@@ -16,6 +16,10 @@ Open **Host Settings → Agents → OMP built-in tools** to request a tool list 
 
 This is not a strict denylist: OMP may automatically add tools excluded from `--tools` or even `--no-tools`, and child agents may use a different tool list. Builds reporting the same version may also expose different tools; for a partial selection, Desktop briefly starts an ephemeral OMP session to request only tools in that build's current active roster. OMP's own settings may disable selected tools. These controls do not change standalone OMP sessions or Desktop-injected tools and extensions, and do not replace filesystem permissions or approval rules. Custom OMP commands cannot combine this setting with their own `--tools` or `--no-tools` flags. No custom OMP build is required for supported versions.
 
+## Model catalog refresh
+
+Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.
+
 ## Conversation names
 
 Rename a conversation from its tab's context menu. Renaming the workspace's primary conversation changes the workspace name; additional conversations keep their own titles. Saved names remain visible when switching tabs, including when a conversation is not loaded or its provider history is unavailable.
