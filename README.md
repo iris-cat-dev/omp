@@ -49,6 +49,8 @@ HTTP(S) links open externally. Text/source links open in the workspace file pane
 
 Targets that cannot be opened are plain text rather than colored links, and clicking one shows an unsupported-link error. Failed file or URL opens also show an error. A `sandbox:` URL is not a local file path: conversation data does not contain an authoritative mapping to an attachment on this host, so those links cannot open until such a mapping is provided. Remote-host binary files likewise cannot be opened by the local desktop file manager.
 
+On desktop, right-click an HTTP(S) conversation link to open it in a new OMP Desktop browser tab, open it in the system browser, or copy its address. Opening it internally preserves the current conversation and the URL's query, fragment, and encoding. Unsupported schemes never receive the internal-open action, and an unavailable plain **Copy** action is omitted. Native context menus follow the app's selected language.
+
 ## Background processes
 
 Background commands started by the current Agent appear beside the workspace branch under the composer. The indicator shows the active count; opening it lists live and recently completed commands. Select a command to open its read-only terminal output in a bottom pane, or use **Stop** to terminate that command. Closing the output pane does not stop the process. Stopping the current Agent response terminates that Agent's running background commands and suppresses their late completion events; reconnecting restores retained process state and output.

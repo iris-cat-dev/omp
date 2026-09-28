@@ -20,6 +20,7 @@ import {
 
 export interface UseFileLinkResult {
   target: InlinePathTarget | null;
+  externalUrl: string | null;
   canOpen: boolean;
   onHoverIn: () => void;
   onPress: () => void;
@@ -139,9 +140,13 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     return query.data ?? null;
   }, [query.data, resolution]);
 
+  const externalUrl =
+    resolution.kind === "resolved" && resolution.value.kind === "external"
+      ? resolution.value.url
+      : null;
   return useMemo(
-    () => ({ target, onHoverIn, onPress, open, canOpen }),
-    [target, onHoverIn, onPress, open, canOpen],
+    () => ({ target, externalUrl, onHoverIn, onPress, open, canOpen }),
+    [target, externalUrl, onHoverIn, onPress, open, canOpen],
   );
 }
 

@@ -11,6 +11,7 @@ import {
 } from "electron";
 
 import type { WindowState, WindowStateStore } from "../settings/window-state.js";
+import { getDesktopContextMenuLabels } from "../features/context-menu-labels.js";
 
 const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
 const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
@@ -482,6 +483,7 @@ export function buildStandardContextMenuItems(
   params: Electron.ContextMenuParams,
 ): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
+  const labels = getDesktopContextMenuLabels();
 
   if (params.misspelledWord) {
     if (params.dictionarySuggestions.length > 0) {
@@ -492,11 +494,11 @@ export function buildStandardContextMenuItems(
         });
       }
     } else {
-      items.push({ label: "No suggestions", enabled: false });
+      items.push({ label: labels.noSuggestions, enabled: false });
     }
     items.push({ type: "separator" });
     items.push({
-      label: "Add to Dictionary",
+      label: labels.addToDictionary,
       click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
     });
     items.push({ type: "separator" });
@@ -504,13 +506,13 @@ export function buildStandardContextMenuItems(
 
   if (params.linkURL && /^https?:/i.test(params.linkURL)) {
     items.push({
-      label: "Open Link in Browser",
+      label: labels.openExternal,
       click: () => {
         void shell.openExternal(params.linkURL);
       },
     });
     items.push({
-      label: "Copy Link Address",
+      label: labels.copyAddress,
       click: () => clipboard.writeText(params.linkURL),
     });
     items.push({ type: "separator" });
@@ -518,27 +520,29 @@ export function buildStandardContextMenuItems(
 
   if (params.hasImageContents && params.srcURL) {
     items.push({
-      label: "Copy Image",
+      label: labels.copyImage,
       click: () => contents.copyImageAt(params.x, params.y),
     });
     items.push({
-      label: "Save Image As…",
+      label: labels.saveImageAs,
       click: () => contents.downloadURL(params.srcURL),
     });
     items.push({ type: "separator" });
   }
 
   if (params.isEditable) {
-    items.push({ role: "cut", enabled: params.editFlags.canCut });
-    items.push({ role: "copy", enabled: params.editFlags.canCopy });
-    items.push({ role: "paste", enabled: params.editFlags.canPaste });
+    items.push({ label: labels.cut, role: "cut", enabled: params.editFlags.canCut });
+    items.push({ label: labels.copy, role: "copy", enabled: params.editFlags.canCopy });
+    items.push({ label: labels.paste, role: "paste", enabled: params.editFlags.canPaste });
     items.push({ type: "separator" });
-    items.push({ role: "selectAll" });
+    items.push({ label: labels.selectAll, role: "selectAll" });
   } else {
-    items.push({ role: "copy", enabled: params.selectionText.length > 0 });
-    items.push({ role: "paste" });
+    if (params.selectionText.length > 0) {
+      items.push({ label: labels.copy, role: "copy" });
+    }
+    items.push({ label: labels.paste, role: "paste" });
     items.push({ type: "separator" });
-    items.push({ role: "selectAll" });
+    items.push({ label: labels.selectAll, role: "selectAll" });
   }
 
   return items;

@@ -23,6 +23,7 @@ export interface AssistantFileLinkResolverConfig {
   serverId?: string;
   workspaceRoot?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
+  onOpenUrlInBrowser?: (url: string) => void;
   toast?: ToastApi | null;
 }
 
@@ -44,6 +45,7 @@ export function AssistantFileLinkResolverProvider({
   serverId,
   workspaceRoot,
   onOpenWorkspaceFile,
+  onOpenUrlInBrowser,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
@@ -53,9 +55,17 @@ export function AssistantFileLinkResolverProvider({
     serverId,
     workspaceRoot,
     onOpenWorkspaceFile,
+    onOpenUrlInBrowser,
     toast,
   });
-  configRef.current = { client, serverId, workspaceRoot, onOpenWorkspaceFile, toast };
+  configRef.current = {
+    client,
+    serverId,
+    workspaceRoot,
+    onOpenWorkspaceFile,
+    onOpenUrlInBrowser,
+    toast,
+  };
 
   const getDirectorySuggestions = useCallback<GetDirectorySuggestions>(async (input) => {
     const activeClient = configRef.current.client;

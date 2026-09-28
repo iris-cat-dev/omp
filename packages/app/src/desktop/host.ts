@@ -89,13 +89,46 @@ export interface DesktopWebUtilsBridge {
 }
 
 export type DesktopTerminalContextMenuAction = "clear";
+export type DesktopLinkContextMenuAction = "open-in-desktop";
+export type DesktopContextMenuAction =
+  | DesktopTerminalContextMenuAction
+  | DesktopLinkContextMenuAction;
+
+export type DesktopContextMenuInput =
+  | {
+      kind: "terminal";
+      hasSelection?: boolean;
+      clearLabel?: string;
+    }
+  | {
+      kind: "assistant-http-link";
+      url: string;
+      openInDesktopLabel: string;
+      openExternalLabel: string;
+      copyAddressLabel: string;
+    };
+
+export interface DesktopContextMenuLabels {
+  addToDictionary: string;
+  clear: string;
+  copy: string;
+  copyAddress: string;
+  copyImage: string;
+  cut: string;
+  inspectElement: string;
+  noSuggestions: string;
+  openExternal: string;
+  openInDesktop: string;
+  paste: string;
+  quitApp: string;
+  saveImageAs: string;
+  selectAll: string;
+  showApp: string;
+}
 
 export interface DesktopMenuBridge {
-  showContextMenu?: (input?: {
-    kind?: "terminal";
-    hasSelection?: boolean;
-    clearLabel?: string;
-  }) => Promise<DesktopTerminalContextMenuAction | null>;
+  showContextMenu?: (input: DesktopContextMenuInput) => Promise<DesktopContextMenuAction | null>;
+  setContextMenuLabels?: (labels: DesktopContextMenuLabels) => Promise<void>;
   setCapturingShortcut?: (capturing: boolean) => Promise<void>;
 }
 

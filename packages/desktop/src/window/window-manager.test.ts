@@ -4,6 +4,7 @@ import {
   beginWindowDrag,
   applyMacWindowControlsUpdate,
   applyWindowControlsOverlayUpdate,
+  buildStandardContextMenuItems,
   createWindowControlsOverlayState,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -17,6 +18,7 @@ import {
   resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
 } from "./window-manager";
+import { getDesktopContextMenuLabels } from "../features/context-menu-labels";
 
 describe("window-manager", () => {
   describe("readBadgeCount", () => {
@@ -34,6 +36,34 @@ describe("window-manager", () => {
       expect(readBadgeCount(1.5)).toBe(0);
       expect(readBadgeCount("2")).toBe(0);
       expect(readBadgeCount({ count: 2 })).toBe(0);
+    });
+  });
+
+  describe("standard context menu", () => {
+    it("keeps Copy Link Address but omits unavailable plain Copy", () => {
+      const labels = getDesktopContextMenuLabels();
+      const items = buildStandardContextMenuItems(
+        {} as Electron.WebContents,
+        {
+          misspelledWord: "",
+          dictionarySuggestions: [],
+          linkURL: "https://example.com/path",
+          hasImageContents: false,
+          srcURL: "",
+          isEditable: false,
+          editFlags: {},
+          selectionText: "",
+          x: 0,
+          y: 0,
+        } as Electron.ContextMenuParams,
+      );
+
+      expect(items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: labels.copyAddress })]),
+      );
+      expect(items).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: labels.copy })]),
+      );
     });
   });
 

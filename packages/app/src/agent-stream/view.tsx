@@ -271,6 +271,7 @@ export interface AgentStreamViewProps {
   bottomOverlayControlClearance?: number;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onOpenUrlInBrowser?: (url: string) => void;
   readOnly?: boolean;
   emptyText?: string;
   historyPagination?: {
@@ -341,6 +342,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       bottomOverlayControlClearance,
       toast,
       onOpenWorkspaceFile,
+      onOpenUrlInBrowser,
       readOnly = false,
       emptyText,
       historyPagination,
@@ -816,6 +818,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             serverId={resolvedServerId}
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
+            onOpenUrlInBrowser={onOpenUrlInBrowser}
             toast={toast}
           >
             {renderedMessage}
@@ -827,6 +830,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         client,
         planPermissionPlacement.permissionByItemId,
         handleInlinePathPress,
+        onOpenUrlInBrowser,
         resolvedServerId,
         toast,
         workspaceRoot,
@@ -1449,6 +1453,7 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  if (left.onOpenUrlInBrowser !== right.onOpenUrlInBrowser) reasons.push("onOpenUrlInBrowser");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (left.emptyText !== right.emptyText) reasons.push("emptyText");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {

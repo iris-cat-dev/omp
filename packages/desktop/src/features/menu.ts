@@ -1,41 +1,83 @@
-import { app, Menu, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from "electron";
 import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
+import { isAllowedExternalUrl } from "./opener.js";
+import { getDesktopContextMenuLabels, setDesktopContextMenuLabels } from "./context-menu-labels.js";
 
-interface ShowContextMenuInput {
-  kind?: "terminal";
+interface TerminalContextMenuInput {
+  kind: "terminal";
   hasSelection?: boolean;
   clearLabel?: string;
 }
 
+interface LinkContextMenuInput {
+  kind: "assistant-http-link";
+  url: string;
+  openInDesktopLabel: string;
+  openExternalLabel: string;
+  copyAddressLabel: string;
+}
+
+type ShowContextMenuInput = TerminalContextMenuInput | LinkContextMenuInput;
+
 export type TerminalContextMenuAction = "clear";
+export type LinkContextMenuAction = "open-in-desktop";
+type ContextMenuAction = TerminalContextMenuAction | LinkContextMenuAction;
 
 export function buildTerminalContextMenuTemplate(
-  input: ShowContextMenuInput,
+  input: Omit<TerminalContextMenuInput, "kind">,
   onAction: (action: TerminalContextMenuAction) => void,
 ): Electron.MenuItemConstructorOptions[] {
+  const labels = getDesktopContextMenuLabels();
   return [
     {
-      label: "Copy",
+      label: labels.copy,
       role: "copy",
       enabled: input.hasSelection === true,
     },
     {
-      label: "Paste",
+      label: labels.paste,
       role: "paste",
     },
     {
       type: "separator",
     },
     {
-      label: "Select All",
+      label: labels.selectAll,
       role: "selectAll",
     },
     {
       type: "separator",
     },
     {
-      label: input.clearLabel?.trim() || "Clear",
+      label: input.clearLabel?.trim() || labels.clear,
       click: () => onAction("clear"),
+    },
+  ];
+}
+
+interface LinkContextMenuCallbacks {
+  onOpenInDesktop: () => void;
+  onOpenExternal: () => void;
+  onCopyAddress: () => void;
+}
+
+export function buildLinkContextMenuTemplate(
+  input: LinkContextMenuInput,
+  callbacks: LinkContextMenuCallbacks,
+): Electron.MenuItemConstructorOptions[] {
+  const labels = getDesktopContextMenuLabels();
+  return [
+    {
+      label: input.openInDesktopLabel.trim() || labels.openInDesktop,
+      click: callbacks.onOpenInDesktop,
+    },
+    {
+      label: input.openExternalLabel.trim() || labels.openExternal,
+      click: callbacks.onOpenExternal,
+    },
+    {
+      label: input.copyAddressLabel.trim() || labels.copyAddress,
+      click: callbacks.onCopyAddress,
     },
   ];
 }
@@ -232,33 +274,49 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
 
   ipcMain.handle(
     "paseo:menu:showContextMenu",
-    (
-      event,
-      input?: ShowContextMenuInput,
-    ): Promise<TerminalContextMenuAction | null> | undefined => {
+    (event, input?: ShowContextMenuInput): Promise<ContextMenuAction | null> | undefined => {
       const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win) {
+      if (!win || !input) {
         return;
       }
 
-      if (input?.kind !== "terminal") {
-        return;
-      }
-
-      let selectedAction: TerminalContextMenuAction | null = null;
-      const contextMenu = Menu.buildFromTemplate(
-        buildTerminalContextMenuTemplate(input, (action) => {
+      let selectedAction: ContextMenuAction | null = null;
+      let template: Electron.MenuItemConstructorOptions[];
+      if (input.kind === "terminal") {
+        template = buildTerminalContextMenuTemplate(input, (action) => {
           selectedAction = action;
-        }),
-      );
-      return new Promise((resolve) => {
-        contextMenu.popup({
-          window: win,
-          callback: () => resolve(selectedAction),
         });
+      } else if (input.kind === "assistant-http-link" && isAllowedExternalUrl(input.url)) {
+        template = buildLinkContextMenuTemplate(input, {
+          onOpenInDesktop: () => {
+            selectedAction = "open-in-desktop";
+          },
+          onOpenExternal: () => {
+            void shell.openExternal(input.url);
+          },
+          onCopyAddress: () => {
+            clipboard.writeText(input.url);
+          },
+        });
+      } else {
+        return;
+      }
+
+      const contextMenu = Menu.buildFromTemplate(template);
+      const { promise, resolve } = Promise.withResolvers<ContextMenuAction | null>();
+      contextMenu.popup({
+        window: win,
+        callback: () => resolve(selectedAction),
       });
+      return promise;
     },
   );
+
+  ipcMain.handle("paseo:menu:set-context-menu-labels", (_event, labels: unknown) => {
+    if (!setDesktopContextMenuLabels(labels)) {
+      throw new Error("Invalid context menu labels");
+    }
+  });
 
   // Disable the zoom accelerators while capturing a shortcut so combos like
   // Cmd+- / Cmd+= reach the renderer instead of zooming the window.

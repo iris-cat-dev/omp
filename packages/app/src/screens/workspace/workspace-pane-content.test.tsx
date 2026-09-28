@@ -66,6 +66,7 @@ function buildContent(tab: WorkspaceTabDescriptor = agentTab, isSidePanel = fals
     onRetargetCurrentTab: vi.fn(),
     onSetCurrentTabState: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
+    onOpenUrlInBrowser: vi.fn(),
     onOpenImportSheet: vi.fn(),
   });
 }

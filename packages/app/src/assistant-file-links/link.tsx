@@ -1,6 +1,7 @@
 import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
@@ -14,6 +15,7 @@ import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { getDesktopHost } from "@/desktop/host";
 
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
@@ -33,7 +35,8 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const { target, onHoverIn, onPress, canOpen } = useFileLink(source);
+  const { t } = useTranslation();
+  const { target, externalUrl, onHoverIn, onPress, canOpen } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
@@ -61,6 +64,36 @@ export function AssistantMarkdownLink({
     if (event.button !== 1 || isAnchor) return;
     event.preventDefault();
     onPress();
+  });
+  const handleContextMenu = useStableEvent((event: MouseEvent<HTMLAnchorElement>) => {
+    const showContextMenu = getDesktopHost()?.menu?.showContextMenu;
+    const openUrlInBrowser = configRef.current.onOpenUrlInBrowser;
+    if (!externalUrl || !showContextMenu || !openUrlInBrowser) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void showContextMenu({
+      kind: "assistant-http-link",
+      url: externalUrl,
+      openInDesktopLabel: t("contextMenu.openInDesktop"),
+      openExternalLabel: t("contextMenu.openExternal"),
+      copyAddressLabel: t("contextMenu.copyAddress"),
+    })
+      .then((action) => {
+        if (action === "open-in-desktop") {
+          configRef.current.onOpenUrlInBrowser?.(externalUrl);
+        }
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        configRef.current.toast?.show(
+          t("common.errors.linkOpenFailed", { token: externalUrl, reason }),
+          { variant: "error" },
+        );
+      });
   });
 
   if (isNative) {
@@ -115,6 +148,7 @@ export function AssistantMarkdownLink({
       title={source.title}
       onClickCapture={handleClick}
       onAuxClickCapture={handleAuxClick}
+      onContextMenu={handleContextMenu}
       style={LINK_ANCHOR_STYLE}
     >
       {isAnchor ? (

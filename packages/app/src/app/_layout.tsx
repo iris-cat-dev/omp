@@ -18,6 +18,7 @@ import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-ha
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { AppearanceProvider } from "@/appearance/provider";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
@@ -412,6 +413,7 @@ const WINDOW_CONTROLS_OVERLAY_DATASET = { "window-controls-overlay": "true" } as
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
+  const { t } = useTranslation();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
@@ -421,6 +423,32 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
+
+  useEffect(() => {
+    const setContextMenuLabels = getDesktopHost()?.menu?.setContextMenuLabels;
+    if (!setContextMenuLabels) {
+      return;
+    }
+    void setContextMenuLabels({
+      addToDictionary: t("contextMenu.addToDictionary"),
+      clear: t("contextMenu.clear"),
+      copy: t("contextMenu.copy"),
+      copyAddress: t("contextMenu.copyAddress"),
+      copyImage: t("contextMenu.copyImage"),
+      cut: t("contextMenu.cut"),
+      inspectElement: t("contextMenu.inspectElement"),
+      noSuggestions: t("contextMenu.noSuggestions"),
+      openExternal: t("contextMenu.openExternal"),
+      openInDesktop: t("contextMenu.openInDesktop"),
+      paste: t("contextMenu.paste"),
+      quitApp: t("contextMenu.quitApp"),
+      saveImageAs: t("contextMenu.saveImageAs"),
+      selectAll: t("contextMenu.selectAll"),
+      showApp: t("contextMenu.showApp"),
+    }).catch((error: unknown) => {
+      console.error("[desktop-menu] Failed to synchronize context menu labels", error);
+    });
+  }, [t]);
 
   const cycleTheme = useCallback(() => {
     void updateSettings({ theme: getNextThemePreference(settings.theme) });

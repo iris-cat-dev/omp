@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildTerminalContextMenuTemplate, reloadActiveBrowserOrWindow } from "./menu.js";
+import {
+  buildLinkContextMenuTemplate,
+  buildTerminalContextMenuTemplate,
+  reloadActiveBrowserOrWindow,
+} from "./menu.js";
 
 class FakeWebContents {
   public readonly reloads: string[] = [];
@@ -81,5 +85,37 @@ describe("terminal context menu", () => {
     expect(clearItem).toBeDefined();
     clearItem?.click?.(null as never, undefined, null as never);
     expect(onAction).toHaveBeenCalledWith("clear");
+  });
+});
+
+describe("assistant HTTP link context menu", () => {
+  it("offers both opening destinations and copy without changing the URL", () => {
+    const callbacks = {
+      onOpenInDesktop: vi.fn(),
+      onOpenExternal: vi.fn(),
+      onCopyAddress: vi.fn(),
+    };
+    const template = buildLinkContextMenuTemplate(
+      {
+        kind: "assistant-http-link",
+        url: "https://example.com/a%20b?q=x%2Fy#section",
+        openInDesktopLabel: "在 OMP Desktop 中打开",
+        openExternalLabel: "在浏览器中打开链接",
+        copyAddressLabel: "复制链接地址",
+      },
+      callbacks,
+    );
+
+    expect(template.map((item) => item.label)).toEqual([
+      "在 OMP Desktop 中打开",
+      "在浏览器中打开链接",
+      "复制链接地址",
+    ]);
+    template[0]?.click?.(null as never, undefined, null as never);
+    template[1]?.click?.(null as never, undefined, null as never);
+    template[2]?.click?.(null as never, undefined, null as never);
+    expect(callbacks.onOpenInDesktop).toHaveBeenCalledOnce();
+    expect(callbacks.onOpenExternal).toHaveBeenCalledOnce();
+    expect(callbacks.onCopyAddress).toHaveBeenCalledOnce();
   });
 });

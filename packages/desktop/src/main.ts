@@ -53,6 +53,10 @@ import { resolveAppIconPath } from "./features/stamped-icon.js";
 import { registerRemoteSshHandlers } from "./features/remote-ssh/ipc.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
+  getDesktopContextMenuLabels,
+  onDesktopContextMenuLabelsChange,
+} from "./features/context-menu-labels.js";
+import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
   decideBrowserWindowOpenRequest,
   getPaseoBrowserIdForWebContents,
@@ -180,7 +184,7 @@ function showBrowserWebviewContextMenu(
       : [
           { type: "separator" as const },
           {
-            label: "Inspect Element",
+            label: getDesktopContextMenuLabels().inspectElement,
             click: () => {
               log.info("[browser-devtools] inspect-element.request", {
                 webContentsId: contents.id,
@@ -862,6 +866,21 @@ async function createWindow(
   return mainWindow;
 }
 let backgroundTray: Tray | null = null;
+let backgroundTrayActions: { restore: () => void; quit: () => void } | null = null;
+
+function updateBackgroundTrayContextMenu(): void {
+  if (!backgroundTray || !backgroundTrayActions) {
+    return;
+  }
+  const labels = getDesktopContextMenuLabels();
+  backgroundTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: labels.showApp, click: backgroundTrayActions.restore },
+      { type: "separator" },
+      { label: labels.quitApp, click: backgroundTrayActions.quit },
+    ]),
+  );
+}
 
 const backgroundModeController = new BackgroundModeController({
   promptForCloseChoice: async (window) => {
@@ -882,6 +901,7 @@ const backgroundModeController = new BackgroundModeController({
     return result.choice;
   },
   createTray: ({ restore, quit }) => {
+    backgroundTrayActions = { restore, quit };
     const iconPath = getTrayIconPath();
     if (!iconPath) {
       throw new Error("Cannot create the system tray without a tray icon");
@@ -902,13 +922,7 @@ const backgroundModeController = new BackgroundModeController({
     backgroundTray = new Tray(trayIcon);
     backgroundTray.setToolTip(APP_NAME);
     backgroundTray.on("click", restore);
-    backgroundTray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: "显示 OMP Desktop", click: restore },
-        { type: "separator" },
-        { label: "退出", click: quit },
-      ]),
-    );
+    updateBackgroundTrayContextMenu();
     log.info("[background mode] system tray created", {
       iconPath,
       bounds: backgroundTray.getBounds(),
@@ -919,6 +933,8 @@ const backgroundModeController = new BackgroundModeController({
   quitApp: () => app.quit(),
   onError: (error) => log.error("[background mode] operation failed", error),
 });
+
+onDesktopContextMenuLabelsChange(updateBackgroundTrayContextMenu);
 
 // ---------------------------------------------------------------------------
 // App lifecycle

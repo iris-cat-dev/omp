@@ -9,15 +9,54 @@ import type { ToastApi } from "@/components/toast-host";
 import { AssistantMarkdownLink } from "./link";
 import { AssistantFileLinkResolverProvider } from "./provider";
 
+vi.hoisted(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
+vi.mock("react-native-unistyles", () => ({
+  StyleSheet: {
+    create: (
+      factory: (theme: {
+        colors: { foreground: string };
+        colorScheme: "light";
+        fontSize: { sm: number };
+        fontWeight: { normal: "400" };
+      }) => unknown,
+    ) =>
+      factory({
+        colors: { foreground: "#111111" },
+        colorScheme: "light",
+        fontSize: { sm: 12 },
+        fontWeight: { normal: "400" },
+      }),
+  },
+}));
+
 const mocks = vi.hoisted(() => ({
   localDaemon: true,
   openPath: vi.fn(async (_input: { path: string; workspaceRoot: string }) => {}),
   openExternalUrl: vi.fn(async (_url: string) => {}),
+  showContextMenu: vi.fn(async () => null as "open-in-desktop" | null),
 }));
 
 vi.mock("@/hooks/use-is-local-daemon", () => ({ useIsLocalDaemon: () => mocks.localDaemon }));
 vi.mock("@/desktop/host", () => ({
-  getDesktopHost: () => ({ opener: { openPath: mocks.openPath } }),
+  getDesktopHost: () => ({
+    opener: { openPath: mocks.openPath },
+    menu: { showContextMenu: mocks.showContextMenu },
+  }),
 }));
 vi.mock("@/utils/open-external-url", () => ({ openExternalUrl: mocks.openExternalUrl }));
 vi.mock("@/components/ui/tooltip", () => ({
@@ -28,6 +67,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 const ROOT = "/Users/test/project";
 const openedFiles = vi.fn();
+const openUrlInBrowser = vi.fn();
 const toastShow = vi.fn<ToastApi["show"]>();
 const client = { getDirectorySuggestions: async () => ({ entries: [], error: null }) };
 const toast: ToastApi = { show: toastShow, copied: vi.fn(), error: vi.fn() };
@@ -42,6 +82,7 @@ function renderLink(href: string, text = href) {
         serverId="local-server"
         workspaceRoot={ROOT}
         onOpenWorkspaceFile={openedFiles}
+        onOpenUrlInBrowser={openUrlInBrowser}
         toast={toast}
       >
         {/* oxlint-disable-next-line react-perf/jsx-no-new-object-as-prop -- one render per test */}
@@ -61,7 +102,9 @@ beforeEach(() => {
   mocks.localDaemon = true;
   mocks.openPath.mockReset().mockResolvedValue(undefined);
   mocks.openExternalUrl.mockReset().mockResolvedValue(undefined);
+  mocks.showContextMenu.mockReset().mockResolvedValue(null);
   openedFiles.mockReset();
+  openUrlInBrowser.mockReset();
   toastShow.mockReset();
 });
 
@@ -81,6 +124,25 @@ describe("assistant Markdown links in the DOM", () => {
     await waitFor(() =>
       expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://example.com/report"),
     );
+  });
+
+  it("opens the exact HTTP URL in a new OMP Desktop browser tab from the context menu", async () => {
+    const url = "https://example.com/a%20b?q=x%2Fy#section";
+    mocks.showContextMenu.mockResolvedValueOnce("open-in-desktop");
+    renderLink(url, "website");
+
+    expect(fireEvent.contextMenu(screen.getByText("website"))).toBe(false);
+    await waitFor(() =>
+      expect(mocks.showContextMenu).toHaveBeenCalledWith({
+        kind: "assistant-http-link",
+        url,
+        openInDesktopLabel: "Open in OMP Desktop",
+        openExternalLabel: "Open Link in Browser",
+        copyAddressLabel: "Copy Link Address",
+      }),
+    );
+    await waitFor(() => expect(openUrlInBrowser).toHaveBeenCalledWith(url));
+    expect(mocks.openExternalUrl).not.toHaveBeenCalled();
   });
 
   it("leaves heading navigation to the browser", async () => {
@@ -162,6 +224,7 @@ describe("assistant Markdown links in the DOM", () => {
         expect.objectContaining({ variant: "error" }),
       );
       expect(mocks.openExternalUrl).not.toHaveBeenCalled();
+      expect(mocks.showContextMenu).not.toHaveBeenCalled();
       expect(mocks.openPath).not.toHaveBeenCalled();
     },
   );
