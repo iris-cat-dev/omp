@@ -111,4 +111,36 @@ describe("orderPinnedSidebarProjects", () => {
       "newer",
     ]);
   });
+
+  it("restores a manual pinned order without changing unpinned or other-project rows", () => {
+    const projects = [
+      project("p1", [placement("a"), placement("b"), placement("c"), placement("unpinned")]),
+      project("p2", [placement("other-a"), placement("other-b")]),
+    ];
+    const result = orderPinnedSidebarProjects({
+      projects,
+      keys: {
+        pinnedWorkspaceKeys: ["a", "b", "c", "other-a", "other-b"],
+        pinnedAtByKey: {
+          a: "2026-01-01T00:00:00Z",
+          b: "2026-02-01T00:00:00Z",
+          c: "2026-03-01T00:00:00Z",
+          "other-a": "2026-04-01T00:00:00Z",
+          "other-b": "2026-05-01T00:00:00Z",
+        },
+      },
+      pinnedWorkspaceOrder: ["c", "a", "b"],
+    });
+
+    expect(result[0]?.workspaces.map((workspace) => workspace.workspaceKey)).toEqual([
+      "c",
+      "a",
+      "b",
+      "unpinned",
+    ]);
+    expect(result[1]?.workspaces.map((workspace) => workspace.workspaceKey)).toEqual([
+      "other-b",
+      "other-a",
+    ]);
+  });
 });

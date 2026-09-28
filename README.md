@@ -26,6 +26,14 @@ Rename a conversation from its tab's context menu. Renaming the workspace's prim
 
 Tab-width measurements do not own titles or selection state. The daemon publishes saved metadata changes for unloaded conversations, and loading a provider session preserves any rename made during initialization.
 
+## Pinned conversation ordering
+
+In project view, pinned conversations stay above unpinned conversations and can be dragged to
+change their priority. The drop position is previewed before release, and the manual order is
+stored locally across restarts, project switches, and sidebar collapse or expansion. Reordering a
+pinned conversation does not open it or change the order of unpinned conversations. Reordering is
+disabled while a host or label filter hides part of the pinned list.
+
 ## Closing unused conversations
 
 Closing the last empty conversation tab returns to the project creation page. On supported hosts, the daemon also archives the unused workspace record so it does not remain in the sidebar under its branch name. This does not delete project files or the project itself.

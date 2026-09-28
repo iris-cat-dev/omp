@@ -14,6 +14,7 @@ import { useMutation } from "@tanstack/react-query";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import {
   memo,
+  Fragment,
   useCallback,
   useMemo,
   useState,
@@ -1643,6 +1644,8 @@ function ProjectBlock({
   onToggleCollapsed,
   onWorkspacePress,
   onWorkspaceReorder,
+  onPinnedWorkspaceReorder,
+  pinnedWorkspaceReorderEnabled,
   onCreateConversationDraft,
   drag,
   isDragging,
@@ -1667,6 +1670,8 @@ function ProjectBlock({
   onToggleCollapsed: (projectViewKey: string) => void;
   onWorkspacePress?: () => void;
   onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
+  onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
+  pinnedWorkspaceReorderEnabled: boolean;
   onCreateConversationDraft: (draft: SidebarConversationDraftSource) => void;
   drag: () => void;
   isDragging: boolean;
@@ -1697,6 +1702,20 @@ function ProjectBlock({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(workspaceRows);
+  const visiblePinnedWorkspaces = useMemo(
+    () =>
+      visibleWorkspaces.filter(
+        (workspace) => workspaceEntriesByKey.get(workspace.workspaceKey)?.pinnedAt != null,
+      ),
+    [visibleWorkspaces, workspaceEntriesByKey],
+  );
+  const visibleUnpinnedWorkspaces = useMemo(
+    () =>
+      visibleWorkspaces.filter(
+        (workspace) => workspaceEntriesByKey.get(workspace.workspaceKey)?.pinnedAt == null,
+      ),
+    [visibleWorkspaces, workspaceEntriesByKey],
+  );
 
   // Collapsed rows hide their workspace rows, so the project row carries the most urgent
   // status among them; expanded rows leave the signal to the child rows themselves.
@@ -1794,6 +1813,12 @@ function ProjectBlock({
     },
     [onWorkspaceReorder, project.viewKey],
   );
+  const handlePinnedWorkspaceDragEnd = useCallback(
+    (workspaces: SidebarWorkspacePlacement[]) => {
+      onPinnedWorkspaceReorder(workspaces);
+    },
+    [onPinnedWorkspaceReorder],
+  );
 
   const toast = useToast();
   const { t } = useTranslation();
@@ -1866,9 +1891,29 @@ function ProjectBlock({
             onWorkspacePress={onWorkspacePress}
           />
         ))}
+        {pinnedWorkspaceReorderEnabled && visiblePinnedWorkspaces.length > 1 ? (
+          <DraggableList
+            testID={`sidebar-pinned-workspace-list-${project.viewKey}`}
+            data={visiblePinnedWorkspaces}
+            keyExtractor={workspaceKeyExtractor}
+            renderItem={renderWorkspace}
+            onDragEnd={handlePinnedWorkspaceDragEnd}
+            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+            scrollEnabled={false}
+            useDragHandle
+            nestable={useNestable}
+            simultaneousGestureRef={parentGestureRef}
+            gestureHostPresented={dragGestureHostPresented}
+            containerStyle={styles.workspaceListContainer}
+          />
+        ) : (
+          visiblePinnedWorkspaces.map((workspace) => (
+            <Fragment key={workspace.workspaceKey}>{renderWorkspaceRow(workspace)}</Fragment>
+          ))
+        )}
         <DraggableList
           testID={`sidebar-workspace-list-${project.viewKey}`}
-          data={visibleWorkspaces}
+          data={visibleUnpinnedWorkspaces}
           keyExtractor={workspaceKeyExtractor}
           renderItem={renderWorkspace}
           onDragEnd={handleWorkspaceDragEnd}
@@ -1945,6 +1990,8 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.onToggleCollapsed === next.onToggleCollapsed &&
     previous.onWorkspacePress === next.onWorkspacePress &&
     previous.onWorkspaceReorder === next.onWorkspaceReorder &&
+    previous.onPinnedWorkspaceReorder === next.onPinnedWorkspaceReorder &&
+    previous.pinnedWorkspaceReorderEnabled === next.pinnedWorkspaceReorderEnabled &&
     previous.onCreateConversationDraft === next.onCreateConversationDraft &&
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
@@ -2060,6 +2107,7 @@ export function SidebarWorkspaceList({
         listFooterComponent={listFooterComponent}
         listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
+        pinnedWorkspaceReorderEnabled={!hasActiveLabelFilter}
         hasHiddenProjects={hasHiddenProjects}
         parentGestureRef={parentGestureRef}
         dragGestureHostPresented={dragGestureHostPresented}
@@ -2129,6 +2177,7 @@ function ProjectModeList({
   listFooterComponent,
   listHeaderComponent,
   sidebarFilterEmpty,
+  pinnedWorkspaceReorderEnabled,
   hasHiddenProjects,
   parentGestureRef,
   dragGestureHostPresented,
@@ -2147,6 +2196,8 @@ function ProjectModeList({
 > & {
   /** Swaps the list body for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty: boolean;
+  /** Reordering is disabled while a label filter hides part of the persisted pinned order. */
+  pinnedWorkspaceReorderEnabled: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
@@ -2172,6 +2223,8 @@ function ProjectModeList({
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
   const getWorkspaceOrder = useSidebarOrderStore((state) => state.getWorkspaceOrder);
   const setWorkspaceOrder = useSidebarOrderStore((state) => state.setWorkspaceOrder);
+  const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
+  const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
 
   const isWorkspaceRoute = useMemo(
     () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
@@ -2253,6 +2306,28 @@ function ProjectModeList({
     },
     [getWorkspaceOrder, setWorkspaceOrder],
   );
+  const handlePinnedWorkspaceReorder = useCallback(
+    (reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+      const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
+      const currentPinnedWorkspaceOrder = getPinnedWorkspaceOrder();
+      if (
+        !hasVisibleOrderChanged({
+          currentOrder: currentPinnedWorkspaceOrder,
+          reorderedVisibleKeys: reorderedWorkspaceKeys,
+        })
+      ) {
+        return;
+      }
+
+      setPinnedWorkspaceOrder(
+        mergeWithRemainder({
+          currentOrder: currentPinnedWorkspaceOrder,
+          reorderedVisibleKeys: reorderedWorkspaceKeys,
+        }),
+      );
+    },
+    [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
+  );
 
   const renderProjectBlock = useCallback(
     (
@@ -2279,6 +2354,8 @@ function ProjectModeList({
           onToggleCollapsed={onToggleProjectCollapsed}
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
+          onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
+          pinnedWorkspaceReorderEnabled={pinnedWorkspaceReorderEnabled && !hasActiveHostFilter}
           onCreateConversationDraft={handleCreateConversationDraft}
           drag={dragState.drag}
           isDragging={dragState.isDragging}
@@ -2299,6 +2376,9 @@ function ProjectModeList({
       onWorkspacePress,
       handleCreateConversationDraft,
       handleWorkspaceReorder,
+      handlePinnedWorkspaceReorder,
+      hasActiveHostFilter,
+      pinnedWorkspaceReorderEnabled,
       hostBadgeByServerId,
       supportsPinningByServerId,
       onToggleWorkspacePin,
