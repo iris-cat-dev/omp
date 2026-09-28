@@ -36,32 +36,62 @@ export function mapOmpToolDetail(
   return mapOmpCoreToolDetail(toolCall, result);
 }
 
+interface ImageGenerationStatusTextInput {
+  filePath: string | undefined;
+  prompt: string | undefined;
+  elapsedText: string | null;
+  referenceText: string | null;
+}
+
+function formatImageGenerationElapsed(seconds: number | null): string | null {
+  if (seconds === null) {
+    return null;
+  }
+  if (seconds >= 60) {
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+  return `${seconds}s`;
+}
+
+function imageGenerationStatusText(input: ImageGenerationStatusTextInput): string | undefined {
+  if (input.filePath) {
+    return input.referenceText
+      ? `Saved to ${input.filePath} · Used ${input.referenceText}`
+      : `Saved to ${input.filePath}`;
+  }
+  if (input.elapsedText) {
+    return `Waiting for the image provider · ${input.elapsedText} elapsed`;
+  }
+  if (input.referenceText) {
+    return `${input.prompt ?? "Generating image"} · Using ${input.referenceText}`;
+  }
+  return input.prompt;
+}
+
 function mapOmpImageGenerationDetail(args: unknown, result: OmpToolResult): ToolCallDetail {
   const argRecord = isRecord(args) ? args : {};
   const details = resultDetails(result);
   const prompt = firstString(details?.prompt, argRecord.prompt);
   const filePath = firstString(details?.filePath);
   const mimeType = firstString(details?.mimeType);
+  const referenceImageCount = Array.isArray(argRecord.referenceImagePaths)
+    ? argRecord.referenceImagePaths.length
+    : 0;
+  const referenceText =
+    referenceImageCount === 0
+      ? null
+      : `${referenceImageCount} reference image${referenceImageCount === 1 ? "" : "s"}`;
   const elapsedSeconds =
     typeof details?.elapsedSeconds === "number" &&
     Number.isFinite(details.elapsedSeconds) &&
     details.elapsedSeconds >= 0
       ? Math.floor(details.elapsedSeconds)
       : null;
-  const elapsedText =
-    elapsedSeconds === null
-      ? null
-      : elapsedSeconds >= 60
-        ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
-        : `${elapsedSeconds}s`;
+  const elapsedText = formatImageGenerationElapsed(elapsedSeconds);
   return {
     type: "plain_text",
     label: filePath ? "Generated image" : "Generating image",
-    text: filePath
-      ? `Saved to ${filePath}`
-      : elapsedText
-        ? `Waiting for the image provider · ${elapsedText} elapsed`
-        : prompt,
+    text: imageGenerationStatusText({ filePath, prompt, elapsedText, referenceText }),
     icon: "sparkles",
     ...(filePath
       ? {

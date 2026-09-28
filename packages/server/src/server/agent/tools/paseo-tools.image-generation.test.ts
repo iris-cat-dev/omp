@@ -1,3 +1,4 @@
+import path from "node:path";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,9 +9,15 @@ import type { GeneratedImage, ImageGenerationService } from "../../image-generat
 import type { PaseoToolResult } from "./types.js";
 import { createPaseoToolCatalog } from "./paseo-tools.js";
 
-function createCatalog(imageGenerationService: ImageGenerationService, callerAgentId = "agent-1") {
+function createCatalog(
+  imageGenerationService: ImageGenerationService,
+  callerAgentId = "agent-1",
+  cwd = "/workspace",
+) {
   return createPaseoToolCatalog({
-    agentManager: {} as AgentManager,
+    agentManager: {
+      getAgent: () => ({ cwd }),
+    } as unknown as AgentManager,
     agentStorage: {} as AgentStorage,
     providerSnapshotManager: {} as ProviderSnapshotManager,
     imageGenerationService,
@@ -66,6 +73,46 @@ describe("image_gen Paseo tool", () => {
         text: "Generated image saved to /tmp/generated.png. The desktop renders it automatically.",
       },
     ]);
+  });
+
+  it.each([
+    [["source.png"], [path.resolve("/workspace", "source.png")]],
+    [
+      ["subject.png", "references/style.webp"],
+      [
+        path.resolve("/workspace", "subject.png"),
+        path.resolve("/workspace", "references/style.webp"),
+      ],
+    ],
+  ])("resolves and forwards one or multiple reference images", async (requested, resolved) => {
+    const generate = vi.fn(async () => ({
+      prompt: "restyle the subject",
+      model: "gpt-image-2",
+      filePath: "/tmp/generated.png",
+      mimeType: "image/png",
+      size: "auto" as const,
+      quality: "medium" as const,
+      background: "auto" as const,
+      outputFormat: "png" as const,
+    }));
+    const catalog = createCatalog({ generate });
+
+    await catalog.executeTool("image_gen", {
+      prompt: "restyle the subject",
+      referenceImagePaths: requested,
+    });
+
+    expect(generate).toHaveBeenCalledWith(
+      {
+        prompt: "restyle the subject",
+        referenceImagePaths: resolved,
+        size: "auto",
+        quality: "medium",
+        background: "auto",
+        outputFormat: "png",
+      },
+      { agentId: "agent-1", signal: undefined },
+    );
   });
 
   it("uses medium quality by default and reports provider wait progress", async () => {

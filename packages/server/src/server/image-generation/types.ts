@@ -9,8 +9,11 @@ export type ImageGenerationQuality = (typeof IMAGE_GENERATION_QUALITIES)[number]
 export type ImageGenerationBackground = (typeof IMAGE_GENERATION_BACKGROUNDS)[number];
 export type ImageGenerationOutputFormat = (typeof IMAGE_GENERATION_OUTPUT_FORMATS)[number];
 
+export const MAX_IMAGE_GENERATION_REFERENCE_IMAGES = 16;
+
 export interface ImageGenerationInput {
   prompt: string;
+  referenceImagePaths?: readonly string[];
   size?: ImageGenerationSize;
   quality?: ImageGenerationQuality;
   background?: ImageGenerationBackground;

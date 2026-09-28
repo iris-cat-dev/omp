@@ -143,6 +143,20 @@ describe("OMP tool call mapper", () => {
     });
     expect(
       mapOmpToolDetail(
+        parseToolArgs("image_gen", {
+          prompt: "combine the subject and style",
+          referenceImagePaths: ["/tmp/subject.png", "/tmp/style.png"],
+        }),
+        null,
+      ),
+    ).toEqual({
+      type: "plain_text",
+      label: "Generating image",
+      text: "combine the subject and style · Using 2 reference images",
+      icon: "sparkles",
+    });
+    expect(
+      mapOmpToolDetail(
         parseToolArgs("image_gen", { prompt: "a red fox" }),
         parseToolResult({
           content: [{ type: "text", text: "Waiting for provider" }],

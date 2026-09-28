@@ -1,27 +1,37 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type pino from "pino";
 import { OpenAI } from "openai";
-import type { ImageGenerateParamsNonStreaming, ImagesResponse } from "openai/resources/images";
+import type {
+  ImageEditParamsNonStreaming,
+  ImageGenerateParamsNonStreaming,
+  ImagesResponse,
+} from "openai/resources/images";
 
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpSubscriptionCredentialResolver } from "./omp-subscription-credential.js";
-import type {
-  GeneratedImage,
-  ImageGenerationBackground,
-  ImageGenerationContext,
-  ImageGenerationInput,
-  ImageGenerationOutputFormat,
-  ImageGenerationQuality,
-  ImageGenerationService,
-  ImageGenerationSize,
+import {
+  MAX_IMAGE_GENERATION_REFERENCE_IMAGES,
+  type GeneratedImage,
+  type ImageGenerationBackground,
+  type ImageGenerationContext,
+  type ImageGenerationInput,
+  type ImageGenerationOutputFormat,
+  type ImageGenerationQuality,
+  type ImageGenerationService,
+  type ImageGenerationSize,
 } from "./types.js";
 
 const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_BYTES = 50 * 1024 * 1024;
 export const DEFAULT_IMAGE_GENERATION_TIMEOUT_MS = 10 * 60 * 1000;
-const CODEX_IMAGE_GENERATION_ENDPOINT = "https://chatgpt.com/backend-api/codex/images/generations";
+const CODEX_IMAGE_API_BASE_URL = "https://chatgpt.com/backend-api/codex/images";
+const CODEX_IMAGE_GENERATION_ENDPOINT = `${CODEX_IMAGE_API_BASE_URL}/generations`;
+const CODEX_IMAGE_EDIT_ENDPOINT = `${CODEX_IMAGE_API_BASE_URL}/edits`;
 const CODEX_IMAGE_GENERATION_MODEL = "gpt-image-2";
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 const MIME_TYPE_BY_OUTPUT_FORMAT: Record<ImageGenerationOutputFormat, string> = {
   png: "image/png",
@@ -32,6 +42,10 @@ const MIME_TYPE_BY_OUTPUT_FORMAT: Record<ImageGenerationOutputFormat, string> = 
 interface ImageApiClient {
   generate(
     input: ImageGenerateParamsNonStreaming,
+    options: { signal?: AbortSignal },
+  ): Promise<ImagesResponse>;
+  edit(
+    input: ImageEditParamsNonStreaming,
     options: { signal?: AbortSignal },
   ): Promise<ImagesResponse>;
 }
@@ -53,6 +67,7 @@ function createOpenAIImageClient(config: ImageGenerationRuntimeConfig): ImageApi
   });
   return {
     generate: (input, options) => client.images.generate(input, options),
+    edit: (input, options) => client.images.edit(input, options),
   };
 }
 
@@ -84,6 +99,79 @@ function createRequestSignal(
   };
 }
 
+interface ReferenceImage {
+  filePath: string;
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+}
+
+function referenceImageMimeType(bytes: Buffer): ReferenceImage["mimeType"] | null {
+  if (bytes.length >= PNG_SIGNATURE.length && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+async function inspectReferenceImage(filePath: string): Promise<ReferenceImage> {
+  let fileStats;
+  try {
+    fileStats = await stat(filePath);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      throw new Error(`Reference image not found: ${filePath}`, { cause: error });
+    }
+    throw error;
+  }
+  if (!fileStats.isFile()) {
+    throw new Error(`Reference image path is not a file: ${filePath}`);
+  }
+  if (fileStats.size <= 0) {
+    throw new Error(`Reference image is empty: ${filePath}`);
+  }
+  if (fileStats.size > MAX_REFERENCE_IMAGE_BYTES) {
+    throw new Error(
+      `Reference image is too large (${fileStats.size} bytes; max ${MAX_REFERENCE_IMAGE_BYTES}): ${filePath}`,
+    );
+  }
+
+  const sample = Buffer.allocUnsafe(Math.min(12, fileStats.size));
+  const handle = await open(filePath, "r");
+  try {
+    const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
+    const mimeType = referenceImageMimeType(sample.subarray(0, bytesRead));
+    if (!mimeType) {
+      throw new Error(`Reference image must be a PNG, JPEG, or WebP file: ${filePath}`);
+    }
+    return { filePath, mimeType };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function inspectReferenceImages(
+  paths: readonly string[],
+  signal?: AbortSignal,
+): Promise<ReferenceImage[]> {
+  if (paths.length > MAX_IMAGE_GENERATION_REFERENCE_IMAGES) {
+    throw new Error(
+      `Image generation accepts at most ${MAX_IMAGE_GENERATION_REFERENCE_IMAGES} reference images.`,
+    );
+  }
+  signal?.throwIfAborted();
+  const images = await Promise.all(paths.map((filePath) => inspectReferenceImage(filePath)));
+  signal?.throwIfAborted();
+  return images;
+}
+
 function validateRequest(
   backend: ImageGenerationRuntimeConfig["backend"],
   model: string,
@@ -111,7 +199,12 @@ function decodeBase64Image(value: string): Buffer {
   if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
     throw new Error("Image generation returned invalid base64 data.");
   }
-  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  let padding = 0;
+  if (value.endsWith("==")) {
+    padding = 2;
+  } else if (value.endsWith("=")) {
+    padding = 1;
+  }
   const decodedSize = (value.length / 4) * 3 - padding;
   if (decodedSize > MAX_GENERATED_IMAGE_BYTES) {
     throw new Error("Generated image exceeds the 32 MiB output limit.");
@@ -125,10 +218,7 @@ function decodeBase64Image(value: string): Buffer {
 
 function hasExpectedSignature(bytes: Buffer, format: ImageGenerationOutputFormat): boolean {
   if (format === "png") {
-    return (
-      bytes.length >= 8 &&
-      bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-    );
+    return bytes.length >= PNG_SIGNATURE.length && bytes.subarray(0, 8).equals(PNG_SIGNATURE);
   }
   if (format === "jpeg") {
     return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -138,6 +228,48 @@ function hasExpectedSignature(bytes: Buffer, format: ImageGenerationOutputFormat
     bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
     bytes.subarray(8, 12).toString("ascii") === "WEBP"
   );
+}
+
+interface ResolvedImageGenerationRequest {
+  prompt: string;
+  size: ImageGenerationSize;
+  quality: ImageGenerationQuality;
+  background: ImageGenerationBackground;
+  outputFormat: ImageGenerationOutputFormat;
+}
+
+function resolveImageGenerationRequest(
+  config: ImageGenerationRuntimeConfig,
+  input: ImageGenerationInput,
+): ResolvedImageGenerationRequest {
+  const requestedOutputFormat: ImageGenerationOutputFormat = input.outputFormat ?? "png";
+  validateRequest(config.backend, config.model, {
+    ...input,
+    outputFormat: requestedOutputFormat,
+  });
+  return {
+    prompt: input.prompt.trim(),
+    size: input.size ?? "auto",
+    quality: input.quality ?? "auto",
+    background: input.background ?? "auto",
+    outputFormat: config.backend === "chatgpt-subscription" ? "png" : requestedOutputFormat,
+  };
+}
+
+function imageProviderEndpoint(
+  config: ImageGenerationRuntimeConfig,
+  hasReferenceImages: boolean,
+): string {
+  if (config.backend === "chatgpt-subscription") {
+    const endpoint = hasReferenceImages
+      ? CODEX_IMAGE_EDIT_ENDPOINT
+      : CODEX_IMAGE_GENERATION_ENDPOINT;
+    return new URL(endpoint).origin;
+  }
+  if (config.baseUrl) {
+    return new URL(config.baseUrl).origin;
+  }
+  return "https://api.openai.com";
 }
 
 function outputDirectory(paseoHome: string, agentId: string): string {
@@ -216,6 +348,7 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
       size: ImageGenerationSize;
       quality: ImageGenerationQuality;
       background: ImageGenerationBackground;
+      referenceImages: readonly ReferenceImage[];
     },
     signal: AbortSignal,
   ): Promise<ImagesResponse> {
@@ -227,6 +360,7 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
       throw new Error("OpenAI Codex subscription credentials are unavailable on this host.");
     }
 
+    let images: Array<{ image_url: string }> | undefined;
     const request = async (forceRefresh: boolean): Promise<Response> => {
       const credential = await this.subscriptionCredentialResolver?.resolve(credentialId, {
         forceRefresh,
@@ -238,7 +372,20 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
       if (credential.planType === "free") {
         throw new Error("Image generation is unavailable for the selected free ChatGPT plan.");
       }
-      return await this.fetchApi(CODEX_IMAGE_GENERATION_ENDPOINT, {
+      const endpoint =
+        input.referenceImages.length > 0
+          ? CODEX_IMAGE_EDIT_ENDPOINT
+          : CODEX_IMAGE_GENERATION_ENDPOINT;
+      if (input.referenceImages.length > 0 && !images) {
+        images = await Promise.all(
+          input.referenceImages.map(async (image) => ({
+            image_url: `data:${image.mimeType};base64,${(
+              await readFile(image.filePath, { signal })
+            ).toString("base64")}`,
+          })),
+        );
+      }
+      return await this.fetchApi(endpoint, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -253,6 +400,7 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
           model: CODEX_IMAGE_GENERATION_MODEL,
           quality: input.quality,
           size: input.size,
+          ...(images ? { images } : {}),
         }),
         signal,
       });
@@ -266,6 +414,64 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
     return parseSubscriptionResponse(await response.json());
   }
 
+  private async requestImage(
+    config: ImageGenerationRuntimeConfig,
+    input: ResolvedImageGenerationRequest,
+    referenceImages: readonly ReferenceImage[],
+    signal: AbortSignal,
+  ): Promise<ImagesResponse> {
+    if (config.backend === "chatgpt-subscription") {
+      return await this.generateWithSubscription(
+        config,
+        {
+          prompt: input.prompt,
+          size: input.size,
+          quality: input.quality,
+          background: input.background,
+          referenceImages,
+        },
+        signal,
+      );
+    }
+
+    const client = this.createClient(config);
+    if (referenceImages.length === 0) {
+      return await client.generate(
+        {
+          prompt: input.prompt,
+          model: config.model,
+          n: 1,
+          size: input.size,
+          quality: input.quality,
+          background: input.background,
+          output_format: input.outputFormat,
+          stream: false,
+        },
+        { signal },
+      );
+    }
+
+    const streams = referenceImages.map((image) => createReadStream(image.filePath));
+    try {
+      return await client.edit(
+        {
+          image: streams,
+          prompt: input.prompt,
+          model: config.model,
+          n: 1,
+          size: input.size,
+          quality: input.quality,
+          background: input.background,
+          output_format: input.outputFormat,
+          stream: false,
+        },
+        { signal },
+      );
+    } finally {
+      for (const stream of streams) stream.destroy();
+    }
+  }
+
   public async generate(
     input: ImageGenerationInput,
     context: ImageGenerationContext,
@@ -275,31 +481,22 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
       throw new Error("Image generation is disabled in Host settings.");
     }
 
-    const prompt = input.prompt.trim();
-    const size: ImageGenerationSize = input.size ?? "auto";
-    const quality: ImageGenerationQuality = input.quality ?? "auto";
-    const background: ImageGenerationBackground = input.background ?? "auto";
-    const requestedOutputFormat: ImageGenerationOutputFormat = input.outputFormat ?? "png";
-    validateRequest(config.backend, config.model, {
-      ...input,
-      outputFormat: requestedOutputFormat,
-    });
-    const outputFormat: ImageGenerationOutputFormat =
-      config.backend === "chatgpt-subscription" ? "png" : requestedOutputFormat;
+    const { prompt, size, quality, background, outputFormat } = resolveImageGenerationRequest(
+      config,
+      input,
+    );
     context.signal?.throwIfAborted();
+    const referenceImages = await inspectReferenceImages(
+      input.referenceImagePaths ?? [],
+      context.signal,
+    );
 
     if (config.backend === "openai-api" && !config.apiKey) {
       throw new Error("Image generation requires an OpenAI API key in Host settings.");
     }
 
-    const client = config.backend === "openai-api" ? this.createClient(config) : null;
     const requestStartedAt = Date.now();
-    const endpoint =
-      config.backend === "chatgpt-subscription"
-        ? new URL(CODEX_IMAGE_GENERATION_ENDPOINT).origin
-        : config.baseUrl
-          ? new URL(config.baseUrl).origin
-          : "https://api.openai.com";
+    const endpoint = imageProviderEndpoint(config, referenceImages.length > 0);
     const requestSignal = createRequestSignal(context.signal, this.requestTimeoutMs);
     this.logger.info(
       {
@@ -307,6 +504,7 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
         size,
         quality,
         outputFormat,
+        referenceImageCount: referenceImages.length,
         endpoint,
         timeoutMs: this.requestTimeoutMs,
       },
@@ -314,26 +512,12 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
     );
     let response: ImagesResponse;
     try {
-      response =
-        config.backend === "chatgpt-subscription"
-          ? await this.generateWithSubscription(
-              config,
-              { prompt, size, quality, background },
-              requestSignal.signal,
-            )
-          : await client!.generate(
-              {
-                prompt,
-                model: config.model,
-                n: 1,
-                size,
-                quality,
-                background,
-                output_format: outputFormat,
-                stream: false,
-              },
-              { signal: requestSignal.signal },
-            );
+      response = await this.requestImage(
+        config,
+        { prompt, size, quality, background, outputFormat },
+        referenceImages,
+        requestSignal.signal,
+      );
     } catch (error) {
       const durationMs = Date.now() - requestStartedAt;
       if (requestSignal.didTimeout()) {
@@ -386,6 +570,7 @@ export class OpenAIImageGenerationService implements ImageGenerationService {
         quality,
         outputFormat,
         filePath: finalPath,
+        referenceImageCount: referenceImages.length,
         durationMs: Date.now() - requestStartedAt,
       },
       "Generated image",

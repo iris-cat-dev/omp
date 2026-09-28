@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -46,7 +46,7 @@ describe("OpenAIImageGenerationService", () => {
       paseoHome,
       getConfig: () => runtimeConfig(),
       logger: pino({ level: "silent" }),
-      createClient: () => ({ generate }),
+      createClient: () => ({ generate, edit: vi.fn() }),
     });
 
     const result = await service.generate(
@@ -82,6 +82,56 @@ describe("OpenAIImageGenerationService", () => {
     expect(await readFile(result.filePath)).toEqual(PNG_BYTES);
     expect(result.filePath.startsWith(path.join(paseoHome, "generated-images"))).toBe(true);
     expect(result.filePath).not.toContain("unsafe");
+  });
+
+  it.each([1, 3])("edits with %i OpenAI API reference image(s)", async (referenceCount) => {
+    const paseoHome = await createRoot();
+    const referenceImagePaths = await Promise.all(
+      Array.from({ length: referenceCount }, async (_, index) => {
+        const filePath = path.join(paseoHome, `reference-${index}.png`);
+        await writeFile(filePath, PNG_BYTES);
+        return filePath;
+      }),
+    );
+    const generate = vi.fn();
+    const edit = vi.fn(async () => ({
+      created: 1,
+      data: [{ b64_json: PNG_BYTES.toString("base64") }],
+    }));
+    const service = new OpenAIImageGenerationService({
+      paseoHome,
+      getConfig: () => runtimeConfig(),
+      logger: pino({ level: "silent" }),
+      createClient: () => ({ generate, edit }),
+    });
+
+    await service.generate(
+      {
+        prompt: "preserve the subject and change the lighting",
+        referenceImagePaths,
+        size: "1024x1024",
+        quality: "medium",
+        background: "opaque",
+        outputFormat: "png",
+      },
+      { agentId: "agent" },
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(edit).toHaveBeenCalledWith(
+      {
+        image: referenceImagePaths.map((filePath) => expect.objectContaining({ path: filePath })),
+        prompt: "preserve the subject and change the lighting",
+        model: "gpt-image-2",
+        n: 1,
+        size: "1024x1024",
+        quality: "medium",
+        background: "opaque",
+        output_format: "png",
+        stream: false,
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
   it("uses the selected ChatGPT subscription without an API key", async () => {
     const paseoHome = await createRoot();
@@ -153,6 +203,57 @@ describe("OpenAIImageGenerationService", () => {
       outputFormat: "png",
     });
     expect(await readFile(result.filePath)).toEqual(PNG_BYTES);
+  });
+
+  it("sends multiple reference images to the ChatGPT subscription edit endpoint", async () => {
+    const paseoHome = await createRoot();
+    const firstPath = path.join(paseoHome, "subject.png");
+    const secondPath = path.join(paseoHome, "style.png");
+    await Promise.all([writeFile(firstPath, PNG_BYTES), writeFile(secondPath, PNG_BYTES)]);
+    const resolve = vi.fn(async () => ({
+      accessToken: "oauth-token",
+      accountId: "account-123",
+      planType: "plus",
+    }));
+    const fetchApi = vi.fn(async () =>
+      Response.json({ data: [{ b64_json: PNG_BYTES.toString("base64") }] }),
+    );
+    const service = new OpenAIImageGenerationService({
+      paseoHome,
+      getConfig: () =>
+        runtimeConfig({
+          backend: "chatgpt-subscription",
+          apiKey: undefined,
+          apiKeyConfigured: false,
+          apiKeySource: null,
+          subscriptionCredentialId: 7,
+        }),
+      logger: pino({ level: "silent" }),
+      subscriptionCredentialResolver: { resolve },
+      fetch: fetchApi,
+    });
+
+    await service.generate(
+      {
+        prompt: "use image 1 as the subject and image 2 as the style",
+        referenceImagePaths: [firstPath, secondPath],
+      },
+      { agentId: "agent" },
+    );
+
+    const [url, init] = fetchApi.mock.calls[0]!;
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/images/edits");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      prompt: "use image 1 as the subject and image 2 as the style",
+      background: "auto",
+      model: "gpt-image-2",
+      quality: "auto",
+      size: "auto",
+      images: [
+        { image_url: `data:image/png;base64,${PNG_BYTES.toString("base64")}` },
+        { image_url: `data:image/png;base64,${PNG_BYTES.toString("base64")}` },
+      ],
+    });
   });
 
   it("refreshes a ChatGPT subscription token once after an unauthorized response", async () => {
@@ -229,7 +330,7 @@ describe("OpenAIImageGenerationService", () => {
       paseoHome,
       getConfig: () => runtimeConfig({ enabled: false }),
       logger: pino({ level: "silent" }),
-      createClient: () => ({ generate }),
+      createClient: () => ({ generate, edit: vi.fn() }),
     });
     await expect(disabled.generate({ prompt: "fox" }, { agentId: "agent" })).rejects.toThrow(
       "disabled",
@@ -239,7 +340,7 @@ describe("OpenAIImageGenerationService", () => {
       paseoHome,
       getConfig: () => runtimeConfig({ apiKey: undefined, apiKeyConfigured: false }),
       logger: pino({ level: "silent" }),
-      createClient: () => ({ generate }),
+      createClient: () => ({ generate, edit: vi.fn() }),
     });
     await expect(missingKey.generate({ prompt: "fox" }, { agentId: "agent" })).rejects.toThrow(
       "API key",
@@ -258,6 +359,7 @@ describe("OpenAIImageGenerationService", () => {
           created: 1,
           data: [{ b64_json: Buffer.from("not png").toString("base64") }],
         }),
+        edit: vi.fn(),
       }),
     });
 
@@ -275,7 +377,7 @@ describe("OpenAIImageGenerationService", () => {
       paseoHome,
       getConfig: () => runtimeConfig(),
       logger: pino({ level: "silent" }),
-      createClient: () => ({ generate }),
+      createClient: () => ({ generate, edit: vi.fn() }),
     });
 
     await expect(
@@ -302,6 +404,7 @@ describe("OpenAIImageGenerationService", () => {
           });
           return promise;
         },
+        edit: vi.fn(),
       }),
     });
 

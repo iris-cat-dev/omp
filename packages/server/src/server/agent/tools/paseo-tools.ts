@@ -96,6 +96,7 @@ import {
   IMAGE_GENERATION_OUTPUT_FORMATS,
   IMAGE_GENERATION_QUALITIES,
   IMAGE_GENERATION_SIZES,
+  MAX_IMAGE_GENERATION_REFERENCE_IMAGES,
 } from "../../image-generation/types.js";
 import type {
   PaseoToolCatalog,
@@ -1355,15 +1356,23 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   registerTool(
     "image_gen",
     {
-      title: "Generate image",
+      title: "Generate or edit image",
       description:
-        "Generate one new raster image from a text prompt. Use when the user asks to create a photo, illustration, texture, mockup, or other bitmap image. Do not use for SVG, existing code-native graphics, or deterministic diagrams. Do not use this to show an existing local image in the chat; use present_image. Use medium quality for ordinary requests; use high only when the user explicitly requests maximum quality and accepts multi-minute latency. The desktop renders successful output automatically; never return image base64.",
+        "Generate one raster image from a text prompt, optionally using one or more local reference images. Use referenceImagePaths for image editing, style transfer, composition, or identity-sensitive generation; list images in the same order used by the prompt. Use when the user asks to create or modify a photo, illustration, texture, mockup, or other bitmap image. Do not use for SVG, existing code-native graphics, or deterministic diagrams. Do not use this to show an existing local image in the chat; use present_image. Use medium quality for ordinary requests; use high only when the user explicitly requests maximum quality and accepts multi-minute latency. The desktop renders successful output automatically; never return image base64.",
       inputSchema: {
         prompt: z
           .string()
           .trim()
           .min(1, "prompt is required")
           .max(32_000, "prompt must be 32000 characters or fewer"),
+        referenceImagePaths: z
+          .array(z.string().trim().min(1, "reference image path must not be empty"))
+          .min(1)
+          .max(MAX_IMAGE_GENERATION_REFERENCE_IMAGES)
+          .optional()
+          .describe(
+            `Local PNG, JPEG, or WebP paths to use as references, in prompt order (maximum ${MAX_IMAGE_GENERATION_REFERENCE_IMAGES}). Relative paths resolve against the caller agent's workspace.`,
+          ),
         size: z.enum(IMAGE_GENERATION_SIZES).optional().default("auto"),
         quality: z
           .enum(IMAGE_GENERATION_QUALITIES)
@@ -1412,12 +1421,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           }),
         });
       }, 15_000);
+      const callerAgent = args.referenceImagePaths === undefined ? null : resolveCallerAgent();
+      const referenceImagePaths = args.referenceImagePaths?.map((imagePath: string) =>
+        resolvePresentImagePath({ path: imagePath, cwd: callerAgent?.cwd ?? null }),
+      );
       let generated: GeneratedImage;
       try {
-        generated = await options.imageGenerationService.generate(args, {
-          agentId: callerAgentId,
-          signal: context.signal,
-        });
+        generated = await options.imageGenerationService.generate(
+          {
+            ...args,
+            ...(referenceImagePaths ? { referenceImagePaths } : {}),
+          },
+          {
+            agentId: callerAgentId,
+            signal: context.signal,
+          },
+        );
       } finally {
         clearInterval(progressTimer);
       }
