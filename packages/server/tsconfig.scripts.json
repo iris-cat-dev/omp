@@ -5,6 +5,9 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "types": ["node"],
+    "paths": {
+      "@omp-desktop/protocol/*": ["../protocol/dist/*"]
+    },
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,

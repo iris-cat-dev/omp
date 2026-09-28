@@ -122,12 +122,18 @@ async function copyRipgrep(resourcesDir, platform, arch) {
 
 function prepareBundledOmp(resourcesDir, platform, arch) {
   const executablePath = path.join(resourcesDir, "bin", platform === "win32" ? "omp.exe" : "omp");
+  if (process.env.OMP_DESKTOP_BUNDLE_OMP === "0") {
+    rmSafe(executablePath);
+    console.log(`Building without bundled OMP for ${platform}-${arch}.`);
+    return;
+  }
   if (!fs.existsSync(executablePath)) {
     throw new Error(`Bundled OMP executable is missing for ${platform}-${arch}: ${executablePath}`);
   }
   if (platform !== "win32") fs.chmodSync(executablePath, 0o755);
   console.log(`Prepared bundled OMP for ${platform}-${arch}: ${executablePath}`);
 }
+exports.prepareBundledOmp = prepareBundledOmp;
 
 function assertBackgroundJobsExtension(resourcesDir) {
   const extensionPath = path.join(

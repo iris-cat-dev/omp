@@ -92,6 +92,11 @@ describe("runtime-paths", () => {
     expect(resolveBundledOmpPath()).toBe("/opt/omp/resources/bin/omp.exe");
   });
 
+  it("falls back to OMP on PATH when a package does not bundle the executable", () => {
+    mocks.existsSync.mockReturnValue(false);
+    expect(resolveBundledOmpPath()).toBeNull();
+  });
+
   it("does not resolve a bundled OMP executable during development", () => {
     mocks.app.isPackaged = false;
     expect(resolveBundledOmpPath()).toBeNull();

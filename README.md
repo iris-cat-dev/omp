@@ -189,6 +189,19 @@ manual download but cannot be installed by the in-app updater. Publish the gener
 after every target for that release is complete; do not use `--publish always` during the individual
 Windows architecture builds because it can publish incomplete channel metadata.
 
+To build Windows packages that rely on an `omp` installation on `PATH` instead of bundling the
+OMP executable, run:
+
+```bash
+npm run build:windows:no-omp
+npm run build:windows:no-omp:x64
+npm run build:windows:no-omp:arm64
+```
+
+These artifacts use `OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe` names so they do not overwrite
+the standard installers. The application still includes its daemon and CLI; only `omp.exe` is
+omitted.
+
 Download and checksum-verify the latest supported OMP binaries:
 
 ```bash

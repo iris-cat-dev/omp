@@ -7,7 +7,7 @@
   "author": "OMP Desktop contributors",
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm --prefix ../.. run build:remote-backend && npm run build:main && electron-builder --config electron-builder.yml",
+    "build": "npm --prefix ../.. run build:remote-backend && npm run build:main && node scripts/stage-windows-keyrings.js && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json --incremental false",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",

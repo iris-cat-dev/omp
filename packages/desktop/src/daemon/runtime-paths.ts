@@ -39,14 +39,12 @@ export function resolvePackagedNodeEntrypointRunnerPath(): string {
 
 export function resolveBundledOmpPath(): string | null {
   if (!app.isPackaged) return null;
-  return assertPathExists({
-    label: "Bundled OMP executable",
-    filePath: path.join(
-      process.resourcesPath,
-      "bin",
-      process.platform === "win32" ? "omp.exe" : "omp",
-    ),
-  });
+  const filePath = path.join(
+    process.resourcesPath,
+    "bin",
+    process.platform === "win32" ? "omp.exe" : "omp",
+  );
+  return existsSync(filePath) ? filePath : null;
 }
 
 export function resolveBundledRipgrepPath(): string | null {

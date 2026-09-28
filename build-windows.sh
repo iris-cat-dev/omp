@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")"
+
 # Windows installers must be built one architecture per electron-builder
 # invocation. Passing both architectures in one invocation emits an additional
 # universal NSIS installer containing both payloads.
@@ -30,22 +32,33 @@ fi
 
 # npm installs only the host platform's optional dependencies. Cross-building on
 # macOS therefore omits the Windows keyring bindings that the packaged daemon
-# loads at runtime. Fetch the requested Windows architectures directly without
-# reifying the workspace (which would remove the other architecture).
+# loads at runtime. Keep downloaded packages outside node_modules until the
+# desktop build finishes its npm-driven prerequisite builds, then stage them
+# immediately before electron-builder runs.
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+cleanup() {
+  if [[ "$host_platform_arch" != win32:* ]]; then
+    for arch in "${arches[@]}"; do
+      rm -rf "node_modules/@napi-rs/keyring-win32-${arch}-msvc"
+    done
+  fi
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+keyring_staging="$tmp_dir/keyring-packages"
+mkdir -p "$keyring_staging"
+export OMP_DESKTOP_WINDOWS_KEYRING_STAGING="$keyring_staging"
 
 keyring_version="$(node -p "require('./node_modules/@napi-rs/keyring/package.json').version")"
 
 for arch in "${arches[@]}"; do
-  package="@napi-rs/keyring-win32-${arch}-msvc"
+  package_name="keyring-win32-${arch}-msvc"
+  package="@napi-rs/$package_name"
   archive="$(npm pack --silent --pack-destination "$tmp_dir" "$package@$keyring_version")"
-  package_dir="node_modules/$package"
-  rm -rf "$package_dir"
+  package_dir="$keyring_staging/$package_name"
   mkdir -p "$package_dir"
   tar -xzf "$tmp_dir/$archive" -C "$package_dir" --strip-components=1
-  binding_name="${package#@napi-rs/keyring-}"
-  test -f "$package_dir/keyring.$binding_name.node"
+  test -f "$package_dir/keyring.win32-${arch}-msvc.node"
 done
 
 # Do not leave a stale universal installer in release/ after splitting builds.

@@ -16,9 +16,11 @@ import { describe, expect, it } from "vitest";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(import.meta.url);
-const { assertNativeKeyringBinding } = require("../../scripts/after-pack.js") as {
-  assertNativeKeyringBinding: (resourcesDir: string, platform: string, arch: string) => void;
-};
+const { assertNativeKeyringBinding, prepareBundledOmp } =
+  require("../../scripts/after-pack.js") as {
+    assertNativeKeyringBinding: (resourcesDir: string, platform: string, arch: string) => void;
+    prepareBundledOmp: (resourcesDir: string, platform: string, arch: string) => void;
+  };
 
 function writeExecutable(filePath: string, contents: string): void {
   writeFileSync(filePath, contents, "utf8");
@@ -110,6 +112,18 @@ describe("desktop packaging", () => {
     expect(config).toContain("- omp-desktop");
   });
 
+  it("defines a Windows package variant without the OMP executable", () => {
+    const config = require("../../electron-builder-no-omp.cjs") as {
+      win: { artifactName: string; extraResources: Array<{ to?: string }> };
+    };
+
+    expect(config.win.artifactName).toContain("No-OMP");
+    expect(config.win.extraResources.some((resource) => resource.to === "bin/omp.exe")).toBe(false);
+    expect(
+      config.win.extraResources.some((resource) => resource.to === "bin/omp-desktop.cmd"),
+    ).toBe(true);
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot
@@ -154,6 +168,25 @@ describe("desktop packaging", () => {
 
       expect(() => assertNativeKeyringBinding(resourcesDir, "win32", "arm64")).not.toThrow();
     } finally {
+      rmSync(resourcesDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes OMP from packages built with bundling disabled", () => {
+    const resourcesDir = mkdtempSync(join(tmpdir(), "omp-unbundled-package-test-"));
+    const executablePath = join(resourcesDir, "bin", "omp.exe");
+    const previous = process.env.OMP_DESKTOP_BUNDLE_OMP;
+    try {
+      mkdirSync(dirname(executablePath), { recursive: true });
+      writeFileSync(executablePath, "not bundled");
+      process.env.OMP_DESKTOP_BUNDLE_OMP = "0";
+
+      prepareBundledOmp(resourcesDir, "win32", "x64");
+
+      expect(() => readFileSync(executablePath)).toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.OMP_DESKTOP_BUNDLE_OMP;
+      else process.env.OMP_DESKTOP_BUNDLE_OMP = previous;
       rmSync(resourcesDir, { recursive: true, force: true });
     }
   });

@@ -69,6 +69,9 @@
     "build:windows": "WINDOWS_ARCHES='x64 arm64' ./build-windows.sh",
     "build:windows:x64": "WINDOWS_ARCHES=x64 ./build-windows.sh",
     "build:windows:arm64": "WINDOWS_ARCHES=arm64 ./build-windows.sh",
+    "build:windows:no-omp": "WINDOWS_ARCHES='x64 arm64' ./build-windows-no-omp.sh",
+    "build:windows:no-omp:x64": "WINDOWS_ARCHES=x64 ./build-windows-no-omp.sh",
+    "build:windows:no-omp:arm64": "WINDOWS_ARCHES=arm64 ./build-windows-no-omp.sh",
     "download:omp": "node scripts/download-omp-binaries.mjs",
     "db:query": "npm run db:query --workspace=@omp-desktop/server --",
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js"
