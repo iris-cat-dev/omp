@@ -86,6 +86,62 @@ describe("classifyForResolution", () => {
     });
   });
 
+  it("decodes explicit Markdown href paths exactly once", () => {
+    const context = { workspaceRoot: "C:/work/demo" };
+    const cases = [
+      {
+        href: "%E4%B8%AD%E6%96%87%E7%9B%AE%E5%BD%95/output/setup.exe",
+        path: "C:/work/demo/中文目录/output/setup.exe",
+      },
+      {
+        href: "releases/My%20Build/setup.exe",
+        path: "C:/work/demo/releases/My Build/setup.exe",
+      },
+      {
+        href: "reports/100%2520-ready.txt",
+        path: "C:/work/demo/reports/100%20-ready.txt",
+      },
+      {
+        href: "%E4%B8%AD%E6%96%87%E7%9B%AE%E5%BD%95/100%-ready.txt",
+        path: "C:/work/demo/中文目录/100%-ready.txt",
+      },
+    ];
+
+    for (const { href, path } of cases) {
+      expect(classifyForResolution({ href }, context)).toEqual({
+        kind: "resolved",
+        value: {
+          kind: "file",
+          target: {
+            raw: href,
+            path,
+            lineStart: undefined,
+            lineEnd: undefined,
+          },
+        },
+      });
+    }
+  });
+
+  it("keeps percent escapes in native inline-code paths literal", () => {
+    expect(
+      classifyForResolution(
+        {
+          href: "reports/100%20-ready.txt",
+          text: "reports/100%20-ready.txt",
+          sourceType: "inline-code",
+        },
+        { workspaceRoot: "C:/work/demo" },
+      ),
+    ).toMatchObject({
+      kind: "needsLookup",
+      target: {
+        raw: "reports/100%20-ready.txt",
+        path: "C:/work/demo/reports/100%20-ready.txt",
+      },
+    });
+  });
+
   it("flags basename inline-code as a daemon lookup keyed by suggestion query", () => {
     const result = classifyForResolution(
       { href: "file.ts:12", text: "file.ts:12", sourceType: "inline-code" },

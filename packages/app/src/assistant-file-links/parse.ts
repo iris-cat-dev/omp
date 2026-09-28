@@ -111,6 +111,7 @@ export function isSystemAssistantPath(target: InlinePathTarget): boolean {
 
 export interface AssistantHrefParseOptions {
   workspaceRoot?: string;
+  urlEncoded?: boolean;
 }
 
 export type AssistantFileLinkClassification =
@@ -342,12 +343,23 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const inlinePathTarget = parseAssistantInlinePathLink(trimmed);
+  let localValue = trimmed;
+  if (options.urlEncoded) {
+    // Only explicit Markdown hrefs have URL semantics. Inline-code paths are already native paths,
+    // so decoding those would corrupt valid filenames containing literal percent escapes.
+    const delimiterIndex = trimmed.search(/[?#]/);
+    const pathEnd = delimiterIndex < 0 ? trimmed.length : delimiterIndex;
+    const urlPath = trimmed
+      .slice(0, pathEnd)
+      .replace(/(?:%[0-9A-Fa-f]{2})+/g, (encoded) => safeDecodeURIComponent(encoded));
+    localValue = `${urlPath}${trimmed.slice(pathEnd)}`;
+  }
+  const inlinePathTarget = parseAssistantInlinePathLink(localValue);
   if (inlinePathTarget) {
-    return inlinePathTarget;
+    return { ...inlinePathTarget, raw: value };
   }
 
-  const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
+  const windowsPathMatch = localValue.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
     const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
     if (!normalizedPath) {
@@ -366,20 +378,20 @@ export function parseAssistantFileLink(
     };
   }
 
-  const relativeTarget = parseWorkspaceRelativeFileLink(trimmed, {
+  const relativeTarget = parseWorkspaceRelativeFileLink(localValue, {
     workspaceRoot: options.workspaceRoot,
   });
   if (relativeTarget) {
-    return relativeTarget;
+    return { ...relativeTarget, raw: value };
   }
 
-  if (!isAbsolutePath(trimmed)) {
+  if (!isAbsolutePath(localValue)) {
     return null;
   }
 
   let parsedUrl: URL;
   try {
-    parsedUrl = new URL(trimmed, "http://paseo.invalid");
+    parsedUrl = new URL(localValue, "http://paseo.invalid");
   } catch {
     return null;
   }

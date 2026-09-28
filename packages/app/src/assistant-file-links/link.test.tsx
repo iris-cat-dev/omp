@@ -3,7 +3,7 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToastApi } from "@/components/toast-host";
 import { AssistantMarkdownLink } from "./link";
@@ -44,11 +44,10 @@ function renderLink(href: string, text = href) {
         onOpenWorkspaceFile={openedFiles}
         toast={toast}
       >
-        {createElement(AssistantMarkdownLink, {
-          source: { href },
-          style: linkStyle,
-          children: text,
-        })}
+        {/* oxlint-disable-next-line react-perf/jsx-no-new-object-as-prop -- one render per test */}
+        <AssistantMarkdownLink source={{ href }} style={linkStyle}>
+          {text}
+        </AssistantMarkdownLink>
       </AssistantFileLinkResolverProvider>
     </QueryClientProvider>,
   );
@@ -113,6 +112,19 @@ describe("assistant Markdown links in the DOM", () => {
       expect(openedFiles).not.toHaveBeenCalled();
     },
   );
+
+  it("decodes a URL-encoded executable path before asking the desktop opener", async () => {
+    renderLink("%E4%B8%AD%E6%96%87%E7%9B%AE%E5%BD%95/output/setup.exe", "installer");
+    expect(fireEvent.click(screen.getByText("installer"))).toBe(false);
+
+    await waitFor(() =>
+      expect(mocks.openPath).toHaveBeenCalledWith({
+        path: `${ROOT}/中文目录/output/setup.exe`,
+        workspaceRoot: ROOT,
+      }),
+    );
+    expect(openedFiles).not.toHaveBeenCalled();
+  });
 
   it("shows a visible error when the OS refuses a file", async () => {
     mocks.openPath.mockRejectedValueOnce(new Error("permission denied"));
