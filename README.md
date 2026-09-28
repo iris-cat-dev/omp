@@ -60,6 +60,11 @@ Opening a new conversation from the sidebar keeps the current header tabs visibl
 - Local text previews support files up to 2 MiB, including extensionless files. Directories, binary files, and larger files show an explanation instead.
 - Terminal surfaces keep their existing file-path drop behavior.
 
+## Text editor shortcuts
+
+In an editable source tab, press **Ctrl+/** to comment or uncomment the selected lines. **Cmd+/**
+continues to work on macOS. The editor uses the comment syntax of the current file type.
+
 ## Assistant message links
 
 HTTP(S) links open externally. Text/source links open in the workspace file panel. On the local desktop host, links to existing images, documents, archives, and directories inside the workspace open with the operating system; executable files are shown in the file manager rather than launched. Web conversation headings support native `#heading` navigation.

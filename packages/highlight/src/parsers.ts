@@ -1,4 +1,10 @@
-import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
+import {
+  defineLanguageFacet,
+  languageDataProp,
+  Language,
+  LRLanguage,
+  StreamLanguage,
+} from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
@@ -16,58 +22,84 @@ import { parser as xmlParser } from "@lezer/xml";
 import { parser as yamlParser } from "@lezer/yaml";
 import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
+import type { LRParser } from "@lezer/lr";
+import type { MarkdownParser } from "@lezer/markdown";
 import { csharpLanguage } from "./csharp/language.js";
 import { nixLanguage } from "./nix/language.js";
 import { parser as svelteBaseParser } from "./svelte/parser.js";
 import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 
-function language(parser: Parser): Language {
-  return new Language(defineLanguageFacet(), parser);
+interface CommentTokens {
+  line?: string;
+  block?: { open: string; close: string };
 }
+
+function language(parser: LRParser, commentTokens?: CommentTokens): Language {
+  return LRLanguage.define({
+    parser,
+    ...(commentTokens ? { languageData: { commentTokens } } : {}),
+  });
+}
+function markdownLanguage(parser: MarkdownParser, commentTokens: CommentTokens): Language {
+  const data = defineLanguageFacet({ commentTokens });
+  return new Language(
+    data,
+    parser.configure({
+      props: [languageDataProp.add((type) => (type.isTop ? data : undefined))],
+    }),
+  );
+}
+
+const C_STYLE_COMMENTS = { line: "//", block: { open: "/*", close: "*/" } } as const;
+const HASH_COMMENT = { line: "#" } as const;
+const MARKUP_COMMENT = { block: { open: "<!--", close: "-->" } } as const;
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
-  js: language(jsParser),
-  jsx: language(jsParser.configure({ dialect: "jsx" })),
-  ts: language(jsParser.configure({ dialect: "ts" })),
-  tsx: language(jsParser.configure({ dialect: "ts jsx" })),
-  mjs: language(jsParser),
-  cjs: language(jsParser),
+  js: language(jsParser, C_STYLE_COMMENTS),
+  jsx: language(jsParser.configure({ dialect: "jsx" }), C_STYLE_COMMENTS),
+  ts: language(jsParser.configure({ dialect: "ts" }), C_STYLE_COMMENTS),
+  tsx: language(jsParser.configure({ dialect: "ts jsx" }), C_STYLE_COMMENTS),
+  mjs: language(jsParser, C_STYLE_COMMENTS),
+  cjs: language(jsParser, C_STYLE_COMMENTS),
   // C / C++ / Objective-C
-  c: language(cppParser),
-  h: language(cppParser),
-  cc: language(cppParser),
-  cpp: language(cppParser),
-  cxx: language(cppParser),
-  hpp: language(cppParser),
-  hxx: language(cppParser),
-  m: language(cppParser),
-  mm: language(cppParser),
+  c: language(cppParser, C_STYLE_COMMENTS),
+  h: language(cppParser, C_STYLE_COMMENTS),
+  cc: language(cppParser, C_STYLE_COMMENTS),
+  cpp: language(cppParser, C_STYLE_COMMENTS),
+  cxx: language(cppParser, C_STYLE_COMMENTS),
+  hpp: language(cppParser, C_STYLE_COMMENTS),
+  hxx: language(cppParser, C_STYLE_COMMENTS),
+  m: language(cppParser, C_STYLE_COMMENTS),
+  mm: language(cppParser, C_STYLE_COMMENTS),
   // JSON
   json: language(jsonParser),
   // CSS
-  css: language(cssParser),
-  scss: language(cssParser),
+  css: language(cssParser, { block: C_STYLE_COMMENTS.block }),
+  scss: language(cssParser, { block: C_STYLE_COMMENTS.block }),
   // HTML
-  html: language(htmlParser),
-  htm: language(htmlParser),
+  html: language(htmlParser, MARKUP_COMMENT),
+  htm: language(htmlParser, MARKUP_COMMENT),
   // Svelte
-  svelte: language(svelteBaseParser.configure({ wrap: configureNesting(defaultNesting) })),
+  svelte: language(
+    svelteBaseParser.configure({ wrap: configureNesting(defaultNesting) }),
+    MARKUP_COMMENT,
+  ),
   // XML
-  xml: language(xmlParser),
+  xml: language(xmlParser, MARKUP_COMMENT),
   // Java
-  java: language(javaParser),
+  java: language(javaParser, C_STYLE_COMMENTS),
   // Python
-  py: language(pythonParser),
+  py: language(pythonParser, HASH_COMMENT),
   // Go
-  go: language(goParser),
+  go: language(goParser, C_STYLE_COMMENTS),
   // PHP
-  php: language(phpParser),
+  php: language(phpParser, C_STYLE_COMMENTS),
   // YAML
-  yaml: language(yamlParser),
-  yml: language(yamlParser),
+  yaml: language(yamlParser, HASH_COMMENT),
+  yml: language(yamlParser, HASH_COMMENT),
   // Rust
-  rs: language(rustParser),
+  rs: language(rustParser, C_STYLE_COMMENTS),
   // Swift
   swift: StreamLanguage.define(swift),
   // Dart
@@ -77,11 +109,11 @@ const languagesByExtension: Record<string, Language> = {
   // Nix
   nix: nixLanguage,
   // Elixir
-  ex: language(elixirParser),
-  exs: language(elixirParser),
+  ex: language(elixirParser, HASH_COMMENT),
+  exs: language(elixirParser, HASH_COMMENT),
   // Markdown
-  md: language(markdownParser),
-  mdx: language(markdownParser),
+  md: markdownLanguage(markdownParser, MARKUP_COMMENT),
+  mdx: markdownLanguage(markdownParser, MARKUP_COMMENT),
 };
 
 export function getLanguageForFile(filename: string): Language | null {

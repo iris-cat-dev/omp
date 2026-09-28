@@ -1,11 +1,11 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { history } from "@codemirror/commands";
 import {
   bracketMatching,
   defaultHighlightStyle,
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { search, searchKeymap } from "@codemirror/search";
+import { search } from "@codemirror/search";
 import {
   EditorView,
   drawSelection,
@@ -15,6 +15,7 @@ import {
 } from "@codemirror/view";
 import { createCodeMirrorHighlightStyle, type HighlightStyle } from "@omp-desktop/highlight";
 import { createCursorSearchPanel } from "./search-panel.web";
+import { fileEditorKeymap } from "./keymap.web";
 
 export interface EditorVisualTheme {
   colorScheme: "light" | "dark";
@@ -39,13 +40,7 @@ export function editorBaseExtensions(onSave: () => void) {
     bracketMatching(),
     highlightActiveLine(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-    keymap.of([
-      { key: "Mod-s", preventDefault: true, run: () => (onSave(), true) },
-      indentWithTab,
-      ...defaultKeymap,
-      ...historyKeymap,
-      ...searchKeymap,
-    ]),
+    keymap.of(fileEditorKeymap(onSave)),
   ];
 }
 
