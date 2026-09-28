@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
+  autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
   Menu,
@@ -103,6 +104,7 @@ import {
   type AgentDeepLinkTarget,
 } from "@omp-desktop/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import { installAppUpdateOnQuit as installDownloadedAppUpdateOnQuit } from "./features/auto-updater.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "omp-desktop";
@@ -1194,7 +1196,14 @@ const quitLifecycle = createQuitLifecycle({
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
     }),
-  installAppUpdateOnQuit: async () => false,
+  installAppUpdateOnQuit: async (signal) => {
+    const { releaseChannel } = await getDesktopSettingsStore().get();
+    return await installDownloadedAppUpdateOnQuit({
+      currentVersion: app.getVersion(),
+      releaseChannel,
+      signal,
+    });
+  },
   createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
   onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
@@ -1202,6 +1211,10 @@ const quitLifecycle = createQuitLifecycle({
   onUpdateError: (error) => {
     log.error("[auto-updater] failed to validate downloaded update on quit", error);
   },
+});
+
+electronAutoUpdater.on("before-quit-for-update", () => {
+  quitLifecycle.handleBeforeQuitForUpdate();
 });
 
 app.on("before-quit", (event) => {

@@ -19,6 +19,7 @@
     "@omp-desktop/protocol": "*",
     "@omp-desktop/server": "*",
     "electron-log": "^5.4.3",
+    "electron-updater": "^6.8.9",
     "node-pty": "1.2.0-beta.15",
     "ws": "^8.14.2",
     "zod": "^4.4.3"

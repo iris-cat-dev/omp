@@ -77,6 +77,7 @@ import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
+import { DesktopUpdateProvider } from "@/desktop/updates/desktop-update-provider";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -853,7 +854,9 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
     <HostRuntimeBootstrapProvider>
       <PushNotificationRouter />
       <SidebarCalloutProvider>
-        <ProvidersWrapper>{children}</ProvidersWrapper>
+        <DesktopUpdateProvider>
+          <ProvidersWrapper>{children}</ProvidersWrapper>
+        </DesktopUpdateProvider>
       </SidebarCalloutProvider>
     </HostRuntimeBootstrapProvider>
   );

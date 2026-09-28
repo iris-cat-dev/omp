@@ -80,6 +80,7 @@ import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-sect
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
+import { useDesktopUpdate } from "@/desktop/updates/desktop-update-provider";
 import { useCurrentAppVersion } from "@/utils/app-version";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
@@ -553,6 +554,44 @@ interface AboutSectionProps {
 
 function AboutSection({ appVersion, appVersionText }: AboutSectionProps) {
   const { t } = useTranslation();
+  const update = useDesktopUpdate();
+  const isDesktopApp = isElectronRuntime();
+  const isChecking = update.status === "checking";
+  const isInstalling = update.status === "installing";
+  const updateReady = update.status === "ready";
+  let updateStatusText = t("desktop.updates.status.idle");
+  if (isChecking) {
+    updateStatusText = t("desktop.updates.status.checking");
+  } else if (isInstalling) {
+    updateStatusText = t("desktop.updates.status.installing");
+  } else if (update.status === "up-to-date") {
+    updateStatusText = t("desktop.updates.status.upToDate");
+  } else if (updateReady && update.latestVersion) {
+    updateStatusText = t("settings.about.updates.readyToInstall", {
+      version: formatVersionWithPrefix(update.latestVersion),
+    });
+  } else if (update.status === "error") {
+    updateStatusText = update.errorMessage ?? t("desktop.updates.status.failed");
+  }
+
+  let updateActionLabel = t("settings.about.updates.check");
+  if (isInstalling) {
+    updateActionLabel = t("settings.about.updates.installing");
+  } else if (isChecking) {
+    updateActionLabel = t("settings.about.updates.checking");
+  } else if (updateReady && update.latestVersion) {
+    updateActionLabel = t("settings.about.updates.updateTo", {
+      version: formatVersionWithPrefix(update.latestVersion),
+    });
+  }
+  const handleUpdateAction = useCallback(() => {
+    if (updateReady) {
+      void update.installUpdate();
+      return;
+    }
+    void update.checkForUpdates();
+  }, [update, updateReady]);
+
   return (
     <>
       <SettingsSection title={t("settings.about.title")}>
@@ -564,6 +603,24 @@ function AboutSection({ appVersion, appVersionText }: AboutSectionProps) {
             </View>
             <Text style={styles.aboutValue}>{appVersionText}</Text>
           </View>
+          {isDesktopApp ? (
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>{t("settings.about.updates.label")}</Text>
+                <Text style={settingsStyles.rowHint}>{updateStatusText}</Text>
+              </View>
+              <Button
+                variant={updateReady ? "default" : "secondary"}
+                size="sm"
+                loading={isChecking || isInstalling}
+                disabled={isChecking || isInstalling}
+                onPress={handleUpdateAction}
+                testID="settings-app-update-action"
+              >
+                {updateActionLabel}
+              </Button>
+            </View>
+          ) : null}
         </View>
       </SettingsSection>
       <ConnectedHostsSection clientVersion={appVersion} />

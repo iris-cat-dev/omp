@@ -169,6 +169,26 @@ npm run build:windows:arm64
 
 Run `npm run build:windows` to build both sequentially. Publish the resulting `OMP-Desktop-Setup-<version>-x64.exe` and `OMP-Desktop-Setup-<version>-arm64.exe`; no combined installer is produced.
 
+Desktop updates use the public
+[`iris-cat-dev/omp-desktop` GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases)
+feed. The app checks its configured Stable or Beta channel at startup, downloads a newer package in
+the background, verifies the SHA-512 value from electron-builder's update metadata, and installs it
+when the user chooses **Install & restart** or next quits the app.
+
+Every release must upload the updater metadata and payloads generated from the same build:
+
+- macOS: `OMP-Desktop-<version>-<arch>.dmg`, the matching `.zip`, and the channel metadata
+  (`latest-mac.yml` for Stable or `beta-mac.yml` for Beta);
+- Windows: both architecture-specific `.exe` installers, their `.blockmap` files, and the merged
+  channel metadata (`latest.yml` for Stable or `beta.yml` for Beta);
+- Linux AppImage releases: the AppImage, its blockmap, and the matching `*-linux.yml` metadata.
+
+`build-windows.sh` merges the x64 and arm64 metadata so `electron-updater` selects the installer
+matching `process.arch`. A GitHub Release that only contains DMG or EXE files remains available for
+manual download but cannot be installed by the in-app updater. Publish the generated files only
+after every target for that release is complete; do not use `--publish always` during the individual
+Windows architecture builds because it can publish incomplete channel metadata.
+
 Download and checksum-verify the latest supported OMP binaries:
 
 ```bash

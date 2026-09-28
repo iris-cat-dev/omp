@@ -50,10 +50,28 @@ done
 
 # Do not leave a stale universal installer in release/ after splitting builds.
 version="$(node -p "require('./packages/desktop/package.json').version")"
+channel="latest"
+if [[ "$version" == *-* ]]; then
+  channel="${version#*-}"
+  channel="${channel%%.*}"
+fi
+metadata_filename="$channel.yml"
 rm -f \
   "packages/desktop/release/OMP-Desktop-Setup-$version.exe" \
   "packages/desktop/release/OMP-Desktop-Setup-$version.exe.blockmap"
 
+metadata_dir="$tmp_dir/update-metadata"
+mkdir -p "$metadata_dir"
+metadata_files=()
+
 for arch in "${arches[@]}"; do
   npm run build:desktop -- --win "--$arch" "$@"
+  cp \
+    "packages/desktop/release/$metadata_filename" \
+    "$metadata_dir/$channel-$arch.yml"
+  metadata_files+=("$metadata_dir/$channel-$arch.yml")
 done
+
+node scripts/merge-windows-update-metadata.mjs \
+  "packages/desktop/release/$metadata_filename" \
+  "${metadata_files[@]}"

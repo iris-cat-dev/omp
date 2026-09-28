@@ -8,6 +8,10 @@ protocols:
       - omp-desktop
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
+publish:
+  provider: github
+  owner: iris-cat-dev
+  repo: omp-desktop
 directories:
   output: release
 files:
