@@ -221,6 +221,8 @@ function buildAgentManagerSpies() {
     hasInFlightRun: vi.fn().mockReturnValue(false),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
+    steerOrReplaceActiveTurn: vi.fn().mockResolvedValue({ status: "inactive" }),
+    replaceAgentRun: vi.fn(() => (async function* noop() {})()),
     streamAgent: vi.fn(() => (async function* noop() {})()),
     waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
     respondToPermission: vi.fn(),
@@ -3664,6 +3666,65 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+  });
+
+  it("delivers a child prompt to its running parent without replacing either run", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      activeForegroundTurnId: "parent-turn",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Parent" },
+      labels: {},
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      activeForegroundTurnId: "child-turn",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    spies.agentManager.hasInFlightRun.mockImplementation(
+      (agentId: string) => agentId === "parent-agent",
+    );
+    spies.agentManager.steerOrReplaceActiveTurn.mockResolvedValueOnce({ status: "steered" });
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "child-agent",
+      logger,
+    });
+
+    const response = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
+      agentId: "parent-agent",
+      prompt: "ACK",
+      background: true,
+      notifyOnFinish: false,
+    });
+
+    expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
+    expect(spies.agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
+      "parent-agent",
+      "ACK",
+      { replaceOnUnavailable: false },
+    );
+    expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
+    expect(spies.agentManager.cancelAgentRun).not.toHaveBeenCalled();
+    expect(parentAgent.lifecycle).toBe("running");
+    expect(childAgent.lifecycle).toBe("running");
   });
 
   it("keeps top-level prompts blocking by default", async () => {

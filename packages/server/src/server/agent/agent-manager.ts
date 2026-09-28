@@ -295,13 +295,17 @@ export interface AgentManagerOptions {
   logger: Logger;
 }
 
+export interface ActiveTurnSteerDispatchOptions extends AgentSteerOptions {
+  replaceOnUnavailable?: boolean;
+}
+
 export type ActiveTurnSteerDispatchResult =
-  | { status: "inactive" | "steered" }
+  | { status: "inactive" | "steered" | "unavailable" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
-function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
+function stripSteerOptions(options?: ActiveTurnSteerDispatchOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
-  const { clearPendingPermissions: _, ...runOptions } = options;
+  const { clearPendingPermissions: _, replaceOnUnavailable: _replace, ...runOptions } = options;
   return runOptions;
 }
 
@@ -2520,7 +2524,7 @@ export class AgentManager {
   async steerOrReplaceActiveTurn(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentSteerOptions,
+    options?: ActiveTurnSteerDispatchOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2542,6 +2546,9 @@ export class AgentManager {
       : { status: "unavailable" as const };
     if (result.status === "accepted") {
       return { status: "steered" };
+    }
+    if (options?.replaceOnUnavailable === false) {
+      return { status: "unavailable" };
     }
 
     // Providers without autonomous steering keep their existing dispatch behavior. The shared

@@ -684,6 +684,17 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().followUpRequests).toEqual([]);
   });
 
+  test("steers a running turn without aborting it", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working");
+
+    await expect(omp.steerActiveTurn("ACK", turnId)).resolves.toEqual({ status: "accepted" });
+
+    expect(omp.runtime().steerRequests).toEqual([{ message: "ACK", imageCount: 0 }]);
+    expect(omp.wasAborted()).toBe(false);
+  });
+
   test("keeps enhanced selected when leaving plan workflow", async () => {
     const omp = new OmpHarness();
     await omp.start({ featureValues: { workflow_mode: "plan" } });

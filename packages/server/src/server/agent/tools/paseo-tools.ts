@@ -39,6 +39,7 @@ import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agen
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@omp-desktop/protocol/schedule/cadence";
+import { getParentAgentIdFromLabels } from "@omp-desktop/protocol/agent-labels";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
@@ -510,6 +511,30 @@ function resolveChildAgentCwd(params: {
   }
 
   return resolvePathFromBase(params.parentCwd, requestedCwd);
+}
+
+async function isManagedAncestor(params: {
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  descendantAgentId: string;
+  ancestorAgentId: string;
+}): Promise<boolean> {
+  const visitedAgentIds = new Set<string>();
+  let currentAgentId = params.descendantAgentId;
+  while (!visitedAgentIds.has(currentAgentId)) {
+    visitedAgentIds.add(currentAgentId);
+    const liveAgent = params.agentManager.getAgent(currentAgentId);
+    const labels = liveAgent?.labels ?? (await params.agentStorage.get(currentAgentId))?.labels;
+    const parentAgentId = getParentAgentIdFromLabels(labels);
+    if (!parentAgentId) {
+      return false;
+    }
+    if (parentAgentId === params.ancestorAgentId) {
+      return true;
+    }
+    currentAgentId = parentAgentId;
+  }
+  return false;
 }
 
 const TerminalSummarySchema = z.object({
@@ -2096,7 +2121,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        "Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default.",
+        "Send a task to a running agent. Prompts from an agent to itself or a managed ancestor use non-destructive steering and never replace the active turn; the call fails before interruption when the provider cannot steer. Agent-scoped callers run in background by default; top-level callers wait by default.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -2114,6 +2139,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
+      const requiresNonDestructiveDelivery = Boolean(
+        callerAgentId &&
+        (callerAgentId === agentId ||
+          (await isManagedAncestor({
+            agentManager,
+            agentStorage,
+            descendantAgentId: callerAgentId,
+            ancestorAgentId: agentId,
+          }))),
+      );
 
       await sendPromptToAgent({
         agentManager,
@@ -2121,6 +2156,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentId,
         prompt,
         sessionMode,
+        ...(requiresNonDestructiveDelivery
+          ? { activeTurnBehavior: "steer" as const, replaceOnSteerUnavailable: false }
+          : {}),
         logger: childLogger,
       });
 

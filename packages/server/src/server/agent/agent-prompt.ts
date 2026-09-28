@@ -27,6 +27,11 @@ export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
+  /**
+   * Defaults true. Set false when the caller must never interrupt the target
+   * or its managed descendants if provider steering is unavailable.
+   */
+  replaceOnSteerUnavailable?: boolean;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
 }
@@ -52,9 +57,18 @@ async function steerOrReplaceActiveRun(
   const steerOptions = options.clearPendingPermissions
     ? { ...options.runOptions, clearPendingPermissions: true }
     : options.runOptions;
-  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
+  const dispatchOptions =
+    options.replaceOnSteerUnavailable === undefined
+      ? steerOptions
+      : { ...steerOptions, replaceOnUnavailable: options.replaceOnSteerUnavailable };
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, dispatchOptions);
   if (result.status === "steered") {
     return { disposition: "steered" };
+  }
+  if (result.status === "unavailable") {
+    throw new Error(
+      `Cannot deliver a prompt to running agent ${agentId} without interrupting its active turn because its provider does not support steering`,
+    );
   }
   if (result.status === "replaced") {
     return { disposition: "turn_started", iterator: result.iterator };
@@ -189,6 +203,11 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
+  /**
+   * Defaults true. Set false for prompts whose delivery must not cancel the
+   * target's managed subtree when steering is unavailable.
+   */
+  replaceOnSteerUnavailable?: boolean;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
@@ -290,6 +309,7 @@ export async function sendPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     activeTurnBehavior: params.activeTurnBehavior,
+    replaceOnSteerUnavailable: params.replaceOnSteerUnavailable,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,
   });

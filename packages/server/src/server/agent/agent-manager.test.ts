@@ -632,6 +632,105 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir, initialStartedAt };
 }
 
+test("steers a running parent without canceling its managed child", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-parent-steer-"));
+  const client = new (class extends TestAgentClient {
+    readonly sessions: SteeringTestSession[] = [];
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new SteeringTestSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const drains: Promise<void>[] = [];
+
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+
+    for (const agent of [parent, child]) {
+      const stream = manager.streamAgent(agent.id, "keep running");
+      drains.push(
+        (async () => {
+          for await (const _event of stream) {
+            // Drain until explicit cleanup.
+          }
+        })(),
+      );
+      await manager.waitForAgentRunStart(agent.id);
+    }
+
+    await expect(
+      startAgentRun(manager, parent.id, "ACK", logger, {
+        replaceRunning: true,
+        activeTurnBehavior: "steer",
+        replaceOnSteerUnavailable: false,
+      }),
+    ).resolves.toEqual({ disposition: "steered" });
+
+    expect(client.sessions.map((session) => session.interruptCount)).toEqual([0, 0]);
+    expect(client.sessions[0]?.steerCount).toBe(1);
+    expect(manager.getAgent(parent.id)?.lifecycle).toBe("running");
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("running");
+  } finally {
+    await Promise.all(
+      manager.listAgents().map((agent) => manager.cancelAgentRun(agent.id).catch(() => undefined)),
+    );
+    await Promise.all(drains);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("rejects non-destructive delivery when a running provider cannot steer", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-required-steer-"));
+  const session = new UnsupportedSteeringSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let drain: Promise<void> | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "keep running");
+    drain = (async () => {
+      for await (const _event of stream) {
+        // Drain until explicit cleanup.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(
+      startAgentRun(manager, agent.id, "ACK", logger, {
+        replaceRunning: true,
+        activeTurnBehavior: "steer",
+        replaceOnSteerUnavailable: false,
+      }),
+    ).rejects.toThrow("without interrupting its active turn");
+
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+  } finally {
+    await Promise.all(
+      manager.listAgents().map((agent) => manager.cancelAgentRun(agent.id).catch(() => undefined)),
+    );
+    await drain;
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
   const store = new RecordingTimelineStore();

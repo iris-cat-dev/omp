@@ -45,6 +45,8 @@ import {
   type AgentSessionConfig,
   type AgentSlashCommand,
   type AgentStreamEvent,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type AgentTimelineItem,
   type FetchCatalogOptions,
   type ImportableProviderSession,
@@ -1915,6 +1917,18 @@ export class OmpAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (!this.activeTurnId || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    this.runtimeSession.steer(payload.text, payload.images);
+    return { status: "accepted" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
