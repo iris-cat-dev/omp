@@ -22,7 +22,7 @@ Updating OMP, saving its provider configuration, or logging in or out refreshes 
 
 ## Conversation names
 
-Rename a conversation from its tab's context menu. Renaming the workspace's primary conversation changes the workspace name; additional conversations keep their own titles. Saved names remain visible when switching tabs, including when a conversation is not loaded or its provider history is unavailable.
+Rename a conversation from its tab's context menu. Renaming the workspace's primary conversation changes the workspace name; additional conversations keep their own titles. Accepted renames update the local tab title immediately, without waiting for a directory event. Saved names remain visible when switching tabs, including when a conversation is not loaded or its provider history is unavailable.
 
 Tab-width measurements do not own titles or selection state. The daemon publishes saved metadata changes for unloaded conversations, and loading a provider session preserves any rename made during initialization.
 

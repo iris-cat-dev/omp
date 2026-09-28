@@ -4,7 +4,7 @@ import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { ListTerminalsResponse } from "@omp-desktop/protocol/messages";
 import { useTranslation } from "react-i18next";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   normalizeWorkspaceOpaqueId,
@@ -69,7 +69,11 @@ export function useWorkspaceTabRename(
           ) === agentId &&
           workspace
         ) {
-          setRenamingTab({ kind: "workspace", id: workspaceId, currentTitle: workspace.name });
+          setRenamingTab({
+            kind: "workspace",
+            id: workspaceId,
+            currentTitle: workspace.title ?? workspace.name,
+          });
           return;
         }
         setRenamingTab({ kind: "agent", id: agentId, currentTitle: agent?.title ?? "" });
@@ -97,12 +101,44 @@ export function useWorkspaceTabRename(
         return;
       }
       if (renamingTab.kind === "workspace") {
-        await client.setWorkspaceTitle(renamingTab.id, trimmed || null);
+        const { title } = await client.setWorkspaceTitle(renamingTab.id, trimmed || null);
+        if (title) {
+          useSessionStore.getState().setWorkspaces(normalizedServerId, (workspaces) => {
+            const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+              workspaces,
+              workspaceId: renamingTab.id,
+            });
+            const workspace = workspaceKey ? workspaces.get(workspaceKey) : null;
+            if (
+              !workspaceKey ||
+              !workspace ||
+              (workspace.title ?? workspace.name) !== renamingTab.currentTitle ||
+              (workspace.name === title && workspace.title === title)
+            ) {
+              return workspaces;
+            }
+            const next = new Map(workspaces);
+            next.set(workspaceKey, { ...workspace, name: title, title });
+            return next;
+          });
+        }
         return;
       }
       await client.updateAgent(renamingTab.id, { name: trimmed });
+      const renameInMap = (agents: Map<string, Agent>) => {
+        const agent = agents.get(renamingTab.id);
+        if (!agent || (agent.title ?? "") !== renamingTab.currentTitle || agent.title === trimmed) {
+          return agents;
+        }
+        const next = new Map(agents);
+        next.set(renamingTab.id, { ...agent, title: trimmed });
+        return next;
+      };
+      const store = useSessionStore.getState();
+      store.setAgents(normalizedServerId, renameInMap);
+      store.setAgentDetails(normalizedServerId, renameInMap);
     },
-    [client, queryClient, renamingTab, terminalsQueryKey, t],
+    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey, t],
   );
 
   const handleRenameModalClose = useCallback(() => {

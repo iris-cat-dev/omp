@@ -387,7 +387,7 @@ function useAgentPanelDescriptor(
       return {
         ...resolveAgentDescriptorIdentity(agent),
         isPrimaryAgent,
-        workspaceName: workspace?.name ?? null,
+        workspaceName: workspace?.title ?? workspace?.name ?? null,
         currentBranch: workspace?.gitRuntime?.currentBranch ?? null,
         isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
       };
