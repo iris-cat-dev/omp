@@ -270,11 +270,18 @@ export class ProviderSnapshotManager {
     const homeCwd = target.snapshotCwd;
     const providers = this.resolveRefreshProviders(options.providers);
     const providersToRefresh = providers ?? this.getProviderIds();
+    const targets = [target];
+    for (const cwd of this.snapshots.keys()) {
+      if (!isGlobalProviderSnapshotKey(cwd)) {
+        targets.push(createWorkspaceSnapshotTarget(cwd));
+      }
+    }
 
     this.clearCachedProviders(providers);
     this.resetSnapshotToLoading(homeCwd, providers, { preserveExisting: false });
     this.emitChange(homeCwd);
-    await this.refreshProviders(target, providersToRefresh);
+    // Existing clients consume pushed snapshots and may never read these scopes again.
+    await Promise.all(targets.map((scope) => this.refreshProviders(scope, providersToRefresh)));
   }
 
   async warmUpSnapshotForCwd(options: ProviderSnapshotWarmUpOptions): Promise<void> {
