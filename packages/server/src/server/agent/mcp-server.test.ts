@@ -1353,6 +1353,9 @@ describe("create_agent MCP tool", () => {
     });
 
     expect(response.structuredContent.workspaceId).toBe("wks_existing");
+    expect(response.structuredContent.guidance).toContain(
+      "Open it by selecting that workspace in the left sidebar",
+    );
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: existingCwd,
@@ -3252,90 +3255,110 @@ describe("create_agent MCP tool", () => {
       scoped: true,
       placement: {},
       isChild: true,
+      conflicts: false,
     },
     {
-      name: "creates a canonical detached root in the caller workspace",
+      name: "rejects a canonical detached root in an occupied caller workspace",
       scoped: true,
       placement: { workspaceId: "wks_parent", detached: true },
       isChild: false,
+      conflicts: true,
     },
     {
-      name: "keeps top-level creation a root without advertising detached",
+      name: "rejects top-level creation in an occupied workspace",
       scoped: false,
       placement: { workspaceId: "wks_parent" },
       isChild: false,
+      conflicts: true,
     },
     {
-      name: "preserves legacy detached creation through MCP input parsing",
+      name: "rejects legacy detached creation in an occupied caller workspace",
       scoped: true,
       placement: detachedCurrentWorkspace(),
       isChild: false,
+      conflicts: true,
     },
-  ])("$name and enforces trusted parent labels", async ({ scoped, placement, isChild }) => {
-    const workdir = await mkdtemp(join(tmpdir(), "mcp-workspace-inherit-"));
-    const storage = new AgentStorage(join(workdir, "agents"), logger);
-    const agentManager = new AgentManager({
-      clients: createTestAgentClients(),
-      registry: storage,
-      logger,
-    });
-    const parent = await agentManager.createAgent(
-      { provider: "codex", cwd: existingCwd },
-      undefined,
-      { workspaceId: "wks_parent" },
-    );
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage: storage,
-      callerAgentId: scoped ? parent.id : undefined,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      listActiveWorkspaces: async () => [
-        { workspaceId: "wks_parent", cwd: existingCwd, kind: "worktree" },
-      ],
-      logger,
-    });
-    const client = await connectInMemoryMcpClient(server);
+  ])(
+    "$name and enforces trusted parent labels",
+    async ({ scoped, placement, isChild, conflicts }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-workspace-inherit-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const agentManager = new AgentManager({
+        clients: createTestAgentClients(),
+        registry: storage,
+        logger,
+      });
+      const parent = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: scoped ? parent.id : undefined,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        listActiveWorkspaces: async () => [
+          { workspaceId: "wks_parent", cwd: existingCwd, kind: "worktree" },
+        ],
+        logger,
+      });
+      const client = await connectInMemoryMcpClient(server);
 
-    try {
-      const listedTools = await client.listTools();
-      const createTool = listedTools.tools.find((tool) => tool.name === "create_agent");
-      if (scoped) {
-        expect(createTool?.inputSchema.properties?.detached).toMatchObject({ type: "boolean" });
-        expect(createTool?.inputSchema.required).not.toContain("detached");
-      } else {
-        expect(createTool?.inputSchema.properties?.detached).toBeUndefined();
-      }
+      try {
+        const listedTools = await client.listTools();
+        const createTool = listedTools.tools.find((tool) => tool.name === "create_agent");
+        if (scoped) {
+          expect(createTool?.inputSchema.properties?.detached).toMatchObject({ type: "boolean" });
+          expect(createTool?.inputSchema.required).not.toContain("detached");
+        } else {
+          expect(createTool?.inputSchema.properties?.detached).toBeUndefined();
+        }
 
-      const result = await client.callTool({
-        name: "create_agent",
-        arguments: {
-          ...placement,
-          title: "Created agent",
-          provider: "codex/gpt-5.4",
-          initialPrompt: "Do work",
-          notifyOnFinish: false,
-          ...(scoped ? {} : { background: true }),
-          labels: {
-            [PARENT_AGENT_ID_LABEL]: "spoofed-parent",
-            source: "handoff",
+        const result = await client.callTool({
+          name: "create_agent",
+          arguments: {
+            ...placement,
+            title: "Created agent",
+            provider: "codex/gpt-5.4",
+            initialPrompt: "Do work",
+            notifyOnFinish: false,
+            ...(scoped ? {} : { background: true }),
+            labels: {
+              [PARENT_AGENT_ID_LABEL]: "spoofed-parent",
+              source: "handoff",
+            },
           },
-        },
-      });
-      expect(result.isError).not.toBe(true);
-      const createdId = z.object({ agentId: z.string() }).parse(result.structuredContent).agentId;
-      const storedAgent = await storage.get(createdId);
-      expect(storedAgent?.workspaceId).toBe("wks_parent");
-      expect(storedAgent?.cwd).toBe(existingCwd);
-      expect(storedAgent?.labels).toEqual({
-        ...(isChild ? { [PARENT_AGENT_ID_LABEL]: parent.id } : {}),
-        source: "handoff",
-      });
-    } finally {
-      await client.close();
-      await server.close();
-      rmSync(workdir, { recursive: true, force: true });
-    }
-  });
+        });
+        if (conflicts) {
+          expect(result.isError).toBe(true);
+          expect(result.content).toEqual([
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("create_workspace"),
+            }),
+          ]);
+          expect(
+            (await storage.listByWorkspace("wks_parent")).filter((record) => !record.archivedAt),
+          ).toHaveLength(1);
+          return;
+        }
+        expect(result.isError).not.toBe(true);
+        const createdId = z.object({ agentId: z.string() }).parse(result.structuredContent).agentId;
+        const storedAgent = await storage.get(createdId);
+        expect(storedAgent?.workspaceId).toBe("wks_parent");
+        expect(storedAgent?.cwd).toBe(existingCwd);
+        expect(storedAgent?.labels).toEqual({
+          ...(isChild ? { [PARENT_AGENT_ID_LABEL]: parent.id } : {}),
+          source: "handoff",
+        });
+      } finally {
+        await client.close();
+        await server.close();
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([true, false])(
     "rejects detached mixed with legacy placement (agent-scoped: %s)",

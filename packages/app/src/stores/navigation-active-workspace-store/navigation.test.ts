@@ -242,12 +242,16 @@ describe("workspace navigation", () => {
       createdAt: new Date("2026-03-04"),
       archivedAt: null,
     } as Agent;
-    const { deps, navigations } = createSidebarFakeDeps({
+    const { deps, navigations, pinnedAgents } = createSidebarFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [newer, primary],
     });
     await navigateToSidebarWorkspace({ serverId: "server-1", workspaceId: workspace.id }, deps);
     expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aprimary"]);
+    expect(pinnedAgents).toEqual([
+      { workspaceKey: "server-1:workspace-a", agentId: "primary" },
+      { workspaceKey: "server-1:workspace-a", agentId: "newer" },
+    ]);
   });
 
   it("opens a sidebar conversation in the current center tab host without navigating", async () => {
@@ -303,6 +307,56 @@ describe("workspace navigation", () => {
     ]);
     expect(navigations).toEqual([]);
     expect(remembered).toEqual([]);
+  });
+
+  it("restores every legacy root tab and focuses the root that needs attention", async () => {
+    const primary = {
+      id: "root-primary",
+      workspaceId: "workspace-conversation",
+      parentAgentId: null,
+      createdAt: new Date("2026-03-01T00:00:00.000Z"),
+      archivedAt: null,
+      requiresAttention: false,
+    } as Agent;
+    const hiddenAttentionRoot = {
+      id: "root-hidden-attention",
+      workspaceId: "workspace-conversation",
+      parentAgentId: null,
+      createdAt: new Date("2026-03-02T00:00:00.000Z"),
+      archivedAt: null,
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date("2026-03-03T00:00:00.000Z"),
+    } as Agent;
+    const { deps, openedTabs, pinnedAgents, navigations } = createSidebarFakeDeps({
+      getSessionAgents: () => [hiddenAttentionRoot, primary],
+    });
+
+    const route = await navigateToSidebarWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-conversation",
+        tabHost: { serverId: "server-1", workspaceId: "workspace-host" },
+      },
+      deps,
+    );
+
+    expect(route).toBe("/h/server-1/workspace/workspace-host");
+    expect(openedTabs).toEqual([
+      {
+        workspaceKey: "server-1:workspace-host",
+        target: { kind: "agent", agentId: "root-primary" },
+      },
+      {
+        workspaceKey: "server-1:workspace-host",
+        target: { kind: "agent", agentId: "root-hidden-attention" },
+      },
+    ]);
+    expect(pinnedAgents).toEqual([
+      { workspaceKey: "server-1:workspace-host", agentId: "root-primary" },
+      { workspaceKey: "server-1:workspace-host", agentId: "root-hidden-attention" },
+    ]);
+    expect(navigations).toEqual([]);
   });
 
   it("leaves a draft-only host when opening another project's conversation", async () => {

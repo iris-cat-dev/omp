@@ -43,6 +43,7 @@ export {
   type SidebarProjectEntry,
   type SidebarStateBucket,
   type SidebarWorkspaceEntry,
+  type SidebarWorkspaceRootAgent,
 } from "./sidebar-workspaces-view-model";
 
 /**

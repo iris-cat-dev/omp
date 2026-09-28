@@ -7,11 +7,10 @@ import { PARENT_AGENT_ID_LABEL } from "@omp-desktop/protocol/agent-labels";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
-import { AgentManager } from "../agent-manager.js";
-import { AgentStorage } from "../agent-storage.js";
+import { AgentManager, WorkspaceRootConflictError, type ManagedAgent } from "../agent-manager.js";
+import { AgentStorage, type StoredAgentRecord } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
-import type { ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
 
 const logger = createTestLogger();
@@ -316,12 +315,13 @@ test.each([
         initialPrompt: "respond with exactly: creation-notification-result",
         callerAgentId: caller.id,
         detached,
+        ...(detached ? { workspaceId: "ws-detached" } : {}),
         background: true,
         notifyOnFinish,
       });
       expect(initialPromptStarted).toBe(true);
       const storedCreated = await storage.get(created.id);
-      expect(storedCreated?.workspaceId).toBe("ws-caller");
+      expect(storedCreated?.workspaceId).toBe(detached ? "ws-detached" : "ws-caller");
       expect(storedCreated?.labels?.[PARENT_AGENT_ID_LABEL]).toBe(detached ? undefined : caller.id);
       const completeChild = await childCompletionReady;
       expect(agentManager.getAgent(created.id)?.lifecycle).toBe("running");
@@ -381,6 +381,158 @@ test("session create stamps the requested workspaceId when no worktree setup run
 
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-source");
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("manual and tool creation reject a second independent root in one workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-root-conflict-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+
+  try {
+    const { snapshot: root } = await createAgentCommand(
+      { agentManager, agentStorage: storage, logger, providerSnapshotManager },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-shared",
+        labels: {},
+        provisionalTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    await expect(
+      createAgentCommand(
+        { agentManager, agentStorage: storage, logger, providerSnapshotManager },
+        {
+          kind: "mcp",
+          provider: "codex/gpt-5.4",
+          title: "Second root",
+          initialPrompt: "Do independent work",
+          callerAgentId: root.id,
+          detached: true,
+          background: true,
+          notifyOnFinish: false,
+        },
+      ),
+    ).rejects.toThrow(
+      `Workspace "ws-shared" already has an unarchived root agent: ${root.id}. ` +
+        "One workspace can have only one independent root conversation. " +
+        "To create another independent conversation, call create_workspace first",
+    );
+
+    const records = await storage.listByWorkspace("ws-shared");
+    expect(records.filter((record) => !record.archivedAt)).toHaveLength(1);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("persisted legacy roots can still load when their workspace contains duplicates", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-legacy-root-load-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const legacyRootIds = [
+    "00000000-0000-4000-8000-0000000000a1",
+    "00000000-0000-4000-8000-0000000000a2",
+  ] as const;
+  const legacyRecord = (id: string, createdAt: string): StoredAgentRecord => ({
+    id,
+    provider: "codex",
+    cwd: workdir,
+    workspaceId: "ws-legacy-duplicates",
+    createdAt,
+    updatedAt: createdAt,
+    title: id,
+    labels: {},
+    lastStatus: "idle",
+    config: {},
+    persistence: null,
+    archivedAt: null,
+  });
+
+  try {
+    await storage.upsert(legacyRecord(legacyRootIds[0], "2026-09-27T10:00:00.000Z"));
+    await storage.upsert(legacyRecord(legacyRootIds[1], "2026-09-27T10:01:00.000Z"));
+
+    const loaded = await Promise.all(
+      legacyRootIds.map((agentId) =>
+        agentManager.createAgent({ provider: "codex", cwd: workdir }, agentId, {
+          workspaceId: "ws-legacy-duplicates",
+        }),
+      ),
+    );
+
+    expect(loaded.map((agent) => agent.id).sort()).toEqual([...legacyRootIds]);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("same-workspace subagents remain valid and an archived root can be replaced", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-root-replacement-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+
+  try {
+    const root = await agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-shared",
+    });
+    const { snapshot: child } = await createAgentCommand(
+      { agentManager, agentStorage: storage, logger, providerSnapshotManager },
+      {
+        kind: "mcp",
+        provider: "codex/gpt-5.4",
+        title: "Child",
+        initialPrompt: "Do delegated work",
+        callerAgentId: root.id,
+        background: true,
+        notifyOnFinish: false,
+      },
+    );
+    expect(child.labels[PARENT_AGENT_ID_LABEL]).toBe(root.id);
+
+    await agentManager.archiveAgent(root.id);
+    const replacement = await agentManager.createAgent(
+      { provider: "codex", cwd: workdir },
+      undefined,
+      { workspaceId: "ws-shared" },
+    );
+    expect(replacement.workspaceId).toBe("ws-shared");
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("concurrent root creation commits only one root per workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-root-race-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+
+  try {
+    const results = await Promise.allSettled([
+      agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "ws-race",
+      }),
+      agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "ws-race",
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejection = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejection?.reason).toBeInstanceOf(WorkspaceRootConflictError);
+    expect(
+      (await storage.listByWorkspace("ws-race")).filter((record) => !record.archivedAt),
+    ).toHaveLength(1);
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }

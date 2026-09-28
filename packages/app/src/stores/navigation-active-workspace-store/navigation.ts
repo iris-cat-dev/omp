@@ -1,6 +1,6 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { pickAttentionAgent } from "@/utils/agent-attention";
-import { pickWorkspacePrimaryAgentId } from "@/subagents/policies";
+import { listActiveWorkspaceRootAgentIds, pickWorkspacePrimaryAgentId } from "@/subagents/policies";
 import {
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
@@ -215,11 +215,50 @@ export async function navigateToSidebarWorkspace(
     return navigateToWorkspace(input, deps);
   }
 
-  const activeWorkspaceAgents = Array.from(deps.getSessionAgents(input.serverId)).filter(
-    (agent) => !agent.archivedAt && normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId,
+  const activeAgents = Array.from(deps.getSessionAgents(input.serverId)).filter(
+    (agent) => !agent.archivedAt,
   );
+  const activeWorkspaceAgents = activeAgents.filter(
+    (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId,
+  );
+  const rootAgentIds = listActiveWorkspaceRootAgentIds(activeAgents, workspaceId);
+  if (rootAgentIds.length > 0) {
+    const activeAgentById = new Map(activeAgents.map((agent) => [agent.id, agent]));
+    const rootAgents = rootAgentIds.flatMap((agentId) => {
+      const agent = activeAgentById.get(agentId);
+      return agent ? [agent] : [];
+    });
+    const focusedAgentId = pickAttentionAgent(rootAgents) ?? rootAgentIds[0];
+    if (!focusedAgentId) {
+      return navigateToWorkspace(input, deps);
+    }
+    const revealOrder = [
+      ...rootAgentIds.filter((agentId) => agentId !== focusedAgentId),
+      focusedAgentId,
+    ];
+    if (tabHost) {
+      for (const agentId of revealOrder) {
+        revealSidebarAgentInTabHost(tabHost, agentId, deps);
+      }
+      return buildHostWorkspaceRoute(tabHost.serverId, tabHost.workspaceId);
+    }
+
+    const workspaceKey = `${input.serverId}:${workspaceId}`;
+    for (const agentId of rootAgentIds) {
+      deps.pinAgent(workspaceKey, agentId);
+    }
+    return navigateToWorkspace(
+      {
+        ...input,
+        target: { kind: "agent", agentId: focusedAgentId },
+        pin: true,
+        deferAgentTargetUntilNavigation: true,
+      },
+      deps,
+    );
+  }
   if (activeWorkspaceAgents.length > 0) {
-    const agentId = pickWorkspacePrimaryAgentId(activeWorkspaceAgents, workspaceId);
+    const agentId = pickWorkspacePrimaryAgentId(activeAgents, workspaceId);
     if (agentId && tabHost) {
       return revealSidebarAgentInTabHost(tabHost, agentId, deps);
     }

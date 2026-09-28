@@ -645,6 +645,30 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   browser_close_tab: "optional",
 };
 
+function buildCreateAgentGuidance(input: {
+  workspaceId: string | undefined;
+  isRoot: boolean;
+  callerAgentId: string | undefined;
+  notifyOnFinish: boolean;
+  initialPromptStarted: boolean;
+}): string | undefined {
+  const guidanceParts: string[] = [];
+  if (input.workspaceId && input.isRoot) {
+    guidanceParts.push(
+      `This root conversation belongs to workspace ${input.workspaceId}. ` +
+        "Open it by selecting that workspace in the left sidebar; selecting the workspace " +
+        "restores its unarchived root conversation tabs.",
+    );
+  }
+  if (input.callerAgentId && input.notifyOnFinish && input.initialPromptStarted) {
+    guidanceParts.push(
+      "You will get notified when the created agent finishes, errors, or needs permission. " +
+        "Do not poll for status; continue with other work until the notification arrives.",
+    );
+  }
+  return guidanceParts.length > 0 ? guidanceParts.join(" ") : undefined;
+}
+
 export function createPaseoToolCatalog(options: PaseoToolHostDependencies): PaseoToolCatalog {
   const {
     agentManager,
@@ -1121,7 +1145,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .min(1)
       .optional()
       .describe(
-        "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
+        "Existing workspace id. Agent-scoped subagents default to the caller workspace. An independent root requires a workspace with no unarchived root; omit this in top-level calls or call create_workspace first.",
       ),
   };
   const agentToAgentInputSchema = {
@@ -1130,7 +1154,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .boolean()
       .optional()
       .describe(
-        "Create an independent root instead of a caller-owned subagent. Defaults to false. Use only when the conversation must outlive its creator or be managed separately; parallel or background work alone should remain a subagent. This does not isolate concurrent file edits or change workspace selection.",
+        "Create an independent root instead of a caller-owned subagent. Defaults to false. A workspace can have only one unarchived root, so call create_workspace first when the caller's workspace already has one. Parallel or background work should remain a subagent.",
       ),
     notifyOnFinish: z
       .boolean()
@@ -1659,7 +1683,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create agent",
       description:
-        "Create an OMP agent. Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace; use detached=true only for a conversation that must outlive its creator or be managed separately. Top-level creation always creates a root and without workspaceId creates a new local workspace. Requires omp/model and an initial prompt. Call list_models before choosing a model.",
+        "Create an OMP agent. Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace. Independent roots require a workspace with no unarchived root; call create_workspace first for another conversation. Top-level creation without workspaceId creates a new local workspace. Requires omp/model and an initial prompt. Call list_models before choosing a model.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1726,6 +1750,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           worktree,
         },
       );
+      const guidance = buildCreateAgentGuidance({
+        workspaceId: snapshot.workspaceId,
+        isRoot: getParentAgentIdFromLabels(snapshot.labels) === null,
+        callerAgentId,
+        notifyOnFinish,
+        initialPromptStarted,
+      });
 
       try {
         if (!createdInBackground && initialPromptStarted) {
@@ -1744,6 +1775,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             availableModes: liveSnapshot.availableModes,
             lastMessage: result.lastMessage,
             permission: sanitizePermissionRequest(result.permission),
+            ...(guidance ? { guidance } : {}),
           };
           const validJson = ensureValidJson(responseData);
 
@@ -1760,10 +1792,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
-      const guidance =
-        callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
-          : undefined;
       const response = {
         content: [],
         structuredContent: ensureValidJson({

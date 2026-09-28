@@ -451,6 +451,69 @@ describe("shared sidebar workspace model", () => {
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
   });
 
+  it("lists every active legacy root with the attention state needed to locate it", () => {
+    const workspaceDescriptor = workspace({
+      id: "legacy",
+      name: "legacy",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const primary = agent({
+      id: "root-primary",
+      workspaceId: "legacy",
+      status: "idle",
+      title: "Primary",
+      createdAt: new Date(1_000),
+    });
+    const additional = agent({
+      id: "root-attention",
+      workspaceId: "legacy",
+      status: "idle",
+      title: "Finished handoff",
+      createdAt: new Date(2_000),
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    const child = agent({
+      id: "child",
+      workspaceId: "legacy",
+      status: "running",
+      parentAgentId: primary.id,
+    });
+    const agents = new Map([primary, additional, child].map((entry) => [entry.id, entry] as const));
+
+    const entries = buildSidebarWorkspaceEntries({
+      placements: [workspacePlacement({ workspaceId: "legacy", projectViewKey: "project" })],
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: buildWorkspaceAgentActivityIndex(agents),
+          workspaces: new Map([["legacy", workspaceDescriptor]]),
+          agents,
+        },
+      ],
+    });
+
+    expect(entries.get("srv:legacy")?.rootAgents).toEqual([
+      {
+        id: "root-primary",
+        title: "Primary",
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      },
+      {
+        id: "root-attention",
+        title: "Finished handoff",
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "finished",
+      },
+    ]);
+  });
+
   it("keeps a structurally disambiguated project key in status entries", () => {
     const projectKey = "host:srv:project:prj_a";
     const model = buildSidebarWorkspacePlacementModel({
@@ -692,6 +755,10 @@ function agent(input: {
   id: string;
   workspaceId: string;
   status: Agent["status"];
+  createdAt?: Date;
+  title?: string | null;
+  requiresAttention?: boolean;
+  attentionReason?: Agent["attentionReason"];
   updatedAt?: Date;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
@@ -702,7 +769,7 @@ function agent(input: {
     provider: "claude" as Agent["provider"],
     status: input.status,
     activeTurn: null,
-    createdAt: new Date(0),
+    createdAt: input.createdAt ?? new Date(0),
     updatedAt: input.updatedAt ?? new Date(1_000),
     lastUserMessageAt: null,
     lastActivityAt: new Date(1_000),
@@ -711,13 +778,15 @@ function agent(input: {
     availableModes: [],
     pendingPermissions: [],
     persistence: null,
-    title: null,
+    title: input.title ?? null,
     cwd: "/repo",
     workspaceId: input.workspaceId,
     model: null,
     parentAgentId: input.parentAgentId ?? null,
     archivedAt: input.archivedAt ?? null,
     labels: {},
+    requiresAttention: input.requiresAttention ?? false,
+    attentionReason: input.attentionReason ?? null,
   };
 }
 

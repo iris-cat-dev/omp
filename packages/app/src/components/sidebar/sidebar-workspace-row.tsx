@@ -485,6 +485,7 @@ function WorkspaceRowTrailingActions({
                 serverId={workspace.serverId}
                 workspaceId={workspace.workspaceId}
                 workspaceLabels={workspace.labels}
+                rootAgents={workspace.rootAgents}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}

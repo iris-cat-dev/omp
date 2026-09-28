@@ -45,6 +45,10 @@ import {
   WORKSPACE_LABEL_PAGE_ID,
   type WorkspaceLabelTarget,
 } from "@/workspace-labels/picker";
+import {
+  useWorkspaceConversationMenuPages,
+  WORKSPACE_CONVERSATIONS_PAGE_ID,
+} from "@/components/sidebar/workspace-conversations-menu";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -74,6 +78,10 @@ const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedCol
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 const deleteLeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
+const conversationsLeadingIcon = (
+  <ThemedMessageSquareQuote size={14} uniProps={foregroundMutedColorMapping} />
+);
+const EMPTY_ROOT_AGENTS: readonly NonNullable<SidebarWorkspaceEntry["rootAgents"]>[number][] = [];
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -89,6 +97,7 @@ export interface SidebarWorkspaceMenuProps {
   serverId?: string;
   workspaceId?: string;
   workspaceLabels?: readonly string[];
+  rootAgents?: SidebarWorkspaceEntry["rootAgents"];
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onReferenceContent?: () => void;
@@ -116,9 +125,10 @@ export interface SidebarWorkspaceMenuProps {
 
 interface SidebarWorkspaceMenuItemsProps extends Omit<
   SidebarWorkspaceMenuProps,
-  "onArchive" | "open" | "onOpenChange"
+  "onArchive" | "open" | "onOpenChange" | "rootAgents"
 > {
   onArchive?: () => void;
+  rootAgentCount?: number;
 }
 
 type MenuSurface = "context" | "dropdown";
@@ -158,6 +168,7 @@ function SidebarWorkspaceMenuItems({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
+  rootAgentCount = 0,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
@@ -237,6 +248,15 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      {rootAgentCount > 1 ? (
+        <DropdownMenuSubTrigger
+          id={WORKSPACE_CONVERSATIONS_PAGE_ID}
+          leading={conversationsLeadingIcon}
+          testID={`sidebar-workspace-menu-conversations-${workspaceKey}`}
+        >
+          {t("sidebar.workspace.actions.conversations", { count: rootAgentCount })}
+        </DropdownMenuSubTrigger>
+      ) : null}
       {serverId && workspaceId ? (
         <DropdownMenuSubTrigger
           id={WORKSPACE_LABEL_PAGE_ID}
@@ -280,6 +300,7 @@ export function SidebarWorkspaceMenu({
   serverId,
   workspaceId,
   workspaceLabels,
+  rootAgents = EMPTY_ROOT_AGENTS,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -304,7 +325,16 @@ export function SidebarWorkspaceMenu({
       serverId && workspaceId ? { serverId, workspaceId, labels: workspaceLabels ?? [] } : null,
     [serverId, workspaceId, workspaceLabels],
   );
-  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const labelPages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const conversationPages = useWorkspaceConversationMenuPages({
+    serverId,
+    workspaceId,
+    rootAgents,
+  });
+  const pages = useMemo(
+    () => [...conversationPages, ...labelPages],
+    [conversationPages, labelPages],
+  );
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -328,6 +358,7 @@ export function SidebarWorkspaceMenu({
           serverId={serverId}
           workspaceId={workspaceId}
           workspaceLabels={workspaceLabels}
+          rootAgentCount={rootAgents.length}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
@@ -423,7 +454,16 @@ export function SidebarWorkspaceContextMenu({
     }),
     [workspace],
   );
-  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const labelPages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const conversationPages = useWorkspaceConversationMenuPages({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    rootAgents: workspace.rootAgents ?? EMPTY_ROOT_AGENTS,
+  });
+  const pages = useMemo(
+    () => [...conversationPages, ...labelPages],
+    [conversationPages, labelPages],
+  );
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
@@ -447,6 +487,7 @@ export function SidebarWorkspaceContextMenu({
           serverId={workspaceTarget.serverId}
           workspaceId={workspaceTarget.workspaceId}
           workspaceLabels={workspaceTarget.labels}
+          rootAgentCount={workspace.rootAgents?.length ?? 0}
           onCopyPath={onCopyPath}
           onReferenceContent={onReferenceContent}
           referenceContentStatus={referenceContentStatus}

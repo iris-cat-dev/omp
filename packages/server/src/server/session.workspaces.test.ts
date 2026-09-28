@@ -1230,7 +1230,7 @@ test.each([
     expectedTitle: "Pinned conversation",
   },
 ])(
-  "create_agent_request names an empty workspace without replacing a manual title ($title, $generatedTitle)",
+  "create_agent_request names an empty workspace and rejects a second root ($title, $generatedTitle)",
   async ({ title, generatedTitle, expectedTitle }) => {
     vi.useFakeTimers();
     const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
@@ -1371,7 +1371,8 @@ test.each([
         ),
       ).toBe(true);
 
-      // Clearing a conversation title must not make a later agent its "first" agent.
+      // Clearing a conversation title must not let a later create bypass the
+      // one-root-per-workspace invariant or trigger another title generation.
       await workspaceRegistry.update("ws-existing", (current) => ({ ...current, title: null }));
       await session.handleMessage({
         type: "create_agent_request",
@@ -1388,7 +1389,15 @@ test.each([
         filterByType(emitted, "status").filter(
           (message) => message.payload.status === "agent_created",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
+      expect(
+        filterByType(emitted, "status").find(
+          (message) => message.payload.requestId === "req-create-second-agent",
+        )?.payload,
+      ).toMatchObject({
+        status: "agent_create_failed",
+        error: expect.stringContaining("create_workspace"),
+      });
     } finally {
       vi.useRealTimers();
       rmSync(workdir, { recursive: true, force: true });

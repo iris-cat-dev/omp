@@ -2,7 +2,7 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
@@ -11,7 +11,11 @@ import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
+import { isWorkspaceRootAgent } from "@/subagents/policies";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -35,6 +39,15 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
   statusEnteredAt: Date | null;
 }
 
+export interface SidebarWorkspaceRootAgent {
+  id: string;
+  title: string | null;
+  status: Agent["status"];
+  pendingPermissionCount: number;
+  requiresAttention: boolean;
+  attentionReason: Agent["attentionReason"] | null;
+}
+
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
@@ -52,6 +65,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  rootAgents?: readonly SidebarWorkspaceRootAgent[];
 }
 
 export interface SidebarProjectEntry {
@@ -73,11 +87,13 @@ export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  agents?: Map<string, Agent>;
 }
 
 interface SidebarWorkspaceSessionSource {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  agents?: Map<string, Agent>;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -94,6 +110,7 @@ export function selectSidebarWorkspaceSessions(
       serverId,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      agents: session.agents,
     });
   }
   return selected;
@@ -114,7 +131,8 @@ export function areSidebarWorkspaceSessionsEqual(
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
-      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
+      leftSession.agents !== rightSession.agents
     ) {
       return false;
     }
@@ -149,6 +167,7 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  rootAgents?: readonly SidebarWorkspaceRootAgent[];
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -181,6 +200,7 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    ...(input.rootAgents && input.rootAgents.length > 1 ? { rootAgents: input.rootAgents } : {}),
   };
 }
 
@@ -362,6 +382,43 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
+function buildSidebarWorkspaceRootAgentIndex(
+  agents: ReadonlyMap<string, Agent> | undefined,
+): Map<string, SidebarWorkspaceRootAgent[]> {
+  const rootsByWorkspaceId = new Map<string, Array<{ agent: Agent; createdAt: number }>>();
+  if (!agents) return new Map();
+
+  for (const agent of agents.values()) {
+    const workspaceId = normalizeWorkspaceOpaqueId(agent.workspaceId);
+    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
+    if (agent.archivedAt || !workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
+      continue;
+    }
+    const roots = rootsByWorkspaceId.get(workspaceId) ?? [];
+    roots.push({ agent, createdAt: agent.createdAt.getTime() });
+    rootsByWorkspaceId.set(workspaceId, roots);
+  }
+
+  return new Map(
+    Array.from(rootsByWorkspaceId, ([workspaceId, roots]) => [
+      workspaceId,
+      roots
+        .sort(
+          (left, right) =>
+            left.createdAt - right.createdAt || left.agent.id.localeCompare(right.agent.id),
+        )
+        .map(({ agent }) => ({
+          id: agent.id,
+          title: agent.title,
+          status: agent.status,
+          pendingPermissionCount: agent.pendingPermissions.length,
+          requiresAttention: agent.requiresAttention ?? false,
+          attentionReason: agent.attentionReason ?? null,
+        })),
+    ]),
+  );
+}
+
 export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
@@ -373,6 +430,12 @@ export function buildSidebarWorkspaceEntries(input: {
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
+  const rootAgentsByServerId = new Map(
+    input.sessions.map((session) => [
+      session.serverId,
+      buildSidebarWorkspaceRootAgentIndex(session.agents),
+    ]),
+  );
   const entries = new Map<string, SidebarWorkspaceEntry>();
 
   for (const placement of input.placements) {
@@ -391,6 +454,9 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      rootAgents: rootAgentsByServerId
+        .get(placement.serverId)
+        ?.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(
@@ -404,13 +470,38 @@ export function buildSidebarWorkspaceEntries(input: {
   return entries;
 }
 
+function areSidebarWorkspaceRootAgentsEqual(
+  left: readonly SidebarWorkspaceRootAgent[] | undefined,
+  right: readonly SidebarWorkspaceRootAgent[] | undefined,
+): boolean {
+  const leftAgents = left ?? [];
+  const rightAgents = right ?? [];
+  return (
+    leftAgents.length === rightAgents.length &&
+    leftAgents.every((agent, index) => {
+      const other = rightAgents[index];
+      return (
+        other !== undefined &&
+        agent.id === other.id &&
+        agent.title === other.title &&
+        agent.status === other.status &&
+        agent.pendingPermissionCount === other.pendingPermissionCount &&
+        agent.requiresAttention === other.requiresAttention &&
+        agent.attentionReason === other.attentionReason
+      );
+    })
+  );
+}
+
 function areSidebarWorkspaceEntriesEqual(
   left: SidebarWorkspaceEntry,
   right: SidebarWorkspaceEntry,
 ): boolean {
+  if (!areSidebarWorkspaceRootAgentsEqual(left.rootAgents, right.rootAgents)) return false;
   const keys = Object.keys(left) as Array<keyof SidebarWorkspaceEntry>;
   if (keys.length !== Object.keys(right).length) return false;
   return keys.every((key) => {
+    if (key === "rootAgents") return true;
     if (key !== "prHint") return Object.is(left[key], right[key]);
     const leftHint = left.prHint;
     const rightHint = right.prHint;

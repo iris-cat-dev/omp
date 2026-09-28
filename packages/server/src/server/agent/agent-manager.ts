@@ -272,6 +272,22 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
 }
 
+export class WorkspaceRootConflictError extends Error {
+  constructor(
+    public readonly workspaceId: string,
+    public readonly existingAgentIds: readonly string[],
+  ) {
+    const rootLabel = existingAgentIds.length === 1 ? "root agent" : "root agents";
+    super(
+      `Workspace "${workspaceId}" already has an unarchived ${rootLabel}: ${existingAgentIds.join(", ")}. ` +
+        "One workspace can have only one independent root conversation. " +
+        "To create another independent conversation, call create_workspace first, then call " +
+        "create_agent with the new workspaceId.",
+    );
+    this.name = "WorkspaceRootConflictError";
+  }
+}
+
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -696,6 +712,7 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
+  private readonly workspaceRootCreationTails = new Map<string, Promise<void>>();
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
@@ -1178,7 +1195,110 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation(
+      this.createAgentWithWorkspaceRootGuard(config, agentId, options),
+    );
+  }
+
+  private async createAgentWithWorkspaceRootGuard(
+    config: AgentSessionConfig,
+    agentId: string | undefined,
+    options: CreateAgentOptions,
+  ): Promise<ManagedAgent> {
+    if (agentId && (this.agents.has(agentId) || (await this.registry?.get(agentId)))) {
+      // Loading or replacing a persisted legacy root must not be mistaken for
+      // creating another root in an already-invalid workspace.
+      return this.createAgentInternal(config, agentId, options);
+    }
+
+    const workspaceId = options.workspaceId;
+    if (
+      config.internal ||
+      !workspaceId ||
+      !(await this.isWorkspaceRootCreate(workspaceId, options.labels))
+    ) {
+      return this.createAgentInternal(config, agentId, options);
+    }
+
+    return this.serializeWorkspaceRootCreate(workspaceId, async () => {
+      const existingAgentIds = await this.listUnarchivedWorkspaceRootAgentIds(workspaceId, agentId);
+      if (existingAgentIds.length > 0) {
+        throw new WorkspaceRootConflictError(workspaceId, existingAgentIds);
+      }
+      return this.createAgentInternal(config, agentId, options);
+    });
+  }
+
+  private async isWorkspaceRootCreate(
+    workspaceId: string,
+    labels: Record<string, string> | undefined,
+  ): Promise<boolean> {
+    const parentAgentId = getParentAgentIdFromLabels(labels);
+    if (!parentAgentId) {
+      return true;
+    }
+    const parent = this.agents.get(parentAgentId) ?? (await this.registry?.get(parentAgentId));
+    return parent ? parent.workspaceId !== workspaceId : false;
+  }
+
+  private async listUnarchivedWorkspaceRootAgentIds(
+    workspaceId: string,
+    replacingAgentId: string | undefined,
+  ): Promise<string[]> {
+    const workspaceAgents = new Map<
+      string,
+      Pick<StoredAgentRecord, "id" | "workspaceId" | "labels" | "archivedAt" | "internal">
+    >();
+    for (const record of (await this.registry?.listByWorkspace(workspaceId)) ?? []) {
+      workspaceAgents.set(record.id, record);
+    }
+    for (const agent of this.agents.values()) {
+      if (agent.workspaceId !== workspaceId) continue;
+      workspaceAgents.set(agent.id, {
+        id: agent.id,
+        workspaceId: agent.workspaceId,
+        labels: agent.labels,
+        archivedAt: null,
+        internal: agent.internal,
+      });
+    }
+
+    const rootAgentIds: string[] = [];
+    for (const agent of workspaceAgents.values()) {
+      if (agent.id === replacingAgentId || agent.archivedAt || agent.internal) continue;
+      const parentAgentId = getParentAgentIdFromLabels(agent.labels);
+      if (parentAgentId) {
+        const parent =
+          workspaceAgents.get(parentAgentId) ??
+          this.agents.get(parentAgentId) ??
+          (await this.registry?.get(parentAgentId));
+        if (!parent || parent.workspaceId === workspaceId) continue;
+      }
+      rootAgentIds.push(agent.id);
+    }
+    return rootAgentIds.sort();
+  }
+
+  private async serializeWorkspaceRootCreate<T>(
+    workspaceId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.workspaceRootCreationTails.get(workspaceId) ?? Promise.resolve();
+    let release!: () => void;
+    const released = new Promise<void>((releaseLock) => {
+      release = releaseLock;
+    });
+    const current = previous.catch(() => undefined).then(() => released);
+    this.workspaceRootCreationTails.set(workspaceId, current);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.workspaceRootCreationTails.get(workspaceId) === current) {
+        this.workspaceRootCreationTails.delete(workspaceId);
+      }
+    }
   }
 
   private async createAgentInternal(

@@ -58,10 +58,16 @@ Background commands started by the current Agent appear beside the workspace bra
 ## Independent agent conversations
 
 Agent-scoped `create_agent` calls create a child agent in the caller's workspace by default.
-Set `detached: true` to create an independent conversation instead; `workspaceId` still
-selects its workspace and defaults to the caller's workspace when omitted. The independent
-agent appears as a workspace root and is not canceled or archived with its creator.
-Sharing a workspace does not isolate concurrent file edits.
+Each workspace can have only one unarchived independent root conversation. To start another
+independent conversation, call `create_workspace` first, then call `create_agent` with
+`detached: true` and the new `workspaceId`. Normal child agents remain in their parent's
+workspace.
+
+For workspaces created by older versions with multiple active roots, selecting the workspace
+restores every root as a tab and focuses the one needing attention. The workspace menu lists
+those conversations and lets users open or archive each one without visiting global history.
+Archiving preserves conversation history. Sharing a workspace does not isolate concurrent file
+edits.
 
 `notifyOnFinish: true` can notify the creator when an independently created agent finishes,
 fails, or needs permission without establishing a parent relationship. Notifications do

@@ -6,4 +6,8 @@
 // UI surface. Use `@/subagents/policies` only when the caller is
 // non-RN infrastructure code; otherwise prefer `@/subagents`.
 export { resolveCloseAgentTabPolicy, type CloseAgentTabPolicy } from "./close-tab-policy";
-export { isWorkspaceRootAgent, pickWorkspacePrimaryAgentId } from "./workspace-root-policy";
+export {
+  isWorkspaceRootAgent,
+  listActiveWorkspaceRootAgentIds,
+  pickWorkspacePrimaryAgentId,
+} from "./workspace-root-policy";

@@ -1,6 +1,9 @@
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
-type WorkspaceAgent = { parentAgentId: string | null; workspaceId?: string | null };
+interface WorkspaceAgent {
+  parentAgentId: string | null;
+  workspaceId?: string | null;
+}
 
 export function isWorkspaceRootAgent(
   agent: WorkspaceAgent,
@@ -11,8 +14,10 @@ export function isWorkspaceRootAgent(
   }
 
   const workspaceId = normalizeWorkspaceOpaqueId(agent.workspaceId);
-  const parentWorkspaceId = normalizeWorkspaceOpaqueId(parentAgent?.workspaceId);
-  return Boolean(workspaceId && parentWorkspaceId && workspaceId !== parentWorkspaceId);
+  if (!workspaceId || !parentAgent) {
+    return false;
+  }
+  return normalizeWorkspaceOpaqueId(parentAgent.workspaceId) !== workspaceId;
 }
 
 type PrimaryWorkspaceAgent = WorkspaceAgent & {
@@ -20,6 +25,41 @@ type PrimaryWorkspaceAgent = WorkspaceAgent & {
   createdAt?: Date | string | null;
   archivedAt?: Date | string | null;
 };
+
+function createdAtTimestamp(agent: PrimaryWorkspaceAgent): number {
+  let createdAt = Number.POSITIVE_INFINITY;
+  if (agent.createdAt instanceof Date) {
+    createdAt = agent.createdAt.getTime();
+  } else if (agent.createdAt) {
+    createdAt = Date.parse(agent.createdAt);
+  }
+  return Number.isFinite(createdAt) ? createdAt : Number.POSITIVE_INFINITY;
+}
+
+export function listActiveWorkspaceRootAgentIds(
+  agents: readonly PrimaryWorkspaceAgent[],
+  workspaceId: string,
+): string[] {
+  const normalizedWorkspaceId = normalizeWorkspaceOpaqueId(workspaceId);
+  if (!normalizedWorkspaceId) return [];
+
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  return agents
+    .filter(
+      (agent) =>
+        !agent.archivedAt &&
+        normalizeWorkspaceOpaqueId(agent.workspaceId) === normalizedWorkspaceId &&
+        isWorkspaceRootAgent(
+          agent,
+          agent.parentAgentId ? byId.get(agent.parentAgentId) : undefined,
+        ),
+    )
+    .sort((left, right) => {
+      const createdAtDifference = createdAtTimestamp(left) - createdAtTimestamp(right);
+      return createdAtDifference || left.id.localeCompare(right.id);
+    })
+    .map((agent) => agent.id);
+}
 
 /** A workspace owns one primary tab; additional independent roots remain separate conversations. */
 export function pickWorkspacePrimaryAgentId(
@@ -41,13 +81,7 @@ export function pickWorkspacePrimaryAgentId(
       agent,
       agent.parentAgentId ? byId.get(agent.parentAgentId) : undefined,
     );
-    const createdAt =
-      agent.createdAt instanceof Date
-        ? agent.createdAt.getTime()
-        : agent.createdAt
-          ? Date.parse(agent.createdAt)
-          : Infinity;
-    const timestamp = Number.isFinite(createdAt) ? createdAt : Infinity;
+    const timestamp = createdAtTimestamp(agent);
     if (
       !primary ||
       (active && !primaryIsActive) ||
