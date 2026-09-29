@@ -169,29 +169,6 @@ describe("PersistedConfigSchema GitHub OAuth config", () => {
   });
 });
 
-describe("PersistedConfigSchema provider credentials", () => {
-  test("accepts separate OpenAI STT and TTS credentials", () => {
-    const parsed = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          stt: {
-            apiKey: " stt-secret ",
-            baseUrl: " https://stt.example.com/v1 ",
-          },
-          tts: {
-            apiKey: " tts-secret ",
-            baseUrl: " https://tts.example.com/v1 ",
-          },
-        },
-      },
-    });
-
-    expect(parsed.providers?.openai?.stt?.apiKey).toBe("stt-secret");
-    expect(parsed.providers?.openai?.stt?.baseUrl).toBe("https://stt.example.com/v1");
-    expect(parsed.providers?.openai?.tts?.apiKey).toBe("tts-secret");
-    expect(parsed.providers?.openai?.tts?.baseUrl).toBe("https://tts.example.com/v1");
-  });
-});
 
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
@@ -665,41 +642,6 @@ describe("PersistedConfigSchema logging config", () => {
   });
 });
 
-describe("PersistedConfigSchema voice mode config", () => {
-  test("accepts a dedicated turn detection provider", () => {
-    const parsed = PersistedConfigSchema.parse({
-      features: {
-        voiceMode: {
-          turnDetection: {
-            provider: "local",
-          },
-        },
-      },
-    });
-
-    expect(parsed.features?.voiceMode?.turnDetection?.provider).toBe("local");
-  });
-
-  test("accepts trimmed STT language fields", () => {
-    const parsed = PersistedConfigSchema.parse({
-      features: {
-        dictation: {
-          stt: {
-            language: " fr ",
-          },
-        },
-        voiceMode: {
-          stt: {
-            language: " de ",
-          },
-        },
-      },
-    });
-
-    expect(parsed.features?.dictation?.stt?.language).toBe("fr");
-    expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
-  });
-});
 
 describe("loadPersistedConfig", () => {
   test("materializes the hosted Relay defaults for a new Paseo home", () => {
@@ -747,37 +689,41 @@ describe("loadPersistedConfig", () => {
     }
   });
 
-  test("loads a config that still uses the removed providers.openai.voice block", () => {
+  test("discards speech settings left by older releases", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");
     try {
       writeFileSync(
         configPath,
-        `${JSON.stringify(
-          {
-            version: 1,
-            providers: {
-              openai: {
-                apiKey: "global-key",
-                voice: { apiKey: "voice-key", baseUrl: "https://voice.example.com/v1" },
-              },
+        `${JSON.stringify({
+          version: 1,
+          providers: {
+            local: { enabled: true },
+            openai: {
+              apiKey: "global-key",
+              stt: { apiKey: "stt-key" },
+              tts: { apiKey: "tts-key" },
+              voice: { apiKey: "voice-key" },
             },
           },
-          null,
-          2,
-        )}\n`,
+          features: {
+            dictation: { enabled: true },
+            voiceMode: { enabled: true },
+          },
+        })}\n`,
       );
 
       const config = loadPersistedConfig(home);
 
-      expect(config.providers?.openai?.apiKey).toBe("global-key");
-      expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
-      expect(config.providers?.openai?.stt).toBeUndefined();
-      expect(config.providers?.openai?.tts).toBeUndefined();
+      expect(config.providers?.openai).toEqual({ apiKey: "global-key" });
+      expect(config.providers).not.toHaveProperty("local");
+      expect(config.features).not.toHaveProperty("dictation");
+      expect(config.features).not.toHaveProperty("voiceMode");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
 });
 
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {

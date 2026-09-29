@@ -218,9 +218,9 @@ describe("matchesAgentUpdatesFilter", () => {
   });
 
   test("label match vs mismatch", () => {
-    const agent = makeAgentPayload({ id: "a", labels: { surface: "voice" } });
+    const agent = makeAgentPayload({ id: "a", labels: { surface: "dashboard" } });
     expect(
-      matchesAgentUpdatesFilter({ agent, project, filter: { labels: { surface: "voice" } } }),
+      matchesAgentUpdatesFilter({ agent, project, filter: { labels: { surface: "dashboard" } } }),
     ).toBe(true);
     expect(
       matchesAgentUpdatesFilter({ agent, project, filter: { labels: { surface: "cli" } } }),

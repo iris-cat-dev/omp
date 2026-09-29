@@ -31,22 +31,6 @@ export {
   type DirectTcpHostConnection,
   type NormalizedDirectTcpHostConnection,
 } from "@omp-desktop/protocol/host-connection-schema";
-export {
-  ensureLocalSpeechModels,
-  listLocalSpeechModels,
-  type LocalSpeechModelId,
-  type LocalSttModelId,
-  type LocalTtsModelId,
-} from "./speech/providers/local/models.js";
-export {
-  applySherpaLoaderEnv,
-  resolveSherpaLoaderEnv,
-  sherpaLoaderEnvKey,
-  sherpaPlatformArch,
-  sherpaPlatformPackageName,
-  type SherpaLoaderEnvKey,
-  type SherpaLoaderEnvResolution,
-} from "./speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 // Provider binary resolution
 export {

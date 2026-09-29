@@ -459,18 +459,13 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.get("1")?.run.isSealed).toBe(true);
   });
 
-  it("hosts single calls while leaving plans and spoken messages ungrouped", () => {
+  it("hosts single calls while leaving plans ungrouped", () => {
     const singleCall = toolCall("1", { type: "shell", command: "one" });
     const plan = toolCall("2", { type: "plan", text: "Plan" });
-    const speak = toolCall(
-      "3",
-      { type: "unknown", input: "Hello", output: null },
-      { name: "speak" },
-    );
 
-    const result = project({ level: "overview", head: [singleCall, plan, speak] });
+    const result = project({ level: "overview", head: [singleCall, plan] });
 
-    expect(result.head).toEqual([singleCall, plan, speak]);
+    expect(result.head).toEqual([singleCall, plan]);
     expect(result.groupsByHostId.get(singleCall.id)?.run.calls).toEqual([singleCall]);
     expect(result.groupsByHostId.size).toBe(1);
   });

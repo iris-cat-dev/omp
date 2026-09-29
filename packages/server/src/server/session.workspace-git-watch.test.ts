@@ -260,8 +260,6 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     }),
     workspaceGitService,
     mcpBaseUrl: null,
-    stt: null,
-    tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
     serviceProxy: options?.serviceProxy,

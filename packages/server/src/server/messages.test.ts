@@ -112,7 +112,7 @@ describe("serializeAgentStreamEvent", () => {
       item: {
         type: "tool_call",
         callId: "call_unknown",
-        name: "paseo_voice.speak",
+        name: "custom.unknown_tool",
         status: "completed",
         detail: {
           type: "unknown",

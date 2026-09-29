@@ -37,7 +37,6 @@ import type {
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   AgentHistoryUnavailable,
-  ServerCapabilities,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@omp-desktop/protocol/messages";
@@ -294,7 +293,6 @@ export interface DaemonServerInfo {
   hostname: string | null;
   version: string | null;
   desktopManaged?: boolean;
-  capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
 }
 
@@ -401,8 +399,6 @@ export interface SessionState {
   hasHydratedWorkspaces: boolean;
   hasWorkspaceDirectorySnapshot: boolean;
 
-  // Audio state
-  isPlayingAudio: boolean;
 
   // Focus
   focusedAgentId: string | null;
@@ -477,8 +473,6 @@ interface SessionStoreActions {
   setViewedTimelineSync: (serverId: string, sync: ViewedTimelineUiBridge | null) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
 
-  // Audio state
-  setIsPlayingAudio: (serverId: string, playing: boolean) => void;
 
   // Focus
   setFocusedAgentId: (serverId: string, agentId: string | null) => void;
@@ -679,7 +673,6 @@ function createInitialSessionState(
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
     hasWorkspaceDirectorySnapshot: false,
-    isPlayingAudio: false,
     focusedAgentId: null,
     focusedTerminalId: null,
     agentStreamTail: new Map(),
@@ -709,12 +702,6 @@ function createInitialSessionState(
   };
 }
 
-function areServerCapabilitiesEqual(
-  current: ServerCapabilities | undefined,
-  next: ServerCapabilities | undefined,
-): boolean {
-  return JSON.stringify(current ?? null) === JSON.stringify(next ?? null);
-}
 
 function areServerInfoFeaturesEqual(
   current: ServerInfoStatusPayload["features"] | undefined,
@@ -728,7 +715,6 @@ function isSessionServerInfoUnchanged(input: {
   nextHostname: string | null;
   nextVersion: string | null;
   nextDesktopManaged: boolean | undefined;
-  nextCapabilities: ServerCapabilities | undefined;
   nextFeatures: ServerInfoStatusPayload["features"] | undefined;
   nextServerId: string;
 }): boolean {
@@ -737,7 +723,6 @@ function isSessionServerInfoUnchanged(input: {
     nextHostname,
     nextVersion,
     nextDesktopManaged,
-    nextCapabilities,
     nextFeatures,
   } = input;
   const prevHostname = currentServerInfo?.hostname?.trim() || null;
@@ -747,7 +732,6 @@ function isSessionServerInfoUnchanged(input: {
     prevHostname === nextHostname &&
     prevVersion === nextVersion &&
     currentServerInfo?.desktopManaged === nextDesktopManaged &&
-    areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
     areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
   );
 }
@@ -937,7 +921,6 @@ export const useSessionStore = create<SessionStore>()(
           const nextHostname = info.hostname?.trim() || null;
           const nextVersion = info.version?.trim() || null;
           const nextDesktopManaged = info.desktopManaged;
-          const nextCapabilities = info.capabilities;
           const nextFeatures = info.features;
 
           if (
@@ -946,7 +929,6 @@ export const useSessionStore = create<SessionStore>()(
               nextHostname,
               nextVersion,
               nextDesktopManaged,
-              nextCapabilities,
               nextFeatures,
               nextServerId: info.serverId,
             })
@@ -967,7 +949,6 @@ export const useSessionStore = create<SessionStore>()(
                   ...(nextDesktopManaged !== undefined
                     ? { desktopManaged: nextDesktopManaged }
                     : {}),
-                  ...(nextCapabilities ? { capabilities: nextCapabilities } : {}),
                   ...(nextFeatures ? { features: nextFeatures } : {}),
                 },
               },
@@ -980,22 +961,6 @@ export const useSessionStore = create<SessionStore>()(
         return get().sessions[serverId];
       },
 
-      // Audio state
-      setIsPlayingAudio: (serverId, playing) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session || session.isPlayingAudio === playing) {
-            return prev;
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, isPlayingAudio: playing },
-            },
-          };
-        });
-      },
 
       // Focus
       setFocusedAgentId: (serverId, agentId) => {

@@ -2983,15 +2983,15 @@ describe("create_agent MCP tool", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("allows caller agents to override cwd and applies caller context labels", async () => {
+  it("allows caller agents to override cwd", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const baseDir = await mkdtemp(join(tmpdir(), "paseo-mcp-test-"));
     const subdir = join(baseDir, "subdir");
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
-      id: "voice-agent",
+      id: "parent-agent",
       cwd: baseDir,
-      workspaceId: "wks_voice",
+      workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
     } as ManagedAgent);
@@ -3008,11 +3008,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "voice-agent",
-      resolveCallerContext: () => ({
-        childAgentDefaultLabels: { source: "voice" },
-        allowCustomCwd: true,
-      }),
+      callerAgentId: "parent-agent",
       logger,
     });
 
@@ -3031,10 +3027,9 @@ describe("create_agent MCP tool", () => {
       undefined,
       {
         labels: {
-          [PARENT_AGENT_ID_LABEL]: "voice-agent",
-          source: "voice",
+          [PARENT_AGENT_ID_LABEL]: "parent-agent",
         },
-        workspaceId: "wks_voice",
+        workspaceId: "wks_parent",
       },
     );
     await rm(baseDir, { recursive: true, force: true });
@@ -5204,63 +5199,6 @@ describe("provider MCP tools", () => {
   });
 });
 
-describe("speak MCP tool", () => {
-  const logger = createTestLogger();
-
-  it("invokes registered speak handler for caller agent", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const speak = vi.fn().mockResolvedValue(undefined);
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "voice-agent-1",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => speak,
-      logger,
-    });
-    const tool = registeredTool(server, "speak");
-    expect(tool).toBeDefined();
-
-    await tool.handler({ text: "Hello from voice agent." });
-    expect(speak).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "Hello from voice agent.",
-        callerAgentId: "voice-agent-1",
-      }),
-    );
-  });
-
-  it("fails when no speak handler exists", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "voice-agent-2",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => null,
-      logger,
-    });
-    const tool = registeredTool(server, "speak");
-    await expect(tool.handler({ text: "Hello." })).rejects.toThrow(
-      "No speak handler registered for your session",
-    );
-  });
-
-  it("does not register speak tool unless voice tools are enabled", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "agent-no-voice",
-      logger,
-    });
-    const tool = lookupTool(server, "speak");
-    expect(tool).toBeUndefined();
-  });
-});
 
 describe("agent snapshot MCP serialization", () => {
   const logger = createTestLogger();

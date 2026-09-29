@@ -55,12 +55,6 @@ const LogConfigSchema = z
   })
   .strict();
 
-const OpenAiSpeechEndpointSchema = z
-  .object({
-    apiKey: z.string().trim().min(1).optional(),
-    baseUrl: z.string().trim().min(1).optional(),
-  })
-  .strict();
 
 const OpenAiImageEndpointSchema = z
   .object({
@@ -77,22 +71,14 @@ const OpenAiProviderSchema = z
   .object({
     apiKey: z.string().min(1).optional(),
     baseUrl: z.string().trim().min(1).optional(),
-    stt: OpenAiSpeechEndpointSchema.optional(),
-    tts: OpenAiSpeechEndpointSchema.optional(),
     image: OpenAiImageEndpointSchema.optional(),
   })
   .strict();
 
-const LocalSpeechProviderSchema = z
-  .object({
-    modelsDir: z.string().min(1).optional(),
-  })
-  .strict();
 
 const ProvidersSchema = z
   .object({
     openai: OpenAiProviderSchema.optional(),
-    local: LocalSpeechProviderSchema.optional(),
   })
   .strict();
 
@@ -130,63 +116,6 @@ const DaemonAuthSchema = z
   })
   .strict();
 
-const SpeechProviderIdSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .pipe(z.enum(["openai", "local"]));
-
-const FeatureDictationSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    stt: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        language: z.string().trim().min(1).optional(),
-        confidenceThreshold: z.number().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-const FeatureVoiceModeSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    llm: z
-      .object({
-        provider: z.string().optional(),
-        model: z.string().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    stt: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        language: z.string().trim().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    turnDetection: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-      })
-      .strict()
-      .optional(),
-    tts: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
-        speakerId: z.number().int().optional(),
-        speed: z.number().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
 
 const FeatureWebUiSchema = z
   .object({
@@ -368,8 +297,6 @@ export const PersistedConfigSchema = z
       .optional(),
     features: z
       .object({
-        dictation: FeatureDictationSchema.optional(),
-        voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
       })
       .strict()
@@ -401,10 +328,6 @@ const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
       useTls: true,
     },
   },
-  features: {
-    dictation: { enabled: false },
-    voiceMode: { enabled: false },
-  },
   app: {
     baseUrl: "omp-desktop://app",
   },
@@ -422,45 +345,40 @@ function getConfigPath(paseoHome: string): string {
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
 }
-
-// Removed config fields are stripped before parsing so the strict schema does not
-// reject a config written by an older release. The stripped values are discarded,
-// not migrated — there is no back-compat for the removed `providers.openai.voice`
-// block (use `providers.openai.stt` / `providers.openai.tts`).
-function stripRemovedConfigFields(parsed: unknown): unknown {
+function stripRemovedSpeechConfig(parsed: unknown): unknown {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return parsed;
   }
 
   const root = { ...(parsed as Record<string, unknown>) };
   const providers = root.providers;
-  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
-    return root;
+  if (providers && typeof providers === "object" && !Array.isArray(providers)) {
+    const providerEntries = { ...(providers as Record<string, unknown>) };
+    delete providerEntries.local;
+
+    const openai = providerEntries.openai;
+    if (openai && typeof openai === "object" && !Array.isArray(openai)) {
+      const openaiConfig = { ...(openai as Record<string, unknown>) };
+      delete openaiConfig.stt;
+      delete openaiConfig.tts;
+      delete openaiConfig.voice;
+      providerEntries.openai = openaiConfig;
+    }
+    root.providers = providerEntries;
   }
 
-  const providersRecord = { ...(providers as Record<string, unknown>) };
-
-  const local = providersRecord.local;
-  if (local && typeof local === "object" && !Array.isArray(local)) {
-    const localRecord = { ...(local as Record<string, unknown>) };
-    delete localRecord.autoDownload;
-    providersRecord.local = localRecord;
+  const features = root.features;
+  if (features && typeof features === "object" && !Array.isArray(features)) {
+    const featureEntries = { ...(features as Record<string, unknown>) };
+    delete featureEntries.dictation;
+    delete featureEntries.voiceMode;
+    root.features = featureEntries;
   }
 
-  const openai = providersRecord.openai;
-  if (openai && typeof openai === "object" && !Array.isArray(openai)) {
-    const openaiRecord = { ...(openai as Record<string, unknown>) };
-    // COMPAT(openaiVoiceConfig): added 2026-06-30, remove after 2026-12-30.
-    // Drop a `providers.openai.voice` block left by an older release so the strict
-    // schema doesn't reject it. The value is discarded, not migrated — there is no
-    // back-compat; configure `providers.openai.stt` / `providers.openai.tts` instead.
-    delete openaiRecord.voice;
-    providersRecord.openai = openaiRecord;
-  }
-
-  root.providers = providersRecord;
   return root;
 }
+
+
 
 export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): PersistedConfig {
   const log = getLogger(logger);
@@ -500,8 +418,7 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     });
   }
 
-  const migrated = stripRemovedConfigFields(parsed);
-  const result = PersistedConfigSchema.safeParse(migrated);
+  const result = PersistedConfigSchema.safeParse(stripRemovedSpeechConfig(parsed));
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)

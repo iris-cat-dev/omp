@@ -7,11 +7,6 @@ export type KeyboardActionId =
   | "agent.interrupt"
   | "message-input.focus"
   | "message-input.send"
-  | "message-input.dictation-toggle"
-  | "message-input.dictation-cancel"
-  | "message-input.dictation-confirm"
-  | "message-input.voice-toggle"
-  | "message-input.voice-mute-toggle"
   | "message-input.mode-cycle"
   | "workspace.agent.new"
   | "workspace.tab.menu.open"
@@ -57,11 +52,6 @@ export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
   | { id: "message-input.focus"; scope: KeyboardActionScope }
   | { id: "message-input.send"; scope: KeyboardActionScope }
-  | { id: "message-input.dictation-toggle"; scope: KeyboardActionScope }
-  | { id: "message-input.dictation-cancel"; scope: KeyboardActionScope }
-  | { id: "message-input.dictation-confirm"; scope: KeyboardActionScope }
-  | { id: "message-input.voice-toggle"; scope: KeyboardActionScope }
-  | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
   | { id: "workspace.agent.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.menu.open"; scope: KeyboardActionScope }

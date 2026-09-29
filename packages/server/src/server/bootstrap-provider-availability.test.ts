@@ -80,8 +80,6 @@ describe("bootstrap provider availability", () => {
       agentStoragePath,
       relayEnabled: false,
       appBaseUrl: "https://app.paseo.sh",
-      openai: undefined,
-      speech: undefined,
     };
     const processFailures: Error[] = [];
     const onUnhandledRejection = (reason: unknown) => {

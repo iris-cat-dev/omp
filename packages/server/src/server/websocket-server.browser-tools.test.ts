@@ -21,7 +21,7 @@ import type { ScheduleService } from "./schedule/service.js";
 import { createStub } from "./test-utils/class-mocks.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { PaseoWebSocketServer } from "./websocket-server.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 interface BrowserToolsDaemonHarness {
@@ -199,7 +199,7 @@ describe("WebSocketServer browser tools wiring", () => {
 async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarness> {
   const httpServer = createServer();
   const broker = createBroker();
-  const wsServer = createVoiceAssistantWebSocketServer({ httpServer, broker });
+  const wsServer = createPaseoWebSocketServer({ httpServer, broker });
   const clients = new Set<DaemonClient>();
 
   await listen(httpServer);
@@ -266,10 +266,10 @@ function createRequestIdSequence(): () => string {
   };
 }
 
-function createVoiceAssistantWebSocketServer(params: {
+function createPaseoWebSocketServer(params: {
   httpServer: HTTPServer;
   broker: BrowserToolsBroker;
-}): VoiceAssistantWebSocketServer {
+}): PaseoWebSocketServer {
   const { httpServer, broker } = params;
   const agentManager = {
     setAgentAttentionCallback() {},
@@ -286,7 +286,7 @@ function createVoiceAssistantWebSocketServer(params: {
     onChange: () => () => {},
   };
 
-  return new VoiceAssistantWebSocketServer(
+  return new PaseoWebSocketServer(
     httpServer,
     createStub<pino.Logger>(createLogger()),
     "srv-test",

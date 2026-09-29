@@ -6,15 +6,7 @@ export type KeyboardFocusScope =
   | "browser"
   | "other";
 
-export type MessageInputKeyboardActionKind =
-  | "focus"
-  | "send"
-  | "dictation-toggle"
-  | "dictation-cancel"
-  | "dictation-confirm"
-  | "voice-toggle"
-  | "voice-mute-toggle"
-  | "mode-cycle";
+export type MessageInputKeyboardActionKind = "focus" | "send" | "mode-cycle";
 
 export type KeyboardActionId =
   | "agent.interrupt"

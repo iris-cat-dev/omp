@@ -22,7 +22,6 @@ import { openSidePanelView } from "@/workspace-tabs/side-panel";
 import {
   AssistantMessage,
   AssistantMarkdownImage,
-  SpeakMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
@@ -866,16 +865,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (payload.source === "agent") {
           const data = payload.data;
 
-          if (
-            data.name === "speak" &&
-            data.detail.type === "unknown" &&
-            typeof data.detail.input === "string" &&
-            data.detail.input.trim()
-          ) {
-            return (
-              <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
-            );
-          }
 
           const toolCall = (
             <ToolCallSlot

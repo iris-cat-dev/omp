@@ -1136,7 +1136,7 @@ export class HubRelationshipHarness {
       clientId: "hub-must-not-resume",
       clientType: "browser",
       protocolVersion: 1,
-      capabilities: { voice: true, pushNotifications: true },
+      capabilities: { experimental: true, pushNotifications: true },
     });
     return socket.closeCode;
   }

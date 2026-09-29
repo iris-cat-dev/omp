@@ -31,7 +31,6 @@ import {
   Stethoscope,
   Info,
   Bell,
-  Shield,
   Puzzle,
   FolderGit2,
   SquareTerminal,
@@ -73,7 +72,6 @@ import { EditorSection } from "@/screens/settings/editor-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
 import { DesktopStartupSection } from "@/desktop/components/desktop-startup-section";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
@@ -150,12 +148,6 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "notifications",
     labelKey: "settings.sections.notifications",
     icon: Bell,
-    desktopOnly: true,
-  },
-  {
-    id: "permissions",
-    labelKey: "settings.sections.permissions",
-    icon: Shield,
     desktopOnly: true,
   },
   { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
@@ -1262,8 +1254,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           return isDesktopApp ? <IntegrationsSection /> : null;
         case "notifications":
           return isDesktopApp ? <DesktopNotificationsSection /> : null;
-        case "permissions":
-          return isDesktopApp ? <DesktopPermissionsSection /> : null;
         case "diagnostics":
           return (
             <DiagnosticsSection

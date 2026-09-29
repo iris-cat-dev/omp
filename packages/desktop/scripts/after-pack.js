@@ -49,16 +49,6 @@ function pruneEsbuild(nodeModules, platform, arch) {
   pruneChildrenExcept(path.join(nodeModules, "@esbuild"), new Set([`${platform}-${arch}`]));
 }
 
-function pruneSherpa(nodeModules, platform, arch) {
-  const platformName = platform === "win32" ? "win" : platform;
-  const keep = `sherpa-onnx-${platformName}-${arch}`;
-  if (!fs.existsSync(nodeModules)) return;
-  for (const entry of fs.readdirSync(nodeModules)) {
-    if (entry.startsWith("sherpa-onnx-") && entry !== keep) {
-      rmSafe(path.join(nodeModules, entry));
-    }
-  }
-}
 function keyringBindingPath(resourcesDir, arch) {
   const bindingName = `win32-${arch}-msvc`;
   return path.join(
@@ -99,7 +89,6 @@ function pruneNativeModules(appOutDir, platform, arch) {
   pruneNodePty(nodeModules, platform, arch);
   pruneSharpLibvips(nodeModules, platform, arch);
   pruneEsbuild(nodeModules, platform, arch);
-  pruneSherpa(nodeModules, platform, arch);
 
   const after = dirSizeSync(nodeModules);
   const savedMB = ((before - after) / 1024 / 1024).toFixed(1);

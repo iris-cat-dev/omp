@@ -117,7 +117,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
   );
 }
 
-import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { PaseoWebSocketServer } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
@@ -129,10 +129,6 @@ import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-wo
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
-import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
-import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
-import type { RequestedSpeechProviders } from "./speech/speech-types.js";
-import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -369,19 +365,6 @@ function summarizeAgentMcpDebugBody(body: unknown): Record<string, unknown> {
   };
 }
 
-export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
-export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
-
-export interface PaseoSpeechSttLanguages {
-  dictation: string;
-  voice: string;
-}
-
-export interface PaseoSpeechConfig {
-  providers: RequestedSpeechProviders;
-  sttLanguages?: PaseoSpeechSttLanguages;
-  local?: PaseoLocalSpeechConfig;
-}
 
 export type DaemonLifecycleIntent =
   | {
@@ -446,7 +429,6 @@ export interface PaseoDaemonConfig {
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   github?: GitHubAuthConfig;
-  openai?: PaseoOpenAIConfig;
   imageGeneration?: {
     enabled: boolean;
     provider: "openai";
@@ -458,11 +440,6 @@ export interface PaseoDaemonConfig {
     apiKeySource: "environment" | "config" | null;
     subscriptionCredentialId?: number;
   };
-  speech?: PaseoSpeechConfig;
-  voiceLlmProvider?: AgentProvider | null;
-  voiceLlmProviderExplicit?: boolean;
-  voiceLlmModel?: string | null;
-  dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerCatalogRefreshTimeoutMs?: number;
@@ -790,7 +767,7 @@ export async function createPaseoDaemon(
   daemonConfigStore.onFieldChange("app.baseUrl", (value) => {
     appBaseUrl = typeof value === "string" ? value : DEFAULT_APP_BASE_URL;
   });
-  let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let wsServer: PaseoWebSocketServer | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
@@ -968,7 +945,7 @@ export async function createPaseoDaemon(
   const httpServer = createHTTPServer(app);
 
   // Script proxy WebSocket upgrade handler — must be registered before the
-  // VoiceAssistantWebSocketServer attaches its own "upgrade" listener so that
+  // PaseoWebSocketServer attaches its own "upgrade" listener so that
   // script-bound upgrades are forwarded first. The handler is a no-op for
   // requests that don't match a registered script route.
   httpServer.on("upgrade", serviceProxy.upgradeHandler({ passthroughUnknown: true }));
@@ -1366,10 +1343,7 @@ export async function createPaseoDaemon(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
   );
-  logger.info(
-    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
-  );
-  logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
+  logger.info({ elapsed: elapsed() }, "Preparing MCP runtime");
 
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
@@ -1426,10 +1400,6 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
-    enableVoiceTools: runtime.enableVoiceTools,
-    voiceOnly: runtime.voiceOnly,
-    resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
-    resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
     logger,
   });
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
@@ -1560,12 +1530,6 @@ export async function createPaseoDaemon(
     logger.info({ route: agentMcpRoute, enabled: mcpEnabled }, "Agent MCP route mounted");
   }
 
-  const speechService = createSpeechService({
-    logger,
-    openaiConfig: config.openai,
-    speechConfig: config.speech,
-  });
-  logger.info({ elapsed: elapsed() }, "Speech service created");
 
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
@@ -1652,7 +1616,7 @@ export async function createPaseoDaemon(
               logger.info("Daemon password authentication enabled");
             }
 
-            wsServer = new VoiceAssistantWebSocketServer(
+            wsServer = new PaseoWebSocketServer(
               httpServer,
               logger,
               serverId,
@@ -1671,11 +1635,7 @@ export async function createPaseoDaemon(
               },
               workspaceAutoName,
               config.auth,
-              speechService,
               terminalManager,
-              {
-                finalTimeoutMs: config.dictationFinalTimeoutMs,
-              },
               daemonVersion,
               (intent) => {
                 try {
@@ -1749,9 +1709,6 @@ export async function createPaseoDaemon(
         }
       });
 
-      // Start speech service after listening so synchronous Sherpa native
-      // model loading doesn't block the server from accepting connections.
-      speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -1779,7 +1736,6 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
     terminalManager.killAll();
-    await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayStopped;
     if (wsServer) {

@@ -165,15 +165,6 @@ describe("shared tool-call display mapping", () => {
     expect(display.displayName).toBe("List Agents");
   });
 
-  it("does not override speak tool display name", () => {
-    const display = buildToolCallDisplayModel({
-      name: "speak",
-      status: "running",
-      error: null,
-      detail: { type: "unknown", input: null, output: null },
-    });
-    expect(display.displayName).toBe("Speak");
-  });
 
   it("labels plan detail rows as Plan", () => {
     const display = buildToolCallDisplayModel({

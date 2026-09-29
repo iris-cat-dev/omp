@@ -266,8 +266,6 @@ function createSessionForWireCompatTest(options?: {
     } as unknown as SessionOptions["workspaceGitService"],
     daemonConfigStore:
       new EmptyDaemonConfigStore() as unknown as SessionOptions["daemonConfigStore"],
-    stt: null,
-    tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
   });

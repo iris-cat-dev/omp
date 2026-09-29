@@ -48,7 +48,6 @@ export const ko: TranslationResources = {
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
       linkOpenFailed: "{{token}}을(를) 열 수 없습니다: {{reason}}",
       unsupportedLink: "이 링크를 열 수 없습니다: {{token}}",
-      unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
       online: "온라인",
@@ -148,18 +147,6 @@ export const ko: TranslationResources = {
       cancelingAgent: "에이전트 취소 중",
       stopAgent: "에이전트 중지",
       interrupt: "중단",
-    },
-    voice: {
-      enableVoiceMode: "음성 모드 켜기",
-      voiceMode: "음성 모드",
-      unmuteVoiceMode: "음성 모드 음소거 해제",
-      muteVoiceMode: "음성 모드 음소거",
-      stopDictation: "받아쓰기 중지",
-      startDictation: "받아쓰기 시작",
-      unmuteVoice: "음성 음소거 해제",
-      muteVoice: "음성 음소거",
-      dictation: "받아쓰기",
-      interruptBeforeVoice: "음성 모드를 시작하기 전에 에이전트를 중단하세요",
     },
     attachments: {
       addImage: "이미지 추가",
@@ -444,20 +431,8 @@ export const ko: TranslationResources = {
       file: "파일",
       directory: "폴더",
     },
-    speak: {
-      header: "말함",
-    },
     activity: {
       details: "세부 정보",
-    },
-    dictation: {
-      start: "음성 받아쓰기 시작",
-      cancel: "받아쓰기 취소",
-      retry: "받아쓰기 다시 시도",
-      insert: "전사 삽입",
-      insertAndSend: "전사 삽입 후 보내기",
-      failed: "받아쓰기 실패: {{error}}",
-      failedRetry: "받아쓰기에 실패했습니다. 다시 시도하려면 누르세요.",
     },
     question: {
       submit: "제출",
@@ -1535,28 +1510,8 @@ export const ko: TranslationResources = {
         requestFailed: "알림 권한을 요청하지 못했습니다: {{message}}",
         unexpectedState: "예기치 않은 알림 권한 상태: {{state}}",
       },
-      microphone: {
-        webOnly: "데스크톱 마이크 상태는 웹 런타임에서만 사용할 수 있습니다.",
-        navigatorUnavailable: "이 환경에서는 Navigator를 사용할 수 없습니다.",
-        granted: "마이크 접근이 허용되었습니다.",
-        denied: "시스템 설정에서 마이크 접근이 거부되어 있습니다.",
-        notGranted: "마이크 권한이 아직 허용되지 않았습니다.",
-        unexpectedState: "예기치 않은 마이크 권한 상태: {{state}}",
-        statusApiUnavailable:
-          "이 런타임에서는 마이크 상태 API를 사용할 수 없습니다. 접근을 확인하려면 요청을 사용하세요.",
-        queryFailed: "마이크 상태를 조회하지 못했습니다: {{message}}",
-        captureUnavailable: "이 환경에서는 마이크 캡처를 사용할 수 없습니다.",
-        permissionApiUnavailable:
-          "권한 상태 API를 사용할 수 없습니다. 접근을 확인하려면 요청을 사용하세요.",
-        requestsWebOnly: "데스크톱 마이크 요청은 웹 런타임에서만 사용할 수 있습니다.",
-        captureApiUnavailable: "이 환경에서는 마이크 캡처 API를 사용할 수 없습니다.",
-        requestDenied: "사용자 또는 시스템에 의해 마이크 권한이 거부되었습니다.",
-        noDevice: "마이크 장치를 찾을 수 없습니다.",
-        requestFailed: "마이크 권한을 요청하지 못했습니다: {{message}}",
-      },
       empty: {
         notifications: "알림 상태를 아직 확인하지 않았습니다.",
-        microphone: "마이크 상태를 아직 확인하지 않았습니다.",
       },
       testNotification: {
         title: "OMP Desktop 알림 테스트",
@@ -1874,13 +1829,6 @@ export const ko: TranslationResources = {
       retry: "다시 시도",
       copy: "복사",
       copied: "복사됨",
-    },
-  },
-  realtimeVoice: {
-    actions: {
-      mute: "실시간 음성 음소거",
-      unmute: "실시간 음성 음소거 해제",
-      stop: "실시간 음성 중지 및 턴 중단",
     },
   },
   rewind: {
@@ -2403,12 +2351,9 @@ export const ko: TranslationResources = {
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",
-        toggleVoiceMode: "음성 모드 토글",
-        startStopDictation: "받아쓰기 시작/중지",
         interruptAgent: "에이전트 중단",
         sendMessage: "메시지 보내기",
         queueMessage: "메시지 대기열에 추가",
-        muteUnmuteVoiceMode: "음성 모드 음소거/해제",
         switchProject: "프로젝트 전환",
       },
       helpNotes: {
@@ -2435,18 +2380,6 @@ export const ko: TranslationResources = {
         installed: "설치됨",
         uninstall: "제거",
         uninstalling: "제거 중...",
-      },
-    },
-    permissions: {
-      title: "권한",
-      microphone: "마이크",
-      refresh: "새로고침",
-      refreshing: "새로고침 중...",
-      refreshAccessibility: "데스크톱 권한 새로고침",
-      actions: {
-        granted: "허용됨",
-        request: "요청",
-        requesting: "요청 중...",
       },
     },
     host: {

@@ -63,7 +63,6 @@ export const zhCN: TranslationResources = {
       noFileFound: "未找到 {{token}} 对应的文件",
       linkOpenFailed: "无法打开 {{token}}：{{reason}}",
       unsupportedLink: "无法打开此链接：{{token}}",
-      unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
       online: "在线",
@@ -163,18 +162,6 @@ export const zhCN: TranslationResources = {
       cancelingAgent: "正在取消 Agent",
       stopAgent: "停止 Agent",
       interrupt: "中断",
-    },
-    voice: {
-      enableVoiceMode: "启用语音模式",
-      voiceMode: "语音模式",
-      unmuteVoiceMode: "取消静音语音模式",
-      muteVoiceMode: "静音语音模式",
-      stopDictation: "停止听写",
-      startDictation: "开始听写",
-      unmuteVoice: "取消静音",
-      muteVoice: "静音",
-      dictation: "听写",
-      interruptBeforeVoice: "启动语音模式前请先中断 Agent",
     },
     attachments: {
       addImage: "添加图片",
@@ -468,20 +455,8 @@ export const zhCN: TranslationResources = {
       file: "文件",
       directory: "文件夹",
     },
-    speak: {
-      header: "已朗读",
-    },
     activity: {
       details: "详情",
-    },
-    dictation: {
-      start: "开始语音听写",
-      cancel: "取消听写",
-      retry: "重试听写",
-      insert: "插入转写",
-      insertAndSend: "插入转写并发送",
-      failed: "听写失败：{{error}}",
-      failedRetry: "听写失败。点按重试。",
     },
     question: {
       submit: "提交",
@@ -1536,26 +1511,8 @@ export const zhCN: TranslationResources = {
         requestFailed: "请求通知权限失败：{{message}}",
         unexpectedState: "意外的通知权限状态：{{state}}",
       },
-      microphone: {
-        webOnly: "桌面麦克风状态仅在 web runtime 中可用。",
-        navigatorUnavailable: "此环境中 Navigator 不可用。",
-        granted: "已授予麦克风访问权限。",
-        denied: "系统设置中已拒绝麦克风访问。",
-        notGranted: "麦克风权限尚未授予。",
-        unexpectedState: "意外的麦克风权限状态：{{state}}",
-        statusApiUnavailable: "此 runtime 中麦克风状态 API 不可用。请使用请求来检查访问权限。",
-        queryFailed: "查询麦克风状态失败：{{message}}",
-        captureUnavailable: "此环境中麦克风采集不可用。",
-        permissionApiUnavailable: "权限状态 API 不可用。请使用请求来检查访问权限。",
-        requestsWebOnly: "桌面麦克风请求仅在 web runtime 中可用。",
-        captureApiUnavailable: "此环境中麦克风采集 API 不可用。",
-        requestDenied: "用户或系统拒绝了麦克风权限。",
-        noDevice: "未找到麦克风设备。",
-        requestFailed: "请求麦克风权限失败：{{message}}",
-      },
       empty: {
         notifications: "尚未检查通知状态。",
-        microphone: "尚未检查麦克风状态。",
       },
       testNotification: {
         title: "OMP Desktop 通知测试",
@@ -1899,13 +1856,6 @@ export const zhCN: TranslationResources = {
       retry: "重试",
       copy: "复制",
       copied: "已复制",
-    },
-  },
-  realtimeVoice: {
-    actions: {
-      mute: "静音 realtime voice",
-      unmute: "取消静音 realtime voice",
-      stop: "停止 realtime voice 并中断 turn",
     },
   },
   rewind: {
@@ -2424,12 +2374,9 @@ export const zhCN: TranslationResources = {
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",
-        toggleVoiceMode: "切换语音模式",
-        startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",
         sendMessage: "发送消息",
         queueMessage: "消息排队",
-        muteUnmuteVoiceMode: "静音/取消静音语音模式",
         switchProject: "切换项目",
       },
       helpNotes: {
@@ -2456,18 +2403,6 @@ export const zhCN: TranslationResources = {
         installed: "已安装",
         uninstall: "卸载",
         uninstalling: "正在卸载...",
-      },
-    },
-    permissions: {
-      title: "权限",
-      microphone: "麦克风",
-      refresh: "刷新",
-      refreshing: "正在刷新...",
-      refreshAccessibility: "刷新桌面端权限",
-      actions: {
-        granted: "已授权",
-        request: "请求",
-        requesting: "正在请求...",
       },
     },
     host: {

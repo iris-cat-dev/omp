@@ -26,18 +26,12 @@ if (-not $env:PASEO_HOME) {
     }
 }
 
-# Share speech models with the main install to avoid duplicate downloads
-if (-not $env:PASEO_LOCAL_MODELS_DIR) {
-    $env:PASEO_LOCAL_MODELS_DIR = "$env:USERPROFILE\.paseo\models\local-speech"
-    New-Item -ItemType Directory -Force -Path $env:PASEO_LOCAL_MODELS_DIR | Out-Null
-}
 
 Write-Host @"
 ======================================================
   Paseo Dev (Windows)
 ======================================================
   Home:    $($env:PASEO_HOME)
-  Models:  $($env:PASEO_LOCAL_MODELS_DIR)
   Daemon:  localhost:6768
 ======================================================
 "@

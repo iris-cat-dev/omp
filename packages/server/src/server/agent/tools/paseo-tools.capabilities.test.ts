@@ -48,7 +48,6 @@ const toolsByCapability = {
   scripts: ["list_workspace_scripts", "start_workspace_script", "stop_workspace_script"],
   providers: ["list_providers", "list_models", "list_profiles", "inspect_provider"],
   optional: [
-    "speak",
     "image_gen",
     "present_image",
     "browser_list_tabs",
@@ -110,7 +109,6 @@ function createCatalog(
     browserToolsEnabled: true,
     browserToolsBroker: {} as BrowserToolsBroker,
     callerAgentId,
-    enableVoiceTools: true,
     logger: pino({ level: "silent" }),
   });
 }

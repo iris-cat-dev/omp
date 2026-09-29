@@ -182,8 +182,6 @@ function createHarness(input: {
       onChange: () => () => {},
     }),
     mcpBaseUrl: null,
-    stt: null,
-    tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
   });

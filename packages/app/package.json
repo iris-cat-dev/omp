@@ -63,7 +63,6 @@
     "expo-haptics": "~15.0.7",
     "expo-image": "~3.0.10",
     "expo-image-picker": "^17.0.8",
-    "expo-keep-awake": "^15.0.7",
     "expo-linking": "~8.0.8",
     "expo-localization": "~17.0.9",
     "expo-router": "~6.0.13",

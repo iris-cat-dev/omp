@@ -29,7 +29,7 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 describe("persistence hooks", () => {
   test("buildConfigOverrides preserves the complete private launch config", () => {
     const record = createRecord({
-      title: "Voice agent (current)",
+      title: "Configured agent",
       config: {
         modeId: "default",
         model: "gpt-5.4-mini",
@@ -41,7 +41,7 @@ describe("persistence hooks", () => {
         toolPolicy: {
           preapproved: [{ kind: "mcp", server: "paseo", tool: "report_status" }],
         },
-        systemPrompt: "Use speak first.",
+        systemPrompt: "Use tools first.",
         mcpServers: {
           paseo: {
             type: "stdio",
@@ -64,7 +64,7 @@ describe("persistence hooks", () => {
       toolPolicy: {
         preapproved: [{ kind: "mcp", server: "paseo", tool: "report_status" }],
       },
-      systemPrompt: "Use speak first.",
+      systemPrompt: "Use tools first.",
       mcpServers: {
         paseo: {
           type: "stdio",
@@ -81,7 +81,7 @@ describe("persistence hooks", () => {
       title: "Renamed title",
       config: {
         model: "gpt-5.4-mini",
-        systemPrompt: "Confirm and speak first.",
+        systemPrompt: "Confirm first.",
         mcpServers: {
           paseo: {
             type: "stdio",
@@ -97,7 +97,7 @@ describe("persistence hooks", () => {
       cwd: "/tmp/project",
       modeId: undefined,
       model: "gpt-5.4-mini",
-      systemPrompt: "Confirm and speak first.",
+      systemPrompt: "Confirm first.",
       mcpServers: {
         paseo: {
           type: "stdio",

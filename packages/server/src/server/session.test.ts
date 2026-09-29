@@ -53,15 +53,6 @@ import type { GitHubPullRequestStatusFacts } from "../services/github-facts.js";
 
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
-  handleSendAgentMessage(
-    agentId: string,
-    text: string,
-    messageId?: string,
-    images?: Array<{ data: string; mimeType: string }>,
-    attachments?: unknown[],
-    runOptions?: unknown,
-    options?: { spokenInput?: boolean },
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
   handleCheckoutMergeRequest(params: unknown): Promise<unknown>;
   handleCheckoutMergeFromBaseRequest(params: unknown): Promise<unknown>;
   handleCheckoutCommitRequest(params: unknown): Promise<unknown>;
@@ -310,8 +301,6 @@ interface SessionForTestOptions {
   providerSnapshotManager?: ProviderSnapshotManager;
   daemonConfigStore?: { [K in keyof SessionOptions["daemonConfigStore"]]?: unknown };
   hubExecutionAgents?: SessionOptions["hubExecutionAgents"];
-  stt?: SessionOptions["stt"];
-  voice?: SessionOptions["voice"];
   paseoHome?: string;
   serverId?: SessionOptions["serverId"];
   daemonVersion?: SessionOptions["daemonVersion"];
@@ -414,8 +403,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       }),
     pluginRuntime: options.pluginRuntime,
     orchestrationSkills: options.orchestrationSkills,
-    stt: options.stt ?? null,
-    tts: null,
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
@@ -424,7 +411,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
-    voice: options.voice,
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,

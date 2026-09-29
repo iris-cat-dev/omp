@@ -48,7 +48,6 @@ export const ja: TranslationResources = {
       noFileFound: "{{token}}のファイルが見つかりません",
       linkOpenFailed: "{{token}}を開けませんでした: {{reason}}",
       unsupportedLink: "このリンクは開けません: {{token}}",
-      unexpectedDictationError: "音声入力処理中に予期しないエラーが発生しました。",
     },
     connectionStatus: {
       online: "オンライン",
@@ -148,18 +147,6 @@ export const ja: TranslationResources = {
       cancelingAgent: "エージェントをキャンセル中",
       stopAgent: "エージェントを停止",
       interrupt: "中断",
-    },
-    voice: {
-      enableVoiceMode: "音声モードを有効にする",
-      voiceMode: "音声モード",
-      unmuteVoiceMode: "音声モードのミュートを解除",
-      muteVoiceMode: "音声モードをミュート",
-      stopDictation: "音声入力を停止",
-      startDictation: "音声入力を開始",
-      unmuteVoice: "音声のミュートを解除",
-      muteVoice: "音声をミュート",
-      dictation: "音声入力",
-      interruptBeforeVoice: "音声モードを開始する前にエージェントを中断してください",
     },
     attachments: {
       addImage: "画像を追加",
@@ -446,20 +433,8 @@ export const ja: TranslationResources = {
       file: "ファイル",
       directory: "フォルダ",
     },
-    speak: {
-      header: "読み上げ済み",
-    },
     activity: {
       details: "詳細",
-    },
-    dictation: {
-      start: "音声入力を開始",
-      cancel: "音声入力をキャンセル",
-      retry: "音声入力を再試行",
-      insert: "文字起こしを挿入",
-      insertAndSend: "文字起こしを挿入して送信",
-      failed: "音声入力に失敗しました: {{error}}",
-      failedRetry: "音声入力に失敗しました。再試行をタップしてください。",
     },
     question: {
       submit: "送信",
@@ -1539,28 +1514,8 @@ export const ja: TranslationResources = {
         requestFailed: "通知の権限リクエストに失敗しました: {{message}}",
         unexpectedState: "予期しない通知の権限状態: {{state}}",
       },
-      microphone: {
-        webOnly: "デスクトップマイクのステータスはWebランタイムでのみ利用できます。",
-        navigatorUnavailable: "この環境ではNavigatorは利用できません。",
-        granted: "マイクへのアクセスが許可されています。",
-        denied: "マイクへのアクセスはシステム設定で拒否されています。",
-        notGranted: "マイクの権限はまだ許可されていません。",
-        unexpectedState: "予期しないマイクの権限状態: {{state}}",
-        statusApiUnavailable:
-          "マイクステータスAPIはこのランタイムでは利用できません。アクセス確認は［許可を求める］から行ってください。",
-        queryFailed: "マイクのステータス確認に失敗しました: {{message}}",
-        captureUnavailable: "この環境ではマイクのキャプチャは利用できません。",
-        permissionApiUnavailable:
-          "権限ステータスAPIは利用できません。アクセス確認は［許可を求める］から行ってください。",
-        requestsWebOnly: "デスクトップマイクのリクエストはWebランタイムでのみ利用できます。",
-        captureApiUnavailable: "この環境ではマイクキャプチャAPIは利用できません。",
-        requestDenied: "マイクの権限はユーザーまたはシステムによって拒否されました。",
-        noDevice: "マイクデバイスが見つかりませんでした。",
-        requestFailed: "マイクの権限リクエストに失敗しました: {{message}}",
-      },
       empty: {
         notifications: "通知のステータスはまだ確認されていません。",
-        microphone: "マイクのステータスはまだ確認されていません。",
       },
       testNotification: {
         title: "OMP Desktop通知テスト",
@@ -1880,13 +1835,6 @@ export const ja: TranslationResources = {
       retry: "再試行",
       copy: "コピー",
       copied: "コピーしました",
-    },
-  },
-  realtimeVoice: {
-    actions: {
-      mute: "リアルタイム音声をミュート",
-      unmute: "リアルタイム音声のミュートを解除",
-      stop: "リアルタイム音声を停止してターンを中断",
     },
   },
   rewind: {
@@ -2410,12 +2358,9 @@ export const ja: TranslationResources = {
         cycleTheme: "テーマを順に切り替え",
         focusMessageInput: "メッセージ入力にフォーカス",
         cycleAgentMode: "エージェントモードを順に切り替え",
-        toggleVoiceMode: "音声モードを切り替え",
-        startStopDictation: "音声入力を開始/停止",
         interruptAgent: "エージェントを中断",
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
-        muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
         switchProject: "プロジェクトを切り替え",
       },
       helpNotes: {
@@ -2443,18 +2388,6 @@ export const ja: TranslationResources = {
         installed: "インストール済み",
         uninstall: "アンインストール",
         uninstalling: "アンインストール中...",
-      },
-    },
-    permissions: {
-      title: "権限",
-      microphone: "マイク",
-      refresh: "更新",
-      refreshing: "更新中...",
-      refreshAccessibility: "デスクトップの権限を更新",
-      actions: {
-        granted: "許可済み",
-        request: "許可を求める",
-        requesting: "許可を求めています...",
       },
     },
     host: {

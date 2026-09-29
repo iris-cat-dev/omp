@@ -15,9 +15,6 @@ export function getToolLeafName(name: string): string | null {
   return tokens.length > 0 ? tokens[tokens.length - 1] : null;
 }
 
-export function isSpeakToolName(name: string): boolean {
-  return getToolLeafName(name) === "speak";
-}
 
 export function isLikelyNamespacedToolName(name: string): boolean {
   const normalized = normalizeToolName(name);
@@ -41,9 +38,6 @@ export function isLikelyNamespacedToolName(name: string): boolean {
 
 export function isPaseoToolName(name: string): boolean {
   const normalized = normalizeToolName(name);
-  if (isSpeakToolName(normalized)) {
-    return false;
-  }
   if (normalized.includes("__")) {
     const segments = normalized.split("__").filter((s) => s.length > 0);
     return (
@@ -86,9 +80,6 @@ export function isLikelyExternalToolName(name: string): boolean {
   const normalized = normalizeToolName(name);
   if (!normalized) {
     return false;
-  }
-  if (isSpeakToolName(normalized)) {
-    return true;
   }
   return isLikelyNamespacedToolName(normalized);
 }

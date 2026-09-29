@@ -79,33 +79,16 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
           return;
         }
 
-        setSnapshot((previous) => {
-          const base: DesktopPermissionSnapshot = previous ?? {
-            checkedAt: Date.now(),
-            notifications: {
-              state: "unknown",
-              detail: t("desktop.permissions.empty.notifications"),
-            },
-            microphone: {
-              state: "unknown",
-              detail: t("desktop.permissions.empty.microphone"),
-            },
-          };
-
-          if (kind === "notifications") {
-            return {
-              ...base,
-              checkedAt: Date.now(),
-              notifications: status,
-            };
-          }
-
-          return {
-            ...base,
-            checkedAt: Date.now(),
-            microphone: status,
-          };
-        });
+        setSnapshot((previous) => ({
+          checkedAt: Date.now(),
+          notifications:
+            kind === "notifications"
+              ? status
+              : (previous?.notifications ?? {
+                  state: "unknown",
+                  detail: t("desktop.permissions.empty.notifications"),
+                }),
+        }));
       } catch (error) {
         console.error(`[Settings] Failed to request ${kind} permission`, error);
       } finally {

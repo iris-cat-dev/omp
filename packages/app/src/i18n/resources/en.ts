@@ -62,7 +62,6 @@ export const en = {
       noFileFound: "No file found for {{token}}",
       linkOpenFailed: "Could not open {{token}}: {{reason}}",
       unsupportedLink: "Cannot open this link: {{token}}",
-      unexpectedDictationError: "An unexpected error occurred while handling dictation.",
     },
     connectionStatus: {
       online: "Online",
@@ -162,18 +161,6 @@ export const en = {
       cancelingAgent: "Canceling agent",
       stopAgent: "Stop agent",
       interrupt: "Interrupt",
-    },
-    voice: {
-      enableVoiceMode: "Enable Voice mode",
-      voiceMode: "Voice mode",
-      unmuteVoiceMode: "Unmute Voice mode",
-      muteVoiceMode: "Mute Voice mode",
-      stopDictation: "Stop dictation",
-      startDictation: "Start dictation",
-      unmuteVoice: "Unmute voice",
-      muteVoice: "Mute voice",
-      dictation: "Dictation",
-      interruptBeforeVoice: "Interrupt the agent before starting voice mode",
     },
     attachments: {
       addImage: "Add image",
@@ -468,20 +455,8 @@ export const en = {
       file: "File",
       directory: "Folder",
     },
-    speak: {
-      header: "Spoke",
-    },
     activity: {
       details: "Details",
-    },
-    dictation: {
-      start: "Start voice dictation",
-      cancel: "Cancel dictation",
-      retry: "Retry dictation",
-      insert: "Insert transcription",
-      insertAndSend: "Insert transcription and send",
-      failed: "Dictation failed: {{error}}",
-      failedRetry: "Dictation failed. Tap retry.",
     },
     question: {
       submit: "Submit",
@@ -1561,28 +1536,8 @@ export const en = {
         requestFailed: "Failed to request notification permission: {{message}}",
         unexpectedState: "Unexpected notification permission state: {{state}}",
       },
-      microphone: {
-        webOnly: "Desktop microphone status is only available on web runtime.",
-        navigatorUnavailable: "Navigator is unavailable in this environment.",
-        granted: "Microphone access is granted.",
-        denied: "Microphone access is denied in system settings.",
-        notGranted: "Microphone permission has not been granted yet.",
-        unexpectedState: "Unexpected microphone permission state: {{state}}",
-        statusApiUnavailable:
-          "Microphone status API is unavailable in this runtime. Use Request to check access.",
-        queryFailed: "Failed to query microphone status: {{message}}",
-        captureUnavailable: "Microphone capture is unavailable in this environment.",
-        permissionApiUnavailable:
-          "Permission status API is unavailable. Use Request to check access.",
-        requestsWebOnly: "Desktop microphone requests are only available on web runtime.",
-        captureApiUnavailable: "Microphone capture API is unavailable in this environment.",
-        requestDenied: "Microphone permission was denied by the user or system.",
-        noDevice: "No microphone device was found.",
-        requestFailed: "Failed to request microphone permission: {{message}}",
-      },
       empty: {
         notifications: "Notification status has not been checked yet.",
-        microphone: "Microphone status has not been checked yet.",
       },
       testNotification: {
         title: "OMP Desktop notification test",
@@ -1933,13 +1888,6 @@ export const en = {
       retry: "Retry",
       copy: "Copy",
       copied: "Copied",
-    },
-  },
-  realtimeVoice: {
-    actions: {
-      mute: "Mute realtime voice",
-      unmute: "Unmute realtime voice",
-      stop: "Stop realtime voice and interrupt turn",
     },
   },
   rewind: {
@@ -2515,12 +2463,9 @@ export const en = {
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
         cycleAgentMode: "Cycle agent mode",
-        toggleVoiceMode: "Toggle voice mode",
-        startStopDictation: "Start/stop dictation",
         interruptAgent: "Interrupt agent",
         sendMessage: "Send message",
         queueMessage: "Queue message",
-        muteUnmuteVoiceMode: "Mute/unmute voice mode",
         switchProject: "Switch project",
       },
       helpNotes: {
@@ -2547,18 +2492,6 @@ export const en = {
         installed: "Installed",
         uninstall: "Uninstall",
         uninstalling: "Uninstalling...",
-      },
-    },
-    permissions: {
-      title: "Permissions",
-      microphone: "Microphone",
-      refresh: "Refresh",
-      refreshing: "Refreshing...",
-      refreshAccessibility: "Refresh desktop permissions",
-      actions: {
-        granted: "Granted",
-        request: "Request",
-        requesting: "Requesting...",
       },
     },
     host: {
@@ -2706,7 +2639,7 @@ export const en = {
           },
           optional: {
             title: "Additional host capabilities",
-            body: "Other enabled settings and host support may also expose browser automation, image generation, and voice output.",
+            body: "Other enabled settings and host support may also expose browser automation and image generation.",
           },
           warning:
             "High-privilege access: agents can create other agents, modify worktrees, start terminals, and create schedules. Session mode, permission approval, working-directory restrictions, and host configuration still apply. Turning off one capability removes only that group of OMP Desktop tools; turning off the main switch removes every OMP Desktop orchestration tool. Neither action disables an agent's built-in file or command tools.",

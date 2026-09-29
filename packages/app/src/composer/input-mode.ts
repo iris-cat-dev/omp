@@ -13,7 +13,6 @@ export interface ComposerInputModePresentation {
   /** Attachments, slash-and-@ autocomplete, and model/mode chips are chat-agent
    * affordances. A terminal prompt becomes argv. */
   showAttachments: boolean;
-  showVoice: boolean;
   showAutocomplete: boolean;
   showAgentControls: boolean;
   /** Argv is read character by character, so it gets the terminal's own font. */
@@ -25,7 +24,6 @@ export interface ComposerInputModePresentation {
 const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentation> = {
   chat: {
     showAttachments: true,
-    showVoice: false,
     showAutocomplete: true,
     showAgentControls: true,
     isMonospace: false,
@@ -33,7 +31,6 @@ const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentat
   },
   terminal: {
     showAttachments: false,
-    showVoice: false,
     showAutocomplete: false,
     showAgentControls: false,
     isMonospace: true,

@@ -11,16 +11,6 @@ describe("isPaseoToolName", () => {
     expect(isPaseoToolName("mcp__paseo__list_agents")).toBe(true);
   });
 
-  it("detects paseo_voice variant", () => {
-    expect(isPaseoToolName("mcp__paseo_voice__create_agent")).toBe(true);
-    expect(isPaseoToolName("paseo_voice.create_agent")).toBe(true);
-  });
-
-  it("excludes speak tools", () => {
-    expect(isPaseoToolName("mcp__paseo_voice__speak")).toBe(false);
-    expect(isPaseoToolName("mcp__paseo__speak")).toBe(false);
-    expect(isPaseoToolName("paseo.speak")).toBe(false);
-  });
 
   it("detects Codex dot format", () => {
     expect(isPaseoToolName("paseo.create_agent")).toBe(true);

@@ -5026,7 +5026,7 @@ test("reloadAgentSession cancels active run and resumes existing session once th
   expect(active?.lifecycle).toBe("running");
 
   const reloaded = await manager.reloadAgentSession(snapshot.id, {
-    systemPrompt: "voice mode on",
+    systemPrompt: "updated instructions",
   });
 
   expect(client.createSessionCalls).toBe(1);

@@ -1492,8 +1492,8 @@ export class AgentManager {
   }
 
   // Hot-reload an active agent session with config overrides. By default the
-  // in-memory timeline is preserved (used for voice-mode toggles and similar
-  // config swaps). When `rehydrateFromDisk` is set, the timeline is wiped so a
+  // in-memory timeline is preserved for lightweight config swaps. When
+  // `rehydrateFromDisk` is set, the timeline is wiped so a
   // new epoch is minted and provider history is re-streamed — this is what the
   // user-facing "Reload agent" action wants when the on-disk session was
   // mutated outside Paseo.

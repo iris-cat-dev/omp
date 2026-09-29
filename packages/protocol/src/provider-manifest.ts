@@ -28,11 +28,6 @@ export interface AgentProviderDefinition {
   enabledByDefault?: boolean;
   defaultModeId: string | null;
   modes: AgentProviderModeDefinition[];
-  voice?: {
-    enabled: boolean;
-    defaultModeId: string;
-    defaultModel?: string;
-  };
 }
 
 export const OMP_MODES: AgentProviderModeDefinition[] = [

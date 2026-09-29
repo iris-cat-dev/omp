@@ -191,8 +191,6 @@ export function createCli(): Command {
   // Provider commands
   program.addCommand(createProviderCommand());
 
-  // Speech model commands
-
   // Workspace commands
   program.addCommand(createProjectCommand());
   program.addCommand(createWorkspaceCommand());

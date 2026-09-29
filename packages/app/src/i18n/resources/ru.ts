@@ -48,7 +48,6 @@ export const ru: TranslationResources = {
       noFileFound: "Файл для {{token}} не найден",
       linkOpenFailed: "Не удалось открыть {{token}}: {{reason}}",
       unsupportedLink: "Невозможно открыть ссылку: {{token}}",
-      unexpectedDictationError: "При обработке диктовки произошла непредвиденная ошибка.",
     },
     connectionStatus: {
       online: "Онлайн",
@@ -148,18 +147,6 @@ export const ru: TranslationResources = {
       cancelingAgent: "Отменить агента",
       stopAgent: "Остановить агента",
       interrupt: "Прервать",
-    },
-    voice: {
-      enableVoiceMode: "Включить голосовой режим",
-      voiceMode: "Голосовой режим",
-      unmuteVoiceMode: "Включить голосовой режим",
-      muteVoiceMode: "Отключить голосовой режим",
-      stopDictation: "Остановить диктовку",
-      startDictation: "Начать диктовку",
-      unmuteVoice: "Включить звук",
-      muteVoice: "Отключить голос",
-      dictation: "Диктовка",
-      interruptBeforeVoice: "Остановите агента перед запуском голосового режима",
     },
     attachments: {
       addImage: "Добавить изображение",
@@ -455,20 +442,8 @@ export const ru: TranslationResources = {
       file: "Файл",
       directory: "Папка",
     },
-    speak: {
-      header: "Сказал",
-    },
     activity: {
       details: "Подробности",
-    },
-    dictation: {
-      start: "Начать диктовку голосом",
-      cancel: "Отменить диктовку",
-      retry: "Повторить диктовку",
-      insert: "Вставить транскрипцию",
-      insertAndSend: "Вставить транскрипцию и отправить",
-      failed: "Диктовка не удалась: {{error}}",
-      failedRetry: "Диктовка не удалась. Нажмите «Повторить».",
     },
     question: {
       submit: "Отправить",
@@ -1559,29 +1534,8 @@ export const ru: TranslationResources = {
         requestFailed: "Не удалось запросить разрешение на уведомления: {{message}}",
         unexpectedState: "Неожиданное состояние разрешения на уведомления: {{state}}",
       },
-      microphone: {
-        webOnly: "Статус микрофона доступен только в веб-среде выполнения.",
-        navigatorUnavailable: "Объект Navigator недоступен в этой среде.",
-        granted: "Доступ к микрофону разрешён.",
-        denied: "Доступ к микрофону запрещен в настройках системы.",
-        notGranted: "Разрешение на использование микрофона ещё не получено.",
-        unexpectedState: "Неожиданное состояние разрешения на микрофон: {{state}}",
-        statusApiUnavailable:
-          "API проверки состояния микрофона недоступен в этой среде выполнения. Запросите доступ, чтобы проверить его.",
-        queryFailed: "Не удалось проверить состояние микрофона: {{message}}",
-        captureUnavailable: "В этой среде захват микрофона недоступен.",
-        permissionApiUnavailable:
-          "API проверки разрешений недоступен. Запросите доступ, чтобы проверить его.",
-        requestsWebOnly: "Запрашивать доступ к микрофону можно только в веб-среде выполнения.",
-        captureApiUnavailable: "API захвата микрофона недоступен в этой среде.",
-        requestDenied:
-          "Разрешение на использование микрофона было отклонено пользователем или системой.",
-        noDevice: "Микрофон не найден.",
-        requestFailed: "Не удалось запросить доступ к микрофону: {{message}}",
-      },
       empty: {
         notifications: "Статус уведомлений ещё не проверен.",
-        microphone: "Состояние микрофона ещё не проверялось.",
       },
       testNotification: {
         title: "Тест уведомлений OMP Desktop",
@@ -1906,13 +1860,6 @@ export const ru: TranslationResources = {
       retry: "Повторить попытку",
       copy: "Копировать",
       copied: "Скопировано",
-    },
-  },
-  realtimeVoice: {
-    actions: {
-      mute: "Отключить микрофон в голосовом режиме реального времени",
-      unmute: "Включить микрофон в голосовом режиме реального времени",
-      stop: "Остановить голосовой режим реального времени и прервать текущий ответ",
     },
   },
   rewind: {
@@ -2444,12 +2391,9 @@ export const ru: TranslationResources = {
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
         cycleAgentMode: "Переключить режим агента",
-        toggleVoiceMode: "Переключить голосовой режим",
-        startStopDictation: "Начать/остановить диктовку",
         interruptAgent: "Прервать агента",
         sendMessage: "Отправить сообщение",
         queueMessage: "Поставить сообщение в очередь",
-        muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",
         switchProject: "Сменить проект",
       },
       helpNotes: {
@@ -2476,18 +2420,6 @@ export const ru: TranslationResources = {
         installed: "Установлено",
         uninstall: "Удалить",
         uninstalling: "Удаление...",
-      },
-    },
-    permissions: {
-      title: "Разрешения",
-      microphone: "Микрофон",
-      refresh: "Обновить",
-      refreshing: "Обновление...",
-      refreshAccessibility: "Обновить разрешения рабочего стола",
-      actions: {
-        granted: "Предоставлено",
-        request: "Запросить",
-        requesting: "Запрашивается...",
       },
     },
     host: {
