@@ -695,6 +695,39 @@ describe("OMP agent client and session", () => {
     expect(omp.wasAborted()).toBe(false);
   });
 
+  test("correlates a steered user message with its submitted client message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working", {
+      clientMessageId: "initial-client-message",
+    });
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("keep working", "initial-native-message");
+
+    await expect(
+      omp.steerActiveTurn("change direction", turnId, {
+        clientMessageId: "steer-client-message",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    runtime.acceptPrompt("change direction", "steer-native-message");
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "keep working",
+        messageId: "initial-native-message",
+        clientMessageId: "initial-client-message",
+      },
+      {
+        type: "user_message",
+        text: "change direction",
+        messageId: "steer-native-message",
+        clientMessageId: "steer-client-message",
+      },
+    ]);
+  });
+
   test("keeps enhanced selected when leaving plan workflow", async () => {
     const omp = new OmpHarness();
     await omp.start({ featureValues: { workflow_mode: "plan" } });

@@ -9,6 +9,7 @@ import type {
   AgentPermissionResponse,
   AgentPermissionResult,
   AgentRunOptions,
+  AgentSteerOptions,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
@@ -642,8 +643,12 @@ export class OmpHarness {
     return turnId;
   }
 
-  async steerActiveTurn(message: string, expectedTurnId: string) {
-    return await this.requireSession().steerActiveTurn(message, { expectedTurnId });
+  async steerActiveTurn(
+    message: string,
+    expectedTurnId: string,
+    options?: Omit<AgentSteerOptions, "expectedTurnId">,
+  ) {
+    return await this.requireSession().steerActiveTurn(message, { ...options, expectedTurnId });
   }
 
   async interrupt(): Promise<void> {

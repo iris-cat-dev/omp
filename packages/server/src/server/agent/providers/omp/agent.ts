@@ -1927,7 +1927,23 @@ export class OmpAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const payload = convertPromptInput(prompt, { model: this.state.model });
-    this.runtimeSession.steer(payload.text, payload.images);
+    const previousClientMessageId = this.activeClientMessageId;
+    const previousPromptText = this.lastSubmittedPromptText;
+    const previousDisplayText = this.lastSubmittedPromptDisplayText;
+    const previousPromptClientMessageId = this.lastSubmittedPromptClientMessageId;
+    this.activeClientMessageId = options.clientMessageId ?? null;
+    this.lastSubmittedPromptText = payload.text;
+    this.lastSubmittedPromptDisplayText = payload.text;
+    this.lastSubmittedPromptClientMessageId = this.activeClientMessageId;
+    try {
+      this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      this.activeClientMessageId = previousClientMessageId;
+      this.lastSubmittedPromptText = previousPromptText;
+      this.lastSubmittedPromptDisplayText = previousDisplayText;
+      this.lastSubmittedPromptClientMessageId = previousPromptClientMessageId;
+      throw error;
+    }
     return { status: "accepted" };
   }
 
