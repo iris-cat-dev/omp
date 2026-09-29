@@ -65,6 +65,67 @@ describe("window-manager", () => {
         expect.arrayContaining([expect.objectContaining({ label: labels.copy })]),
       );
     });
+
+    it("keeps image actions but omits Paste for a read-only image", () => {
+      const labels = getDesktopContextMenuLabels();
+      const items = buildStandardContextMenuItems(
+        {} as Electron.WebContents,
+        {
+          misspelledWord: "",
+          dictionarySuggestions: [],
+          linkURL: "",
+          hasImageContents: true,
+          srcURL: "https://example.com/image.png",
+          isEditable: false,
+          editFlags: {},
+          selectionText: "",
+          x: 12,
+          y: 24,
+        } as Electron.ContextMenuParams,
+      );
+
+      expect(items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: labels.copyImage }),
+          expect.objectContaining({ label: labels.saveImageAs }),
+        ]),
+      );
+      expect(items).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: labels.paste })]),
+      );
+    });
+
+    it("keeps Paste availability tied to editable targets", () => {
+      const labels = getDesktopContextMenuLabels();
+      const params = {
+        misspelledWord: "",
+        dictionarySuggestions: [],
+        linkURL: "",
+        hasImageContents: false,
+        srcURL: "",
+        isEditable: true,
+        editFlags: { canCut: false, canCopy: false, canPaste: false },
+        selectionText: "",
+        x: 0,
+        y: 0,
+      } as Electron.ContextMenuParams;
+      const unavailableItems = buildStandardContextMenuItems({} as Electron.WebContents, params);
+      const availableItems = buildStandardContextMenuItems({} as Electron.WebContents, {
+        ...params,
+        editFlags: { ...params.editFlags, canPaste: true },
+      });
+
+      expect(unavailableItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: labels.paste, role: "paste", enabled: false }),
+        ]),
+      );
+      expect(availableItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: labels.paste, role: "paste", enabled: true }),
+        ]),
+      );
+    });
   });
 
   describe("readWindowTheme", () => {

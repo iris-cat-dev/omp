@@ -540,7 +540,6 @@ export function buildStandardContextMenuItems(
     if (params.selectionText.length > 0) {
       items.push({ label: labels.copy, role: "copy" });
     }
-    items.push({ label: labels.paste, role: "paste" });
     items.push({ type: "separator" });
     items.push({ label: labels.selectAll, role: "selectAll" });
   }
