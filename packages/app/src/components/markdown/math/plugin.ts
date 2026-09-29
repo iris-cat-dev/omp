@@ -28,21 +28,28 @@ function findUnescaped(source: string, delimiter: string, from: number, to: numb
 
 function bracketInlineRule(state: InlineState, silent: boolean): boolean {
   const start = state.pos;
-  if (!state.src.startsWith("\\(", start) || isEscaped(state.src, start)) {
+  let delimiter: { open: string; close: string } | null = null;
+  if (state.src.startsWith("\\(", start)) {
+    delimiter = { open: "\\(", close: "\\)" };
+  } else if (state.src.startsWith("\\[", start)) {
+    delimiter = { open: "\\[", close: "\\]" };
+  }
+  if (!delimiter || isEscaped(state.src, start)) {
     return false;
   }
 
-  const end = findUnescaped(state.src, "\\)", start + 2, state.posMax);
-  if (end < 0 || state.src.slice(start + 2, end).includes("\n")) {
+  const contentStart = start + delimiter.open.length;
+  const end = findUnescaped(state.src, delimiter.close, contentStart, state.posMax);
+  if (end < 0 || state.src.slice(contentStart, end).includes("\n")) {
     return false;
   }
 
   if (!silent) {
     const token = state.push(MATH_INLINE_TOKEN, "math", 0);
-    token.content = state.src.slice(start + 2, end).trim();
-    token.markup = "\\(";
+    token.content = state.src.slice(contentStart, end).trim();
+    token.markup = delimiter.open;
   }
-  state.pos = end + 2;
+  state.pos = end + delimiter.close.length;
   return true;
 }
 
@@ -51,6 +58,7 @@ function dollarInlineRule(state: InlineState, silent: boolean): boolean {
   const source = state.src;
   if (
     source[start] !== "$" ||
+    source[start - 1] === "$" ||
     source[start + 1] === "$" ||
     isEscaped(source, start) ||
     (start > 0 && /\d/.test(source[start - 1] ?? ""))
@@ -66,6 +74,8 @@ function dollarInlineRule(state: InlineState, silent: boolean): boolean {
       content.length > 0 &&
       !content.includes("\n") &&
       !/^\s|\s$/.test(content) &&
+      source[end - 1] !== "$" &&
+      source[end + 1] !== "$" &&
       !/\d/.test(next)
     ) {
       if (!silent) {
@@ -125,14 +135,27 @@ function findClosingEnvironment(source: string, name: string, from: number, to: 
   return -1;
 }
 
-function lineContaining(
+function logicalBlockSource(
   state: BlockState,
-  position: number,
   startLine: number,
   endLine: number,
-): number {
+): { source: string; lineStarts: number[] } {
+  const lines: string[] = [];
+  const lineStarts: number[] = [];
+  let offset = 0;
   for (let line = startLine; line < endLine; line += 1) {
-    if (position <= state.eMarks[line]) {
+    lineStarts.push(offset);
+    const contentStart = state.bMarks[line] + state.tShift[line];
+    const content = state.src.slice(contentStart, state.eMarks[line]);
+    lines.push(content);
+    offset += content.length + 1;
+  }
+  return { source: lines.join("\n"), lineStarts };
+}
+
+function logicalLineContaining(position: number, lineStarts: readonly number[]): number {
+  for (let line = lineStarts.length - 1; line >= 0; line -= 1) {
+    if (position >= (lineStarts[line] ?? 0)) {
       return line;
     }
   }
@@ -149,16 +172,17 @@ function mathBlockRule(
     return false;
   }
 
-  const start = state.bMarks[startLine] + state.tShift[startLine];
-  const sourceEnd = state.eMarks[endLine - 1];
-  const delimiter = blockDelimiterAt(state.src, start);
+  const logical = logicalBlockSource(state, startLine, endLine);
+  const source = logical.source;
+  const sourceEnd = source.length;
+  const delimiter = blockDelimiterAt(source, 0);
   let contentStart: number;
   let contentEnd: number;
   let blockEnd: number;
   let markup: string;
 
   if (delimiter) {
-    const closing = findUnescaped(state.src, delimiter.close, delimiter.contentStart, sourceEnd);
+    const closing = findUnescaped(source, delimiter.close, delimiter.contentStart, sourceEnd);
     if (closing < 0) {
       return false;
     }
@@ -167,17 +191,12 @@ function mathBlockRule(
     blockEnd = closing + delimiter.close.length;
     markup = delimiter.open;
   } else {
-    const environment = state.src.slice(start).match(/^\\begin\{([A-Za-z][A-Za-z*]*)\}/);
+    const environment = source.match(/^\\begin\{([A-Za-z][A-Za-z*]*)\}/);
     if (!environment) {
       return false;
     }
-    contentStart = start;
-    blockEnd = findClosingEnvironment(
-      state.src,
-      environment[1],
-      start + environment[0].length,
-      sourceEnd,
-    );
+    contentStart = 0;
+    blockEnd = findClosingEnvironment(source, environment[1], environment[0].length, sourceEnd);
     if (blockEnd < 0) {
       return false;
     }
@@ -185,8 +204,11 @@ function mathBlockRule(
     markup = environment[0];
   }
 
-  const closingLine = lineContaining(state, blockEnd, startLine, endLine);
-  if (closingLine < 0 || state.src.slice(blockEnd, state.eMarks[closingLine]).trim().length > 0) {
+  const logicalClosingLine = logicalLineContaining(blockEnd, logical.lineStarts);
+  const closingLine = startLine + logicalClosingLine;
+  const nextLineStart = logical.lineStarts[logicalClosingLine + 1];
+  const closingLineEnd = nextLineStart === undefined ? sourceEnd : nextLineStart - 1;
+  if (logicalClosingLine < 0 || source.slice(blockEnd, closingLineEnd).trim().length > 0) {
     return false;
   }
 
@@ -196,7 +218,7 @@ function mathBlockRule(
 
   const token = state.push(MATH_BLOCK_TOKEN, "math", 0);
   token.block = true;
-  token.content = state.src.slice(contentStart, contentEnd).trim();
+  token.content = source.slice(contentStart, contentEnd).trim();
   token.markup = markup;
   token.map = [startLine, closingLine + 1];
   state.line = closingLine + 1;

@@ -1,10 +1,14 @@
-import katex from "katex";
+import { renderToString } from "katex";
 
+const EMPHATIC_VECTOR = String.raw`\overrightarrow{\mathbf{#1}}`;
 export function renderMathToHtml(tex: string, displayMode: boolean): string {
-  return katex.renderToString(tex, {
+  return renderToString(tex, {
     displayMode,
     throwOnError: false,
     trust: false,
     strict: "warn",
+    macros: {
+      "\\vec": EMPHATIC_VECTOR,
+    },
   });
 }

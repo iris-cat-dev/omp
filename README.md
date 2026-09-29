@@ -73,6 +73,13 @@ Targets that cannot be opened are plain text rather than colored links, and clic
 
 On desktop, right-click an HTTP(S) conversation link to open it in a new OMP Desktop browser tab, open it in the system browser, or copy its address. Opening it internally preserves the current conversation and the URL's query, fragment, and encoding. Unsupported schemes never receive the internal-open action, and an unavailable plain **Copy** action is omitted. Read-only images offer image-specific actions without an ambiguous **Paste** action; editable targets still expose **Paste** according to their current edit capability. Native context menus follow the app's selected language.
 
+## Assistant message math
+
+Assistant Markdown renders inline formulas delimited by `$...$`, `\(...\)`, or same-line
+`\[...\]`. Display formulas use standalone `$$...$$` or `\[...\]` blocks; these blocks also work
+inside Markdown quotes and lists. Explicit `\vec{v}` notation renders with both a vector arrow and
+a bold symbol, while `\mathbf{v}` remains available for bold-vector notation.
+
 ## Background processes
 
 Background commands started by the current Agent appear beside the workspace branch under the composer. The indicator shows the active count; opening it lists live and recently completed commands. Select a command to open its read-only terminal output in a bottom pane, or use **Stop** to terminate that command. Closing the output pane does not stop the process. Stopping the current Agent response terminates that Agent's running background commands and suppresses their late completion events; reconnecting restores retained process state and output.

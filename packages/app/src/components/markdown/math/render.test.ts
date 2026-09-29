@@ -8,6 +8,22 @@ describe("renderMathToHtml", () => {
     expect(html).toContain("≤");
   });
 
+  it("distinguishes explicit vectors from scalar variables with bold arrow notation", () => {
+    const scalar = renderMathToHtml("v", false);
+    const vector = renderMathToHtml(String.raw`\vec{v}`, false);
+
+    expect(scalar).not.toContain('mathvariant="bold"');
+    expect(vector).toContain('mathvariant="bold"');
+    expect(vector).toContain("<mover ");
+    expect(vector).toContain("<svg");
+  });
+
+  it("preserves explicit bold-vector notation", () => {
+    const html = renderMathToHtml(String.raw`v \ne \mathbf{v}`, false);
+    expect(html).toContain("<mi>v</mi>");
+    expect(html).toContain('<mi mathvariant="bold">v</mi>');
+  });
+
   it("renders aligned rows", () => {
     const html = renderMathToHtml(
       String.raw`\begin{aligned}
