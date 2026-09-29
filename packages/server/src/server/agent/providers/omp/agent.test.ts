@@ -1283,6 +1283,38 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("omits live skill prompt custom messages", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptWithCustomMessage(
+        "/skill:bric-cli inspect this link",
+        {
+          role: "custom",
+          customType: "skill-prompt",
+          content:
+            '[IMPORTANT: User invoked the "bric-cli" skill; follow its instructions. Full skill below.]\n\nSECRET SKILL BODY',
+        },
+        "model turn completed",
+      ),
+    ).resolves.toMatchObject({
+      finalText: expect.stringContaining("model turn completed"),
+    });
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text: "/skill:bric-cli inspect this link",
+        messageId: "user-1",
+      },
+      {
+        type: "assistant_message",
+        text: "model turn completed",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+  });
+
   test("renders a live system-notice custom message as a synthetic tool call", async () => {
     const omp = new OmpHarness();
     await omp.start();

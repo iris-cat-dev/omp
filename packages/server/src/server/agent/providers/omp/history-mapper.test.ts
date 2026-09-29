@@ -299,12 +299,13 @@ describe("OMP history mapper", () => {
     ]);
   });
 
-  test("omits replayed custom messages only when display is false", async () => {
+  test("omits replayed hidden and skill prompt custom messages", async () => {
     await expect(
       collectHistory(
         [
           { role: "user", content: "first prompt" },
           { role: "custom", content: "hidden reminder", display: false },
+          { role: "custom", content: "expanded skill instructions", customType: "skill-prompt" },
           { role: "custom", content: "visible explicit custom", display: true },
           { role: "custom", content: "visible legacy custom" },
           {
