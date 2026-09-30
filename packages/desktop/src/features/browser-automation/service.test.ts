@@ -1319,6 +1319,10 @@ describe("executeAutomationCommand", () => {
       message: "browser_resize is handled by the app runtime.",
     },
     {
+      command: { command: "reveal", args: { browserId: BROWSER_A } },
+      message: "browser_reveal is handled by the app runtime.",
+    },
+    {
       command: { command: "close_tab", args: { browserId: BROWSER_A } },
       message: "browser_close_tab is handled by the app runtime.",
     },

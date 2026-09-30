@@ -251,7 +251,7 @@ function newTabResultFrom(payload: BrowserAutomationResponsePayload) {
     result: {
       command: "new_tab",
       workspaceId: "wks_workspace_a",
-      hostWorkspaceId: "wks_workspace_a",
+      presentationHostWorkspaceId: "wks_workspace_a",
       presented: false,
       activated: false,
       url: "https://example.com",
@@ -350,6 +350,165 @@ describe("mountBrowserAutomationHandler", () => {
     ]);
   });
 
+  test("recovers an existing cross-host browser after owner-route reentry without replacing its page", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    const ownerKey = "server-1:wks_workspace_a";
+    const hostKey = "server-1:wks_workspace_b";
+    let visibleWorkspace = { serverId: "server-1", workspaceId: "wks_workspace_b" };
+    const draftTabId = useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: hostKey,
+      target: { kind: "draft", draftId: "msg_cross_host" },
+      intent: "reveal",
+    })!;
+    useWorkspaceLayoutStore.getState().convertDraftToAgent(hostKey, draftTabId, "agent-1");
+    browser.mount({
+      serverId: "server-1",
+      getVisibleWorkspaceSelection: () => visibleWorkspace,
+    });
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const created = browser.client.payloadAt(0);
+    if (!created.ok || created.result.command !== "new_tab") throw new Error("Expected browser");
+    const browserId = created.result.browserId;
+    const originalRecord = useBrowserStore.getState().browsersById[browserId];
+    visibleWorkspace = { serverId: "server-1", workspaceId: "wks_workspace_a" };
+    const focusedAgent = useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: ownerKey,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    browser.receive({
+      ...browserNewTabRequest(),
+      requestId: "req-list",
+      command: { command: "list_tabs", args: {} },
+    });
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(1)).toMatchObject({
+      ok: true,
+      result: {
+        tabs: [
+          {
+            browserId,
+            ownerWorkspaceId: "wks_workspace_a",
+            presentationHostWorkspaceId: "wks_workspace_b",
+            presented: false,
+            activated: false,
+            isActive: false,
+          },
+        ],
+      },
+    });
+    browser.browser.response = {
+      requestId: "req-navigate",
+      ok: true,
+      result: { command: "navigate", browserId, url: "https://example.com/next" },
+    };
+    browser.receive({
+      ...browserNewTabRequest(),
+      requestId: "req-navigate",
+      command: { command: "navigate", args: { browserId, url: "https://example.com/next" } },
+    });
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(2)).toMatchObject({
+      ok: true,
+      result: { command: "navigate", presented: false, activated: false },
+    });
+    expect(
+      findPaneById(useWorkspaceLayoutStore.getState().layoutByWorkspace[ownerKey]!.root, "main")
+        ?.focusedTabId,
+    ).toBe(focusedAgent);
+    browser.receive({
+      ...browserNewTabRequest(),
+      requestId: "req-reveal",
+      command: { command: "reveal", args: { browserId } },
+    });
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(3)).toMatchObject({
+      ok: true,
+      result: {
+        command: "reveal",
+        browserId,
+        ownerWorkspaceId: "wks_workspace_a",
+        presentationHostWorkspaceId: "wks_workspace_a",
+        presented: true,
+        activated: true,
+      },
+    });
+    expect(workspaceBrowserTabs(hostKey, browserId)).toEqual([]);
+    const recovered = workspaceBrowserTabs(ownerKey, browserId);
+    expect(
+      findPaneById(useWorkspaceLayoutStore.getState().layoutByWorkspace[ownerKey]!.root, "main")
+        ?.focusedTabId,
+    ).toBe(recovered[0]?.tabId);
+    expect(useBrowserStore.getState().browsersById[browserId]).toBe(originalRecord);
+    expect(browser.resident.ensuredWebviews).toEqual([
+      { browserId, workspaceId: "wks_workspace_a", url: "https://example.com" },
+    ]);
+    expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([]);
+    browser.unmount();
+  });
+
+  test.each([
+    {
+      name: "unrelated host",
+      visible: { serverId: "server-1", workspaceId: "wks_other" },
+      owner: "wks_workspace_a",
+      serverId: "server-1",
+      code: "browser_denied",
+    },
+    {
+      name: "other visible server",
+      visible: { serverId: "server-2", workspaceId: "wks_workspace_a" },
+      owner: "wks_workspace_a",
+      serverId: "server-1",
+      code: "browser_denied",
+    },
+    {
+      name: "no visible host",
+      visible: null,
+      owner: "wks_workspace_a",
+      serverId: "server-1",
+      code: "browser_denied",
+    },
+    {
+      name: "wrong owner",
+      visible: { serverId: "server-1", workspaceId: "wks_other" },
+      owner: "wks_other",
+      serverId: "server-1",
+      code: "browser_tab_not_found",
+    },
+    {
+      name: "wrong owning server",
+      visible: { serverId: "server-2", workspaceId: "wks_workspace_a" },
+      owner: "wks_workspace_a",
+      serverId: "server-2",
+      code: "browser_tab_not_found",
+    },
+  ])(
+    "reveal rejects $name without moving or activating a browser",
+    async ({ visible, owner, serverId, code }) => {
+      const browser = new BrowserAutomationHandlerHarness();
+      browser.mount({ serverId: "server-1" });
+      browser.receive(browserNewTabRequest());
+      await flushAsyncWork();
+      const created = browser.client.payloadAt(0);
+      if (!created.ok || created.result.command !== "new_tab") throw new Error("Expected browser");
+      browser.unmount();
+      const previousLayouts = useWorkspaceLayoutStore.getState().layoutByWorkspace;
+      browser.mount({ serverId, getVisibleWorkspaceSelection: () => visible });
+      browser.receive({
+        ...browserNewTabRequest(),
+        workspaceId: owner,
+        command: { command: "reveal", args: { browserId: created.result.browserId } },
+      });
+      await flushAsyncWork();
+      expect(browser.client.payloadAt(1)).toMatchObject({ ok: false, error: { code } });
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toBe(previousLayouts);
+      expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([]);
+      browser.unmount();
+    },
+  );
+
   test("browser_new_tab hosts the tab beside a cross-workspace agent without changing ownership", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     const ownerWorkspaceKey = buildWorkspaceTabPersistenceKey({
@@ -382,7 +541,7 @@ describe("mountBrowserAutomationHandler", () => {
       result: {
         command: "new_tab",
         workspaceId: "wks_workspace_a",
-        hostWorkspaceId: "wks_workspace_b",
+        presentationHostWorkspaceId: "wks_workspace_b",
         presented: true,
         activated: false,
       },
@@ -402,7 +561,7 @@ describe("mountBrowserAutomationHandler", () => {
 
     browser.receive(browserCloseTabRequest(result.result.browserId));
     await flushAsyncWork();
-    expect(browser.client.payloadAt(2)).toEqual({
+    expect(browser.client.payloadAt(2)).toMatchObject({
       requestId: "req-close-tab",
       ok: true,
       result: { command: "close_tab", browserId: result.result.browserId },
@@ -479,7 +638,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.receive(browserResizeRequest(result.browserId));
     await flushAsyncWork();
 
-    expect(browser.client.payloadAt(1)).toEqual({
+    expect(browser.client.payloadAt(1)).toMatchObject({
       requestId: "req-resize",
       ok: true,
       result: {
@@ -540,7 +699,14 @@ describe("mountBrowserAutomationHandler", () => {
     expect(browser.client.payloadAt(1)).toEqual({
       requestId: "req-close-tab",
       ok: true,
-      result: { command: "close_tab", browserId: result.browserId },
+      result: {
+        command: "close_tab",
+        browserId: result.browserId,
+        ownerWorkspaceId: "wks_workspace_a",
+        presentationHostWorkspaceId: null,
+        presented: false,
+        activated: false,
+      },
     });
     expect(workspaceBrowserTabs(workspaceKey, result.browserId)).toEqual([]);
     expect(useBrowserStore.getState().browsersById[result.browserId]).toBeUndefined();

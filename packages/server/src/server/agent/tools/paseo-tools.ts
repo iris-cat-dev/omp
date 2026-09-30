@@ -614,6 +614,7 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   present_image: "optional",
   browser_list_tabs: "optional",
   browser_new_tab: "optional",
+  browser_reveal: "optional",
   browser_snapshot: "optional",
   browser_click: "optional",
   browser_fill: "optional",
@@ -1286,7 +1287,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   type LegacyAgentToAgentCreateAgentArgs = z.infer<typeof legacyAgentToAgentCreateAgentArgsSchema>;
   type TopLevelCreateAgentArgs = z.infer<typeof canonicalTopLevelCreateAgentArgsSchema>;
   type LegacyTopLevelCreateAgentArgs = z.infer<typeof legacyTopLevelCreateAgentArgsSchema>;
-
 
   if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({

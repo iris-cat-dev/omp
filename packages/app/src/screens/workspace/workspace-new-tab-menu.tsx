@@ -58,6 +58,7 @@ function WorkspaceNewTabMenuItem({
   return (
     <DropdownMenuItem
       testID={`workspace-new-tab-menu-${item.id}`}
+      description={item.description}
       leading={leading}
       trailing={trailing}
       disabled={item.disabled}

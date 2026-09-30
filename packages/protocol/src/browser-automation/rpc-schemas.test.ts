@@ -13,6 +13,11 @@ const WAIT_CONDITION_MESSAGE = "browser_wait requires exactly one of text or url
 
 const commandParseCases = [
   {
+    name: "reveal",
+    command: { command: "reveal", args: { browserId: BROWSER_ID } },
+    expected: { command: "reveal", args: { browserId: BROWSER_ID } },
+  },
+  {
     name: "click",
     command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
     expected: {
@@ -224,6 +229,40 @@ const commandParseCases = [
 ] as const;
 
 const resultParseCases = [
+  {
+    name: "new_tab",
+    result: {
+      command: "new_tab",
+      browserId: BROWSER_ID,
+      workspaceId: "workspace-1",
+      url: "https://example.com",
+    },
+    expected: {
+      command: "new_tab",
+      browserId: BROWSER_ID,
+      workspaceId: "workspace-1",
+      url: "https://example.com",
+    },
+  },
+  {
+    name: "reveal",
+    result: {
+      command: "reveal",
+      browserId: BROWSER_ID,
+      ownerWorkspaceId: "workspace-1",
+      presentationHostWorkspaceId: "workspace-2",
+      presented: true,
+      activated: true,
+    },
+    expected: {
+      command: "reveal",
+      browserId: BROWSER_ID,
+      ownerWorkspaceId: "workspace-1",
+      presentationHostWorkspaceId: "workspace-2",
+      presented: true,
+      activated: true,
+    },
+  },
   {
     name: "snapshot",
     result: {
@@ -456,6 +495,70 @@ const resultParseCases = [
 ] as const;
 
 describe("browser automation execute RPC schemas", () => {
+  test.each([undefined, "", "default"])("reveal rejects invalid browserId %j", (browserId) => {
+    expect(
+      BrowserAutomationExecuteRequestSchema.safeParse({
+        type: "browser.automation.execute.request",
+        requestId: "req-reveal",
+        command: { command: "reveal", args: { browserId } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test.each(["ownerWorkspaceId", "presentationHostWorkspaceId", "presented", "activated"])(
+    "reveal requires presentation field %s",
+    (field) => {
+      const result: Record<string, unknown> = {
+        command: "reveal",
+        browserId: BROWSER_ID,
+        ownerWorkspaceId: "workspace-1",
+        presentationHostWorkspaceId: "workspace-2",
+        presented: true,
+        activated: true,
+      };
+      delete result[field];
+      expect(
+        BrowserAutomationExecuteResponseSchema.safeParse({
+          type: "browser.automation.execute.response",
+          payload: { requestId: "req-reveal", ok: true, result },
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  test("list tabs preserves unavailable presentation without inferring native visibility", () => {
+    const presentation = {
+      ownerWorkspaceId: "workspace-1",
+      presentationHostWorkspaceId: null,
+      presented: false,
+      activated: false,
+    };
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-list",
+        ok: true,
+        result: {
+          command: "list_tabs",
+          tabs: [
+            {
+              browserId: BROWSER_ID,
+              url: "https://example.com",
+              title: "Example",
+              isActive: true,
+              isLoading: false,
+              ...presentation,
+            },
+          ],
+        },
+      },
+    });
+    expect(parsed.payload).toMatchObject({
+      ok: true,
+      result: { tabs: [{ browserId: BROWSER_ID, isActive: true, ...presentation }] },
+    });
+  });
+
   test("list tabs reads workspace from the request envelope", () => {
     const parsed = BrowserAutomationExecuteRequestSchema.parse({
       type: "browser.automation.execute.request",
@@ -543,21 +646,18 @@ describe("browser automation execute RPC schemas", () => {
     });
   });
 
-  test("tab commands reject workspace id in command args", () => {
+  test.each([
+    { command: "click", args: { workspaceId: "workspace-2", browserId: BROWSER_ID, ref: "@e1" } },
+    { command: "reveal", args: { workspaceId: "workspace-2", browserId: BROWSER_ID } },
+  ])("$command rejects workspace override in command args", (command) => {
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
       type: "browser.automation.execute.request",
       requestId: "req-click",
       workspaceId: "workspace-1",
-      command: {
-        command: "click",
-        args: { workspaceId: "workspace-1", browserId: BROWSER_ID, ref: "@e1" },
-      },
+      command,
     });
 
-    expect(parsed).toMatchObject({
-      success: false,
-      error: { issues: [expect.objectContaining({ message: 'Unrecognized key: "workspaceId"' })] },
-    });
+    expect(parsed.success).toBe(false);
   });
 
   test("wait rejects calls without exactly one condition", () => {
@@ -704,6 +804,25 @@ describe("browser automation execute RPC schemas", () => {
         requestId: "req-result",
         ok: true,
         result: expected,
+      });
+      const presentation = {
+        ownerWorkspaceId: "workspace-1",
+        presentationHostWorkspaceId: null,
+        presented: false,
+        activated: false,
+      };
+      const enriched = BrowserAutomationExecuteResponseSchema.parse({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: "req-enriched",
+          ok: true,
+          result: { ...result, ...presentation },
+        },
+      });
+      expect(enriched.payload).toEqual({
+        requestId: "req-enriched",
+        ok: true,
+        result: { ...expected, ...presentation },
       });
     },
   );
