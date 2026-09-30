@@ -82,7 +82,7 @@ function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={item.label}
+      accessibilityLabel={item.description ? `${item.label}. ${item.description}` : item.label}
       dataSet={ROW_DATA_SET}
       disabled={item.disabled}
       onPress={handlePress}
@@ -94,9 +94,12 @@ function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
       {item.terminalIconKey ? (
         <TerminalProfileIcon iconKey={item.terminalIconKey} size={LAUNCHER_ICON_SIZE} />
       ) : null}
-      <Text numberOfLines={1} style={styles.rowLabel}>
-        {item.label}
-      </Text>
+      <View style={styles.rowText}>
+        <Text numberOfLines={1} style={styles.rowLabel}>
+          {item.label}
+        </Text>
+        {item.description ? <Text style={styles.rowDescription}>{item.description}</Text> : null}
+      </View>
       {item.shortcutActionId ? <LauncherShortcut actionId={item.shortcutActionId} /> : null}
     </Pressable>
   );
@@ -290,7 +293,9 @@ const styles = StyleSheet.create((theme) => ({
   rowHovered: { backgroundColor: theme.colors.surface2 },
   rowFocused: { borderColor: theme.colors.borderAccent },
   rowPressed: { opacity: 0.85 },
-  rowLabel: { flex: 1, color: theme.colors.foreground },
+  rowText: { flex: 1, paddingVertical: theme.spacing[2] },
+  rowLabel: { color: theme.colors.foreground },
+  rowDescription: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   // The section header shares the launcher rows' outer rails. The pencil's own
   // padding is subtracted so its glyph — not its hover box — lands on the right rail.
   groupHeader: {

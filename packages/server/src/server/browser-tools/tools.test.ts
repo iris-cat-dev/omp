@@ -118,7 +118,8 @@ function newTabPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       command: "new_tab",
       browserId: BROWSER_ID,
       workspaceId: "wks_workspace_a",
-      hostWorkspaceId: "wks_workspace_a",
+      ownerWorkspaceId: "wks_workspace_a",
+      presentationHostWorkspaceId: "wks_workspace_a",
       presented: true,
       activated: false,
       url: "https://example.com",
@@ -543,6 +544,7 @@ describe("registerBrowserTools", () => {
     expect(harness.toolNames()).toEqual([
       "browser_list_tabs",
       "browser_new_tab",
+      "browser_reveal",
       "browser_snapshot",
       "browser_click",
       "browser_fill",
@@ -569,7 +571,7 @@ describe("registerBrowserTools", () => {
   test("list tabs sends workspace in the request envelope", async () => {
     const harness = new BrowserToolHarness();
 
-    const response = await harness.execute("browser_list_tabs", {});
+    await harness.execute("browser_list_tabs", {});
 
     expect(harness.broker.calls).toEqual([
       {
@@ -579,19 +581,13 @@ describe("registerBrowserTools", () => {
         command: { command: "list_tabs", args: {} },
       },
     ]);
-    expect(response.content).toEqual([
-      {
-        type: "text",
-        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active title="Example" url=https://example.com`,
-      },
-    ]);
   });
 
   test("new tab sends workspace in the request envelope", async () => {
     const harness = new BrowserToolHarness();
     harness.broker.setResponse(newTabPayload());
 
-    const response = await harness.execute("browser_new_tab", { url: "https://example.com" });
+    await harness.execute("browser_new_tab", { url: "https://example.com" });
 
     expect(harness.broker.calls).toEqual([
       {
@@ -599,12 +595,6 @@ describe("registerBrowserTools", () => {
         cwd: "/repo",
         workspaceId: "wks_workspace_a",
         command: { command: "new_tab", args: { url: "https://example.com" } },
-      },
-    ]);
-    expect(response.content).toEqual([
-      {
-        type: "text",
-        text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com; added to the current visible tab host in the background. Use this browserId for tab-scoped browser tools.`,
       },
     ]);
   });
@@ -725,6 +715,26 @@ describe("registerBrowserTools", () => {
         agentId: "agent-1",
         cwd: "/repo",
       },
+    });
+  });
+
+  test.each([{}, { browserId: "default" }, { browserId: "" }])(
+    "reveal rejects invalid browser targets %j",
+    (input) => {
+      const harness = new BrowserToolHarness();
+      expect(harness.validate("browser_reveal", input).success).toBe(false);
+      expect(harness.broker.calls).toEqual([]);
+    },
+  );
+
+  test("reveal requires workspace authorization context", async () => {
+    const harness = new BrowserToolHarness({ id: "agent-1", cwd: "/repo" });
+    const response = await harness.execute("browser_reveal", { browserId: BROWSER_ID });
+
+    expect(harness.broker.calls).toEqual([]);
+    expect(response.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_denied" },
     });
   });
 

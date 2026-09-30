@@ -12,11 +12,10 @@ import {
   useBrowserStore,
 } from "@/desktop/browser/store";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import {
-  getLastWorkspaceSelection,
-  type ActiveWorkspaceSelection,
-} from "@/stores/navigation-active-workspace-store";
+import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { getBrowserPresentation, revealWorkspaceBrowser } from "@/desktop/browser/presentation";
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -61,7 +60,11 @@ export function mountBrowserAutomationHandler(
       ensureResidentBrowserWebview:
         options.ensureResidentBrowserWebview ?? ensureResidentBrowserWebviewDefault,
       getVisibleWorkspaceSelection:
-        options.getVisibleWorkspaceSelection ?? getLastWorkspaceSelection,
+        options.getVisibleWorkspaceSelection ??
+        (() =>
+          typeof window === "undefined"
+            ? null
+            : parseHostWorkspaceRouteFromPathname(window.location.pathname)),
       ...(options.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
         : {}),
@@ -106,13 +109,34 @@ async function handleBrowserAutomationRequest(params: {
     getVisibleWorkspaceSelection,
   } = params;
   const browserHost = getHost()?.browser;
+  const sendPayload = (payload: BrowserAutomationResponsePayload) => {
+    client.sendBrowserAutomationExecuteResponse({
+      type: "browser.automation.execute.response",
+      payload: enrichBrowserPresentation({
+        payload,
+        request,
+        serverId,
+        visibleWorkspace: getVisibleWorkspaceSelection(),
+      }),
+    });
+  };
+
+  if (request.command.command === "reveal") {
+    sendPayload(
+      revealBrowserTabForRequest({
+        request,
+        serverId,
+        visibleWorkspace: getVisibleWorkspaceSelection(),
+      }),
+    );
+    return;
+  }
   const executeAutomationCommand = browserHost?.executeAutomationCommand;
 
   if (request.command.command === "new_tab") {
     try {
-      client.sendBrowserAutomationExecuteResponse({
-        type: "browser.automation.execute.response",
-        payload: await openBrowserTabForRequest({
+      sendPayload(
+        await openBrowserTabForRequest({
           request,
           serverId,
           browserHost,
@@ -121,7 +145,7 @@ async function handleBrowserAutomationRequest(params: {
           ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
           ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
         }),
-      });
+      );
     } catch (error) {
       client.sendBrowserAutomationExecuteResponse({
         type: "browser.automation.execute.response",
@@ -132,23 +156,19 @@ async function handleBrowserAutomationRequest(params: {
   }
 
   if (request.command.command === "resize") {
-    client.sendBrowserAutomationExecuteResponse({
-      type: "browser.automation.execute.response",
-      payload: resizeBrowserTabForRequest({ request, serverId }),
-    });
+    sendPayload(resizeBrowserTabForRequest({ request, serverId }));
     return;
   }
 
   if (request.command.command === "close_tab") {
     try {
-      client.sendBrowserAutomationExecuteResponse({
-        type: "browser.automation.execute.response",
-        payload: await closeBrowserTabForRequest({
+      sendPayload(
+        await closeBrowserTabForRequest({
           request,
           serverId,
           browserHost,
         }),
-      });
+      );
     } catch (error) {
       client.sendBrowserAutomationExecuteResponse({
         type: "browser.automation.execute.response",
@@ -172,16 +192,118 @@ async function handleBrowserAutomationRequest(params: {
 
   try {
     const payload = await executeAutomationCommand(request);
-    client.sendBrowserAutomationExecuteResponse({
-      type: "browser.automation.execute.response",
-      payload: normalizeBridgePayload(request.requestId, payload),
-    });
+    sendPayload(normalizeBridgePayload(request.requestId, payload));
   } catch (error) {
     client.sendBrowserAutomationExecuteResponse({
       type: "browser.automation.execute.response",
       payload: normalizeThrownBridgeError(request.requestId, error),
     });
   }
+}
+
+function enrichBrowserPresentation(input: {
+  payload: BrowserAutomationResponsePayload;
+  request: BrowserAutomationExecuteRequest;
+  serverId?: string;
+  visibleWorkspace: ActiveWorkspaceSelection | null;
+}): BrowserAutomationResponsePayload {
+  const { payload, request, serverId, visibleWorkspace } = input;
+  if (!payload.ok || !serverId || !request.workspaceId || payload.result.command === "reveal")
+    return payload;
+  const ownerWorkspaceId = request.workspaceId;
+  if (payload.result.command === "list_tabs") {
+    return {
+      ...payload,
+      result: {
+        ...payload.result,
+        tabs: payload.result.tabs.map((tab) => {
+          const state = getBrowserPresentation({
+            serverId,
+            ownerWorkspaceId,
+            browserId: tab.browserId,
+            visibleWorkspace,
+          });
+          return { ...tab, ...state, isActive: state.activated };
+        }),
+      },
+    };
+  }
+  if ("browserId" in payload.result) {
+    return {
+      ...payload,
+      result: {
+        ...payload.result,
+        ...getBrowserPresentation({
+          serverId,
+          ownerWorkspaceId,
+          browserId: payload.result.browserId,
+          visibleWorkspace,
+        }),
+      },
+    };
+  }
+  return payload;
+}
+
+function revealBrowserTabForRequest(input: {
+  request: BrowserAutomationExecuteRequest;
+  serverId?: string;
+  visibleWorkspace: ActiveWorkspaceSelection | null;
+}): BrowserAutomationResponsePayload {
+  const { request, serverId, visibleWorkspace } = input;
+  if (request.command.command !== "reveal") throw new Error("Expected reveal command");
+  const browserId = request.command.args.browserId;
+  const browser = getBrowserRecord(browserId);
+  const workspaceId = request.workspaceId;
+  if (!serverId || !workspaceId) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unsupported",
+      message: "Cannot reveal a browser tab without a workspace context.",
+    });
+  }
+  if (!browser || !isBrowserOwnedByWorkspace({ serverId, workspaceId, browserId, browser })) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_tab_not_found",
+      message: `No browser tab found for ID: ${browserId}`,
+    });
+  }
+  const host = resolveBrowserTabHostWorkspace({
+    serverId,
+    ownerWorkspaceId: workspaceId,
+    agentId: request.agentId,
+    visibleWorkspace,
+  });
+  if (!host.presented) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_denied",
+      message:
+        "Open the owning workspace or a tab host containing this agent before revealing its browser.",
+    });
+  }
+  if (!revealWorkspaceBrowser({ serverId, workspaceId: host.workspaceId, browserId })) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_unknown_error",
+      message: "Could not reveal the browser tab in the current workspace.",
+    });
+  }
+  return {
+    requestId: request.requestId,
+    ok: true,
+    result: {
+      command: "reveal",
+      browserId,
+      ...getBrowserPresentation({
+        serverId,
+        ownerWorkspaceId: workspaceId,
+        browserId,
+        visibleWorkspace,
+      }),
+    },
+  };
 }
 
 function resizeBrowserTabForRequest(params: {
@@ -475,9 +597,6 @@ async function openBrowserTabForRequest(params: {
       command: "new_tab",
       browserId,
       workspaceId,
-      hostWorkspaceId: tabHost.workspaceId,
-      presented: tabHost.presented,
-      activated: false,
       url: normalizedUrl,
     },
   };

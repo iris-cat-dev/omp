@@ -52,6 +52,7 @@ const toolsByCapability = {
     "present_image",
     "browser_list_tabs",
     "browser_new_tab",
+    "browser_reveal",
     "browser_snapshot",
     "browser_click",
     "browser_fill",

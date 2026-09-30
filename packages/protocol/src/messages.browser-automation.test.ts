@@ -109,14 +109,14 @@ describe("browser automation protocol integration", () => {
         protocolVersion: 1,
         capabilities: {
           [CLIENT_CAPS.browserHost]: {
-            supportedCommands: ["evaluate", "scroll", "resize", "close_tab"],
+            supportedCommands: ["evaluate", "scroll", "resize", "close_tab", "reveal"],
             hostKind: "desktop app",
           },
         },
       }).capabilities,
     ).toMatchObject({
       [CLIENT_CAPS.browserHost]: {
-        supportedCommands: ["evaluate", "scroll", "resize", "close_tab"],
+        supportedCommands: ["evaluate", "scroll", "resize", "close_tab", "reveal"],
         hostKind: "desktop app",
       },
     });

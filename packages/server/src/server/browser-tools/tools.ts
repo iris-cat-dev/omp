@@ -69,7 +69,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "List browser tabs",
       description:
-        "List open Paseo browser tabs for this agent's workspace across connected browser automation hosts. Use returned browserId values with tab-scoped tools.",
+        "List registered Paseo browser tabs owned by this agent's workspace across connected automation hosts, including tabs without a visible UI entry. Presentation fields report whether an entry exists in the currently visible host (presented) and is selected in its focused pane (activated); native registration alone does not mean visibility. Use returned browserId values with tab-scoped tools, and browser_reveal to explicitly show and activate an existing tab.",
       inputSchema: {},
     },
     async () => {
@@ -117,6 +117,35 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         },
       });
       return browserToolResult({ payload, context });
+    },
+  );
+
+  options.registerTool(
+    "browser_reveal",
+    {
+      title: "Reveal browser tab",
+      description:
+        "Explicitly show and activate an existing Paseo browser tab in the current visible workspace, preserving its browserId, page, session, and owner. Use browserId from browser_new_tab or browser_list_tabs. Allowed only when the visible workspace owns the tab or contains this requesting agent on the same server; otherwise returns browser_denied without changing the user's view.",
+      inputSchema: {
+        browserId: BrowserAutomationBrowserIdSchema,
+      },
+    },
+    async ({ browserId }) => {
+      const context = resolveBrowserToolContext(options);
+      const missingWorkspace = requireWorkspaceContext(context);
+      if (missingWorkspace) {
+        return missingWorkspace;
+      }
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        command: {
+          command: "reveal",
+          args: { browserId },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
 
@@ -815,7 +844,16 @@ function browserToolStructuredResult(
 function browserToolSuccessContent(
   payload: Extract<BrowserToolsResponsePayload, { ok: true }>,
 ): PaseoToolResult["content"] {
-  const textContent = { type: "text" as const, text: summarizeBrowserSuccess(payload) };
+  const result = payload.result;
+  let text = summarizeBrowserSuccess(payload);
+  if ("browserId" in result && result.command !== "reveal" && result.presented !== undefined) {
+    const host =
+      result.presentationHostWorkspaceId === undefined
+        ? "unknown"
+        : (result.presentationHostWorkspaceId ?? "none");
+    text += `\nBrowser presentation: ownerWorkspaceId=${result.ownerWorkspaceId ?? "unknown"} presentationHostWorkspaceId=${host} presented=${result.presented} activated=${result.activated ?? "unknown"}.`;
+  }
+  const textContent = { type: "text" as const, text };
   const imageContent = browserToolImageContent(payload.result);
   return imageContent ? [textContent, imageContent] : [textContent];
 }
@@ -871,23 +909,36 @@ function summarizeBrowserSuccess(
   if (payload.result.command === "list_tabs") {
     const count = payload.result.tabs.length;
     if (count === 0) {
-      return "No Paseo browser tabs are open. Call browser_new_tab to create one.";
+      return "No Paseo browser tabs are registered for this workspace. Call browser_new_tab to create one.";
     }
     const tabLines = payload.result.tabs.map((tab) => {
-      const active = tab.isActive ? " active" : "";
-      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
+      const presentation =
+        tab.presented === undefined
+          ? "visibility=unknown"
+          : `presented=${tab.presented} activated=${tab.activated ?? "unknown"}`;
+      const host =
+        tab.presentationHostWorkspaceId === undefined
+          ? "unknown"
+          : (tab.presentationHostWorkspaceId ?? "none");
+      return `- browserId=${tab.browserId} ownerWorkspaceId=${tab.ownerWorkspaceId ?? tab.workspaceId ?? "unknown"} presentationHostWorkspaceId=${host} ${presentation} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
     });
     return withDialogs(
       [
-        `Found ${count} Paseo browser tab${count === 1 ? "" : "s"}. Use these browserId values for tab-scoped browser tools.`,
+        `Found ${count} registered Paseo browser tab${count === 1 ? "" : "s"}. Registration does not imply a visible entry. Use browser_reveal to explicitly show and activate an existing tab.`,
         ...tabLines,
       ].join("\n"),
     );
   }
 
   if (payload.result.command === "new_tab") {
+    let presentation = "UI presentation unknown";
+    if (payload.result.presented !== undefined) {
+      presentation = payload.result.presented
+        ? "added to the current visible tab host in the background"
+        : "registered but not shown in the current tab host";
+    }
     return withDialogs(
-      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}; ${payload.result.presented ? "added to the current visible tab host in the background" : "created in its owner workspace but not shown in the current tab host"}. Use this browserId for tab-scoped browser tools.`,
+      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}; ${presentation}. Use this browserId for tab-scoped browser tools, or browser_reveal to explicitly show and activate it.`,
     );
   }
 
@@ -1004,6 +1055,10 @@ function summarizeBrowserRefActionSuccess(
 function summarizeBrowserControlSuccess(
   result: Extract<BrowserToolsResponsePayload, { ok: true }>["result"],
 ): string | null {
+  if (result.command === "reveal") {
+    return `Browser tab browserId=${result.browserId} ownerWorkspaceId=${result.ownerWorkspaceId} presentationHostWorkspaceId=${result.presentationHostWorkspaceId ?? "none"} presented=${result.presented} activated=${result.activated}.`;
+  }
+
   if (result.command === "select") {
     return `Selected ${result.value} in browser element ${result.ref}.`;
   }
