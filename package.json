@@ -1,6 +1,6 @@
 {
   "name": "omp-desktop",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "private": true,
   "description": "Desktop client for local Oh My Pi coding agents",
   "keywords": [

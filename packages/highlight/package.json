@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/highlight",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "files": [
     "dist",
     "!dist/**/*.map"

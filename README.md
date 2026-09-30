@@ -2,6 +2,8 @@
 
 An Electron and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through a self-hosted, end-to-end encrypted relay.
 
+Current source version: **0.3.11**.
+
 ## Requirements
 
 - Node.js from `.tool-versions` and npm workspaces for development and source builds
