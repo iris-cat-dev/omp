@@ -249,6 +249,8 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
     executeListTabs(requestId, workspaceId, registry),
   new_tab: ({ requestId }) =>
     fail(requestId, "browser_unsupported", "browser_new_tab is handled by the app runtime."),
+  reveal: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_reveal is handled by the app runtime."),
   snapshot: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const snapshotCommand = command as Extract<BrowserAutomationCommand, { command: "snapshot" }>;
     return executeSnapshot(

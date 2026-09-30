@@ -79,6 +79,21 @@ On desktop, right-click an HTTP(S) conversation link to open it in a new OMP Des
 
 On the local desktop host, right-click a resolvable workspace file link to reveal it in the system file manager (Explorer on Windows), without opening or executing it. Relative paths, URL-encoded names, and line suffixes use the same resolution as left-click. Remote-host links do not offer local reveal; missing targets and paths outside the workspace, including symlink escapes, are rejected with an error. Left-click behavior is unchanged.
 
+## Existing desktop browser tabs
+
+The tab **+** menu and **New tab** launcher include **Existing browsers — show here**.
+Each entry identifies its current workspace tab host. Select an entry to recover the same
+page into the current workspace and activate it; its browser ID, page state, and automation
+owner are preserved. Browsers owned by another server are not listed.
+
+Agents can explicitly recover an existing page with `browser_reveal({ browserId })`.
+The current tab host must be the browser's owning workspace or contain the requesting agent.
+Browser tool results distinguish `ownerWorkspaceId`, `presentationHostWorkspaceId`,
+`presented` (an entry in the current visible host), and `activated` (selected in its focused pane).
+Background registration or successful navigation does not imply visibility. Creating a new
+browser still adds it in the background without stealing focus; navigation and reload do not
+move existing browser tabs.
+
 ## Assistant message math
 
 Assistant Markdown renders inline formulas delimited by `$...$`, `\(...\)`, or same-line

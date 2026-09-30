@@ -450,6 +450,18 @@ describe("BrowserToolsBroker", () => {
 
   test.each([
     {
+      name: "reveal",
+      command: { command: "reveal", args: { browserId: BROWSER_ID } },
+      result: {
+        command: "reveal",
+        browserId: BROWSER_ID,
+        ownerWorkspaceId: "workspace-1",
+        presentationHostWorkspaceId: "workspace-2",
+        presented: true,
+        activated: true,
+      },
+    },
+    {
       name: "scroll",
       command: { command: "scroll", args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 } },
       result: { command: "scroll", browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
@@ -492,11 +504,18 @@ describe("BrowserToolsBroker", () => {
     });
     await newTabPromise;
 
-    const resultPromise = broker.execute({ command, requestId: "req-command" });
+    const resultPromise = broker.execute({
+      command,
+      requestId: "req-command",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+    });
 
     expect(owner.receivedRequests.at(-1)).toEqual({
       type: "browser.automation.execute.request",
       requestId: "req-command",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
       command,
     });
     expect(other.receivedRequests).toEqual([]);
@@ -679,6 +698,12 @@ describe("BrowserToolsBroker", () => {
         message: 'Browser automation command "scroll" is not supported by the desktop app.',
         retryable: false,
       },
+    });
+    await expect(
+      broker.execute({ command: { command: "reveal", args: { browserId: BROWSER_ID } } }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_unsupported" },
     });
     expect(client.receivedRequests).toEqual([]);
   });

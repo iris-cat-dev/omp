@@ -20,6 +20,7 @@ import {
   resolveTerminalProfiles,
 } from "@omp-desktop/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import { useExistingWorkspaceBrowsers } from "./internal/use-existing-browsers";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -28,6 +29,7 @@ export type WorkspaceTabLaunchDestination =
   | { kind: "replace"; tabId: string };
 
 export interface NewTabLauncher {
+  workspaceId: string;
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
@@ -38,6 +40,7 @@ export interface NewTabLauncher {
 export interface WorkspaceTabLaunchItem {
   id: string;
   label: string;
+  description?: string;
   Icon?: LucideIcon;
   terminalIconKey?: string;
   shortcutActionId?: string;
@@ -46,7 +49,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "terminal-profiles";
+  id: "tabs" | "terminal-profiles" | "existing-browsers";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -83,6 +86,11 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const launcher = useContext(NewTabLauncherContext);
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
+  const existingBrowserItems = useExistingWorkspaceBrowsers({
+    serverId,
+    workspaceId: launcher.workspaceId,
+    enabled: launcher.showBrowser,
+  });
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {
@@ -154,6 +162,13 @@ export function useWorkspaceTabLaunchCatalog(input: {
 
     const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
+    if (existingBrowserItems.length > 0) {
+      groups.push({
+        id: "existing-browsers",
+        label: t("workspace.tabs.actions.existingBrowsers"),
+        items: existingBrowserItems,
+      });
+    }
     if (profiles.length > 0) {
       groups.push({
         id: "terminal-profiles",
@@ -173,7 +188,15 @@ export function useWorkspaceTabLaunchCatalog(input: {
       });
     }
     return groups;
-  }, [config?.terminalProfiles, editTerminalProfiles, launchSelection, launcher, purpose, t]);
+  }, [
+    config?.terminalProfiles,
+    editTerminalProfiles,
+    existingBrowserItems,
+    launchSelection,
+    launcher,
+    purpose,
+    t,
+  ]);
 }
 
 export { getBuiltInLaunchOrder } from "./internal/catalog";
