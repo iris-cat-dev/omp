@@ -1,4 +1,4 @@
-// Keep these versioned lists in sync with the built-in tools accepted by OMP's CLI.
+// Known tool catalogs are UI hints; launch arguments are filtered against OMP's active tools.
 export const OMP_BUILTIN_TOOL_NAMES = [
   "read",
   "bash",
@@ -49,10 +49,17 @@ export const OMP_LEGACY_BUILTIN_TOOL_NAMES = [
   "ask",
 ] as const;
 
-/** Unknown versions have no verified tool manifest or policy semantics. */
-export function getOmpBuiltinToolNames(version: string | undefined): readonly string[] | null {
+const ALL_KNOWN_BUILTIN_TOOL_NAMES = [
+  ...OMP_BUILTIN_TOOL_NAMES,
+  ...OMP_LEGACY_BUILTIN_TOOL_NAMES.filter(
+    (name) => !(OMP_BUILTIN_TOOL_NAMES as readonly string[]).includes(name),
+  ),
+];
+
+/** Use a known release's catalog when available, without restricting other releases. */
+export function getOmpBuiltinToolNames(version: string | undefined): readonly string[] {
   const release = /\b(\d+\.\d+\.\d+)\b/.exec(version ?? "")?.[1];
   if (release === "18.2.10") return OMP_LEGACY_BUILTIN_TOOL_NAMES;
   if (/^18\.3\.\d+$/.test(release ?? "")) return OMP_BUILTIN_TOOL_NAMES;
-  return null;
+  return ALL_KNOWN_BUILTIN_TOOL_NAMES;
 }

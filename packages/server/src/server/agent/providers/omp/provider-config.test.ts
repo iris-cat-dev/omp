@@ -49,19 +49,26 @@ describe("OMP built-in tool policy", () => {
     expect(resolveOmpBuiltinToolArgs([], "unknown", "", [])).toEqual([]);
   });
 
-  test("rejects unverified versions, missing native flags, and conflicting command flags", () => {
+  test.each(["omp/18.4.4", "omp/19.0.0", "custom-build"])(
+    "honors tool settings without restricting version %s",
+    (version) => {
+      const args = resolveOmpBuiltinToolArgs(["write", "python"], version, stockHelp, []);
+      expect(args[0]).toBe("--tools");
+      const enabled = args[1]!.split(",");
+      expect(enabled).toContain("read");
+      expect(enabled).toContain("manage_skill");
+      expect(enabled).not.toContain("write");
+      expect(enabled).not.toContain("python");
+    },
+  );
+
+  test("rejects missing native flags and conflicting command flags", () => {
     expect(() => resolveOmpBuiltinToolArgs(["write"], "omp/18.3.0", "--no-tools", [])).toThrow(
       "does not support --tools and --no-tools",
     );
     expect(() =>
       resolveOmpBuiltinToolArgs(["write"], "omp/18.2.10", "--tools <names>", []),
     ).toThrow("does not support --tools and --no-tools");
-    expect(() => resolveOmpBuiltinToolArgs(["write"], "omp/18.2.9", stockHelp, [])).toThrow(
-      "18.2.10 or 18.3.x",
-    );
-    expect(() => resolveOmpBuiltinToolArgs(["write"], "unknown", stockHelp, [])).toThrow(
-      "verified OMP version",
-    );
     for (const flag of ["--tools=read", "--tools", "--no-tools"]) {
       expect(() => resolveOmpBuiltinToolArgs(["bash"], "omp/18.3.0", stockHelp, [flag])).toThrow(
         "conflict",

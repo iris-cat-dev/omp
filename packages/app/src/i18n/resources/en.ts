@@ -2674,12 +2674,9 @@ export const en = {
         description:
           "Desktop requests a tool list for new or resumed OMP sessions via --tools/--no-tools. Running sessions are unchanged. A switch on requests that tool; OMP's own settings may still disable it.",
         limitations:
-          "A build or configuration may expose fewer tools than this version list; unavailable tools are not requested. OMP may automatically add excluded tools back, even with --no-tools. Child agents may use a different tool list. This is not a security boundary.",
+          "A build or configuration may expose fewer tools than this known tool list; unavailable tools are not requested. OMP may automatically add excluded tools back, even with --no-tools. Child agents may use a different tool list. This is not a security boundary.",
         upgradeHost: "Update this host's daemon to manage OMP built-in tools.",
         installOmp: "Install OMP on this host to manage its built-in tools.",
-        unsupportedVersion:
-          "{{version}} is not supported for built-in tool settings. Update OMP to a supported version.",
-        unknownVersion: "unknown version",
         linkedTools: "These two OMP tools are linked and must be changed together.",
         showTools: "Show tools",
         hideTools: "Hide tools",

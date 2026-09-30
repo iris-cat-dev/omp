@@ -273,11 +273,6 @@ export function resolveOmpBuiltinToolArgs(
   }
   const version = /\b(\d+\.\d+\.\d+)\b/.exec(versionOutput)?.[1];
   const manifest = getOmpBuiltinToolNames(version);
-  if (!manifest) {
-    throw new Error(
-      `OMP built-in tool settings require a verified OMP version (18.2.10 or 18.3.x); detected ${versionOutput.trim() || "unknown"}. Update OMP or clear the disabled tools.`,
-    );
-  }
   if (!/--tools(?:[=\s]|$)/.test(helpOutput) || !/--no-tools(?:[\s]|$)/.test(helpOutput)) {
     throw new Error(
       "This OMP binary does not support --tools and --no-tools. Update OMP to a supported version or clear the disabled tools.",

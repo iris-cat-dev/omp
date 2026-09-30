@@ -2581,11 +2581,9 @@ export const zhCN: TranslationResources = {
         description:
           "Desktop 通过 --tools/--no-tools 为新启动或恢复的 OMP 会话请求工具列表，不影响运行中的会话。开关开启表示请求该工具，OMP 自身配置仍可能禁用它。",
         limitations:
-          "同版本的 OMP 构建或配置也可能只提供部分列表工具，不会请求不可用的工具。OMP 可能自动加回未选择的工具，即使使用 --no-tools 也一样；子代理也可能使用不同的工具列表。这些开关不是安全隔离措施。",
+          "OMP 构建或配置可能只提供已知工具列表中的部分工具，不会请求不可用的工具。OMP 可能自动加回未选择的工具，即使使用 --no-tools 也一样；子代理也可能使用不同的工具列表。这些开关不是安全隔离措施。",
         upgradeHost: "更新此主机的守护进程后才能管理 OMP 内置工具。",
         installOmp: "在此主机安装 OMP 后才能管理内置工具。",
-        unsupportedVersion: "{{version}} 暂不支持内置工具设置。请更新到受支持的 OMP 版本。",
-        unknownVersion: "版本未知",
         linkedTools: "这两个 OMP 工具相互关联，必须一起切换。",
         showTools: "展开工具列表",
         hideTools: "收起工具列表",

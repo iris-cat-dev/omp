@@ -176,7 +176,6 @@ function OmpBuiltinToolsView({
           loading={loading}
           status={status}
           error={statusError}
-          catalog={catalog}
           configLoaded={configLoaded}
         />
         {saveError ? (
@@ -304,14 +303,12 @@ function InstallationStatusMessage({
   loading,
   status,
   error,
-  catalog,
   configLoaded,
 }: {
   supported: boolean;
   loading: boolean;
   status: OmpInstallationStatus | null;
   error: string | null;
-  catalog: readonly string[] | null;
   configLoaded: boolean;
 }) {
   const { t } = useTranslation();
@@ -327,15 +324,6 @@ function InstallationStatusMessage({
   if (!status?.installed) {
     return (
       <Text style={settingsStyles.rowHint}>{t("settings.host.ompBuiltinTools.installOmp")}</Text>
-    );
-  }
-  if (!catalog) {
-    return (
-      <Text style={settingsStyles.rowHint} testID="host-page-omp-builtin-tools-unsupported-version">
-        {t("settings.host.ompBuiltinTools.unsupportedVersion", {
-          version: status.version ?? t("settings.host.ompBuiltinTools.unknownVersion"),
-        })}
-      </Text>
     );
   }
   if (!configLoaded) return <Text style={settingsStyles.rowHint}>{t("common.loading")}</Text>;

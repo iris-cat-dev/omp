@@ -146,7 +146,7 @@ describe("OMP CLI runtime", () => {
     const binary = `
       const args = process.argv.slice(1);
       if (args.includes("--version")) {
-        process.stdout.write("omp/18.3.0");
+        process.stdout.write("omp/18.4.4");
         process.exit();
       }
       if (args.includes("--help")) {
