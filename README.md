@@ -175,6 +175,29 @@ The macOS arm64 application is written to:
 packages/desktop/release/mac-arm64/OMP Desktop.app
 ```
 
+Desktop packaging keeps build/test-only dependencies out of the production dependency graph and
+excludes third-party TypeScript sources, declarations, and MCP SDK examples from the ASAR.
+Standard packages retain the bundled OMP executable, runtime workers, shell integration, and
+the target platform's native bindings. Windows ConPTY files are loaded from the matching
+node-pty prebuild, not its duplicate `third_party` directory.
+
+The Electron language allowlists retain all nine application languages and common regional
+variants. macOS also retains each selected language's grammatical-gender `.lproj` variants.
+Update both platform allowlists in `packages/desktop/electron-builder.yml` when adding a language.
+
+The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules,
+including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8
+instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating
+IR containers without removing validation, defaults, transforms, or fallback schema behavior;
+see `packages/protocol/codegen/README.md`.
+
+For local installer builds, pass `--publish never` to avoid uploading release artifacts. To
+exercise an unpacked application, including its renderer, daemon, bundled OMP, CLI and terminal:
+
+```bash
+node packages/desktop/e2e/packaged-app-smoke.js --app "packages/desktop/release/mac-arm64/OMP Desktop.app"
+```
+
 For a local test package, run:
 
 ```bash

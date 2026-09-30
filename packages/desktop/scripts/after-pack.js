@@ -25,9 +25,7 @@ function pruneNodePty(nodeModules, platform, arch) {
   const prebuilds = path.join(nodeModules, "node-pty", "prebuilds");
   pruneChildrenExcept(prebuilds, new Set([`${platform}-${arch}`]));
 
-  if (platform !== "win32") {
-    rmSafe(path.join(nodeModules, "node-pty", "third_party"));
-  }
+  rmSafe(path.join(nodeModules, "node-pty", "third_party"));
 }
 
 function pruneSharpLibvips(nodeModules, platform, arch) {
@@ -45,8 +43,21 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
     }
   }
 }
-function pruneEsbuild(nodeModules, platform, arch) {
-  pruneChildrenExcept(path.join(nodeModules, "@esbuild"), new Set([`${platform}-${arch}`]));
+function pruneKeyring(nodeModules, platform, arch) {
+  const napiDir = path.join(nodeModules, "@napi-rs");
+  if (!fs.existsSync(napiDir)) return;
+
+  const prefix = `keyring-${platform}-${arch}`;
+  for (const entry of fs.readdirSync(napiDir)) {
+    if (
+      entry.startsWith("keyring-") &&
+      entry !== prefix &&
+      !entry.startsWith(`${prefix}-`) &&
+      !(platform === "darwin" && entry === "keyring-darwin-universal")
+    ) {
+      rmSafe(path.join(napiDir, entry));
+    }
+  }
 }
 
 function keyringBindingPath(resourcesDir, arch) {
@@ -88,7 +99,7 @@ function pruneNativeModules(appOutDir, platform, arch) {
 
   pruneNodePty(nodeModules, platform, arch);
   pruneSharpLibvips(nodeModules, platform, arch);
-  pruneEsbuild(nodeModules, platform, arch);
+  pruneKeyring(nodeModules, platform, arch);
 
   const after = dirSizeSync(nodeModules);
   const savedMB = ((before - after) / 1024 / 1024).toFixed(1);
@@ -171,8 +182,8 @@ exports.default = async function afterPack(context) {
   await copyRipgrep(resourcesDir, platform, arch);
   prepareBundledOmp(resourcesDir, platform, arch);
   assertBackgroundJobsExtension(resourcesDir);
-  assertNativeKeyringBinding(resourcesDir, platform, arch);
   pruneNativeModules(context.appOutDir, platform, arch);
+  assertNativeKeyringBinding(resourcesDir, platform, arch);
 
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {

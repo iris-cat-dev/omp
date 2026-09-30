@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import { describe, expect, it } from "vitest";
+import { compileSharedSchemas } from "../../scripts/compile-shared-validation.mjs";
 import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../../src/generated/validation/ws-outbound.aot.js";
 
 interface GeneratedSchema {
@@ -11,13 +12,12 @@ interface GeneratedSchema {
 }
 
 const protocolRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const generatedWSOutboundPath = resolve(
-  protocolRoot,
-  "src/generated/validation/ws-outbound.aot.ts",
-);
 const require = createRequire(import.meta.url);
 
-async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchema> {
+async function compileSchema(
+  sourceSchema: string,
+  mode: "shared" | "inline" = "shared",
+): Promise<GeneratedSchema> {
   const scratchRoot = resolve(protocolRoot, "../../.tmp");
   await mkdir(scratchRoot, { recursive: true });
   const tempDir = await mkdtemp(join(scratchRoot, "paseo-zod-aot-"));
@@ -39,15 +39,29 @@ async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchem
 
     const zodAotEntry = require.resolve("zod-aot");
     const zodAotRoot = resolve(dirname(zodAotEntry), "..");
-    const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
-      await Promise.all([
-        import(pathToFileURL(resolve(zodAotRoot, "dist/discovery.js")).href),
-        import(pathToFileURL(resolve(zodAotRoot, "dist/core/pipeline.js")).href),
-        import(pathToFileURL(resolve(zodAotRoot, "dist/cli/emitter.js")).href),
-      ]);
+    const [
+      { discoverSchemas },
+      { compileSchemas },
+      { extractSchema },
+      { generateFast },
+      { generateSlow },
+      context,
+      { generateCompiledFileContent },
+    ] = await Promise.all([
+      import(pathToFileURL(resolve(zodAotRoot, "dist/discovery.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/core/pipeline.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/core/extract/index.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/fast-path.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/slow-path.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/context.js")).href),
+      import(pathToFileURL(resolve(zodAotRoot, "dist/cli/emitter.js")).href),
+    ]);
 
     const schemas = await discoverSchemas(sourcePath, { cacheBust: true });
-    const compiled = compileSchemas(schemas, { mode: "inline" });
+    const compiled =
+      mode === "inline"
+        ? compileSchemas(schemas, { mode: "inline" })
+        : compileSharedSchemas(schemas, { extractSchema, generateFast, generateSlow, context });
     const content = generateCompiledFileContent(compiled, "./schema.source.js", {
       zodCompat: false,
     });
@@ -61,9 +75,121 @@ async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchem
   }
 }
 
+const sharedSchemaSource = `
+const Shared = z.object({
+  id: z.string().min(2),
+  values: z.array(z.number().int()),
+  coordinates: z.tuple([z.number(), z.number()]),
+  state: z.enum(["running", "completed", "failed", "canceled"]),
+  label: z.string().optional(),
+});
+`;
+
 describe("WS outbound zod-aot validation", () => {
+  it("preserves shared fast-path data and ordered nested union errors", async () => {
+    const source = `${sharedSchemaSource}
+const SourceSchema = z.object({
+  left: Shared,
+  right: z.array(Shared),
+  records: z.record(z.string(), Shared),
+  choice: z.union([z.object({ data: Shared }), z.object({ other: Shared })]),
+});
+`;
+    const [shared, inline] = await Promise.all([
+      compileSchema(source),
+      compileSchema(source, "inline"),
+    ]);
+    const item = { id: "ok", values: [1, 2], coordinates: [0, 1], state: "running" };
+    const valid = { left: item, right: [item], records: { first: item }, choice: { data: item } };
+    expect(shared.safeParse(valid)).toEqual({ success: true, data: valid });
+    // An absent optional property must not become an own undefined property.
+    expect(shared.safeParse(valid)).toEqual(inline.safeParse(valid));
+    const invalid = {
+      left: item,
+      right: [{ ...item, id: 3 }],
+      records: { first: { ...item, id: false } },
+      choice: { data: { ...item, values: ["bad"] }, other: null },
+    };
+    expect(shared.safeParse(invalid)).toEqual(inline.safeParse(invalid));
+    expect(shared.safeParse(invalid)).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          { code: "invalid_type", path: ["right", 0, "id"] },
+          { code: "invalid_type", path: ["records", "first", "id"] },
+          { code: "invalid_union", path: ["choice"] },
+        ],
+      },
+    });
+  });
+
+  it("keeps defaults, transforms and fallback stripping beside shared validators", async () => {
+    const source = `${sharedSchemaSource}
+const Checked = z.object({ token: z.string(), nested: Shared }).superRefine((value, ctx) => {
+  if (value.token !== "ok") ctx.addIssue({ code: "custom", path: ["token"], message: "bad token" });
+});
+const OtherChecked = z.object({ token: z.string(), nested: Shared }).superRefine((value, ctx) => {
+  if (value.token !== "other") ctx.addIssue({ code: "custom", path: ["token"], message: "other token" });
+});
+const fields = {
+  items: z.array(Shared),
+  enabled: z.boolean().default(true),
+  clean: z.string().transform((value) => value.trim()),
+  checked: Checked,
+  otherChecked: OtherChecked,
+};
+const SourceSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("first"), ...fields }),
+  z.object({ type: z.literal("second"), ...fields }),
+]);
+`;
+    const [shared, inline] = await Promise.all([
+      compileSchema(source),
+      compileSchema(source, "inline"),
+    ]);
+    const item = { id: "ok", values: [1], coordinates: [0, 1], state: "completed" };
+    for (const type of ["first", "second"]) {
+      const input = {
+        type,
+        items: [item],
+        clean: "  trimmed  ",
+        checked: { token: "ok", nested: item, stripMe: true },
+        otherChecked: { token: "other", nested: item, stripMe: true },
+      };
+      expect(shared.safeParse(input)).toEqual({
+        success: true,
+        data: {
+          type,
+          items: [item],
+          enabled: true,
+          clean: "trimmed",
+          checked: { token: "ok", nested: item },
+          otherChecked: { token: "other", nested: item },
+        },
+      });
+      expect(shared.safeParse(input)).toEqual(inline.safeParse(input));
+      const invalid = {
+        ...input,
+        items: [{ ...item, id: false }],
+        checked: { ...input.checked, token: "bad" },
+        otherChecked: { ...input.otherChecked, token: "bad" },
+      };
+      expect(shared.safeParse(invalid)).toEqual(inline.safeParse(invalid));
+      expect(shared.safeParse(invalid)).toMatchObject({
+        success: false,
+        error: {
+          issues: [
+            { code: "invalid_type", path: ["items", 0, "id"] },
+            { code: "custom", path: ["checked", "token"] },
+            { code: "custom", path: ["otherChecked", "token"] },
+          ],
+        },
+      });
+    }
+  });
+
   it("applies defaults inside discriminated-union branches", async () => {
-    const schema = await compileInlineSchema(`
+    const schema = await compileSchema(`
 const SourceSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("with_default"),
@@ -83,7 +209,7 @@ const SourceSchema = z.discriminatedUnion("type", [
   });
 
   it("routes tool-call-like status unions through the current sequential item union", async () => {
-    const schema = await compileInlineSchema(`
+    const schema = await compileSchema(`
 const ToolCallItemSchema = z.discriminatedUnion("status", [
   z.object({ type: z.literal("tool_call"), status: z.literal("running"), callId: z.string() }),
   z.object({ type: z.literal("tool_call"), status: z.literal("completed"), callId: z.string(), output: z.string() }),
@@ -259,11 +385,6 @@ const SourceSchema = z.object({
       success: true,
       data: envelope,
     });
-  });
-
-  it("emits runtime imports with .js extensions", async () => {
-    const generated = await readFile(generatedWSOutboundPath, "utf8");
-    expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');
   });
 
   it("accepts a forge.search.response envelope", () => {

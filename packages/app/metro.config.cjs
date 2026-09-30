@@ -18,6 +18,12 @@ const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .toLowerCase();
 
 const config = getDefaultConfig(projectRoot);
+if (customWebPlatform === "electron") {
+  config.transformer.minifierConfig.output = {
+    ...config.transformer.minifierConfig.output,
+    ascii_only: false,
+  };
+}
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
 
 // Keep app exports deterministic across dev machines and CI. Metro's Watchman

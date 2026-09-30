@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { compileSharedSchemas } from "./compile-shared-validation.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(packageRoot, "codegen/ws-outbound.compile.ts");
@@ -72,19 +73,32 @@ await Promise.all([
   ensureZodAotDiscriminatedUnionOutputPatch(),
 ]);
 
-const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
-  await Promise.all([
-    import(pathToFileURL(resolve(zodAotRoot, "dist/discovery.js")).href),
-    import(pathToFileURL(resolve(zodAotRoot, "dist/core/pipeline.js")).href),
-    import(pathToFileURL(resolve(zodAotRoot, "dist/cli/emitter.js")).href),
-  ]);
-
+const [
+  { discoverSchemas },
+  { extractSchema },
+  { generateFast },
+  { generateSlow },
+  context,
+  { generateCompiledFileContent },
+] = await Promise.all([
+  import(pathToFileURL(resolve(zodAotRoot, "dist/discovery.js")).href),
+  import(pathToFileURL(resolve(zodAotRoot, "dist/core/extract/index.js")).href),
+  import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/fast-path.js")).href),
+  import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/slow-path.js")).href),
+  import(pathToFileURL(resolve(zodAotRoot, "dist/core/codegen/context.js")).href),
+  import(pathToFileURL(resolve(zodAotRoot, "dist/cli/emitter.js")).href),
+]);
 const schemas = await discoverSchemas(source, { cacheBust: true });
 if (schemas.length === 0) {
   throw new Error(`No zod-aot compile() exports found in ${relative(packageRoot, source)}`);
 }
 
-const compiled = compileSchemas(schemas, { mode: "inline" });
+const compiled = compileSharedSchemas(schemas, {
+  extractSchema,
+  generateFast,
+  generateSlow,
+  context,
+});
 const runtimeImportPath = relative(dirname(output), runtimeSchemaMetadata)
   .replace(/\.[cm]?[jt]sx?$/, ".js")
   .split(sep)
