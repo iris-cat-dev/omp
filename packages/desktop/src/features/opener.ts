@@ -117,4 +117,9 @@ export function registerOpenerHandlers(): void {
       throw new Error(error);
     }
   });
+
+  ipcMain.handle("paseo:opener:revealPath", async (_event, input: unknown) => {
+    const { target } = await resolveWorkspacePath(input);
+    shell.showItemInFolder(target);
+  });
 }

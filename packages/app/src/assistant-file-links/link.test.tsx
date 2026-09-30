@@ -2,10 +2,12 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToastApi } from "@/components/toast-host";
+import type { DesktopContextMenuAction } from "@/desktop/host";
+import type { AssistantFileLinkSource, DirectorySuggestionResult } from "./resolver";
 import { AssistantMarkdownLink } from "./link";
 import { AssistantFileLinkResolverProvider } from "./provider";
 
@@ -47,14 +49,25 @@ vi.mock("react-native-unistyles", () => ({
 const mocks = vi.hoisted(() => ({
   localDaemon: true,
   openPath: vi.fn(async (_input: { path: string; workspaceRoot: string }) => {}),
+  revealPath: vi.fn(async (_input: { path: string; workspaceRoot: string }) => {}),
+  listTargets: vi.fn(async () => [
+    {
+      id: "finder",
+      label: "Finder",
+      kind: "file-manager" as const,
+      icon: { kind: "symbol" as const, name: "folder" as const },
+    },
+  ]),
+  openTarget: vi.fn(async () => {}),
   openExternalUrl: vi.fn(async (_url: string) => {}),
-  showContextMenu: vi.fn(async () => null as "open-in-desktop" | null),
+  showContextMenu: vi.fn(async () => null as DesktopContextMenuAction | null),
 }));
 
 vi.mock("@/hooks/use-is-local-daemon", () => ({ useIsLocalDaemon: () => mocks.localDaemon }));
 vi.mock("@/desktop/host", () => ({
   getDesktopHost: () => ({
-    opener: { openPath: mocks.openPath },
+    opener: { openPath: mocks.openPath, revealPath: mocks.revealPath },
+    editor: { listTargets: mocks.listTargets, openTarget: mocks.openTarget },
     menu: { showContextMenu: mocks.showContextMenu },
   }),
 }));
@@ -69,29 +82,52 @@ const ROOT = "/Users/test/project";
 const openedFiles = vi.fn();
 const openUrlInBrowser = vi.fn();
 const toastShow = vi.fn<ToastApi["show"]>();
-const client = { getDirectorySuggestions: async () => ({ entries: [], error: null }) };
+const getDirectorySuggestions = vi.fn(
+  async (): Promise<DirectorySuggestionResult> => ({
+    entries: [],
+    error: null,
+  }),
+);
+const client = { getDirectorySuggestions };
 const toast: ToastApi = { show: toastShow, copied: vi.fn(), error: vi.fn() };
 const linkStyle = { color: "#007f71" };
 
-function renderLink(href: string, text = href) {
+function renderLink(
+  href: string,
+  text = href,
+  options: {
+    sourceType?: AssistantFileLinkSource["sourceType"];
+    workspaceRoot?: string;
+    serverId?: string;
+  } = {},
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  // oxlint-disable-next-line react-perf/jsx-no-new-object-as-prop -- stable fixture across rerenders
+  const source: AssistantFileLinkSource = { href, text, sourceType: options.sourceType };
+  const element = (config: { workspaceRoot?: string; serverId?: string }) => (
     <QueryClientProvider client={queryClient}>
       <AssistantFileLinkResolverProvider
         client={client}
-        serverId="local-server"
-        workspaceRoot={ROOT}
+        serverId={config.serverId}
+        workspaceRoot={config.workspaceRoot}
         onOpenWorkspaceFile={openedFiles}
         onOpenUrlInBrowser={openUrlInBrowser}
         toast={toast}
       >
-        {/* oxlint-disable-next-line react-perf/jsx-no-new-object-as-prop -- one render per test */}
-        <AssistantMarkdownLink source={{ href }} style={linkStyle}>
+        <AssistantMarkdownLink source={source} style={linkStyle}>
           {text}
         </AssistantMarkdownLink>
       </AssistantFileLinkResolverProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const config = { serverId: "local-server", workspaceRoot: ROOT, ...options };
+  const result = render(element(config));
+  return {
+    ...result,
+    rerenderConfig(nextConfig: { workspaceRoot?: string; serverId?: string }) {
+      result.rerender(element({ ...config, ...nextConfig }));
+    },
+  };
 }
 
 afterEach(() => {
@@ -101,6 +137,8 @@ afterEach(() => {
 beforeEach(() => {
   mocks.localDaemon = true;
   mocks.openPath.mockReset().mockResolvedValue(undefined);
+  mocks.revealPath.mockReset().mockResolvedValue(undefined);
+  getDirectorySuggestions.mockReset().mockResolvedValue({ entries: [], error: null });
   mocks.openExternalUrl.mockReset().mockResolvedValue(undefined);
   mocks.showContextMenu.mockReset().mockResolvedValue(null);
   openedFiles.mockReset();
@@ -143,6 +181,149 @@ describe("assistant Markdown links in the DOM", () => {
     );
     await waitFor(() => expect(openUrlInBrowser).toHaveBeenCalledWith(url));
     expect(mocks.openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("reveals a decoded Chinese path with spaces without its line suffix", async () => {
+    mocks.showContextMenu.mockResolvedValueOnce("reveal-in-file-manager");
+    renderLink("%E4%B8%AD%E6%96%87%20notes/report.md#L12-L14", "report");
+    expect(fireEvent.contextMenu(screen.getByText("report"))).toBe(false);
+
+    await waitFor(() =>
+      expect(mocks.revealPath).toHaveBeenCalledWith({
+        path: `${ROOT}/中文 notes/report.md`,
+        workspaceRoot: ROOT,
+      }),
+    );
+    expect(mocks.showContextMenu).toHaveBeenCalledWith({
+      kind: "assistant-file-link",
+      revealLabel: "Reveal in Finder",
+    });
+    expect(openedFiles).not.toHaveBeenCalled();
+    expect(mocks.openPath).not.toHaveBeenCalled();
+  });
+
+  it("resolves an inline-code link on right-click without requiring hover", async () => {
+    getDirectorySuggestions.mockResolvedValueOnce({
+      entries: [{ path: "docs/report.md", kind: "file" }],
+      error: null,
+    });
+    mocks.showContextMenu.mockResolvedValueOnce("reveal-in-file-manager");
+    renderLink("report.md:7", "report", { sourceType: "inline-code" });
+    fireEvent.contextMenu(screen.getByText("report"));
+
+    await waitFor(() =>
+      expect(mocks.revealPath).toHaveBeenCalledWith({
+        path: `${ROOT}/docs/report.md`,
+        workspaceRoot: ROOT,
+      }),
+    );
+    fireEvent.click(screen.getByText("report"));
+    await waitFor(() =>
+      expect(openedFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ path: `${ROOT}/docs/report.md`, lineStart: 7 }),
+        "side",
+      ),
+    );
+    expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer local reveal for a remote text file", () => {
+    mocks.localDaemon = false;
+    renderLink("docs/report.md", "remote report");
+    expect(fireEvent.contextMenu(screen.getByText("remote report"))).toBe(true);
+    expect(mocks.showContextMenu).not.toHaveBeenCalled();
+    expect(mocks.revealPath).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("remote report"));
+    expect(openedFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `${ROOT}/docs/report.md` }),
+      "side",
+    );
+  });
+
+  it("does not reveal when the native menu is dismissed", async () => {
+    renderLink("docs/report.md", "report");
+    fireEvent.contextMenu(screen.getByText("report"));
+    await waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalled());
+    await act(async () => {});
+    expect(mocks.revealPath).not.toHaveBeenCalled();
+    expect(openedFiles).not.toHaveBeenCalled();
+  });
+
+  it("shows a visible error when the OS refuses to reveal the file", async () => {
+    mocks.showContextMenu.mockResolvedValueOnce("reveal-in-file-manager");
+    mocks.revealPath.mockRejectedValueOnce(new Error("permission denied"));
+    renderLink("docs/report.md", "report");
+    fireEvent.contextMenu(screen.getByText("report"));
+    await waitFor(() =>
+      expect(toastShow).toHaveBeenCalledWith(
+        expect.stringContaining("permission denied"),
+        expect.objectContaining({ variant: "error" }),
+      ),
+    );
+  });
+
+  it("does not offer reveal when the daemon cannot resolve the file", async () => {
+    renderLink("missing.md", "missing", { sourceType: "inline-code" });
+    fireEvent.contextMenu(screen.getByText("missing"));
+    await waitFor(() =>
+      expect(toastShow).toHaveBeenCalledWith(
+        "No file found for missing.md",
+        expect.objectContaining({ variant: "error" }),
+      ),
+    );
+    expect(mocks.showContextMenu).not.toHaveBeenCalled();
+    expect(mocks.revealPath).not.toHaveBeenCalled();
+  });
+
+  it.each([{ workspaceRoot: "/Users/test/other" }, { serverId: "other-server" }])(
+    "ignores a menu selection after the configuration changes to %o",
+    async (nextConfig) => {
+      const { promise, resolve: select } = Promise.withResolvers<DesktopContextMenuAction | null>();
+      mocks.showContextMenu.mockReturnValueOnce(promise);
+      const view = renderLink("docs/report.md", "report");
+      fireEvent.contextMenu(screen.getByText("report"));
+      await waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalled());
+      view.rerenderConfig(nextConfig);
+      await act(async () => select("reveal-in-file-manager"));
+      expect(mocks.revealPath).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([{ workspaceRoot: "/Users/test/other" }, { serverId: "other-server" }])(
+    "ignores a lookup result after the configuration changes to %o",
+    async (nextConfig) => {
+      const { promise, resolve: resolveLookup } =
+        Promise.withResolvers<DirectorySuggestionResult>();
+      getDirectorySuggestions.mockReturnValueOnce(promise);
+      const view = renderLink("report.md", "report", { sourceType: "inline-code" });
+      fireEvent.contextMenu(screen.getByText("report"));
+      await waitFor(() => expect(getDirectorySuggestions).toHaveBeenCalled());
+      view.rerenderConfig(nextConfig);
+      await act(async () =>
+        resolveLookup({ entries: [{ path: "docs/report.md", kind: "file" }], error: null }),
+      );
+      expect(mocks.showContextMenu).not.toHaveBeenCalled();
+      expect(mocks.revealPath).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not reveal when the daemon becomes remote while its menu is open", async () => {
+    const { promise, resolve } = Promise.withResolvers<DesktopContextMenuAction | null>();
+    mocks.showContextMenu.mockReturnValueOnce(promise);
+    const view = renderLink("docs/report.md", "report");
+    fireEvent.contextMenu(screen.getByText("report"));
+    await waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalled());
+    mocks.localDaemon = false;
+    view.rerenderConfig({});
+    await act(async () => resolve("reveal-in-file-manager"));
+    expect(mocks.revealPath).not.toHaveBeenCalled();
+  });
+
+  it("leaves the browser context menu alone without a workspace root", () => {
+    renderLink(`${ROOT}/docs/report.md`, "report", { workspaceRoot: undefined });
+    expect(fireEvent.contextMenu(screen.getByText("report"))).toBe(true);
+    expect(mocks.showContextMenu).not.toHaveBeenCalled();
+    expect(mocks.revealPath).not.toHaveBeenCalled();
   });
 
   it("leaves heading navigation to the browser", async () => {

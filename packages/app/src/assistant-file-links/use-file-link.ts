@@ -1,10 +1,11 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { getDesktopHost } from "@/desktop/host";
+import { listDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { isSystemAssistantPath, type InlinePathTarget } from "./parse";
 import {
   useAssistantFileLinkResolverContext,
@@ -22,6 +23,8 @@ export interface UseFileLinkResult {
   target: InlinePathTarget | null;
   externalUrl: string | null;
   canOpen: boolean;
+  canReveal: boolean;
+  onContextMenu: () => void;
   onHoverIn: () => void;
   onPress: () => void;
   open: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
@@ -46,6 +49,8 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   const { t } = useTranslation();
   const context = useAssistantFileLinkResolverContext();
   const queryClient = useQueryClient();
+  const contextRef = useRef(context);
+  contextRef.current = context;
   const stableSource = useStableSource(source);
   const activeConfig = context.configRef.current;
   const workspaceRoot = activeConfig.workspaceRoot;
@@ -144,9 +149,83 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     resolution.kind === "resolved" && resolution.value.kind === "external"
       ? resolution.value.url
       : null;
+  const canReveal = Boolean(
+    localDaemon &&
+    workspaceRoot?.trim() &&
+    getDesktopHost()?.opener?.revealPath &&
+    getDesktopHost()?.menu?.showContextMenu &&
+    (resolution.kind === "needsLookup" || resolution.value.kind === "file"),
+  );
+  const onContextMenu = useStableEvent(() => {
+    if (!canReveal) return;
+    const capturedConfig = context.configRef.current;
+    const revealPath = getDesktopHost()?.opener?.revealPath;
+    const showContextMenu = getDesktopHost()?.menu?.showContextMenu;
+    if (!capturedConfig.workspaceRoot || !revealPath || !showContextMenu) return;
+    const capturedRoot = capturedConfig.workspaceRoot;
+    const isCurrent = () => {
+      const current = contextRef.current;
+      return (
+        current.localDaemon &&
+        current.configRef.current.serverId === capturedConfig.serverId &&
+        current.configRef.current.workspaceRoot === capturedRoot
+      );
+    };
+    const run = async () => {
+      try {
+        let fileTarget: InlinePathTarget | null = null;
+        if (resolution.kind === "needsLookup") {
+          fileTarget = await queryClient.fetchQuery({
+            queryKey,
+            queryFn: () =>
+              fetchDaemonResolution({
+                ambiguousQuery: resolution.ambiguousQuery,
+                token: resolution.token,
+                target: resolution.target,
+                workspaceRoot: capturedRoot,
+                getDirectorySuggestions: context.getDirectorySuggestions,
+              }),
+            retry: 0,
+            staleTime: Infinity,
+          });
+        } else if (resolution.value.kind === "file") {
+          fileTarget = resolution.value.target;
+        }
+        if (!fileTarget || !isCurrent()) return;
+        const targets = await queryClient.fetchQuery({
+          queryKey: ["desktop-open-targets"],
+          queryFn: listDesktopOpenTargets,
+          staleTime: 60_000,
+          retry: false,
+        });
+        const fileManagerTarget = targets.find((item) => item.kind === "file-manager");
+        if (!fileManagerTarget || !isCurrent()) return;
+        const action = await showContextMenu({
+          kind: "assistant-file-link",
+          revealLabel: t("workspace.fileActions.revealIn", { target: fileManagerTarget.label }),
+        });
+        if (action !== "reveal-in-file-manager" || !isCurrent()) return;
+        await revealPath({ path: fileTarget.path, workspaceRoot: capturedRoot });
+      } catch (error) {
+        if (!isCurrent()) return;
+        const message =
+          error instanceof UnresolvedFileLinkError
+            ? t("common.errors.noFileFound", { token: error.token })
+            : t("common.errors.linkOpenFailed", {
+                token: stableSource.href,
+                reason: error instanceof Error ? error.message : String(error),
+              });
+        contextRef.current.configRef.current.toast?.show(message, {
+          variant: "error",
+          testID: "assistant-file-link-reveal-error-toast",
+        });
+      }
+    };
+    void run();
+  });
   return useMemo(
-    () => ({ target, externalUrl, onHoverIn, onPress, open, canOpen }),
-    [target, externalUrl, onHoverIn, onPress, open, canOpen],
+    () => ({ target, externalUrl, onHoverIn, onPress, open, canOpen, canReveal, onContextMenu }),
+    [target, externalUrl, onHoverIn, onPress, open, canOpen, canReveal, onContextMenu],
   );
 }
 

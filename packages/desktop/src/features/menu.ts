@@ -17,11 +17,22 @@ interface LinkContextMenuInput {
   copyAddressLabel: string;
 }
 
-type ShowContextMenuInput = TerminalContextMenuInput | LinkContextMenuInput;
+interface FileLinkContextMenuInput {
+  kind: "assistant-file-link";
+  revealLabel: string;
+}
+
+type ShowContextMenuInput =
+  | TerminalContextMenuInput
+  | LinkContextMenuInput
+  | FileLinkContextMenuInput;
 
 export type TerminalContextMenuAction = "clear";
 export type LinkContextMenuAction = "open-in-desktop";
-type ContextMenuAction = TerminalContextMenuAction | LinkContextMenuAction;
+type ContextMenuAction =
+  | TerminalContextMenuAction
+  | LinkContextMenuAction
+  | "reveal-in-file-manager";
 
 export function buildTerminalContextMenuTemplate(
   input: Omit<TerminalContextMenuInput, "kind">,
@@ -298,6 +309,15 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
             clipboard.writeText(input.url);
           },
         });
+      } else if (input.kind === "assistant-file-link" && typeof input.revealLabel === "string") {
+        template = [
+          {
+            label: input.revealLabel,
+            click: () => {
+              selectedAction = "reveal-in-file-manager";
+            },
+          },
+        ];
       } else {
         return;
       }

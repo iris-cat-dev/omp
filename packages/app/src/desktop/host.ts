@@ -62,6 +62,7 @@ export interface DesktopNotificationBridge {
 export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
   openPath?: (input: { path: string; workspaceRoot: string }) => Promise<void>;
+  revealPath?: (input: { path: string; workspaceRoot: string }) => Promise<void>;
 }
 
 export interface DesktopEditorTargetDescriptor {
@@ -90,9 +91,11 @@ export interface DesktopWebUtilsBridge {
 
 export type DesktopTerminalContextMenuAction = "clear";
 export type DesktopLinkContextMenuAction = "open-in-desktop";
+export type DesktopFileLinkContextMenuAction = "reveal-in-file-manager";
 export type DesktopContextMenuAction =
   | DesktopTerminalContextMenuAction
-  | DesktopLinkContextMenuAction;
+  | DesktopLinkContextMenuAction
+  | DesktopFileLinkContextMenuAction;
 
 export type DesktopContextMenuInput =
   | {
@@ -106,6 +109,10 @@ export type DesktopContextMenuInput =
       openInDesktopLabel: string;
       openExternalLabel: string;
       copyAddressLabel: string;
+    }
+  | {
+      kind: "assistant-file-link";
+      revealLabel: string;
     };
 
 export interface DesktopContextMenuLabels {

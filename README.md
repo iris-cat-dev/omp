@@ -73,6 +73,8 @@ Targets that cannot be opened are plain text rather than colored links, and clic
 
 On desktop, right-click an HTTP(S) conversation link to open it in a new OMP Desktop browser tab, open it in the system browser, or copy its address. Opening it internally preserves the current conversation and the URL's query, fragment, and encoding. Unsupported schemes never receive the internal-open action, and an unavailable plain **Copy** action is omitted. Read-only images offer image-specific actions without an ambiguous **Paste** action; editable targets still expose **Paste** according to their current edit capability. Native context menus follow the app's selected language.
 
+On the local desktop host, right-click a resolvable workspace file link to reveal it in the system file manager (Explorer on Windows), without opening or executing it. Relative paths, URL-encoded names, and line suffixes use the same resolution as left-click. Remote-host links do not offer local reveal; missing targets and paths outside the workspace, including symlink escapes, are rejected with an error. Left-click behavior is unchanged.
+
 ## Assistant message math
 
 Assistant Markdown renders inline formulas delimited by `$...$`, `\(...\)`, or same-line

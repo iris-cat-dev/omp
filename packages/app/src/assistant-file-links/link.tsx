@@ -36,7 +36,8 @@ export function AssistantMarkdownLink({
   children,
 }: AssistantMarkdownLinkProps) {
   const { t } = useTranslation();
-  const { target, externalUrl, onHoverIn, onPress, canOpen } = useFileLink(source);
+  const { target, externalUrl, onHoverIn, onPress, canOpen, canReveal, onContextMenu } =
+    useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
@@ -66,6 +67,12 @@ export function AssistantMarkdownLink({
     onPress();
   });
   const handleContextMenu = useStableEvent((event: MouseEvent<HTMLAnchorElement>) => {
+    if (canReveal) {
+      event.preventDefault();
+      event.stopPropagation();
+      onContextMenu();
+      return;
+    }
     const showContextMenu = getDesktopHost()?.menu?.showContextMenu;
     const openUrlInBrowser = configRef.current.onOpenUrlInBrowser;
     if (!externalUrl || !showContextMenu || !openUrlInBrowser) {

@@ -23,13 +23,15 @@ function getRegisteredOpenUrlHandler(): (_event: unknown, url: unknown) => Promi
   return handler as (_event: unknown, url: unknown) => Promise<void>;
 }
 
-function getRegisteredOpenPathHandler(): (_event: unknown, input: unknown) => Promise<void> {
+function getRegisteredPathHandler(
+  action: "openPath" | "revealPath" = "openPath",
+): (_event: unknown, input: unknown) => Promise<void> {
   registerOpenerHandlers();
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => {
-    return channel === "paseo:opener:openPath";
+    return channel === `paseo:opener:${action}`;
   })?.[1];
   if (typeof handler !== "function") {
-    throw new Error("open path handler was not registered");
+    throw new Error(`${action} handler was not registered`);
   }
   return handler as (_event: unknown, input: unknown) => Promise<void>;
 }
@@ -103,7 +105,7 @@ describe("workspace path opener", () => {
   });
 
   it("opens existing files and directories inside the resolved workspace", async () => {
-    const handler = getRegisteredOpenPathHandler();
+    const handler = getRegisteredPathHandler();
 
     await handler({}, { path: filePath, workspaceRoot });
     await handler({}, { path: directoryPath, workspaceRoot });
@@ -115,84 +117,126 @@ describe("workspace path opener", () => {
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
-  it("rejects paths outside the workspace, including traversal and sibling prefixes", async () => {
-    const handler = getRegisteredOpenPathHandler();
-    const sibling = path.join(temporaryDirectory, "workspace-neighbor");
-    await mkdir(sibling);
+  it("reveals regular files, directories, and executables without opening them", async () => {
+    const handler = getRegisteredPathHandler("revealPath");
+    const executablePath = path.join(workspaceRoot, "untrusted.exe");
+    await writeFile(executablePath, "untrusted");
 
-    await expect(handler({}, { path: outsidePath, workspaceRoot })).rejects.toThrow(
-      "Path is outside workspace",
-    );
-    await expect(
-      handler({}, { path: path.join(workspaceRoot, "..", "outside.txt"), workspaceRoot }),
-    ).rejects.toThrow("Path is outside workspace");
-    await expect(handler({}, { path: sibling, workspaceRoot })).rejects.toThrow(
-      "Path is outside workspace",
-    );
-    expect(shell.openPath).not.toHaveBeenCalled();
-  });
+    await handler({}, { path: filePath, workspaceRoot });
+    await handler({}, { path: directoryPath, workspaceRoot });
+    await handler({}, { path: workspaceRoot, workspaceRoot });
+    await handler({}, { path: executablePath, workspaceRoot });
 
-  it("rejects symlink escapes but opens in-workspace symlinks at their resolved target", async () => {
-    const handler = getRegisteredOpenPathHandler();
-    const outsideDirectory = path.join(temporaryDirectory, "outside-directory");
-    const escapeLink = path.join(workspaceRoot, "escape");
-    const insideLink = path.join(workspaceRoot, "inside-link");
-    await mkdir(outsideDirectory);
-    await symlink(outsideDirectory, escapeLink, process.platform === "win32" ? "junction" : "dir");
-    await symlink(directoryPath, insideLink, process.platform === "win32" ? "junction" : "dir");
-
-    await expect(handler({}, { path: escapeLink, workspaceRoot })).rejects.toThrow(
-      "Path is outside workspace",
-    );
-    await handler({}, { path: insideLink, workspaceRoot });
-    expect(shell.openPath).toHaveBeenCalledTimes(1);
-    expect(shell.openPath).toHaveBeenCalledWith(await realpath(directoryPath));
-  });
-
-  it("rejects absent paths and workspace roots", async () => {
-    const handler = getRegisteredOpenPathHandler();
-
-    await expect(
-      handler({}, { path: path.join(workspaceRoot, "missing"), workspaceRoot }),
-    ).rejects.toThrow();
-    await expect(
-      handler({}, { path: filePath, workspaceRoot: path.join(temporaryDirectory, "missing") }),
-    ).rejects.toThrow();
-    expect(shell.openPath).not.toHaveBeenCalled();
-  });
-
-  it("rejects malformed inputs, URL schemes, and foreign-platform paths", async () => {
-    const handler = getRegisteredOpenPathHandler();
-    const malformed = [
-      null,
-      {},
-      [],
-      { path: filePath },
-      { path: filePath, workspaceRoot: null },
-      { path: 42, workspaceRoot },
-      { path: "relative/path", workspaceRoot },
-      { path: "sandbox:/file.txt", workspaceRoot },
-      { path: "file:///etc/passwd", workspaceRoot },
-      { path: "https://example.com", workspaceRoot },
-      { path: `${filePath}\0`, workspaceRoot },
-      { path: filePath, workspaceRoot: "sandbox:/workspace" },
-      { path: filePath, workspaceRoot: "relative/workspace" },
-      {
-        path: process.platform === "win32" ? "/etc/passwd" : "C:\\Windows\\win.ini",
-        workspaceRoot,
-      },
-      { path: "\\\\server\\share\\file", workspaceRoot },
-    ];
-
-    for (const input of malformed) {
-      await expect(handler({}, input)).rejects.toThrow("Invalid workspace path");
-    }
+    expect(shell.showItemInFolder).toHaveBeenNthCalledWith(1, await realpath(filePath));
+    expect(shell.showItemInFolder).toHaveBeenNthCalledWith(2, await realpath(directoryPath));
+    expect(shell.showItemInFolder).toHaveBeenNthCalledWith(3, await realpath(workspaceRoot));
+    expect(shell.showItemInFolder).toHaveBeenNthCalledWith(4, await realpath(executablePath));
     expect(shell.openPath).not.toHaveBeenCalled();
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
+  it.each(["openPath", "revealPath"] as const)(
+    "%s rejects paths outside the workspace, including traversal and sibling prefixes",
+    async (action) => {
+      const handler = getRegisteredPathHandler(action);
+      const sibling = path.join(temporaryDirectory, "workspace-neighbor");
+      await mkdir(sibling);
+
+      await expect(handler({}, { path: outsidePath, workspaceRoot })).rejects.toThrow(
+        "Path is outside workspace",
+      );
+      await expect(
+        handler({}, { path: path.join(workspaceRoot, "..", "outside.txt"), workspaceRoot }),
+      ).rejects.toThrow("Path is outside workspace");
+      await expect(handler({}, { path: sibling, workspaceRoot })).rejects.toThrow(
+        "Path is outside workspace",
+      );
+      expect(shell.openPath).not.toHaveBeenCalled();
+      expect(shell.showItemInFolder).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openPath", "revealPath"] as const)(
+    "%s rejects symlink escapes but handles in-workspace symlinks at their resolved target",
+    async (action) => {
+      const handler = getRegisteredPathHandler(action);
+      const outsideDirectory = path.join(temporaryDirectory, "outside-directory");
+      const escapeLink = path.join(workspaceRoot, "escape");
+      const insideLink = path.join(workspaceRoot, "inside-link");
+      await mkdir(outsideDirectory);
+      await symlink(
+        outsideDirectory,
+        escapeLink,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      await symlink(directoryPath, insideLink, process.platform === "win32" ? "junction" : "dir");
+
+      await expect(handler({}, { path: escapeLink, workspaceRoot })).rejects.toThrow(
+        "Path is outside workspace",
+      );
+      expect(shell.openPath).not.toHaveBeenCalled();
+      expect(shell.showItemInFolder).not.toHaveBeenCalled();
+      await handler({}, { path: insideLink, workspaceRoot });
+      const selectedOperation = action === "openPath" ? shell.openPath : shell.showItemInFolder;
+      const otherOperation = action === "openPath" ? shell.showItemInFolder : shell.openPath;
+      expect(selectedOperation).toHaveBeenCalledTimes(1);
+      expect(selectedOperation).toHaveBeenCalledWith(await realpath(directoryPath));
+      expect(otherOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openPath", "revealPath"] as const)(
+    "%s rejects absent paths and workspace roots",
+    async (action) => {
+      const handler = getRegisteredPathHandler(action);
+
+      await expect(
+        handler({}, { path: path.join(workspaceRoot, "missing"), workspaceRoot }),
+      ).rejects.toThrow();
+      await expect(
+        handler({}, { path: filePath, workspaceRoot: path.join(temporaryDirectory, "missing") }),
+      ).rejects.toThrow();
+      expect(shell.openPath).not.toHaveBeenCalled();
+      expect(shell.showItemInFolder).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openPath", "revealPath"] as const)(
+    "%s rejects malformed inputs, URL schemes, and foreign-platform paths",
+    async (action) => {
+      const handler = getRegisteredPathHandler(action);
+      const malformed = [
+        null,
+        {},
+        [],
+        { path: filePath },
+        { path: filePath, workspaceRoot: null },
+        { path: 42, workspaceRoot },
+        { path: "relative/path", workspaceRoot },
+        { path: "sandbox:/file.txt", workspaceRoot },
+        { path: "file:///etc/passwd", workspaceRoot },
+        { path: "https://example.com", workspaceRoot },
+        { path: `${filePath}\0`, workspaceRoot },
+        { path: filePath, workspaceRoot: "sandbox:/workspace" },
+        { path: filePath, workspaceRoot: "relative/workspace" },
+        {
+          path: process.platform === "win32" ? "/etc/passwd" : "C:\\Windows\\win.ini",
+          workspaceRoot,
+        },
+        { path: "\\\\server\\share\\file", workspaceRoot },
+      ];
+
+      for (const input of malformed) {
+        await expect(handler({}, input)).rejects.toThrow("Invalid workspace path");
+      }
+      expect(shell.openPath).not.toHaveBeenCalled();
+      expect(shell.showItemInFolder).not.toHaveBeenCalled();
+      expect(shell.openExternal).not.toHaveBeenCalled();
+    },
+  );
+
   it("reveals executable files and app bundles instead of launching them", async () => {
-    const handler = getRegisteredOpenPathHandler();
+    const handler = getRegisteredPathHandler();
     const executablePaths = [".exe", ".msi", ".bat", ".cmd", ".ps1"].map((extension) =>
       path.join(workspaceRoot, `untrusted${extension}`),
     );
@@ -218,7 +262,7 @@ describe("workspace path opener", () => {
 
   if (process.platform !== "win32") {
     it("reveals extensionless Unix executable files instead of launching them", async () => {
-      const handler = getRegisteredOpenPathHandler();
+      const handler = getRegisteredPathHandler();
       const executablePath = path.join(workspaceRoot, "untrusted-program");
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n");
       await chmod(executablePath, 0o755);
@@ -231,7 +275,7 @@ describe("workspace path opener", () => {
   }
 
   it("propagates shell.openPath failures", async () => {
-    const handler = getRegisteredOpenPathHandler();
+    const handler = getRegisteredPathHandler();
     vi.mocked(shell.openPath).mockResolvedValue("Cannot open path");
 
     await expect(handler({}, { path: filePath, workspaceRoot })).rejects.toThrow(
