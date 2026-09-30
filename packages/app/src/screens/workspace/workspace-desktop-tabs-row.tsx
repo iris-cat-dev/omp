@@ -81,6 +81,9 @@ import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useWorkspace } from "@/stores/session-store-hooks";
 
 const DROPDOWN_WIDTH = 220;
 // Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
@@ -621,6 +624,7 @@ function TabHandleContent({
 function TabChip({
   tab,
   isActive,
+  revealWorkspacePath,
   isDragging,
   isFocused,
   resolvedTabWidth,
@@ -637,6 +641,7 @@ function TabChip({
   dragHandleProps,
 }: {
   tab: WorkspaceTabDescriptor;
+  revealWorkspacePath: string | null;
   isActive: boolean;
   isDragging: boolean;
   isFocused: boolean;
@@ -827,7 +832,17 @@ function TabChip({
             entry.kind === "separator" ? (
               <ContextMenuSeparator key={entry.key} />
             ) : (
-              <TabContextMenuItem key={entry.key} entry={entry} />
+              <React.Fragment key={entry.key}>
+                <TabContextMenuItem entry={entry} />
+                {entry.key === "copy-file-path" && tab.target.kind === "file" ? (
+                  <OpenInFileManagerMenuItem
+                    surface="context"
+                    path={revealWorkspacePath}
+                    filePath={tab.target.path}
+                    testID={`${contextMenuTestId}-reveal-file`}
+                  />
+                ) : null}
+              </React.Fragment>
             ),
           )}
         </ContextMenuContent>
@@ -928,6 +943,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
+  const isLocalDaemon = useIsLocalDaemon(normalizedServerId);
+  const workspace = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  const revealWorkspacePath = isLocalDaemon ? (workspace?.workspaceDirectory ?? null) : null;
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [paneMaximizeButtonWidth, setPaneMaximizeButtonWidth] = useState<number>(0);
   const [, setExitFocusModeWidth] = useState<number>(0);
@@ -1183,6 +1201,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         <ResolvedDesktopTabChip
           key={`${item.tab.key}:${item.tab.kind}`}
           item={item}
+          revealWorkspacePath={revealWorkspacePath}
           isFocused={isFocused}
           isDragging={isActive}
           index={index}
@@ -1211,6 +1230,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     },
     [
       activeDragTabId,
+      revealWorkspacePath,
       isFocused,
       layout.closeButtonPolicy,
       layout.items,
@@ -1313,6 +1333,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 }
 function ResolvedDesktopTabChip({
   item,
+  revealWorkspacePath,
   isFocused,
   isDragging,
   index,
@@ -1338,6 +1359,7 @@ function ResolvedDesktopTabChip({
   showDropIndicatorAfter,
 }: {
   item: ResolvedWorkspaceDesktopTabRowItem;
+  revealWorkspacePath: string | null;
   isFocused: boolean;
   isDragging: boolean;
   index: number;
@@ -1412,6 +1434,7 @@ function ResolvedDesktopTabChip({
       ) : null}
       <TabChip
         tab={item.tab}
+        revealWorkspacePath={revealWorkspacePath}
         isActive={item.isActive}
         isDragging={isDragging}
         isFocused={isFocused}

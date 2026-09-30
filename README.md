@@ -65,6 +65,10 @@ Opening a new conversation from the sidebar keeps the current header tabs visibl
 In an editable source tab, press **Ctrl+/** to comment or uncomment the selected lines. **Cmd+/**
 continues to work on macOS. The editor uses the comment syntax of the current file type.
 
+Right-click a file tab on the local desktop host to reveal the file in **Finder** (macOS),
+**Explorer** (Windows), or **Files** (Linux). The action follows the app's selected language
+and is unavailable for remote-host files and web clients.
+
 ## Assistant message links
 
 HTTP(S) links open externally. Text/source links open in the workspace file panel. On the local desktop host, links to existing images, documents, archives, and directories inside the workspace open with the operating system; executable files are shown in the file manager rather than launched. Web conversation headings support native `#heading` navigation.
