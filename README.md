@@ -86,6 +86,10 @@ Assistant Markdown renders inline formulas delimited by `$...$`, `\(...\)`, or s
 inside Markdown quotes and lists. Explicit `\vec{v}` notation renders with both a vector arrow and
 a bold symbol, while `\mathbf{v}` remains available for bold-vector notation.
 
+## Thinking and tool calls
+
+Collapsed activity groups show their item count in a compact, theme-aware pill with a layers icon. The count updates as activity arrives; expanding the group hides the pill and reveals the individual items.
+
 ## Background processes
 
 Background commands started by the current Agent appear beside the workspace branch under the composer. The indicator shows the active count; opening it lists live and recently completed commands. Select a command to open its read-only terminal output in a bottom pane, or use **Stop** to terminate that command. Closing the output pane does not stop the process. Stopping the current Agent response terminates that Agent's running background commands and suppresses their late completion events; reconnecting restores retained process state and output.

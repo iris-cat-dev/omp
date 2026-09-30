@@ -2336,6 +2336,7 @@ export const TodoListCard = memo(function TodoListCard({
 interface ExpandableBadgeProps {
   label: string;
   secondaryLabel?: string;
+  trailingAccessory?: ReactNode;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
   style?: StyleProp<ViewStyle>;
@@ -2419,6 +2420,7 @@ interface ExpandableBadgeLabelRowProps {
   label: string;
   labelStyle: StyleProp<TextStyle>;
   secondaryLabel?: string;
+  trailingAccessory?: ReactNode;
   secondaryLabelStyle: StyleProp<TextStyle>;
   shouldMeasureWebShimmer: boolean;
   shouldMeasureNativeShimmer: boolean;
@@ -2446,6 +2448,7 @@ function ExpandableBadgeLabelRow({
   labelStyle,
   secondaryLabel,
   secondaryLabelStyle,
+  trailingAccessory,
   shouldMeasureWebShimmer,
   shouldMeasureNativeShimmer,
   isWebShimmer,
@@ -2485,6 +2488,7 @@ function ExpandableBadgeLabelRow({
         shouldMeasureWebShimmer={shouldMeasureWebShimmer}
         onSecondaryLayout={onSecondaryLayout}
       />
+      {trailingAccessory}
       {showOpenFileButton ? (
         <Pressable
           onPress={onOpenFilePress}
@@ -2700,6 +2704,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   label,
   style,
   secondaryLabel,
+  trailingAccessory,
   icon,
   isExpanded,
   onToggle,
@@ -2985,6 +2990,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
             label={label}
             labelStyle={labelStyle}
             secondaryLabel={secondaryLabel}
+            trailingAccessory={trailingAccessory}
             secondaryLabelStyle={secondaryLabelStyle}
             shouldMeasureWebShimmer={shouldMeasureWebShimmer}
             shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
@@ -3025,6 +3031,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: ExpandableBadgeProps) {
   if (previous.label !== next.label) return false;
   if (previous.secondaryLabel !== next.secondaryLabel) return false;
+  if (previous.trailingAccessory !== next.trailingAccessory) return false;
   if (previous.icon !== next.icon) return false;
   if (previous.isExpanded !== next.isExpanded) return false;
   if (previous.style !== next.style) return false;
