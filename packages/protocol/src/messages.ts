@@ -1754,6 +1754,14 @@ export const OmpProviderManagementGetRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const OmpCodexResetCreditConsumeRequestMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_credit.consume.request"),
+  credentialId: z.number().int().positive(),
+  creditId: z.string().trim().min(1).max(512),
+  redeemRequestId: z.string().trim().min(1).max(512),
+  requestId: z.string(),
+});
+
 export const OmpProviderManagementSaveRequestMessageSchema = z.object({
   type: z.literal("omp.provider.management.save.request"),
   configYaml: z.string().max(1_000_000),
@@ -3549,6 +3557,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   OmpProviderManagementGetRequestMessageSchema,
+  OmpCodexResetCreditConsumeRequestMessageSchema,
   OmpProviderManagementSaveRequestMessageSchema,
   OmpSubagentSettingsGetRequestMessageSchema,
   OmpSubagentSettingsUpdateRequestMessageSchema,
@@ -3776,6 +3785,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: z.boolean().optional(),
+        ompCodexResetCredits: z.boolean().optional(),
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
         ompSubagentSettings: z.boolean().optional(),
         // COMPAT(ompMemoryManagement): added 2026-09-12, remove gate after 2027-03-12.
@@ -6354,6 +6364,31 @@ export const ProviderDiagnosticResponseMessageSchema = z.object({
     requestId: z.string(),
   }),
 });
+export const OmpCodexResetCreditsSchema = z.object({
+  status: z.enum(["available", "unavailable", "error"]),
+  availableCount: z.number().int().nonnegative().nullable(),
+  credits: z.array(
+    z.object({
+      id: z.string(),
+      resetType: z.string(),
+      status: z.string(),
+      grantedAt: z.string(),
+      expiresAt: z.string().nullable(),
+      title: z.string().nullable(),
+      description: z.string().nullable(),
+    }),
+  ),
+  error: z.string().optional(),
+});
+export const OmpCodexSubscriptionSchema = z.object({
+  status: z.enum(["active", "expired", "none", "unavailable"]),
+  expiresAt: z.string().nullable(),
+  error: z.string().optional(),
+});
+export const OmpCodexResetCreditConsumeResultSchema = z.object({
+  code: z.enum(["reset", "nothing_to_reset", "no_credit", "already_redeemed"]),
+  windowsReset: z.number().int().nonnegative(),
+});
 export const OmpProviderAccountQuotaSchema = z.object({
   status: z.enum(["available", "unavailable", "error"]),
   planLabel: z.string().nullable().optional(),
@@ -6364,6 +6399,8 @@ export const OmpProviderAccountQuotaSchema = z.object({
   weeklyResetsAt: z.string().nullable().optional(),
   fetchedAt: z.string().nullable().optional(),
   error: z.string().nullable().optional(),
+  resetCredits: OmpCodexResetCreditsSchema.optional(),
+  subscription: OmpCodexSubscriptionSchema.optional(),
 });
 export const OmpProviderManagementSchema = z.object({
   configPath: z.string(),
@@ -6510,6 +6547,11 @@ export const OmpInstallationStatusSchema = z.object({
 export const OmpProviderManagementGetResponseMessageSchema = z.object({
   type: z.literal("omp.provider.management.get.response"),
   payload: OmpProviderManagementSchema.extend({ requestId: z.string() }),
+});
+
+export const OmpCodexResetCreditConsumeResponseMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_credit.consume.response"),
+  payload: OmpCodexResetCreditConsumeResultSchema.extend({ requestId: z.string() }),
 });
 
 export const OmpProviderManagementSaveResponseMessageSchema = z.object({
@@ -7336,6 +7378,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   OmpProviderManagementGetResponseMessageSchema,
+  OmpCodexResetCreditConsumeResponseMessageSchema,
   OmpProviderManagementSaveResponseMessageSchema,
   OmpSubagentSettingsGetResponseMessageSchema,
   OmpSubagentSettingsUpdateResponseMessageSchema,
@@ -7539,6 +7582,17 @@ export type ProviderDiagnosticResponseMessage = z.infer<
 >;
 export type OmpProviderManagement = z.infer<typeof OmpProviderManagementSchema>;
 export type OmpProviderAccountQuota = z.infer<typeof OmpProviderAccountQuotaSchema>;
+export type OmpCodexResetCredits = z.infer<typeof OmpCodexResetCreditsSchema>;
+export type OmpCodexSubscription = z.infer<typeof OmpCodexSubscriptionSchema>;
+export type OmpCodexResetCreditConsumeResult = z.infer<
+  typeof OmpCodexResetCreditConsumeResultSchema
+>;
+export type OmpCodexResetCreditConsumeRequestMessage = z.infer<
+  typeof OmpCodexResetCreditConsumeRequestMessageSchema
+>;
+export type OmpCodexResetCreditConsumeResponseMessage = z.infer<
+  typeof OmpCodexResetCreditConsumeResponseMessageSchema
+>;
 export type OmpProviderManagementGetResponseMessage = z.infer<
   typeof OmpProviderManagementGetResponseMessageSchema
 >;

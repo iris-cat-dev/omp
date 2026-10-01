@@ -33,7 +33,7 @@ describe("fetchCodexAccountQuota", () => {
         fetch: fetchApi,
         now: () => NOW,
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: "available",
       planLabel: "plus",
       fiveHourUsedPct: 100,
@@ -65,7 +65,7 @@ describe("fetchCodexAccountQuota", () => {
         fetch: fetchApi,
         now: () => NOW,
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: "available",
       planLabel: "pro",
       fiveHourUsedPct: null,
@@ -91,7 +91,6 @@ describe("fetchCodexAccountQuota", () => {
       fiveHourLimitReached: null,
       error: "Codex account authentication expired",
     });
-    expect(fetchApi).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a successful response that has no five-hour window", async () => {
@@ -110,6 +109,43 @@ describe("fetchCodexAccountQuota", () => {
       fiveHourUsedPct: null,
       fiveHourLimitReached: null,
       error: "Codex usage response did not include the five-hour limit",
+    });
+  });
+  it("keeps reset cards available when the independent usage request fails", async () => {
+    const quota = await fetchCodexAccountQuota({
+      credential: { accessToken: "access-token" },
+      now: () => NOW,
+      fetch: async (url) =>
+        url === CODEX_USAGE_ENDPOINT
+          ? jsonResponse({}, 503)
+          : jsonResponse({
+              available_count: 1,
+              credits: [
+                {
+                  id: "reset-1",
+                  reset_type: "codex_rate_limits",
+                  status: "available",
+                  granted_at: "2026-08-01T00:00:00Z",
+                  expires_at: null,
+                },
+              ],
+            }),
+    });
+    expect(quota.status).toBe("error");
+    expect(quota.resetCredits).toEqual({
+      status: "available",
+      availableCount: 1,
+      credits: [
+        {
+          id: "reset-1",
+          resetType: "codex_rate_limits",
+          status: "available",
+          grantedAt: "2026-08-01T00:00:00Z",
+          expiresAt: null,
+          title: null,
+          description: null,
+        },
+      ],
     });
   });
 });

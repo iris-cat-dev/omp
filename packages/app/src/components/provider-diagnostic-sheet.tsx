@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import {
   AlertTriangle,
@@ -48,6 +48,7 @@ import {
   OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
   OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
   ompProviderManagementQueryKey,
+  refreshOmpAccountQuotaManagement,
 } from "@/hooks/use-omp-account-quota";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
@@ -79,6 +80,11 @@ import {
 } from "./omp-custom-provider-config";
 import { updateOmpProviderAccountNote } from "./omp-provider-account-notes";
 import { formatOmpAccountIdentity, resolveOmpLoginAction } from "./omp-provider-accounts";
+import {
+  OmpCodexQuotaDetails,
+  OmpCodexQuotaServerContext,
+  OmpQuotaCountdown,
+} from "./omp-codex-quota-details";
 import {
   formatOmpQuotaResetTime,
   resolveOmpRemainingQuotaPct,
@@ -279,7 +285,6 @@ function OmpAccountQuotaWindow({
   usedPct,
   resetsAt,
   status,
-  unknownLabel,
   limitReached = false,
 }: {
   label: string;
@@ -290,7 +295,6 @@ function OmpAccountQuotaWindow({
       ? Status
       : undefined
     : undefined;
-  unknownLabel?: string;
   limitReached?: boolean;
 }) {
   const { t, i18n } = useTranslation();
@@ -313,7 +317,7 @@ function OmpAccountQuotaWindow({
   const statusText =
     status !== "available"
       ? t("settings.providers.omp.multiAccount.quotaUnavailable")
-      : (remainingText ?? unknownLabel ?? t("settings.providers.omp.multiAccount.quotaUnknown"));
+      : (remainingText ?? t("settings.providers.omp.multiAccount.quotaUnknown"));
   const resetTime = formatOmpQuotaResetTime(resetsAt, i18n.language);
   const accessibilityValue = useMemo(
     () => ({ min: 0, max: 100, now: Math.round(remainingPct ?? 0) }),
@@ -341,9 +345,12 @@ function OmpAccountQuotaWindow({
         </View>
       ) : null}
       {resetTime ? (
-        <Text style={sheetStyles.accountQuotaReset}>
-          {t("settings.providers.omp.multiAccount.quotaResetsAt", { time: resetTime })}
-        </Text>
+        <>
+          <OmpQuotaCountdown resetsAt={resetsAt} />
+          <Text style={sheetStyles.accountQuotaReset}>
+            {t("settings.providers.omp.multiAccount.quotaResetsAt", { time: resetTime })}
+          </Text>
+        </>
       ) : null}
     </View>
   );
@@ -360,11 +367,10 @@ function OmpAccountQuotaSummary({
   return (
     <View style={sheetStyles.accountQuota} testID={`omp-provider-account-quota-${credentialId}`}>
       <OmpAccountQuotaWindow
-        label={t("settings.providers.omp.multiAccount.quotaTotal")}
+        label={t("agentControls.quota.weekly")}
         usedPct={quota?.weeklyUsedPct}
         resetsAt={quota?.weeklyResetsAt}
         status={quota?.status}
-        unknownLabel={t("settings.providers.omp.multiAccount.quotaTotalUnknown")}
       />
       {shouldShowOmpFiveHourQuota(quota?.planLabel) ? (
         <OmpAccountQuotaWindow
@@ -479,7 +485,16 @@ function OmpProviderAccountRow({
               </Text>
             ) : null}
             {showQuota ? (
-              <OmpAccountQuotaSummary credentialId={account.credentialId} quota={account.quota} />
+              <>
+                <OmpAccountQuotaSummary credentialId={account.credentialId} quota={account.quota} />
+                <OmpCodexQuotaDetails
+                  account={account}
+                  accountLabel={
+                    identity.primary ??
+                    t("settings.providers.omp.multiAccount.fallback", { number: index + 1 })
+                  }
+                />
+              </>
             ) : null}
           </View>
           <View style={sheetStyles.accountActions}>
@@ -890,6 +905,39 @@ function OmpProviderAccounts({
   );
 }
 
+function OmpProviderSummaryIdentity({ summary }: { summary: OmpProviderSummary }) {
+  const { t } = useTranslation();
+  const { login } = summary;
+  const accountCount = login?.accounts?.length ?? 0;
+  const modelCount = t(
+    summary.modelCount === 1 ? "settings.providers.models.one" : "settings.providers.models.many",
+    { count: summary.modelCount },
+  );
+  let loginStatus = "";
+  if (login) {
+    loginStatus = login.authenticated
+      ? ` · ${t("settings.providers.omp.provider.signedIn")}`
+      : ` · ${t("settings.providers.omp.provider.notSignedIn")}`;
+    if (accountCount > 0) {
+      loginStatus += ` · ${t(
+        accountCount === 1
+          ? "settings.providers.omp.multiAccount.countOne"
+          : "settings.providers.omp.multiAccount.countMany",
+        { count: accountCount },
+      )}`;
+    }
+  }
+  return (
+    <View style={sheetStyles.providerSummaryText}>
+      <Text style={sheetStyles.modelTitle}>{login?.name ?? summary.id}</Text>
+      <Text style={sheetStyles.mutedText}>
+        {modelCount}
+        {loginStatus}
+      </Text>
+    </View>
+  );
+}
+
 function OmpProviderSummaryRow({
   summary,
   loggingInProviderId,
@@ -916,7 +964,6 @@ function OmpProviderSummaryRow({
   onSaveAccountNote,
   onCancelAccountNote,
 }: OmpProviderSummaryRowProps) {
-  const { t } = useTranslation();
   const { login } = summary;
   const accounts = login?.accounts ?? [];
   const loginAction = login ? resolveOmpLoginAction(login) : null;
@@ -937,34 +984,10 @@ function OmpProviderSummaryRow({
   const handleConfigureModels = useCallback(() => {
     onConfigureModels?.(summary.id);
   }, [onConfigureModels, summary.id]);
-  const modelCount = t(
-    summary.modelCount === 1 ? "settings.providers.models.one" : "settings.providers.models.many",
-    { count: summary.modelCount },
-  );
-  let loginStatus = "";
-  if (login) {
-    loginStatus = login.authenticated
-      ? ` · ${t("settings.providers.omp.provider.signedIn")}`
-      : ` · ${t("settings.providers.omp.provider.notSignedIn")}`;
-    if (accounts.length > 0) {
-      loginStatus += ` · ${t(
-        accounts.length === 1
-          ? "settings.providers.omp.multiAccount.countOne"
-          : "settings.providers.omp.multiAccount.countMany",
-        { count: accounts.length },
-      )}`;
-    }
-  }
   return (
     <View style={sheetStyles.providerSummaryBlock}>
       <View style={sheetStyles.providerSummaryRow}>
-        <View style={sheetStyles.providerSummaryText}>
-          <Text style={sheetStyles.modelTitle}>{login?.name ?? summary.id}</Text>
-          <Text style={sheetStyles.mutedText}>
-            {modelCount}
-            {loginStatus}
-          </Text>
-        </View>
+        <OmpProviderSummaryIdentity summary={summary} />
         <OmpProviderSummaryActions
           summary={summary}
           login={login}
@@ -1793,6 +1816,18 @@ function OmpManagementPanel({
     setManagement(result);
     setConfigYaml(result.configYaml);
   }, []);
+  useEffect(() => {
+    if (!visible) return;
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (
+        event.query.queryKey[0] !== "ompProviderManagement" ||
+        event.query.queryKey[1] !== serverId
+      )
+        return;
+      const data = event.query.state.data as OmpProviderManagement | undefined;
+      if (data && event.type === "updated" && event.action.type === "success") showManagement(data);
+    });
+  }, [queryClient, serverId, showManagement, visible]);
   const storeManagement = useCallback(
     (result: OmpProviderManagement) => {
       queryClient.setQueryData(managementQueryKey, result);
@@ -1824,20 +1859,22 @@ function OmpManagementPanel({
       setLoading(true);
       setError(null);
       try {
-        const result = await queryClient.fetchQuery({
-          queryKey: managementQueryKey,
-          queryFn: () => client.getOmpProviderManagement(),
-          staleTime: force ? 0 : OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
-          gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
-        });
-        storeManagement(result);
+        await (force
+          ? refreshOmpAccountQuotaManagement(queryClient, client, serverId)
+          : queryClient.fetchQuery({
+              queryKey: managementQueryKey,
+              queryFn: () => client.getOmpProviderManagement(),
+              staleTime: OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
+              gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
+            }));
       } catch (loadError) {
+        if (isCancelledError(loadError)) return;
         setError(loadError instanceof Error ? loadError.message : String(loadError));
       } finally {
         setLoading(false);
       }
     },
-    [client, managementQueryKey, queryClient, showManagement, storeManagement, supported],
+    [client, managementQueryKey, queryClient, serverId, showManagement, supported],
   );
   const cancelLoginFlow = useCallback(
     async (flow: OmpProviderLoginFlowState) => {
@@ -2513,7 +2550,11 @@ function OmpManagementPanel({
     );
   }
 
-  return renderPanel();
+  return (
+    <OmpCodexQuotaServerContext.Provider value={visible ? serverId : null}>
+      {renderPanel()}
+    </OmpCodexQuotaServerContext.Provider>
+  );
 }
 export function OmpProviderConfigurationPanel({ serverId }: { serverId: string }) {
   const { refresh } = useProvidersSnapshot(serverId, { enabled: false });

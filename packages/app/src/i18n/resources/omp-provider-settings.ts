@@ -1,4 +1,7 @@
+import { codexQuotaStrings } from "./codex-quota";
+
 const en = {
+  codexQuota: codexQuotaStrings.en,
   managementTitle: "OMP providers",
   loading: "Loading OMP providers…",
   updateHost: "Update this OMP Desktop host to manage OMP providers here.",
@@ -38,11 +41,9 @@ const en = {
     moveUp: "Move up",
     moveDown: "Move down",
     orderHint: "New automatic sessions use accounts in this order, rotating each time.",
-    quotaTotal: "Total quota",
     quotaFiveHour: "5-hour quota",
     quotaRemaining: "{{remaining}}% remaining",
     quotaReached: "5-hour limit reached",
-    quotaTotalUnknown: "Total quota unknown",
     quotaResetsAt: "Resets at {{time}}",
     quotaUnavailable: "Quota unavailable",
     quotaUnknown: "Quota unknown",
@@ -168,6 +169,7 @@ export const ompProviderSettings = {
   en,
   ar: {
     ...en,
+    codexQuota: codexQuotaStrings.ar,
     managementTitle: "موفرو OMP",
     loading: "جارٍ تحميل موفري OMP…",
     updateHost: "حدّث مضيف OMP Desktop لإدارة موفري OMP هنا.",
@@ -267,6 +269,7 @@ export const ompProviderSettings = {
   },
   es: {
     ...en,
+    codexQuota: codexQuotaStrings.es,
     managementTitle: "Proveedores de OMP",
     loading: "Cargando proveedores de OMP…",
     updateHost: "Actualiza este host de OMP Desktop para gestionar aquí los proveedores de OMP.",
@@ -369,6 +372,7 @@ export const ompProviderSettings = {
   },
   fr: {
     ...en,
+    codexQuota: codexQuotaStrings.fr,
     managementTitle: "Fournisseurs OMP",
     loading: "Chargement des fournisseurs OMP…",
     updateHost: "Mettez à jour cet hôte OMP Desktop pour gérer les fournisseurs OMP ici.",
@@ -472,6 +476,7 @@ export const ompProviderSettings = {
   },
   ja: {
     ...en,
+    codexQuota: codexQuotaStrings.ja,
     managementTitle: "OMPプロバイダー",
     loading: "OMPプロバイダーを読み込み中…",
     updateHost: "ここでOMPプロバイダーを管理するには、このOMP Desktopホストを更新してください。",
@@ -574,6 +579,7 @@ export const ompProviderSettings = {
   },
   ko: {
     ...en,
+    codexQuota: codexQuotaStrings.ko,
     managementTitle: "OMP 제공자",
     loading: "OMP 제공자 불러오는 중…",
     updateHost: "여기서 OMP 제공자를 관리하려면 OMP Desktop 호스트를 업데이트하세요.",
@@ -676,6 +682,7 @@ export const ompProviderSettings = {
   },
   "pt-BR": {
     ...en,
+    codexQuota: codexQuotaStrings["pt-BR"],
     managementTitle: "Provedores OMP",
     loading: "Carregando provedores OMP…",
     updateHost: "Atualize este host do OMP Desktop para gerenciar os provedores OMP aqui.",
@@ -778,6 +785,7 @@ export const ompProviderSettings = {
   },
   ru: {
     ...en,
+    codexQuota: codexQuotaStrings.ru,
     managementTitle: "Провайдеры OMP",
     loading: "Загрузка провайдеров OMP…",
     updateHost: "Обновите этот хост OMP Desktop, чтобы управлять провайдерами OMP.",
@@ -880,6 +888,7 @@ export const ompProviderSettings = {
   },
   "zh-CN": {
     ...en,
+    codexQuota: codexQuotaStrings["zh-CN"],
     managementTitle: "OMP 模型服务商",
     loading: "正在加载 OMP 模型服务商…",
     updateHost: "请更新此 OMP Desktop 主机后再管理 OMP 模型服务商。",
@@ -916,11 +925,9 @@ export const ompProviderSettings = {
       moveUp: "上移",
       moveDown: "下移",
       orderHint: "新的自动模式会话会按此顺序轮换账号。",
-      quotaTotal: "总额度",
       quotaFiveHour: "5 小时额度",
       quotaRemaining: "剩余 {{remaining}}%",
       quotaReached: "已达到 5 小时额度",
-      quotaTotalUnknown: "总额度未知",
       quotaResetsAt: "{{time}} 重置",
       quotaUnavailable: "额度暂不可用",
       quotaUnknown: "额度未知",

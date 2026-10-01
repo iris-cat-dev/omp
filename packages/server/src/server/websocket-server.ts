@@ -328,7 +328,6 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
   };
 }
 
-
 function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffer {
   if (typeof data === "string") return Buffer.from(data, "utf8");
   if (Array.isArray(data)) {
@@ -861,7 +860,6 @@ export class PaseoWebSocketServer {
         .catch((error) => this.logger.warn({ err: error }, "Failed to publish project update"));
     }
   }
-
 
   public async attachExternalSocket(
     ws: WebSocketLike,
@@ -1526,6 +1524,7 @@ export class PaseoWebSocketServer {
         providersSnapshotCwd: true,
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: true,
+        ompCodexResetCredits: true,
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
         ompSubagentSettings: true,
         // COMPAT(ompMemoryManagement): added 2026-09-12, remove gate after 2027-03-12.
@@ -1689,7 +1688,6 @@ export class PaseoWebSocketServer {
     });
   }
 
-
   private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
     this.broadcast(this.createDaemonConfigChangedMessage(config));
   }
@@ -1719,7 +1717,6 @@ export class PaseoWebSocketServer {
       await this.detachSocket(ws, { error: err });
     });
   }
-
 
   private async detachSocket(
     ws: WebSocketLike,

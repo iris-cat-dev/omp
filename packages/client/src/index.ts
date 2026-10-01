@@ -21,6 +21,7 @@ import type {
   OmpProviderLoginStartResponseMessage,
   OmpInstallationStatus,
   OmpProviderManagementGetResponseMessage,
+  OmpCodexResetCreditConsumeResult,
   OmpProviderManagementSaveResponseMessage,
   OmpSubagentSettingsGetResponseMessage,
   OmpSubagentSettingsUpdateResponseMessage,
@@ -377,6 +378,11 @@ export interface OmpProviderActions {
   getProviderManagement(options?: {
     requestId?: string;
   }): Promise<OmpProviderManagementGetResponseMessage["payload"]>;
+  consumeCodexResetCredit(
+    credentialId: number,
+    creditId: string,
+    redeemRequestId: string,
+  ): Promise<OmpCodexResetCreditConsumeResult>;
   saveProviderConfig(
     configYaml: string,
     options?: { requestId?: string },
@@ -562,6 +568,8 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
     },
     omp: {
       getProviderManagement: (options) => daemonClient.getOmpProviderManagement(options),
+      consumeCodexResetCredit: (credentialId, creditId, redeemRequestId) =>
+        daemonClient.consumeOmpCodexResetCredit(credentialId, creditId, redeemRequestId),
       saveProviderConfig: (configYaml, options) =>
         daemonClient.saveOmpProviderConfig(configYaml, options),
       getSubagentSettings: (options) => daemonClient.getOmpSubagentSettings(options),
