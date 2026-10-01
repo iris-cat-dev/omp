@@ -294,6 +294,14 @@ export const ptBR: TranslationResources = {
     },
     turnMetadata: {
       tokens: "tokens",
+      workedFor: "Duração: {{duration}}",
+      completedAt: "Concluído: {{time}}",
+      tokensPerSecond: "{{speed}} tokens/s",
+      duration: {
+        hour: "{{count}} h",
+        minute: "{{count}} min",
+        second: "{{count}} s",
+      },
     },
     turnFileChanges: {
       added: "Adicionado {{name}}",

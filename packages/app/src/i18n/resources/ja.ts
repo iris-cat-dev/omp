@@ -294,6 +294,14 @@ export const ja: TranslationResources = {
     },
     turnMetadata: {
       tokens: "トークン",
+      workedFor: "所要時間 {{duration}}",
+      completedAt: "完了日時 {{time}}",
+      tokensPerSecond: "{{speed}} トークン/秒",
+      duration: {
+        hour: "{{count}}時間",
+        minute: "{{count}}分",
+        second: "{{count}}秒",
+      },
     },
     turnFileChanges: {
       added: "{{name}} を追加",

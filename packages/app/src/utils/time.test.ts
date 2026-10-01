@@ -88,6 +88,16 @@ describe("formatDuration", () => {
     expect(formatDuration(-1)).toBe("0s");
     expect(formatDuration(Number.NaN)).toBe("0s");
   });
+
+  it("uses localized units for zero, remainder units, and invalid durations", () => {
+    const units = { hour: "小时", minute: "分钟", second: "秒" };
+    const formatUnit = (count: number, unit: keyof typeof units) => `${count}${units[unit]}`;
+
+    expect(formatDuration(0, formatUnit)).toBe("0秒");
+    expect(formatDuration(61_000, formatUnit)).toBe("1分钟 1秒");
+    expect(formatDuration(3_660_000, formatUnit)).toBe("1小时 1分钟");
+    expect(formatDuration(Number.NaN, formatUnit)).toBe("0秒");
+  });
 });
 
 describe("formatMessageTimestamp", () => {
@@ -114,5 +124,23 @@ describe("formatMessageTimestamp", () => {
     const formatted = formatMessageTimestamp(date, now);
     expect(formatted).toMatch(/Apr|April/);
     expect(formatted).toMatch(/2026/);
+  });
+
+  it("honors a requested numbering system without reusing another locale's cached formatter", () => {
+    const now = new Date(2026, 4, 14, 17, 30);
+    const date = new Date(2026, 4, 14, 12, 23);
+    const english = formatMessageTimestamp(date, now, "en");
+    const arabicNumerals = formatMessageTimestamp(date, now, "ar-u-nu-arab");
+
+    expect(english).toMatch(/12:23/);
+    expect(arabicNumerals).toMatch(/[٠-٩]/);
+    expect(formatMessageTimestamp(date, now, "en")).toBe(english);
+  });
+
+  it("uses the app locale for weekdays and older dates", () => {
+    const now = new Date(2026, 4, 14, 17, 30);
+
+    expect(formatMessageTimestamp(new Date(2026, 4, 11, 22, 12), now, "zh-CN")).toContain("星期一");
+    expect(formatMessageTimestamp(new Date(2026, 3, 1, 9, 5), now, "zh-CN")).toContain("4月");
   });
 });

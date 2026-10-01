@@ -294,6 +294,14 @@ export const es: TranslationResources = {
     },
     turnMetadata: {
       tokens: "tokens",
+      workedFor: "Duración: {{duration}}",
+      completedAt: "Completado: {{time}}",
+      tokensPerSecond: "{{speed}} tokens/s",
+      duration: {
+        hour: "{{count}} h",
+        minute: "{{count}} min",
+        second: "{{count}} s",
+      },
     },
     turnFileChanges: {
       added: "Añadido {{name}}",

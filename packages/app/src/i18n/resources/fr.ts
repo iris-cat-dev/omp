@@ -295,6 +295,14 @@ export const fr: TranslationResources = {
     },
     turnMetadata: {
       tokens: "jetons",
+      workedFor: "Durée : {{duration}}",
+      completedAt: "Terminé : {{time}}",
+      tokensPerSecond: "{{speed}} jetons/s",
+      duration: {
+        hour: "{{count}} h",
+        minute: "{{count}} min",
+        second: "{{count}} s",
+      },
     },
     turnFileChanges: {
       added: "Ajouté {{name}}",

@@ -102,29 +102,35 @@ function isSameLocalDay(a: Date, b: Date): boolean {
 // Cached Intl formatter. Explicitly carrying `hourCycle` from the resolved
 // options is what makes the runtime respect the user's OS-level 12h/24h
 // preference rather than the locale's default cycle.
-let cachedTimeFormatter: Intl.DateTimeFormat | null = null;
-function getTimeFormatter(): Intl.DateTimeFormat {
-  if (cachedTimeFormatter) return cachedTimeFormatter;
+const cachedTimeFormatters = new Map<string | undefined, Intl.DateTimeFormat>();
+function getTimeFormatter(locale?: string): Intl.DateTimeFormat {
+  const cached = cachedTimeFormatters.get(locale);
+  if (cached) return cached;
   const resolved = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
   }).resolvedOptions();
-  cachedTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  const formatter = new Intl.DateTimeFormat(locale, {
     hour: "numeric",
     minute: "2-digit",
     hourCycle: resolved.hourCycle,
   });
-  return cachedTimeFormatter;
+  cachedTimeFormatters.set(locale, formatter);
+  return formatter;
 }
 
 /**
- * Format a chat-message timestamp for hover-revealed UI.
+ * Format a chat-message timestamp in the requested locale.
  * - Same day: "10:11 PM" or "22:11" depending on user preference
  * - Within ~6 days: "Wednesday 10:11 PM"
  * - Older: "14 May 2026, 10:11 PM"
  */
-export function formatMessageTimestamp(date: Date, now: Date = new Date()): string {
-  const time = getTimeFormatter().format(date);
+export function formatMessageTimestamp(
+  date: Date,
+  now: Date = new Date(),
+  locale?: string,
+): string {
+  const time = getTimeFormatter(locale).format(date);
 
   if (isSameLocalDay(date, now)) {
     return time;
@@ -133,11 +139,11 @@ export function formatMessageTimestamp(date: Date, now: Date = new Date()): stri
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   if (diffDays >= 0 && diffDays < 7) {
-    const weekday = date.toLocaleDateString(undefined, { weekday: "long" });
+    const weekday = date.toLocaleDateString(locale, { weekday: "long" });
     return `${weekday} ${time}`;
   }
 
-  const dateLabel = date.toLocaleDateString(undefined, {
+  const dateLabel = date.toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -145,26 +151,34 @@ export function formatMessageTimestamp(date: Date, now: Date = new Date()): stri
   return `${dateLabel}, ${time}`;
 }
 
+const DURATION_UNIT_SUFFIXES = { hour: "h", minute: "m", second: "s" } as const;
+
+function formatDurationUnit(count: number, unit: keyof typeof DURATION_UNIT_SUFFIXES): string {
+  return `${count}${DURATION_UNIT_SUFFIXES[unit]}`;
+}
+
 /**
  * Format a duration as a compact human-readable string.
  * - 0-60s: whole seconds ("47s")
  * - Minutes/hours: integers only ("2m 12s", "1h 5m")
  */
-export function formatDuration(durationMs: number): string {
+export function formatDuration(durationMs: number, formatUnit = formatDurationUnit): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) {
-    return "0s";
+    return formatUnit(0, "second");
   }
   const totalSeconds = durationMs / 1000;
 
   if (totalSeconds < 60) {
-    return `${Math.floor(totalSeconds)}s`;
+    return formatUnit(Math.floor(totalSeconds), "second");
   }
   const totalMinutes = Math.floor(totalSeconds / 60);
   if (totalMinutes < 60) {
     const seconds = Math.floor(totalSeconds) % 60;
-    return seconds === 0 ? `${totalMinutes}m` : `${totalMinutes}m ${seconds}s`;
+    const minutesLabel = formatUnit(totalMinutes, "minute");
+    return seconds === 0 ? minutesLabel : `${minutesLabel} ${formatUnit(seconds, "second")}`;
   }
   const hours = Math.floor(totalMinutes / 60);
   const remMinutes = totalMinutes % 60;
-  return remMinutes === 0 ? `${hours}h` : `${hours}h ${remMinutes}m`;
+  const hoursLabel = formatUnit(hours, "hour");
+  return remMinutes === 0 ? hoursLabel : `${hoursLabel} ${formatUnit(remMinutes, "minute")}`;
 }

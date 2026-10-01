@@ -294,6 +294,14 @@ export const ko: TranslationResources = {
     },
     turnMetadata: {
       tokens: "토큰",
+      workedFor: "소요 시간 {{duration}}",
+      completedAt: "완료 시간 {{time}}",
+      tokensPerSecond: "{{speed}} 토큰/초",
+      duration: {
+        hour: "{{count}}시간",
+        minute: "{{count}}분",
+        second: "{{count}}초",
+      },
     },
     turnFileChanges: {
       added: "{{name}} 추가됨",

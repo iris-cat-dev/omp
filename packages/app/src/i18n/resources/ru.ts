@@ -304,6 +304,14 @@ export const ru: TranslationResources = {
     },
     turnMetadata: {
       tokens: "токенов",
+      workedFor: "Затрачено {{duration}}",
+      completedAt: "Завершено: {{time}}",
+      tokensPerSecond: "{{speed}} токенов/с",
+      duration: {
+        hour: "{{count}} ч",
+        minute: "{{count}} мин",
+        second: "{{count}} с",
+      },
     },
     turnFileChanges: {
       added: "Добавлен {{name}}",

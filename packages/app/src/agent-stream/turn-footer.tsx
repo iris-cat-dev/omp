@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { SPACING, type Theme } from "@/styles/theme";
@@ -151,6 +152,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
   outputTokenSpeed: number | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
+  const { t } = useTranslation();
   const active = useRetainedPanelActive();
   return (
     <View style={stylesheet.turnFooterContent}>
@@ -160,7 +162,9 @@ const WorkingIndicator = memo(function WorkingIndicator({
       {outputTokenSpeed !== null ? (
         <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
           <Text style={stylesheet.tokenOutputSpeedText}>
-            {formatOutputTokenSpeed(outputTokenSpeed)} t/s
+            {t("agentStream.turnMetadata.tokensPerSecond", {
+              speed: formatOutputTokenSpeed(outputTokenSpeed),
+            })}
           </Text>
         </View>
       ) : null}
@@ -275,6 +279,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
+    maxWidth: "100%",
     minHeight: 24,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },

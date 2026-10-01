@@ -294,6 +294,14 @@ export const ar: TranslationResources = {
     },
     turnMetadata: {
       tokens: "توكنز",
+      workedFor: "استغرق {{duration}}",
+      completedAt: "اكتمل: {{time}}",
+      tokensPerSecond: "{{speed}} توكن/ث",
+      duration: {
+        hour: "{{count}} س",
+        minute: "{{count}} د",
+        second: "{{count}} ث",
+      },
     },
     turnFileChanges: {
       added: "أُضيف {{name}}",

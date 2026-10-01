@@ -318,6 +318,14 @@ export const en = {
     },
     turnMetadata: {
       tokens: "tokens",
+      workedFor: "Worked for {{duration}}",
+      completedAt: "Completed: {{time}}",
+      tokensPerSecond: "{{speed}} t/s",
+      duration: {
+        hour: "{{count}}h",
+        minute: "{{count}}m",
+        second: "{{count}}s",
+      },
     },
     turnFileChanges: {
       added: "Added {{name}}",

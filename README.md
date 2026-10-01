@@ -39,6 +39,15 @@ not user or assistant message bubbles. They remain in conversation history after
 and are not sent to the model. Failed requests, unchanged settings, and initial draft
 preferences do not add switch notices.
 
+## Assistant turn statistics
+
+Completed assistant turns show duration, completion time, total tokens, and average output
+speed in the app's selected language. Completion time stays visible alongside duration;
+hovering or tapping is not required. Weekdays and dates follow the selected language, while
+the clock retains the system's 12/24-hour preference. Missing metadata is omitted independently,
+and the footer wraps on narrow screens. Running-turn duration and output speed use the same
+localized units.
+
 ## Conversation names
 
 Rename a conversation from its tab's context menu. Renaming the workspace's primary conversation changes the workspace name; additional conversations keep their own titles. Accepted renames update the local tab title immediately, without waiting for a directory event. Saved names remain visible when switching tabs, including when a conversation is not loaded or its provider history is unavailable.

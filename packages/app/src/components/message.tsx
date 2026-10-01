@@ -601,6 +601,9 @@ interface AssistantTurnFooterProps {
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    flexShrink: 1,
+    maxWidth: "100%",
     alignItems: "center",
     gap: theme.spacing[2],
   },
@@ -611,35 +614,17 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     marginTop: 0,
     marginLeft: -theme.spacing[1],
   },
-  labelWrapper: {
-    position: "relative",
-  },
-  labelSizer: {
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
-    opacity: 0,
-  },
-  labelOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
-  },
   metadataLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
+    maxWidth: "100%",
     fontVariant: ["tabular-nums"],
   },
 }));
 
-const TIMESTAMP_REVEAL_MS = 3000;
-
 /**
  * Footer rendered next to the copy button at the end of an assistant turn.
- * Always shows the turn duration; swaps to the end timestamp on hover (web)
- * or tap (native). The hidden sizer keeps the label width stable while the
- * visible text swaps.
+ * Shows localized duration, completion time, and token statistics without interaction.
  */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
@@ -649,45 +634,27 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   avgSpeedLabel,
   onFork,
 }: AssistantTurnFooterProps) {
-  const { t } = useTranslation();
-  const [hovered, setHovered] = useState(false);
-  const [pressedReveal, setPressedReveal] = useState(false);
-  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (revealTimerRef.current) {
-        clearTimeout(revealTimerRef.current);
-        revealTimerRef.current = null;
-      }
-    };
-  }, []);
-
+  const { t, i18n } = useTranslation();
   const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
-    [durationMs],
+    () =>
+      durationMs !== undefined
+        ? t("agentStream.turnMetadata.workedFor", {
+            duration: formatDuration(durationMs, (count, unit) =>
+              t(`agentStream.turnMetadata.duration.${unit}`, { count }),
+            ),
+          })
+        : "",
+    [durationMs, t],
   );
   const timestampLabel = useMemo(
-    () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
-    [completedAt],
+    () =>
+      completedAt
+        ? t("agentStream.turnMetadata.completedAt", {
+            time: formatMessageTimestamp(completedAt, undefined, i18n.language),
+          })
+        : "",
+    [completedAt, i18n.language, t],
   );
-
-  const canSwap = Boolean(timestampLabel);
-  const showTimestamp = canSwap && (isWeb ? hovered : pressedReveal);
-
-  const handleHoverIn = useCallback(() => setHovered(true), []);
-  const handleHoverOut = useCallback(() => setHovered(false), []);
-  const handlePress = useCallback(() => {
-    if (isWeb || !canSwap) return;
-    if (revealTimerRef.current) {
-      clearTimeout(revealTimerRef.current);
-    }
-    setPressedReveal((prev) => !prev);
-    revealTimerRef.current = setTimeout(() => {
-      setPressedReveal(false);
-      revealTimerRef.current = null;
-    }, TIMESTAMP_REVEAL_MS);
-  }, [canSwap]);
   const handleFork = useCallback(() => onFork?.(), [onFork]);
   const canFork = Boolean(onFork);
 
@@ -699,24 +666,14 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       />
       {canFork ? <AssistantForkButton onFork={handleFork} /> : null}
       {durationLabel ? (
-        <Pressable
-          onPress={handlePress}
-          onHoverIn={handleHoverIn}
-          onHoverOut={handleHoverOut}
-          accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
-        >
-          <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
-                container width is stable across hover transitions. */}
-            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {durationLabel.length >= timestampLabel.length ? durationLabel : timestampLabel}
-            </Text>
-            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : durationLabel}
-            </Text>
-          </View>
-        </Pressable>
+        <Text style={assistantTurnFooterStylesheet.metadataLabel} testID="turn-duration">
+          {durationLabel}
+        </Text>
+      ) : null}
+      {timestampLabel ? (
+        <Text style={assistantTurnFooterStylesheet.metadataLabel} testID="turn-completed-at">
+          {timestampLabel}
+        </Text>
       ) : null}
       {tokenTotalLabel ? (
         <Text style={assistantTurnFooterStylesheet.metadataLabel} testID="turn-token-total">
@@ -725,7 +682,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       ) : null}
       {avgSpeedLabel ? (
         <Text style={assistantTurnFooterStylesheet.metadataLabel} testID="turn-avg-speed">
-          {avgSpeedLabel} t/s
+          {t("agentStream.turnMetadata.tokensPerSecond", { speed: avgSpeedLabel })}
         </Text>
       ) : null}
     </View>
@@ -749,6 +706,7 @@ export const LiveElapsed = memo(function LiveElapsed({
   style,
   testID,
 }: LiveElapsedProps) {
+  const { t } = useTranslation();
   const startedAtMs = startedAt.getTime();
   const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
   const visibleElapsedMs = active ? Math.max(0, Date.now() - startedAtMs) : elapsedMs;
@@ -766,7 +724,9 @@ export const LiveElapsed = memo(function LiveElapsed({
 
   return (
     <Text style={style} testID={testID}>
-      {formatDuration(visibleElapsedMs)}
+      {formatDuration(visibleElapsedMs, (count, unit) =>
+        t(`agentStream.turnMetadata.duration.${unit}`, { count }),
+      )}
     </Text>
   );
 });

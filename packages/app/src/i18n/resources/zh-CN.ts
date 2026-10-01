@@ -318,7 +318,15 @@ export const zhCN: TranslationResources = {
       proposedPlan: "建议计划",
     },
     turnMetadata: {
-      tokens: "tokens",
+      tokens: "词元",
+      workedFor: "耗时 {{duration}}",
+      completedAt: "完成于 {{time}}",
+      tokensPerSecond: "{{speed}} 词元/秒",
+      duration: {
+        hour: "{{count}}小时",
+        minute: "{{count}}分钟",
+        second: "{{count}}秒",
+      },
     },
     turnFileChanges: {
       added: "新增 {{name}}",
