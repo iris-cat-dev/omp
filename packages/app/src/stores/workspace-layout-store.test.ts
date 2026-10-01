@@ -30,7 +30,6 @@ import {
   findBottomTerminalPaneId,
   findPaneContainingTab,
   FOCUSED_PANE_PLACEMENT,
-  getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
   normalizeLayout,
@@ -204,6 +203,86 @@ describe("workspace-layout-store helpers", () => {
     });
   });
 
+  it.each([1, 2])(
+    "recovers other tabs, panes, focus and workspaces from version %i layouts with browser tabs",
+    async (version) => {
+      const main = {
+        kind: "pane",
+        pane: {
+          id: "main",
+          tabIds: ["agent-a", "browser-a", "draft-a"],
+          focusedTabId: "browser-a",
+          tabs: [
+            createTab("agent-a", { kind: "agent", agentId: "agent-a" }),
+            { tabId: "browser-a", target: { kind: "browser", browserId: "old-a" }, createdAt: 1 },
+            createTab("draft-a", { kind: "draft", draftId: "draft-a" }),
+          ],
+        },
+      };
+      const otherPane = {
+        kind: "pane",
+        pane: {
+          id: "other-pane",
+          tabIds: ["browser-b"],
+          focusedTabId: "browser-b",
+          tabs: [
+            { tabId: "browser-b", target: { kind: "browser", browserId: "old-b" }, createdAt: 1 },
+          ],
+        },
+      };
+      await AsyncStorage.setItem(
+        "workspace-layout-state",
+        JSON.stringify({
+          state: {
+            layoutByWorkspace: {
+              first: {
+                root: {
+                  kind: "group",
+                  group: {
+                    id: "user-split",
+                    direction: "horizontal",
+                    children: [main, otherPane],
+                    sizes: [0.6, 0.4],
+                  },
+                },
+                focusedPaneId: "main",
+                parentTabIdByTabId: {
+                  "draft-a": "browser-a",
+                  "browser-a": "agent-a",
+                },
+              },
+              second: {
+                root: createPane({
+                  id: "main",
+                  tabIds: ["agent-b"],
+                  targetsByTabId: { "agent-b": { kind: "agent", agentId: "agent-b" } },
+                }),
+                focusedPaneId: "main",
+              },
+            },
+            splitSizesByWorkspace: { first: { "user-split": [0.6, 0.4] } },
+          },
+          version,
+        }),
+      );
+
+      const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+      await restored.persist.rehydrate();
+      const first = restored.getState().layoutByWorkspace.first;
+      const second = restored.getState().layoutByWorkspace.second;
+      expect(first.focusedPaneId).toBe("main");
+      expect(findPaneById(first.root, "main")?.focusedTabId).toBe("draft-a");
+      expect(collectContentTabs(first.root).map((tab) => tab.tabId)).toEqual([
+        "agent-a",
+        "draft-a",
+      ]);
+      expect(findPaneById(first.root, "other-pane")).toBeTruthy();
+      expect(first.parentTabIdByTabId).toBeUndefined();
+      expect(collectContentTabs(second.root).map((tab) => tab.tabId)).toEqual(["agent-b"]);
+      expect(restored.getState().splitSizesByWorkspace.first?.["user-split"]).toEqual([0.6, 0.4]);
+    },
+  );
+
   it("survives closing the draft created while repairing a hidden-only layout", async () => {
     await AsyncStorage.setItem(
       "workspace-layout-state",
@@ -317,59 +396,11 @@ describe("workspace-layout-store helpers", () => {
     ]);
   });
 
-  it("derives the focused browser id from the focused pane active tab", () => {
-    const root: SplitNode = {
-      kind: "group",
-      group: {
-        id: "group-root",
-        direction: "horizontal",
-        sizes: [0.5, 0.5],
-        children: [
-          createPane({
-            id: "left",
-            tabIds: ["agent-a", "browser-a"],
-            focusedTabId: "browser-a",
-            targetsByTabId: {
-              "agent-a": { kind: "agent", agentId: "agent-a" },
-              "browser-a": { kind: "browser", browserId: "browser-a-id" },
-            },
-          }),
-          createPane({
-            id: "right",
-            tabIds: ["browser-b"],
-            focusedTabId: "browser-b",
-            targetsByTabId: {
-              "browser-b": { kind: "browser", browserId: "browser-b-id" },
-            },
-          }),
-        ],
-      },
-    };
-
-    expect(getFocusedBrowserId({ root, focusedPaneId: "left" })).toBe("browser-a-id");
-    expect(getFocusedBrowserId({ root, focusedPaneId: "right" })).toBe("browser-b-id");
-  });
-
-  it("returns null when the focused pane active tab is not a browser", () => {
-    const root = createPane({
-      id: "main",
-      tabIds: ["browser-a", "agent-a"],
-      focusedTabId: "agent-a",
-      targetsByTabId: {
-        "browser-a": { kind: "browser", browserId: "browser-a-id" },
-        "agent-a": { kind: "agent", agentId: "agent-a" },
-      },
-    });
-
-    expect(getFocusedBrowserId({ root, focusedPaneId: "main" })).toBeNull();
-  });
-
   it("keeps tabs in hidden panes while excluding those panes from focus helpers", () => {
     const root = createPane({ id: "hidden", tabIds: ["tab-a"], hidden: true });
 
     expect(collectAllTabs(root).map((tab) => tab.tabId)).toEqual(["tab-a"]);
     expect(collectAllPanes(root)).toEqual([]);
-    expect(getFocusedBrowserId({ root, focusedPaneId: "hidden" })).toBeNull();
   });
 });
 
@@ -1345,30 +1376,6 @@ describe("workspace-layout-store actions", () => {
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, setupTabId as string)?.id).toBe("secondary");
     expect(layout.focusedPaneId).toBe("explorer");
-  });
-
-  it("keeps ambient browser opens out of the focused explorer pane", () => {
-    const workspaceKey = createWorkspaceKey();
-    const store = workspaceLayoutStore.getState();
-    store.openTab({
-      workspaceKey: workspaceKey,
-      target: { kind: "browser", browserId: "browser-1" },
-      intent: "reveal",
-    });
-    store.focusPane(workspaceKey, "explorer");
-
-    const browserTabId = store.openTab({
-      workspaceKey: workspaceKey,
-      target: {
-        kind: "browser",
-        browserId: "browser-2",
-      },
-      intent: "reveal",
-    });
-
-    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-    expect(findPaneContainingTab(layout.root, browserTabId as string)?.id).toBe("main");
-    expect(layout.focusedPaneId).toBe("main");
   });
 
   it("keeps ambient draft opens out of the focused explorer pane", () => {

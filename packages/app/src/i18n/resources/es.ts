@@ -656,45 +656,6 @@ export const es: TranslationResources = {
         noOutput: "Sin salida",
       },
     },
-    browser: {
-      unavailable: {
-        title: "El navegador es solo para escritorio",
-        subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",
-      },
-      session: "Sesión de navegador{{browserId}}",
-      controls: {
-        back: "Atrás",
-        forward: "Adelante",
-        stopLoading: "dejar de cargar",
-        refresh: "Refrescar",
-        browserUrl: "NavegadorURL",
-        enterUrl: "IngreseURL",
-        openDevTools: "Abrir herramientas de desarrollo del navegador",
-        cancelSelector: "Cancelar selector de elementos",
-        annotateElement: "Anotar elemento",
-        screenshotElement: "Capturar elemento",
-        screenshotCopied: "Captura copiada al portapapeles",
-        elementCopied: "Elemento copiado al portapapeles",
-        screenshotFailed: "No se pudo copiar la captura",
-        selectorLoading: "Espera a que la página termine de cargar",
-        selectorFailed: "No se pudo iniciar el selector de elementos",
-      },
-      annotate: {
-        title: "Anotar elemento",
-        placeholder: "Mensaje al agente sobre este elemento…",
-        submit: "Adjuntar",
-        cancel: "Cancelar",
-      },
-      devices: {
-        label: "Tamaño del dispositivo",
-        responsive: "Adaptable",
-      },
-      errors: {
-        failedToLoad: "No se pudo cargar la página",
-        invalidUrl: "Navegador no válidoURL",
-        unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
-      },
-    },
     terminal: {
       clear: "Limpiar",
       hostDisconnected: "Hostno está conectado",
@@ -710,7 +671,6 @@ export const es: TranslationResources = {
         setup: "Configuración",
         workspaceSetup: "Configuración deWorkspace",
         terminal: "Terminal",
-        browser: "Navegador",
         agent: "Agent",
         workspace: "Workspace",
       },
@@ -744,10 +704,6 @@ export const es: TranslationResources = {
         newTerminal: "Nueva terminal",
         preparingTerminal: "Preparando la pestaña del terminal",
         preparingTerminalTooltip: "Preparando terminal...",
-        newBrowser: "Nuevo navegador",
-        existingBrowsers: "Navegadores existentes — mostrar aquí",
-        browserHostedIn: "Ubicación de la pestaña: {{hosts}}",
-        browserNotPresented: "No se muestra actualmente en ningún espacio de trabajo",
         maximizePane: "Maximizar panel",
         restorePane: "Restaurar panel",
         closePane: "Cerrar panel",
@@ -819,7 +775,6 @@ export const es: TranslationResources = {
         workspaceActions: "AccionesWorkspace",
         newAgent: "Nuevo agente",
         newTerminal: "Nueva terminal",
-        newBrowser: "Nueva pestaña del navegador",
         importSession: "Importar sesión",
         copyPath: "Copiar ruta del espacio de trabajo",
         copyBranchName: "Copiar nombre de sucursal",
@@ -1898,13 +1853,6 @@ export const es: TranslationResources = {
   diffViewer: {
     empty: "No hay cambios para mostrar",
   },
-  serviceUrl: {
-    title: "Servicio abiertoURL",
-    message: "¿Abrir{{url}}?",
-    inPaseo: "EnOMP Desktop",
-    externalBrowser: "Navegador externo",
-    dontAskAgain: "no vuelvas a preguntar",
-  },
   contextMenu: {
     addToDictionary: "Añadir al diccionario",
     clear: "Limpiar",
@@ -1915,7 +1863,6 @@ export const es: TranslationResources = {
     inspectElement: "Inspeccionar elemento",
     noSuggestions: "No hay sugerencias",
     openExternal: "Abrir enlace en el navegador",
-    openInDesktop: "Abrir en OMP Desktop",
     paste: "Pegar",
     quitApp: "Salir",
     saveImageAs: "Guardar imagen como…",
@@ -2166,19 +2113,6 @@ export const es: TranslationResources = {
     },
     general: {
       title: "General",
-      browserData: {
-        title: "Datos del navegador",
-        siteData: "Cookies y datos de sitios",
-        description:
-          "Las pestañas del navegador comparten inicios de sesión y datos de sitios en OMP Desktop.",
-        clear: "Borrar datos del navegador",
-        clearing: "Borrando...",
-        confirmTitle: "¿Borrar los datos del navegador?",
-        confirmMessage:
-          "Se cerrarán las sesiones de los sitios y se recargarán las pestañas abiertas del navegador.",
-        success: "Datos del navegador borrados.",
-        error: "No se pudieron borrar los datos del navegador.",
-      },
       defaultSend: {
         label: "Envío predeterminado",
         descriptions: {
@@ -2193,15 +2127,6 @@ export const es: TranslationResources = {
           interrupt: "Interrumpir",
           steer: "Dirigir",
           queue: "Cola",
-        },
-      },
-      serviceUrls: {
-        label: "URL de servicio",
-        description: "Dónde abrir URL desde scripts en ejecución",
-        options: {
-          ask: "Preguntar",
-          inApp: "EnOMP Desktop",
-          external: "Navegador externo",
         },
       },
       terminalScrollback: {

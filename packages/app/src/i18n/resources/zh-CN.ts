@@ -676,45 +676,6 @@ export const zhCN: TranslationResources = {
         noOutput: "没有输出",
       },
     },
-    browser: {
-      unavailable: {
-        title: "浏览器仅桌面端可用",
-        subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
-      },
-      session: "浏览器会话 {{browserId}}",
-      controls: {
-        back: "后退",
-        forward: "前进",
-        stopLoading: "停止加载",
-        refresh: "刷新",
-        browserUrl: "浏览器 URL",
-        enterUrl: "输入 URL",
-        openDevTools: "打开浏览器开发者工具",
-        cancelSelector: "取消元素选择器",
-        annotateElement: "标注元素",
-        screenshotElement: "截图元素",
-        screenshotCopied: "已将截图复制到剪贴板",
-        elementCopied: "已将元素复制到剪贴板",
-        screenshotFailed: "无法复制截图",
-        selectorLoading: "请等待页面加载完成",
-        selectorFailed: "无法启动元素选择器",
-      },
-      annotate: {
-        title: "标注元素",
-        placeholder: "给智能体关于此元素的留言…",
-        submit: "附加",
-        cancel: "取消",
-      },
-      devices: {
-        label: "设备尺寸",
-        responsive: "自适应",
-      },
-      errors: {
-        failedToLoad: "页面加载失败",
-        invalidUrl: "浏览器 URL 无效",
-        unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
-      },
-    },
     terminal: {
       clear: "清空",
       hostDisconnected: "Host 未连接",
@@ -730,7 +691,6 @@ export const zhCN: TranslationResources = {
         setup: "Setup",
         workspaceSetup: "Workspace setup",
         terminal: "Terminal",
-        browser: "浏览器",
         agent: "Agent",
         workspace: "Workspace",
       },
@@ -763,10 +723,6 @@ export const zhCN: TranslationResources = {
         newTerminal: "新建 Terminal",
         preparingTerminal: "正在准备 Terminal 标签",
         preparingTerminalTooltip: "正在准备 Terminal...",
-        newBrowser: "新建浏览器",
-        existingBrowsers: "已有浏览器 — 在此显示",
-        browserHostedIn: "标签所在 workspace：{{hosts}}",
-        browserNotPresented: "当前未在任何 workspace 中显示",
         maximizePane: "最大化窗格",
         restorePane: "还原窗格",
         closePane: "关闭窗格",
@@ -834,7 +790,6 @@ export const zhCN: TranslationResources = {
         workspaceActions: "Workspace 操作",
         newAgent: "新建 Agent",
         newTerminal: "新建 Terminal",
-        newBrowser: "新建浏览器标签",
         importSession: "导入会话",
         copyPath: "复制 workspace 路径",
         copyBranchName: "复制分支名称",
@@ -1889,13 +1844,6 @@ export const zhCN: TranslationResources = {
   diffViewer: {
     empty: "没有可显示的变更",
   },
-  serviceUrl: {
-    title: "打开服务 URL",
-    message: "打开 {{url}}？",
-    inPaseo: "在 OMP Desktop 中",
-    externalBrowser: "外部浏览器",
-    dontAskAgain: "不再询问",
-  },
   contextMenu: {
     addToDictionary: "添加到词典",
     clear: "清空",
@@ -1906,7 +1854,6 @@ export const zhCN: TranslationResources = {
     inspectElement: "检查元素",
     noSuggestions: "无建议",
     openExternal: "在浏览器中打开链接",
-    openInDesktop: "在 OMP Desktop 中打开",
     paste: "粘贴",
     quitApp: "退出",
     saveImageAs: "图像另存为…",
@@ -2157,17 +2104,6 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
-      browserData: {
-        title: "浏览器数据",
-        siteData: "Cookie 和网站数据",
-        description: "浏览器标签页在 OMP Desktop 中共享登录状态和网站数据。",
-        clear: "清除浏览器数据",
-        clearing: "正在清除...",
-        confirmTitle: "清除浏览器数据？",
-        confirmMessage: "网站帐号将退出登录，打开的浏览器标签页将重新加载。",
-        success: "浏览器数据已清除。",
-        error: "无法清除浏览器数据。",
-      },
       defaultSend: {
         label: "默认发送",
         descriptions: {
@@ -2179,15 +2115,6 @@ export const zhCN: TranslationResources = {
           interrupt: "中断",
           steer: "引导",
           queue: "排队",
-        },
-      },
-      serviceUrls: {
-        label: "服务 URL",
-        description: "运行脚本中的 URL 打开位置",
-        options: {
-          ask: "询问",
-          inApp: "在 OMP Desktop 中",
-          external: "外部浏览器",
         },
       },
       terminalScrollback: {

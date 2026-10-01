@@ -35,23 +35,16 @@ test("Hub retries one durable daemon execution across concurrency and reconstruc
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
-test("Hub denies trusted steering and browser dispatch", async () => {
+test("Hub denies trusted steering", async () => {
   const hub = await launchRelationship();
   const localAgentId = await hub.createUnrelatedLocalAgent();
 
   const steeringDenial = await hub.deniedSteering(localAgentId);
-  const browserDenial = await hub.deniedBrowserDispatch();
 
   expect(steeringDenial).toEqual({
     requestId: "denied-steer",
     requestType: "send_agent_message_request",
     error: "Session is not authorized for send_agent_message_request",
-    code: "access_denied",
-  });
-  expect(browserDenial).toEqual({
-    requestId: "browser-1",
-    requestType: "browser.automation.execute.response",
-    error: "Session is not authorized for browser.automation.execute.response",
     code: "access_denied",
   });
   expect(hub.observedAgentIds()).not.toContain(localAgentId);

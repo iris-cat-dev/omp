@@ -44,9 +44,7 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
-import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
-import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@omp-desktop/protocol/browser-automation/rpc-schemas";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
@@ -55,7 +53,6 @@ import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
 } from "@/data/push-router";
-import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -471,20 +468,9 @@ function probeIntervalForConnection(
 }
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
-  const browserHostAvailable =
-    typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
-  const browserAutomationCapabilities = browserHostAvailable
-    ? {
-        [CLIENT_CAPS.browserHost]: {
-          supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
-          hostKind: "desktop app",
-        },
-      }
-    : undefined;
   const appCapabilities = {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
     [CLIENT_CAPS.degradedAgentHistory]: true,
-    ...browserAutomationCapabilities,
   };
 
   return {
@@ -542,23 +528,12 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         trace: nativePerformanceTrace,
       }),
     getClientId: () => getOrCreateClientId(),
-    mountClientHandlers: ({ client, host }) => {
-      const unmountServerData = mountServerDataPushRouter({
+    mountClientHandlers: ({ client, host }) =>
+      mountServerDataPushRouter({
         client,
         queryClient,
         serverId: host.serverId,
-      });
-      if (!browserAutomationCapabilities) {
-        return unmountServerData;
-      }
-      const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
-        serverId: host.serverId,
-      });
-      return () => {
-        unmountBrowserAutomation();
-        unmountServerData();
-      };
-    },
+      }),
   };
 }
 
@@ -1422,6 +1397,12 @@ export class HostRuntimeStore {
 
   private async runBoot(): Promise<void> {
     const override = readConfiguredLocalDaemonOverride();
+    // Retired browser index only; never clear shared workspace layouts or Electron profiles.
+    try {
+      await this.storage.removeItem("workspace-browser-store");
+    } catch (error) {
+      console.error("[HostRuntime] Failed to remove retired browser index", error);
+    }
     await this.loadFromStorage();
     this.markHostRegistryLoaded();
 

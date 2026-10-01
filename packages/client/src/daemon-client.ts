@@ -185,10 +185,6 @@ import {
   normalizeProvidersSnapshotPayload,
 } from "./compat/normalize-provider-models.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
-import type {
-  BrowserAutomationExecuteRequest,
-  BrowserAutomationExecuteResponse,
-} from "@omp-desktop/protocol/browser-automation/rpc-schemas";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -335,8 +331,6 @@ export type DaemonEvent =
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
-export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
-export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
 export interface DaemonClientConfig {
   url: string;
@@ -1836,18 +1830,6 @@ export class DaemonClient {
       ...params,
       responseType,
     });
-  }
-
-  private sendSessionMessageStrict(message: SessionInboundMessage): void {
-    if (!this.transport || this.connectionState.status !== "connected") {
-      throw new Error("Transport not connected");
-    }
-    const payload = SessionInboundMessageSchema.parse(message);
-    try {
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
-    }
   }
 
   async clearAgentAttention(agentId: string | string[]): Promise<void> {
@@ -4806,10 +4788,6 @@ export class DaemonClient {
       },
       responseType: "set_daemon_config_response",
     });
-  }
-
-  sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
-    this.sendSessionMessageStrict(response);
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {

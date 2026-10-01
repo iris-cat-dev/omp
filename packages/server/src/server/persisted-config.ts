@@ -55,7 +55,6 @@ const LogConfigSchema = z
   })
   .strict();
 
-
 const OpenAiImageEndpointSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -74,7 +73,6 @@ const OpenAiProviderSchema = z
     image: OpenAiImageEndpointSchema.optional(),
   })
   .strict();
-
 
 const ProvidersSchema = z
   .object({
@@ -115,7 +113,6 @@ const DaemonAuthSchema = z
     password: BcryptHashSchema.optional(),
   })
   .strict();
-
 
 const FeatureWebUiSchema = z
   .object({
@@ -217,12 +214,8 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
-        browserTools: z
-          .object({
-            enabled: z.boolean().optional(),
-          })
-          .passthrough()
-          .optional(),
+        // Discard the retired browser-tool setting while accepting legacy config files.
+        browserTools: z.unknown().optional(),
         git: z
           .object({
             maxProcessesPerSecond: z.number().int().positive().optional(),
@@ -266,7 +259,7 @@ export const PersistedConfigSchema = z
         auth: DaemonAuthSchema.optional(),
       })
       .strict()
-      .transform(({ allowedHosts, ...daemon }) => {
+      .transform(({ allowedHosts, browserTools: _browserTools, ...daemon }) => {
         const hostnames = daemon.hostnames ?? allowedHosts;
         return hostnames === undefined ? daemon : { ...daemon, hostnames };
       })
@@ -377,8 +370,6 @@ function stripRemovedSpeechConfig(parsed: unknown): unknown {
 
   return root;
 }
-
-
 
 export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): PersistedConfig {
   const log = getLogger(logger);

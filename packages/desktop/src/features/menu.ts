@@ -1,5 +1,4 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from "electron";
-import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
 import { isAllowedExternalUrl } from "./opener.js";
 import { getDesktopContextMenuLabels, setDesktopContextMenuLabels } from "./context-menu-labels.js";
 
@@ -12,7 +11,6 @@ interface TerminalContextMenuInput {
 interface LinkContextMenuInput {
   kind: "assistant-http-link";
   url: string;
-  openInDesktopLabel: string;
   openExternalLabel: string;
   copyAddressLabel: string;
 }
@@ -28,11 +26,7 @@ type ShowContextMenuInput =
   | FileLinkContextMenuInput;
 
 export type TerminalContextMenuAction = "clear";
-export type LinkContextMenuAction = "open-in-desktop";
-type ContextMenuAction =
-  | TerminalContextMenuAction
-  | LinkContextMenuAction
-  | "reveal-in-file-manager";
+type ContextMenuAction = TerminalContextMenuAction | "reveal-in-file-manager";
 
 export function buildTerminalContextMenuTemplate(
   input: Omit<TerminalContextMenuInput, "kind">,
@@ -67,21 +61,16 @@ export function buildTerminalContextMenuTemplate(
 }
 
 interface LinkContextMenuCallbacks {
-  onOpenInDesktop: () => void;
   onOpenExternal: () => void;
   onCopyAddress: () => void;
 }
 
-export function buildLinkContextMenuTemplate(
+function buildLinkContextMenuTemplate(
   input: LinkContextMenuInput,
   callbacks: LinkContextMenuCallbacks,
 ): Electron.MenuItemConstructorOptions[] {
   const labels = getDesktopContextMenuLabels();
   return [
-    {
-      label: input.openInDesktopLabel.trim() || labels.openInDesktop,
-      click: callbacks.onOpenInDesktop,
-    },
     {
       label: input.openExternalLabel.trim() || labels.openExternal,
       click: callbacks.onOpenExternal,
@@ -104,51 +93,6 @@ function withBrowserWindow(
     const win = baseWin instanceof BrowserWindow ? baseWin : BrowserWindow.getFocusedWindow();
     if (win) callback(win);
   };
-}
-
-interface ReloadableWebContents {
-  isLoadingMainFrame(): boolean;
-  stop(): void;
-  reload(): void;
-  reloadIgnoringCache(): void;
-}
-
-interface ReloadableWindow {
-  webContents: ReloadableWebContents & { id: number };
-}
-
-interface ReloadActiveBrowserOrWindowInput {
-  win: ReloadableWindow;
-  getActiveBrowserContentsForHostWindow: (
-    hostWebContentsId: number,
-  ) => ReloadableWebContents | null;
-  ignoreCache?: boolean;
-}
-
-export function reloadActiveBrowserOrWindow({
-  win,
-  getActiveBrowserContentsForHostWindow,
-  ignoreCache = false,
-}: ReloadActiveBrowserOrWindowInput): void {
-  const browserContents = getActiveBrowserContentsForHostWindow(win.webContents.id);
-  if (browserContents) {
-    if (ignoreCache) {
-      browserContents.reloadIgnoringCache();
-      return;
-    }
-    if (browserContents.isLoadingMainFrame()) {
-      browserContents.stop();
-      return;
-    }
-    browserContents.reload();
-    return;
-  }
-
-  if (ignoreCache) {
-    win.webContents.reloadIgnoringCache();
-    return;
-  }
-  win.webContents.reload();
 }
 
 function buildApplicationMenuTemplate(
@@ -233,21 +177,14 @@ function buildApplicationMenuTemplate(
           label: "Reload",
           accelerator: "CmdOrCtrl+R",
           click: withBrowserWindow((win) => {
-            reloadActiveBrowserOrWindow({
-              win,
-              getActiveBrowserContentsForHostWindow: getActivePaseoBrowserWebContentsForHostWindow,
-            });
+            win.webContents.reload();
           }),
         },
         {
           label: "Force Reload",
           accelerator: "CmdOrCtrl+Shift+R",
           click: withBrowserWindow((win) => {
-            reloadActiveBrowserOrWindow({
-              win,
-              getActiveBrowserContentsForHostWindow: getActivePaseoBrowserWebContentsForHostWindow,
-              ignoreCache: true,
-            });
+            win.webContents.reloadIgnoringCache();
           }),
         },
         { role: "toggleDevTools" },
@@ -299,9 +236,6 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
         });
       } else if (input.kind === "assistant-http-link" && isAllowedExternalUrl(input.url)) {
         template = buildLinkContextMenuTemplate(input, {
-          onOpenInDesktop: () => {
-            selectedAction = "open-in-desktop";
-          },
           onOpenExternal: () => {
             void shell.openExternal(input.url);
           },
@@ -345,10 +279,8 @@ export function setupApplicationMenu(options: ApplicationMenuOptions): void {
     rebuildApplicationMenu();
   });
 
-  // If the renderer reloads mid-capture (e.g. Cmd+R) the renderer-side effect
-  // never gets to send `false`, so reset the flag from the main process when a
-  // main window finishes loading. Workspace browser webviews are not
-  // BrowserWindows, so they don't trigger this.
+  // If the renderer reloads mid-capture (e.g. Cmd+R) its cleanup callback
+  // never gets to send `false`, so reset the flag when the window finishes loading.
   app.on("browser-window-created", (_event, win) => {
     win.webContents.on("did-finish-load", () => {
       if (!capturingShortcut) return;

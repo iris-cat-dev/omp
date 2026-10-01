@@ -138,8 +138,8 @@ describe("OMP host tools", () => {
         handler: async () => ({ content: [] }),
       },
       {
-        name: "browser_list_tabs",
-        description: "List browser tabs.",
+        name: "list_agents",
+        description: "List agents.",
         handler: async () => ({ content: [] }),
       },
     ]);
@@ -153,8 +153,8 @@ describe("OMP host tools", () => {
         parameters: expect.objectContaining({ type: "object", required: ["initialPrompt"] }),
       },
       {
-        name: "browser_list_tabs",
-        description: "List browser tabs.",
+        name: "list_agents",
+        description: "List agents.",
         loadMode: "essential",
         parameters: expect.objectContaining({ type: "object" }),
       },

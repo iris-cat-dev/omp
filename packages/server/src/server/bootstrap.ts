@@ -161,8 +161,6 @@ import {
   type CliConfigOverrides,
 } from "./config.js";
 import { shouldUseTlsForDefaultHostedRelay } from "@omp-desktop/protocol/daemon-endpoints";
-import { BrowserToolsBroker } from "./browser-tools/broker.js";
-import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
@@ -365,7 +363,6 @@ function summarizeAgentMcpDebugBody(body: unknown): Record<string, unknown> {
   };
 }
 
-
 export type DaemonLifecycleIntent =
   | {
       type: "shutdown";
@@ -393,7 +390,6 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   mcpToolCapabilities?: Partial<OmpDesktopToolCapabilities>;
-  browserToolsEnabled?: boolean;
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -483,7 +479,6 @@ export interface PaseoDaemon {
   terminalManager: TerminalManager;
   serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
-  browserToolsBroker: BrowserToolsBroker;
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
@@ -610,7 +605,6 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     ...(config.providerCatalogRefreshTimeoutMs !== undefined
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
-    browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
     ...createInitialTextGenerationConfig(config),
     ...(imageGeneration ? { imageGeneration } : {}),
@@ -707,8 +701,6 @@ export async function createPaseoDaemon(
   void orchestrationSkills.autoUpdate().catch((error) => {
     logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
   });
-  const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
-  const browserToolsBroker = new BrowserToolsBroker({});
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
@@ -1395,8 +1387,6 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
-    browserToolsEnabled: browserToolsPolicy.isEnabled(),
-    browserToolsBroker,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
@@ -1529,7 +1519,6 @@ export async function createPaseoDaemon(
     app.delete(agentMcpRoute, handleAgentMcpRequest);
     logger.info({ route: agentMcpRoute, enabled: mcpEnabled }, "Agent MCP route mounted");
   }
-
 
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
@@ -1668,7 +1657,6 @@ export async function createPaseoDaemon(
                 getRelayConfig,
               },
               serviceProxyPublicBaseUrl,
-              browserToolsBroker,
               null,
               workspaceSetupRuntime,
               undefined,
@@ -1766,7 +1754,6 @@ export async function createPaseoDaemon(
     terminalManager,
     serviceProxy,
     scriptRuntimeStore,
-    browserToolsBroker,
     start,
     stop,
     getListenTarget: () => boundListenTarget,

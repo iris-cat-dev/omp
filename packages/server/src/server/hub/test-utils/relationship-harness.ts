@@ -1098,19 +1098,6 @@ export class HubRelationshipHarness {
     return ((await this.latestSocket().socket.messageFor(requestId)) as RpcErrorMessage).payload;
   }
 
-  async deniedBrowserDispatch(): Promise<RpcErrorMessage["payload"]> {
-    const requestId = "browser-1";
-    this.latestSocket().socket.receive({
-      type: "browser.automation.execute.response",
-      payload: {
-        requestId,
-        ok: false,
-        error: { code: "browser_denied", message: "denied", retryable: false },
-      },
-    });
-    return ((await this.latestSocket().socket.messageFor(requestId)) as RpcErrorMessage).payload;
-  }
-
   observedAgentIds(): string[] {
     return this.remote.sockets.flatMap(({ socket }) =>
       socket.sent.flatMap((message) => {

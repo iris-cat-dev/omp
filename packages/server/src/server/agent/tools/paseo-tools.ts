@@ -87,8 +87,6 @@ import {
   type CreatePaseoWorktreeCommandInput,
   createPaseoWorktreeCommand,
 } from "../../worktree/commands.js";
-import { registerBrowserTools } from "../../browser-tools/tools.js";
-import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type { GeneratedImage, ImageGenerationService } from "../../image-generation/types.js";
 import {
   IMAGE_GENERATION_BACKGROUNDS,
@@ -140,8 +138,6 @@ export interface PaseoToolHostDependencies {
     cwd: string,
     firstAgentContext?: FirstAgentContext,
   ) => Promise<string>;
-  browserToolsEnabled?: boolean;
-  browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -612,29 +608,6 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   inspect_provider: "providers",
   image_gen: "optional",
   present_image: "optional",
-  browser_list_tabs: "optional",
-  browser_new_tab: "optional",
-  browser_reveal: "optional",
-  browser_snapshot: "optional",
-  browser_click: "optional",
-  browser_fill: "optional",
-  browser_wait: "optional",
-  browser_type: "optional",
-  browser_keypress: "optional",
-  browser_navigate: "optional",
-  browser_back: "optional",
-  browser_forward: "optional",
-  browser_reload: "optional",
-  browser_screenshot: "optional",
-  browser_upload: "optional",
-  browser_hover: "optional",
-  browser_select: "optional",
-  browser_drag: "optional",
-  browser_logs: "optional",
-  browser_evaluate: "optional",
-  browser_scroll: "optional",
-  browser_resize: "optional",
-  browser_close_tab: "optional",
 };
 
 function buildCreateAgentGuidance(input: {
@@ -1287,15 +1260,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   type LegacyAgentToAgentCreateAgentArgs = z.infer<typeof legacyAgentToAgentCreateAgentArgsSchema>;
   type TopLevelCreateAgentArgs = z.infer<typeof canonicalTopLevelCreateAgentArgsSchema>;
   type LegacyTopLevelCreateAgentArgs = z.infer<typeof legacyTopLevelCreateAgentArgsSchema>;
-
-  if (options.browserToolsEnabled && options.browserToolsBroker) {
-    registerBrowserTools({
-      registerTool,
-      broker: options.browserToolsBroker,
-      callerAgentId,
-      resolveCallerAgent,
-    });
-  }
 
   registerTool(
     "image_gen",

@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/protocol",
-  "version": "0.3.11",
+  "version": "0.4.0",
   "description": "OMP Desktop protocol schemas and wire types",
   "files": [
     "dist",

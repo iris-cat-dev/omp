@@ -29,7 +29,6 @@ import {
   findPaneContainingTab,
   focusPaneInLayout,
   focusTabInLayout,
-  getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
   moveTabToPaneInLayout,
@@ -82,7 +81,6 @@ export {
   findPaneById,
   findBottomTerminalPaneId,
   findPaneContainingTab,
-  getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
   normalizeLayout,
@@ -208,7 +206,6 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
     agentId: z.string(),
     processId: z.string(),
   }),
-  z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
   z.strictObject({ kind: z.literal("files") }),
   z.strictObject({ kind: z.literal("pull_request") }),
   z.strictObject({
@@ -295,6 +292,108 @@ const WorkspaceLayoutPersistedStateSchema = z.strictObject({
 });
 
 type WorkspaceLayoutPersistedState = z.infer<typeof WorkspaceLayoutPersistedStateSchema>;
+/**
+ * Old layouts may embed browser tabs. Drop those before strict storage validation;
+ * Zustand's version migration runs after validation, even for version 2 blobs.
+ */
+function removeLegacyBrowserTabsFromPersistedLayout(raw: string | null): string | null {
+  if (raw === null) return null;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  const record = asRecord(envelope);
+  const state = asRecord(record?.state);
+  const layouts = asRecord(state?.layoutByWorkspace);
+  if (!record || !state || !layouts) return raw;
+
+  let changed = false;
+  const nextLayouts: Record<string, unknown> = {};
+  for (const [workspaceKey, value] of Object.entries(layouts)) {
+    const layout = asRecord(value);
+    if (!layout) {
+      nextLayouts[workspaceKey] = value;
+      continue;
+    }
+    const removedTabIds = new Set<string>();
+    const root = removeLegacyBrowserTabsFromNode(layout.root, removedTabIds);
+    if (removedTabIds.size === 0) {
+      nextLayouts[workspaceKey] = value;
+      continue;
+    }
+    changed = true;
+    const parents = asRecord(layout.parentTabIdByTabId);
+    nextLayouts[workspaceKey] = {
+      ...layout,
+      root,
+      ...(parents
+        ? {
+            parentTabIdByTabId: Object.fromEntries(
+              Object.entries(parents).filter(
+                ([tabId, parentId]) =>
+                  !removedTabIds.has(tabId) &&
+                  !(typeof parentId === "string" && removedTabIds.has(parentId)),
+              ),
+            ),
+          }
+        : {}),
+    };
+  }
+  return changed
+    ? JSON.stringify({ ...record, state: { ...state, layoutByWorkspace: nextLayouts } })
+    : raw;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function removeLegacyBrowserTabsFromNode(value: unknown, removedTabIds: Set<string>): unknown {
+  const node = asRecord(value);
+  if (!node) return value;
+  if (node.kind === "group") {
+    const group = asRecord(node.group);
+    if (!group || !Array.isArray(group.children)) return value;
+    const children: unknown[] = group.children;
+    const cleanedChildren = children.map((child) =>
+      removeLegacyBrowserTabsFromNode(child, removedTabIds),
+    );
+    return cleanedChildren.some((child, index) => child !== children[index])
+      ? { ...node, group: { ...group, children: cleanedChildren } }
+      : value;
+  }
+  if (node.kind !== "pane") return value;
+  const pane = asRecord(node.pane);
+  if (!pane || !Array.isArray(pane.tabs) || !Array.isArray(pane.tabIds)) return value;
+  const paneRemovedTabIds = new Set<string>();
+  const tabs = pane.tabs.filter((tab) => {
+    const record = asRecord(tab);
+    if (asRecord(record?.target)?.kind !== "browser") return true;
+    if (typeof record?.tabId === "string") {
+      paneRemovedTabIds.add(record.tabId);
+      removedTabIds.add(record.tabId);
+    }
+    return false;
+  });
+  if (tabs.length === pane.tabs.length) return value;
+  const tabIds = pane.tabIds.filter((id) => !paneRemovedTabIds.has(id));
+  const focusedIndex = pane.tabIds.indexOf(pane.focusedTabId);
+  const focusedTabId = paneRemovedTabIds.has(pane.focusedTabId as string)
+    ? (tabIds[Math.min(Math.max(focusedIndex, 0), tabIds.length - 1)] ?? null)
+    : pane.focusedTabId;
+  return { ...node, pane: { ...pane, tabs, tabIds, focusedTabId } };
+}
+
+const workspaceLayoutPersistBackingStorage = {
+  getItem: async (name: string) =>
+    removeLegacyBrowserTabsFromPersistedLayout(await AsyncStorage.getItem(name)),
+  setItem: (name: string, value: string) => AsyncStorage.setItem(name, value),
+  removeItem: (name: string) => AsyncStorage.removeItem(name),
+};
 
 function narrowLegacySidePanel(node: SplitNode, paneId: string): SplitNode {
   if (node.kind === "pane") {
@@ -2046,7 +2145,10 @@ export function createWorkspaceLayoutStore(
       {
         name: "workspace-layout-state",
         version: 2,
-        storage: createValidatedPersistStorage(AsyncStorage, WorkspaceLayoutPersistedStateSchema),
+        storage: createValidatedPersistStorage(
+          workspaceLayoutPersistBackingStorage,
+          WorkspaceLayoutPersistedStateSchema,
+        ),
         migrate: migrateWorkspaceLayoutState,
         partialize: (state) => {
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};

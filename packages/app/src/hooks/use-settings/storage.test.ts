@@ -81,6 +81,27 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("interrupt");
   });
 
+  it("drops a retired in-app service URL preference without losing other settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          serviceUrlBehavior: "in-app",
+          language: "ja",
+          theme: "light",
+          contentFontSize: 17,
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result).toMatchObject({ language: "ja", theme: "light", contentFontSize: 17 });
+    expect(result).not.toHaveProperty("serviceUrlBehavior");
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).not.toHaveProperty(
+      "serviceUrlBehavior",
+    );
+  });
+
   it("defaults theme to dark when storage is empty", async () => {
     const deps = makeDeps();
 

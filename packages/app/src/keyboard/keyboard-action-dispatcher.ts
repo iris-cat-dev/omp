@@ -11,7 +11,6 @@ export type KeyboardActionId =
   | "workspace.agent.new"
   | "workspace.tab.menu.open"
   | "workspace.tab.target.agent"
-  | "workspace.tab.target.browser"
   | "workspace.tab.target.changes"
   | "workspace.tab.target.files"
   | "workspace.tab.close-current"
@@ -40,7 +39,6 @@ export type KeyboardActionId =
   | "workspace.explorer.maximize.toggle"
   | "workspace.focus.toggle"
   | "workspace.terminal.new"
-  | "workspace.browser.new"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
   | "workspace.new"
@@ -56,7 +54,6 @@ export type KeyboardActionDefinition =
   | { id: "workspace.agent.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.menu.open"; scope: KeyboardActionScope }
   | { id: "workspace.tab.target.agent"; scope: KeyboardActionScope }
-  | { id: "workspace.tab.target.browser"; scope: KeyboardActionScope }
   | { id: "workspace.tab.target.changes"; scope: KeyboardActionScope }
   | { id: "workspace.tab.target.files"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
@@ -90,7 +87,6 @@ export type KeyboardActionDefinition =
   | { id: "workspace.explorer.maximize.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.focus.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
-  | { id: "workspace.browser.new"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.both"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }

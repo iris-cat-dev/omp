@@ -36,7 +36,6 @@ export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
-export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
@@ -49,7 +48,6 @@ const ThemePreferenceSchema = z.enum([
 const VALID_THEMES = new Set<string>(ThemePreferenceSchema.options);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
 export const DEFAULT_THEME_PREFERENCE = "dark" satisfies ThemePreference;
-const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
   "diff",
@@ -88,7 +86,6 @@ export interface AppSettings {
   pluginThemeId: string | null;
   language: AppLanguage;
   sendBehavior: SendBehavior;
-  serviceUrlBehavior: ServiceUrlBehavior;
   /** Relay used when adding a host; users may clear it to trust each pairing offer. */
   relayServerAddress: string;
   terminalScrollbackLines: number;
@@ -137,7 +134,8 @@ const StoredAppSettingsSchema = z.strictObject({
     .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
     .optional(),
   sendBehavior: z.enum(["interrupt", "steer", "queue"]).optional(),
-  serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).optional(),
+  // COMPAT(serviceUrlBehavior): tolerate any retired value without invalidating other settings.
+  serviceUrlBehavior: z.unknown().optional(),
   relayServerAddress: z.string().optional(),
   terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
   useLegacyTerminalRenderer: z.boolean().optional(),
@@ -175,7 +173,6 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   pluginThemeId: null,
   language: "system",
   sendBehavior: "steer",
-  serviceUrlBehavior: "ask",
   relayServerAddress: DEFAULT_RELAY_SERVER_ADDRESS,
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
@@ -262,6 +259,7 @@ async function readAppSettings(
       settings: normalizeAppSettings(stored),
       // COMPAT(uiFontSizeScale): persist the converted base size, remove after 2027-08-17.
       needsWrite:
+        stored.serviceUrlBehavior !== undefined ||
         (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
         stored.contentFontSize === undefined,
     };
@@ -380,12 +378,6 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     stored.sendBehavior === "queue"
   ) {
     result.sendBehavior = stored.sendBehavior;
-  }
-  if (
-    typeof stored.serviceUrlBehavior === "string" &&
-    VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
-  ) {
-    result.serviceUrlBehavior = stored.serviceUrlBehavior;
   }
   if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
     result.syntaxTheme = stored.syntaxTheme;

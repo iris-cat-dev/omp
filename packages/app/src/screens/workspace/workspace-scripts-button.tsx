@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
-import { openServiceUrl } from "@/utils/open-service-url";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   resolveWorkspaceScriptLink,
   type WorkspaceScriptLinkKind,
@@ -47,7 +47,6 @@ interface WorkspaceScriptsButtonProps {
   liveTerminalIds?: readonly string[];
   onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
 }
@@ -360,7 +359,6 @@ interface ScriptRowProps {
   preferredRouteKind: WorkspaceScriptLinkKind | null;
   onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
 function resolveScriptIconColorMapping(args: {
@@ -392,7 +390,6 @@ function ScriptRow({
   preferredRouteKind,
   onSelectRouteKind,
   onViewTerminal,
-  onOpenUrlInBrowserTab,
 }: ScriptRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = script.lifecycle === "running";
@@ -415,8 +412,8 @@ function ScriptRow({
   const handleOpenService = useCallback(() => {
     if (!selectedLink) return;
     closeMenu();
-    void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
-  }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
+    void openExternalUrl(selectedLink.url);
+  }, [selectedLink, closeMenu]);
 
   const handleView = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);
@@ -541,7 +538,6 @@ export function WorkspaceScriptsButton({
   liveTerminalIds = [],
   onScriptTerminalStarted,
   onViewTerminal,
-  onOpenUrlInBrowserTab,
   hideLabels,
   presentation = "split",
 }: WorkspaceScriptsButtonProps): ReactElement | null {
@@ -723,7 +719,6 @@ export function WorkspaceScriptsButton({
                     preferredRouteKind={preferredRouteKind}
                     onSelectRouteKind={handleSelectRouteKind}
                     onViewTerminal={onViewTerminal}
-                    onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
                   />
                 </Fragment>
               ))}

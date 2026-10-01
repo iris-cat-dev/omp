@@ -1,90 +1,45 @@
 import { BrowserWindow, clipboard, ipcMain, Menu, shell } from "electron";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  buildLinkContextMenuTemplate,
-  buildTerminalContextMenuTemplate,
-  reloadActiveBrowserOrWindow,
-  setupApplicationMenu,
-} from "./menu.js";
+import { buildTerminalContextMenuTemplate, setupApplicationMenu } from "./menu.js";
 
 vi.mock("electron", () => ({
   app: { name: "OMP Desktop", on: vi.fn() },
-  BrowserWindow: { fromWebContents: vi.fn() },
+  BrowserWindow: Object.assign(function BrowserWindowMock() {}, {
+    fromWebContents: vi.fn(),
+    getFocusedWindow: vi.fn(),
+  }),
   clipboard: { writeText: vi.fn() },
   ipcMain: { handle: vi.fn() },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
   shell: { openExternal: vi.fn(), openPath: vi.fn(), showItemInFolder: vi.fn() },
 }));
 
-vi.mock("./browser-webviews/index.js", () => ({
-  getActivePaseoBrowserWebContentsForHostWindow: vi.fn(),
-}));
-
-class FakeWebContents {
-  public readonly reloads: string[] = [];
-
-  public constructor(public readonly id: number) {}
-
-  public isLoadingMainFrame(): boolean {
-    return false;
-  }
-
-  public stop(): void {
-    this.reloads.push("stop");
-  }
-
-  public reload(): void {
-    this.reloads.push("reload");
-  }
-
-  public reloadIgnoringCache(): void {
-    this.reloads.push("force-reload");
-  }
-}
-
-class BrowserReloads {
-  public readonly firstWindow = { webContents: new FakeWebContents(101) };
-  public readonly secondWindow = { webContents: new FakeWebContents(202) };
-  public readonly firstBrowser = new FakeWebContents(11);
-  public readonly secondBrowser = new FakeWebContents(22);
-  public readonly resolvedHostWindowIds: number[] = [];
-
-  public activeBrowserForHostWindow(hostWebContentsId: number): FakeWebContents | null {
-    this.resolvedHostWindowIds.push(hostWebContentsId);
-    return hostWebContentsId === 101 ? this.firstBrowser : this.secondBrowser;
-  }
-}
-
-describe("reloadActiveBrowserOrWindow", () => {
-  it("reloads only the active browser belonging to the supplied window", () => {
-    const browserReloads = new BrowserReloads();
-
-    reloadActiveBrowserOrWindow({
-      win: browserReloads.firstWindow,
-      getActiveBrowserContentsForHostWindow:
-        browserReloads.activeBrowserForHostWindow.bind(browserReloads),
+describe("window reload shortcuts", () => {
+  it("reloads the selected application window without targeting a guest", () => {
+    vi.clearAllMocks();
+    setupApplicationMenu({ onNewWindow: vi.fn() });
+    const menu = vi.mocked(Menu.buildFromTemplate).mock.calls[0]?.[0];
+    const view = menu?.find((entry) => entry.label === "View");
+    const actions = Array.isArray(view?.submenu) ? view.submenu : [];
+    const reload = actions.find((item) => item.label === "Reload");
+    const forceReload = actions.find((item) => item.label === "Force Reload");
+    const first = new BrowserWindow();
+    const second = new BrowserWindow();
+    const firstReload = vi.fn();
+    const forceFirstReload = vi.fn();
+    Object.assign(first, {
+      webContents: { reload: firstReload, reloadIgnoringCache: forceFirstReload },
+    });
+    Object.assign(second, {
+      webContents: { reload: vi.fn(), reloadIgnoringCache: vi.fn() },
     });
 
-    expect(browserReloads.resolvedHostWindowIds).toEqual([101]);
-    expect(browserReloads.firstBrowser.reloads).toEqual(["reload"]);
-    expect(browserReloads.secondBrowser.reloads).toEqual([]);
-    expect(browserReloads.firstWindow.webContents.reloads).toEqual([]);
-  });
+    reload?.click?.(null as never, first, null as never);
+    forceReload?.click?.(null as never, first, null as never);
 
-  it("force reloads only the active browser belonging to the supplied window", () => {
-    const browserReloads = new BrowserReloads();
-
-    reloadActiveBrowserOrWindow({
-      win: browserReloads.secondWindow,
-      getActiveBrowserContentsForHostWindow:
-        browserReloads.activeBrowserForHostWindow.bind(browserReloads),
-      ignoreCache: true,
-    });
-
-    expect(browserReloads.resolvedHostWindowIds).toEqual([202]);
-    expect(browserReloads.firstBrowser.reloads).toEqual([]);
-    expect(browserReloads.secondBrowser.reloads).toEqual(["force-reload"]);
-    expect(browserReloads.secondWindow.webContents.reloads).toEqual([]);
+    expect(firstReload).toHaveBeenCalledOnce();
+    expect(forceFirstReload).toHaveBeenCalledOnce();
+    expect(second.webContents.reload).not.toHaveBeenCalled();
   });
 });
 
@@ -104,34 +59,32 @@ describe("terminal context menu", () => {
 });
 
 describe("assistant HTTP link context menu", () => {
-  it("offers both opening destinations and copy without changing the URL", () => {
-    const callbacks = {
-      onOpenInDesktop: vi.fn(),
-      onOpenExternal: vi.fn(),
-      onCopyAddress: vi.fn(),
-    };
-    const template = buildLinkContextMenuTemplate(
-      {
-        kind: "assistant-http-link",
-        url: "https://example.com/a%20b?q=x%2Fy#section",
-        openInDesktopLabel: "在 OMP Desktop 中打开",
-        openExternalLabel: "在浏览器中打开链接",
-        copyAddressLabel: "复制链接地址",
-      },
-      callbacks,
-    );
+  it("opens the original URL in the system browser, never in an app guest", () => {
+    vi.clearAllMocks();
+    const url = "https://example.com/a%20b?q=x%2Fy#section";
+    vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({} as BrowserWindow);
+    vi.mocked(Menu.buildFromTemplate).mockReturnValue({
+      popup: vi.fn(),
+    } as unknown as Electron.Menu);
+    setupApplicationMenu({ onNewWindow: vi.fn() });
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === "paseo:menu:showContextMenu")?.[1];
+    if (!handler) throw new Error("context menu handler was not registered");
+    vi.mocked(Menu.buildFromTemplate).mockClear();
+    void handler({ sender: {} } as Electron.IpcMainInvokeEvent, {
+      kind: "assistant-http-link",
+      url,
+      openExternalLabel: "在浏览器中打开链接",
+      copyAddressLabel: "复制链接地址",
+    });
+    const actions = vi.mocked(Menu.buildFromTemplate).mock.calls[0]?.[0];
 
-    expect(template.map((item) => item.label)).toEqual([
-      "在 OMP Desktop 中打开",
-      "在浏览器中打开链接",
-      "复制链接地址",
-    ]);
-    template[0]?.click?.(null as never, undefined, null as never);
-    template[1]?.click?.(null as never, undefined, null as never);
-    template[2]?.click?.(null as never, undefined, null as never);
-    expect(callbacks.onOpenInDesktop).toHaveBeenCalledOnce();
-    expect(callbacks.onOpenExternal).toHaveBeenCalledOnce();
-    expect(callbacks.onCopyAddress).toHaveBeenCalledOnce();
+    expect(actions?.map((item) => item.label)).toEqual(["在浏览器中打开链接", "复制链接地址"]);
+    actions?.[0]?.click?.(null as never, undefined, null as never);
+    actions?.[1]?.click?.(null as never, undefined, null as never);
+    expect(shell.openExternal).toHaveBeenCalledWith(url);
+    expect(clipboard.writeText).toHaveBeenCalledWith(url);
   });
 });
 

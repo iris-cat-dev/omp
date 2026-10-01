@@ -8,7 +8,6 @@ export interface DesktopContextMenuLabels {
   inspectElement: string;
   noSuggestions: string;
   openExternal: string;
-  openInDesktop: string;
   paste: string;
   quitApp: string;
   saveImageAs: string;
@@ -26,7 +25,6 @@ const DEFAULT_CONTEXT_MENU_LABELS: DesktopContextMenuLabels = {
   inspectElement: "Inspect Element",
   noSuggestions: "No suggestions",
   openExternal: "Open Link in Browser",
-  openInDesktop: "Open in OMP Desktop",
   paste: "Paste",
   quitApp: "Quit",
   saveImageAs: "Save Image As…",

@@ -14,16 +14,14 @@ import {
   app,
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
-  clipboard,
   Menu,
-  ipcMain,
   nativeImage,
+  ipcMain,
   net,
   protocol,
   screen,
   session,
   Tray,
-  webContents,
 } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
@@ -38,7 +36,6 @@ import {
   setupWindowStatePersistence,
   setupDefaultContextMenu,
   setupDragDropPrevention,
-  buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { BackgroundModeController } from "./window/background-mode.js";
 import { CloseChoiceRequestBroker } from "./window/close-choice-request.js";
@@ -57,31 +54,7 @@ import {
   getDesktopContextMenuLabels,
   onDesktopContextMenuLabelsChange,
 } from "./features/context-menu-labels.js";
-import {
-  BROWSER_NEW_TAB_REQUEST_EVENT,
-  decideBrowserWindowOpenRequest,
-  getPaseoBrowserIdForWebContents,
-  getPaseoBrowserWebContentsForHostWindow,
-  getPaseoBrowserWebviewRegistry,
-  listRegisteredPaseoBrowserIds,
-  isPaseoBrowserWebviewAttach,
-  preparePaseoBrowserWebContents,
-  PendingBrowserWindowOpenRequests,
-  registerBrowserWebviewNavigationGuards,
-  unregisterPaseoBrowserFromHost,
-  registerAttachedPaseoBrowser,
-  setWorkspaceActivePaseoBrowserId,
-  unregisterPaseoBrowserHost,
-} from "./features/browser-webviews/index.js";
-import {
-  clearPaseoBrowserProfile,
-  getLegacyPaseoBrowserProfileSession,
-  PASEO_BROWSER_PROFILE_PARTITION,
-  getPaseoBrowserProfileSession,
-  getPaseoBrowserProfileSessions,
-  listPaseoBrowserProfileGuests,
-  readLegacyPaseoBrowserIds,
-} from "./features/browser-profile.js";
+import { clearRetiredBrowserProfiles } from "./features/browser-profile.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { PendingOpenProjectStore } from "./pending-open-project-store.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
@@ -96,8 +69,6 @@ import {
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
-import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
-import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import {
   buildAgentDeepLinkRoute,
   parseAgentDeepLink,
@@ -111,7 +82,6 @@ const APP_SCHEME = "omp-desktop";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "OMP Desktop";
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
-const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 const closeChoiceRequests = new CloseChoiceRequestBroker();
 
@@ -125,161 +95,6 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
-
-interface AttachedBrowserInput {
-  browserId: string;
-  workspaceId: string;
-  webContentsId: number;
-}
-
-function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return null;
-  }
-  const record = input as Record<string, unknown>;
-  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
-    return null;
-  }
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
-    return null;
-  }
-  if (
-    typeof record.webContentsId !== "number" ||
-    !Number.isInteger(record.webContentsId) ||
-    record.webContentsId <= 0
-  ) {
-    return null;
-  }
-  return {
-    browserId: record.browserId.trim(),
-    workspaceId: record.workspaceId.trim(),
-    webContentsId: record.webContentsId,
-  };
-}
-
-function readActiveBrowserInput(
-  input: unknown,
-): { workspaceId: string; browserId: string | null } | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return null;
-  }
-  const record = input as Record<string, unknown>;
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
-    return null;
-  }
-  const browserId = typeof record.browserId === "string" ? record.browserId.trim() : null;
-  return { workspaceId: record.workspaceId.trim(), browserId: browserId || null };
-}
-
-const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
-browserKeyboard.registerIpc();
-
-function showBrowserWebviewContextMenu(
-  win: BrowserWindow,
-  contents: Electron.WebContents,
-  params: Electron.ContextMenuParams,
-): void {
-  const menu = Menu.buildFromTemplate([
-    ...buildStandardContextMenuItems(contents, params),
-    ...(app.isPackaged
-      ? []
-      : [
-          { type: "separator" as const },
-          {
-            label: getDesktopContextMenuLabels().inspectElement,
-            click: () => {
-              log.info("[browser-devtools] inspect-element.request", {
-                webContentsId: contents.id,
-                browserId: getPaseoBrowserIdForWebContents(contents),
-                x: params.x,
-                y: params.y,
-                isDevToolsOpened: contents.isDevToolsOpened(),
-              });
-              contents.openDevTools({ mode: "detach" });
-              contents.inspectElement(params.x, params.y);
-              log.info("[browser-devtools] inspect-element.done", {
-                webContentsId: contents.id,
-                isDevToolsOpened: contents.isDevToolsOpened(),
-              });
-            },
-          },
-        ]),
-  ]);
-  menu.popup({ window: win });
-}
-
-function getBrowserPopupWindowOptions(
-  mainWindow: BrowserWindow,
-): Electron.BrowserWindowConstructorOptions {
-  return {
-    parent: mainWindow,
-    show: true,
-    autoHideMenuBar: true,
-    webPreferences: {
-      partition: PASEO_BROWSER_PROFILE_PARTITION,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      nodeIntegrationInWorker: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      webviewTag: false,
-      allowRunningInsecureContent: false,
-    },
-  };
-}
-
-function installBrowserWindowOpenHandler(input: {
-  contents: Electron.WebContents;
-  sourceContents: Electron.WebContents;
-  mainWindow: BrowserWindow;
-}): void {
-  const { contents, sourceContents, mainWindow } = input;
-
-  contents.setWindowOpenHandler(({ url, disposition, frameName, features, postBody }) => {
-    const decision = decideBrowserWindowOpenRequest({
-      url,
-      disposition,
-      frameName,
-      features,
-      hasPostBody: postBody !== undefined && postBody !== null,
-    });
-
-    if (decision.kind === "deny") {
-      return { action: "deny" };
-    }
-    if (decision.kind === "popup") {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow),
-      };
-    }
-
-    const sourceBrowserId = getPaseoBrowserIdForWebContents(sourceContents);
-    if (sourceBrowserId) {
-      mainWindow.webContents.send(BROWSER_NEW_TAB_REQUEST_EVENT, {
-        sourceBrowserId,
-        url: decision.url,
-      });
-    } else {
-      pendingBrowserWindowOpenRequests.add(sourceContents.id, decision.url);
-    }
-    return { action: "deny" };
-  });
-
-  contents.on("did-create-window", (popupWindow) => {
-    const popupContents = popupWindow.webContents;
-    registerBrowserWebviewNavigationGuards(popupContents);
-    popupContents.on("context-menu", (_event, params) => {
-      showBrowserWebviewContextMenu(popupWindow, popupContents, params);
-    });
-    installBrowserWindowOpenHandler({
-      contents: popupContents,
-      sourceContents,
-      mainWindow,
-    });
-  });
-}
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
@@ -378,251 +193,6 @@ ipcMain.handle("paseo:window:respondCloseChoice", (event, response: unknown) => 
   return closeChoiceRequests.respond(event.sender.id, response);
 });
 
-function normalizeBrowserCaptureRect(
-  rect: unknown,
-): { x: number; y: number; width: number; height: number } | null {
-  if (!rect || typeof rect !== "object") {
-    return null;
-  }
-  const candidate = rect as Record<string, unknown>;
-  const x = candidate.x;
-  const y = candidate.y;
-  const width = candidate.width;
-  const height = candidate.height;
-  if (
-    typeof x !== "number" ||
-    typeof y !== "number" ||
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height) ||
-    width <= 0 ||
-    height <= 0
-  ) {
-    return null;
-  }
-  return {
-    x: Math.max(0, Math.round(x)),
-    y: Math.max(0, Math.round(y)),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
-}
-
-ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
-  const input = readAttachedBrowserInput(rawInput);
-  if (!input) {
-    throw new Error("Invalid attached browser registration");
-  }
-  const registered = registerAttachedPaseoBrowser({
-    ...input,
-    sender: event.sender,
-    profileSession: getPaseoBrowserProfileSession(session),
-    findWebContents: (webContentsId) => webContents.fromId(webContentsId) ?? null,
-  });
-  if (!registered) {
-    throw new Error("Attached browser registration was rejected");
-  }
-  const guest = webContents.fromId(input.webContentsId);
-  if (!guest) {
-    throw new Error("Attached browser guest disappeared after registration");
-  }
-  browserKeyboard.attach({ contents: guest, hostContents: event.sender });
-  log.info("[browser-webview] registered", {
-    browserId: input.browserId,
-    webContentsId: input.webContentsId,
-    registeredBrowserIds: listRegisteredPaseoBrowserIds(),
-  });
-  for (const url of pendingBrowserWindowOpenRequests.take(input.webContentsId)) {
-    event.sender.send(BROWSER_NEW_TAB_REQUEST_EVENT, {
-      sourceBrowserId: input.browserId,
-      url,
-    });
-  }
-});
-
-ipcMain.handle("paseo:browser:unregister-workspace-browser", async (event, browserId: unknown) => {
-  if (typeof browserId === "string" && browserId.trim().length > 0) {
-    const normalizedBrowserId = browserId.trim();
-    const hasOtherHost = getPaseoBrowserWebviewRegistry().hasBrowserInOtherHostWindow(
-      event.sender.id,
-      normalizedBrowserId,
-    );
-    unregisterPaseoBrowserFromHost(event.sender.id, normalizedBrowserId);
-    // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
-    const legacyProfile = hasOtherHost
-      ? null
-      : getLegacyPaseoBrowserProfileSession(session, normalizedBrowserId);
-    if (legacyProfile) {
-      try {
-        await clearPaseoBrowserProfile({
-          profileSessions: [legacyProfile],
-          listGuests: () => [],
-          logReloadError: () => {},
-        });
-      } catch (error) {
-        log.warn("[browser-profile] failed to clear legacy tab profile", {
-          browserId: normalizedBrowserId,
-          error,
-        });
-      }
-    }
-  }
-});
-
-ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: unknown) => {
-  const input = readActiveBrowserInput(rawInput);
-  if (input) {
-    setWorkspaceActivePaseoBrowserId({ ...input, hostWebContentsId: event.sender.id });
-  }
-});
-
-ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
-  if (typeof browserId !== "string" || browserId.trim().length === 0) {
-    return false;
-  }
-  const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-  if (!contents) {
-    return false;
-  }
-  contents.focus();
-  return true;
-});
-
-ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
-  if (typeof browserId !== "string" || browserId.trim().length === 0) {
-    const result = {
-      ok: false,
-      reason: "invalid-browser-id",
-      browserId,
-      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
-    };
-    log.warn("[browser-devtools] open-devtools.invalid", result);
-    return result;
-  }
-  const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-  if (!contents) {
-    const result = {
-      ok: false,
-      reason: "browser-webcontents-not-found",
-      browserId,
-      registeredBrowserIds: listRegisteredPaseoBrowserIds(),
-    };
-    log.warn("[browser-devtools] open-devtools.not-found", result);
-    return result;
-  }
-  log.info("[browser-devtools] open-devtools.request", {
-    browserId,
-    webContentsId: contents.id,
-    isDestroyed: contents.isDestroyed(),
-    isDevToolsOpened: contents.isDevToolsOpened(),
-    registeredBrowserIds: listRegisteredPaseoBrowserIds(),
-  });
-  contents.openDevTools({ mode: "detach" });
-  const result = {
-    ok: true,
-    reason: "opened",
-    browserId,
-    webContentsId: contents.id,
-    isDevToolsOpened: contents.isDevToolsOpened(),
-  };
-  log.info("[browser-devtools] open-devtools.done", result);
-  return result;
-});
-
-ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds: unknown) => {
-  const profileSessions = getPaseoBrowserProfileSessions(
-    session,
-    readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
-  );
-  const profileSession = profileSessions[0];
-  await clearPaseoBrowserProfile({
-    profileSessions,
-    listGuests: () =>
-      listPaseoBrowserProfileGuests({
-        profileSession,
-        webContents: webContents.getAllWebContents(),
-      }),
-    logReloadError: (webContentsId, error) => {
-      log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
-    },
-  });
-});
-
-ipcMain.handle(
-  "paseo:browser:capture-element",
-  async (event, browserId: unknown, rect: unknown) => {
-    if (typeof browserId !== "string" || browserId.trim().length === 0) {
-      return null;
-    }
-    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-    if (!contents || contents.isDestroyed()) {
-      return null;
-    }
-    const captureRect = normalizeBrowserCaptureRect(rect);
-    if (!captureRect) {
-      return null;
-    }
-    try {
-      // capturePage expects an integer rect in CSS pixels relative to the
-      // guest viewport, which matches getBoundingClientRect() on the page.
-      const image = await contents.capturePage(captureRect);
-      if (image.isEmpty()) {
-        return null;
-      }
-      return image.toDataURL();
-    } catch (error) {
-      log.warn("[browser-capture] capture-element.failed", {
-        browserId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  },
-);
-
-ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean => {
-  if (!payload || typeof payload !== "object") {
-    return false;
-  }
-  const { text, imageDataUrl } = payload as { text?: unknown; imageDataUrl?: unknown };
-  const copyText = typeof text === "string" && text.length > 0 ? text : null;
-
-  // Resolve the image first so we can write the clipboard exactly once and
-  // avoid flashing an intermediate text-only state.
-  let image: Electron.NativeImage | null = null;
-  if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image")) {
-    try {
-      const candidate = nativeImage.createFromDataURL(imageDataUrl);
-      if (!candidate.isEmpty()) {
-        image = candidate;
-      }
-    } catch (error) {
-      log.warn("[browser-capture] copy-element.image-failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  // Writing from the main process avoids the renderer's navigator.clipboard
-  // NotAllowedError, which fires when focus is inside the guest <webview>.
-  if (copyText && image) {
-    clipboard.write({ text: copyText, image });
-    return true;
-  }
-  if (image) {
-    clipboard.writeImage(image);
-    return true;
-  }
-  if (copyText) {
-    clipboard.writeText(copyText);
-    return true;
-  }
-  return false;
-});
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
@@ -636,10 +206,6 @@ protocol.registerSchemesAsPrivileged([
 
 function getPreloadPath(): string {
   return path.join(__dirname, "preload.js");
-}
-
-function getBrowserKeyboardPreloadPath(): string {
-  return path.join(__dirname, "features", "browser-keyboard", "guest-preload.js");
 }
 
 function getAppDistDir(): string {
@@ -779,7 +345,7 @@ async function createWindow(
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
+      webviewTag: false,
     },
   });
   backgroundModeController.registerWindow(mainWindow);
@@ -794,8 +360,6 @@ async function createWindow(
   mainWindow.on("closed", () => {
     pendingOpenProjectStore.delete(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
-    unregisterPaseoBrowserHost(webContentsId);
-    browserKeyboard.detachHost(webContentsId);
   });
 
   if (devWorktreeName) {
@@ -813,41 +377,8 @@ async function createWindow(
   }
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
-  mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (!isPaseoBrowserWebviewAttach(params)) {
-      event.preventDefault();
-      return;
-    }
-    webPreferences.nodeIntegration = false;
-    // The sandboxed keyboard preload must run in every frame so focused iframes keep
-    // the same page-first shortcut boundary. Node integration remains disabled.
-    webPreferences.nodeIntegrationInSubFrames = true;
-    webPreferences.nodeIntegrationInWorker = false;
-    webPreferences.contextIsolation = true;
-    webPreferences.sandbox = true;
-    webPreferences.webSecurity = true;
-    webPreferences.webviewTag = false;
-    webPreferences.allowRunningInsecureContent = false;
-    delete webPreferences.preload;
-    delete params.preload;
-    delete (webPreferences as { preloadURL?: string }).preloadURL;
-    delete (params as { preloadURL?: string }).preloadURL;
-    webPreferences.preload = getBrowserKeyboardPreloadPath();
-  });
-  mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
-    preparePaseoBrowserWebContents(contents);
-    contents.once("destroyed", () => {
-      pendingBrowserWindowOpenRequests.delete(contents.id);
-    });
-    installBrowserWindowOpenHandler({
-      contents,
-      sourceContents: contents,
-      mainWindow,
-    });
-    contents.on("context-menu", (_contextMenuEvent, params) => {
-      showBrowserWebviewContextMenu(mainWindow, contents, params);
-    });
-    registerBrowserWebviewNavigationGuards(contents);
+  mainWindow.webContents.on("will-attach-webview", (event) => {
+    event.preventDefault();
   });
 
   mainWindow.once("ready-to-show", () => {
@@ -1080,6 +611,13 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  try {
+    await clearRetiredBrowserProfiles(session, (partition, error) => {
+      log.warn("[browser-profile] failed to clear retired partition", { partition, error });
+    });
+  } catch (error) {
+    log.warn("[browser-profile] failed to locate retired partitions", { error });
+  }
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
@@ -1125,7 +663,6 @@ async function bootstrap(): Promise<void> {
   registerOpenerHandlers();
   registerEditorTargetHandlers();
   registerRemoteSshHandlers();
-  registerBrowserAutomationIpc();
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).

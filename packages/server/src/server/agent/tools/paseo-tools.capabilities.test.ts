@@ -5,7 +5,6 @@ import type {
   MutableDaemonConfig,
   OmpDesktopToolCapabilities,
 } from "@omp-desktop/protocol/messages";
-import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type { AgentManager } from "../agent-manager.js";
 import type { AgentStorage } from "../agent-storage.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
@@ -47,33 +46,7 @@ const toolsByCapability = {
   ],
   scripts: ["list_workspace_scripts", "start_workspace_script", "stop_workspace_script"],
   providers: ["list_providers", "list_models", "list_profiles", "inspect_provider"],
-  optional: [
-    "image_gen",
-    "present_image",
-    "browser_list_tabs",
-    "browser_new_tab",
-    "browser_reveal",
-    "browser_snapshot",
-    "browser_click",
-    "browser_fill",
-    "browser_wait",
-    "browser_type",
-    "browser_keypress",
-    "browser_navigate",
-    "browser_back",
-    "browser_forward",
-    "browser_reload",
-    "browser_screenshot",
-    "browser_upload",
-    "browser_hover",
-    "browser_select",
-    "browser_drag",
-    "browser_logs",
-    "browser_evaluate",
-    "browser_scroll",
-    "browser_resize",
-    "browser_close_tab",
-  ],
+  optional: ["image_gen", "present_image"],
 } satisfies Record<keyof OmpDesktopToolCapabilities, string[]>;
 
 const allEnabled: OmpDesktopToolCapabilities = {
@@ -94,7 +67,6 @@ function createCatalog(
 ) {
   const config: MutableDaemonConfig = {
     mcp: { injectIntoAgents: true, toolCapabilities },
-    browserTools: { enabled: true },
     providers: {},
     metadataGeneration: { providers: [] },
     autoArchiveAfterMerge: false,
@@ -107,8 +79,6 @@ function createCatalog(
     agentStorage: {} as AgentStorage,
     providerSnapshotManager: {} as ProviderSnapshotManager,
     daemonConfigStore: { get: () => config },
-    browserToolsEnabled: true,
-    browserToolsBroker: {} as BrowserToolsBroker,
     callerAgentId,
     logger: pino({ level: "silent" }),
   });

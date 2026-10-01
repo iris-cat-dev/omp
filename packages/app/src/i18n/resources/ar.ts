@@ -651,45 +651,6 @@ export const ar: TranslationResources = {
         noOutput: "لا يوجد إخراج",
       },
     },
-    browser: {
-      unavailable: {
-        title: "المتصفح مخصص لسطح المكتب فقط",
-        subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
-      },
-      session: "جلسة المتصفح{{browserId}}",
-      controls: {
-        back: "خلف",
-        forward: "إلى الأمام",
-        stopLoading: "توقف عن التحميل",
-        refresh: "ينعش",
-        browserUrl: "متصفح URL",
-        enterUrl: "أدخل URL",
-        openDevTools: "افتح أدوات تطوير المتصفح",
-        cancelSelector: "إلغاء محدد العنصر",
-        annotateElement: "التعليق على العنصر",
-        screenshotElement: "لقطة للعنصر",
-        screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
-        elementCopied: "تم نسخ العنصر إلى الحافظة",
-        screenshotFailed: "تعذّر نسخ لقطة الشاشة",
-        selectorLoading: "انتظر حتى ينتهي تحميل الصفحة",
-        selectorFailed: "تعذّر بدء محدد العنصر",
-      },
-      annotate: {
-        title: "التعليق على العنصر",
-        placeholder: "رسالة إلى الوكيل حول هذا العنصر…",
-        submit: "إرفاق",
-        cancel: "إلغاء",
-      },
-      devices: {
-        label: "حجم الجهاز",
-        responsive: "متجاوب",
-      },
-      errors: {
-        failedToLoad: "فشل تحميل الصفحة",
-        invalidUrl: "متصفح غير صالح URL",
-        unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
-      },
-    },
     terminal: {
       clear: "مسح",
       hostDisconnected: "Host غير متصل",
@@ -705,7 +666,6 @@ export const ar: TranslationResources = {
         setup: "يثبت",
         workspaceSetup: "إعداد Workspace",
         terminal: "Terminal",
-        browser: "المتصفح",
         agent: "Agent",
         workspace: "Workspace",
       },
@@ -738,10 +698,6 @@ export const ar: TranslationResources = {
         newTerminal: "محطة جديدة",
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
         preparingTerminalTooltip: "جارٍ تحضير المحطة...",
-        newBrowser: "متصفح جديد",
-        existingBrowsers: "المتصفحات الموجودة — إظهار هنا",
-        browserHostedIn: "موقع علامة التبويب: {{hosts}}",
-        browserNotPresented: "غير معروض حاليًا في أي مساحة عمل",
         maximizePane: "تكبير الجزء",
         restorePane: "استعادة الجزء",
         closePane: "إغلاق الجزء",
@@ -813,7 +769,6 @@ export const ar: TranslationResources = {
         workspaceActions: "إجراءات Workspace",
         newAgent: "وكيل جديد",
         newTerminal: "محطة جديدة",
-        newBrowser: "علامة تبويب متصفح جديدة",
         importSession: "جلسة الاستيراد",
         copyPath: "نسخ مسار مساحة العمل",
         copyBranchName: "انسخ اسم الفرع",
@@ -1849,13 +1804,6 @@ export const ar: TranslationResources = {
   diffViewer: {
     empty: "لا توجد تغييرات للعرض",
   },
-  serviceUrl: {
-    title: "افتح الخدمة URL",
-    message: "افتح{{url}}؟",
-    inPaseo: "في OMP Desktop",
-    externalBrowser: "متصفح خارجي",
-    dontAskAgain: "لا تسأل مرة أخرى",
-  },
   contextMenu: {
     addToDictionary: "إضافة إلى القاموس",
     clear: "مسح",
@@ -1866,7 +1814,6 @@ export const ar: TranslationResources = {
     inspectElement: "فحص العنصر",
     noSuggestions: "لا توجد اقتراحات",
     openExternal: "فتح الرابط في المتصفح",
-    openInDesktop: "فتح في OMP Desktop",
     paste: "لصق",
     quitApp: "إنهاء",
     saveImageAs: "حفظ الصورة باسم…",
@@ -2117,17 +2064,6 @@ export const ar: TranslationResources = {
     },
     general: {
       title: "عام",
-      browserData: {
-        title: "بيانات المتصفح",
-        siteData: "ملفات تعريف الارتباط وبيانات المواقع",
-        description: "تتشارك علامات تبويب المتصفح تسجيلات الدخول وبيانات المواقع عبر OMP Desktop.",
-        clear: "مسح بيانات المتصفح",
-        clearing: "جارٍ المسح...",
-        confirmTitle: "هل تريد مسح بيانات المتصفح؟",
-        confirmMessage: "سيتم تسجيل خروجك من المواقع وإعادة تحميل علامات تبويب المتصفح المفتوحة.",
-        success: "تم مسح بيانات المتصفح.",
-        error: "تعذر مسح بيانات المتصفح.",
-      },
       defaultSend: {
         label: "إرسال افتراضي",
         descriptions: {
@@ -2141,15 +2077,6 @@ export const ar: TranslationResources = {
           interrupt: "مقاطعة",
           steer: "توجيه",
           queue: "طابور",
-        },
-      },
-      serviceUrls: {
-        label: "عناوين URL للخدمة",
-        description: "مكان فتح عناوين URL من تشغيل البرامج النصية",
-        options: {
-          ask: "بسأل",
-          inApp: "في OMP Desktop",
-          external: "متصفح خارجي",
         },
       },
       terminalScrollback: {

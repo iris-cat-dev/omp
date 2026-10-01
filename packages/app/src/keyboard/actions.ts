@@ -3,7 +3,6 @@ export type KeyboardFocusScope =
   | "message-input"
   | "command-center"
   | "editable"
-  | "browser"
   | "other";
 
 export type MessageInputKeyboardActionKind = "focus" | "send" | "mode-cycle";
@@ -13,7 +12,6 @@ export type KeyboardActionId =
   | "agent.new"
   | "workspace.tab.menu.open"
   | "workspace.tab.target.agent"
-  | "workspace.tab.target.browser"
   | "workspace.tab.target.changes"
   | "workspace.tab.target.files"
   | "workspace.tab.close.current"

@@ -63,11 +63,6 @@ import {
   LoopStopResponseSchema,
 } from "./loop/rpc-schemas.js";
 import {
-  BrowserAutomationExecuteRequestSchema,
-  BrowserAutomationExecuteResponseSchema,
-} from "./browser-automation/rpc-schemas.js";
-import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
-import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -194,11 +189,6 @@ export const AgentProfileSchema = z
 
 export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 
-const MutableBrowserToolsConfigSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-  })
-  .passthrough();
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
@@ -311,7 +301,6 @@ export const MutableDaemonConfigSchema = z
       .optional(),
     app: z.object({ baseUrl: z.string() }).optional(),
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
-    browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     quickAsk: MutableQuickAskConfigSchema.optional(),
@@ -338,7 +327,6 @@ export const MutableDaemonConfigPatchSchema = z
       })
       .passthrough()
       .optional(),
-    browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
@@ -3496,7 +3484,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
   HubExecutionControlRequestSchema,
-  BrowserAutomationExecuteResponseSchema,
   FetchAgentsRequestMessageSchema,
   FetchAgentHistoryRequestMessageSchema,
   FetchRecentProviderSessionsRequestMessageSchema,
@@ -7206,7 +7193,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
-  BrowserAutomationExecuteRequestSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,
@@ -8041,7 +8027,6 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
-      [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()
     .optional(),

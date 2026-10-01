@@ -3,7 +3,6 @@ export const PRIMARY_LAUNCH_ORDER = [
   "terminal",
   "changes",
   "files",
-  "browser",
   "pullRequest",
 ] as const;
 
@@ -12,7 +11,6 @@ export const SUPPORTING_LAUNCH_ORDER = [
   "files",
   "terminal",
   "agent",
-  "browser",
   "pullRequest",
 ] as const;
 

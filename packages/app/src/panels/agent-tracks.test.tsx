@@ -240,7 +240,6 @@ function createHostPaneContext(
     retargetCurrentTab: vi.fn(),
     setCurrentTabState: vi.fn(),
     openFileInWorkspace: vi.fn(),
-    openUrlInBrowser: vi.fn(),
     openImportSheet: vi.fn(),
   };
   return paneContext;

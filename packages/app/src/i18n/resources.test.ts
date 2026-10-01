@@ -294,8 +294,6 @@ describe("translation resources", () => {
     expect(en.workspace.fileExplorer.empty.noVisibleFiles).toBe("No visible files");
     expect(en.workspace.setup.status.running).toBe("Running");
     expect(en.workspace.setup.empty.noCommands).toBe("No setup commands ran for this workspace.");
-    expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");
-    expect(en.workspace.browser.controls.enterUrl).toBe("Enter URL");
     expect(en.workspace.terminal.hostDisconnected).toBe("Host is not connected");
     expect(en.panels.file.directoryMissing).toBe("Workspace directory not found.");
   });
@@ -351,7 +349,6 @@ describe("translation resources", () => {
     expect(en.rewind.actions.conversation).toBe("Rewind conversation");
     expect(en.rewind.warning).toBe("This action cannot be undone");
     expect(en.diffViewer.empty).toBe("No changes to display");
-    expect(en.serviceUrl.title).toBe("Open service URL");
   });
 
   it("includes keyboard shortcut help keys for the Batch 4G migration", () => {

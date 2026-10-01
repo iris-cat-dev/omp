@@ -365,7 +365,6 @@ describe("workspace navigation", () => {
         [{ id: "agent-root", workspaceId: "workspace-other", archivedAt: null }] as Agent[],
       getWorkspaceTabs: () => [
         { tabId: "draft", target: { kind: "draft", draftId: "unused" }, createdAt: 0 },
-        { tabId: "browser", target: { kind: "browser", browserId: "browser" }, createdAt: 0 },
       ],
     });
 

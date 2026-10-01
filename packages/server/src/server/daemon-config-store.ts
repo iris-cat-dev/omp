@@ -34,7 +34,6 @@ interface SupportedMutableConfigPatch {
     publicUseTls?: boolean;
   };
   mcp?: MutableDaemonConfigPatch["mcp"];
-  browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
   metadataGeneration?: MutableDaemonConfigPatch["metadataGeneration"];
@@ -311,7 +310,6 @@ const RELOADABLE_PATHS = [
   "daemon.mcp.enabled",
   "daemon.mcp.injectIntoAgents",
   "daemon.mcp.toolCapabilities",
-  "daemon.browserTools.enabled",
   "daemon.hostnames",
   "daemon.cors.allowedOrigins",
   "daemon.trustedProxies",
@@ -342,7 +340,6 @@ const PERSISTED_TO_MUTABLE_PATH: Record<string, string> = {
   "daemon.mcp.enabled": "mcp.enabled",
   "daemon.mcp.injectIntoAgents": "mcp.injectIntoAgents",
   "daemon.mcp.toolCapabilities": "mcp.toolCapabilities",
-  "daemon.browserTools.enabled": "browserTools.enabled",
   "daemon.hostnames": "hostnames",
   "daemon.cors.allowedOrigins": "cors.allowedOrigins",
   "daemon.trustedProxies": "trustedProxies",
@@ -441,9 +438,6 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
   return {
     ...pickRelayPatchField(patch),
     ...pickMcpPatchField(patch),
-    ...(patch.browserTools?.enabled !== undefined
-      ? { browserTools: { enabled: patch.browserTools.enabled } }
-      : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
     ...(patch.metadataGeneration !== undefined
@@ -1031,9 +1025,6 @@ function mergeMutableDaemonPatch(
         ...patch.mcp.toolCapabilities,
       },
     };
-  }
-  if (patch.browserTools?.enabled !== undefined) {
-    next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
   }
   if (patch.autoArchiveAfterMerge !== undefined) {
     next.autoArchiveAfterMerge = patch.autoArchiveAfterMerge;

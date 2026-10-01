@@ -655,45 +655,6 @@ export const ptBR: TranslationResources = {
         noOutput: "Nenhuma saída",
       },
     },
-    browser: {
-      unavailable: {
-        title: "O navegador é exclusivo do desktop",
-        subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
-      },
-      session: "Sessão do navegador {{browserId}}",
-      controls: {
-        back: "Voltar",
-        forward: "Avançar",
-        stopLoading: "Parar carregamento",
-        refresh: "Atualizar",
-        browserUrl: "URL do navegador",
-        enterUrl: "Inserir URL",
-        openDevTools: "Abrir ferramentas de desenvolvedor do navegador",
-        cancelSelector: "Cancelar seletor de elemento",
-        annotateElement: "Anotar elemento",
-        screenshotElement: "Capturar elemento",
-        screenshotCopied: "Captura copiada para a área de transferência",
-        elementCopied: "Elemento copiado para a área de transferência",
-        screenshotFailed: "Não foi possível copiar a captura",
-        selectorLoading: "Aguarde o carregamento da página terminar",
-        selectorFailed: "Não foi possível iniciar o seletor de elemento",
-      },
-      annotate: {
-        title: "Anotar elemento",
-        placeholder: "Mensagem ao agente sobre este elemento…",
-        submit: "Anexar",
-        cancel: "Cancelar",
-      },
-      devices: {
-        label: "Tamanho do dispositivo",
-        responsive: "Responsivo",
-      },
-      errors: {
-        failedToLoad: "Falha ao carregar página",
-        invalidUrl: "URL de navegador inválida",
-        unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
-      },
-    },
     terminal: {
       clear: "Limpar",
       hostDisconnected: "Host não está conectado",
@@ -709,7 +670,6 @@ export const ptBR: TranslationResources = {
         setup: "Configuração",
         workspaceSetup: "Configuração do workspace",
         terminal: "Terminal",
-        browser: "Navegador",
         agent: "Agente",
         workspace: "Workspace",
       },
@@ -742,10 +702,6 @@ export const ptBR: TranslationResources = {
         newTerminal: "Novo terminal",
         preparingTerminal: "Preparando aba de terminal",
         preparingTerminalTooltip: "Preparando terminal...",
-        newBrowser: "Novo navegador",
-        existingBrowsers: "Navegadores existentes — mostrar aqui",
-        browserHostedIn: "Localização da aba: {{hosts}}",
-        browserNotPresented: "Não está sendo exibido em nenhum workspace",
         maximizePane: "Maximizar painel",
         restorePane: "Restaurar painel",
         closePane: "Fechar painel",
@@ -816,7 +772,6 @@ export const ptBR: TranslationResources = {
         workspaceActions: "Ações do workspace",
         newAgent: "Novo agente",
         newTerminal: "Novo terminal",
-        newBrowser: "Nova aba de navegador",
         importSession: "Importar sessão",
         copyPath: "Copiar caminho do workspace",
         copyBranchName: "Copiar nome da branch",
@@ -1885,13 +1840,6 @@ export const ptBR: TranslationResources = {
   diffViewer: {
     empty: "Nenhuma alteração para exibir",
   },
-  serviceUrl: {
-    title: "Abrir URL do serviço",
-    message: "Abrir {{url}}?",
-    inPaseo: "No OMP Desktop",
-    externalBrowser: "Navegador externo",
-    dontAskAgain: "Não perguntar novamente",
-  },
   contextMenu: {
     addToDictionary: "Adicionar ao dicionário",
     clear: "Limpar",
@@ -1902,7 +1850,6 @@ export const ptBR: TranslationResources = {
     inspectElement: "Inspecionar elemento",
     noSuggestions: "Nenhuma sugestão",
     openExternal: "Abrir link no navegador",
-    openInDesktop: "Abrir no OMP Desktop",
     paste: "Colar",
     quitApp: "Sair",
     saveImageAs: "Salvar imagem como…",
@@ -2154,18 +2101,6 @@ export const ptBR: TranslationResources = {
     },
     general: {
       title: "Geral",
-      browserData: {
-        title: "Dados do navegador",
-        siteData: "Cookies e dados de sites",
-        description: "As abas do navegador compartilham logins e dados de sites no OMP Desktop.",
-        clear: "Limpar dados do navegador",
-        clearing: "Limpando...",
-        confirmTitle: "Limpar dados do navegador?",
-        confirmMessage:
-          "Você será desconectado dos sites e as abas abertas do navegador serão recarregadas.",
-        success: "Dados do navegador limpos.",
-        error: "Não foi possível limpar os dados do navegador.",
-      },
       defaultSend: {
         label: "Envio padrão",
         descriptions: {
@@ -2179,15 +2114,6 @@ export const ptBR: TranslationResources = {
           interrupt: "Interromper",
           steer: "Orientar",
           queue: "Fila",
-        },
-      },
-      serviceUrls: {
-        label: "URLs de serviço",
-        description: "Onde abrir URLs de scripts em execução",
-        options: {
-          ask: "Perguntar",
-          inApp: "No OMP Desktop",
-          external: "Navegador externo",
         },
       },
       terminalScrollback: {

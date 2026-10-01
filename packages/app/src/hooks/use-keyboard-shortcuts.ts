@@ -3,7 +3,6 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
-import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
@@ -14,11 +13,6 @@ import {
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
-import {
-  buildBrowserKeyboardPolicy,
-  parseBrowserShortcutInput,
-  shouldPublishBrowserShortcutPolicy,
-} from "@/desktop/browser/shortcuts";
 import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
 import {
   routeKeyboardShortcut,
@@ -30,7 +24,6 @@ import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
 import { keyboardShortcutsAvailable } from "@/keyboard/availability";
-import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
   type ActiveWorkspaceSelection,
@@ -75,35 +68,11 @@ export function useKeyboardShortcuts({
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
   const badgeModifierKeyRef = useRef<string | null | undefined>(undefined);
 
-  const publishBrowserShortcutPolicy = useCallback(
-    (chordState?: ChordState) => {
-      const policy =
-        enabled && shortcutsAvailable
-          ? buildBrowserKeyboardPolicy({
-              bindings,
-              chordState,
-              isMac,
-              isDesktop: isDesktopApp,
-            })
-          : { menuPrefixes: [], prefixes: [] };
-      void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
-    },
-    [bindings, enabled, isDesktopApp, isMac, shortcutsAvailable],
-  );
-
   useEffect(() => {
     if (activeWorkspaceSelection) {
       keyboardWorkspaceSelectionRef.current = activeWorkspaceSelection;
     }
   }, [activeWorkspaceSelection]);
-
-  useEffect(() => {
-    if (!isDesktopApp) {
-      return;
-    }
-
-    publishBrowserShortcutPolicy();
-  }, [isDesktopApp, publishBrowserShortcutPolicy]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -161,11 +130,7 @@ export function useKeyboardShortcuts({
       "cycle-theme": cycleTheme,
     };
 
-    const performShortcutAction = (
-      action: ShortcutAction,
-      event: KeyboardEvent | null,
-      browserFocusRestoreElement: HTMLElement | null = null,
-    ): boolean => {
+    const performShortcutAction = (action: ShortcutAction, event: KeyboardEvent): boolean => {
       switch (action.kind) {
         case "none":
           return false;
@@ -197,11 +162,7 @@ export function useKeyboardShortcuts({
           return true;
         case "command-center-toggle": {
           if (action.nextOpen) {
-            if (event) {
-              captureCommandCenterFocusRestore(event);
-            } else {
-              setCommandCenterFocusRestoreElement(browserFocusRestoreElement);
-            }
+            captureCommandCenterFocusRestore(event);
           }
           useKeyboardShortcutsStore
             .getState()
@@ -217,8 +178,7 @@ export function useKeyboardShortcuts({
     const routeAndPerformShortcut = (input: {
       action: string;
       payload: KeyboardShortcutPayload;
-      domEvent: KeyboardEvent | null;
-      browserFocusRestoreElement?: HTMLElement | null;
+      domEvent: KeyboardEvent;
     }): boolean => {
       const store = useKeyboardShortcutsStore.getState();
       const shortcutAction = routeKeyboardShortcut(
@@ -233,11 +193,7 @@ export function useKeyboardShortcuts({
           shortcutsDialogOpen: store.shortcutsDialogOpen,
         },
       );
-      const handled = performShortcutAction(
-        shortcutAction,
-        input.domEvent,
-        input.browserFocusRestoreElement,
-      );
+      const handled = performShortcutAction(shortcutAction, input.domEvent);
       if (handled && isWorkspaceFocusModeEnabled && input.action.startsWith("sidebar.")) {
         exitFocusMode();
       }
@@ -247,11 +203,9 @@ export function useKeyboardShortcuts({
     const resolveAndPerformShortcut = (input: {
       event: KeyboardShortcutInput;
       focusScope: KeyboardFocusScope;
-      domEvent: KeyboardEvent | null;
-      browserFocusRestoreElement?: HTMLElement | null;
+      domEvent: KeyboardEvent;
     }) => {
       const store = useKeyboardShortcutsStore.getState();
-      const previousChordState = chordStateRef.current;
       const result = resolveKeyboardShortcut({
         event: input.event,
         context: {
@@ -267,22 +221,12 @@ export function useKeyboardShortcuts({
             step: 0,
             timeoutId: null,
           };
-          publishBrowserShortcutPolicy();
         },
         bindings,
       });
       chordStateRef.current = result.nextChordState;
-      if (
-        shouldPublishBrowserShortcutPolicy({
-          isBrowserInput: "browserId" in input.event,
-          previousChordState,
-          nextChordState: result.nextChordState,
-        })
-      ) {
-        publishBrowserShortcutPolicy(result.nextChordState);
-      }
 
-      if (result.preventDefault && input.domEvent) {
+      if (result.preventDefault) {
         input.domEvent.preventDefault();
         input.domEvent.stopPropagation();
       }
@@ -295,9 +239,8 @@ export function useKeyboardShortcuts({
         action: result.match.action,
         payload: result.match.payload,
         domEvent: input.domEvent,
-        browserFocusRestoreElement: input.browserFocusRestoreElement,
       });
-      if (!handled || !input.domEvent) {
+      if (!handled) {
         return;
       }
 
@@ -367,20 +310,6 @@ export function useKeyboardShortcuts({
     window.addEventListener("blur", handleBlurOrHide);
     document.addEventListener("visibilitychange", handleBlurOrHide);
 
-    const browserShortcutSubscription = isElectronRuntime()
-      ? getDesktopHost()?.events?.on?.("browser-shortcut-input", (payload) => {
-          const input = parseBrowserShortcutInput(payload);
-          if (!input) {
-            return;
-          }
-          resolveAndPerformShortcut({
-            event: input,
-            focusScope: "browser",
-            domEvent: null,
-            browserFocusRestoreElement: getResidentBrowserWebview(input.browserId),
-          });
-        })
-      : null;
     return () => {
       if (chordStateRef.current.timeoutId !== null) {
         clearTimeout(chordStateRef.current.timeoutId);
@@ -394,11 +323,6 @@ export function useKeyboardShortcuts({
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("blur", handleBlurOrHide);
       document.removeEventListener("visibilitychange", handleBlurOrHide);
-      if (typeof browserShortcutSubscription === "function") {
-        browserShortcutSubscription();
-      } else {
-        void browserShortcutSubscription?.then((dispose) => dispose());
-      }
     };
   }, [
     bindings,
@@ -413,7 +337,6 @@ export function useKeyboardShortcuts({
     keyboardActionDispatcher,
     openProjectPickerAction,
     pathname,
-    publishBrowserShortcutPolicy,
     resetModifiers,
     router,
     shortcutsAvailable,

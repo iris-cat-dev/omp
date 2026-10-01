@@ -17,7 +17,6 @@ async function createStore() {
   roots.push(root);
   const config = new DaemonConfigStore(root, {
     mcp: { injectIntoAgents: false },
-    browserTools: { enabled: false },
     providers: {},
     metadataGeneration: { providers: [] },
     autoArchiveAfterMerge: false,

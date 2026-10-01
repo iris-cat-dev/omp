@@ -676,45 +676,6 @@ export const en = {
         noOutput: "No output",
       },
     },
-    browser: {
-      unavailable: {
-        title: "Browser is desktop-only",
-        subtitle: "Open this workspace in Electron to use the built-in browser.",
-      },
-      session: "Browser session {{browserId}}",
-      controls: {
-        back: "Back",
-        forward: "Forward",
-        stopLoading: "Stop loading",
-        refresh: "Refresh",
-        browserUrl: "Browser URL",
-        enterUrl: "Enter URL",
-        openDevTools: "Open browser dev tools",
-        cancelSelector: "Cancel element selector",
-        annotateElement: "Annotate element",
-        screenshotElement: "Screenshot element",
-        screenshotCopied: "Copied screenshot to clipboard",
-        elementCopied: "Copied element to clipboard",
-        screenshotFailed: "Couldn't copy screenshot",
-        selectorLoading: "Wait for the page to finish loading",
-        selectorFailed: "Couldn't start element selector",
-      },
-      annotate: {
-        title: "Annotate element",
-        placeholder: "Message to the agent about this element…",
-        submit: "Attach",
-        cancel: "Cancel",
-      },
-      devices: {
-        label: "Device size",
-        responsive: "Responsive",
-      },
-      errors: {
-        failedToLoad: "Failed to load page",
-        invalidUrl: "Invalid browser URL",
-        unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
-      },
-    },
     terminal: {
       clear: "Clear",
       hostDisconnected: "Host is not connected",
@@ -730,7 +691,6 @@ export const en = {
         setup: "Setup",
         workspaceSetup: "Workspace setup",
         terminal: "Terminal",
-        browser: "Browser",
         agent: "Agent",
         workspace: "Workspace",
       },
@@ -763,10 +723,6 @@ export const en = {
         newTerminal: "New terminal",
         preparingTerminal: "Preparing terminal tab",
         preparingTerminalTooltip: "Preparing terminal...",
-        newBrowser: "New browser",
-        existingBrowsers: "Existing browsers — show here",
-        browserHostedIn: "Tab location: {{hosts}}",
-        browserNotPresented: "Not currently shown in a workspace",
         maximizePane: "Maximize pane",
         restorePane: "Restore pane",
         closePane: "Close pane",
@@ -836,7 +792,6 @@ export const en = {
         workspaceActions: "Workspace actions",
         newAgent: "New agent",
         newTerminal: "New terminal",
-        newBrowser: "New browser tab",
         importSession: "Import session",
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
@@ -1921,13 +1876,6 @@ export const en = {
   diffViewer: {
     empty: "No changes to display",
   },
-  serviceUrl: {
-    title: "Open service URL",
-    message: "Open {{url}}?",
-    inPaseo: "In OMP Desktop",
-    externalBrowser: "External browser",
-    dontAskAgain: "Don't ask again",
-  },
   contextMenu: {
     addToDictionary: "Add to Dictionary",
     clear: "Clear",
@@ -1938,7 +1886,6 @@ export const en = {
     inspectElement: "Inspect Element",
     noSuggestions: "No suggestions",
     openExternal: "Open Link in Browser",
-    openInDesktop: "Open in OMP Desktop",
     paste: "Paste",
     quitApp: "Quit",
     saveImageAs: "Save Image As…",
@@ -2244,17 +2191,6 @@ export const en = {
     },
     general: {
       title: "General",
-      browserData: {
-        title: "Browser data",
-        siteData: "Cookies and site data",
-        description: "Browser tabs share sign-ins and site data across OMP Desktop.",
-        clear: "Clear browser data",
-        clearing: "Clearing...",
-        confirmTitle: "Clear browser data?",
-        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
-        success: "Browser data cleared.",
-        error: "Couldn't clear browser data.",
-      },
       defaultSend: {
         label: "Default send",
         descriptions: {
@@ -2267,15 +2203,6 @@ export const en = {
           interrupt: "Interrupt",
           steer: "Steer",
           queue: "Queue",
-        },
-      },
-      serviceUrls: {
-        label: "Service URLs",
-        description: "Where to open URLs from running scripts",
-        options: {
-          ask: "Ask",
-          inApp: "In OMP Desktop",
-          external: "External browser",
         },
       },
       terminalScrollback: {

@@ -26,7 +26,8 @@ export interface AttachmentMetadata {
   createdAt: number;
 }
 
-export interface BrowserElementAttachment {
+/** Read-only compatibility for saved element selections in existing drafts. */
+export interface LegacyBrowserElementAttachment {
   url: string;
   selector: string;
   tag: string;
@@ -136,7 +137,7 @@ export type UserComposerAttachment =
 export type WorkspaceComposerAttachment =
   | {
       kind: "browser_element";
-      attachment: BrowserElementAttachment;
+      attachment: LegacyBrowserElementAttachment;
     }
   | PullRequestContextAttachment
   | ChatHistoryContextAttachment

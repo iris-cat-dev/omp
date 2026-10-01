@@ -440,7 +440,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       inspectElement: t("contextMenu.inspectElement"),
       noSuggestions: t("contextMenu.noSuggestions"),
       openExternal: t("contextMenu.openExternal"),
-      openInDesktop: t("contextMenu.openInDesktop"),
       paste: t("contextMenu.paste"),
       quitApp: t("contextMenu.quitApp"),
       saveImageAs: t("contextMenu.saveImageAs"),

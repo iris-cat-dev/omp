@@ -44,7 +44,6 @@ export type WorkspaceTabTarget =
   | { kind: "provider_subagent"; parentAgentId: string; subagentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "background_process"; agentId: string; processId: string }
-  | { kind: "browser"; browserId: string }
   | { kind: "files" }
   | { kind: "pull_request" }
   | WorkspaceFileTabTarget

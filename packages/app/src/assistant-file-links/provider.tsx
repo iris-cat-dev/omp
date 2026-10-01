@@ -23,7 +23,6 @@ export interface AssistantFileLinkResolverConfig {
   serverId?: string;
   workspaceRoot?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
   toast?: ToastApi | null;
 }
 
@@ -45,7 +44,6 @@ export function AssistantFileLinkResolverProvider({
   serverId,
   workspaceRoot,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
@@ -55,7 +53,6 @@ export function AssistantFileLinkResolverProvider({
     serverId,
     workspaceRoot,
     onOpenWorkspaceFile,
-    onOpenUrlInBrowser,
     toast,
   });
   configRef.current = {
@@ -63,7 +60,6 @@ export function AssistantFileLinkResolverProvider({
     serverId,
     workspaceRoot,
     onOpenWorkspaceFile,
-    onOpenUrlInBrowser,
     toast,
   };
 

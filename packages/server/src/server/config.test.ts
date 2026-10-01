@@ -4,8 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
-import { loadPersistedConfig } from "./persisted-config.js";
+import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
 
 const roots: string[] = [];
 
@@ -40,24 +39,6 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
-  test("resolves reload state from the supplied validated snapshot", async () => {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
-    roots.push(paseoHome);
-    const snapshot = loadPersistedConfig(paseoHome);
-    await writeFile(
-      path.join(paseoHome, "config.json"),
-      JSON.stringify({
-        ...snapshot,
-        daemon: { ...snapshot.daemon, browserTools: { enabled: true } },
-      }),
-    );
-
-    expect(resolveConfigFromPersisted(paseoHome, snapshot, { env: {} }).browserToolsEnabled).toBe(
-      false,
-    );
-    expect(loadConfig(paseoHome, { env: {} }).browserToolsEnabled).toBe(true);
-  });
-
   test("records mutable and startup launch overrides by persisted leaf", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-overrides-"));
     roots.push(paseoHome);
@@ -86,7 +67,6 @@ describe("server config", () => {
     expect(config.trustedProxies).toBe(true);
     expect(config.log?.file?.path).toBe("custom.log");
   });
-
 
   test("resolves bundled web UI path from source-tree modules", () => {
     const root = path.parse(process.cwd()).root;

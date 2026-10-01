@@ -89,12 +89,6 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
-import type { BrowserAutomationExecuteResponse } from "@omp-desktop/protocol/browser-automation/rpc-schemas";
-import {
-  BrowserAutomationHostCapabilitySchema,
-  type BrowserAutomationHostCapability,
-} from "@omp-desktop/protocol/browser-automation/capabilities";
-import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
@@ -339,15 +333,6 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
   return Buffer.from(data);
 }
 
-function getBrowserHostCapability(
-  capabilities: Record<string, unknown> | null,
-): BrowserAutomationHostCapability | null {
-  const parsed = BrowserAutomationHostCapabilitySchema.safeParse(
-    capabilities?.[CLIENT_CAPS.browserHost],
-  );
-  return parsed.success ? parsed.data : null;
-}
-
 export interface WebSocketLike {
   readyState: number;
   bufferedAmount?: number;
@@ -402,11 +387,6 @@ type TrustedLifecycleKey =
 type HubLifecycleOverlap = Extract<keyof HubConnection, TrustedLifecycleKey>;
 const HUB_HAS_NO_TRUSTED_LIFECYCLE_STATE: HubLifecycleOverlap extends never ? true : never = true;
 void HUB_HAS_NO_TRUSTED_LIFECYCLE_STATE;
-
-interface BrowserToolsRegistration {
-  capabilitySignature: string;
-  unregister: () => void;
-}
 
 interface SocketSessionOptions {
   clientId: string;
@@ -521,9 +501,7 @@ export class PaseoWebSocketServer {
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
-  private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
-  private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
   private readonly advertiseDaemonStatusRpc: boolean;
   private readonly advertiseRelayConfig: boolean;
@@ -567,7 +545,6 @@ export class PaseoWebSocketServer {
     providerSnapshotManager?: ProviderSnapshotManager,
     daemonRuntimeConfig?: DaemonRuntimeConfig,
     serviceProxyPublicBaseUrl?: string | null,
-    browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
     pluginRuntime?: SessionOptions["pluginRuntime"],
@@ -585,7 +562,6 @@ export class PaseoWebSocketServer {
     }
     this.daemonVersion = daemonVersion.trim();
     this.daemonRuntimeConfig = daemonRuntimeConfig;
-    this.browserToolsBroker = browserToolsBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
@@ -1023,9 +999,6 @@ export class PaseoWebSocketServer {
     this.sessions.clear();
     this.socketIdentities.clear();
     this.externalSessionsByKey.clear();
-    for (const clientId of this.browserToolsRegistrations.keys()) {
-      this.unregisterBrowserToolsClient(clientId);
-    }
     this.wss.close();
   }
 
@@ -1447,7 +1420,6 @@ export class PaseoWebSocketServer {
       this.externalSessionsByKey.set(clientId, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(connection);
     this.sendToClient(ws, this.createServerInfoMessage());
     connection.connectionLogger.info(
       {
@@ -1486,12 +1458,10 @@ export class PaseoWebSocketServer {
       JSON.stringify(newClientCapabilities ?? null)
     ) {
       existing.clientCapabilities = newClientCapabilities;
-      this.syncBrowserToolsClientRegistration(existing);
     }
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(existing);
     this.sendToClient(ws, this.createServerInfoMessage());
     pending.connectionLogger.info(
       {
@@ -1778,7 +1748,6 @@ export class PaseoWebSocketServer {
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {
-      this.unregisterBrowserToolsClient(connection.clientId);
       if (connection.lifecycle === "ephemeral-plugin") {
         this.pluginSocketIds.delete(ws);
         await this.cleanupConnection(connection, "Plugin session disconnected");
@@ -1856,55 +1825,12 @@ export class PaseoWebSocketServer {
         this.externalSessionsByKey.delete(connection.clientId);
       }
     }
-    this.unregisterBrowserToolsClient(connection.clientId);
 
     connection.connectionLogger.trace(
       { clientId: connection.clientId, totalSessions: this.sessions.size },
       logMessage,
     );
     await connection.session.cleanup();
-  }
-
-  private syncBrowserToolsClientRegistration(connection: TrustedSessionConnection): void {
-    if (!this.browserToolsBroker) {
-      return;
-    }
-    const browserHostCapability = getBrowserHostCapability(connection.clientCapabilities);
-    if (!browserHostCapability) {
-      this.unregisterBrowserToolsClient(connection.clientId);
-      return;
-    }
-    const capabilitySignature = JSON.stringify(browserHostCapability);
-    const existing = this.browserToolsRegistrations.get(connection.clientId);
-    if (existing?.capabilitySignature === capabilitySignature) {
-      return;
-    }
-    if (existing) {
-      this.browserToolsRegistrations.delete(connection.clientId);
-      existing.unregister();
-    }
-
-    const unregister = this.browserToolsBroker.registerClient({
-      id: connection.clientId,
-      hostKind: browserHostCapability.hostKind,
-      supportedCommands: browserHostCapability.supportedCommands,
-      sendBrowserAutomationRequest: (request) => {
-        this.sendToConnection(connection, wrapSessionMessage(request));
-      },
-    });
-    this.browserToolsRegistrations.set(connection.clientId, {
-      capabilitySignature,
-      unregister,
-    });
-  }
-
-  private unregisterBrowserToolsClient(clientId: string): void {
-    const registration = this.browserToolsRegistrations.get(clientId);
-    if (!registration) {
-      return;
-    }
-    this.browserToolsRegistrations.delete(clientId);
-    registration.unregister();
   }
 
   private handleInvalidInboundMessage(args: {
@@ -2172,14 +2098,6 @@ export class PaseoWebSocketServer {
         "ws_control_rpc_received",
       );
     }
-    if (
-      activeConnection.kind === "trusted" &&
-      message.message.type === "browser.automation.execute.response"
-    ) {
-      this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
-      return;
-    }
-
     const startMs = performance.now();
     await activeConnection.session.handleMessage(message.message, ws);
     const durationMs = performance.now() - startMs;

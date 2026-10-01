@@ -2,7 +2,7 @@
 
 An Electron and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through a self-hosted, end-to-end encrypted relay.
 
-Current source version: **0.3.11**.
+Current source version: **0.4.0**.
 
 ## Requirements
 
@@ -145,24 +145,9 @@ HTTP(S) links open externally. Text/source links open in the workspace file pane
 
 Targets that cannot be opened are plain text rather than colored links, and clicking one shows an unsupported-link error. Failed file or URL opens also show an error. A `sandbox:` URL is not a local file path: conversation data does not contain an authoritative mapping to an attachment on this host, so those links cannot open until such a mapping is provided. Remote-host binary files likewise cannot be opened by the local desktop file manager.
 
-On desktop, right-click an HTTP(S) conversation link to open it in a new OMP Desktop browser tab, open it in the system browser, or copy its address. Opening it internally preserves the current conversation and the URL's query, fragment, and encoding. Unsupported schemes never receive the internal-open action, and an unavailable plain **Copy** action is omitted. Read-only images offer image-specific actions without an ambiguous **Paste** action; editable targets still expose **Paste** according to their current edit capability. Native context menus follow the app's selected language.
+On desktop, right-click an HTTP(S) conversation link to open it in the system browser or copy its address. Unsupported schemes do not receive an open action, and an unavailable plain **Copy** action is omitted. Read-only images offer image-specific actions without an ambiguous **Paste** action; editable targets still expose **Paste** according to their current edit capability. Native context menus follow the app's selected language.
 
 On the local desktop host, right-click a resolvable workspace file link to reveal it in the system file manager (Explorer on Windows), without opening or executing it. Relative paths, URL-encoded names, and line suffixes use the same resolution as left-click. Remote-host links do not offer local reveal; missing targets and paths outside the workspace, including symlink escapes, are rejected with an error. Left-click behavior is unchanged.
-
-## Existing desktop browser tabs
-
-The tab **+** menu and **New tab** launcher include **Existing browsers — show here**.
-Each entry identifies its current workspace tab host. Select an entry to recover the same
-page into the current workspace and activate it; its browser ID, page state, and automation
-owner are preserved. Browsers owned by another server are not listed.
-
-Agents can explicitly recover an existing page with `browser_reveal({ browserId })`.
-The current tab host must be the browser's owning workspace or contain the requesting agent.
-Browser tool results distinguish `ownerWorkspaceId`, `presentationHostWorkspaceId`,
-`presented` (an entry in the current visible host), and `activated` (selected in its focused pane).
-Background registration or successful navigation does not imply visibility. Creating a new
-browser still adds it in the background without stealing focus; navigation and reload do not
-move existing browser tabs.
 
 ## Assistant message math
 

@@ -655,45 +655,6 @@ export const ja: TranslationResources = {
         noOutput: "出力なし",
       },
     },
-    browser: {
-      unavailable: {
-        title: "ブラウザはデスクトップ専用です",
-        subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",
-      },
-      session: "ブラウザセッション{{browserId}}",
-      controls: {
-        back: "戻る",
-        forward: "進む",
-        stopLoading: "読み込みを停止",
-        refresh: "更新",
-        browserUrl: "ブラウザURL",
-        enterUrl: "URLを入力",
-        openDevTools: "ブラウザ開発ツールを開く",
-        cancelSelector: "要素セレクターをキャンセル",
-        annotateElement: "要素に注釈を付ける",
-        screenshotElement: "要素のスクリーンショット",
-        screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
-        elementCopied: "要素をクリップボードにコピーしました",
-        screenshotFailed: "スクリーンショットをコピーできませんでした",
-        selectorLoading: "ページの読み込みが完了するまでお待ちください",
-        selectorFailed: "要素セレクターを開始できませんでした",
-      },
-      annotate: {
-        title: "要素に注釈を付ける",
-        placeholder: "この要素についてエージェントへのメッセージ…",
-        submit: "添付",
-        cancel: "キャンセル",
-      },
-      devices: {
-        label: "デバイスサイズ",
-        responsive: "レスポンシブ",
-      },
-      errors: {
-        failedToLoad: "ページの読み込みに失敗しました",
-        invalidUrl: "無効なブラウザURL",
-        unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
-      },
-    },
     terminal: {
       clear: "クリア",
       hostDisconnected: "ホストが接続されていません",
@@ -709,7 +670,6 @@ export const ja: TranslationResources = {
         setup: "セットアップ",
         workspaceSetup: "ワークスペースセットアップ",
         terminal: "ターミナル",
-        browser: "ブラウザ",
         agent: "エージェント",
         workspace: "ワークスペース",
       },
@@ -743,10 +703,6 @@ export const ja: TranslationResources = {
         newTerminal: "新しいターミナル",
         preparingTerminal: "ターミナルタブを準備中",
         preparingTerminalTooltip: "ターミナルを準備中...",
-        newBrowser: "新しいブラウザ",
-        existingBrowsers: "既存のブラウザ — ここに表示",
-        browserHostedIn: "タブのあるワークスペース：{{hosts}}",
-        browserNotPresented: "現在どのワークスペースにも表示されていません",
         maximizePane: "ペインを最大化",
         restorePane: "ペインを元に戻す",
         closePane: "ペインを閉じる",
@@ -815,7 +771,6 @@ export const ja: TranslationResources = {
         workspaceActions: "ワークスペースアクション",
         newAgent: "新しいエージェント",
         newTerminal: "新しいターミナル",
-        newBrowser: "新しいブラウザタブ",
         importSession: "セッションをインポート",
         copyPath: "ワークスペースパスをコピー",
         copyBranchName: "ブランチ名をコピー",
@@ -1868,13 +1823,6 @@ export const ja: TranslationResources = {
   diffViewer: {
     empty: "表示する変更がありません",
   },
-  serviceUrl: {
-    title: "サービスURLを開く",
-    message: "{{url}}を開きますか？",
-    inPaseo: "OMP Desktopで",
-    externalBrowser: "外部ブラウザ",
-    dontAskAgain: "次回から確認しない",
-  },
   contextMenu: {
     addToDictionary: "辞書に追加",
     clear: "クリア",
@@ -1885,7 +1833,6 @@ export const ja: TranslationResources = {
     inspectElement: "要素を検証",
     noSuggestions: "候補なし",
     openExternal: "ブラウザでリンクを開く",
-    openInDesktop: "OMP Desktopで開く",
     paste: "貼り付け",
     quitApp: "終了",
     saveImageAs: "画像を別名で保存…",
@@ -2137,17 +2084,6 @@ export const ja: TranslationResources = {
     },
     general: {
       title: "一般",
-      browserData: {
-        title: "ブラウザーデータ",
-        siteData: "Cookie とサイトデータ",
-        description: "ブラウザータブ間でログイン情報とサイトデータが共有されます。",
-        clear: "ブラウザーデータを消去",
-        clearing: "消去中...",
-        confirmTitle: "ブラウザーデータを消去しますか？",
-        confirmMessage: "サイトからログアウトし、開いているブラウザータブを再読み込みします。",
-        success: "ブラウザーデータを消去しました。",
-        error: "ブラウザーデータを消去できませんでした。",
-      },
       defaultSend: {
         label: "デフォルトの送信",
         descriptions: {
@@ -2160,15 +2096,6 @@ export const ja: TranslationResources = {
           interrupt: "中断",
           steer: "指示",
           queue: "キュー",
-        },
-      },
-      serviceUrls: {
-        label: "サービスURL",
-        description: "実行中のスクリプトからURLを開く場所",
-        options: {
-          ask: "確認する",
-          inApp: "OMP Desktopで",
-          external: "外部ブラウザ",
         },
       },
       terminalScrollback: {

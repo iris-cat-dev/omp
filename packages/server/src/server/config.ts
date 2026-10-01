@@ -197,7 +197,6 @@ function parsePositiveIntegerEnv(value: string | undefined): number | undefined 
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-
 function extractProviderOverrides(
   providers: Record<string, unknown> | undefined,
 ): Record<string, ProviderOverride> | undefined {
@@ -318,7 +317,6 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
   };
 }
 
-
 function resolveServiceProxyPublicBaseUrl(value: string | null): string | null {
   if (value === null) {
     return null;
@@ -380,7 +378,6 @@ function resolveWebUiConfig(
     distDir,
   };
 }
-
 
 function resolveCorsAllowedOrigins(
   env: NodeJS.ProcessEnv,
@@ -474,10 +471,6 @@ function resolveWorktreesRoot(
 
 function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
   return persisted.daemon?.appendSystemPrompt ?? "";
-}
-
-function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
-  return persisted.daemon?.browserTools?.enabled ?? false;
 }
 
 function resolveImageGenerationCredentials(
@@ -574,7 +567,6 @@ function resolveStaticLoadConfigSettings(
 ) {
   return {
     ...resolveMcpSettings(cli, persisted),
-    browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
@@ -610,7 +602,6 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpToolCapabilities,
-    browserToolsEnabled,
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
@@ -650,7 +641,6 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpToolCapabilities,
-    browserToolsEnabled,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
@@ -837,4 +827,3 @@ function resolveLogOverrideControlledPaths(env: NodeJS.ProcessEnv): string[] {
   }
   return paths;
 }
-

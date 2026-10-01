@@ -79,7 +79,6 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 const ROOT = "/Users/test/project";
 const openedFiles = vi.fn();
-const openUrlInBrowser = vi.fn();
 const toastShow = vi.fn<ToastApi["show"]>();
 const getDirectorySuggestions = vi.fn(
   async (): Promise<DirectorySuggestionResult> => ({
@@ -110,7 +109,6 @@ function renderLink(
         serverId={config.serverId}
         workspaceRoot={config.workspaceRoot}
         onOpenWorkspaceFile={openedFiles}
-        onOpenUrlInBrowser={openUrlInBrowser}
         toast={toast}
       >
         <AssistantMarkdownLink source={source} style={linkStyle}>
@@ -141,7 +139,6 @@ beforeEach(() => {
   mocks.openExternalUrl.mockReset().mockResolvedValue(undefined);
   mocks.showContextMenu.mockReset().mockResolvedValue(null);
   openedFiles.mockReset();
-  openUrlInBrowser.mockReset();
   toastShow.mockReset();
 });
 
@@ -161,25 +158,6 @@ describe("assistant Markdown links in the DOM", () => {
     await waitFor(() =>
       expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://example.com/report"),
     );
-  });
-
-  it("opens the exact HTTP URL in a new OMP Desktop browser tab from the context menu", async () => {
-    const url = "https://example.com/a%20b?q=x%2Fy#section";
-    mocks.showContextMenu.mockResolvedValueOnce("open-in-desktop");
-    renderLink(url, "website");
-
-    expect(fireEvent.contextMenu(screen.getByText("website"))).toBe(false);
-    await waitFor(() =>
-      expect(mocks.showContextMenu).toHaveBeenCalledWith({
-        kind: "assistant-http-link",
-        url,
-        openInDesktopLabel: "Open in OMP Desktop",
-        openExternalLabel: "Open Link in Browser",
-        copyAddressLabel: "Copy Link Address",
-      }),
-    );
-    await waitFor(() => expect(openUrlInBrowser).toHaveBeenCalledWith(url));
-    expect(mocks.openExternalUrl).not.toHaveBeenCalled();
   });
 
   it("reveals a decoded Chinese path with spaces without its line suffix", async () => {

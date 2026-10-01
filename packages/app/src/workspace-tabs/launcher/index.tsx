@@ -5,7 +5,6 @@ import {
   FileDiff,
   FolderTree,
   GitPullRequest,
-  Globe,
   SquarePen,
   SquareTerminal,
   type LucideIcon,
@@ -20,7 +19,6 @@ import {
   resolveTerminalProfiles,
 } from "@omp-desktop/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
-import { useExistingWorkspaceBrowsers } from "./internal/use-existing-browsers";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -32,7 +30,6 @@ export interface NewTabLauncher {
   workspaceId: string;
   showChanges: boolean;
   showPullRequest: boolean;
-  showBrowser: boolean;
   terminalDisabled: boolean;
   launch: (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => void;
 }
@@ -49,7 +46,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "terminal-profiles" | "existing-browsers";
+  id: "tabs" | "terminal-profiles";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -72,7 +69,6 @@ const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   terminal: { kind: "terminal" },
   changes: { kind: "target", target: { kind: "working_diff" } },
   files: { kind: "target", target: { kind: "files" } },
-  browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
 };
 
@@ -86,11 +82,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const launcher = useContext(NewTabLauncherContext);
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
-  const existingBrowserItems = useExistingWorkspaceBrowsers({
-    serverId,
-    workspaceId: launcher.workspaceId,
-    enabled: launcher.showBrowser,
-  });
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {
@@ -137,15 +128,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
         disabled: false,
         launch: launchSelection(BUILT_IN_SELECTIONS.files),
       },
-      browser: {
-        id: "browser",
-        label: t("workspace.tabs.fallback.browser"),
-        Icon: Globe,
-        shortcutActionId: "workspace-tab-target-browser",
-        disabled: false,
-        hidden: !launcher.showBrowser,
-        launch: launchSelection(BUILT_IN_SELECTIONS.browser),
-      },
       pullRequest: {
         id: "pull-request",
         label: t("workspace.tabs.actions.pullRequest"),
@@ -162,13 +144,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
 
     const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
-    if (existingBrowserItems.length > 0) {
-      groups.push({
-        id: "existing-browsers",
-        label: t("workspace.tabs.actions.existingBrowsers"),
-        items: existingBrowserItems,
-      });
-    }
     if (profiles.length > 0) {
       groups.push({
         id: "terminal-profiles",
@@ -188,15 +163,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
       });
     }
     return groups;
-  }, [
-    config?.terminalProfiles,
-    editTerminalProfiles,
-    existingBrowserItems,
-    launchSelection,
-    launcher,
-    purpose,
-    t,
-  ]);
+  }, [config?.terminalProfiles, editTerminalProfiles, launchSelection, launcher, purpose, t]);
 }
 
 export { getBuiltInLaunchOrder } from "./internal/catalog";

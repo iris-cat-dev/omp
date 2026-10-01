@@ -15,7 +15,6 @@ const localizedLabels: DesktopContextMenuLabels = {
   inspectElement: "检查元素",
   noSuggestions: "无建议",
   openExternal: "在浏览器中打开链接",
-  openInDesktop: "在 OMP Desktop 中打开",
   paste: "粘贴",
   quitApp: "退出",
   saveImageAs: "图像另存为…",

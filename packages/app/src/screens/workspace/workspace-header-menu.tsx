@@ -2,14 +2,7 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import {
-  Copy,
-  Ellipsis,
-  Globe,
-  Import as ImportIcon,
-  Settings,
-  SquarePen,
-} from "lucide-react-native";
+import { Copy, Ellipsis, Import as ImportIcon, Settings, SquarePen } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@omp-desktop/protocol/messages";
 import {
@@ -33,7 +26,6 @@ import type { Theme } from "@/styles/theme";
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedSquarePen = withUnistyles(SquarePen);
-const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 
@@ -41,7 +33,6 @@ const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foregrou
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -187,12 +178,10 @@ function HeaderMenuProfileItem({
 
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   normalizedServerId: string;
-  showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-  onCreateBrowser: () => void;
 }
 
 /**
@@ -201,12 +190,10 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
  */
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
-  showCreateBrowserTab,
   createTerminalDisabled,
   onCreateDraftTab,
   onCreateTerminal,
   onCreateTerminalWithProfile,
-  onCreateBrowser,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
   const { t } = useTranslation();
@@ -245,15 +232,6 @@ export function WorkspaceHeaderMenuMobile({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
-        {showCreateBrowserTab ? (
-          <DropdownMenuItem
-            testID="workspace-header-new-browser"
-            leading={MENU_NEW_BROWSER_ICON}
-            onSelect={onCreateBrowser}
-          >
-            {t("workspace.header.actions.newBrowser")}
-          </DropdownMenuItem>
-        ) : null}
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>

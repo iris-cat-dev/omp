@@ -7,7 +7,6 @@ import {
   type Logger,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
-import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@omp-desktop/protocol/browser-automation/rpc-schemas";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -234,7 +233,7 @@ test("traces WebSocket frames, message types, and JSON parse duration", async ()
   ]);
 });
 
-test("does not infer browser automation capabilities from Electron runtime", async () => {
+test("does not infer selective timeline capabilities from Electron runtime", async () => {
   vi.stubGlobal("navigator", {
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Paseo/0.1.89 Chrome/146 Electron/41.2.0 Safari/537.36",
@@ -258,40 +257,7 @@ test("does not infer browser automation capabilities from Electron runtime", asy
       capabilities: z.record(z.unknown()),
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
-  expect(hello.capabilities[CLIENT_CAPS.browserHost]).toBeUndefined();
   expect(hello.capabilities[CLIENT_CAPS.selectiveAgentTimeline]).toBeUndefined();
-});
-
-test("advertises consumer-provided browser automation capabilities", async () => {
-  const mock = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "browser_capability_unit_test",
-    transportFactory: () => mock.transport,
-    reconnect: { enabled: false },
-    capabilities: {
-      [CLIENT_CAPS.browserHost]: {
-        supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
-        hostKind: "desktop app",
-      },
-    },
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen({ preserveSent: true });
-  await connectPromise;
-
-  const hello = z
-    .object({
-      type: z.literal("hello"),
-      capabilities: z.record(z.unknown()),
-    })
-    .parse(JSON.parse(assertStr(mock.sent[0])));
-  expect(hello.capabilities[CLIENT_CAPS.browserHost]).toEqual({
-    supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
-    hostKind: "desktop app",
-  });
 });
 
 test("Hub management requires daemon support before dispatching requests", async () => {
@@ -757,12 +723,6 @@ test("advertises client capabilities in hello", async () => {
     logger,
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
-    capabilities: {
-      browser_host: {
-        supportedCommands: ["list_tabs"],
-        hostKind: "desktop app",
-      },
-    },
   });
   clients.push(client);
 
@@ -783,10 +743,6 @@ test("advertises client capabilities in hello", async () => {
       provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
-      browser_host: {
-        supportedCommands: ["list_tabs"],
-        hostKind: "desktop app",
-      },
     },
   });
 });
@@ -920,42 +876,6 @@ test("sends new-agent run options when updating schedules", async () => {
     requestId: "request-1",
     schedule: null,
     error: null,
-  });
-});
-
-test("sends typed browser automation execute responses", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  client.sendBrowserAutomationExecuteResponse({
-    type: "browser.automation.execute.response",
-    payload: {
-      requestId: "req-1",
-      ok: true,
-      result: { command: "list_tabs", tabs: [] },
-    },
-  });
-
-  expect(parseSentFrame(mock.sent[0])).toEqual({
-    type: "browser.automation.execute.response",
-    payload: {
-      requestId: "req-1",
-      ok: true,
-      result: { command: "list_tabs", tabs: [] },
-    },
   });
 });
 
@@ -1579,7 +1499,7 @@ test("sends and parses daemon config reload", async () => {
       type: "daemon.config.reload.response",
       payload: {
         requestId: "reload-new-host",
-        appliedPaths: ["daemon.browserTools.enabled"],
+        appliedPaths: ["daemon.mcp.injectIntoAgents"],
         restartRequiredPaths: ["daemon.listen"],
         overrideControlledPaths: [],
       },
@@ -1588,7 +1508,7 @@ test("sends and parses daemon config reload", async () => {
 
   await expect(response).resolves.toEqual({
     requestId: "reload-new-host",
-    appliedPaths: ["daemon.browserTools.enabled"],
+    appliedPaths: ["daemon.mcp.injectIntoAgents"],
     restartRequiredPaths: ["daemon.listen"],
     overrideControlledPaths: [],
   });
@@ -4930,7 +4850,6 @@ test("imports an agent by provider handle id", async () => {
     provider: "custom-codex",
   });
 });
-
 
 test("cancels waiters when send fails (no leaked timeouts)", async () => {
   useHeartbeatClock();

@@ -5,8 +5,7 @@ import type { TerminalProfile } from "@omp-desktop/protocol/messages";
 export type NewTabSelection =
   | { kind: "target"; target: WorkspaceTab["target"] }
   | { kind: "agent" }
-  | { kind: "terminal"; profile?: TerminalProfile }
-  | { kind: "browser" };
+  | { kind: "terminal"; profile?: TerminalProfile };
 
 export function createNewWorkspaceTab(): WorkspaceTab {
   return {

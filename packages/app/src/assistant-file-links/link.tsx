@@ -74,8 +74,7 @@ export function AssistantMarkdownLink({
       return;
     }
     const showContextMenu = getDesktopHost()?.menu?.showContextMenu;
-    const openUrlInBrowser = configRef.current.onOpenUrlInBrowser;
-    if (!externalUrl || !showContextMenu || !openUrlInBrowser) {
+    if (!externalUrl || !showContextMenu) {
       return;
     }
 
@@ -84,23 +83,15 @@ export function AssistantMarkdownLink({
     void showContextMenu({
       kind: "assistant-http-link",
       url: externalUrl,
-      openInDesktopLabel: t("contextMenu.openInDesktop"),
       openExternalLabel: t("contextMenu.openExternal"),
       copyAddressLabel: t("contextMenu.copyAddress"),
-    })
-      .then((action) => {
-        if (action === "open-in-desktop") {
-          configRef.current.onOpenUrlInBrowser?.(externalUrl);
-        }
-        return undefined;
-      })
-      .catch((error: unknown) => {
-        const reason = error instanceof Error ? error.message : String(error);
-        configRef.current.toast?.show(
-          t("common.errors.linkOpenFailed", { token: externalUrl, reason }),
-          { variant: "error" },
-        );
-      });
+    }).catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      configRef.current.toast?.show(
+        t("common.errors.linkOpenFailed", { token: externalUrl, reason }),
+        { variant: "error" },
+      );
+    });
   });
 
   if (isNative) {

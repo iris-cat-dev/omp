@@ -664,47 +664,6 @@ export const ru: TranslationResources = {
         noOutput: "Нет вывода",
       },
     },
-    browser: {
-      unavailable: {
-        title: "Встроенный браузер доступен только в настольном приложении",
-        subtitle:
-          "Откройте это рабочее пространство в Electron, чтобы использовать встроенный браузер.",
-      },
-      session: "Сеанс браузера {{browserId}}",
-      controls: {
-        back: "Назад",
-        forward: "Вперед",
-        stopLoading: "Остановить загрузку",
-        refresh: "Обновить",
-        browserUrl: "URL браузера",
-        enterUrl: "Введите URL",
-        openDevTools: "Открыть инструменты разработчика браузера",
-        cancelSelector: "Отменить выбор элемента",
-        annotateElement: "Добавить примечание к элементу",
-        screenshotElement: "Сделать снимок элемента",
-        screenshotCopied: "Снимок скопирован в буфер обмена",
-        elementCopied: "Элемент скопирован в буфер обмена",
-        screenshotFailed: "Не удалось скопировать снимок",
-        selectorLoading: "Дождитесь окончания загрузки страницы",
-        selectorFailed: "Не удалось включить режим выбора элемента",
-      },
-      annotate: {
-        title: "Добавить примечание к элементу",
-        placeholder: "Сообщение агенту об этом элементе…",
-        submit: "Прикрепить",
-        cancel: "Отмена",
-      },
-      devices: {
-        label: "Размер экрана устройства",
-        responsive: "Адаптивный режим",
-      },
-      errors: {
-        failedToLoad: "Не удалось загрузить страницу",
-        invalidUrl: "Недопустимый URL браузера",
-        unsupportedProtocol:
-          "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
-      },
-    },
     terminal: {
       clear: "Очистить",
       hostDisconnected: "Хост не подключён",
@@ -720,7 +679,6 @@ export const ru: TranslationResources = {
         setup: "Настройка",
         workspaceSetup: "Настройка рабочего пространства",
         terminal: "Терминал",
-        browser: "Браузер",
         agent: "Агент",
         workspace: "Рабочее пространство",
       },
@@ -753,10 +711,6 @@ export const ru: TranslationResources = {
         newTerminal: "Новый терминал",
         preparingTerminal: "Подготовка вкладки терминала",
         preparingTerminalTooltip: "Подготовка терминала...",
-        newBrowser: "Новый браузер",
-        existingBrowsers: "Существующие браузеры — показать здесь",
-        browserHostedIn: "Расположение вкладки: {{hosts}}",
-        browserNotPresented: "Сейчас не отображается ни в одном рабочем пространстве",
         maximizePane: "Развернуть панель",
         restorePane: "Восстановить панель",
         closePane: "Закрыть панель",
@@ -828,7 +782,6 @@ export const ru: TranslationResources = {
         workspaceActions: "Действия с рабочим пространством",
         newAgent: "Новый агент",
         newTerminal: "Новый терминал",
-        newBrowser: "Новая вкладка браузера",
         importSession: "Импортировать сессию",
         copyPath: "Скопировать путь к рабочему пространству",
         copyBranchName: "Скопировать название ветки",
@@ -1893,13 +1846,6 @@ export const ru: TranslationResources = {
   diffViewer: {
     empty: "Нет изменений для отображения",
   },
-  serviceUrl: {
-    title: "Открыть URL сервиса",
-    message: "Открыть {{url}}?",
-    inPaseo: "В OMP Desktop",
-    externalBrowser: "Внешний браузер",
-    dontAskAgain: "Больше не спрашивать",
-  },
   contextMenu: {
     addToDictionary: "Добавить в словарь",
     clear: "Очистить",
@@ -1910,7 +1856,6 @@ export const ru: TranslationResources = {
     inspectElement: "Исследовать элемент",
     noSuggestions: "Нет вариантов",
     openExternal: "Открыть ссылку в браузере",
-    openInDesktop: "Открыть в OMP Desktop",
     paste: "Вставить",
     quitApp: "Выйти",
     saveImageAs: "Сохранить изображение как…",
@@ -2163,19 +2108,6 @@ export const ru: TranslationResources = {
     },
     general: {
       title: "Основные",
-      browserData: {
-        title: "Данные браузера",
-        siteData: "Файлы cookie и данные сайтов",
-        description:
-          "Вкладки браузера в OMP Desktop используют общие данные входа и данные сайтов.",
-        clear: "Очистить данные браузера",
-        clearing: "Очистка...",
-        confirmTitle: "Очистить данные браузера?",
-        confirmMessage:
-          "Вы выйдете из аккаунтов на сайтах, а открытые вкладки браузера перезагрузятся.",
-        success: "Данные браузера очищены.",
-        error: "Не удалось очистить данные браузера.",
-      },
       defaultSend: {
         label: "Отправка по умолчанию",
         descriptions: {
@@ -2190,15 +2122,6 @@ export const ru: TranslationResources = {
           interrupt: "Прерывать",
           steer: "Направить",
           queue: "Поставить в очередь",
-        },
-      },
-      serviceUrls: {
-        label: "URL-адреса сервисов",
-        description: "Где открывать URL-адреса запущенных скриптов",
-        options: {
-          ask: "Спрашивать",
-          inApp: "В OMP Desktop",
-          external: "Внешний браузер",
         },
       },
       terminalScrollback: {

@@ -588,14 +588,6 @@ describe("keyboard-shortcuts", () => {
     expect(secondResult.nextChordState).toEqual(initialChordState());
   });
 
-  it("resolves a browser-origin shortcut with browser focus instead of host focus", () => {
-    expectShortcutResolution({
-      event: { key: "t", code: "KeyT", ctrlKey: true },
-      context: { isDesktop: true, focusScope: "browser" },
-      action: "workspace.tab.menu.open",
-    });
-  });
-
   it("schedules a chord reset timeout for advancing candidates", () => {
     vi.useFakeTimers();
 
@@ -1148,7 +1140,6 @@ describe("direct new-tab target shortcuts", () => {
   const desktopNonMac = { isMac: false, isDesktop: true };
   const targetCases = [
     ["a", "KeyA", "workspace.tab.target.agent"],
-    ["b", "KeyB", "workspace.tab.target.browser"],
     ["g", "KeyG", "workspace.tab.target.changes"],
     ["e", "KeyE", "workspace.tab.target.files"],
   ] as const;

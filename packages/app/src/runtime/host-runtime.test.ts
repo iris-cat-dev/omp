@@ -1387,6 +1387,26 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("removes only the retired browser index on boot", async () => {
+    const host = makeHost();
+    const registry = JSON.stringify([host]);
+    const storage = createMemoryHostRuntimeStorage({
+      "@omp-desktop:daemon-registry": registry,
+      "@omp-desktop:e2e": "1",
+      "workspace-browser-store": JSON.stringify({ state: { browsersById: { old: {} } } }),
+      "workspace-layout-state": JSON.stringify({ workspaces: ["unchanged"] }),
+    });
+    const store = new HostRuntimeStore({ storage, deps: makeDeps({}, []) });
+
+    await store.boot();
+
+    expect(await storage.getItem("workspace-browser-store")).toBeNull();
+    expect(await storage.getItem("workspace-layout-state")).toBe(
+      JSON.stringify({ workspaces: ["unchanged"] }),
+    );
+    expect(await storage.getItem("@omp-desktop:daemon-registry")).toBe(registry);
+  });
+
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });
     const revocation = createDeferred<void>();

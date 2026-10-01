@@ -652,45 +652,6 @@ export const ko: TranslationResources = {
         noOutput: "출력 없음",
       },
     },
-    browser: {
-      unavailable: {
-        title: "브라우저는 데스크톱 전용입니다",
-        subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
-      },
-      session: "브라우저 세션 {{browserId}}",
-      controls: {
-        back: "뒤로",
-        forward: "앞으로",
-        stopLoading: "로딩 중지",
-        refresh: "새로고침",
-        browserUrl: "브라우저 URL",
-        enterUrl: "URL 입력",
-        openDevTools: "브라우저 개발자 도구 열기",
-        cancelSelector: "요소 선택기 취소",
-        annotateElement: "요소에 주석 달기",
-        screenshotElement: "요소 스크린샷",
-        screenshotCopied: "스크린샷을 클립보드에 복사했습니다.",
-        elementCopied: "요소를 클립보드에 복사했습니다.",
-        screenshotFailed: "스크린샷을 복사할 수 없습니다.",
-        selectorLoading: "페이지 로딩이 끝날 때까지 기다려 주세요.",
-        selectorFailed: "요소 선택기를 시작할 수 없습니다.",
-      },
-      annotate: {
-        title: "요소에 주석 달기",
-        placeholder: "이 요소에 관해 에이전트에게 보낼 메시지…",
-        submit: "첨부",
-        cancel: "취소",
-      },
-      devices: {
-        label: "장치 크기",
-        responsive: "반응형",
-      },
-      errors: {
-        failedToLoad: "페이지를 불러오지 못했습니다",
-        invalidUrl: "잘못된 브라우저 URL",
-        unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
-      },
-    },
     terminal: {
       clear: "지우기",
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
@@ -706,7 +667,6 @@ export const ko: TranslationResources = {
         setup: "설정",
         workspaceSetup: "워크스페이스 설정",
         terminal: "터미널",
-        browser: "브라우저",
         agent: "에이전트",
         workspace: "워크스페이스",
       },
@@ -740,10 +700,6 @@ export const ko: TranslationResources = {
         newTerminal: "새 터미널",
         preparingTerminal: "터미널 탭 준비 중",
         preparingTerminalTooltip: "터미널 준비 중...",
-        newBrowser: "새 브라우저",
-        existingBrowsers: "기존 브라우저 — 여기에 표시",
-        browserHostedIn: "탭이 있는 워크스페이스: {{hosts}}",
-        browserNotPresented: "현재 어떤 워크스페이스에도 표시되지 않음",
         maximizePane: "창 최대화",
         restorePane: "창 복원",
         closePane: "창 닫기",
@@ -813,7 +769,6 @@ export const ko: TranslationResources = {
         workspaceActions: "워크스페이스 작업",
         newAgent: "새 에이전트",
         newTerminal: "새 터미널",
-        newBrowser: "새 브라우저 탭",
         importSession: "세션 가져오기",
         copyPath: "워크스페이스 경로 복사",
         copyBranchName: "브랜치 이름 복사",
@@ -1862,13 +1817,6 @@ export const ko: TranslationResources = {
   diffViewer: {
     empty: "표시할 변경 사항이 없습니다",
   },
-  serviceUrl: {
-    title: "서비스 URL 열기",
-    message: "{{url}}을(를) 열까요?",
-    inPaseo: "OMP Desktop에서",
-    externalBrowser: "외부 브라우저",
-    dontAskAgain: "다시 묻지 않기",
-  },
   contextMenu: {
     addToDictionary: "사전에 추가",
     clear: "지우기",
@@ -1879,7 +1827,6 @@ export const ko: TranslationResources = {
     inspectElement: "요소 검사",
     noSuggestions: "추천 없음",
     openExternal: "브라우저에서 링크 열기",
-    openInDesktop: "OMP Desktop에서 열기",
     paste: "붙여넣기",
     quitApp: "종료",
     saveImageAs: "이미지를 다른 이름으로 저장…",
@@ -2130,17 +2077,6 @@ export const ko: TranslationResources = {
     },
     general: {
       title: "일반",
-      browserData: {
-        title: "브라우저 데이터",
-        siteData: "쿠키 및 사이트 데이터",
-        description: "브라우저 탭은 OMP Desktop 전체에서 로그인 및 사이트 데이터를 공유합니다.",
-        clear: "브라우저 데이터 지우기",
-        clearing: "삭제 중...",
-        confirmTitle: "브라우저 데이터를 삭제하시겠습니까?",
-        confirmMessage: "사이트가 로그아웃되고 열려 있는 브라우저 탭이 다시 로드됩니다.",
-        success: "브라우저 데이터가 삭제되었습니다.",
-        error: "브라우저 데이터를 삭제할 수 없습니다.",
-      },
       defaultSend: {
         label: "기본 전송",
         descriptions: {
@@ -2155,15 +2091,6 @@ export const ko: TranslationResources = {
           interrupt: "중단",
           steer: "지시",
           queue: "대기열",
-        },
-      },
-      serviceUrls: {
-        label: "서비스 URL",
-        description: "실행 중인 스크립트의 URL을 열 위치",
-        options: {
-          ask: "물어보기",
-          inApp: "OMP Desktop에서",
-          external: "외부 브라우저",
         },
       },
       terminalScrollback: {

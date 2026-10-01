@@ -46,15 +46,34 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
   });
 });
 
-describe("PersistedConfigSchema daemon browser tools config", () => {
-  test("accepts optional browser tools opt-in", () => {
-    const parsed = PersistedConfigSchema.parse({
-      daemon: {
-        browserTools: { enabled: true },
-      },
-    });
-
-    expect(parsed.daemon?.browserTools?.enabled).toBe(true);
+describe("legacy browser tools config", () => {
+  test("loads old config without exposing the removed setting or discarding other fields", () => {
+    const home = createTempHome();
+    try {
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          version: 1,
+          daemon: {
+            browserTools: { enabled: true },
+            listen: "127.0.0.1:6767",
+            mcp: { enabled: true },
+          },
+          app: { baseUrl: "omp-desktop://app" },
+        }),
+      );
+      const config = loadPersistedConfig(home);
+      expect(config.daemon).toMatchObject({
+        listen: "127.0.0.1:6767",
+        mcp: { enabled: true },
+      });
+      expect(config.daemon).not.toHaveProperty("browserTools");
+      expect(config.app?.baseUrl).toBe("omp-desktop://app");
+      savePersistedConfig(home, config);
+      expect(loadPersistedConfig(home).daemon).not.toHaveProperty("browserTools");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -168,7 +187,6 @@ describe("PersistedConfigSchema GitHub OAuth config", () => {
     });
   });
 });
-
 
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
@@ -642,7 +660,6 @@ describe("PersistedConfigSchema logging config", () => {
   });
 });
 
-
 describe("loadPersistedConfig", () => {
   test("materializes the hosted Relay defaults for a new Paseo home", () => {
     const home = createTempHome();
@@ -723,7 +740,6 @@ describe("loadPersistedConfig", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
-
 });
 
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {

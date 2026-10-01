@@ -1,208 +1,100 @@
-import { describe, expect, test } from "vitest";
-import {
-  clearPaseoBrowserProfile,
-  getLegacyPaseoBrowserProfileSession,
-  getPaseoBrowserProfileSessions,
-  listPaseoBrowserProfileGuests,
-  readLegacyPaseoBrowserIds,
-} from "./browser-profile.js";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { clearRetiredBrowserProfiles } from "./browser-profile.js";
 
-class FakeProfileSession {
-  public readonly storageClears: unknown[] = [];
-  public cacheClears = 0;
-  public authClears = 0;
-  public storageClear: Promise<void> = Promise.resolve();
+class FakeSession {
+  public clears: string[] = [];
 
-  public clearStorageData(options: unknown): Promise<void> {
-    this.storageClears.push(options);
-    return this.storageClear;
+  public constructor(private readonly storagePath: string) {}
+
+  public getStoragePath(): string {
+    return this.storagePath;
   }
 
-  public clearCache(): Promise<void> {
-    this.cacheClears += 1;
-    return Promise.resolve();
+  public async clearStorageData(): Promise<void> {
+    this.clears.push("storage");
   }
 
-  public clearAuthCache(): Promise<void> {
-    this.authClears += 1;
-    return Promise.resolve();
+  public async clearCache(): Promise<void> {
+    this.clears.push("cache");
+  }
+
+  public async clearAuthCache(): Promise<void> {
+    this.clears.push("auth");
   }
 }
 
-class FakeLiveGuest {
-  public reloads = 0;
-
-  public constructor(
-    public readonly id: number,
-    private readonly destroyed = false,
-    private readonly reloadError: Error | null = null,
-  ) {}
-
-  public isDestroyed(): boolean {
-    return this.destroyed;
-  }
-
-  public reload(): void {
-    if (this.reloadError) {
-      throw this.reloadError;
-    }
-    this.reloads += 1;
-  }
-}
-
-class FakeWebContents extends FakeLiveGuest {
-  public constructor(
-    id: number,
-    public readonly session: object,
-    private readonly type: string,
-    destroyed = false,
-  ) {
-    super(id, destroyed);
-  }
-
-  public getType(): string {
-    return this.type;
-  }
-}
-
-describe("listPaseoBrowserProfileGuests", () => {
-  test("returns every live webview and popup in the shared profile", () => {
-    const profileSession = {};
-    const firstWindowGuest = new FakeWebContents(1, profileSession, "webview");
-    const secondWindowGuest = new FakeWebContents(2, profileSession, "webview");
-    const foreignProfileGuest = new FakeWebContents(3, {}, "webview");
-    const popupWindow = new FakeWebContents(4, profileSession, "window");
-    const destroyedGuest = new FakeWebContents(5, profileSession, "webview", true);
-
-    const guests = listPaseoBrowserProfileGuests({
-      profileSession,
-      webContents: [
-        firstWindowGuest,
-        secondWindowGuest,
-        foreignProfileGuest,
-        popupWindow,
-        destroyedGuest,
-      ],
-    });
-
-    expect(guests).toEqual([firstWindowGuest, secondWindowGuest, popupWindow]);
-  });
+const tempDirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("legacy browser profiles", () => {
-  test("accepts only unique saved browser ids and resolves their old partitions", () => {
-    const uuid = "123e4567-e89b-42d3-a456-426614174000";
-    const fallbackId = "1700000000000-abcd";
-    const browserIds = readLegacyPaseoBrowserIds([uuid, fallbackId, uuid, "not-a-browser-id", 123]);
-    const partitions: string[] = [];
-    const sessions = getPaseoBrowserProfileSessions(
+describe("retired browser profiles", () => {
+  test("clears only the dedicated shared and verified legacy partitions", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "omp-retired-profiles-"));
+    tempDirs.push(root);
+    const parent = path.join(root, "Partitions");
+    const sharedPath = path.join(parent, "omp-desktop-browser");
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const legacyPath = `${sharedPath}-${id}`;
+    const unrelatedPath = path.join(parent, "main-window");
+    const invalidPath = `${sharedPath}-unexpected`;
+    await Promise.all(
+      [sharedPath, legacyPath, unrelatedPath, invalidPath].map((dir) =>
+        mkdir(dir, { recursive: true }),
+      ),
+    );
+    const profiles: Record<string, FakeSession> = {
+      "persist:omp-desktop-browser": new FakeSession(sharedPath),
+      [`persist:omp-desktop-browser-${id}`]: new FakeSession(legacyPath),
+      "": new FakeSession(unrelatedPath),
+    };
+    const requested: string[] = [];
+    const errors: unknown[] = [];
+
+    await clearRetiredBrowserProfiles(
       {
-        fromPartition: (partition) => {
-          partitions.push(partition);
-          return new FakeProfileSession();
+        fromPartition(partition) {
+          requested.push(partition);
+          const profile = profiles[partition];
+          if (!profile) throw new Error(`Unexpected partition: ${partition}`);
+          return profile;
         },
       },
-      browserIds,
+      (_partition, error) => errors.push(error),
     );
 
-    expect(partitions).toEqual([
-      "persist:omp-desktop-browser",
-      `persist:omp-desktop-browser-${uuid}`,
-      `persist:omp-desktop-browser-${fallbackId}`,
+    expect(requested).toEqual(["persist:omp-desktop-browser", `persist:omp-desktop-browser-${id}`]);
+    expect(profiles["persist:omp-desktop-browser"].clears).toEqual(["storage", "cache", "auth"]);
+    expect(profiles[`persist:omp-desktop-browser-${id}`].clears).toEqual([
+      "storage",
+      "cache",
+      "auth",
     ]);
-    expect(sessions).toHaveLength(3);
+    expect(profiles[""].clears).toEqual([]);
+    expect(errors).toEqual([]);
   });
 
-  test("resolves one valid legacy profile for tab-close cleanup", () => {
-    const partitions: string[] = [];
-    const sessions = {
-      fromPartition: (partition: string) => {
-        partitions.push(partition);
-        return new FakeProfileSession();
-      },
-    };
+  test("does not clear a legacy profile when Electron resolves a different storage location", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "omp-retired-profiles-"));
+    tempDirs.push(root);
+    const sharedPath = path.join(root, "Partitions", "omp-desktop-browser");
+    const id = "1700000000000-abcd";
+    await mkdir(`${sharedPath}-${id}`, { recursive: true });
+    const shared = new FakeSession(sharedPath);
+    const mismatched = new FakeSession(path.join(root, "different-profile"));
 
-    expect(getLegacyPaseoBrowserProfileSession(sessions, "1700000000000-abcd")).not.toBeNull();
-    expect(getLegacyPaseoBrowserProfileSession(sessions, "invalid")).toBeNull();
-    expect(partitions).toEqual(["persist:omp-desktop-browser-1700000000000-abcd"]);
-  });
-});
-
-describe("clearPaseoBrowserProfile", () => {
-  test("clears site data, HTTP cache, and auth before reloading live guests", async () => {
-    const profile = new FakeProfileSession();
-    const legacyProfile = new FakeProfileSession();
-    let finishStorageClear: (() => void) | null = null;
-    profile.storageClear = new Promise((resolve) => {
-      finishStorageClear = resolve;
-    });
-    const firstGuest = new FakeLiveGuest(1);
-    const secondGuest = new FakeLiveGuest(2);
-
-    const clearing = clearPaseoBrowserProfile({
-      profileSessions: [profile, legacyProfile],
-      listGuests: () => [firstGuest, secondGuest],
-      logReloadError: () => {},
-    });
-
-    expect(firstGuest.reloads).toBe(0);
-    expect(secondGuest.reloads).toBe(0);
-    finishStorageClear?.();
-    await clearing;
-
-    expect(profile.storageClears).toEqual([
+    await clearRetiredBrowserProfiles(
       {
-        storages: [
-          "cookies",
-          "filesystem",
-          "indexdb",
-          "localstorage",
-          "serviceworkers",
-          "cachestorage",
-          "websql",
-        ],
+        fromPartition: (partition) =>
+          partition === "persist:omp-desktop-browser" ? shared : mismatched,
       },
-    ]);
-    expect(profile.cacheClears).toBe(1);
-    expect(profile.authClears).toBe(1);
-    expect(legacyProfile.storageClears).toEqual(profile.storageClears);
-    expect(legacyProfile.cacheClears).toBe(1);
-    expect(legacyProfile.authClears).toBe(1);
-    expect(firstGuest.reloads).toBe(1);
-    expect(secondGuest.reloads).toBe(1);
-  });
+      () => {},
+    );
 
-  test("skips destroyed guests and logs individual reload failures", async () => {
-    const profile = new FakeProfileSession();
-    const destroyedGuest = new FakeLiveGuest(1, true);
-    const reloadError = new Error("guest disappeared");
-    const failedGuest = new FakeLiveGuest(2, false, reloadError);
-    const reloadErrors: Array<{ guestId: number; error: unknown }> = [];
-
-    await clearPaseoBrowserProfile({
-      profileSessions: [profile],
-      listGuests: () => [destroyedGuest, failedGuest],
-      logReloadError: (guestId, error) => reloadErrors.push({ guestId, error }),
-    });
-
-    expect(destroyedGuest.reloads).toBe(0);
-    expect(failedGuest.reloads).toBe(0);
-    expect(reloadErrors).toEqual([{ guestId: 2, error: reloadError }]);
-  });
-
-  test("propagates clear failures without reloading guests", async () => {
-    const profile = new FakeProfileSession();
-    const clearError = new Error("profile locked");
-    profile.storageClear = Promise.reject(clearError);
-    const guest = new FakeLiveGuest(1);
-
-    await expect(
-      clearPaseoBrowserProfile({
-        profileSessions: [profile],
-        listGuests: () => [guest],
-        logReloadError: () => {},
-      }),
-    ).rejects.toBe(clearError);
-    expect(guest.reloads).toBe(0);
+    expect(shared.clears).toEqual(["storage", "cache", "auth"]);
+    expect(mismatched.clears).toEqual([]);
   });
 });

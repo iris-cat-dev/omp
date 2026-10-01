@@ -324,7 +324,7 @@ function storeFetchedAgentDetail(input: {
 }
 
 function AgentPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace, openUrlInBrowser } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isInteractive } = usePaneFocus();
   invariant(target.kind === "agent", "AgentPanel requires agent target");
 
@@ -335,7 +335,6 @@ function AgentPanel() {
       agentId={target.agentId}
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={openFileInWorkspace}
-      onOpenUrlInBrowser={openUrlInBrowser}
     />
   );
 }
@@ -347,7 +346,6 @@ function DraftPanel() {
     tabId,
     target,
     openFileInWorkspace,
-    openUrlInBrowser,
     openImportSheet,
     retargetCurrentTab,
   } = usePaneContext();
@@ -377,7 +375,6 @@ function DraftPanel() {
       initialSetup={target.setup}
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={openFileInWorkspace}
-      onOpenUrlInBrowser={openUrlInBrowser}
       onCreated={handleCreated}
       onOpenImportSheet={openImportSheet}
     />
@@ -474,14 +471,12 @@ function AgentPanelContent({
   agentId,
   isPaneFocused,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
 }: {
   serverId: string;
   workspaceId: string;
   agentId: string;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
 }) {
   const { t } = useTranslation();
   const resolvedAgentId = agentId.trim() || undefined;
@@ -535,7 +530,6 @@ function AgentPanelContent({
       isConnected={runtimeIsConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onOpenUrlInBrowser={onOpenUrlInBrowser}
     />
   );
 }
@@ -549,7 +543,6 @@ function AgentPanelBody({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
 }: {
   serverId: string;
   workspaceId: string;
@@ -559,7 +552,6 @@ function AgentPanelBody({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
 }) {
   const { t } = useTranslation();
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
@@ -720,7 +712,6 @@ function AgentPanelBody({
       isConnected={isConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onOpenUrlInBrowser={onOpenUrlInBrowser}
     />
   );
 }
@@ -734,7 +725,6 @@ function ChatAgentContent({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
 }: {
   serverId: string;
   workspaceId: string;
@@ -744,7 +734,6 @@ function ChatAgentContent({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
 }) {
   const { t } = useTranslation();
   const isPaneVisible = useRetainedPanelActive();
@@ -1175,7 +1164,6 @@ function ChatAgentContent({
       onAttentionInputFocus={attentionController.clearOnInputFocus}
       onAttentionPromptSend={attentionController.clearOnPromptSend}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onOpenUrlInBrowser={onOpenUrlInBrowser}
     />
   );
 }
@@ -1230,7 +1218,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onAttentionInputFocus,
   onAttentionPromptSend,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
 }: {
   serverId: string;
   workspaceId: string;
@@ -1259,7 +1246,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
 }) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
@@ -1446,7 +1432,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           hasVisibleBackgroundProcesses={hasVisibleBackgroundProcesses}
           toast={toastApi}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
-          onOpenUrlInBrowser={onOpenUrlInBrowser}
         />
       </RenderProfile>
       {hasActiveComposer ? (
@@ -1593,7 +1578,6 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasVisibleBackgroundProcesses,
   toast,
   onOpenWorkspaceFile,
-  onOpenUrlInBrowser,
   readOnly,
   emptyText,
 }: {
@@ -1611,7 +1595,6 @@ const AgentStreamSection = memo(function AgentStreamSection({
   readOnly: boolean;
   emptyText?: string;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onOpenUrlInBrowser?: (url: string) => void;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
@@ -1691,7 +1674,6 @@ const AgentStreamSection = memo(function AgentStreamSection({
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onOpenUrlInBrowser={onOpenUrlInBrowser}
     />
   );
 });

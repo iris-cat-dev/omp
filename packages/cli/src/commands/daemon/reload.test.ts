@@ -11,7 +11,7 @@ describe("daemon reload output", () => {
     expect(
       render(
         result({
-          appliedPaths: ["daemon.browserTools.enabled"],
+          appliedPaths: ["daemon.mcp.injectIntoAgents"],
           restartRequiredPaths: ["daemon.listen"],
           overrideControlledPaths: ["app.baseUrl"],
         }),
@@ -34,7 +34,7 @@ describe("daemon reload output", () => {
   test("human output omits restart guidance for a live-only reload", () => {
     const output = render(
       result({
-        appliedPaths: ["daemon.browserTools.enabled"],
+        appliedPaths: ["daemon.mcp.injectIntoAgents"],
         restartRequiredPaths: [],
         overrideControlledPaths: [],
       }),
@@ -45,13 +45,13 @@ describe("daemon reload output", () => {
 
   test("structured output preserves the daemon result", () => {
     const data = {
-      appliedPaths: ["daemon.browserTools.enabled"],
+      appliedPaths: ["daemon.mcp.injectIntoAgents"],
       restartRequiredPaths: ["daemon.listen"],
       overrideControlledPaths: [],
     };
     expect(render(result(data), { format: "json" })).toBe(JSON.stringify(data, null, 2));
     expect(render(result(data), { format: "yaml" })).toContain(
-      "appliedPaths:\n  - daemon.browserTools.enabled",
+      "appliedPaths:\n  - daemon.mcp.injectIntoAgents",
     );
   });
 });

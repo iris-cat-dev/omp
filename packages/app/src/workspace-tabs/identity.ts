@@ -67,10 +67,6 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const processId = trimNonEmpty(value.processId);
       return agentId && processId ? { kind: "background_process", agentId, processId } : null;
     }
-    case "browser": {
-      const browserId = trimNonEmpty(value.browserId);
-      return browserId ? { kind: "browser", browserId } : null;
-    }
     case "files":
     case "pull_request":
       return { kind: value.kind };
@@ -150,9 +146,6 @@ function secondaryWorkspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
 ): boolean {
-  if (left.kind === "browser" && right.kind === "browser") {
-    return left.browserId === right.browserId;
-  }
   if (left.kind === "file" && right.kind === "file") {
     return workspaceFileLocationsEqual(left, right);
   }
@@ -238,9 +231,6 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;
-  }
-  if (target.kind === "browser") {
-    return `browser_${target.browserId}`;
   }
   if (target.kind === "local_file") {
     return `local_file_${target.previewId}`;

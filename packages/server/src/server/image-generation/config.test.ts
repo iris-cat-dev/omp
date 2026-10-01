@@ -25,7 +25,6 @@ function mutableConfig(
 ): MutableDaemonConfig {
   return {
     mcp: { injectIntoAgents: true },
-    browserTools: { enabled: false },
     providers: {},
     metadataGeneration: { providers: [] },
     imageGeneration,

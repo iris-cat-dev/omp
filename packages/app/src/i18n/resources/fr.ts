@@ -654,45 +654,6 @@ export const fr: TranslationResources = {
         noOutput: "Aucune sortie",
       },
     },
-    browser: {
-      unavailable: {
-        title: "Le navigateur est réservé au bureau",
-        subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
-      },
-      session: "Session de navigateur{{browserId}}",
-      controls: {
-        back: "Dos",
-        forward: "Avant",
-        stopLoading: "Arrêter le chargement",
-        refresh: "Rafraîchir",
-        browserUrl: "NavigateurURL",
-        enterUrl: "EntrezURL",
-        openDevTools: "Outils de développement du navigateur ouvert",
-        cancelSelector: "Annuler le sélecteur d'élément",
-        annotateElement: "Annoter l'élément",
-        screenshotElement: "Capturer l'élément",
-        screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
-        elementCopied: "Élément copié dans le presse-papiers",
-        screenshotFailed: "Impossible de copier la capture",
-        selectorLoading: "Attendez la fin du chargement de la page",
-        selectorFailed: "Impossible de démarrer le sélecteur d’élément",
-      },
-      annotate: {
-        title: "Annoter l'élément",
-        placeholder: "Message à l'agent concernant cet élément…",
-        submit: "Joindre",
-        cancel: "Annuler",
-      },
-      devices: {
-        label: "Taille de l'appareil",
-        responsive: "Adaptatif",
-      },
-      errors: {
-        failedToLoad: "Échec du chargement de la page",
-        invalidUrl: "NavigateurURLinvalide",
-        unsupportedProtocol: "Navigateur non pris en charge bloquéURL:{{protocol}}",
-      },
-    },
     terminal: {
       clear: "Effacer",
       hostDisconnected: "Hostn'est pas connecté",
@@ -708,7 +669,6 @@ export const fr: TranslationResources = {
         setup: "Installation",
         workspaceSetup: "ConfigurationWorkspace",
         terminal: "Terminal",
-        browser: "Navigateur",
         agent: "Agent",
         workspace: "Workspace",
       },
@@ -742,10 +702,6 @@ export const fr: TranslationResources = {
         newTerminal: "Nouveau terminal",
         preparingTerminal: "Préparation de l'onglet du terminal",
         preparingTerminalTooltip: "Préparation du terminal...",
-        newBrowser: "Nouveau navigateur",
-        existingBrowsers: "Navigateurs existants — afficher ici",
-        browserHostedIn: "Emplacement de l’onglet : {{hosts}}",
-        browserNotPresented: "Actuellement affiché dans aucun espace de travail",
         maximizePane: "Agrandir le volet",
         restorePane: "Restaurer le volet",
         closePane: "Fermer le volet",
@@ -817,7 +773,6 @@ export const fr: TranslationResources = {
         workspaceActions: "ActionsWorkspace",
         newAgent: "Nouvel agent",
         newTerminal: "Nouvelle borne",
-        newBrowser: "Nouvel onglet du navigateur",
         importSession: "Session d'importation",
         copyPath: "Copier le chemin de l'espace de travail",
         copyBranchName: "Copier le nom de la branche",
@@ -1897,13 +1852,6 @@ export const fr: TranslationResources = {
   diffViewer: {
     empty: "Aucun changement à afficher",
   },
-  serviceUrl: {
-    title: "Service ouvertURL",
-    message: "Ouvrir{{url}}?",
-    inPaseo: "DansOMP Desktop",
-    externalBrowser: "Navigateur externe",
-    dontAskAgain: "Ne demande plus",
-  },
   contextMenu: {
     addToDictionary: "Ajouter au dictionnaire",
     clear: "Effacer",
@@ -1914,7 +1862,6 @@ export const fr: TranslationResources = {
     inspectElement: "Inspecter l’élément",
     noSuggestions: "Aucune suggestion",
     openExternal: "Ouvrir le lien dans le navigateur",
-    openInDesktop: "Ouvrir dans OMP Desktop",
     paste: "Coller",
     quitApp: "Quitter",
     saveImageAs: "Enregistrer l’image sous…",
@@ -2167,18 +2114,6 @@ export const fr: TranslationResources = {
     },
     general: {
       title: "Général",
-      browserData: {
-        title: "Données du navigateur",
-        siteData: "Cookies et données des sites",
-        description:
-          "Les onglets du navigateur partagent les connexions et les données des sites dans OMP Desktop.",
-        clear: "Effacer les données du navigateur",
-        clearing: "Effacement...",
-        confirmTitle: "Effacer les données du navigateur ?",
-        confirmMessage: "Vous serez déconnecté des sites et les onglets ouverts seront rechargés.",
-        success: "Données du navigateur effacées.",
-        error: "Impossible d'effacer les données du navigateur.",
-      },
       defaultSend: {
         label: "Envoi par défaut",
         descriptions: {
@@ -2193,15 +2128,6 @@ export const fr: TranslationResources = {
           interrupt: "Interrompre",
           steer: "Orienter",
           queue: "File d'attente",
-        },
-      },
-      serviceUrls: {
-        label: "URL de services",
-        description: "Où ouvrir les URL à partir de scripts en cours d'exécution",
-        options: {
-          ask: "Demander",
-          inApp: "DansOMP Desktop",
-          external: "Navigateur externe",
         },
       },
       terminalScrollback: {

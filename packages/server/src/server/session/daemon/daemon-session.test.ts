@@ -81,7 +81,7 @@ describe("DaemonSession", () => {
   test("config reload returns the daemon-owned classification", () => {
     const { subsystem, emitted } = makeSubsystem({
       reloadConfig: () => ({
-        appliedPaths: ["daemon.browserTools.enabled"],
+        appliedPaths: ["daemon.mcp.injectIntoAgents"],
         restartRequiredPaths: ["daemon.listen"],
         overrideControlledPaths: ["app.baseUrl"],
       }),
@@ -97,7 +97,7 @@ describe("DaemonSession", () => {
         type: "daemon.config.reload.response",
         payload: {
           requestId: "reload-1",
-          appliedPaths: ["daemon.browserTools.enabled"],
+          appliedPaths: ["daemon.mcp.injectIntoAgents"],
           restartRequiredPaths: ["daemon.listen"],
           overrideControlledPaths: ["app.baseUrl"],
         },

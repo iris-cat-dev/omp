@@ -1,123 +1,93 @@
-export const PASEO_BROWSER_PROFILE_PARTITION = "persist:omp-desktop-browser";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
+
+const BROWSER_PARTITION = "persist:omp-desktop-browser";
 const LEGACY_BROWSER_ID_PATTERN =
   /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\d{13,}-[0-9a-f]+)$/i;
-const MAX_LEGACY_BROWSER_PROFILES = 1000;
 
-const PASEO_BROWSER_STORAGE_TYPES = [
-  "cookies",
-  "filesystem",
-  "indexdb",
-  "localstorage",
-  "serviceworkers",
-  "cachestorage",
-  "websql",
-] as const;
-
-interface BrowserProfileSession {
+interface RetiredBrowserSession {
+  getStoragePath(): string | null;
   clearStorageData(options: {
-    storages: Array<(typeof PASEO_BROWSER_STORAGE_TYPES)[number]>;
+    storages: Array<
+      | "cookies"
+      | "filesystem"
+      | "indexdb"
+      | "localstorage"
+      | "shadercache"
+      | "serviceworkers"
+      | "cachestorage"
+      | "websql"
+    >;
   }): Promise<void>;
   clearCache(): Promise<void>;
   clearAuthCache(): Promise<void>;
 }
 
-interface BrowserProfileGuest {
-  readonly id: number;
-  isDestroyed(): boolean;
-  reload(): void;
-}
-
-interface BrowserProfileWebContents extends BrowserProfileGuest {
-  readonly session: object;
-  getType(): string;
-}
-
-interface ListBrowserProfileGuestsInput {
-  profileSession: object;
-  webContents: BrowserProfileWebContents[];
-}
-
-interface ClearBrowserProfileInput {
-  profileSessions: BrowserProfileSession[];
-  listGuests(): BrowserProfileGuest[];
-  logReloadError(guestId: number, error: unknown): void;
-}
-
 interface ElectronSessions {
-  fromPartition(partition: string): BrowserProfileSession;
+  fromPartition(partition: string): RetiredBrowserSession;
 }
 
-export function getPaseoBrowserProfileSession(sessions: ElectronSessions): BrowserProfileSession {
-  return sessions.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+async function clearProfile(profile: RetiredBrowserSession): Promise<void> {
+  await Promise.all([
+    profile.clearStorageData({
+      storages: [
+        "cookies",
+        "filesystem",
+        "indexdb",
+        "localstorage",
+        "shadercache",
+        "serviceworkers",
+        "cachestorage",
+        "websql",
+      ],
+    }),
+    profile.clearCache(),
+    profile.clearAuthCache(),
+  ]);
 }
 
-export function readLegacyPaseoBrowserIds(input: unknown): string[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-  const browserIds = new Set<string>();
-  for (const value of input) {
-    if (typeof value === "string" && LEGACY_BROWSER_ID_PATTERN.test(value)) {
-      browserIds.add(value);
-      if (browserIds.size >= MAX_LEGACY_BROWSER_PROFILES) {
-        break;
-      }
-    }
-  }
-  return [...browserIds];
-}
-
-export function getPaseoBrowserProfileSessions(
+/**
+ * Only the retired browser's persistent partitions may be cleared here.
+ * Never clear defaultSession: it also holds the main window's application state.
+ */
+export async function clearRetiredBrowserProfiles(
   sessions: ElectronSessions,
-  legacyBrowserIds: string[],
-): [BrowserProfileSession, ...BrowserProfileSession[]] {
-  return [
-    getPaseoBrowserProfileSession(sessions),
-    // COMPAT(browserProfile): added in v0.1.108; remove after 2027-01-15.
-    ...legacyBrowserIds.map((browserId) =>
-      sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${browserId}`),
-    ),
-  ];
-}
+  onError: (partition: string, error: unknown) => void,
+): Promise<void> {
+  const shared = sessions.fromPartition(BROWSER_PARTITION);
+  const sharedStoragePath = shared.getStoragePath();
+  try {
+    await clearProfile(shared);
+  } catch (error) {
+    onError(BROWSER_PARTITION, error);
+  }
 
-export function getLegacyPaseoBrowserProfileSession(
-  sessions: ElectronSessions,
-  browserId: string,
-): BrowserProfileSession | null {
-  const [legacyBrowserId] = readLegacyPaseoBrowserIds([browserId]);
-  return legacyBrowserId
-    ? sessions.fromPartition(`${PASEO_BROWSER_PROFILE_PARTITION}-${legacyBrowserId}`)
-    : null;
-}
+  // Older releases used one partition per browser ID. Only consider real
+  // sibling directories of the shared partition's Electron-reported path;
+  // never infer a location from userData or traverse symlinks.
+  if (!sharedStoragePath) return;
+  const parent = path.dirname(sharedStoragePath);
+  const prefix = `${path.basename(sharedStoragePath)}-`;
+  let entries;
+  try {
+    entries = await readdir(parent, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
 
-export function listPaseoBrowserProfileGuests(
-  input: ListBrowserProfileGuestsInput,
-): BrowserProfileGuest[] {
-  return input.webContents.filter(
-    (contents) =>
-      !contents.isDestroyed() &&
-      (contents.getType() === "webview" || contents.getType() === "window") &&
-      contents.session === input.profileSession,
-  );
-}
-
-export async function clearPaseoBrowserProfile(input: ClearBrowserProfileInput): Promise<void> {
-  await Promise.all(
-    input.profileSessions.flatMap((profileSession) => [
-      profileSession.clearStorageData({ storages: [...PASEO_BROWSER_STORAGE_TYPES] }),
-      profileSession.clearCache(),
-      profileSession.clearAuthCache(),
-    ]),
-  );
-
-  for (const guest of input.listGuests()) {
-    if (guest.isDestroyed()) {
-      continue;
-    }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+    const browserId = entry.name.slice(prefix.length);
+    if (!LEGACY_BROWSER_ID_PATTERN.test(browserId)) continue;
+    const partition = `${BROWSER_PARTITION}-${browserId}`;
+    const legacy = sessions.fromPartition(partition);
+    // Electron must confirm this partition maps to precisely this sibling.
+    if (legacy.getStoragePath() !== path.join(parent, entry.name)) continue;
     try {
-      guest.reload();
+      await clearProfile(legacy);
     } catch (error) {
-      input.logReloadError(guest.id, error);
+      onError(partition, error);
     }
   }
 }
