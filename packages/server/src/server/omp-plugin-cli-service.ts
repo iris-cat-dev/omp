@@ -328,6 +328,24 @@ export class OmpPluginCliService {
     });
   }
 
+  async upgrade(
+    name: string,
+    scope?: "user" | "project",
+  ): Promise<{ ok: boolean; output?: string }> {
+    return this.runExclusive(async () => {
+      // Upgrade force-reinstalls the current catalog version and retains enabled
+      // state. An explicit scope prevents upgrading another copy of the same ID.
+      const args = ["upgrade", name];
+      if (scope) args.push("--scope", scope);
+      try {
+        const output = await this.runCli(args, INSTALL_TIMEOUT_MS);
+        return { ok: true, output: truncateOutput(output) };
+      } catch (error) {
+        return { ok: false, output: truncateOutput((error as Error).message) };
+      }
+    });
+  }
+
   async remove(
     name: string,
     scope?: "user" | "project",

@@ -119,6 +119,35 @@ describe("OmpPluginCliService", () => {
     expect(result.output).toContain("404");
   });
 
+  it("returns upgrade failures with CLI diagnostics instead of reporting success", async () => {
+    const runner: OmpPluginRunner = async () => {
+      throw Object.assign(new Error("Command exited with code 1"), {
+        stdout: "Resolving probe@catalog",
+        stderr: 'Failed to upgrade: Plugin "probe@catalog" is not installed in project scope',
+      });
+    };
+
+    const result = await makeService(runner).upgrade("probe@catalog", "project");
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("Resolving probe@catalog");
+    expect(result.output).toContain("not installed in project scope");
+    expect(result.output).toContain("Command exited with code 1");
+  });
+
+  it("returns an upgrade failure when the runtime is unavailable", async () => {
+    const service = new OmpPluginCliService({
+      logger: createTestLogger(),
+      runner: makeRunner(""),
+      resolveOmpCommand: async () => null,
+    });
+
+    const result = await service.upgrade("probe@catalog", "user");
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("OMP CLI is not available");
+  });
+
   it("matches the installed plugin by name derived from the spec", async () => {
     const runner = makeRunner(
       `installing pi-memory...\n${JSON.stringify({ npm: [{ name: "pi-memory", version: "0.4.2", enabled: true }], marketplace: [] })}`,

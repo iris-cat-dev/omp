@@ -2771,6 +2771,8 @@ export const zhCN: TranslationResources = {
         doctorHint: "检查 omp 插件安装状态,并标记损坏的条目。",
         actions: {
           install: "安装",
+          upgrade: "升级",
+          installed: "已安装",
           check: "检查",
           remove: "移除",
           doctor: "运行 doctor",
@@ -2780,6 +2782,7 @@ export const zhCN: TranslationResources = {
           toggleFailed: "无法切换 {{id}}",
           removeFailed: "无法移除 {{id}}",
           installFailed: "无法安装 {{id}}",
+          upgradeFailed: "无法升级 {{id}}",
         },
         marketplace: {
           title: "插件市场",

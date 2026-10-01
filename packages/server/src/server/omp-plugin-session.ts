@@ -40,6 +40,14 @@ export class OmpPluginSession {
           return { ok: result.ok, plugin: result.plugin ?? null, output: result.output };
         });
       }
+      case "ompPlugins.upgrade.request": {
+        const { requestId, name, scope } = msg;
+        return this.reply(
+          requestId,
+          "ompPlugins.upgrade.response",
+          () => this.service.upgrade(name, scope) as Promise<Record<string, unknown>>,
+        );
+      }
       case "ompPlugins.remove.request": {
         const { requestId, name, scope } = msg;
         return this.reply(

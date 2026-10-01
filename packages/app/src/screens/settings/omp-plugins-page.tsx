@@ -20,6 +20,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { PluginPageState } from "@/screens/settings/plugins-page-state";
 import { settingsStyles } from "@/styles/settings";
+import { getMarketplacePluginState } from "./marketplace-plugin-state";
 
 interface OmpPluginsPageProps {
   serverId: string;
@@ -69,6 +70,9 @@ interface MarketplaceCatalogRowProps {
   plugin: OmpMarketplaceCatalogEntry;
   marketplaceName: string;
   busy: boolean;
+  installedPlugins: OmpPluginInfo[];
+  upgradeLabel: string;
+  installedLabel: string;
   onInstall: (plugin: OmpMarketplaceCatalogEntry, marketplaceName: string) => void;
   installLabel: string;
 }
@@ -79,7 +83,17 @@ function MarketplaceCatalogRow({
   busy,
   onInstall,
   installLabel,
+  installedPlugins,
+  upgradeLabel,
+  installedLabel,
 }: MarketplaceCatalogRowProps) {
+  const { installed, updateAvailable } = getMarketplacePluginState(
+    plugin,
+    marketplaceName,
+    installedPlugins,
+  );
+  let actionLabel = installLabel;
+  if (installed) actionLabel = updateAvailable ? upgradeLabel : installedLabel;
   const handleInstall = useCallback(
     () => onInstall(plugin, marketplaceName),
     [onInstall, plugin, marketplaceName],
@@ -98,8 +112,13 @@ function MarketplaceCatalogRow({
         ) : null}
       </View>
       <View style={styles.pluginActions}>
-        <Button size="sm" loading={busy} onPress={handleInstall}>
-          {installLabel}
+        <Button
+          size="sm"
+          loading={busy}
+          disabled={!!installed && !updateAvailable}
+          onPress={handleInstall}
+        >
+          {actionLabel}
         </Button>
       </View>
     </View>
@@ -114,6 +133,9 @@ interface MarketplaceEntryCardProps {
   browseLabel: string;
   removeLabel: string;
   installLabel: string;
+  installedPlugins: OmpPluginInfo[];
+  upgradeLabel: string;
+  installedLabel: string;
   searchPlaceholder: string;
   searchClearLabel: string;
   onToggle: (name: string) => void;
@@ -130,6 +152,9 @@ function MarketplaceEntryCard({
   browseLabel,
   removeLabel,
   installLabel,
+  installedPlugins,
+  upgradeLabel,
+  installedLabel,
   searchPlaceholder,
   searchClearLabel,
   onToggle,
@@ -188,6 +213,9 @@ function MarketplaceEntryCard({
               busy={busyCatalogName === `${entry.name}@${marketplace.name}`}
               onInstall={onInstall}
               installLabel={installLabel}
+              installedPlugins={installedPlugins}
+              upgradeLabel={upgradeLabel}
+              installedLabel={installedLabel}
             />
           ))}
         </View>
@@ -335,10 +363,8 @@ export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
       setPageState("loading");
       setLoadError(null);
       try {
-        const [pluginResult, marketplaceResult] = await Promise.all([
-          client.listOmpPlugins(),
-          client.listOmpPluginMarketplaces().catch(() => null),
-        ]);
+        const pluginResult = await client.listOmpPlugins();
+        const marketplaceResult = await client.listOmpPluginMarketplaces().catch(() => null);
         setPlugins(pluginResult.plugins);
         setRawOutput(pluginResult.rawOutput ?? null);
         setPageState(pluginResult.plugins.length === 0 ? "empty" : "ready");
@@ -508,16 +534,29 @@ export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
     async (plugin: OmpMarketplaceCatalogEntry, marketplaceName: string) => {
       if (!client) return;
       const key = `${plugin.name}@${marketplaceName}`;
+      const { installed, updateAvailable } = getMarketplacePluginState(
+        plugin,
+        marketplaceName,
+        plugins,
+      );
+      if (installed && !updateAvailable) return;
       setBusyCatalog(key);
       setLoadError(null);
       try {
-        const result = await client.installOmpPlugin({ spec: key });
+        const result = installed
+          ? await client.upgradeOmpPlugin(key, installed.scope ?? "user")
+          : await client.installOmpPlugin({ spec: key });
         if (result.ok) {
           await load();
         } else {
           setLoadError(
             result.output ??
-              t("settings.host.ompPlugins.feedback.installFailed", { id: plugin.name }),
+              t(
+                installed
+                  ? "settings.host.ompPlugins.feedback.upgradeFailed"
+                  : "settings.host.ompPlugins.feedback.installFailed",
+                { id: plugin.name },
+              ),
           );
         }
       } catch (error) {
@@ -526,7 +565,7 @@ export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
         setBusyCatalog(null);
       }
     },
-    [client, load, t],
+    [client, load, plugins, t],
   );
 
   const handleMarketplaceToggle = useCallback((name: string) => {
@@ -719,6 +758,9 @@ export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
                 })}
                 removeLabel={t("settings.host.ompPlugins.actions.remove")}
                 installLabel={t("settings.host.ompPlugins.actions.install")}
+                installedPlugins={plugins}
+                upgradeLabel={t("settings.host.ompPlugins.actions.upgrade")}
+                installedLabel={t("settings.host.ompPlugins.actions.installed")}
                 searchPlaceholder={t("settings.host.ompPlugins.marketplace.searchPlaceholder")}
                 searchClearLabel={t("settings.host.ompPlugins.marketplace.searchClear")}
                 onToggle={handleMarketplaceToggle}

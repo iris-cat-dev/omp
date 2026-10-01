@@ -2869,6 +2869,8 @@ export const en = {
         doctorHint: "Verifies the omp plugin installation and flags broken entries.",
         actions: {
           install: "Install",
+          upgrade: "Upgrade",
+          installed: "Installed",
           check: "Check",
           remove: "Remove",
           doctor: "Run doctor",
@@ -2878,6 +2880,7 @@ export const en = {
           toggleFailed: "Could not toggle {{id}}",
           removeFailed: "Could not remove {{id}}",
           installFailed: "Could not install {{id}}",
+          upgradeFailed: "Could not upgrade {{id}}",
         },
         marketplace: {
           title: "Marketplaces",
