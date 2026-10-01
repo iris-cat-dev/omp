@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   formatOmpQuotaResetTime,
+  formatOmpQuotaCountdown,
+  isOmpCodexResetCreditUsable,
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
 } from "./omp-provider-quota";
@@ -49,4 +51,44 @@ describe("OMP provider quota windows", () => {
       expect(shouldShowOmpFiveHourQuota(planLabel)).toBe(true);
     },
   );
+});
+
+describe("OMP quota countdown boundaries", () => {
+  const now = Date.parse("2026-10-01T00:00:00Z");
+  test.each([
+    [93 * 60 * 60_000, "3d21h"],
+    [132 * 60_000, "2h12min"],
+    [1, "0h1min"],
+    [0, ""],
+    [-60_000, ""],
+  ])("formats remaining duration %s without negative or premature reset", (remaining, expected) => {
+    expect(formatOmpQuotaCountdown(new Date(now + remaining).toISOString(), now)).toBe(expected);
+  });
+  test("does not turn missing or invalid server timestamps into reset", () => {
+    expect(formatOmpQuotaCountdown(undefined, now)).toBeNull();
+    expect(formatOmpQuotaCountdown("invalid", now)).toBeNull();
+  });
+});
+
+describe("Codex reset-card eligibility", () => {
+  const now = Date.parse("2026-10-01T00:00:00Z");
+  const available = { status: "available", resetType: "codex_rate_limits", expiresAt: null };
+  test("accepts only known available cards with a future or absent expiry", () => {
+    expect(isOmpCodexResetCreditUsable(available, now)).toBe(true);
+    expect(
+      isOmpCodexResetCreditUsable(
+        { ...available, expiresAt: new Date(now + 1).toISOString() },
+        now,
+      ),
+    ).toBe(true);
+    for (const patch of [
+      { status: "used" },
+      { status: "new_server_status" },
+      { resetType: "new_server_type" },
+      { expiresAt: new Date(now).toISOString() },
+      { expiresAt: new Date(now - 1).toISOString() },
+      { expiresAt: "invalid" },
+    ])
+      expect(isOmpCodexResetCreditUsable({ ...available, ...patch }, now)).toBe(false);
+  });
 });

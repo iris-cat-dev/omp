@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
@@ -25,6 +26,77 @@ function isCodexProvider(provider: string | undefined, modelId: string | null): 
 
 interface OmpProviderManagementClient {
   getOmpProviderManagement(): Promise<OmpProviderManagement>;
+}
+
+const managementRefreshes = new WeakMap<QueryClient, Map<string, Promise<OmpProviderManagement>>>();
+const reachedRefreshes = new WeakMap<QueryClient, Map<string, number>>();
+
+export function refreshOmpAccountQuotaManagement(
+  queryClient: QueryClient,
+  client: OmpProviderManagementClient,
+  serverId: string,
+  afterMutation = false,
+): Promise<OmpProviderManagement> {
+  let refreshes = managementRefreshes.get(queryClient);
+  if (!refreshes) {
+    refreshes = new Map();
+    managementRefreshes.set(queryClient, refreshes);
+  }
+  const pending = refreshes.get(serverId);
+  if (pending) {
+    if (!afterMutation) return pending;
+    return pending
+      .catch(() => undefined)
+      .then(() => refreshOmpAccountQuotaManagement(queryClient, client, serverId));
+  }
+  const queryKey = ompProviderManagementQueryKey(serverId);
+  const refresh = (async () => {
+    // Discard pre-reset reads so an old response cannot overwrite the refreshed quota/cards.
+    await queryClient.cancelQueries({ queryKey, exact: true });
+    return queryClient.fetchQuery({
+      queryKey,
+      queryFn: () => client.getOmpProviderManagement(),
+      staleTime: 0,
+      gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
+    });
+  })().finally(() => refreshes.delete(serverId));
+  refreshes.set(serverId, refresh);
+  return refresh;
+}
+
+export function useOmpQuotaClock(enabled = true): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!enabled) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [enabled]);
+  return now;
+}
+
+export function useOmpQuotaReachedRefresh(
+  serverId: string | null | undefined,
+  resetsAt: Array<string | null | undefined>,
+  now: number,
+  enabled = true,
+): void {
+  const queryClient = useQueryClient();
+  const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
+  const reached = resetsAt.some((value) => value && Date.parse(value) <= now);
+  useEffect(() => {
+    if (!enabled || !serverId || !client || !reached) return;
+    let refreshes = reachedRefreshes.get(queryClient);
+    if (!refreshes) {
+      refreshes = new Map();
+      reachedRefreshes.set(queryClient, refreshes);
+    }
+    // One shared request per host per minute, even with multiple windows/surfaces mounted.
+    const lastRefresh = refreshes.get(serverId);
+    if (lastRefresh !== undefined && now - lastRefresh < 60_000) return;
+    refreshes.set(serverId, now);
+    void refreshOmpAccountQuotaManagement(queryClient, client, serverId).catch(() => undefined);
+  }, [client, enabled, now, queryClient, reached, serverId]);
 }
 
 function needsInitialQuotaRetry(management: OmpProviderManagement): boolean {
@@ -66,6 +138,7 @@ export function useOmpCodexAccountQuota(
   serverId: string | null | undefined,
   enabled = true,
 ): OmpCodexAccountQuotaResult {
+  const queryClient = useQueryClient();
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
   const supportsOmpProviderManagement = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.ompProviderManagement === true,
@@ -87,11 +160,10 @@ export function useOmpCodexAccountQuota(
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
-  const refetchQuota = query.refetch;
   const refresh = useCallback(async () => {
-    if (!active) return;
-    await refetchQuota();
-  }, [active, refetchQuota]);
+    if (!active || !client || !serverId) return;
+    await refreshOmpAccountQuotaManagement(queryClient, client, serverId);
+  }, [active, client, queryClient, serverId]);
   const provider = active
     ? (query.data?.loginProviders.find((entry) => entry.id === "openai-codex") ?? null)
     : null;

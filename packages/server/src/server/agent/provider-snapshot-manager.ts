@@ -503,6 +503,26 @@ export class ProviderSnapshotManager {
     }
   }
 
+  async consumeOmpCodexResetCredit(
+    credentialId: number,
+    creditId: string,
+    redeemRequestId: string,
+  ) {
+    const definition = this.providerRegistry.omp;
+    if (!definition) throw new Error("OMP provider is not configured");
+    const client = this.ensureClient("omp", definition);
+    if (!client.consumeOmpCodexResetCredit) {
+      throw new Error("Codex reset card consumption is unavailable");
+    }
+    try {
+      return await client.consumeOmpCodexResetCredit(credentialId, creditId, redeemRequestId);
+    } finally {
+      // A read begun before the mutation cannot satisfy the subsequent refresh,
+      // including when the POST outcome is uncertain.
+      this.ompProviderManagementRead = null;
+    }
+  }
+
   async saveOmpProviderConfig(configYaml: string): Promise<OmpProviderManagement> {
     const definition = this.providerRegistry.omp;
     if (!definition) {

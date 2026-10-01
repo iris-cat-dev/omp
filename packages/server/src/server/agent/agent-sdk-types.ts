@@ -13,6 +13,7 @@ import type {
   OmpCustomProviderInput,
   OmpInstallationStatus,
   OmpProviderAccountQuota,
+  OmpCodexResetCreditConsumeResult,
   OmpSubagentSettings,
   OmpMemorySettings,
   OmpMemorySettingsPatch,
@@ -833,6 +834,11 @@ export interface AgentClient {
   isAvailable(signal?: AbortSignal): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   getOmpProviderManagement?(): Promise<OmpProviderManagement>;
+  consumeOmpCodexResetCredit?(
+    credentialId: number,
+    creditId: string,
+    redeemRequestId: string,
+  ): Promise<OmpCodexResetCreditConsumeResult>;
   saveOmpProviderConfig?(configYaml: string): Promise<OmpProviderManagement>;
   getOmpSubagentSettings?(): Promise<OmpSubagentSettings>;
   updateOmpSubagentModel?(agentName: string, model: string | null): Promise<OmpSubagentSettings>;

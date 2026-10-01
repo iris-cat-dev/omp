@@ -63,6 +63,7 @@ import {
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
 } from "@/components/omp-provider-quota";
+import { OmpQuotaCountdown } from "@/components/omp-codex-quota-details";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
 import type { ProviderUsageView } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
@@ -97,6 +98,8 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import {
   useOmpAccountQuota,
+  useOmpQuotaClock,
+  useOmpQuotaReachedRefresh,
   type OmpAccountQuotaDisplayAccount,
 } from "@/hooks/use-omp-account-quota";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
@@ -562,10 +565,12 @@ function SidebarQuotaMeter({
   label,
   usedPct,
   limitReached,
+  resetsAt,
 }: {
   label: string;
   usedPct: number | null | undefined;
   limitReached?: boolean | null;
+  resetsAt?: string | null;
 }) {
   const { theme } = useUnistyles();
   const remainingPct = resolveOmpRemainingQuotaPct(usedPct);
@@ -606,6 +611,7 @@ function SidebarQuotaMeter({
           />
         ) : null}
       </View>
+      <OmpQuotaCountdown resetsAt={resetsAt} />
     </View>
   );
 }
@@ -914,6 +920,24 @@ function resolveSidebarAccountCopy({
   };
 }
 
+function useSidebarSelectedAccountQuotaRefresh(
+  serverId: AgentControlCommandCenterSource["serverId"],
+  selectedAccount: SidebarAccount | null,
+) {
+  const quotaNow = useOmpQuotaClock(Boolean(selectedAccount));
+  useOmpQuotaReachedRefresh(
+    serverId,
+    [
+      selectedAccount?.quota?.weeklyResetsAt,
+      shouldShowOmpFiveHourQuota(selectedAccount?.quota?.planLabel)
+        ? selectedAccount?.quota?.fiveHourResetsAt
+        : null,
+    ],
+    quotaNow,
+    Boolean(selectedAccount),
+  );
+}
+
 function useSidebarAccountModel({
   controls,
   selectedModelId,
@@ -967,6 +991,7 @@ function useSidebarAccountModel({
     selectableAccounts,
     selectedAccountId,
   );
+  useSidebarSelectedAccountQuotaRefresh(controls.serverId, selectedAccount);
   const accountSelectorOptions = useMemo(
     () =>
       resolveOmpAccountSelectorOptions(
@@ -1206,11 +1231,13 @@ function SidebarProviderAccountDetails({
               <SidebarQuotaMeter
                 label={t("agentControls.quota.weekly")}
                 usedPct={selectedAccount.quota?.weeklyUsedPct}
+                resetsAt={selectedAccount.quota?.weeklyResetsAt}
               />
               {shouldShowOmpFiveHourQuota(selectedAccount.quota?.planLabel) ? (
                 <SidebarQuotaMeter
                   label={t("agentControls.quota.fiveHour")}
                   usedPct={selectedAccount.quota?.fiveHourUsedPct}
+                  resetsAt={selectedAccount.quota?.fiveHourResetsAt}
                   limitReached={selectedAccount.quota?.fiveHourLimitReached}
                 />
               ) : null}

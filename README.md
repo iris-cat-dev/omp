@@ -12,6 +12,28 @@ Current source version: **0.3.11**.
 
 Packaged macOS, Linux, and Windows applications include OMP and do not require a system OMP installation.
 
+## Codex quota and reset cards
+
+Open **Host Settings → Model providers → Signed-in providers** to view each Codex account's
+five-hour and weekly quota windows (Pro shows its weekly window only). Settings and the sidebar
+show live compact reset countdowns such as `3d21h` and `2h12min`. At the deadline, Desktop
+refreshes server usage and shows an awaiting-refresh state rather than assuming the quota reset.
+
+Each account lists its banked Codex reset cards, server-reported available count, status,
+and grant/expiry timestamps with a timezone. **Use reset card** asks you to confirm the selected
+account, card, and applicable quota windows. Only available, unexpired `codex_rate_limits` cards
+can be submitted. The daemon rechecks the card with OpenAI before consuming it and preserves the
+redemption request ID; duplicate submissions do not intentionally spend another card. A confirmed
+server result refreshes both cards and quota. Errors and already-redeemed/nothing-to-reset results
+are displayed separately from a successful reset. Older daemons cannot consume cards.
+
+Subscription validity is separate from quota resets. When the OAuth credential contains a
+timezone-qualified `chatgpt_subscription_active_until` claim, Desktop displays its reported date
+and live remaining time. This is token-reported metadata, not live billing or an auto-renewal
+guarantee. A Free plan displays no subscription; missing, invalid, stale, or unavailable expiry
+metadata displays **Subscription expiry unavailable**, never a fabricated `0` or the OAuth
+token's own expiration. Some Codex credentials omit subscription expiry entirely.
+
 ## OMP built-in tools
 
 Open **Host Settings → Agents → OMP built-in tools** to request a tool list for new or resumed sessions. The tool list starts collapsed; expand it to edit switches, request all off, or reset. Choices are saved per host. Desktop passes `--no-tools` when every tool is switched off, or `--tools <enabled names>` for a partial selection; resetting removes the extra tool flag. Known releases use their tool catalog; other versions use the combined known tool list without a version whitelist. Desktop checks native `--tools`/`--no-tools` support instead of rejecting an unfamiliar release. Checkpoint and rewind share one switch. Running sessions do not change.

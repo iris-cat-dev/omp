@@ -642,6 +642,18 @@ function workspaceLabelErrorCode(error: unknown): string {
 // Covers request preparation before agent/terminal managers register their runtimes,
 // shared across client sessions using the same daemon registry.
 const workspaceContentMutations = new WeakMap<WorkspaceRegistry, number>();
+const WORKSPACE_CONTENT_MUTATION_TYPES: Partial<Record<SessionInboundMessage["type"], true>> = {
+  create_agent_request: true,
+  resume_agent_request: true,
+  import_agent_request: true,
+  create_terminal_request: true,
+  start_workspace_script_request: true,
+  "workspace.script.start.request": true,
+  "workspace.title.set.request": true,
+  "workspace.pin.set.request": true,
+  "workspace.label.assignment.set.request": true,
+  "hub.execution.agent.create.request": true,
+};
 
 export class Session {
   private readonly clientId: string;
@@ -1082,7 +1094,6 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
-
     this.subscribeToAgentEvents();
     this.subscribeToRegistryMutations();
 
@@ -1432,7 +1443,6 @@ export class Session {
     }
   }
 
-
   private handleAgentRunError(agentId: string, error: unknown, context: string): void {
     const message = errorToFriendlyMessage(error);
     this.sessionLogger.error({ err: error, agentId, context }, `${context} for agent ${agentId}`);
@@ -1654,7 +1664,6 @@ export class Session {
           return;
         }
 
-
         const serializedEvent = serializeAgentStreamEvent(event.event);
         if (!serializedEvent) {
           return;
@@ -1794,17 +1803,7 @@ export class Session {
    * Main entry point for processing session messages
    */
   public async handleMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
-    const createsWorkspaceContent =
-      msg.type === "create_agent_request" ||
-      msg.type === "resume_agent_request" ||
-      msg.type === "import_agent_request" ||
-      msg.type === "create_terminal_request" ||
-      msg.type === "start_workspace_script_request" ||
-      msg.type === "workspace.script.start.request" ||
-      msg.type === "workspace.title.set.request" ||
-      msg.type === "workspace.pin.set.request" ||
-      msg.type === "workspace.label.assignment.set.request" ||
-      msg.type === "hub.execution.agent.create.request";
+    const createsWorkspaceContent = WORKSPACE_CONTENT_MUTATION_TYPES[msg.type] === true;
     if (createsWorkspaceContent) {
       workspaceContentMutations.set(
         this.workspaceRegistry,
@@ -2517,27 +2516,27 @@ export class Session {
         return this.providerCatalogSession.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
+      case "provider.usage.list.request":
+        return this.providerCatalogSession.handleProviderUsageListRequest(msg);
       default:
-        return this.dispatchOmpProviderMessage(msg);
+        return (
+          this.dispatchOmpProviderManagementMessage(msg) ??
+          this.dispatchOmpProviderAuthenticationMessage(msg) ??
+          this.dispatchOmpSettingsMessage(msg)
+        );
     }
   }
 
-  private dispatchOmpProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchOmpProviderManagementMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "omp.provider.management.get.request":
         return this.providerCatalogSession.handleOmpProviderManagementGetRequest(msg);
+      case "omp.codex.reset_credit.consume.request":
+        return this.providerCatalogSession.handleOmpCodexResetCreditConsumeRequest(msg);
       case "omp.provider.management.save.request":
         return this.providerCatalogSession.handleOmpProviderManagementSaveRequest(msg);
-      case "omp.subagents.management.get.request":
-        return this.providerCatalogSession.handleOmpSubagentSettingsGetRequest(msg);
-      case "omp.subagents.management.update.request":
-        return this.providerCatalogSession.handleOmpSubagentSettingsUpdateRequest(msg);
-      case "omp.subagents.management.enabled.update.request":
-        return this.providerCatalogSession.handleOmpSubagentSettingsEnabledUpdateRequest(msg);
-      case "omp.memory.settings.get.request":
-        return this.providerCatalogSession.handleOmpMemorySettingsGetRequest(msg);
-      case "omp.memory.settings.update.request":
-        return this.providerCatalogSession.handleOmpMemorySettingsUpdateRequest(msg);
       case "omp.provider.management.context_windows.update.request":
         return this.providerCatalogSession.handleOmpProviderContextWindowOverridesUpdateRequest(
           msg,
@@ -2550,6 +2549,15 @@ export class Session {
         return this.providerCatalogSession.handleOmpProviderModelDiscoveryRequest(msg);
       case "omp.provider.management.remove.request":
         return this.providerCatalogSession.handleOmpProviderManagementRemoveRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchOmpProviderAuthenticationMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
       case "omp.install.status.request":
         return this.providerCatalogSession.handleOmpInstallStatusRequest(msg);
       case "omp.install.request":
@@ -2562,8 +2570,23 @@ export class Session {
         return this.providerCatalogSession.handleOmpProviderLoginCancelRequest(msg);
       case "omp.provider.logout.request":
         return this.providerCatalogSession.handleOmpProviderLogoutRequest(msg);
-      case "provider.usage.list.request":
-        return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchOmpSettingsMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "omp.subagents.management.get.request":
+        return this.providerCatalogSession.handleOmpSubagentSettingsGetRequest(msg);
+      case "omp.subagents.management.update.request":
+        return this.providerCatalogSession.handleOmpSubagentSettingsUpdateRequest(msg);
+      case "omp.subagents.management.enabled.update.request":
+        return this.providerCatalogSession.handleOmpSubagentSettingsEnabledUpdateRequest(msg);
+      case "omp.memory.settings.get.request":
+        return this.providerCatalogSession.handleOmpMemorySettingsGetRequest(msg);
+      case "omp.memory.settings.update.request":
+        return this.providerCatalogSession.handleOmpMemorySettingsUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -3395,7 +3418,6 @@ export class Session {
       });
     }
   }
-
 
   /**
    * Handle create agent request

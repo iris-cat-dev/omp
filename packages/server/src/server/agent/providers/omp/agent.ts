@@ -15,6 +15,7 @@ import type {
   OmpCustomProviderInput,
   OmpInstallationStatus,
   OmpProviderAccountQuota,
+  OmpCodexResetCreditConsumeResult,
   OmpSubagentSettings,
   OmpMemorySettings,
   OmpMemorySettingsPatch,
@@ -158,11 +159,20 @@ import {
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 import { fetchCodexAccountQuota, type CodexAccountQuotaCredential } from "./codex-account-quota.js";
+import { consumeCodexResetCredit } from "./codex-reset-credits.js";
 import { createProxyFetch } from "../../../../services/quota-fetcher/proxy-fetch.js";
 
 const OMP_PROVIDER = "omp";
 const DEFAULT_OMP_BINARY = process.env.OMP_COMMAND?.trim() || "omp";
 const QUESTION_RESPONSE_HEADER = "Response";
+const codexResetConsumptions = new Map<
+  string,
+  {
+    creditId: string;
+    redeemRequestId: string;
+    promise: Promise<OmpCodexResetCreditConsumeResult>;
+  }
+>();
 const QUESTION_COMMENT_HEADER = "Comment";
 const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const OMP_ASK_FREEFORM_SENTINEL = "Other (type your own)";
@@ -4474,6 +4484,62 @@ export class OmpAgentClient implements AgentClient {
       loginProviders,
       ...(runtimeError ? { runtimeError } : {}),
     };
+  }
+
+  async consumeOmpCodexResetCredit(
+    credentialId: number,
+    creditId: string,
+    redeemRequestId: string,
+  ): Promise<OmpCodexResetCreditConsumeResult> {
+    if (
+      !Number.isSafeInteger(credentialId) ||
+      credentialId <= 0 ||
+      !creditId.trim() ||
+      !redeemRequestId.trim()
+    ) {
+      throw new Error(
+        "A selected Codex credential, reset card, and redemption request ID are required",
+      );
+    }
+    const env = { ...process.env, ...this.runtimeSettings?.env };
+    const { agentDb } = resolveOmpDiagnosticPaths(env);
+    const credential = readStoredOmpOAuthAccountCredentials(agentDb).find(
+      (account) => account.credentialId === credentialId && account.provider === "openai-codex",
+    );
+    if (!credential) throw new Error("The selected Codex OAuth account is unavailable");
+    const key = JSON.stringify([
+      "account",
+      agentDb,
+      credential.accountId ?? credential.identityKey ?? credentialId,
+    ]);
+    const cardKey = JSON.stringify(["card", agentDb, creditId]);
+    const active = codexResetConsumptions.get(key) ?? codexResetConsumptions.get(cardKey);
+    if (active) {
+      if (
+        codexResetConsumptions.get(key) === active &&
+        active.creditId === creditId &&
+        active.redeemRequestId === redeemRequestId
+      ) {
+        return await active.promise;
+      }
+      throw new Error("A reset card is already being consumed for this Codex account");
+    }
+    const promise = consumeCodexResetCredit({
+      credential,
+      creditId,
+      redeemRequestId,
+      fetch: this.quotaFetch,
+      now: this.quotaNow,
+    });
+    const consumption = { creditId, redeemRequestId, promise };
+    codexResetConsumptions.set(key, consumption);
+    codexResetConsumptions.set(cardKey, consumption);
+    try {
+      return await promise;
+    } finally {
+      codexResetConsumptions.delete(key);
+      codexResetConsumptions.delete(cardKey);
+    }
   }
 
   async getOmpSubagentSettings(): Promise<OmpSubagentSettings> {

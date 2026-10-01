@@ -1,4 +1,7 @@
+import { z } from "zod";
 import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
+import { fetchCodexResetCredits } from "./codex-reset-credits.js";
+import { resolveCodexSubscription } from "./codex-subscription.js";
 
 export const CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -15,9 +18,17 @@ export interface CodexAccountQuotaFetchOptions {
   timeoutMs?: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const CodexUsageResponseSchema = z.object({
+  plan_type: z.unknown().optional(),
+  rate_limit: z.object({
+    primary_window: z.unknown().optional(),
+    secondary_window: z.unknown().optional(),
+  }),
+});
+const CodexUsageWindowSchema = z.object({
+  used_percent: z.unknown().optional(),
+  reset_at: z.unknown().optional(),
+});
 
 function finiteNumber(value: unknown): number | null {
   const number = typeof value === "number" ? value : Number(value);
@@ -43,9 +54,10 @@ function isProPlan(planLabel: string | null): boolean {
 }
 
 function parseWindow(value: unknown): { usedPct: number | null; resetsAt: string | null } | null {
-  if (!isRecord(value)) return null;
-  const usedPct = parseUsedPct(value.used_percent);
-  const resetsAt = parseResetAt(value.reset_at);
+  const parsed = CodexUsageWindowSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const usedPct = parseUsedPct(parsed.data.used_percent);
+  const resetsAt = parseResetAt(parsed.data.reset_at);
   if (usedPct === null && resetsAt === null) return null;
   return { usedPct, resetsAt };
 }
@@ -67,7 +79,34 @@ function failure(
   };
 }
 
-export async function fetchCodexAccountQuota(
+function parseUsageResponse(payload: unknown, now: () => number): OmpProviderAccountQuota {
+  const parsed = CodexUsageResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    return failure("error", "Codex usage response did not include rate limits", now);
+  }
+  const primary = parseWindow(parsed.data.rate_limit.primary_window);
+  const secondary = parseWindow(parsed.data.rate_limit.secondary_window);
+  const planLabel = typeof parsed.data.plan_type === "string" ? parsed.data.plan_type : null;
+  const hasFiveHourLimit = !isProPlan(planLabel);
+  if (!primary && hasFiveHourLimit) {
+    return failure("error", "Codex usage response did not include the five-hour limit", now);
+  }
+  const fiveHour = hasFiveHourLimit ? primary : null;
+  const total = hasFiveHourLimit ? secondary : primary;
+  const fiveHourUsedPct = fiveHour?.usedPct ?? null;
+  return {
+    status: "available",
+    planLabel,
+    fiveHourUsedPct,
+    fiveHourLimitReached: fiveHourUsedPct === null ? null : fiveHourUsedPct >= 100,
+    fiveHourResetsAt: fiveHour?.resetsAt ?? null,
+    weeklyUsedPct: total?.usedPct ?? null,
+    weeklyResetsAt: total?.resetsAt ?? null,
+    fetchedAt: new Date(now()).toISOString(),
+  };
+}
+
+async function fetchCodexUsage(
   options: CodexAccountQuotaFetchOptions,
 ): Promise<OmpProviderAccountQuota> {
   const now = options.now ?? Date.now;
@@ -90,6 +129,8 @@ export async function fetchCodexAccountQuota(
     const response = await fetchApi(CODEX_USAGE_ENDPOINT, {
       headers,
       signal: controller.signal,
+      cache: "no-store",
+      redirect: "error",
     });
     if (response.status === 401 || response.status === 403) {
       return failure("unavailable", "Codex account authentication expired", now);
@@ -104,33 +145,7 @@ export async function fetchCodexAccountQuota(
     } catch {
       return failure("error", "Codex usage response was not valid JSON", now);
     }
-    if (!isRecord(payload) || !isRecord(payload.rate_limit)) {
-      return failure("error", "Codex usage response did not include rate limits", now);
-    }
-
-    const primary = parseWindow(payload.rate_limit.primary_window);
-    const secondary = parseWindow(payload.rate_limit.secondary_window);
-    const planLabel = typeof payload.plan_type === "string" ? payload.plan_type : null;
-    const hasFiveHourLimit = !isProPlan(planLabel);
-    const total = hasFiveHourLimit ? secondary : primary;
-    if (!primary && hasFiveHourLimit) {
-      return failure("error", "Codex usage response did not include the five-hour limit", now);
-    }
-
-    const fetchedAt = new Date(now()).toISOString();
-    return {
-      status: "available",
-      planLabel,
-      fiveHourUsedPct: hasFiveHourLimit ? (primary?.usedPct ?? null) : null,
-      fiveHourLimitReached:
-        hasFiveHourLimit && primary?.usedPct !== null && primary?.usedPct !== undefined
-          ? primary.usedPct >= 100
-          : null,
-      fiveHourResetsAt: hasFiveHourLimit ? (primary?.resetsAt ?? null) : null,
-      weeklyUsedPct: total?.usedPct ?? null,
-      weeklyResetsAt: total?.resetsAt ?? null,
-      fetchedAt,
-    };
+    return parseUsageResponse(payload, now);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return failure("error", "Codex usage request timed out", now);
@@ -139,4 +154,22 @@ export async function fetchCodexAccountQuota(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function fetchCodexAccountQuota(
+  options: CodexAccountQuotaFetchOptions,
+): Promise<OmpProviderAccountQuota> {
+  const [quota, resetCredits] = await Promise.all([
+    fetchCodexUsage(options),
+    fetchCodexResetCredits(options),
+  ]);
+  return {
+    ...quota,
+    resetCredits,
+    subscription: resolveCodexSubscription(
+      options.credential,
+      quota.planLabel ?? null,
+      (options.now ?? Date.now)(),
+    ),
+  };
 }
