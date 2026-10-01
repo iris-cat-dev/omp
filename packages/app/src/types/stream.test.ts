@@ -2247,4 +2247,31 @@ describe("system notices", () => {
       { kind: "assistant_message", text: "After switching." },
     ]);
   });
+
+  it("retains distinct selected models in timeline notices at the same timestamp", () => {
+    const timestamp = new Date("2026-10-01T10:00:00.000Z");
+    const first = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" },
+      },
+      timestamp,
+    );
+    const next = reduceStreamUpdate(
+      first,
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "system_notice", notice: "model_changed", modelId: "anthropic/claude-5" },
+      },
+      timestamp,
+    );
+    expect(next.map((item) => item.kind === "system_notice" && item.modelId)).toEqual([
+      "openai/gpt-6",
+      "anthropic/claude-5",
+    ]);
+    expect(next[0]?.id).not.toBe(next[1]?.id);
+  });
 });

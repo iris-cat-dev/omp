@@ -820,6 +820,11 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
   }),
   z.object({
+    type: z.literal("system_notice"),
+    notice: z.literal("model_changed"),
+    modelId: z.string(),
+  }),
+  z.object({
     type: z.literal("extension_notification"),
     message: z.string(),
     level: z.enum(["info", "warning", "error"]),

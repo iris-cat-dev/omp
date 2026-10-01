@@ -448,6 +448,7 @@ export const fr: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Mode rapide activé",
       fastModeDisabled: "Mode rapide désactivé",
+      modelChanged: "Modèle changé pour {{model}}",
     },
     question: {
       submit: "Soumettre",

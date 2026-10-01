@@ -482,6 +482,45 @@ describe("OMP agent client and session", () => {
     expect(omp.latestRuntimeClosed()).toBe(true);
   });
 
+  test("records a model switch only after the conversation has a user message", async () => {
+    const omp = new OmpHarness({
+      initialModel: { provider: "custom-openai", id: "initial" },
+    });
+    await omp.start({ model: "custom-openai/initial" });
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+
+    await omp.setModel("custom-openai", "draft");
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+
+    await omp.runPrompt("Hello", "Hi");
+    await omp.setModel("custom-openai", "final");
+    await omp.setModel("custom-openai", "final");
+
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([
+      { type: "system_notice", notice: "model_changed", modelId: "custom-openai/final" },
+    ]);
+  });
+
+  test("records a model switch in a resumed conversation with prior user messages", async () => {
+    const omp = new OmpHarness({
+      initialModel: { provider: "custom-openai", id: "initial" },
+    });
+    await omp.resume(
+      {
+        user: { id: "user-1", text: "Earlier request" },
+        assistant: { id: "assistant-1", text: "Earlier reply" },
+      },
+      { model: "custom-openai/initial" },
+    );
+    omp.runtime().messages = [{ role: "user", content: "Earlier request" }];
+
+    await omp.setModel("custom-openai", "final");
+
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([
+      { type: "system_notice", notice: "model_changed", modelId: "custom-openai/final" },
+    ]);
+  });
+
   test("records only successful fast-mode transitions as system notices", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openai-codex/gpt-5.6" });

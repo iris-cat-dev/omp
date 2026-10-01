@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@omp-desktop/protocol/messages";
+import { AgentStreamMessageSchema } from "@omp-desktop/protocol/messages";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   normalizeProjectDescriptor,
@@ -7,7 +8,7 @@ import {
   selectAgentTimelineState,
   useSessionStore,
 } from "@/stores/session-store";
-import { createUserMessage, type StreamItem } from "@/types/stream";
+import { createUserMessage, reduceStreamUpdate, type StreamItem } from "@/types/stream";
 import { ReplicaCache, type ReplicaCacheStorage } from ".";
 
 const SERVER_ID = "cached-host";
@@ -309,6 +310,59 @@ describe("ReplicaCache", () => {
       older: "available",
       newer: "none",
     });
+  });
+
+  it("restores the selected model id from a wire timeline notice", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+
+    const parsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent-1",
+        timestamp: "2026-07-18T08:03:00.000Z",
+        event: {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" },
+        },
+      },
+    });
+    const notice = reduceStreamUpdate(
+      [],
+      parsed.payload.event,
+      new Date(parsed.payload.timestamp),
+    )[0];
+    expect(notice).toMatchObject({
+      kind: "system_notice",
+      notice: "model_changed",
+      modelId: "openai/gpt-6",
+    });
+    if (!notice) throw new Error("Expected model change notice");
+    const storedNotice = { ...notice, timelineCursor: { epoch: "epoch-1", seq: 13 } };
+    useSessionStore.getState().setAgentStreamTail(
+      SERVER_ID,
+      new Map([["agent-1", [message("message-1", "Cached"), storedNotice]]]),
+    );
+    useSessionStore.getState().setAgentTimelineCursor(
+      SERVER_ID,
+      new Map([["agent-1", { epoch: "epoch-1", startSeq: 1, endSeq: 13 }]]),
+    );
+    await writer.flush();
+    useSessionStore.getState().clearSession(SERVER_ID);
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    const restored = useSessionStore.getState().sessions[SERVER_ID];
+    expect(restored?.agentStreamTail.get("agent-1")).toEqual([
+      message("message-1", "Cached"),
+      storedNotice,
+    ]);
+    expect(restored && selectAgentTimelineState(restored, "agent-1").status).toBe("synced");
   });
 
   it("restores canonical turn membership without downgrading tagged rows", async () => {

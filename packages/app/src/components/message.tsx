@@ -2254,13 +2254,17 @@ export const CompactionMarker = memo(function CompactionMarker({
 
 export const SystemNotice = memo(function SystemNotice({
   notice,
-}: Pick<SystemNoticeItem, "notice">) {
+  modelId,
+}: Pick<SystemNoticeItem, "notice" | "modelId">) {
   const { t } = useTranslation();
-  const message = t(
-    notice === "fast_mode_enabled"
-      ? "message.systemNotice.fastModeEnabled"
-      : "message.systemNotice.fastModeDisabled",
-  );
+  const message =
+    notice === "model_changed"
+      ? t("message.systemNotice.modelChanged", { model: modelId })
+      : t(
+          notice === "fast_mode_enabled"
+            ? "message.systemNotice.fastModeEnabled"
+            : "message.systemNotice.fastModeDisabled",
+        );
 
   return (
     <View style={compactionStylesheet.container} testID="system-notice">

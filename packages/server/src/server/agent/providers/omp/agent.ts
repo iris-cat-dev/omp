@@ -1582,6 +1582,8 @@ export class OmpAgentSession implements AgentSession {
   private activePlanMessageId: string | null = null;
   private activeTurnStarted = false;
   private activeTurnHasUserMessage = false;
+  private hasConversationUserMessage = false;
+  private readonly resumedSession: boolean;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{
     turnId: string;
@@ -1671,6 +1673,7 @@ export class OmpAgentSession implements AgentSession {
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
     this.live = options.live ?? true;
+    this.resumedSession = options.live === false;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.usagePoller = new OmpUsagePoller({
@@ -2541,15 +2544,41 @@ export class OmpAgentSession implements AgentSession {
       throw new Error(`OMP model id must include a provider: ${modelId}`);
     }
 
+    const previousModelId = this.state.model
+      ? `${this.state.model.provider}/${this.state.model.id}`
+      : this.config.model;
+    if (!this.hasConversationUserMessage && this.resumedSession) {
+      try {
+        this.hasConversationUserMessage = (await this.runtimeSession.getMessages()).some(
+          (message) =>
+            message.role === "user" &&
+            Boolean(getUserMessageText(message.content) || getUserMessageImages(message.content)),
+        );
+      } catch (error) {
+        this.logger.debug({ err: error }, "OMP conversation message lookup failed");
+      }
+    }
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
+    const selectedModelId = `${model.provider}/${model.id}`;
     this.state = {
       ...this.state,
       model,
     };
-    this.config.model = `${model.provider}/${model.id}`;
+    this.config.model = selectedModelId;
     this.refreshFeatures();
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
+    if (this.hasConversationUserMessage && previousModelId !== selectedModelId) {
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "system_notice",
+          notice: "model_changed",
+          modelId: selectedModelId,
+        },
+      });
+    }
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -2565,6 +2594,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private emit(event: AgentStreamEvent): void {
+    if (event.type === "timeline" && event.item.type === "user_message" && event.turnId) {
+      this.hasConversationUserMessage = true;
+    }
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

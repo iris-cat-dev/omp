@@ -446,6 +446,7 @@ export const ko: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "빠른 모드가 켜졌습니다",
       fastModeDisabled: "빠른 모드가 꺼졌습니다",
+      modelChanged: "{{model}}(으)로 전환했습니다",
     },
     question: {
       submit: "제출",

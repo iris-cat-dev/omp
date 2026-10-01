@@ -28,6 +28,28 @@ describe("shared messages stream parsing", () => {
     expect(parsed.payload.event).toMatchObject({ item });
   });
 
+  it("keeps the selected model id on a model change timeline notice", () => {
+    const item = { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" };
+    const message = {
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-10-01T10:00:00.000Z",
+        event: { type: "timeline", provider: "omp", item },
+      },
+    };
+    expect(AgentStreamMessageSchema.parse(message).payload.event).toMatchObject({ item });
+    expect(
+      AgentStreamMessageSchema.safeParse({
+        ...message,
+        payload: {
+          ...message.payload,
+          event: { ...message.payload.event, item: { type: "system_notice", notice: "model_changed" } },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("parses a full timeline prompt index response", () => {
     const parsed = AgentTimelineListPromptsResponseMessageSchema.parse({
       type: "agent.timeline.list_prompts.response",

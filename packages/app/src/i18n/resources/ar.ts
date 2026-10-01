@@ -445,6 +445,7 @@ export const ar: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "تم تفعيل الوضع السريع",
       fastModeDisabled: "تم إيقاف الوضع السريع",
+      modelChanged: "تم التبديل إلى {{model}}",
     },
     question: {
       submit: "يُقدِّم",

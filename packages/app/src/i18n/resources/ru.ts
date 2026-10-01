@@ -457,6 +457,7 @@ export const ru: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Быстрый режим включён",
       fastModeDisabled: "Быстрый режим выключен",
+      modelChanged: "Переключено на {{model}}",
     },
     question: {
       submit: "Отправить",

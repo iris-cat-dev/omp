@@ -74,13 +74,15 @@ GIF, WebP, and SVG files, rather than showing the binary-file placeholder.
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.
 
-## Fast mode feedback
+## Conversation setting feedback
 
 Changing Fast mode in an existing conversation adds a system notice after OMP confirms the
-state changed. Notices use centered, muted text with an information icon and separator lines,
-not user or assistant message bubbles. They remain in conversation history after reloading
-and are not sent to the model. Failed requests, unchanged settings, and initial draft
-preferences do not add switch notices.
+state changed. Switching models adds the same kind of notice with the selected model ID,
+but only after the conversation has received a user message. Selecting a model before
+the first message does not add a notice. Notices use centered, muted text with an
+information icon and separator lines, not user or assistant message bubbles. They remain
+in conversation history after reloading and are not sent to the model. Failed requests,
+unchanged settings, and initial draft preferences do not add switch notices.
 
 ## Assistant turn statistics
 

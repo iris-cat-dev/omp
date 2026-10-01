@@ -470,6 +470,7 @@ export const en = {
     systemNotice: {
       fastModeEnabled: "Fast mode enabled",
       fastModeDisabled: "Fast mode disabled",
+      modelChanged: "Switched to {{model}}",
     },
     question: {
       submit: "Submit",

@@ -96,7 +96,8 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("system_notice"),
-    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
+    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled", "model_changed"]),
+    modelId: z.string().optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -343,6 +344,12 @@ function timelineBase(item: StreamItem) {
   };
 }
 
+function storedModelNoticeId(modelId?: string): { modelId?: string } {
+  return modelId === undefined ? {} : { modelId };
+}
+
+// The explicit timeline variants keep cached records compatible with their wire shapes.
+// eslint-disable-next-line complexity
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   const base = timelineBase(item);
   switch (item.kind) {
@@ -382,7 +389,12 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         message: item.message,
       };
     case "system_notice":
-      return { ...base, kind: item.kind, notice: item.notice };
+      return {
+        ...base,
+        kind: item.kind,
+        notice: item.notice,
+        ...storedModelNoticeId(item.modelId),
+      };
     case "compaction":
       return {
         ...base,
@@ -412,6 +424,8 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   }
 }
 
+// The explicit timeline variants keep cached records compatible with their wire shapes.
+// eslint-disable-next-line complexity
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   const base = {
     id: item.id,
@@ -456,7 +470,12 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         message: item.message,
       };
     case "system_notice":
-      return { ...base, kind: item.kind, notice: item.notice };
+      return {
+        ...base,
+        kind: item.kind,
+        notice: item.notice,
+        ...storedModelNoticeId(item.modelId),
+      };
     case "compaction":
       return {
         ...base,

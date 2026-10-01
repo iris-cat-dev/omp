@@ -448,6 +448,7 @@ export const ja: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "高速モードを有効にしました",
       fastModeDisabled: "高速モードを無効にしました",
+      modelChanged: "{{model}} に切り替えました",
     },
     question: {
       submit: "送信",

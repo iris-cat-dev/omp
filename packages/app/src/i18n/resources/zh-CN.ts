@@ -470,6 +470,7 @@ export const zhCN: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Fast 模式已开启",
       fastModeDisabled: "Fast 模式已关闭",
+      modelChanged: "已切换至 {{model}}",
     },
     question: {
       submit: "提交",

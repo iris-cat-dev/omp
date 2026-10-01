@@ -448,6 +448,7 @@ export const ptBR: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Modo rápido ativado",
       fastModeDisabled: "Modo rápido desativado",
+      modelChanged: "Modelo alterado para {{model}}",
     },
     question: {
       submit: "Enviar",
