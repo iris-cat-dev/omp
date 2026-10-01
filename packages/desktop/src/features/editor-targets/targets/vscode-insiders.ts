@@ -47,7 +47,6 @@ export const vscodeInsidersTarget: EditorTarget = {
       id: this.id,
       label: "VS Code Insiders",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

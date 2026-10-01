@@ -22,7 +22,6 @@ export const traeTarget: EditorTarget = {
       id: this.id,
       label: "Trae",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

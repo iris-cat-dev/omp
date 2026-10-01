@@ -22,7 +22,6 @@ export const kiroTarget: EditorTarget = {
       id: this.id,
       label: "Kiro",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

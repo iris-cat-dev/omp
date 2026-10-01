@@ -9,7 +9,6 @@ export const aquaTarget: EditorTarget = {
       id: this.id,
       label: "Aqua",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
-import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
+import type { EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
@@ -75,10 +75,6 @@ class FakeEditorTargets implements EditorTargetRuntime {
     this.revealedPaths.push(targetPath);
   }
 
-  async loadIcon(fileName: string): Promise<EditorTargetIcon> {
-    return { kind: "image", dataUrl: `data:image/png;base64,${fileName}` };
-  }
-
   hasMacApplication(applicationName: string): boolean {
     return this.macApplications.has(applicationName);
   }
@@ -112,19 +108,16 @@ describe("editor target registry", () => {
         id: "vscode",
         label: "VS Code",
         kind: "editor",
-        icon: { kind: "image", dataUrl: "data:image/png;base64,vscode.png" },
       },
       {
         id: "webstorm",
         label: "WebStorm",
         kind: "editor",
-        icon: { kind: "image", dataUrl: "data:image/png;base64,webstorm.png" },
       },
       {
         id: "file-manager",
         label: "Files",
         kind: "file-manager",
-        icon: { kind: "symbol", name: "folder" },
       },
     ]);
   });
@@ -246,7 +239,6 @@ describe("editor target registry", () => {
       id: "android-studio",
       label: "Android Studio",
       kind: "editor",
-      icon: { kind: "image", dataUrl: "data:image/png;base64,android-studio.png" },
     });
 
     await openEditorTarget(
@@ -297,7 +289,6 @@ describe("editor target registry", () => {
       id: "explorer",
       label: "Explorer",
       kind: "file-manager",
-      icon: { kind: "symbol", name: "folder" },
     });
     await explorerTarget.launch({ workspacePath: "C:/repo" }, runtime);
     await explorerTarget.launch(

@@ -10,12 +10,11 @@ const launchFileManager: EditorTarget["launch"] = async (input, runtime) => {
 
 export const finderTarget: EditorTarget = {
   id: "finder",
-  async describe(runtime) {
+  async describe() {
     return {
       id: this.id,
       label: "Finder",
       kind: "file-manager",
-      icon: await runtime.loadIcon("finder.png"),
     };
   },
   async isInstalled(runtime) {
@@ -31,7 +30,6 @@ export const explorerTarget: EditorTarget = {
       id: this.id,
       label: "Explorer",
       kind: "file-manager",
-      icon: { kind: "symbol", name: "folder" },
     };
   },
   async isInstalled(runtime) {
@@ -47,7 +45,6 @@ export const fileManagerTarget: EditorTarget = {
       id: this.id,
       label: "Files",
       kind: "file-manager",
-      icon: { kind: "symbol", name: "folder" },
     };
   },
   async isInstalled(runtime) {

@@ -1,14 +1,9 @@
 export type EditorTargetKind = "editor" | "file-manager";
 
-export type EditorTargetIcon =
-  | { kind: "image"; dataUrl: string }
-  | { kind: "symbol"; name: "folder" | "terminal" };
-
 export interface EditorTargetDescriptor {
   id: string;
   label: string;
   kind: EditorTargetKind;
-  icon: EditorTargetIcon;
 }
 
 export interface EditorTargetLaunchInput {
@@ -28,7 +23,6 @@ export interface EditorTargetRuntime {
   spawnDetached(input: { command: string; args: readonly string[] }): Promise<void>;
   openPath(path: string): Promise<void>;
   revealPath(path: string): void;
-  loadIcon(fileName: string): Promise<EditorTargetIcon>;
   hasMacApplication(applicationName: string): boolean;
   openMacApplication(input: { applicationName: string; paths: readonly string[] }): Promise<void>;
 }

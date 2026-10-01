@@ -34,6 +34,9 @@ Images in assistant messages, including `image_gen` and `present_image` previews
 app window while preserving the image's aspect ratio. Use the close button or **Esc** to return
 to the conversation. Loading and failed images do not show the full-screen button.
 
+Workspace file tabs preview ICO (`.ico`, case-insensitive) icons as images, alongside PNG, JPEG,
+GIF, WebP, and SVG files, rather than showing the binary-file placeholder.
+
 ## Model catalog refresh
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.
@@ -99,6 +102,9 @@ continues to work on macOS. The editor uses the comment syntax of the current fi
 Right-click a file tab on the local desktop host to reveal the file in **Finder** (macOS),
 **Explorer** (Windows), or **Files** (Linux). The action follows the app's selected language
 and is unavailable for remote-host files and web clients.
+
+Desktop editor targets expose only their ID, label, and kind. Editor detection and opening
+do not depend on bundled editor icon images.
 
 ## Assistant message links
 

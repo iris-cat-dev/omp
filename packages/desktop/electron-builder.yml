@@ -54,8 +54,6 @@ asarUnpack:
 extraResources:
   - from: ../app/dist
     to: app-dist
-  - from: assets/editor-targets
-    to: editor-target-icons
   - from: remote-backend-dist
     to: remote-backend
 mac:

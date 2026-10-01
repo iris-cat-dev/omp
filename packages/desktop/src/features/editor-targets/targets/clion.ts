@@ -9,7 +9,6 @@ export const clionTarget: EditorTarget = {
       id: this.id,
       label: "CLion",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

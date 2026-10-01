@@ -36,12 +36,11 @@ function launchArgs(input: EditorTargetLaunchInput): string[] {
 
 export const vscodeTarget: EditorTarget = {
   id: "vscode",
-  async describe(runtime) {
+  async describe() {
     return {
       id: this.id,
       label: "VS Code",
       kind: "editor",
-      icon: await runtime.loadIcon("vscode.png"),
     };
   },
   async isInstalled(runtime) {

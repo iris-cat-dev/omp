@@ -9,7 +9,6 @@ export const riderTarget: EditorTarget = {
       id: this.id,
       label: "Rider",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

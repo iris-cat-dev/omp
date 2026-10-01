@@ -9,7 +9,6 @@ export const intellijIdeaTarget: EditorTarget = {
       id: this.id,
       label: "IntelliJ IDEA",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

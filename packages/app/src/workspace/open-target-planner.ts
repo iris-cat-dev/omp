@@ -17,7 +17,6 @@ export interface PlannedDesktopOpenTarget {
   id: string;
   label: string;
   editorId: string;
-  icon: DesktopOpenTarget["icon"];
   openInput: OpenDesktopTargetInput;
 }
 
@@ -78,7 +77,6 @@ function planDesktopOpenTargets(input: {
         id: target.id,
         label: target.label,
         editorId: target.id,
-        icon: target.icon,
         openInput: { editorId: target.id, workspacePath: input.workspaceDirectory },
       };
     }
@@ -87,7 +85,6 @@ function planDesktopOpenTargets(input: {
       id: target.id,
       label: target.label,
       editorId: target.id,
-      icon: target.icon,
       openInput: {
         editorId: target.id,
         workspacePath: input.workspaceDirectory,

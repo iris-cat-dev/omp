@@ -9,7 +9,6 @@ export const rubymineTarget: EditorTarget = {
       id: this.id,
       label: "RubyMine",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

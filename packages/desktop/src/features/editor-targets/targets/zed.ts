@@ -11,8 +11,8 @@ function location(input: EditorTargetLaunchInput): string {
 
 export const zedTarget: EditorTarget = {
   id: "zed",
-  async describe(runtime) {
-    return { id: this.id, label: "Zed", kind: "editor", icon: await runtime.loadIcon("zed.png") };
+  async describe() {
+    return { id: this.id, label: "Zed", kind: "editor" };
   },
   async isInstalled(runtime) {
     return runtime.resolveCommand(COMMANDS) !== null || runtime.hasMacApplication("Zed");

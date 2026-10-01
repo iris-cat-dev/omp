@@ -1,12 +1,11 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync as nodeExistsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import os from "node:os";
-import path, { posix, win32 } from "node:path";
-import { app, shell } from "electron";
+import { posix, win32 } from "node:path";
+import { shell } from "electron";
 
-import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
+import type { EditorTargetRuntime } from "./target.js";
 
 interface SpawnedProcess {
   once(event: "error", handler: (error: Error) => void): SpawnedProcess;
@@ -27,7 +26,6 @@ export interface EditorTargetRuntimeOptions {
   spawn?: (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
   openPath?: (path: string) => Promise<string>;
   revealPath?: (path: string) => void;
-  loadIcon?: (fileName: string) => Promise<EditorTargetIcon>;
   homeDirectory?: string;
 }
 
@@ -111,18 +109,6 @@ function spawnProcess(command: string, args: string[], options: SpawnOptions): S
   return nodeSpawn(command, args, options) as ChildProcess as SpawnedProcess;
 }
 
-function iconPath(fileName: string): string {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, "editor-target-icons", fileName);
-  }
-  return path.resolve(__dirname, "../../../assets/editor-targets", fileName);
-}
-
-async function loadBundledIcon(fileName: string): Promise<EditorTargetIcon> {
-  const bytes = await readFile(iconPath(fileName));
-  return { kind: "image", dataUrl: `data:image/png;base64,${bytes.toString("base64")}` };
-}
-
 export function createEditorTargetRuntime(
   options: EditorTargetRuntimeOptions = {},
 ): EditorTargetRuntime {
@@ -132,7 +118,6 @@ export function createEditorTargetRuntime(
   const spawn = options.spawn ?? spawnProcess;
   const openPath = options.openPath ?? ((targetPath) => shell.openPath(targetPath));
   const revealPath = options.revealPath ?? ((targetPath) => shell.showItemInFolder(targetPath));
-  const loadIcon = options.loadIcon ?? loadBundledIcon;
   const homeDirectory = options.homeDirectory ?? os.homedir();
 
   return {
@@ -170,7 +155,6 @@ export function createEditorTargetRuntime(
       if (errorMessage) throw new Error(errorMessage);
     },
     revealPath,
-    loadIcon,
     hasMacApplication(applicationName) {
       if (platform !== "darwin") return false;
       return [

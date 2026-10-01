@@ -4,12 +4,11 @@ const COMMANDS = ["webstorm", "webstorm64"] as const;
 
 export const webstormTarget: EditorTarget = {
   id: "webstorm",
-  async describe(runtime) {
+  async describe() {
     return {
       id: this.id,
       label: "WebStorm",
       kind: "editor",
-      icon: await runtime.loadIcon("webstorm.png"),
     };
   },
   async isInstalled(runtime) {

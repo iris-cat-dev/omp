@@ -38,12 +38,11 @@ function launchArgs(input: EditorTargetLaunchInput): string[] {
 
 export const cursorTarget: EditorTarget = {
   id: "cursor",
-  async describe(runtime) {
+  async describe() {
     return {
       id: this.id,
       label: "Cursor",
       kind: "editor",
-      icon: await runtime.loadIcon("cursor.png"),
     };
   },
   async isInstalled(runtime) {

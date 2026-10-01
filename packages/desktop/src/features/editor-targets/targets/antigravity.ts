@@ -17,12 +17,11 @@ function launchArgs(input: EditorTargetLaunchInput): string[] {
 
 export const antigravityTarget: EditorTarget = {
   id: "antigravity",
-  async describe(runtime) {
+  async describe() {
     return {
       id: this.id,
       label: "Antigravity",
       kind: "editor",
-      icon: await runtime.loadIcon("antigravity.png"),
     };
   },
   async isInstalled(runtime) {

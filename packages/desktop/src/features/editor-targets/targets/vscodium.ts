@@ -41,7 +41,6 @@ export const vscodiumTarget: EditorTarget = {
       id: this.id,
       label: "VSCodium",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

@@ -192,6 +192,41 @@ describe("file explorer service", () => {
     }
   });
 
+  it("reads ICO files as images through both preview and streaming APIs", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+    // A 1×1, 32-bit DIB icon with an opaque red pixel and an empty AND mask.
+    const icon = Buffer.from(
+      "00000100010001010000010020003000000016000000280000000100000002000000010020000000000004000000000000000000000000000000000000000000ffff00000000",
+      "hex",
+    );
+
+    try {
+      await writeFile(path.join(root, "icon.ICO"), icon);
+      const result = await readExplorerFile({ root, relativePath: "icon.ICO" });
+      expect(result).toMatchObject({
+        kind: "image",
+        encoding: "base64",
+        mimeType: "image/x-icon",
+        content: icon.toString("base64"),
+        size: icon.length,
+      });
+
+      await streamExplorerFile({ root, relativePath: "icon.ICO" }, async (file) => {
+        expect(file).toMatchObject({
+          kind: "image",
+          encoding: "binary",
+          mimeType: "image/x-icon",
+          size: icon.length,
+        });
+        const chunks: Buffer[] = [];
+        for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
+        expect(Buffer.concat(chunks)).toEqual(icon);
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies files with null bytes as binary", async () => {
     const root = await createTempDir("paseo-file-explorer-");
 

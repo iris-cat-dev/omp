@@ -6,13 +6,11 @@ const desktopTargets = [
     id: "vscode",
     label: "VS Code",
     kind: "editor" as const,
-    icon: { kind: "symbol" as const, name: "terminal" as const },
   },
   {
     id: "finder",
     label: "Finder",
     kind: "file-manager" as const,
-    icon: { kind: "symbol" as const, name: "folder" as const },
   },
 ];
 
@@ -93,7 +91,6 @@ describe("planWorkspaceOpenTargets", () => {
           id: "script:open-in-nvim",
           label: "Open in Neovim",
           kind: "editor",
-          icon: { kind: "symbol", name: "terminal" },
         },
       ],
       canUseDesktopBridge: true,
@@ -106,7 +103,6 @@ describe("planWorkspaceOpenTargets", () => {
         id: "script:open-in-nvim",
         label: "Open in Neovim",
         editorId: "script:open-in-nvim",
-        icon: { kind: "symbol", name: "terminal" },
         openInput: {
           editorId: "script:open-in-nvim",
           workspacePath: "/repo",

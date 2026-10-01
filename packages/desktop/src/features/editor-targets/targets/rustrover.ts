@@ -9,7 +9,6 @@ export const rustroverTarget: EditorTarget = {
       id: this.id,
       label: "RustRover",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

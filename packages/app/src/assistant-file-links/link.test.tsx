@@ -55,7 +55,6 @@ const mocks = vi.hoisted(() => ({
       id: "finder",
       label: "Finder",
       kind: "file-manager" as const,
-      icon: { kind: "symbol" as const, name: "folder" as const },
     },
   ]),
   openTarget: vi.fn(async () => {}),

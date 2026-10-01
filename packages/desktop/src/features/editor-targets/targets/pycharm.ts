@@ -9,7 +9,6 @@ export const pycharmTarget: EditorTarget = {
       id: this.id,
       label: "PyCharm",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {

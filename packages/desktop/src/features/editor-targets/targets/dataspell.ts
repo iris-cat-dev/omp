@@ -9,7 +9,6 @@ export const dataspellTarget: EditorTarget = {
       id: this.id,
       label: "DataSpell",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
     };
   },
   async isInstalled(runtime) {
