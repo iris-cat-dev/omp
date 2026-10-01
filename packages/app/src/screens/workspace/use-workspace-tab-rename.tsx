@@ -18,10 +18,38 @@ interface RenamingTabState {
   currentTitle: string;
 }
 
+function resolveAgentRenamingTab(serverId: string, agentId: string): RenamingTabState {
+  const session = useSessionStore.getState().sessions[serverId];
+  if (!session) {
+    return { kind: "agent", id: agentId, currentTitle: "" };
+  }
+  const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId) ?? null;
+  const workspaceId = normalizeWorkspaceOpaqueId(agent?.workspaceId);
+  const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+    workspaces: session.workspaces,
+    workspaceId,
+  });
+  const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
+  if (
+    workspaceId &&
+    pickWorkspacePrimaryAgentId(
+      [...session.agentDetails.values(), ...session.agents.values()],
+      workspaceId,
+    ) === agentId &&
+    workspace
+  ) {
+    return {
+      kind: "workspace",
+      id: workspaceId,
+      currentTitle: workspace.title ?? workspace.name,
+    };
+  }
+  return { kind: "agent", id: agentId, currentTitle: agent?.title ?? "" };
+}
+
 interface UseWorkspaceTabRenameInput {
   client: DaemonClient | null;
   normalizedServerId: string;
-  workspaceId: string;
   queryClient: QueryClient;
   terminalsData: ListTerminalsResponse["payload"] | undefined;
   terminalsQueryKey: readonly unknown[];
@@ -37,8 +65,7 @@ interface UseWorkspaceTabRenameResult {
 export function useWorkspaceTabRename(
   input: UseWorkspaceTabRenameInput,
 ): UseWorkspaceTabRenameResult {
-  const { client, normalizedServerId, workspaceId, queryClient, terminalsData, terminalsQueryKey } =
-    input;
+  const { client, normalizedServerId, queryClient, terminalsData, terminalsQueryKey } = input;
   const { t } = useTranslation();
   const [renamingTab, setRenamingTab] = useState<RenamingTabState | null>(null);
 
@@ -52,34 +79,10 @@ export function useWorkspaceTabRename(
         return;
       }
       if (tab.target.kind === "agent") {
-        const { agentId } = tab.target;
-        const session = useSessionStore.getState().sessions[normalizedServerId];
-        const agent = session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null;
-        const workspaceKey = resolveWorkspaceMapKeyByIdentity({
-          workspaces: session?.workspaces,
-          workspaceId,
-        });
-        const workspace = workspaceKey ? session?.workspaces.get(workspaceKey) : null;
-        if (
-          agent &&
-          normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId &&
-          pickWorkspacePrimaryAgentId(
-            [...(session?.agentDetails.values() ?? []), ...(session?.agents.values() ?? [])],
-            workspaceId,
-          ) === agentId &&
-          workspace
-        ) {
-          setRenamingTab({
-            kind: "workspace",
-            id: workspaceId,
-            currentTitle: workspace.title ?? workspace.name,
-          });
-          return;
-        }
-        setRenamingTab({ kind: "agent", id: agentId, currentTitle: agent?.title ?? "" });
+        setRenamingTab(resolveAgentRenamingTab(normalizedServerId, tab.target.agentId));
       }
     },
-    [normalizedServerId, workspaceId, terminalsData],
+    [normalizedServerId, terminalsData],
   );
 
   const handleRenameModalSubmit = useCallback(
@@ -165,12 +168,12 @@ export function WorkspaceTabRenameModal({
   onSubmit,
 }: WorkspaceTabRenameModalProps) {
   const { t } = useTranslation();
-  const title =
-    renamingTab?.kind === "terminal"
-      ? t("workspace.tabs.menu.renameTerminal")
-      : renamingTab?.kind === "workspace"
-        ? t("sidebar.workspace.rename.title")
-        : t("workspace.tabs.menu.renameAgent");
+  let title = t("workspace.tabs.menu.renameAgent");
+  if (renamingTab?.kind === "terminal") {
+    title = t("workspace.tabs.menu.renameTerminal");
+  } else if (renamingTab?.kind === "workspace") {
+    title = t("sidebar.workspace.rename.title");
+  }
   const initialValue = renamingTab?.currentTitle ?? "";
   const testID = renamingTab
     ? `workspace-tab-rename-modal-${renamingTab.kind}-${renamingTab.id}`

@@ -37,7 +37,6 @@ import {
 } from "@/composer/pill-styles";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
-import { getProviderIcon } from "@/components/provider-icons";
 import {
   ToastViewport,
   useToastHost,
@@ -72,13 +71,10 @@ import {
   type ReconnectToastState,
 } from "@/panels/reconnect-toast-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import type { PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
-import {
-  resolveAgentTabPrimaryLabel,
-  resolveSidebarWorkspacePrimaryLabel,
-} from "@/components/sidebar/sidebar-workspace-title";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
+import { useAgentPanelDescriptor } from "@/panels/agent-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
   getHostRuntimeConnectionStatusSince,
@@ -110,11 +106,9 @@ import {
   type Agent,
   useSessionStore,
 } from "@/stores/session-store";
-import { useAppSettings } from "@/hooks/use-settings";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openSidePanelView } from "@/workspace-tabs/side-panel";
-import { pickWorkspacePrimaryAgentId } from "@/subagents/policies";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem, TodoEntry } from "@/types/stream";
@@ -124,13 +118,8 @@ import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
 import { runQuickAsk } from "@/quick-ask/run-quick-ask";
-import {
-  normalizeWorkspaceOpaqueId,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
 
 function shouldPollBackgroundProcesses(hasComposer: boolean, workspaceFocused: boolean): boolean {
   return hasComposer && workspaceFocused;
@@ -283,17 +272,6 @@ function renderChatAgentNonReadyView(args: {
   return null;
 }
 
-function formatProviderLabel(provider: Agent["provider"]): string {
-  if (!provider) {
-    return "Agent";
-  }
-  return provider
-    .split(/[-_\s]+/)
-    .filter((part) => part.length > 0)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function shouldStoreFetchedAgentInActiveDirectory(agent: Agent): boolean {
   return !agent.archivedAt && Boolean(agent.projectPlacement);
 }
@@ -343,90 +321,6 @@ function storeFetchedAgentDetail(input: {
   });
 
   return hydrated;
-}
-
-function resolveAgentDescriptorIdentity(agent: Agent | null) {
-  return {
-    provider: agent?.provider ?? "codex",
-    title: agent?.title ?? null,
-    status: agent?.status ?? null,
-    pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-    requiresAttention: agent?.requiresAttention ?? false,
-    attentionReason: agent?.attentionReason ?? null,
-  };
-}
-
-function useAgentPanelDescriptor(
-  target: { kind: "agent"; agentId: string },
-  context: { serverId: string; workspaceId: string },
-): PanelDescriptor {
-  const { t } = useTranslation();
-  const {
-    settings: { workspaceTitleSource },
-  } = useAppSettings();
-  const descriptorState = useSessionStore(
-    useShallow((state) => {
-      const session = state.sessions[context.serverId];
-      const agent =
-        session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
-      const isPrimaryAgent = Boolean(
-        agent &&
-        normalizeWorkspaceOpaqueId(agent.workspaceId) === context.workspaceId &&
-        pickWorkspacePrimaryAgentId(
-          [...(session?.agentDetails.values() ?? []), ...(session?.agents.values() ?? [])],
-          context.workspaceId,
-        ) === target.agentId,
-      );
-      const workspaceKey = isPrimaryAgent
-        ? resolveWorkspaceMapKeyByIdentity({
-            workspaces: session?.workspaces,
-            workspaceId: context.workspaceId,
-          })
-        : null;
-      const workspace = workspaceKey ? session?.workspaces.get(workspaceKey) : null;
-      return {
-        ...resolveAgentDescriptorIdentity(agent),
-        isPrimaryAgent,
-        workspaceName: workspace?.title ?? workspace?.name ?? null,
-        currentBranch: workspace?.gitRuntime?.currentBranch ?? null,
-        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
-      };
-    }),
-  );
-  const provider = descriptorState.provider;
-  const currentBranch = descriptorState.currentBranch?.trim();
-  const workspaceLabel = descriptorState.workspaceName
-    ? resolveSidebarWorkspacePrimaryLabel({
-        workspace: {
-          name: descriptorState.workspaceName,
-          currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
-        },
-        workspaceTitleSource,
-      })
-    : null;
-  const label = resolveAgentTabPrimaryLabel({
-    agentTitle: descriptorState.title,
-    isPrimaryAgent: descriptorState.isPrimaryAgent,
-    workspaceLabel,
-    newConversationLabel: t("newWorkspace.title"),
-  });
-  const icon = getProviderIcon(provider);
-
-  return {
-    label: label ?? "",
-    subtitle: `${formatProviderLabel(provider)} agent`,
-    tooltip: label ?? `${formatProviderLabel(provider)} agent`,
-    titleState: label ? "ready" : "loading",
-    icon,
-    statusBucket: descriptorState.status
-      ? deriveSidebarStateBucket({
-          status: descriptorState.isTurnActive ? "running" : descriptorState.status,
-          pendingPermissionCount: descriptorState.pendingPermissionCount,
-          requiresAttention: descriptorState.requiresAttention,
-          attentionReason: descriptorState.attentionReason,
-        })
-      : null,
-  };
 }
 
 function AgentPanel() {
