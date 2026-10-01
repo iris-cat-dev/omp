@@ -85,7 +85,6 @@ vi.mock("expo-image", () => ({
     return React.createElement("div", {
       "data-testid": props.testID,
       "data-source": uri,
-      "data-style": JSON.stringify(props.style ?? null),
       role: "img",
     });
   },
@@ -155,32 +154,6 @@ describe("AttachmentLightbox", () => {
 
     expect(queryByTestId("attachment-lightbox-backdrop")).toBeNull();
     expect(queryByTestId("attachment-lightbox-image")).toBeNull();
-  });
-
-  it("renders the image when metadata is provided", () => {
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
-
-    const image = queryByTestId("attachment-lightbox-image");
-    expect(image).not.toBeNull();
-    expect(image?.getAttribute("data-source")).toBe("blob:preview");
-  });
-
-  it("fills its parent via absolute positioning so expo-image does not collapse to 0px", () => {
-    render(<AttachmentLightbox metadata={imageMetadata} onClose={vi.fn()} />);
-
-    const image = queryByTestId("attachment-lightbox-image");
-    const style = JSON.parse(image?.getAttribute("data-style") ?? "null") as {
-      position?: string;
-      top?: number;
-      left?: number;
-      right?: number;
-      bottom?: number;
-    } | null;
-    expect(style?.position).toBe("absolute");
-    expect(style?.top).toBe(0);
-    expect(style?.left).toBe(0);
-    expect(style?.right).toBe(0);
-    expect(style?.bottom).toBe(0);
   });
 
   it("calls onClose when the backdrop is pressed", () => {

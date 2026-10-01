@@ -46,6 +46,7 @@ import {
   TriangleAlertIcon,
   Scissors,
   FileSymlink,
+  Maximize2,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -107,7 +108,7 @@ import {
   AttachmentLabel,
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
-import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { AttachmentLightbox, ImageLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@omp-desktop/protocol/agent-types";
@@ -175,6 +176,7 @@ const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedMaximizeIcon = withUnistyles(Maximize2);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -767,6 +769,19 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     height: "100%",
   },
+  imageFullscreenButton: {
+    position: "absolute",
+    top: theme.spacing[2],
+    right: theme.spacing[2],
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
   imageLoadingOverlay: {
     position: "absolute",
     top: 0,
@@ -809,6 +824,15 @@ export function AssistantMarkdownImage({
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const openViewer = useCallback(() => setViewerOpen(true), []);
+  const closeViewer = useCallback(() => setViewerOpen(false), []);
+
+  useEffect(() => {
+    setViewerOpen(false);
+  }, [source, occurrenceKey]);
+
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? 16 : 0,
@@ -870,12 +894,13 @@ export function AssistantMarkdownImage({
 
   return (
     <View style={frameStyle}>
-      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
+      <View style={surfaceStyle}>
         <Image
           ref={binding.onRef}
           source={imageSource}
           style={assistantMessageStylesheet.image}
           resizeMode="contain"
+          accessibilityLabel={alt}
           onLoad={binding.onLoad}
           onError={binding.onError}
         />
@@ -884,7 +909,22 @@ export function AssistantMarkdownImage({
             <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
           </View>
         ) : null}
+        {image.status === "loaded" ? (
+          <Pressable
+            testID="assistant-image-fullscreen"
+            accessibilityRole="button"
+            accessibilityLabel={t("message.attachments.viewFullscreen")}
+            hitSlop={4}
+            onPress={openViewer}
+            style={assistantMessageStylesheet.imageFullscreenButton}
+          >
+            <ThemedMaximizeIcon size={16} uniProps={foregroundColorMapping} />
+          </Pressable>
+        ) : null}
       </View>
+      {viewerOpen && image.status === "loaded" ? (
+        <ImageLightbox uri={imageUri} alt={alt} onClose={closeViewer} />
+      ) : null}
     </View>
   );
 }

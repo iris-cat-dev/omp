@@ -429,6 +429,7 @@ export const fr: TranslationResources = {
     attachments: {
       dismissImage: "Ignorer l'image",
       closeImage: "Fermer l'image",
+      viewFullscreen: "Afficher en plein écran",
       imageLoadFailed: "Impossible de charger l'image",
       imageUnavailable: "Image indisponible",
       imagePreviewUnavailable: "Aperçu de l'image indisponible.",

@@ -429,6 +429,7 @@ export const ja: TranslationResources = {
     attachments: {
       dismissImage: "画像を閉じる",
       closeImage: "画像を閉じる",
+      viewFullscreen: "全画面で表示",
       imageLoadFailed: "画像を読み込めませんでした",
       imageUnavailable: "画像が利用できません",
       imagePreviewUnavailable: "画像プレビューは利用できません。",

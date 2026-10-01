@@ -27,6 +27,13 @@ reference by its list position when the images have different roles, such as sub
 or style. Calls with references use the provider's image-edit endpoint; text-only calls continue to
 use image generation.
 
+## Image previews
+
+Images in assistant messages, including `image_gen` and `present_image` previews, show a
+**View full screen** button in the image's top-right corner once loaded. The preview fills the
+app window while preserving the image's aspect ratio. Use the close button or **Esc** to return
+to the conversation. Loading and failed images do not show the full-screen button.
+
 ## Model catalog refresh
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.

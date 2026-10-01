@@ -15,19 +15,29 @@ interface AttachmentLightboxProps {
   onClose: () => void;
 }
 
+interface ImageLightboxProps {
+  uri: string | null;
+  alt?: string;
+  onClose: () => void;
+}
+
 export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
+  const uri = useAttachmentPreviewUrl(metadata);
+  return metadata ? <ImageLightbox uri={uri} onClose={onClose} /> : null;
+}
+
+export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const url = useAttachmentPreviewUrl(metadata);
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
     setErrored(false);
-  }, [metadata?.id]);
+  }, [uri]);
 
   useEffect(() => {
-    if (!isWeb || !metadata) return;
+    if (!isWeb) return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -37,7 +47,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [metadata, onClose]);
+  }, [onClose]);
 
   const closeButtonRowStyle = useMemo(
     () => [
@@ -55,13 +65,9 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
 
   const handleImageError = useCallback(() => setErrored(true), []);
   const noopPress = useCallback(() => {}, []);
-  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
+  const imageSource = useMemo(() => ({ uri: uri ?? "" }), [uri]);
 
-  if (!metadata) {
-    return null;
-  }
-
-  const hasError = errored || !url;
+  const hasError = errored || !uri;
 
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
@@ -83,6 +89,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
                   <ExpoImage
                     testID="attachment-lightbox-image"
                     source={imageSource}
+                    accessibilityLabel={alt}
                     contentFit="contain"
                     onError={handleImageError}
                     style={imageFillStyle}
@@ -155,8 +162,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     width: "100%",
     alignSelf: "center",
-    maxWidth: 960,
-    maxHeight: 640,
   },
   errorText: {
     color: theme.colors.foregroundMuted,
