@@ -66,4 +66,68 @@ describe("ProviderSnapshotManager OMP management", () => {
       manager.destroy();
     }
   });
+  test("refreshes reset cards and usage after consumption instead of reusing a pre-consumption read", async () => {
+    const stale = Promise.withResolvers<OmpProviderManagement>();
+    const before: OmpProviderManagement = {
+      configPath: "/tmp/models.yml",
+      configYaml: "providers: {}\n",
+      providerModels: [],
+      loginProviders: [
+        {
+          id: "openai-codex",
+          name: "Codex",
+          available: true,
+          authenticated: true,
+          accounts: [
+            {
+              credentialId: 1,
+              quota: {
+                status: "available",
+                weeklyUsedPct: 100,
+                resetCredits: { status: "available", availableCount: 1, credits: [] },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const after: OmpProviderManagement = {
+      ...before,
+      loginProviders: [
+        {
+          ...before.loginProviders[0]!,
+          accounts: [
+            {
+              credentialId: 1,
+              quota: {
+                status: "available",
+                weeklyUsedPct: 0,
+                resetCredits: { status: "available", availableCount: 0, credits: [] },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    let consumed = false;
+    const client = createOmpClient(async () => (consumed ? after : stale.promise));
+    client.consumeOmpCodexResetCredit = async () => {
+      consumed = true;
+      return { code: "reset", windowsReset: 2 };
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { omp: client },
+    });
+    try {
+      const previousRead = manager.getOmpProviderManagement();
+      await manager.consumeOmpCodexResetCredit(1, "card", "stable-request");
+      expect(await manager.getOmpProviderManagement()).toEqual(after);
+      stale.resolve(before);
+      expect(await previousRead).toEqual(before);
+      expect(await manager.getOmpProviderManagement()).toEqual(after);
+    } finally {
+      manager.destroy();
+    }
+  });
 });

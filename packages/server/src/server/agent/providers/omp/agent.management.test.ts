@@ -16,6 +16,8 @@ import {
   OmpAgentClient,
 } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
+import { CODEX_USAGE_ENDPOINT } from "./codex-account-quota.js";
+import { CODEX_RESET_CREDITS_ENDPOINT } from "./codex-reset-credits.js";
 
 const tempDirs: string[] = [];
 
@@ -256,9 +258,9 @@ providers:
     });
     expect(JSON.stringify(management)).not.toContain("secret-a");
     expect(JSON.stringify(management)).not.toContain("secret-b");
-    expect(quotaFetch).toHaveBeenCalledTimes(2);
     expect(
       quotaFetch.mock.calls
+        .filter(([url]) => String(url) === CODEX_USAGE_ENDPOINT)
         .map(([, init]) => new Headers(init?.headers).get("ChatGPT-Account-Id"))
         .sort(),
     ).toEqual(["acct-a", "acct-b"]);
@@ -351,7 +353,11 @@ providers:
       fiveHourUsedPct: 25,
       weeklyUsedPct: 10,
     });
-    expect(quotaFetch).toHaveBeenCalledTimes(1);
+    expect(
+      quotaFetch.mock.calls.every(
+        ([, init]) => new Headers(init?.headers).get("Authorization") === "Bearer refreshed-token",
+      ),
+    ).toBe(true);
   });
   test("persists account order without overriding OMP automatic selection", async () => {
     const { agentDir, client, runtime } = await createClient();
@@ -727,6 +733,82 @@ providers:
     });
   });
 
+  test("consumes only the selected active Codex credential and blocks concurrent account resets", async () => {
+    const posted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<Response>();
+    const requests: Array<{ account: string | null; method: string }> = [];
+    const quotaFetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(_url)).toBe(
+        init?.method === "POST"
+          ? `${CODEX_RESET_CREDITS_ENDPOINT}/consume`
+          : CODEX_RESET_CREDITS_ENDPOINT,
+      );
+      requests.push({
+        account: new Headers(init?.headers).get("ChatGPT-Account-Id"),
+        method: init?.method ?? "GET",
+      });
+      if (init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          credit_id: "selected",
+          redeem_request_id: "stable-request",
+        });
+        posted.resolve();
+        return release.promise;
+      }
+      return new Response(
+        JSON.stringify({
+          available_count: 1,
+          credits: [
+            {
+              id: "selected",
+              reset_type: "codex_rate_limits",
+              status: "available",
+              granted_at: "2026-09-01T00:00:00Z",
+              expires_at: null,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    const { agentDir, client } = await createClient({ quotaFetch });
+    const database = new DatabaseSync(path.join(agentDir, "agent.db"));
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (1, 'openai-codex', 'oauth', '{"access":"first","accountId":"other-account"}', NULL, NULL),
+        (2, 'openai-codex', 'oauth', '{"access":"selected","accountId":"selected-account"}', NULL, NULL),
+        (3, 'openai-codex', 'oauth', '{"access":"disabled"}', 'expired', NULL),
+        (4, 'anthropic', 'oauth', '{"access":"not-codex"}', NULL, NULL);
+    `);
+    database.close();
+    await expect(
+      client.consumeOmpCodexResetCredit(3, "selected", "invalid-disabled"),
+    ).rejects.toThrow("unavailable");
+    await expect(
+      client.consumeOmpCodexResetCredit(4, "selected", "invalid-provider"),
+    ).rejects.toThrow("unavailable");
+    const first = client.consumeOmpCodexResetCredit(2, "selected", "stable-request");
+    await posted.promise;
+    const duplicate = client.consumeOmpCodexResetCredit(2, "selected", "stable-request");
+    await expect(
+      client.consumeOmpCodexResetCredit(2, "selected", "different-request"),
+    ).rejects.toThrow("already being consumed");
+    release.resolve(
+      new Response(JSON.stringify({ code: "reset", windows_reset: 2 }), { status: 200 }),
+    );
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { code: "reset", windowsReset: 2 },
+      { code: "reset", windowsReset: 2 },
+    ]);
+    expect(requests).toEqual([
+      { account: "selected-account", method: "GET" },
+      { account: "selected-account", method: "POST" },
+    ]);
+  });
   test("rolls back a models.yml rejected by OMP", async () => {
     const { agentDir, client, runtime } = await createClient();
     const configPath = path.join(agentDir, "models.yml");

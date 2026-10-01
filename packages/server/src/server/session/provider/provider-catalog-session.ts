@@ -542,6 +542,33 @@ export class ProviderCatalogSession {
     }
   }
 
+  async handleOmpCodexResetCreditConsumeRequest(
+    msg: Extract<SessionInboundMessage, { type: "omp.codex.reset_credit.consume.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.providerSnapshotManager.consumeOmpCodexResetCredit(
+        msg.credentialId,
+        msg.creditId,
+        msg.redeemRequestId,
+      );
+      this.host.emit({
+        type: "omp.codex.reset_credit.consume.response",
+        payload: { ...result, requestId: msg.requestId },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: err.message,
+          code: "omp_codex_reset_credit_consume_failed",
+        },
+      });
+    }
+  }
+
   async handleOmpProviderManagementSaveRequest(
     msg: Extract<SessionInboundMessage, { type: "omp.provider.management.save.request" }>,
   ): Promise<void> {

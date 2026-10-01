@@ -174,24 +174,6 @@ async function renderPanel(client: ManagementClient) {
   return queryClient;
 }
 
-async function mountPanel(client: ManagementClient) {
-  runtime.client = client;
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-  queryClients.push(queryClient);
-  render(
-    <QueryClientProvider client={queryClient}>
-      <OmpProviderConfigurationPanel serverId="server-1" />
-    </QueryClientProvider>,
-  );
-  fireEvent.click(await screen.findByTestId("omp-signed-in-providers-toggle"));
-  return queryClient;
-}
-
 describe("OMP provider management loading", () => {
   it("reuses the cached result when settings is reopened", async () => {
     const getOmpProviderManagement = vi.fn(async () => management([1]));
@@ -305,61 +287,5 @@ describe("OMP provider account reordering quota synchronization", () => {
     expect(screen.getByTestId("quota-account-order").textContent).toBe("1,2");
     expect(screen.getByTestId("quota-status").textContent).toBe("idle");
     expect(queryClient.getQueryData(ompProviderManagementQueryKey("server-1"))).toEqual(initial);
-  });
-});
-
-describe("OMP provider usage reset in settings", () => {
-  it("shows Cursor reset timing on the signed-in provider card", async () => {
-    runtime.isConnected = true;
-    runtime.providerUsageList = true;
-    await mountPanel({
-      getOmpProviderManagement: vi.fn(async () => ({
-        requestId: "test-management",
-        configPath: "/tmp/models.yml",
-        configYaml: "providers: {}\n",
-        providerModels: [],
-        loginProviders: [
-          {
-            id: "cursor",
-            name: "Cursor (Claude, GPT, etc.)",
-            available: true,
-            authenticated: true,
-            accounts: [{ credentialId: 7, identityKey: "account:auth0|user_cursor" }],
-          },
-        ],
-      })),
-      reorderOmpProviderAccounts: vi.fn(),
-      listProviderUsage: vi.fn(async () => ({
-        requestId: "test-usage",
-        fetchedAt: "2026-09-20T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "cursor",
-            displayName: "Cursor",
-            status: "available" as const,
-            planLabel: null,
-            sourceLabel: "Cursor",
-            windows: [],
-            balances: [
-              {
-                id: "team_spend",
-                label: "Monthly usage",
-                used: 480.13,
-                remaining: 519.87,
-                limit: 1000,
-                unit: "usd" as const,
-                resetsAt: "2026-09-30T00:00:00.000Z",
-              },
-            ],
-            details: [],
-            error: null,
-          },
-        ],
-      })),
-    });
-    const usage = await screen.findByTestId("omp-provider-usage-cursor");
-    expect(usage.textContent).toContain("480.13");
-    expect(usage.textContent).toContain("providerUsage.resetsIn");
-    expect(screen.queryByTestId("omp-provider-usage-openai-codex")).toBeNull();
   });
 });

@@ -92,6 +92,7 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   OmpProviderManagementGetResponseMessage,
+  OmpCodexResetCreditConsumeResult,
   OmpProviderManagementSaveResponseMessage,
   OmpSubagentSettingsGetResponseMessage,
   OmpSubagentSettingsUpdateResponseMessage,
@@ -3581,7 +3582,6 @@ export class DaemonClient {
         return parsed.data.payload;
       },
     });
-
   }
 
   // ============================================================================
@@ -4875,6 +4875,23 @@ export class DaemonClient {
       message: { type: "omp.provider.management.get.request" },
       responseType: "omp.provider.management.get.response",
       timeout: 180000,
+    });
+  }
+
+  async consumeOmpCodexResetCredit(
+    credentialId: number,
+    creditId: string,
+    redeemRequestId: string,
+  ): Promise<OmpCodexResetCreditConsumeResult> {
+    return this.sendCorrelatedSessionRequest({
+      message: {
+        type: "omp.codex.reset_credit.consume.request",
+        credentialId,
+        creditId,
+        redeemRequestId,
+      },
+      responseType: "omp.codex.reset_credit.consume.response",
+      timeout: 45_000,
     });
   }
 

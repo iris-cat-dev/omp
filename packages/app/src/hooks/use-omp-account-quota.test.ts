@@ -1,7 +1,12 @@
+import { QueryClient } from "@tanstack/react-query";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import { describe, expect, test, vi } from "vitest";
 
-import { fetchOmpAccountQuotaManagement } from "./use-omp-account-quota";
+import {
+  fetchOmpAccountQuotaManagement,
+  ompProviderManagementQueryKey,
+  refreshOmpAccountQuotaManagement,
+} from "./use-omp-account-quota";
 
 function management(quota?: { status: "available"; weeklyUsedPct: number }): OmpProviderManagement {
   return {
@@ -61,5 +66,33 @@ describe("fetchOmpAccountQuotaManagement", () => {
 
     expect(waitForRetry).not.toHaveBeenCalled();
     expect(getOmpProviderManagement).toHaveBeenCalledOnce();
+  });
+});
+
+describe("shared quota/cards refresh", () => {
+  test("discarding an older in-flight read prevents stale quota from overwriting a post-reset snapshot", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const older = Promise.withResolvers<OmpProviderManagement>();
+    const queryKey = ompProviderManagementQueryKey("test");
+    const stale = management({ status: "available", weeklyUsedPct: 100 });
+    const fresh = management({ status: "available", weeklyUsedPct: 0 });
+    const oldRead = queryClient
+      .fetchQuery({ queryKey, queryFn: () => older.promise })
+      .catch(() => undefined);
+    const getOmpProviderManagement = vi.fn(async () => fresh);
+    try {
+      await Promise.all([
+        refreshOmpAccountQuotaManagement(queryClient, { getOmpProviderManagement }, "test"),
+        refreshOmpAccountQuotaManagement(queryClient, { getOmpProviderManagement }, "test"),
+      ]);
+      older.resolve(stale);
+      await oldRead;
+      expect(queryClient.getQueryData(queryKey)).toEqual(fresh);
+      expect(getOmpProviderManagement).toHaveBeenCalledTimes(1);
+    } finally {
+      older.resolve(stale);
+      await queryClient.cancelQueries();
+      queryClient.clear();
+    }
   });
 });
