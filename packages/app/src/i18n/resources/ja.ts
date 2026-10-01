@@ -436,6 +436,10 @@ export const ja: TranslationResources = {
     activity: {
       details: "詳細",
     },
+    systemNotice: {
+      fastModeEnabled: "高速モードを有効にしました",
+      fastModeDisabled: "高速モードを無効にしました",
+    },
     question: {
       submit: "送信",
       next: "次へ",

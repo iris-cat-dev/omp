@@ -437,6 +437,10 @@ export const es: TranslationResources = {
     activity: {
       details: "Detalles",
     },
+    systemNotice: {
+      fastModeEnabled: "Modo rápido activado",
+      fastModeDisabled: "Modo rápido desactivado",
+    },
     question: {
       submit: "Entregar",
       next: "Siguiente",

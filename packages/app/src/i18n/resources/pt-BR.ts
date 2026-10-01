@@ -436,6 +436,10 @@ export const ptBR: TranslationResources = {
     activity: {
       details: "Detalhes",
     },
+    systemNotice: {
+      fastModeEnabled: "Modo rápido ativado",
+      fastModeDisabled: "Modo rápido desativado",
+    },
     question: {
       submit: "Enviar",
       next: "Próximo",

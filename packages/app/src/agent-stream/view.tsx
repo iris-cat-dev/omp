@@ -27,6 +27,7 @@ import {
   ToolCall,
   TodoListCard,
   CompactionMarker,
+  SystemNotice,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "@/components/message";
@@ -865,7 +866,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (payload.source === "agent") {
           const data = payload.data;
 
-
           const toolCall = (
             <ToolCallSlot
               itemId={item.id}
@@ -1029,6 +1029,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 metadata={item.metadata}
               />
             );
+
+          case "system_notice":
+            return <SystemNotice notice={item.notice} />;
 
           case "todo_list":
             return <TodoListCard items={item.items} activity={item.activity} />;

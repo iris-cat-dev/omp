@@ -31,6 +31,14 @@ use image generation.
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.
 
+## Fast mode feedback
+
+Changing Fast mode in an existing conversation adds a system notice after OMP confirms the
+state changed. Notices use centered, muted text with an information icon and separator lines,
+not user or assistant message bubbles. They remain in conversation history after reloading
+and are not sent to the model. Failed requests, unchanged settings, and initial draft
+preferences do not add switch notices.
+
 ## Conversation names
 
 Rename a conversation from its tab's context menu. Renaming the workspace's primary conversation changes the workspace name; additional conversations keep their own titles. Accepted renames update the local tab title immediately, without waiting for a directory event. Saved names remain visible when switching tabs, including when a conversation is not loaded or its provider history is unavailable.

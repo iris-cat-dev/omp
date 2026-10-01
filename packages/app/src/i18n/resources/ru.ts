@@ -445,6 +445,10 @@ export const ru: TranslationResources = {
     activity: {
       details: "Подробности",
     },
+    systemNotice: {
+      fastModeEnabled: "Быстрый режим включён",
+      fastModeDisabled: "Быстрый режим выключен",
+    },
     question: {
       submit: "Отправить",
       next: "Далее",

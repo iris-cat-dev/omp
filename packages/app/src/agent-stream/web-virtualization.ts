@@ -72,6 +72,7 @@ export function estimateStreamItemHeight(item: StreamItem): number {
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "activity_log":
       return 88;
+    case "system_notice":
     case "compaction":
       return 72;
     default:

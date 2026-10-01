@@ -433,6 +433,10 @@ export const ar: TranslationResources = {
     activity: {
       details: "تفاصيل",
     },
+    systemNotice: {
+      fastModeEnabled: "تم تفعيل الوضع السريع",
+      fastModeDisabled: "تم إيقاف الوضع السريع",
+    },
     question: {
       submit: "يُقدِّم",
       next: "التالي",

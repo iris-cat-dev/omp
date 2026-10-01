@@ -95,6 +95,11 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
+    kind: z.literal("system_notice"),
+    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
+  }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
     kind: z.literal("compaction"),
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
@@ -376,6 +381,8 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         activityType: item.activityType,
         message: item.message,
       };
+    case "system_notice":
+      return { ...base, kind: item.kind, notice: item.notice };
     case "compaction":
       return {
         ...base,
@@ -448,6 +455,8 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         activityType: item.activityType,
         message: item.message,
       };
+    case "system_notice":
+      return { ...base, kind: item.kind, notice: item.notice };
     case "compaction":
       return {
         ...base,

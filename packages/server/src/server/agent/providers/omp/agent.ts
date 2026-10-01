@@ -2020,6 +2020,7 @@ export class OmpAgentSession implements AgentSession {
         throw new Error("OMP fast mode is unavailable for the current model");
       }
       const result = await this.runtimeSession.setFastMode(value);
+      const changed = this.fastModeEnabled !== result.enabled;
       this.fastModeEnabled = result.enabled;
       this.state = {
         ...this.state,
@@ -2031,6 +2032,16 @@ export class OmpAgentSession implements AgentSession {
         ...this.config.featureValues,
         [OMP_FAST_MODE_FEATURE_ID]: result.enabled,
       };
+      if (changed) {
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          item: {
+            type: "system_notice",
+            notice: result.enabled ? "fast_mode_enabled" : "fast_mode_disabled",
+          },
+        });
+      }
       return;
     }
     if (featureId === OMP_OAUTH_ACCOUNT_FEATURE_ID) {

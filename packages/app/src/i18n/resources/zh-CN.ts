@@ -458,6 +458,10 @@ export const zhCN: TranslationResources = {
     activity: {
       details: "详情",
     },
+    systemNotice: {
+      fastModeEnabled: "Fast 模式已开启",
+      fastModeDisabled: "Fast 模式已关闭",
+    },
     question: {
       submit: "提交",
       next: "下一步",

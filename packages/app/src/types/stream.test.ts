@@ -2202,3 +2202,49 @@ describe("turn lifecycle events", () => {
     );
   });
 });
+
+describe("system notices", () => {
+  it("keeps a setting notice between streamed assistant segments without losing either segment", () => {
+    const events: AgentStreamEventPayload[] = [
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", messageId: "response-1", text: "Before switching." },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "system_notice", notice: "fast_mode_enabled" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", messageId: "response-1", text: "After switching." },
+      },
+    ];
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+    for (const [index, event] of events.entries()) {
+      ({ tail, head } = applyStreamEvent({
+        tail,
+        head,
+        event,
+        timestamp: new Date(Date.UTC(2026, 9, 1, 10, 0, index)),
+      }));
+    }
+
+    expect(
+      [...tail, ...head].map((item) =>
+        item.kind === "assistant_message"
+          ? { kind: item.kind, text: item.text }
+          : item.kind === "system_notice"
+            ? { kind: item.kind, notice: item.notice }
+            : { kind: item.kind },
+      ),
+    ).toEqual([
+      { kind: "assistant_message", text: "Before switching." },
+      { kind: "system_notice", notice: "fast_mode_enabled" },
+      { kind: "assistant_message", text: "After switching." },
+    ]);
+  });
+});

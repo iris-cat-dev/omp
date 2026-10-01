@@ -482,25 +482,16 @@ describe("OMP agent client and session", () => {
     expect(omp.latestRuntimeClosed()).toBe(true);
   });
 
-  test("toggles OMP fast mode through the live RPC feature", async () => {
+  test("records only successful fast-mode transitions as system notices", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openai-codex/gpt-5.6" });
 
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode" }),
-      expect.objectContaining({
-        id: "fast_mode",
-        type: "toggle",
-        icon: "zap",
-        value: false,
-      }),
-    ]);
-
     await omp.setFeature("fast_mode", true);
-    expect(omp.fastModeRequests()).toEqual([true]);
     expect(omp.features()).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "fast_mode", value: true })]),
     );
+    await omp.setFeature("fast_mode", true);
+    await expect(omp.setFeature("fast_mode", "on")).rejects.toThrow("Invalid OMP fast mode");
 
     await omp.setModel("custom-openai", "model");
     expect(omp.features()).not.toEqual(
@@ -508,26 +499,28 @@ describe("OMP agent client and session", () => {
     );
 
     await omp.setModel("openai-codex", "gpt-5.6");
-    expect(omp.fastModeRequests()).toEqual([true]);
     expect(omp.features()).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "fast_mode", value: true })]),
     );
 
     await omp.setFeature("fast_mode", false);
-    expect(omp.fastModeRequests()).toEqual([true, false]);
     expect(omp.features()).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "fast_mode", value: false })]),
     );
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([
+      { type: "system_notice", notice: "fast_mode_enabled" },
+      { type: "system_notice", notice: "fast_mode_disabled" },
+    ]);
   });
 
-  test("applies a persisted fast-mode preference when the session starts", async () => {
+  test("applies a persisted fast-mode preference without adding a switch notice", async () => {
     const omp = new OmpHarness();
     await omp.start({
       model: "openai-codex/gpt-5.6",
       featureValues: { fast_mode: true },
     });
 
-    expect(omp.fastModeRequests()).toEqual([true]);
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
     expect(omp.features()).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "fast_mode", value: true })]),
     );

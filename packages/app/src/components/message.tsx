@@ -62,7 +62,12 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
-import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type {
+  SystemNoticeItem,
+  TaskActivity,
+  TodoEntry,
+  UserMessageImageAttachment,
+} from "@/types/stream";
 import type { AgentAttachment } from "@omp-desktop/protocol/messages";
 import type { ToolCallDetail } from "@omp-desktop/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
@@ -2005,7 +2010,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
-
 interface ActivityLogProps {
   type: "system" | "info" | "success" | "error" | "artifact";
   message: string;
@@ -2242,6 +2246,30 @@ export const CompactionMarker = memo(function CompactionMarker({
           <Scissors size={12} color="#a1a1aa" />
         )}
         <Text style={compactionStylesheet.text}>{label}</Text>
+      </View>
+      <View style={compactionStylesheet.line} />
+    </View>
+  );
+});
+
+export const SystemNotice = memo(function SystemNotice({
+  notice,
+}: Pick<SystemNoticeItem, "notice">) {
+  const { t } = useTranslation();
+  const message = t(
+    notice === "fast_mode_enabled"
+      ? "message.systemNotice.fastModeEnabled"
+      : "message.systemNotice.fastModeDisabled",
+  );
+
+  return (
+    <View style={compactionStylesheet.container} testID="system-notice">
+      <View style={compactionStylesheet.line} />
+      <View style={compactionStylesheet.label}>
+        <Info size={12} color="#a1a1aa" />
+        <Text style={compactionStylesheet.text} selectable>
+          {message}
+        </Text>
       </View>
       <View style={compactionStylesheet.line} />
     </View>

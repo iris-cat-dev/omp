@@ -183,6 +183,9 @@ function curateProjectedActivityEntries(
         flushBuffers(entries, buffers, options);
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
+      case "system_notice":
+        // Session-setting feedback is UI-only, not model activity.
+        break;
       case "extension_notification":
         // Toast-only item; not part of activity history.
         break;

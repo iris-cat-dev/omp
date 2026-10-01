@@ -379,6 +379,7 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
+  | { type: "system_notice"; notice: "fast_mode_enabled" | "fast_mode_disabled" }
   | { type: "extension_notification"; message: string; level: "info" | "warning" | "error" }
   | CompactionTimelineItem;
 

@@ -1,4 +1,8 @@
-import type { AgentProvider, ToolCallDetail } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentProvider,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from "@omp-desktop/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@omp-desktop/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -79,6 +83,7 @@ export type StreamItem =
   | ToolCallItem
   | TodoListItem
   | ActivityLogItem
+  | SystemNoticeItem
   | CompactionItem;
 
 export type UserMessageImageAttachment = AttachmentMetadata;
@@ -836,6 +841,15 @@ export interface ActivityLogItem {
   metadata?: Record<string, unknown>;
 }
 
+export interface SystemNoticeItem {
+  kind: "system_notice";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  notice: Extract<AgentTimelineItem, { type: "system_notice" }>["notice"];
+}
+
 export interface CompactionItem {
   kind: "compaction";
   id: string;
@@ -1579,6 +1593,17 @@ function reduceTimelineEvent(
       };
       return finalizeActiveThoughts(appendActivityLog(state, activity));
     }
+    case "system_notice":
+      return [
+        ...state,
+        {
+          kind: "system_notice",
+          id: createUniqueTimelineId(state, "system_notice", item.notice, timestamp),
+          ...(timelineCursor ? { timelineCursor } : {}),
+          timestamp,
+          notice: item.notice,
+        },
+      ];
     case "extension_notification":
       // Toast-only item; not rendered in the timeline stream.
       return state;
@@ -1740,6 +1765,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
       return "todo_list";
     case "error":
       return "activity_log";
+    case "system_notice":
+      return "system_notice";
     default:
       return null;
   }

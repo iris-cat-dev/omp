@@ -828,6 +828,10 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     message: z.string(),
   }),
   z.object({
+    type: z.literal("system_notice"),
+    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
+  }),
+  z.object({
     type: z.literal("extension_notification"),
     message: z.string(),
     level: z.enum(["info", "warning", "error"]),
@@ -1019,7 +1023,6 @@ export type RecentProviderSessionDescriptorPayload = z.infer<
 // Session Inbound Messages (Session receives these)
 // ============================================================================
 
-
 const AgentDirectoryFilterSchema = z.object({
   labels: z.record(z.string(), z.string()).optional(),
   projectKeys: z.array(z.string()).optional(),
@@ -1158,7 +1161,6 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   workspaceId: z.string(),
   requestId: z.string(),
 });
-
 
 export const GitHubPrAttachmentSchema = z.object({
   type: z.literal("github_pr"),
@@ -1652,7 +1654,6 @@ export const WriteProjectConfigRequestMessageSchema = z.object({
   config: PaseoConfigRawSchema,
   expectedRevision: PaseoConfigRevisionSchema.nullable(),
 });
-
 
 const GitSetupOptionsSchema = z.object({
   baseBranch: z.string().optional(),
@@ -2446,7 +2447,6 @@ export const WorkspaceRecoveryRestoreResponseSchema = z.object({
     error: z.string().nullable(),
   }),
 });
-
 
 export const AgentPermissionResponseMessageSchema = z.object({
   type: z.literal("agent_permission_response"),
@@ -3730,7 +3730,6 @@ export const AssistantChunkMessageSchema = z.object({
   }),
 });
 
-
 const ServerInfoHostnameSchema = z.unknown().transform((value): string | null => {
   if (typeof value !== "string") {
     return null;
@@ -3746,7 +3745,6 @@ const ServerInfoVersionSchema = z.unknown().transform((value): string | null => 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 });
-
 
 export const ServerInfoStatusPayloadSchema = z
   .object({

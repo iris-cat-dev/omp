@@ -458,6 +458,10 @@ export const en = {
     activity: {
       details: "Details",
     },
+    systemNotice: {
+      fastModeEnabled: "Fast mode enabled",
+      fastModeDisabled: "Fast mode disabled",
+    },
     question: {
       submit: "Submit",
       next: "Next",

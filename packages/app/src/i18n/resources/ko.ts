@@ -434,6 +434,10 @@ export const ko: TranslationResources = {
     activity: {
       details: "세부 정보",
     },
+    systemNotice: {
+      fastModeEnabled: "빠른 모드가 켜졌습니다",
+      fastModeDisabled: "빠른 모드가 꺼졌습니다",
+    },
     question: {
       submit: "제출",
       next: "다음",
