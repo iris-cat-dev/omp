@@ -2031,6 +2031,13 @@ export const OmpPluginInstallRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const OmpPluginUpgradeRequestMessageSchema = z.object({
+  type: z.literal("ompPlugins.upgrade.request"),
+  name: z.string().trim().min(1).max(214),
+  scope: z.enum(["user", "project"]).optional(),
+  requestId: z.string(),
+});
+
 export const OmpPluginRemoveRequestMessageSchema = z.object({
   type: z.literal("ompPlugins.remove.request"),
   name: z.string().trim().min(1).max(214),
@@ -3561,6 +3568,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   OmpProviderLogoutRequestMessageSchema,
   OmpPluginListRequestMessageSchema,
   OmpPluginInstallRequestMessageSchema,
+  OmpPluginUpgradeRequestMessageSchema,
   OmpPluginRemoveRequestMessageSchema,
   OmpPluginSetEnabledRequestMessageSchema,
   OmpPluginDoctorRequestMessageSchema,
@@ -6619,6 +6627,15 @@ export const OmpPluginInstallResponseMessageSchema = z.object({
   }),
 });
 
+export const OmpPluginUpgradeResponseMessageSchema = z.object({
+  type: z.literal("ompPlugins.upgrade.response"),
+  payload: z.object({
+    requestId: z.string(),
+    ok: z.boolean(),
+    output: z.string().optional(),
+  }),
+});
+
 export const OmpPluginRemoveResponseMessageSchema = z.object({
   type: z.literal("ompPlugins.remove.response"),
   payload: z.object({
@@ -7338,6 +7355,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   OmpProviderLogoutResponseMessageSchema,
   OmpPluginListResponseMessageSchema,
   OmpPluginInstallResponseMessageSchema,
+  OmpPluginUpgradeResponseMessageSchema,
   OmpPluginRemoveResponseMessageSchema,
   OmpPluginSetEnabledResponseMessageSchema,
   OmpPluginDoctorResponseMessageSchema,

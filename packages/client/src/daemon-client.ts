@@ -3581,8 +3581,8 @@ export class DaemonClient {
         return parsed.data.payload;
       },
     });
-  }
 
+  }
 
   // ============================================================================
   // Git Operations
@@ -5216,6 +5216,20 @@ export class DaemonClient {
       responseType: "ompPlugins.install.response",
     });
     return { ...payload, plugin: payload.plugin ?? null };
+  }
+
+  async upgradeOmpPlugin(
+    name: string,
+    scope?: "user" | "project",
+  ): Promise<{ requestId: string; ok: boolean; output?: string }> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "ompPlugins.upgrade.request", name, scope },
+      responseType: "ompPlugins.upgrade.response",
+      // Allow the CLI's 15-minute install window plus response delivery.
+      timeout: 16 * 60 * 1000,
+    });
   }
 
   async removeOmpPlugin(

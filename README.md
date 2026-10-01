@@ -18,6 +18,17 @@ Open **Host Settings → Agents → OMP built-in tools** to request a tool list 
 
 This is not a strict denylist: OMP may automatically add tools excluded from `--tools` or even `--no-tools`, and child agents may use a different tool list. Builds reporting the same version may also expose different tools; for a partial selection, Desktop briefly starts an ephemeral OMP session to request only tools in that build's current active roster. OMP's own settings may disable selected tools. These controls do not change standalone OMP sessions or Desktop-injected tools and extensions, and do not replace filesystem permissions or approval rules. Custom OMP commands cannot combine this setting with their own `--tools` or `--no-tools` flags. No custom OMP build is required for supported versions.
 
+## OMP plugins
+
+Open **Host Settings → OMP plugins** to browse registered marketplaces and manage OMP runtime
+plugins. Marketplace entries show **Install** when not installed, **Installed** when already
+current, and **Upgrade** when the catalog has a newer version. Upgrade installs the catalog's
+current version rather than repeating the install operation.
+
+Installed entries are matched by their exact `plugin-name@marketplace-name` identity, so a plugin
+with the same name from another marketplace does not count as installed. Upgrades target that
+exact identity and preserve the existing user or project scope and enabled/disabled state.
+
 ## Image generation with references
 
 When image generation is enabled in Host Settings, the `image_gen` tool can generate an image
