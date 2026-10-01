@@ -39,6 +39,7 @@ export {
 } from "./agent/provider-launch-config.js";
 export { findExecutable } from "../executable-resolution/executable-resolution.js";
 export { execCommand, spawnProcess } from "../utils/spawn.js";
+export { killProcessTree } from "../utils/tree-kill.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {

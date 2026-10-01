@@ -149,7 +149,7 @@ describe("terminateWithTreeKill", () => {
         forceTimeoutMs: 2000,
       });
 
-      // tree-kill uses taskkill /T /F on Windows, so the first signal is already forceful.
+      // Windows tree cleanup uses /T /F, so the first signal is already forceful.
       expect(result).toBe("terminated");
       await expectOwnerAndDescendantStopped(
         "owner or Windows descendant survived terminateWithTreeKill",

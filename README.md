@@ -294,6 +294,10 @@ npm run build:windows:arm64
 
 Run `npm run build:windows` to build both sequentially. Publish the resulting `OMP-Desktop-Setup-<version>-x64.exe` and `OMP-Desktop-Setup-<version>-arm64.exe`; no combined installer is produced.
 
+Windows daemon and CLI process-tree cleanup launch `taskkill.exe /T /F` directly with a hidden
+console, avoiding transient `cmd.exe` windows during provider refresh and process shutdown.
+Interactive terminal launches are unchanged. macOS and Linux retain signal-based tree cleanup.
+
 Desktop updates use the public
 [`iris-cat-dev/omp-desktop` GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases)
 feed. The app checks its configured Stable or Beta channel at startup, downloads a newer package in

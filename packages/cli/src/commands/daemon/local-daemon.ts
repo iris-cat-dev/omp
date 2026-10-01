@@ -2,12 +2,11 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@omp-desktop/server";
+import { killProcessTree, loadConfig, resolvePaseoHome, spawnProcess } from "@omp-desktop/server";
 import {
   DEFAULT_RELAY_ENDPOINT,
   shouldUseTlsForDefaultHostedRelay,
 } from "@omp-desktop/protocol/daemon-endpoints";
-import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -342,25 +341,19 @@ async function signalProcessTreeSafely(pid: number, signal: NodeJS.Signals): Pro
     return false;
   }
 
-  return new Promise((resolve, reject) => {
-    treeKill(pid, signal, (err) => {
-      if (!err) {
-        resolve(true);
-        return;
-      }
-
-      const code = readNodeErrnoCode(err);
-      if (code === "ESRCH") {
-        resolve(false);
-        return;
-      }
-      if (code === "EPERM") {
-        resolve(true);
-        return;
-      }
-      reject(err);
-    });
-  });
+  try {
+    await killProcessTree(pid, signal);
+    return true;
+  } catch (err) {
+    const code = readNodeErrnoCode(err);
+    if (code === "ESRCH") {
+      return false;
+    }
+    if (code === "EPERM") {
+      return true;
+    }
+    throw err;
+  }
 }
 
 async function signalProcessTreeOrOwnerSafely(

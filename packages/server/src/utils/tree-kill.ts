@@ -1,4 +1,8 @@
+import { promisify } from "node:util";
 import treeKill from "tree-kill";
+import { execCommand } from "./spawn.js";
+
+const treeKillAsync = promisify<number, NodeJS.Signals, void>(treeKill);
 
 export interface TreeKillTarget {
   pid?: number;
@@ -53,6 +57,15 @@ export async function terminateWithTreeKill(
     : "kill-timeout";
 }
 
+export async function killProcessTree(pid: number, signal: NodeJS.Signals): Promise<void> {
+  if (process.platform === "win32") {
+    await execCommand("taskkill.exe", ["/pid", String(pid), "/T", "/F"], { shell: false });
+    return;
+  }
+
+  await treeKillAsync(pid, signal);
+}
+
 export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
   if (isProcessExited(child)) {
     return Promise.resolve();
@@ -64,13 +77,8 @@ export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals)
     return Promise.resolve();
   }
 
-  return new Promise((resolve) => {
-    treeKill(pid, signal, (error) => {
-      if (error) {
-        signalDirectChild(child, signal);
-      }
-      resolve();
-    });
+  return killProcessTree(pid, signal).catch(() => {
+    signalDirectChild(child, signal);
   });
 }
 
