@@ -862,7 +862,10 @@ export interface AgentClient {
   }): Promise<OmpInstallationStatus>;
   installOmp?(options?: { defer?: boolean }): Promise<OmpInstallationStatus>;
   cancelOmpInstall?(): Promise<OmpInstallationStatus>;
-  startOmpProviderLogin?(providerId: string): Promise<OmpProviderLoginStart>;
+  startOmpProviderLogin?(
+    providerId: string,
+    onCompleted?: (flowId: string) => Promise<void>,
+  ): Promise<OmpProviderLoginStart>;
   finishOmpProviderLogin?(flowId: string, input?: string): Promise<OmpProviderManagement>;
   cancelOmpProviderLogin?(flowId: string): Promise<boolean>;
   logoutOmpProvider?(providerId: string, credentialId?: number): Promise<OmpProviderManagement>;

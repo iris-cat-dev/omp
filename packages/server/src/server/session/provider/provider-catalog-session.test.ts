@@ -63,6 +63,7 @@ function makeSubsystem(options: MakeOptions = {}) {
       changeHandler = handler;
     },
     off: () => {},
+    onOmpProviderLoginCompleted: () => () => {},
     ...options.snapshot,
   });
   const subsystem = new ProviderCatalogSession({

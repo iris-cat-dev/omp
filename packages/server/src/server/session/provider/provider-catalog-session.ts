@@ -162,8 +162,12 @@ export class ProviderCatalogSession {
       });
     };
     this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
+    const unsubscribeLoginCompleted = this.providerSnapshotManager.onOmpProviderLoginCompleted(
+      (payload) => this.host.emit({ type: "omp.provider.login.completed", payload }),
+    );
     this.unsubscribeSnapshotEvents = () => {
       this.providerSnapshotManager.off("change", handleProviderSnapshotChange);
+      unsubscribeLoginCompleted();
     };
   }
 
@@ -988,7 +992,6 @@ export class ProviderCatalogSession {
         msg.flowId,
         msg.input,
       );
-      await this.providerSnapshotManager.refreshSettingsSnapshot({ providers: ["omp"] });
       this.host.emit({
         type: "omp.provider.login.finish.response",
         payload: { ...management, requestId: msg.requestId },

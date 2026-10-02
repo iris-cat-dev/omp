@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type { Logger } from "pino";
-import type { OmpMemorySettingsPatch } from "@omp-desktop/protocol/messages";
+import type {
+  OmpMemorySettingsPatch,
+  OmpProviderLoginCompletedMessage,
+} from "@omp-desktop/protocol/messages";
 
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -641,7 +644,12 @@ export class ProviderSnapshotManager {
     if (!definition) throw new Error("OMP provider is not configured");
     const client = this.ensureClient("omp", definition);
     if (!client.startOmpProviderLogin) throw new Error("OMP login is unavailable");
-    return await client.startOmpProviderLogin(providerId);
+    return await client.startOmpProviderLogin(providerId, async (flowId) => {
+      if (this.destroyed) return;
+      this.ompProviderManagementRead = null;
+      this.events.emit("ompLoginCompleted", { flowId, providerId });
+      await this.refreshSettingsSnapshot({ providers: ["omp"] });
+    });
   }
 
   async finishOmpProviderLogin(flowId: string, input?: string): Promise<OmpProviderManagement> {
@@ -786,6 +794,13 @@ export class ProviderSnapshotManager {
   off(event: "change", listener: ProviderSnapshotChangeListener): this {
     this.events.off(event, listener);
     return this;
+  }
+
+  onOmpProviderLoginCompleted(
+    listener: (flow: OmpProviderLoginCompletedMessage["payload"]) => void,
+  ): () => void {
+    this.events.on("ompLoginCompleted", listener);
+    return () => this.events.off("ompLoginCompleted", listener);
   }
 
   async shutdown(): Promise<void> {

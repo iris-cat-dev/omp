@@ -5,6 +5,7 @@ import React, { type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
+import type { OmpProviderLoginCompletedMessage } from "@omp-desktop/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OmpProviderConfigurationPanel } from "@/components/provider-diagnostic-sheet";
 import {
@@ -16,7 +17,15 @@ type ManagementClient = Pick<
   DaemonClient,
   "getOmpProviderManagement" | "reorderOmpProviderAccounts"
 > &
-  Partial<Pick<DaemonClient, "listProviderUsage">>;
+  Partial<
+    Pick<
+      DaemonClient,
+      | "listProviderUsage"
+      | "startOmpProviderLogin"
+      | "finishOmpProviderLogin"
+      | "cancelOmpProviderLogin"
+    >
+  >;
 type ManagementResponse = Awaited<ReturnType<ManagementClient["getOmpProviderManagement"]>>;
 
 const runtime = vi.hoisted(() => ({
@@ -25,10 +34,18 @@ const runtime = vi.hoisted(() => ({
   translate: (key: string) => key,
   isConnected: false,
   providerUsageList: false,
+  loginListeners: new Set<(message: OmpProviderLoginCompletedMessage) => void>(),
 }));
 
 vi.mock("@/runtime/host-runtime", () => ({
-  useHostRuntimeClient: () => runtime.client,
+  useHostRuntimeClient: () =>
+    runtime.client &&
+    Object.assign(runtime.client, {
+      on: (type: string, handler: (message: OmpProviderLoginCompletedMessage) => void) => {
+        if (type === "omp.provider.login.completed") runtime.loginListeners.add(handler);
+        return () => runtime.loginListeners.delete(handler);
+      },
+    }),
   useHostRuntimeIsConnected: () => runtime.isConnected,
 }));
 
@@ -91,6 +108,7 @@ const settlePendingRequests: Array<() => void> = [];
 beforeEach(() => {
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("open", vi.fn());
 });
 
 afterEach(async () => {
@@ -103,6 +121,7 @@ afterEach(async () => {
   runtime.client = null;
   runtime.isConnected = false;
   runtime.providerUsageList = false;
+  runtime.loginListeners.clear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -229,6 +248,71 @@ describe("OMP provider management loading", () => {
     fireEvent.click(await screen.findByText("settings.providers.omp.refresh"));
 
     await waitFor(() => expect(getOmpProviderManagement).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("OMP automatic login completion", () => {
+  const flow = {
+    requestId: "start",
+    flowId: "flow-codex",
+    providerId: "openai-codex",
+    url: "https://example.test/oauth",
+  };
+
+  function completeLogin(flowId = flow.flowId) {
+    for (const listener of runtime.loginListeners) {
+      listener({
+        type: "omp.provider.login.completed",
+        payload: { flowId, providerId: flow.providerId },
+      });
+    }
+  }
+
+  it("closes only the completed login without requiring finish or cancelling saved credentials", async () => {
+    const finish = vi.fn();
+    const cancel = vi.fn(async () => ({
+      requestId: "cancel",
+      flowId: flow.flowId,
+      cancelled: false,
+    }));
+    await renderPanel({
+      getOmpProviderManagement: async () => management([1, 2]),
+      reorderOmpProviderAccounts: vi.fn(),
+      startOmpProviderLogin: async () => flow,
+      finishOmpProviderLogin: finish,
+      cancelOmpProviderLogin: cancel,
+    });
+    fireEvent.click(screen.getByTestId("omp-login-provider-openai-codex"));
+    await screen.findByText("settings.providers.omp.login.complete");
+
+    act(() => completeLogin("another-flow"));
+    expect(screen.queryByText("settings.providers.omp.login.complete")).not.toBeNull();
+    act(() => completeLogin());
+
+    await waitFor(() =>
+      expect(screen.queryByText("settings.providers.omp.login.complete")).toBeNull(),
+    );
+    cleanup();
+    expect(finish).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen a login that completed before its start response arrived", async () => {
+    await renderPanel({
+      getOmpProviderManagement: async () => management([1, 2]),
+      reorderOmpProviderAccounts: vi.fn(),
+      startOmpProviderLogin: async () => {
+        completeLogin();
+        return flow;
+      },
+    });
+
+    await act(async () => fireEvent.click(screen.getByTestId("omp-login-provider-openai-codex")));
+
+    expect(screen.queryByText("settings.providers.omp.login.complete")).toBeNull();
+    expect(
+      screen.getByTestId("omp-login-provider-openai-codex").getAttribute("aria-disabled"),
+    ).not.toBe("true");
   });
 });
 

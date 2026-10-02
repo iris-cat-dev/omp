@@ -87,6 +87,12 @@ GIF, WebP, and SVG files, rather than showing the binary-file placeholder.
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.
 
+Browser OAuth refreshes these catalogs as soon as OMP confirms authorization; clicking
+**Complete sign-in** again is not required. The sign-in panel closes automatically and the
+provider's signed-in state updates. Providers that request an OAuth code or redirect URL
+still support entering it and completing sign-in manually. Catalog refresh does not switch
+an existing conversation's selected model.
+
 ## Conversation setting feedback
 
 Changing Fast mode in an existing conversation adds a system notice after OMP confirms the
