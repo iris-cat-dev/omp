@@ -192,6 +192,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "agent_deleted"; agentId: string; workspaceId: string | null; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | {
       type: "agent_stream";
@@ -3207,9 +3208,43 @@ export class AgentManager {
     }
   }
 
+  async deleteAgent(
+    agentId: string,
+  ): Promise<{ agentId: string; status: "deleted" | "not_found" }> {
+    const storage = this.registry;
+    if (!storage) {
+      throw new Error("Agent storage is unavailable");
+    }
+    const agent = this.getAgent(agentId);
+    const record = await storage.get(agentId);
+    if (!agent && !record) {
+      return { agentId, status: "not_found" };
+    }
+    const workspaceId = agent?.workspaceId ?? record?.workspaceId ?? null;
+    const internal = agent?.internal ?? record?.internal ?? false;
+
+    // Fence close-time snapshots before closing, then drain pending persistence
+    // so an old background write cannot recreate the deleted record.
+    storage.beginDelete(agentId);
+    try {
+      if (agent) {
+        await this.closeAgent(agentId);
+      }
+      await this.flush();
+      await this.deleteAgentState(agentId);
+      await storage.remove(agentId);
+    } catch (error) {
+      storage.cancelDelete(agentId);
+      throw error;
+    }
+
+    this.dispatch({ type: "agent_deleted", agentId, workspaceId, internal });
+    return { agentId, status: "deleted" };
+  }
+
   async deleteAgentState(agentId: string): Promise<void> {
-    this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
+    this.discardRetainedAgentState(agentId);
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
@@ -4991,7 +5026,7 @@ export class AgentManager {
     for (const subscriber of this.subscribers) {
       if (
         subscriber.agentId &&
-        event.type === "agent_stream" &&
+        (event.type === "agent_stream" || event.type === "agent_deleted") &&
         subscriber.agentId !== event.agentId
       ) {
         continue;
@@ -5023,6 +5058,7 @@ export class AgentManager {
 
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
     if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_deleted") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
     if (event.type !== "provider_subagent") return false;
     const parentAgentId =

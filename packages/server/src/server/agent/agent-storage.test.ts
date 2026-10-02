@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -512,6 +512,26 @@ describe("AgentStorage", () => {
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).not.toContain(":");
     expect(dirs[0]).toBe("D-Users-dev-MyProject");
+  });
+
+  test("remove reports disk errors and preserves a retryable record", async () => {
+    const agentId = "agent-delete-failure";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const error = Object.assign(new Error("record is locked"), { code: "EACCES" });
+    const unlink = vi.spyOn(fs, "unlink").mockRejectedValueOnce(error);
+    try {
+      await expect(storage.remove(agentId)).rejects.toBe(error);
+    } finally {
+      unlink.mockRestore();
+    }
+
+    expect(await storage.get(agentId)).toMatchObject({ id: agentId });
+    expect(await new AgentStorage(storagePath, logger).get(agentId)).toMatchObject({ id: agentId });
+    await storage.setTitle(agentId, "Still writable");
+    expect(await storage.get(agentId)).toMatchObject({ title: "Still writable" });
+    await storage.remove(agentId);
+    expect(await storage.get(agentId)).toBeNull();
+    expect(await new AgentStorage(storagePath, logger).get(agentId)).toBeNull();
   });
 
   test("remove deletes all duplicate record files across project directories", async () => {

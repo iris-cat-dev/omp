@@ -25,6 +25,23 @@ not be stopped and keeps it marked running rather than claiming success. Update 
 Settings, or run `npm run download:omp` before packaging a desktop build. The general minimum OMP
 version above still applies when native-subagent stopping is not needed.
 
+## Permanently deleting conversation history
+
+Desktop-injected agent tools distinguish four operations: `cancel_agent` stops a run,
+`archive_agent` hides a conversation while retaining history, `kill_agent` terminates a
+loaded runtime while retaining its record, and `delete_agent` permanently removes the
+Desktop conversation record and retained timeline.
+
+Use `delete_agent({ agentId, confirm: true })` only after explicit user authorization.
+It supports loaded, archived, and unloaded records without loading a provider session.
+The result is `deleted` or `not_found`; runtime-close and storage errors are reported as
+failures rather than successful deletions. The calling agent and its managed ancestors
+cannot be deleted through this tool.
+
+Connected clients refresh their directories and history/search caches after deletion.
+Project files, deliverables, workspaces, Git worktrees/branches, and provider-owned session
+files are not deleted. This tool removes Desktop history, not the provider's independent logs.
+
 ## Codex quota and reset cards
 
 Open **Host Settings → Model providers → Signed-in providers** to view each Codex account's
