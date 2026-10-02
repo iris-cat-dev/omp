@@ -150,9 +150,9 @@ export function navigateToWorkspace(
   return route;
 }
 
-function resolveSidebarTabHost(
-  input: NavigateToSidebarWorkspaceInput,
-  deps: NavigateToSidebarWorkspaceDeps,
+export function resolveWorkspaceTabHost(
+  input: Pick<NavigateToSidebarWorkspaceInput, "serverId" | "tabHost">,
+  deps: Pick<NavigateToSidebarWorkspaceDeps, "getSessionWorkspaces" | "getWorkspaceTabs">,
 ): ActiveWorkspaceSelection | null {
   const tabHost = input.tabHost;
   if (!tabHost || tabHost.serverId !== input.serverId) {
@@ -202,7 +202,7 @@ export async function navigateToSidebarWorkspace(
     return navigateToWorkspace(input, deps);
   }
 
-  const tabHost = resolveSidebarTabHost(input, deps);
+  const tabHost = resolveWorkspaceTabHost(input, deps);
   if (!deps.getSessionAgentsHydrated(input.serverId) && !tabHost) {
     return navigateToWorkspace(input, deps);
   }
