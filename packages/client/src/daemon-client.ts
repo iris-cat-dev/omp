@@ -3286,6 +3286,26 @@ export class DaemonClient {
     }
   }
 
+  async cancelProviderSubagent(parentAgentId: string, subagentId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "cancel_provider_subagent_request",
+      parentAgentId,
+      subagentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "cancel_provider_subagent_response" && msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({

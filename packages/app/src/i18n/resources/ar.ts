@@ -1833,6 +1833,7 @@ export const ar: TranslationResources = {
     backdrop: "خلفية القائمة",
   },
   subagents: {
+    ...en.subagents,
     title: "الوكلاء الفرعيون",
     modelLabel: "النموذج: {{model}}",
     modelUnknown: "غير معروف (لم يُبلّغ عنه)",

@@ -1869,6 +1869,7 @@ export const ptBR: TranslationResources = {
     backdrop: "Fundo do menu",
   },
   subagents: {
+    ...en.subagents,
     title: "Subagentes",
     modelLabel: "Modelo: {{model}}",
     modelUnknown: "Desconhecido (não informado)",

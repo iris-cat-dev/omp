@@ -26,7 +26,9 @@ export class OmpSubagentIndex {
     state.title = payload.agent || state.title;
     state.description = payload.description ?? state.description;
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
-    state.status = mapLifecycleStatus(payload.status);
+    if (state.status === "running" || payload.status !== "started") {
+      state.status = mapLifecycleStatus(payload.status);
+    }
     return [this.upsert(payload.id, state.status, state)];
   }
 
@@ -39,7 +41,8 @@ export class OmpSubagentIndex {
       state.resolvedModel = payload.progress.resolvedModel.trim();
     }
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
-    state.status = mapProgressStatus(payload.progress.status);
+    const status = mapProgressStatus(payload.progress.status);
+    if (status !== "running" || state.status === "running") state.status = status;
     return [this.upsert(id, state.status, state)];
   }
 
@@ -68,20 +71,11 @@ export class OmpSubagentIndex {
     return events;
   }
 
-  terminalizeRunning(parent: object): AgentStreamEvent[] {
-    const states = this.statesByParent.get(parent);
-    if (!states) {
-      return [];
-    }
-    const events: AgentStreamEvent[] = [];
-    for (const [id, state] of states) {
-      if (state.status !== "running") {
-        continue;
-      }
-      state.status = "canceled";
-      events.push(this.upsert(id, state.status, state));
-    }
-    return events;
+  markCanceled(parent: object, id: string): AgentStreamEvent | null {
+    const state = this.statesByParent.get(parent)?.get(id);
+    if (!state || state.status !== "running") return null;
+    state.status = "canceled";
+    return this.upsert(id, state.status, state);
   }
 
   clear(parent: object): void {

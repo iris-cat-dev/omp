@@ -141,6 +141,37 @@ test("cancel_agent_request reports refusal only through its response", async () 
   ]);
 });
 
+test("cancel_provider_subagent_request reports native refusal without stopping its parent", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const cancelProviderSubagent = vi.fn(async () => {
+    throw new Error("Stopping native OMP subagents requires OMP v18.4.9 or newer");
+  });
+  const cancelAgentRun = vi.fn();
+  const session = createSessionForTest({
+    messages,
+    agentManager: { cancelProviderSubagent, cancelAgentRun },
+  });
+  await session.handleMessage({
+    type: "cancel_provider_subagent_request",
+    parentAgentId: "parent",
+    subagentId: "child",
+    requestId: "request-1",
+  });
+  expect(cancelProviderSubagent).toHaveBeenCalledWith("parent", "child");
+  expect(cancelAgentRun).not.toHaveBeenCalled();
+  expect(messages).toEqual([
+    {
+      type: "cancel_provider_subagent_response",
+      payload: {
+        parentAgentId: "parent",
+        subagentId: "child",
+        requestId: "request-1",
+        error: "Stopping native OMP subagents requires OMP v18.4.9 or newer",
+      },
+    },
+  ]);
+});
+
 test("legacy cancel_agent_request reports refusal through the activity log", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";
   const messages: SessionOutboundMessage[] = [];

@@ -1875,6 +1875,7 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    ...en.subagents,
     title: "Субагенты",
     modelLabel: "Модель: {{model}}",
     modelUnknown: "Неизвестно (не сообщено)",

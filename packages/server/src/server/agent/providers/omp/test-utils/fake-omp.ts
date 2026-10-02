@@ -125,9 +125,7 @@ export class FakeOmp implements OmpRuntime {
   setInitialModel(model: OmpModel | null): void {
     this.initialModel = model;
   }
-  setInitialActiveCredential(
-    activeCredential: OmpSessionState["activeCredential"],
-  ): void {
+  setInitialActiveCredential(activeCredential: OmpSessionState["activeCredential"]): void {
     this.initialActiveCredential = activeCredential;
   }
   setInitialStats(stats: OmpSessionStats): void {
@@ -172,6 +170,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  readonly canceledSubagentIds: string[] = [];
+  cancelSubagentError: Error | null = null;
+  cancelSubagentResult = true;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -311,6 +312,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+  }
+
+  async cancelSubagent(subagentId: string): Promise<boolean> {
+    this.canceledSubagentIds.push(subagentId);
+    if (this.cancelSubagentError) throw this.cancelSubagentError;
+    return this.cancelSubagentResult;
   }
 
   async getState(): Promise<OmpSessionState> {

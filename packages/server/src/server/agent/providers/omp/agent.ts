@@ -2389,6 +2389,18 @@ export class OmpAgentSession implements AgentSession {
     };
   }
 
+  async cancelProviderSubagent(subagentId: string): Promise<boolean> {
+    if (!this.runtimeSession.cancelSubagent) {
+      throw new Error("Stopping native OMP subagents requires OMP v18.4.9 or newer");
+    }
+    const cancelled = await this.runtimeSession.cancelSubagent(subagentId);
+    if (cancelled) {
+      const event = this.subagentIndex.markCanceled(this.runtimeSession, subagentId);
+      if (event) this.emit(event);
+    }
+    return cancelled;
+  }
+
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
@@ -2470,9 +2482,8 @@ export class OmpAgentSession implements AgentSession {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
     }
     this.activeToolCalls.clear();
-    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
-      this.emit(event);
-    }
+    // Aborting the parent turn does not guarantee OMP has stopped its native subagents.
+    // Only the native cancellation response or lifecycle event may terminalize them.
     this.clearOmpTurnState();
   }
 

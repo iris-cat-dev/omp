@@ -12,6 +12,19 @@ Current source version: **0.4.0**.
 
 Packaged macOS, Linux, and Windows applications include OMP and do not require a system OMP installation.
 
+## Stopping conversations and subagents
+
+The conversation's **Stop** button interrupts its current run and all running managed descendants,
+including children still active if the parent turn finishes while the stop request is processed.
+Detached agents are independent and are not stopped. The subagent list also has a **Stop** button
+on each running child; stopping a child leaves it in the list, unlike archiving it.
+
+OMP-native subagents require OMP **18.4.9 or newer** for individual or parent-initiated cancellation
+(`cancel_subagent` RPC). With an older OMP binary, the daemon reports that the native child could
+not be stopped and keeps it marked running rather than claiming success. Update OMP through Host
+Settings, or run `npm run download:omp` before packaging a desktop build. The general minimum OMP
+version above still applies when native-subagent stopping is not needed.
+
 ## Codex quota and reset cards
 
 Open **Host Settings → Model providers → Signed-in providers** to view each Codex account's

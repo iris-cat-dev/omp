@@ -2220,6 +2220,12 @@ export class Session {
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
         return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
+      case "cancel_provider_subagent_request":
+        return this.handleCancelProviderSubagentRequest(
+          msg.parentAgentId,
+          msg.subagentId,
+          msg.requestId,
+        );
       case "agent_permission_response":
         return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
@@ -3871,6 +3877,27 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleCancelProviderSubagentRequest(
+    parentAgentId: string,
+    subagentId: string,
+    requestId: string,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await this.agentManager.cancelProviderSubagent(parentAgentId, subagentId);
+    } catch (reason) {
+      error = errorToFriendlyMessage(reason);
+      this.sessionLogger.warn(
+        { err: reason, parentAgentId, subagentId },
+        "Failed to stop OMP subagent",
+      );
+    }
+    this.emit({
+      type: "cancel_provider_subagent_response",
+      payload: { requestId, parentAgentId, subagentId, error },
+    });
   }
 
   private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {

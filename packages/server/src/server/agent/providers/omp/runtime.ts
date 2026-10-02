@@ -57,6 +57,7 @@ export interface OmpRuntimeSession {
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
+  cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;
   listBackgroundJobs?(): Promise<BackgroundProcess[]>;
   getBackgroundJobOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;

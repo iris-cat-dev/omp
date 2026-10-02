@@ -1740,7 +1740,7 @@ describe("OMP agent client and session", () => {
     );
   });
 
-  test("interrupt terminalizes in-flight tool calls, retry notices, and running subagents", async () => {
+  test("interrupt does not claim native subagents stopped; native cancellation acknowledges exactly one", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
@@ -1777,6 +1777,15 @@ describe("OMP agent client and session", () => {
 
     expect(omp.canceledTurnCount()).toBe(1);
     expect(omp.runningToolCallIds()).toEqual([]);
+    expect(omp.subagentUpserts()).toEqual([{ id: "child-1", status: "running" }]);
+    runtime.cancelSubagentError = new Error("native cancellation unavailable");
+    await expect(omp.cancelProviderSubagent("child-1")).rejects.toThrow(
+      "native cancellation unavailable",
+    );
+    expect(omp.subagentUpserts()).toEqual([{ id: "child-1", status: "running" }]);
+    runtime.cancelSubagentError = null;
+    await expect(omp.cancelProviderSubagent("child-1")).resolves.toBe(true);
+    expect(runtime.canceledSubagentIds).toEqual(["child-1", "child-1"]);
     expect(omp.subagentUpserts()).toEqual([
       { id: "child-1", status: "running" },
       { id: "child-1", status: "canceled" },
@@ -1801,6 +1810,7 @@ describe("OMP agent client and session", () => {
       },
     });
     expect(omp.runningToolCallIds()).toEqual([]);
+    expect(omp.subagentUpserts().at(-1)).toEqual({ id: "child-1", status: "canceled" });
   });
 
   test("manual compact completes from the RPC response without provider lifecycle events", async () => {

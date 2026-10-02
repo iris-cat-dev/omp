@@ -1177,6 +1177,26 @@ export class AgentManager {
     return this.providerSubagents.get(parentAgentId, subagentId);
   }
 
+  async cancelProviderSubagent(parentAgentId: string, subagentId: string): Promise<void> {
+    const parent = this.requirePublicAgent(parentAgentId);
+    const child = this.providerSubagents.get(parentAgentId, subagentId);
+    if (!child) throw new Error(`Subagent ${subagentId} does not belong to agent ${parentAgentId}`);
+    if (child.status !== "running") return;
+    if (!parent.session?.cancelProviderSubagent) {
+      throw new Error("Stopping native OMP subagents requires OMP v18.4.9 or newer");
+    }
+    const cancelled = await parent.session.cancelProviderSubagent(subagentId);
+    if (cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
+      const update = this.providerSubagents.apply(parentAgentId, child.provider, {
+        type: "upsert",
+        id: subagentId,
+        status: "canceled",
+      });
+      this.dispatch({ type: "provider_subagent", event: update });
+    }
+    // A false response means OMP already finished the child; its lifecycle event owns the status.
+  }
+
   fetchProviderSubagentTimeline(
     parentAgentId: string,
     subagentId: string,
@@ -2936,14 +2956,22 @@ export class AgentManager {
     }
     visitedAgentIds.add(agentId);
 
-    const ownCancellation = await this.runForegroundMutation(agentId, () =>
-      this.cancelAgentRunNow(agentId),
-    );
     const childIds = Array.from(this.agents.values())
       .filter((agent) => getParentAgentIdFromLabels(agent.labels) === agentId)
       .map((agent) => agent.id);
-    const childCancellations = await Promise.all(
-      childIds.map((childId) =>
+    const managedChildIds = new Set(childIds);
+    const nativeChildIds = new Set(
+      this.providerSubagents
+        .list(agentId)
+        .filter((subagent) => subagent.status === "running")
+        .map((subagent) => subagent.id),
+    );
+    const childCancellations = await Promise.allSettled<AgentRunCancellationResult>([
+      ...[...nativeChildIds].map(async (subagentId) => {
+        await this.cancelProviderSubagent(agentId, subagentId);
+        return { status: "settled" } as const;
+      }),
+      ...childIds.map((childId) =>
         this.runLifecycleMutation(childId, async () => {
           const child = this.agents.get(childId);
           if (!child || getParentAgentIdFromLabels(child.labels) !== agentId) {
@@ -2952,8 +2980,51 @@ export class AgentManager {
           return this.cancelAgentRunTree(childId, visitedAgentIds);
         }),
       ),
+    ]);
+    // Stop native children before interrupting their parent's turn; an abort alone
+    // does not cancel OMP subagents. Still interrupt the root when a child refuses.
+    const ownCancellation = await this.runForegroundMutation(agentId, () =>
+      this.cancelAgentRunNow(agentId),
+    ).then(
+      (value) => ({ status: "fulfilled", value }) as const,
+      (reason: unknown) => ({ status: "rejected", reason }) as const,
     );
-    const cancellations = [ownCancellation, ...childCancellations];
+    // Catch descendants created while the first cancellation sweep was settling.
+    await this.drainSessionEvents(agentId);
+    const lateChildCancellations = await Promise.allSettled<AgentRunCancellationResult>([
+      ...this.providerSubagents
+        .list(agentId)
+        .filter((subagent) => subagent.status === "running" && !nativeChildIds.has(subagent.id))
+        .map(async (subagent) => {
+          await this.cancelProviderSubagent(agentId, subagent.id);
+          return { status: "settled" } as const;
+        }),
+      ...Array.from(this.agents.values())
+        .filter(
+          (child) =>
+            getParentAgentIdFromLabels(child.labels) === agentId && !managedChildIds.has(child.id),
+        )
+        .map((child) =>
+          this.runLifecycleMutation(child.id, async () => {
+            const current = this.agents.get(child.id);
+            if (!current || getParentAgentIdFromLabels(current.labels) !== agentId) {
+              return { status: "not_running" } as const;
+            }
+            return this.cancelAgentRunTree(child.id, visitedAgentIds);
+          }),
+        ),
+    ]);
+    const failure = [...childCancellations, ...lateChildCancellations, ownCancellation].find(
+      (result) => result.status === "rejected",
+    );
+    if (failure?.status === "rejected") throw failure.reason;
+    const cancellations = [...childCancellations, ...lateChildCancellations]
+      .filter(
+        (result): result is PromiseFulfilledResult<AgentRunCancellationResult> =>
+          result.status === "fulfilled",
+      )
+      .map((result) => result.value);
+    if (ownCancellation.status === "fulfilled") cancellations.push(ownCancellation.value);
     if (cancellations.some((cancellation) => cancellation.status === "refused")) {
       return { status: "refused" };
     }

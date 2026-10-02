@@ -2140,6 +2140,13 @@ export const CancelAgentRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const CancelProviderSubagentRequestMessageSchema = z.object({
+  type: z.literal("cancel_provider_subagent_request"),
+  parentAgentId: z.string(),
+  subagentId: z.string(),
+  requestId: z.string(),
+});
+
 export const RestartServerRequestMessageSchema = z.object({
   type: z.literal("restart_server_request"),
   reason: z.string().optional(),
@@ -3581,6 +3588,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
+  CancelProviderSubagentRequestMessageSchema,
   ShutdownServerRequestMessageSchema,
   RestartServerRequestMessageSchema,
   DaemonUpdateRequestMessageSchema,
@@ -4945,6 +4953,16 @@ export const CancelAgentResponseMessageSchema = z.object({
     agentId: z.string(),
     agent: AgentSnapshotPayloadSchema.nullable(),
     error: z.string().nullable().optional(),
+  }),
+});
+
+export const CancelProviderSubagentResponseMessageSchema = z.object({
+  type: z.literal("cancel_provider_subagent_response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    subagentId: z.string(),
+    error: z.string().nullable(),
   }),
 });
 
@@ -7265,6 +7283,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
   CancelAgentResponseMessageSchema,
+  CancelProviderSubagentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
   WorkspaceClearAttentionResponseSchema,
@@ -7509,6 +7528,9 @@ export type AgentTimelineListPromptsResponseMessage = z.infer<
 >;
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
+export type CancelProviderSubagentResponseMessage = z.infer<
+  typeof CancelProviderSubagentResponseMessageSchema
+>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;

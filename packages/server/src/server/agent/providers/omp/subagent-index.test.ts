@@ -115,23 +115,23 @@ describe("OMP provider subagent mapper", () => {
           assistantMessageEvent: { type: "text_delta", delta: "Answer" },
         },
       }),
-    ).toMatchObject([
-      { event: { type: "upsert", model: "openai-codex/gpt-5.5-2026-07-01" } },
-    ]);
+    ).toMatchObject([{ event: { type: "upsert", model: "openai-codex/gpt-5.5-2026-07-01" } }]);
     expect(
-      index.handleEvent(parent, {
-        id: "child-1",
-        event: {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            provider: "openai-codex",
-            model: "gpt-5.5",
-            responseModel: "gpt-5.5-2026-07-01",
-            content: [{ type: "text", text: "Answer" }],
+      index
+        .handleEvent(parent, {
+          id: "child-1",
+          event: {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              provider: "openai-codex",
+              model: "gpt-5.5",
+              responseModel: "gpt-5.5-2026-07-01",
+              content: [{ type: "text", text: "Answer" }],
+            },
           },
-        },
-      }).map((event) => event.type === "provider_subagent" && event.event.type),
+        })
+        .map((event) => event.type === "provider_subagent" && event.event.type),
     ).toEqual(["timeline"]);
     expect(
       index.handleEvent(parent, {
@@ -149,9 +149,9 @@ describe("OMP provider subagent mapper", () => {
         progress: { id: "child-1", status: "running", resolvedModel: " " },
       }),
     ).toMatchObject([{ event: { model: "openai-codex/gpt-5.5-2026-07-01" } }]);
-    expect(
-      index.handleLifecycle(parent, { ...lifecycle, status: "completed" }),
-    ).toMatchObject([{ event: { model: "openai-codex/gpt-5.5-2026-07-01", status: "completed" } }]);
+    expect(index.handleLifecycle(parent, { ...lifecycle, status: "completed" })).toMatchObject([
+      { event: { model: "openai-codex/gpt-5.5-2026-07-01", status: "completed" } },
+    ]);
   });
 
   test("attributes the latest assistant in final events without replaying the timeline", () => {
@@ -179,9 +179,9 @@ describe("OMP provider subagent mapper", () => {
     ).toMatchObject([
       { event: { type: "upsert", id: "child-1", model: "anthropic/claude-sonnet-5" } },
     ]);
-    expect(index.terminalizeRunning(parent)).toMatchObject([
-      { event: { model: "anthropic/claude-sonnet-5", status: "canceled" } },
-    ]);
+    expect(index.markCanceled(parent, "child-1")).toMatchObject({
+      event: { model: "anthropic/claude-sonnet-5", status: "canceled" },
+    });
     expect(
       index.handleLifecycle({}, { id: "child-1", agent: "task", index: 0, status: "started" }),
     ).toMatchObject([{ event: { model: null } }]);

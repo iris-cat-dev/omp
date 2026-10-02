@@ -330,6 +330,19 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "abort" });
   }
 
+  async cancelSubagent(subagentId: string): Promise<boolean> {
+    let result: unknown;
+    try {
+      result = await this.request({ type: "cancel_subagent", subagentId });
+    } catch (error) {
+      throw new Error(
+        `Unable to stop OMP subagent ${subagentId}; update OMP to v18.4.9 or newer if cancel_subagent is unsupported: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    return z.object({ cancelled: z.boolean() }).parse(result).cancelled;
+  }
+
   async getState(): Promise<OmpSessionState> {
     return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
   }

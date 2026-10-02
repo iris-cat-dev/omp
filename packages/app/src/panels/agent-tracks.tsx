@@ -12,6 +12,8 @@ import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { ComposerTrackBar } from "@/composer/tracks";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-context";
+import { i18n } from "@/i18n/i18next";
 import { usePaneContext } from "@/panels/pane-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -22,6 +24,7 @@ import {
   type SubagentRow,
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
+import { toErrorMessage } from "@/utils/error-messages";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openSidePanelView } from "@/workspace-tabs/side-panel";
@@ -51,6 +54,7 @@ export const AgentTracks = memo(function AgentTracks({
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
 }): ReactElement | null {
+  const toast = useToast();
   const { openTab, tabId, workspaceId: paneWorkspaceId } = usePaneContext();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasWorkspaceBranch = useWorkspaceHasBranch(serverId, workspaceId);
@@ -88,6 +92,30 @@ export const AgentTracks = memo(function AgentTracks({
       openTab({ kind: "provider_subagent", parentAgentId, subagentId });
     },
     [openTab],
+  );
+  const handleStopSubagent = useCallback(
+    async (subagentId: string) => {
+      try {
+        const client = useSessionStore.getState().sessions[serverId]?.client;
+        if (!client) throw new Error(i18n.t("workspaceSetup.errors.hostDisconnected"));
+        await client.cancelAgent(subagentId);
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [serverId, toast],
+  );
+  const handleStopProviderSubagent = useCallback(
+    async (parentAgentId: string, subagentId: string) => {
+      try {
+        const client = useSessionStore.getState().sessions[serverId]?.client;
+        if (!client) throw new Error(i18n.t("workspaceSetup.errors.hostDisconnected"));
+        await client.cancelProviderSubagent(parentAgentId, subagentId);
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [serverId, toast],
   );
   const handleOpenProcess = useCallback(
     (process: BackgroundProcess) => {
@@ -142,6 +170,8 @@ export const AgentTracks = memo(function AgentTracks({
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
         onOpenProviderSubagent={handleOpenProviderSubagent}
+        onStopSubagent={handleStopSubagent}
+        onStopProviderSubagent={handleStopProviderSubagent}
         onArchiveSubagent={archiveSubagent}
         onArchiveFinished={onArchiveFinished}
         archiveFinishedStatus={archiveFinishedStatus}

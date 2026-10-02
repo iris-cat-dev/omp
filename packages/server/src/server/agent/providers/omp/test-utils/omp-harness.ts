@@ -655,6 +655,10 @@ export class OmpHarness {
     await this.requireSession().interrupt();
   }
 
+  async cancelProviderSubagent(subagentId: string): Promise<boolean> {
+    return this.requireSession().cancelProviderSubagent(subagentId);
+  }
+
   wasAborted(): boolean {
     return this.omp.latestSession().abortRequested;
   }

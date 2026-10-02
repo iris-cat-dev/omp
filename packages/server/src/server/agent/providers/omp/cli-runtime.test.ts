@@ -226,6 +226,30 @@ describe("OMP CLI runtime", () => {
     expect(commands).toEqual([{ type: "set_fast_mode", enabled: true }]);
   });
 
+  test("reports an unsupported native-subagent stop instead of treating an RPC refusal as success", async () => {
+    const child = createOmpChild();
+    child.stdin.once("data", (chunk: Buffer) => {
+      const command = JSON.parse(chunk.toString()) as { id: string; type: string };
+      child.stdout.write(
+        `${JSON.stringify({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: false,
+          error: "Unknown command: cancel_subagent",
+        })}\n`,
+      );
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    try {
+      await expect(session.cancelSubagent?.("child-1")).rejects.toThrow(
+        "update OMP to v18.4.9 or newer",
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not arm the short control-plane timeout for LLM-backed compaction", async () => {
     const child = createOmpChild();
     replyToCommands(child, () => ({}));

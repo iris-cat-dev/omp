@@ -2699,6 +2699,99 @@ test("cancelAgentRun cancels running managed descendants but not detached agents
   }
 });
 
+test("stopping an idle root attempts native and managed descendants despite a native refusal", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-native-cancel-"));
+  class NativeCancelSession extends SteeringTestSession {
+    readonly canceledSubagents: string[] = [];
+    cancelError: Error | null = null;
+    spawnDuringCancel: (() => Promise<void>) | null = null;
+
+    async cancelProviderSubagent(subagentId: string): Promise<boolean> {
+      this.canceledSubagents.push(subagentId);
+      const spawnDuringCancel = this.spawnDuringCancel;
+      this.spawnDuringCancel = null;
+      if (spawnDuringCancel) await spawnDuringCancel();
+      if (this.cancelError) throw this.cancelError;
+      return true;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    readonly sessions: NativeCancelSession[] = [];
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new NativeCancelSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      workspaceId: undefined,
+    });
+    const detached = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const drains = [child, detached].map(async (agent) => {
+      for await (const _event of manager.streamAgent(agent.id, "keep running")) {
+        // Drain until interrupted.
+      }
+    });
+    await manager.waitForAgentRunStart(child.id);
+    await manager.waitForAgentRunStart(detached.id);
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "native-a", title: "A", status: "running" },
+    });
+    client.sessions[0]!.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "native-b", title: "B", status: "running" },
+    });
+    await manager.flush();
+    client.sessions[0]!.spawnDuringCancel = async () => {
+      const lateChild = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+        workspaceId: undefined,
+      });
+      drains.push(
+        (async () => {
+          for await (const _event of manager.streamAgent(lateChild.id, "late child")) {
+            // Drain the late descendant through cancellation.
+          }
+        })(),
+      );
+      await manager.waitForAgentRunStart(lateChild.id);
+    };
+    client.sessions[0]!.cancelError = new Error("OMP v18.4.9 required");
+    await expect(manager.cancelAgentRun(root.id)).rejects.toThrow("OMP v18.4.9 required");
+    expect(client.sessions[0]!.canceledSubagents).toEqual(["native-a", "native-b"]);
+    expect(client.sessions[1]!.interruptCount).toBe(1);
+    expect(client.sessions[3]!.interruptCount).toBe(1);
+    expect(client.sessions[2]!.interruptCount).toBe(0);
+    expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("running");
+    client.sessions[0]!.cancelError = null;
+    await expect(manager.cancelProviderSubagent(root.id, "native-a")).resolves.toBeUndefined();
+    expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("canceled");
+    expect(manager.getProviderSubagent(root.id, "native-b")?.status).toBe("running");
+    await expect(manager.cancelProviderSubagent(detached.id, "native-b")).rejects.toThrow(
+      "does not belong",
+    );
+    expect(client.sessions[2]!.interruptCount).toBe(0);
+    await manager.cancelAgentRun(detached.id);
+    await Promise.all(drains);
+  } finally {
+    await Promise.all(
+      manager.listAgents().map((agent) => manager.closeAgent(agent.id).catch(() => undefined)),
+    );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("listProviderAvailability uses registered client keys, including custom providers", async () => {
   const customClient: AgentClient = {
     provider: "zai",

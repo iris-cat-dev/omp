@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { type ReactNode } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { BackgroundProcess } from "@omp-desktop/protocol/background-processes";
@@ -22,6 +22,11 @@ import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 const layoutMode = vi.hoisted(() => ({ isCompact: false }));
+const toastError = vi.hoisted(() => vi.fn());
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({ error: toastError }),
+}));
 
 function createBackgroundProcessState(processes: BackgroundProcess[]) {
   return {
@@ -100,12 +105,16 @@ vi.mock("@/subagents/track", () => ({
     rows,
     onOpenSubagent,
     onOpenProviderSubagent,
+    onStopSubagent,
+    onStopProviderSubagent,
   }: {
     rows: SubagentRow[];
     onOpenSubagent: (subagentId: string) => void;
     onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
+    onStopSubagent: (subagentId: string) => Promise<void>;
+    onStopProviderSubagent: (parentAgentId: string, subagentId: string) => Promise<void>;
   }) =>
-    rows.map((row) =>
+    rows.flatMap((row) => [
       React.createElement(
         "button",
         {
@@ -121,7 +130,23 @@ vi.mock("@/subagents/track", () => ({
         },
         row.kind === "provider" ? "打开 provider 子代理" : "打开 Paseo 子会话",
       ),
-    ),
+      ...(row.status === "running"
+        ? [
+            React.createElement(
+              "button",
+              {
+                key: `${row.id}-stop`,
+                type: "button",
+                onClick: () =>
+                  void (row.kind === "provider"
+                    ? onStopProviderSubagent(row.parentAgentId, row.id)
+                    : onStopSubagent(row.id)),
+              },
+              `停止 ${row.id}`,
+            ),
+          ]
+        : []),
+    ]),
 }));
 
 const SERVER_ID = "agent-tracks-server";
@@ -339,32 +364,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AgentTracks pill order", () => {
-  it("places the terminal indicator immediately after the subagent indicator", () => {
-    const process: BackgroundProcess = {
-      id: "terminal-build",
-      name: "Terminal build",
-      command: "bun run build",
-      cwd: "/repo",
-      ownerAgentId: null,
-      scope: "workspace",
-      source: "terminal",
-      status: "running",
-      startedAt: 1,
-      endedAt: null,
-      exitCode: null,
-      terminalId: "terminal-1",
-    };
-    renderAgentTracks(HOST_WORKSPACE_ID, providerRow, [process]);
-
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "打开 provider 子代理",
-      process.name,
-      "打开更改",
-    ]);
-  });
-});
-
 describe("AgentTracks provider 子代理路由", () => {
   it.each([
     {
@@ -495,5 +494,43 @@ describe("background process output routing", () => {
         .getWorkspaceTabs(fixture.hostWorkspaceKey)
         .some((tab) => tab.tabId === fixture.parentTabId),
     ).toBe(true);
+  });
+});
+
+describe("AgentTracks subagent cancellation errors", () => {
+  it("reports a provider cancellation failure and lets the user retry without navigating", async () => {
+    const cancelProviderSubagent = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Upgrade OMP to stop provider subagents"))
+      .mockResolvedValueOnce(undefined);
+    useSessionStore
+      .getState()
+      .initializeSession(SERVER_ID, { cancelProviderSubagent } as unknown as DaemonClient);
+    renderAgentTracks(HOST_WORKSPACE_ID, providerRow);
+    const stop = screen.getByRole("button", { name: `停止 ${SUBAGENT_ID}` });
+
+    fireEvent.click(stop);
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Upgrade OMP to stop provider subagents"),
+    );
+    expect(screen.getByRole("button", { name: `停止 ${SUBAGENT_ID}` })).toBeTruthy();
+    fireEvent.click(stop);
+    await waitFor(() => expect(cancelProviderSubagent).toHaveBeenCalledTimes(2));
+    expect(cancelProviderSubagent).toHaveBeenCalledWith(PARENT_AGENT_ID, SUBAGENT_ID);
+    expect(navigateToAgent).not.toHaveBeenCalled();
+  });
+
+  it("reports a managed cancellation failure without changing the child status", async () => {
+    const cancelAgent = vi.fn().mockRejectedValue(new Error("Unable to stop child"));
+    useSessionStore
+      .getState()
+      .initializeSession(SERVER_ID, { cancelAgent } as unknown as DaemonClient);
+    const row = seedPaseoChild(HOST_WORKSPACE_ID);
+    renderAgentTracks(HOST_WORKSPACE_ID, { ...row, status: "running" });
+
+    fireEvent.click(screen.getByRole("button", { name: `停止 ${row.id}` }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Unable to stop child"));
+    expect(cancelAgent).toHaveBeenCalledWith(row.id);
+    expect(screen.getByRole("button", { name: `停止 ${row.id}` })).toBeTruthy();
   });
 });

@@ -543,6 +543,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
+  z.object({ ...OmpCommandBase, type: z.literal("cancel_subagent"), subagentId: z.string() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),

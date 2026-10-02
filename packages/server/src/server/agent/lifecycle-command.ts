@@ -67,17 +67,9 @@ async function requestAgentRunCancellation(
   }
 
   const hasInFlightRun = agentManager.hasInFlightRun(agentId);
-  if (!hasInFlightRun) {
-    logger.trace(
-      { agentId, lifecycle: agent.lifecycle, hasInFlightRun },
-      "cancelAgentRunCommand: skipping because agent is not running",
-    );
-    return { agent, cancelled: false, cancellation: { status: "not_running" } };
-  }
-
   logger.debug(
     { agentId, lifecycle: agent.lifecycle, hasInFlightRun },
-    "cancelAgentRunCommand: interrupting",
+    "cancelAgentRunCommand: interrupting agent and descendants",
   );
   const startedAt = Date.now();
   const cancellation = await agentManager.cancelAgentRun(agentId);

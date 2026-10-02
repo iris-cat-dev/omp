@@ -1846,6 +1846,7 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    ...en.subagents,
     title: "하위 에이전트",
     modelLabel: "모델: {{model}}",
     modelUnknown: "알 수 없음(보고되지 않음)",

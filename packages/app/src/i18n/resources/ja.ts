@@ -1852,6 +1852,7 @@ export const ja: TranslationResources = {
     backdrop: "メニューの背景",
   },
   subagents: {
+    ...en.subagents,
     title: "サブエージェント",
     modelLabel: "モデル：{{model}}",
     modelUnknown: "不明（未報告）",

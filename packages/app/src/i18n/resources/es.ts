@@ -1882,6 +1882,7 @@ export const es: TranslationResources = {
     backdrop: "Fondo del menú",
   },
   subagents: {
+    ...en.subagents,
     title: "Subagentes",
     modelLabel: "Modelo: {{model}}",
     modelUnknown: "Desconocido (no informado)",

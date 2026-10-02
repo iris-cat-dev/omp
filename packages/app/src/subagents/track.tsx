@@ -1,7 +1,7 @@
-import { useCallback, useMemo, type ReactElement } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Archive, Bot, Unlink } from "lucide-react-native";
+import { Archive, Bot, Square, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
@@ -24,6 +24,7 @@ import {
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
+const ThemedStop = withUnistyles(Square);
 const ThemedUnlink = withUnistyles(Unlink);
 const ThemedBot = withUnistyles(Bot);
 
@@ -36,6 +37,8 @@ export interface SubagentsTrackProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
+  onStopSubagent: (id: string) => Promise<void>;
+  onStopProviderSubagent: (parentAgentId: string, subagentId: string) => Promise<void>;
   onArchiveSubagent: (id: string) => void;
   onArchiveFinished?: () => void;
   archiveFinishedStatus?: ArchiveFinishedStatus;
@@ -61,6 +64,8 @@ export function SubagentsTrack({
   rows,
   onOpenSubagent,
   onOpenProviderSubagent,
+  onStopSubagent,
+  onStopProviderSubagent,
   onArchiveSubagent,
   onArchiveFinished,
   archiveFinishedStatus = IDLE_ARCHIVE_FINISHED_STATUS,
@@ -103,6 +108,8 @@ export function SubagentsTrack({
           row={row}
           onOpenSubagent={onOpenSubagent}
           onOpenProviderSubagent={onOpenProviderSubagent}
+          onStopSubagent={onStopSubagent}
+          onStopProviderSubagent={onStopProviderSubagent}
           onArchiveSubagent={onArchiveSubagent}
           onDetachSubagent={onDetachSubagent}
         />
@@ -173,6 +180,8 @@ interface SubagentsTrackRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
+  onStopSubagent: (id: string) => Promise<void>;
+  onStopProviderSubagent: (parentAgentId: string, subagentId: string) => Promise<void>;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
 }
@@ -181,6 +190,8 @@ function SubagentsTrackRow({
   row,
   onOpenSubagent,
   onOpenProviderSubagent,
+  onStopSubagent,
+  onStopProviderSubagent,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
@@ -203,6 +214,21 @@ function SubagentsTrackRow({
   const handleDetachPress = useCallback(() => {
     onDetachSubagent?.(row.id);
   }, [onDetachSubagent, row.id]);
+  const [isStopping, setIsStopping] = useState(false);
+  const stoppingRef = useRef(false);
+  const handleStopPress = useCallback(() => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    setIsStopping(true);
+    const request =
+      row.kind === "provider"
+        ? onStopProviderSubagent(row.parentAgentId, row.id)
+        : onStopSubagent(row.id);
+    void Promise.resolve(request).finally(() => {
+      stoppingRef.current = false;
+      setIsStopping(false);
+    });
+  }, [onStopProviderSubagent, onStopSubagent, row]);
   const actionsAlwaysVisible = isNative || isCompact;
 
   const renderRow = useCallback(
@@ -219,27 +245,30 @@ function SubagentsTrackRow({
         >
           {metadata}
         </Text>
-        {row.kind === "paseo" ? (
-          <SubagentRowActions
-            rowId={row.id}
-            displayLabel={displayLabel}
-            visible={actionsAlwaysVisible || active}
-            onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
-            onArchivePress={handleArchivePress}
-          />
-        ) : null}
+        <SubagentRowActions
+          rowId={row.id}
+          displayLabel={displayLabel}
+          visible={actionsAlwaysVisible || active}
+          onStopPress={row.status === "running" ? handleStopPress : undefined}
+          isStopping={isStopping}
+          onDetachPress={row.kind === "paseo" && onDetachSubagent ? handleDetachPress : undefined}
+          onArchivePress={row.kind === "paseo" ? handleArchivePress : undefined}
+        />
       </>
     ),
     [
       actionsAlwaysVisible,
       displayLabel,
       handleArchivePress,
+      handleStopPress,
+      isStopping,
       handleDetachPress,
       metadata,
       onDetachSubagent,
       presentation,
       row.kind,
       row.id,
+      row.status,
     ],
   );
 
@@ -258,6 +287,8 @@ function SubagentRowActions({
   rowId,
   displayLabel,
   visible,
+  onStopPress,
+  isStopping,
   onDetachPress,
   onArchivePress,
 }: {
@@ -265,7 +296,9 @@ function SubagentRowActions({
   displayLabel: string;
   visible: boolean;
   onDetachPress?: () => void;
-  onArchivePress: () => void;
+  onStopPress?: () => void;
+  isStopping: boolean;
+  onArchivePress?: () => void;
 }): ReactElement {
   const { t } = useTranslation();
   return (
@@ -273,6 +306,18 @@ function SubagentRowActions({
       style={visible ? styles.actionClusterVisible : styles.actionClusterHidden}
       pointerEvents={visible ? "auto" : "none"}
     >
+      {onStopPress ? (
+        <SubagentActionButton
+          accessibilityLabel={t(isStopping ? "subagents.stoppingAction" : "subagents.stopAction", {
+            label: displayLabel,
+          })}
+          testID={`subagents-track-stop-${rowId}`}
+          tooltipLabel={t(isStopping ? "subagents.stoppingTooltip" : "subagents.stopTooltip")}
+          icon="stop"
+          visible={visible}
+          onPress={onStopPress}
+        />
+      ) : null}
       {onDetachPress ? (
         <SubagentActionButton
           accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
@@ -283,24 +328,29 @@ function SubagentRowActions({
           onPress={onDetachPress}
         />
       ) : null}
-      <SubagentActionButton
-        accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
-        testID={`subagents-track-archive-${rowId}`}
-        tooltipLabel={t("subagents.archiveTooltip")}
-        icon="archive"
-        visible={visible}
-        onPress={onArchivePress}
-      />
+      {onArchivePress ? (
+        <SubagentActionButton
+          accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
+          testID={`subagents-track-archive-${rowId}`}
+          tooltipLabel={t("subagents.archiveTooltip")}
+          icon="archive"
+          visible={visible}
+          onPress={onArchivePress}
+        />
+      ) : null}
     </View>
   );
 }
 
-type SubagentActionIcon = "archive" | "detach";
+type SubagentActionIcon = "archive" | "detach" | "stop";
 
 function renderSubagentActionIcon(icon: SubagentActionIcon, isActive: boolean): ReactElement {
   const uniProps = isActive ? foregroundColorMapping : foregroundMutedColorMapping;
   if (icon === "detach") {
     return <ThemedUnlink size={ROW_ICON_SIZE} uniProps={uniProps} />;
+  }
+  if (icon === "stop") {
+    return <ThemedStop size={ROW_ICON_SIZE} uniProps={uniProps} />;
   }
   return <ThemedArchive size={ROW_ICON_SIZE} uniProps={uniProps} />;
 }
@@ -320,6 +370,13 @@ function SubagentActionButton({
   visible: boolean;
   onPress: () => void;
 }): ReactElement {
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onPress();
+    },
+    [onPress],
+  );
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild disabled={!visible}>
@@ -327,7 +384,7 @@ function SubagentActionButton({
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
-          onPress={onPress}
+          onPress={handlePress}
           style={styles.actionButton}
           hitSlop={8}
         >
