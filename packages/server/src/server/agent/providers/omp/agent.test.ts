@@ -721,13 +721,16 @@ describe("OMP agent client and session", () => {
     await omp.start();
     const turnId = await omp.requireStartTurn("keep working");
 
-    await expect(omp.steerActiveTurn("ACK", turnId)).resolves.toEqual({ status: "accepted" });
+    await expect(omp.steerActiveTurn("ACK", turnId)).resolves.toEqual({
+      status: "accepted",
+      userMessageEcho: "provider",
+    });
 
     expect(omp.runtime().steerRequests).toEqual([{ message: "ACK", imageCount: 0 }]);
     expect(omp.wasAborted()).toBe(false);
   });
 
-  test("correlates a steered user message with its submitted client message", async () => {
+  test("correlates queued steered user messages when the provider consumes them", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const turnId = await omp.requireStartTurn("keep working", {
@@ -739,10 +742,16 @@ describe("OMP agent client and session", () => {
 
     await expect(
       omp.steerActiveTurn("change direction", turnId, {
-        clientMessageId: "steer-client-message",
+        clientMessageId: "first-steer-client-message",
       }),
-    ).resolves.toEqual({ status: "accepted" });
-    runtime.acceptPrompt("change direction", "steer-native-message");
+    ).resolves.toEqual({ status: "accepted", userMessageEcho: "provider" });
+    await expect(
+      omp.steerActiveTurn("add regression coverage", turnId, {
+        clientMessageId: "second-steer-client-message",
+      }),
+    ).resolves.toEqual({ status: "accepted", userMessageEcho: "provider" });
+    runtime.acceptPrompt("change direction", "first-steer-native-message");
+    runtime.acceptPrompt("add regression coverage", "second-steer-native-message");
 
     expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
       {
@@ -754,8 +763,14 @@ describe("OMP agent client and session", () => {
       {
         type: "user_message",
         text: "change direction",
-        messageId: "steer-native-message",
-        clientMessageId: "steer-client-message",
+        messageId: "first-steer-native-message",
+        clientMessageId: "first-steer-client-message",
+      },
+      {
+        type: "user_message",
+        text: "add regression coverage",
+        messageId: "second-steer-native-message",
+        clientMessageId: "second-steer-client-message",
       },
     ]);
   });
@@ -1722,6 +1737,55 @@ describe("OMP agent client and session", () => {
     await omp.close();
     expect(omp.isClosed()).toBe(true);
   });
+
+  test("preserves replacement as the cancellation source when abort rejects the prompt RPC", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    runtime.holdNextPrompt();
+    await omp.requireStartTurn("keep working");
+    const acknowledgeAbort = runtime.abort.bind(runtime);
+    runtime.abort = async () => {
+      const abortError = new Error("Request was aborted");
+      abortError.name = "AbortError";
+      await runtime.failHeldPrompt(abortError);
+      await acknowledgeAbort();
+    };
+
+    await omp.interrupt("replacement");
+    await waitForImmediate();
+
+    expect(omp.canceledTurnCount()).toBe(1);
+    expect(omp.failedTurnCount()).toBe(0);
+    expect(omp.cancellationReasons()).toEqual(["replacement"]);
+  });
+
+  test("classifies an aborted terminal received before the abort acknowledgement as cancellation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const acknowledgeAbort = runtime.abort.bind(runtime);
+    runtime.abort = async () => {
+      runtime.finishTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "aborted",
+        errorMessage: "Interrupted by user",
+      });
+      await waitForImmediate();
+      await acknowledgeAbort();
+    };
+
+    await omp.interrupt("replacement");
+    await waitForImmediate();
+
+    expect(omp.canceledTurnCount()).toBe(1);
+    expect(omp.failedTurnCount()).toBe(0);
+    expect(omp.cancellationReasons()).toEqual(["replacement"]);
+  });
+
   test("does not let late autonomous events wake an interrupted conversation", async () => {
     const omp = new OmpHarness();
     await omp.start();

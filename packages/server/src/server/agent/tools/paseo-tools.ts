@@ -2072,7 +2072,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        "Send a task to a running agent. Prompts from an agent to itself or a managed ancestor use non-destructive steering and never replace the active turn; the call fails before interruption when the provider cannot steer. Agent-scoped callers run in background by default; top-level callers wait by default.",
+        "Send a task to an agent. Prompts sent while the target is running use non-destructive steering and never replace its active turn; the call fails before interruption when the provider cannot steer. Agent-scoped callers run in background by default; top-level callers wait by default.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -2090,16 +2090,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
-      const requiresNonDestructiveDelivery = Boolean(
-        callerAgentId &&
-        (callerAgentId === agentId ||
-          (await isManagedAncestor({
-            agentManager,
-            agentStorage,
-            descendantAgentId: callerAgentId,
-            ancestorAgentId: agentId,
-          }))),
-      );
 
       await sendPromptToAgent({
         agentManager,
@@ -2107,9 +2097,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentId,
         prompt,
         sessionMode,
-        ...(requiresNonDestructiveDelivery
-          ? { activeTurnBehavior: "steer" as const, replaceOnSteerUnavailable: false }
-          : {}),
+        activeTurnBehavior: "steer",
+        replaceOnSteerUnavailable: false,
         logger: childLogger,
       });
 

@@ -66,6 +66,7 @@ interface FinishNotificationScenario {
   parentPrompts(): string[];
   steerAttemptCount(): number;
   wasParentPrompted(): boolean;
+  steerOptions(): unknown;
 }
 
 function createFinishNotificationScenario(
@@ -75,6 +76,7 @@ function createFinishNotificationScenario(
   let resolveParentPrompt: ((prompt: string) => void) | null = null;
   let parentPrompted = false;
   let steerAttemptCount = 0;
+  let steerOptions: unknown;
   const parentPrompts: string[] = [];
 
   const childAgent: ManagedAgent = Object.create(null);
@@ -109,10 +111,15 @@ function createFinishNotificationScenario(
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
-  Reflect.set(agentManager, "steerOrReplaceActiveTurn", async () => {
-    steerAttemptCount += 1;
-    return { status: "inactive" };
-  });
+  Reflect.set(
+    agentManager,
+    "steerOrReplaceActiveTurn",
+    async (_agentId: string, _prompt: unknown, steerDispatchOptions: unknown) => {
+      steerAttemptCount += 1;
+      steerOptions = steerDispatchOptions;
+      return { status: "inactive" };
+    },
+  );
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
     parentPrompts.push(prompt);
@@ -253,6 +260,9 @@ function createFinishNotificationScenario(
     steerAttemptCount() {
       return steerAttemptCount;
     },
+    steerOptions() {
+      return steerOptions;
+    },
     wasParentPrompted() {
       return parentPrompted;
     },
@@ -278,6 +288,7 @@ test("finish notifications tell the parent the child's last assistant message", 
     ),
   );
   expect(scenario.steerAttemptCount()).toBe(1);
+  expect(scenario.steerOptions()).toEqual({ replaceOnUnavailable: false });
 });
 
 test("finish notifications truncate oversized child responses", async () => {

@@ -28,6 +28,7 @@ import type {
 } from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
+  AgentInterruptReason,
   AgentCreateSessionOptions,
   AgentFeature,
   AgentLaunchContext,
@@ -41,6 +42,8 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  SteerActiveTurnOptions,
+  SteerResult,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -535,6 +538,7 @@ class CloseRecordingTestAgentSession extends TestAgentSession {
 
 class SteeringTestSession extends TestAgentSession {
   interruptCount = 0;
+  interruptReasons: AgentInterruptReason[] = [];
   startCount = 0;
   steerCount = 0;
   steerResult: "accepted" | "unavailable" | Error = "accepted";
@@ -547,19 +551,21 @@ class SteeringTestSession extends TestAgentSession {
     return { turnId };
   }
 
-  override async interrupt(): Promise<void> {
+  override async interrupt(reason: AgentInterruptReason = "user"): Promise<void> {
     this.interruptCount += 1;
+    this.interruptReasons.push(reason);
     this.pushEvent({
       type: "turn_canceled",
       provider: this.provider,
+      reason,
       turnId: `active-turn-${this.startCount}`,
     });
   }
 
   async steerActiveTurn(
     prompt: AgentPromptInput,
-    options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
-  ): Promise<import("./agent-sdk-types.js").SteerResult> {
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
     this.steerCount += 1;
     if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
       return { status: "unavailable" };
@@ -577,6 +583,22 @@ class SteeringTestSession extends TestAgentSession {
       },
     });
     return { status: "accepted" };
+  }
+}
+
+class ProviderEchoSteeringSession extends SteeringTestSession {
+  override async steerActiveTurn(
+    _prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    this.steerCount += 1;
+    if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
+      return { status: "unavailable" };
+    }
+    return {
+      status: "accepted",
+      userMessageEcho: "provider",
+    };
   }
 }
 
@@ -684,6 +706,47 @@ test("steers a running parent without canceling its managed child", async () => 
       manager.listAgents().map((agent) => manager.cancelAgentRun(agent.id).catch(() => undefined)),
     );
     await Promise.all(drains);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not report a provider-echo steer as consumed before its user message arrives", async () => {
+  const session = new ProviderEchoSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session);
+  try {
+    expect(
+      manager
+        .getTimeline(agentId)
+        .some(
+          (item) => item.type === "user_message" && item.clientMessageId === "replacement-client",
+        ),
+    ).toBe(false);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: {
+        type: "user_message",
+        text: "replacement",
+        clientMessageId: "replacement-client",
+        messageId: "provider-replacement",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(manager.fetchTimeline(agentId, { limit: 0 }).rows).toContainEqual(
+        expect.objectContaining({
+          providerMessageId: "provider-replacement",
+          item: expect.objectContaining({
+            type: "user_message",
+            clientMessageId: "replacement-client",
+            messageId: "replacement-client",
+          }),
+        }),
+      );
+    });
+  } finally {
+    await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -851,6 +914,7 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
   const { manager, agentId, workdir } = await startAndSteerThroughManager(session);
   try {
     expect(session.interruptCount).toBe(1);
+    expect(session.interruptReasons).toEqual(["replacement"]);
     expect(session.startCount).toBe(2);
     expect(manager.getTimeline(agentId)).toContainEqual(
       expect.objectContaining({ type: "user_message", clientMessageId: "replacement-client" }),

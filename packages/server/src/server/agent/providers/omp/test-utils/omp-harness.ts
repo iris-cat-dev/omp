@@ -8,6 +8,7 @@ import type {
   AgentPersistenceHandle,
   AgentPermissionResponse,
   AgentPermissionResult,
+  AgentInterruptReason,
   AgentRunOptions,
   AgentSteerOptions,
   AgentSessionConfig,
@@ -651,8 +652,8 @@ export class OmpHarness {
     return await this.requireSession().steerActiveTurn(message, { ...options, expectedTurnId });
   }
 
-  async interrupt(): Promise<void> {
-    await this.requireSession().interrupt();
+  async interrupt(reason?: AgentInterruptReason): Promise<void> {
+    await this.requireSession().interrupt(reason);
   }
 
   async cancelProviderSubagent(subagentId: string): Promise<boolean> {
@@ -691,6 +692,14 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  failedTurnCount(): number {
+    return this.events.filter((event) => event.type === "turn_failed").length;
+  }
+
+  cancellationReasons(): string[] {
+    return this.events.flatMap((event) => (event.type === "turn_canceled" ? [event.reason] : []));
   }
 
   async close(): Promise<void> {

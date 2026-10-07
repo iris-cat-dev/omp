@@ -14,7 +14,6 @@ import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
-import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
@@ -3362,6 +3361,12 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+    expect(spies.agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
+      "child-agent",
+      "Follow up",
+      { replaceOnUnavailable: false },
+    );
+    expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
   });
 
   it("delivers a child prompt to its running parent without replacing either run", async () => {

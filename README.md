@@ -29,6 +29,17 @@ not be stopped and keeps it marked running rather than claiming success. Update 
 Settings, or run `npm run download:omp` before packaging a desktop build. The general minimum OMP
 version above still applies when native-subagent stopping is not needed.
 
+## Guiding a running conversation
+
+The composer defaults to **Steer** while a conversation is running. A steer guides the active turn
+without canceling it or its managed descendants. The submitted message remains visibly pending
+until OMP emits the canonical user-message event that confirms the model consumed it; an RPC
+acknowledgement alone only confirms admission.
+
+If the active provider cannot accept steering, Desktop reports the send failure and leaves the
+current turn running. Agent-to-agent prompts and completion notifications use the same
+non-destructive rule rather than falling back to replacement.
+
 ## Permanently deleting conversation history
 
 Desktop-injected agent tools distinguish four operations: `cancel_agent` stops a run,

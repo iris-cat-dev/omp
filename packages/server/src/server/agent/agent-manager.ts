@@ -37,6 +37,7 @@ import {
   type AgentPersistenceHandle,
   type AgentProviderNotice,
   type AgentPromptInput,
+  type AgentInterruptReason,
   type AgentProvider,
   type AgentRunOptions,
   type AgentSteerOptions,
@@ -2650,7 +2651,13 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+          admission,
+        );
       }
       return admission;
     });
@@ -2680,7 +2687,13 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(
+              agent,
+              prompt,
+              options?.clientMessageId,
+              expectedTurnId,
+              admission,
+            );
           }
           return admission;
         })
@@ -2789,8 +2802,9 @@ export class AgentManager {
     prompt: AgentPromptInput,
     clientMessageId: string | undefined,
     expectedTurnId: string,
+    admission: Extract<SteerResult, { status: "accepted" }>,
   ): Promise<void> {
-    if (!clientMessageId) {
+    if (!clientMessageId || admission.userMessageEcho === "provider") {
       return;
     }
     this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
@@ -2944,13 +2958,17 @@ export class AgentManager {
     }
   }
 
-  async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.cancelAgentRunTree(agentId, new Set());
+  async cancelAgentRun(
+    agentId: string,
+    reason: AgentInterruptReason = "user",
+  ): Promise<AgentRunCancellationResult> {
+    return this.cancelAgentRunTree(agentId, new Set(), reason);
   }
 
   private async cancelAgentRunTree(
     agentId: string,
     visitedAgentIds: Set<string>,
+    reason: AgentInterruptReason,
   ): Promise<AgentRunCancellationResult> {
     if (visitedAgentIds.has(agentId)) {
       return { status: "not_running" };
@@ -2978,17 +2996,17 @@ export class AgentManager {
           if (!child || getParentAgentIdFromLabels(child.labels) !== agentId) {
             return { status: "not_running" } as const;
           }
-          return this.cancelAgentRunTree(childId, visitedAgentIds);
+          return this.cancelAgentRunTree(childId, visitedAgentIds, reason);
         }),
       ),
     ]);
     // Stop native children before interrupting their parent's turn; an abort alone
     // does not cancel OMP subagents. Still interrupt the root when a child refuses.
     const ownCancellation = await this.runForegroundMutation(agentId, () =>
-      this.cancelAgentRunNow(agentId),
+      this.cancelAgentRunNow(agentId, reason),
     ).then(
       (value) => ({ status: "fulfilled", value }) as const,
-      (reason: unknown) => ({ status: "rejected", reason }) as const,
+      (error: unknown) => ({ status: "rejected", reason: error }) as const,
     );
     // Catch descendants created while the first cancellation sweep was settling.
     await this.drainSessionEvents(agentId);
@@ -3011,7 +3029,7 @@ export class AgentManager {
             if (!current || getParentAgentIdFromLabels(current.labels) !== agentId) {
               return { status: "not_running" } as const;
             }
-            return this.cancelAgentRunTree(child.id, visitedAgentIds);
+            return this.cancelAgentRunTree(child.id, visitedAgentIds, reason);
           }),
         ),
     ]);
@@ -3035,7 +3053,10 @@ export class AgentManager {
     return { status: "not_running" };
   }
 
-  private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
+  private async cancelAgentRunNow(
+    agentId: string,
+    reason: AgentInterruptReason,
+  ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??
@@ -3044,7 +3065,7 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    const interruptAcknowledged = await this.interruptSession(agent.session, agentId, reason);
     if (interruptAcknowledged) {
       await this.stopAllBackgroundProcesses(agentId).catch((error: unknown) => {
         this.logger.warn({ err: error, agentId }, "Failed to stop agent background processes");
@@ -3069,7 +3090,7 @@ export class AgentManager {
       await this.dispatchSessionEvent(agent, {
         type: "turn_canceled",
         provider: agent.provider,
-        reason: "interrupted",
+        reason,
         turnId: run.turnId,
       });
       await run.settledPromise;
@@ -3092,7 +3113,7 @@ export class AgentManager {
       await this.dispatchSessionEvent(agent, {
         type: "turn_canceled",
         provider: agent.provider,
-        reason: "interrupted",
+        reason,
       });
     }
 
@@ -3108,16 +3129,21 @@ export class AgentManager {
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
-    const result = await this.cancelAgentRun(agentId);
+    const reason: AgentInterruptReason = action === "replace" ? "replacement" : action;
+    const result = await this.cancelAgentRun(agentId, reason);
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
   }
 
-  private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
+  private async interruptSession(
+    session: AgentSession,
+    agentId: string,
+    reason: AgentInterruptReason,
+  ): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
-        operation: session.interrupt(),
+        operation: session.interrupt(reason),
         timeoutMs: this.rescueTimeouts.interruptSessionMs,
         onLateError: (error) => {
           this.logger.warn(

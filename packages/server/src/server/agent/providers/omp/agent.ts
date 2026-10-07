@@ -28,6 +28,7 @@ import {
   type OmpProviderLoginStart,
   type AgentClient,
   type AgentFeature,
+  type AgentInterruptReason,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1594,6 +1595,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private suppressAutonomousEventsAfterInterrupt = false;
+  private activeInterrupt: { turnId: string | null; reason: AgentInterruptReason } | null = null;
   private lastKnownThinkingOptionId: string | null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -1626,6 +1628,11 @@ export class OmpAgentSession implements AgentSession {
   private lastSubmittedPromptText: string | null = null;
   private lastSubmittedPromptDisplayText: string | null = null;
   private lastSubmittedPromptClientMessageId: string | null = null;
+  private readonly pendingSteeredUserMessages: Array<{
+    text: string;
+    displayText: string;
+    clientMessageId: string | null;
+  }> = [];
   private planContextResetPending: boolean;
   private readonly backgroundDaemons?: OmpBackgroundDaemons;
 
@@ -1835,6 +1842,7 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("An OMP turn is already active");
     }
     this.suppressAutonomousEventsAfterInterrupt = false;
+    this.activeInterrupt = null;
     this.dismissPendingPlanApproval();
 
     const payload = convertPromptInput(prompt, { model: this.state.model });
@@ -1902,6 +1910,11 @@ export class OmpAgentSession implements AgentSession {
         if (this.activeTurnId !== turnId) {
           return;
         }
+        const interruptReason =
+          this.activeInterrupt?.turnId === turnId ? this.activeInterrupt.reason : null;
+        if (interruptReason) {
+          this.activeInterrupt = null;
+        }
         this.usagePoller.stopTurn();
         this.stopAutomaticCredentialResolution();
         this.activeTurnId = null;
@@ -1916,7 +1929,7 @@ export class OmpAgentSession implements AgentSession {
             type: "turn_canceled",
             provider: this.provider,
             turnId,
-            reason: toDiagnosticErrorMessage(error),
+            reason: interruptReason ?? toDiagnosticErrorMessage(error),
           });
           return;
         }
@@ -1940,24 +1953,22 @@ export class OmpAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const payload = convertPromptInput(prompt, { model: this.state.model });
-    const previousClientMessageId = this.activeClientMessageId;
-    const previousPromptText = this.lastSubmittedPromptText;
-    const previousDisplayText = this.lastSubmittedPromptDisplayText;
-    const previousPromptClientMessageId = this.lastSubmittedPromptClientMessageId;
-    this.activeClientMessageId = options.clientMessageId ?? null;
-    this.lastSubmittedPromptText = payload.text;
-    this.lastSubmittedPromptDisplayText = payload.text;
-    this.lastSubmittedPromptClientMessageId = this.activeClientMessageId;
+    const submittedMessage = {
+      text: payload.text,
+      displayText: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    };
+    this.pendingSteeredUserMessages.push(submittedMessage);
     try {
-      this.runtimeSession.steer(payload.text, payload.images);
+      await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
-      this.activeClientMessageId = previousClientMessageId;
-      this.lastSubmittedPromptText = previousPromptText;
-      this.lastSubmittedPromptDisplayText = previousDisplayText;
-      this.lastSubmittedPromptClientMessageId = previousPromptClientMessageId;
+      const index = this.pendingSteeredUserMessages.indexOf(submittedMessage);
+      if (index >= 0) {
+        this.pendingSteeredUserMessages.splice(index, 1);
+      }
       throw error;
     }
-    return { status: "accepted" };
+    return { status: "accepted", userMessageEcho: "provider" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2401,9 +2412,18 @@ export class OmpAgentSession implements AgentSession {
     return cancelled;
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(reason: AgentInterruptReason = "user"): Promise<void> {
     const turnId = this.activeTurnId;
-    await this.runtimeSession.abort();
+    const interrupt = { turnId, reason };
+    this.activeInterrupt = interrupt;
+    try {
+      await this.runtimeSession.abort();
+    } catch (error) {
+      if (this.activeInterrupt === interrupt) {
+        this.activeInterrupt = null;
+      }
+      throw error;
+    }
     this.suppressAutonomousEventsAfterInterrupt = true;
     if (turnId && this.activeTurnId === turnId) {
       this.terminalizeActiveWork();
@@ -2419,9 +2439,12 @@ export class OmpAgentSession implements AgentSession {
       this.emit({
         type: "turn_canceled",
         provider: this.provider,
-        reason: "interrupted",
+        reason,
         turnId,
       });
+    }
+    if (this.activeInterrupt === interrupt) {
+      this.activeInterrupt = null;
     }
   }
 
@@ -3624,12 +3647,16 @@ export class OmpAgentSession implements AgentSession {
     if (!text && !images) {
       return;
     }
+    const submittedSteer = this.pendingSteeredUserMessages.find(
+      (submitted) => submitted.text === text,
+    );
     // Image prompts can produce a second, late user message_end frame after the
     // turn has completed. Its native entry id may differ, so id-only
     // deduplication cannot recognize it. Suppress a replay of the last live text
-    // when no turn is active, or when it arrives during a newer prompt.
+    // unless it matches a submitted prompt that has not been consumed yet.
     if (
       text === this.lastEmittedLiveUserMessageText &&
+      !submittedSteer &&
       (!turnId || text !== this.lastSubmittedPromptText)
     ) {
       return;
@@ -3640,13 +3667,15 @@ export class OmpAgentSession implements AgentSession {
     };
     const messageId = readNativeMessageId(nativeMessage);
     const clientMessageId =
-      text === this.lastSubmittedPromptText
+      submittedSteer?.clientMessageId ??
+      (text === this.lastSubmittedPromptText
         ? (this.activeClientMessageId ?? this.lastSubmittedPromptClientMessageId)
-        : null;
+        : null);
     const displayText =
-      text === this.lastSubmittedPromptText
+      submittedSteer?.displayText ??
+      (text === this.lastSubmittedPromptText
         ? (this.lastSubmittedPromptDisplayText ?? getOmpWorkflowDisplayText(text))
-        : getOmpWorkflowDisplayText(text);
+        : getOmpWorkflowDisplayText(text));
     const emitUserMessage = (resolvedMessageId?: string): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
@@ -3656,6 +3685,12 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
         this.emittedUserMessageIds.add(resolvedMessageId);
+      }
+      if (submittedSteer) {
+        const index = this.pendingSteeredUserMessages.indexOf(submittedSteer);
+        if (index >= 0) {
+          this.pendingSteeredUserMessages.splice(index, 1);
+        }
       }
       this.lastEmittedLiveUserMessageText = text;
       this.emit({
@@ -3762,6 +3797,17 @@ export class OmpAgentSession implements AgentSession {
           ...(this.activePlanMessageId ? { messageId: this.activePlanMessageId } : {}),
         }
       : null;
+    const latestAssistant = messages.findLast(
+      (message): message is Extract<OmpAgentMessage, { role: "assistant" }> =>
+        message.role === "assistant",
+    );
+    const interruptReason =
+      this.activeInterrupt && (this.activeInterrupt.turnId ?? undefined) === turnId
+        ? this.activeInterrupt.reason
+        : null;
+    if (interruptReason) {
+      this.activeInterrupt = null;
+    }
     this.terminalizeActiveRuntimeToolCalls();
     this.stopAutomaticCredentialResolution();
     this.activeTurnId = null;
@@ -3773,6 +3819,16 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
+    if (latestAssistant?.stopReason === "aborted") {
+      this.usagePoller.stopTurn();
+      this.emit({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId,
+        reason: interruptReason ?? "provider_aborted",
+      });
+      return;
+    }
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();

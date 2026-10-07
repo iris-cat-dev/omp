@@ -437,7 +437,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.branchMessages;
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
   }
 

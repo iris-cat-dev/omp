@@ -7800,6 +7800,7 @@ export class Session {
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           // A human message answers any permission the agent is blocked on.
           clearPendingPermissions: true,
+          replaceOnSteerUnavailable: msg.activeTurnBehavior === "steer" ? false : undefined,
           logger: this.sessionLogger,
         });
       } catch (error) {

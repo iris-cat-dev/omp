@@ -226,6 +226,31 @@ describe("OMP CLI runtime", () => {
     expect(commands).toEqual([{ type: "set_fast_mode", enabled: true }]);
   });
 
+  test("waits for OMP to acknowledge steering and reports delivery failures", async () => {
+    const child = createOmpChild();
+    child.stdin.once("data", (chunk: Buffer) => {
+      const command = JSON.parse(chunk.toString()) as { id?: string; type: string };
+      child.stdout.write(
+        `${JSON.stringify({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: false,
+          error: "steering unavailable",
+        })}\n`,
+      );
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const delivery = Reflect.apply(session.steer, session, ["change direction"]) as unknown;
+      expect(delivery).toBeInstanceOf(Promise);
+      await expect(delivery).rejects.toThrow("steering unavailable");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reports an unsupported native-subagent stop instead of treating an RPC refusal as success", async () => {
     const child = createOmpChild();
     child.stdin.once("data", (chunk: Buffer) => {

@@ -452,6 +452,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       agentId: callerAgentId,
       prompt: formatSystemNotificationPrompt(body),
       activeTurnBehavior: "steer",
+      replaceOnSteerUnavailable: false,
       unarchive: false,
       logger,
     });

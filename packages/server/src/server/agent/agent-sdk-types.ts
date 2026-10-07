@@ -228,12 +228,20 @@ export interface AgentRunOptions {
   clientMessageId?: string;
 }
 
+export type AgentInterruptReason = "user" | "replacement" | "reload" | "rewind";
+
 export interface AgentSteerOptions extends AgentRunOptions {
   /** Deny permissions that block this steer. An accepted steer must honor this contract. */
   clearPendingPermissions?: boolean;
 }
 
-export type SteerResult = { status: "accepted" } | { status: "unavailable" };
+export type SteerResult =
+  | {
+      status: "accepted";
+      /** The provider will emit the canonical user message when it consumes the steer. */
+      userMessageEcho?: "provider";
+    }
+  | { status: "unavailable" };
 
 export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
@@ -696,7 +704,7 @@ export interface AgentSession {
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is
    * still uncertain.
    */
-  interrupt(): Promise<void>;
+  interrupt(reason?: AgentInterruptReason): Promise<void>;
   /** Stop exactly one provider-owned subagent; false means it already completed. */
   cancelProviderSubagent?(subagentId: string): Promise<boolean>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
