@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/data/query-client";
@@ -132,22 +132,27 @@ export function useAppSettings(): UseAppSettingsReturn {
     staleTime: Infinity,
     gcTime: Infinity,
   });
+  const [localOverride, setLocalOverride] = useState<AppSettings | null>(null);
 
   const updateSettings = useCallback(
     async (updates: Partial<AppSettings>) => {
       try {
+        const current = localOverride ?? data ?? DEFAULT_CLIENT_SETTINGS;
+        const next = { ...current, ...updates };
+        setLocalOverride(next);
         await saveAppSettings({ queryClient, updates });
       } catch (err) {
         console.error("[AppSettings] Failed to save settings:", err);
         throw err;
       }
     },
-    [queryClient],
+    [queryClient, data, localOverride],
   );
 
   const resetSettings = useCallback(async () => {
     try {
       const next = { ...DEFAULT_CLIENT_SETTINGS };
+      setLocalOverride(next);
       queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
       await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
     } catch (err) {
@@ -155,7 +160,12 @@ export function useAppSettings(): UseAppSettingsReturn {
       throw err;
     }
   }, [queryClient]);
-  const settings = useMemo(() => normalizeAppSettings(data), [data]);
+  const settings = useMemo(
+    () =>
+      (localOverride ??
+        (data ? normalizeAppSettings(data) : DEFAULT_CLIENT_SETTINGS)) as AppSettings,
+    [localOverride, data],
+  );
 
   return {
     settings,

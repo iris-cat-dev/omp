@@ -8,7 +8,9 @@ import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import { execFileSync } from "node:child_process";
 import {
   app,
@@ -22,6 +24,7 @@ import {
   screen,
   session,
   Tray,
+  type NativeImage,
 } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
@@ -214,6 +217,50 @@ function getAppDistDir(): string {
   }
 
   return path.resolve(__dirname, "../../app/dist");
+}
+
+const WALLPAPER_MEDIA_MIME: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".ogv": "video/ogg",
+  ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo",
+};
+
+function mediaTypeForPath(filePath: string): string {
+  return WALLPAPER_MEDIA_MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+/**
+ * Parse a single-range `Range: bytes=` header against a known file size.
+ * Returns null for malformed/unsatisfiable ranges, or for forms the media
+ * stack does not use (multiple ranges) — callers fall back to 416.
+ */
+function parseByteRange(header: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+  const [, startRaw, endRaw] = match;
+  if (startRaw === "" && endRaw === "") return null;
+
+  let start: number;
+  let end: number;
+  if (startRaw === "") {
+    // suffix range: last N bytes
+    const suffix = Number(endRaw);
+    if (!Number.isFinite(suffix) || suffix <= 0) return null;
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(startRaw);
+    end = endRaw === "" ? size - 1 : Number(endRaw);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start >= size) return null;
+    end = Math.min(end, size - 1);
+    if (start > end) return null;
+  }
+  return { start, end };
 }
 
 function getWindowIconCandidates(): string[] {
@@ -446,12 +493,14 @@ const backgroundModeController = new BackgroundModeController({
     if (process.platform === "darwin") {
       sourceIcon.setTemplateImage(true);
     }
-    const trayIcon =
-      process.platform === "win32"
-        ? iconPath
-        : process.platform === "darwin"
-          ? sourceIcon
-          : sourceIcon.resize({ width: 16, height: 16, quality: "best" });
+    let trayIcon: string | NativeImage;
+    if (process.platform === "win32") {
+      trayIcon = iconPath;
+    } else if (process.platform === "darwin") {
+      trayIcon = sourceIcon;
+    } else {
+      trayIcon = sourceIcon.resize({ width: 16, height: 16, quality: "best" });
+    }
     backgroundTray = new Tray(trayIcon);
     backgroundTray.setToolTip(APP_NAME);
     backgroundTray.on("click", restore);
@@ -623,6 +672,54 @@ async function bootstrap(): Promise<void> {
   protocol.handle(APP_SCHEME, (request) => {
     const { pathname, search, hash } = new URL(request.url);
     const decodedPath = decodeURIComponent(pathname);
+
+    // Chromium blocks file:// media loaded from an http(s)/custom-scheme origin
+    // ("Media load rejected by URL safety check"), so local wallpaper videos are
+    // served through this same-origin scheme route instead of pathToFileUri.
+    // The media stack always probes with a Range request; a plain 200 from
+    // net.fetch(file://...) drops byte-range support and the demuxer fails with
+    // "Format error", so ranges are served explicitly here (206 + stream).
+    if (decodedPath === "/wallpaper-media") {
+      const mediaPath = new URL(request.url).searchParams.get("path") ?? "";
+      if (!mediaPath) {
+        return new Response("Missing path", { status: 400 });
+      }
+      if (!existsSync(mediaPath)) {
+        return new Response("Not found", { status: 404 });
+      }
+      const { size } = statSync(mediaPath);
+      const mime = mediaTypeForPath(mediaPath);
+      const rangeHeader = request.headers.get("range");
+      const baseHeaders = {
+        "content-type": mime,
+        "accept-ranges": "bytes",
+        "cache-control": "no-store",
+      };
+
+      const parsed = rangeHeader ? parseByteRange(rangeHeader, size) : null;
+      if (rangeHeader && !parsed) {
+        return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
+      }
+      if (parsed) {
+        const { start, end } = parsed;
+        const stream = Readable.toWeb(
+          createReadStream(mediaPath, { start, end }),
+        ) as ReadableStream;
+        return new Response(stream, {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "content-range": `bytes ${start}-${end}/${size}`,
+            "content-length": String(end - start + 1),
+          },
+        });
+      }
+      const stream = Readable.toWeb(createReadStream(mediaPath)) as ReadableStream;
+      return new Response(stream, {
+        status: 200,
+        headers: { ...baseHeaders, "content-length": String(size) },
+      });
+    }
 
     // Chromium can occasionally request the exported entrypoint directly.
     // Canonicalize it back to the route URL so Expo Router sees `/`, not `/index.html`.

@@ -43,6 +43,7 @@ import { RootErrorBoundary } from "@/components/root-error-boundary";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
+import { WindowControls } from "@/components/window-controls";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
   getIsElectronRuntime,
@@ -83,6 +84,7 @@ import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
+import { WallpaperBackground } from "@/wallpaper/WallpaperBackground";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -632,6 +634,12 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <HostSessionManager />
       <FaviconStatusSync />
       <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+      {/* Chromium resolves -webkit-app-region by DOM order (drag rects add,
+          no-drag rects subtract), not by z-index. The tab strip's
+          [data-window-drag-region=native] sits inside {children} and would
+          otherwise swallow real OS clicks on these controls, so this overlay
+          must come after children to cut its drag rect out. */}
+      <WindowControls />
     </AppearanceProvider>
   );
 }
@@ -892,6 +900,10 @@ function recordUserActivity(): void {
 }
 
 function RootAppTree() {
+  const { settings } = useAppSettings();
+  const wallpaperActive =
+    settings.wallpaperEnabled && settings.wallpaperSource !== "none" && !!settings.wallpaperPath;
+
   return (
     <GestureHandlerRootView
       style={flexStyle}
@@ -899,7 +911,10 @@ function RootAppTree() {
       onTouchEnd={recordUserActivity}
       onTouchCancel={recordUserActivity}
     >
-      <View style={layoutStyles.surfaceFill}>
+      <WallpaperBackground />
+      <View
+        style={[layoutStyles.surfaceFill, wallpaperActive && layoutStyles.surfaceFillTransparent]}
+      >
         <RootProviders>
           <RuntimeProviders>
             <AppShell />
@@ -939,6 +954,9 @@ const layoutStyles = StyleSheet.create((theme) => ({
   surfaceFill: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+  },
+  surfaceFillTransparent: {
+    backgroundColor: "transparent",
   },
   windowSidebarToggle: {
     position: "absolute",

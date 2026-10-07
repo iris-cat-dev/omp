@@ -3,19 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   beginWindowDrag,
   applyMacWindowControlsUpdate,
-  applyWindowControlsOverlayUpdate,
   buildStandardContextMenuItems,
-  createWindowControlsOverlayState,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
-  getTitleBarOverlayOptions,
   moveWindowDrag,
   readBadgeCount,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
   readWindowDragPoint,
-  resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
 } from "./window-manager";
 import { getDesktopContextMenuLabels } from "../features/context-menu-labels";
@@ -141,24 +137,6 @@ describe("window-manager", () => {
     });
   });
 
-  describe("getTitleBarOverlayOptions", () => {
-    it("returns light title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("light")).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 29,
-      });
-    });
-
-    it("returns dark title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 29,
-      });
-    });
-  });
-
   describe("readWindowControlsOverlayUpdate", () => {
     it("accepts partial runtime overlay updates", () => {
       expect(
@@ -189,60 +167,6 @@ describe("window-manager", () => {
     });
   });
 
-  describe("resolveRuntimeTitleBarOverlayOptions", () => {
-    it("applies the VS Code height minus border adjustment", () => {
-      expect(
-        resolveRuntimeTitleBarOverlayOptions({
-          height: 48,
-          backgroundColor: "#ffffff",
-          foregroundColor: "#09090b",
-        }),
-      ).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 47,
-      });
-    });
-  });
-
-  describe("applyWindowControlsOverlayUpdate", () => {
-    it("merges cached colors with later runtime height updates", () => {
-      const setTitleBarOverlay = vi.fn();
-      let state = createWindowControlsOverlayState("dark");
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: {
-          backgroundColor: "#181B1A",
-          foregroundColor: "#e4e4e7",
-        },
-      });
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: { height: 48 },
-      });
-
-      expect(state).toEqual({
-        height: 48,
-        backgroundColor: "#181B1A",
-        foregroundColor: "#e4e4e7",
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(1, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 28,
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(2, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 47,
-      });
-    });
-  });
-
   describe("applyMacWindowControlsUpdate", () => {
     it("uses the focus and normal traffic-light positions", () => {
       const setWindowButtonPosition = vi.fn();
@@ -262,7 +186,7 @@ describe("window-manager", () => {
   });
 
   describe("getMainWindowChromeOptions", () => {
-    it("uses frameless hidden title bars with overlay on windows", () => {
+    it("uses frameless hidden title bars without native overlay on windows", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "win32",
@@ -272,15 +196,10 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#181B1A",
-          symbolColor: "#e4e4e7",
-          height: 29,
-        },
       });
     });
 
-    it("uses frameless hidden title bars with overlay on linux", () => {
+    it("uses frameless hidden title bars without native overlay on linux", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "linux",
@@ -290,11 +209,6 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#ffffff",
-          symbolColor: "#09090b",
-          height: 29,
-        },
       });
     });
 

@@ -2262,6 +2262,38 @@ export const zhCN: TranslationResources = {
         previewAccessibility: "内容排版、语法主题和代码字体的实时预览",
         previewContent: "内容和代码预览",
       },
+      wallpaper: {
+        title: "壁纸",
+        enabled: "启用壁纸",
+        source: {
+          label: "来源",
+          none: "禁用",
+          file: "文件",
+          url: "URL",
+        },
+        url: {
+          label: "图片或视频 URL",
+          hint: "壁纸图片或视频的 URL（mp4、webm）",
+          accessibilityLabel: "壁纸图片或视频 URL",
+        },
+        opacity: {
+          label: "不透明度",
+          hint: "壁纸覆盖层的透明度级别",
+          accessibilityLabel: "壁纸不透明度",
+        },
+        directory: {
+          label: "壁纸目录",
+          hint: "扫描壁纸图片和视频的文件夹（文件来源时使用）",
+          pickerTitle: "选择壁纸文件夹",
+          browse: "浏览",
+        },
+        preview: {
+          scanning: "正在扫描壁纸…",
+          empty: "该文件夹中没有找到图片或视频",
+          expand: "显示全部（{{count}}）",
+          collapse: "收起",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "快捷键",
