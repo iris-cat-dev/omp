@@ -785,6 +785,7 @@ export interface OmpProviderManagement {
     authenticated: boolean;
     accounts?: Array<{
       credentialId: number;
+      accountNumber?: number;
       identityKey?: string;
       quota?: OmpProviderAccountQuota;
     }>;

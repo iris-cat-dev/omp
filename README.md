@@ -121,6 +121,18 @@ to the conversation. Loading and failed images do not show the full-screen butto
 Workspace file tabs preview ICO (`.ico`, case-insensitive) icons as images, alongside PNG, JPEG,
 GIF, WebP, and SVG files, rather than showing the binary-file placeholder.
 
+## Official provider account numbers
+
+Each official provider assigns its OAuth accounts stable, provider-local numbers. Deleting
+an account releases its number; the next account receives the smallest free positive number.
+Remaining accounts keep their numbers across reordering and daemon restarts. Settings,
+account selectors, and usage cards use these numbers when an account has no name or note.
+
+Account numbers are separate from OMP's globally increasing credential IDs. Desktop stores
+the number mapping in `agent.db` without renumbering credentials or changing existing notes,
+provider configuration, or session references. OMP's disabled credential records remain
+disabled; releasing a display number does not reactivate or reuse an old credential.
+
 ## Model catalog refresh
 
 Updating OMP, saving its provider configuration, or logging in or out refreshes the affected provider's catalog globally and in every previously loaded workspace. Workspace catalogs remain workspace-scoped. Open clients receive the refreshed result, or a terminal unavailable/error status, without reopening the model picker or reloading the application.

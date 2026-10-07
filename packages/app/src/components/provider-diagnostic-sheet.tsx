@@ -472,7 +472,9 @@ function OmpProviderAccountRow({
           <View style={sheetStyles.providerSummaryText}>
             <Text style={sheetStyles.accountTitle}>
               {identity.primary ??
-                t("settings.providers.omp.multiAccount.fallback", { number: index + 1 })}
+                t("settings.providers.omp.multiAccount.fallback", {
+                  number: account.accountNumber ?? index + 1,
+                })}
             </Text>
             {identity.secondary ? (
               <Text style={sheetStyles.mutedText} numberOfLines={1}>
@@ -491,7 +493,9 @@ function OmpProviderAccountRow({
                   account={account}
                   accountLabel={
                     identity.primary ??
-                    t("settings.providers.omp.multiAccount.fallback", { number: index + 1 })
+                    t("settings.providers.omp.multiAccount.fallback", {
+                      number: account.accountNumber ?? index + 1,
+                    })
                   }
                 />
               </>

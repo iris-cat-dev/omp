@@ -95,7 +95,7 @@ export function buildCodexProviderUsage(
     const accountLabel = formatOmpAccountSelectionLabel({
       note: account.note,
       identityKey: account.identityKey,
-      fallback: copy.accountFallback(index + 1),
+      fallback: copy.accountFallback(account.accountNumber ?? index + 1),
     });
     const windows = [
       shouldShowOmpFiveHourQuota(quota?.planLabel)

@@ -126,6 +126,28 @@ describe("buildCodexProviderUsage", () => {
     ]);
   });
 
+  test("keeps stable account numbers after deletion, replacement, and reordering", () => {
+    const accounts = [
+      { credentialId: 30, accountNumber: 3 },
+      { credentialId: 61, accountNumber: 1 },
+      { credentialId: 62, accountNumber: 2 },
+    ];
+    const providers = buildCodexProviderUsage(
+      {
+        provider: codexProvider(accounts),
+        accounts,
+        error: null,
+        updatedAt: null,
+      },
+      copy,
+    );
+    expect(providers.map(({ providerId, displayName }) => ({ providerId, displayName }))).toEqual([
+      { providerId: "openai-codex:30", displayName: "OpenAI Codex · Account 3" },
+      { providerId: "openai-codex:61", displayName: "OpenAI Codex · Account 1" },
+      { providerId: "openai-codex:62", displayName: "OpenAI Codex · Account 2" },
+    ]);
+  });
+
   test("shows an unavailable Codex card when no subscription account is signed in", () => {
     expect(
       buildCodexProviderUsage(

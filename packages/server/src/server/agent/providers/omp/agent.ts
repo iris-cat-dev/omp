@@ -197,6 +197,7 @@ interface NodeSqliteDatabase {
 }
 export interface StoredOmpOAuthAccount {
   credentialId: number;
+  accountNumber?: number;
   provider: string;
   identityKey?: string;
 }
@@ -333,6 +334,72 @@ function openOmpCredentialDatabase(agentDbPath: string): NodeSqliteDatabase {
   return database;
 }
 
+function assignStoredOmpOAuthAccountNumbers(
+  database: NodeSqliteDatabase,
+  accounts: StoredOmpOAuthAccount[],
+): void {
+  // Credential IDs are durable OMP references, not reusable provider-local account numbers.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS omp_desktop_account_numbers (
+      credential_id INTEGER PRIMARY KEY,
+      provider TEXT NOT NULL,
+      account_number INTEGER NOT NULL CHECK (account_number > 0),
+      UNIQUE (provider, account_number)
+    );
+    CREATE TRIGGER IF NOT EXISTS omp_desktop_release_disabled_account_number
+    AFTER UPDATE OF disabled_cause ON auth_credentials
+    WHEN NEW.disabled_cause IS NOT NULL
+    BEGIN
+      DELETE FROM omp_desktop_account_numbers WHERE credential_id = NEW.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS omp_desktop_release_deleted_account_number
+    AFTER DELETE ON auth_credentials
+    BEGIN
+      DELETE FROM omp_desktop_account_numbers WHERE credential_id = OLD.id;
+    END;
+    DELETE FROM omp_desktop_account_numbers
+    WHERE NOT EXISTS (
+      SELECT 1 FROM auth_credentials
+      WHERE id = credential_id AND provider = omp_desktop_account_numbers.provider
+        AND credential_type = 'oauth' AND disabled_cause IS NULL
+    );
+  `);
+  const numbers = new Map(
+    database
+      .prepare("SELECT credential_id, account_number FROM omp_desktop_account_numbers")
+      .all()
+      .map((row) => [Number(row.credential_id), Number(row.account_number)] as const),
+  );
+  const usedByProvider = new Map<string, Set<number>>();
+  for (const account of accounts) {
+    let used = usedByProvider.get(account.provider);
+    if (!used) {
+      used = new Set();
+      usedByProvider.set(account.provider, used);
+    }
+    const number = numbers.get(account.credentialId);
+    if (number !== undefined) used.add(number);
+  }
+  const insert = database.prepare(
+    "INSERT INTO omp_desktop_account_numbers (credential_id, provider, account_number) VALUES (?, ?, ?)",
+  );
+  const nextByProvider = new Map<string, number>();
+  for (const account of accounts) {
+    const existing = numbers.get(account.credentialId);
+    if (existing !== undefined) {
+      account.accountNumber = existing;
+      continue;
+    }
+    const used = usedByProvider.get(account.provider)!;
+    let number = nextByProvider.get(account.provider) ?? 1;
+    while (used.has(number)) number += 1;
+    insert.run(account.credentialId, account.provider, number);
+    used.add(number);
+    nextByProvider.set(account.provider, number + 1);
+    account.accountNumber = number;
+  }
+}
+
 export function readStoredOmpOAuthAccounts(agentDbPath: string): StoredOmpOAuthAccount[] {
   if (!existsSync(agentDbPath)) return [];
 
@@ -348,36 +415,45 @@ export function readStoredOmpOAuthAccounts(agentDbPath: string): StoredOmpOAuthA
     const requiredColumns = ["id", "provider", "credential_type", "disabled_cause", "identity_key"];
     if (requiredColumns.some((column) => !columns.has(column))) return [];
 
-    return database
-      .prepare(
-        `SELECT id, provider, identity_key
-         FROM auth_credentials
-         WHERE credential_type = 'oauth' AND disabled_cause IS NULL
-         ORDER BY provider, id`,
-      )
-      .all()
-      .flatMap((row): StoredOmpOAuthAccount[] => {
-        const credentialId = Number(row.id);
-        if (
-          !Number.isSafeInteger(credentialId) ||
-          credentialId <= 0 ||
-          typeof row.provider !== "string" ||
-          row.provider.length === 0
-        ) {
-          return [];
-        }
-        const identityKey =
-          typeof row.identity_key === "string" && row.identity_key.trim().length > 0
-            ? row.identity_key.trim()
-            : undefined;
-        return [
-          {
-            credentialId,
-            provider: row.provider,
-            ...(identityKey ? { identityKey } : {}),
-          },
-        ];
-      });
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const accounts = database
+        .prepare(
+          `SELECT id, provider, identity_key
+           FROM auth_credentials
+           WHERE credential_type = 'oauth' AND disabled_cause IS NULL
+           ORDER BY provider, id`,
+        )
+        .all()
+        .flatMap((row): StoredOmpOAuthAccount[] => {
+          const credentialId = Number(row.id);
+          if (
+            !Number.isSafeInteger(credentialId) ||
+            credentialId <= 0 ||
+            typeof row.provider !== "string" ||
+            row.provider.length === 0
+          ) {
+            return [];
+          }
+          const identityKey =
+            typeof row.identity_key === "string" && row.identity_key.trim().length > 0
+              ? row.identity_key.trim()
+              : undefined;
+          return [
+            {
+              credentialId,
+              provider: row.provider,
+              ...(identityKey ? { identityKey } : {}),
+            },
+          ];
+        });
+      assignStoredOmpOAuthAccountNumbers(database, accounts);
+      database.exec("COMMIT");
+      return accounts;
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
   } finally {
     database.close();
   }
@@ -671,7 +747,7 @@ function isOmpNativeWorkflowMode(value: OmpWorkflowSelection): value is OmpWorkf
 
 function formatStoredOmpOAuthAccountLabel(account: StoredOmpOAuthAccount): string {
   const identityKey = account.identityKey?.trim();
-  if (!identityKey) return `OAuth credential #${account.credentialId}`;
+  if (!identityKey) return `OAuth account #${account.accountNumber ?? account.credentialId}`;
   const parts = identityKey
     .split("|")
     .map((part) => part.trim())
@@ -4551,11 +4627,12 @@ export class OmpAgentClient implements AgentClient {
         return {
           ...provider,
           // eslint-disable-next-line oxc/no-map-spread
-          accounts: accounts.map(({ credentialId, identityKey }) => {
+          accounts: accounts.map(({ credentialId, accountNumber, identityKey }) => {
             const quota =
               provider.id === "openai-codex" ? quotaByCredentialId.get(credentialId) : undefined;
             return {
               credentialId,
+              accountNumber,
               ...(identityKey ? { identityKey } : {}),
               ...(quota ? { quota } : {}),
             };

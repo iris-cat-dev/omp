@@ -1024,7 +1024,9 @@ function useSidebarAccountModel({
       const identity = formatOmpAccountSelectionLabel({
         note: account.note,
         identityKey: account.identityKey,
-        fallback: t("agentControls.quota.account", { number: accountNumber }),
+        fallback: t("agentControls.quota.account", {
+          number: account.accountNumber ?? accountNumber,
+        }),
       });
       const weeklyRemaining = resolveOmpRemainingQuotaPct(account.quota?.weeklyUsedPct);
       const fiveHourRemaining = resolveOmpRemainingQuotaPct(account.quota?.fiveHourUsedPct);

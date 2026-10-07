@@ -209,15 +209,18 @@ providers:
     expect(readStoredOmpOAuthAccounts(databasePath)).toEqual([
       {
         credentialId: 5,
+        accountNumber: 1,
         provider: "anthropic",
       },
       {
         credentialId: 1,
+        accountNumber: 1,
         provider: "openai-codex",
         identityKey: "email:alice@example.com|org:personal",
       },
       {
         credentialId: 2,
+        accountNumber: 2,
         provider: "openai-codex",
         identityKey: "email:bob@example.com|org:team",
       },
@@ -230,6 +233,7 @@ providers:
           accounts: [
             {
               credentialId: 1,
+              accountNumber: 1,
               identityKey: "email:alice@example.com|org:personal",
               quota: {
                 status: "available",
@@ -241,6 +245,7 @@ providers:
             },
             {
               credentialId: 2,
+              accountNumber: 2,
               identityKey: "email:bob@example.com|org:team",
               quota: {
                 status: "unavailable",
@@ -252,7 +257,7 @@ providers:
         },
         {
           id: "anthropic",
-          accounts: [{ credentialId: 5 }],
+          accounts: [{ credentialId: 5, accountNumber: 1 }],
         },
       ],
     });
@@ -399,12 +404,15 @@ providers:
 
     const management = await client.reorderOmpProviderAccounts("openai-codex", [2, 1]);
 
-    expect(management.loginProviders[0]?.accounts?.map((account) => account.credentialId)).toEqual([
-      2, 1,
+    expect(
+      management.loginProviders[0]?.accounts?.map(({ credentialId, accountNumber }) => ({
+        credentialId,
+        accountNumber,
+      })),
+    ).toEqual([
+      { credentialId: 2, accountNumber: 2 },
+      { credentialId: 1, accountNumber: 1 },
     ]);
-    await expect(
-      readFile(path.join(agentDir, "omp-desktop-account-order.json"), "utf8"),
-    ).resolves.toContain('"openai-codex": [\n    2,\n    1\n  ]');
     runtime.setInitialModel({ provider: "openai-codex", id: "gpt-5.6" });
     const session = await client.createSession({
       provider: "omp",
@@ -512,6 +520,86 @@ providers:
       { id: 2, disabled_cause: "deleted by user" },
       { id: 3, disabled_cause: null },
       { id: 4, disabled_cause: null },
+    ]);
+  });
+
+  test("reuses the lowest free account number without changing retained credentials", async () => {
+    const agentDir = await mkdtemp(path.join(tmpdir(), "omp-desktop-account-numbers-"));
+    tempDirs.push(agentDir);
+    const databasePath = path.join(agentDir, "agent.db");
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        credential_type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        disabled_cause TEXT,
+        identity_key TEXT,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO auth_credentials
+        (id, provider, credential_type, data, identity_key, disabled_cause)
+      VALUES
+        (10, 'openai-codex', 'oauth', '{"access":"first"}', 'email:first@example.com', NULL),
+        (20, 'openai-codex', 'oauth', '{"access":"second"}', 'email:second@example.com', NULL),
+        (30, 'openai-codex', 'oauth', '{"access":"third"}', 'email:third@example.com', NULL),
+        (40, 'anthropic', 'oauth', '{"access":"other"}', 'email:other@example.com', NULL),
+        (50, 'openai-codex', 'api_key', '{"key":"api-key"}', NULL, NULL),
+        (60, 'openai-codex', 'oauth', '{"access":"expired"}', 'email:expired@example.com', 'expired');
+      CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      INSERT INTO cache VALUES
+        ('session:sticky:openai-codex:retained-session', '{"type":"oauth","credentialId":30}', 4102444800);
+    `);
+    const retainedRows = database
+      .prepare("SELECT * FROM auth_credentials WHERE id IN (30, 40, 50, 60) ORDER BY id")
+      .all();
+    const orderPath = path.join(agentDir, "omp-desktop-account-order.json");
+    const order = '{"openai-codex":[30,10,20]}';
+    await writeFile(orderPath, order);
+
+    expect(readStoredOmpOAuthAccounts(databasePath)).toMatchObject([
+      { credentialId: 40, accountNumber: 1 },
+      { credentialId: 10, accountNumber: 1 },
+      { credentialId: 20, accountNumber: 2 },
+      { credentialId: 30, accountNumber: 3 },
+    ]);
+    expect(disableStoredOmpCredential(databasePath, "openai-codex", 20)).toBe(1);
+    expect(disableStoredOmpCredential(databasePath, "openai-codex", 10)).toBe(1);
+    database.exec(`
+      INSERT INTO auth_credentials (provider, credential_type, data, identity_key)
+      VALUES ('openai-codex', 'oauth', '{"access":"replacement-a"}', 'email:new-a@example.com'),
+             ('openai-codex', 'oauth', '{"access":"replacement-b"}', 'email:new-b@example.com');
+    `);
+    expect(readStoredOmpOAuthAccounts(databasePath)).toMatchObject([
+      { credentialId: 40, accountNumber: 1 },
+      { credentialId: 30, accountNumber: 3 },
+      { credentialId: 61, accountNumber: 1 },
+      { credentialId: 62, accountNumber: 2 },
+    ]);
+    expect(readStoredOmpSessionCredentialId(databasePath, "openai-codex", "retained-session")).toBe(
+      30,
+    );
+    expect(
+      database
+        .prepare("SELECT * FROM auth_credentials WHERE id IN (30, 40, 50, 60) ORDER BY id")
+        .all(),
+    ).toEqual(retainedRows);
+    expect(await readFile(orderPath, "utf8")).toBe(order);
+
+    database.exec("DELETE FROM auth_credentials WHERE id = 61");
+    database.close();
+    const reopened = new DatabaseSync(databasePath);
+    reopened.exec(`
+      INSERT INTO auth_credentials (provider, credential_type, data)
+      VALUES ('openai-codex', 'oauth', '{"access":"after-restart"}');
+    `);
+    reopened.close();
+    expect(readStoredOmpOAuthAccounts(databasePath)).toMatchObject([
+      { credentialId: 40, accountNumber: 1 },
+      { credentialId: 30, accountNumber: 3 },
+      { credentialId: 62, accountNumber: 2 },
+      { credentialId: 63, accountNumber: 1 },
     ]);
   });
 

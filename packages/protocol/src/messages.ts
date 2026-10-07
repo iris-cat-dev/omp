@@ -6443,6 +6443,7 @@ export const OmpProviderManagementSchema = z.object({
         .array(
           z.object({
             credentialId: z.number().int().positive(),
+            accountNumber: z.number().int().positive().optional(),
             identityKey: z.string().optional(),
             quota: OmpProviderAccountQuotaSchema.optional(),
           }),
