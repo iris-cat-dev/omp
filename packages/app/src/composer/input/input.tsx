@@ -25,7 +25,7 @@ import { ArrowUp, CornerDownLeft, Plus } from "lucide-react-native";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { useToast } from "@/contexts/toast-context";
 import {
-  collectImageFilesFromClipboardData,
+  collectClipboardAttachmentFiles,
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
@@ -112,6 +112,8 @@ export interface MessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
+  onPasteFiles?: (files: readonly File[]) => void;
+  isAttachmentPasteDisabled?: boolean;
   onPasteImages?: (files: readonly NativePastedFile[]) => void;
   client: DaemonClient | null;
   placeholder?: string;
@@ -376,18 +378,21 @@ function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTM
   return native instanceof HTMLElement ? native : null;
 }
 
-interface PasteImagesEffectArgs {
+interface PasteAttachmentsEffectArgs {
   getWebTextArea: () => TextAreaHandle | null;
   isConnected: boolean;
   disabled: boolean;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteFiles: ((files: readonly File[]) => void) | undefined;
 }
 
-function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
-  const { getWebTextArea, isConnected, disabled, onAddImages } = args;
+function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
+  const argsRef = useRef(args);
+  argsRef.current = args;
+  const { getWebTextArea } = args;
 
   useEffect(() => {
-    if (!isWeb || !onAddImages) return;
+    if (!isWeb) return;
 
     const textarea = getWebTextArea() as
       | (TextAreaHandle & {
@@ -403,18 +408,26 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       return;
     }
 
-    let disposed = false;
     const handlePaste = (event: ClipboardEvent) => {
+      const { isConnected, disabled, onAddImages, onPasteFiles } = argsRef.current;
+      if (!onAddImages && !onPasteFiles) return;
+
+      const { imageFiles, genericFiles } = collectClipboardAttachmentFiles(event.clipboardData);
+      if (imageFiles.length === 0 && genericFiles.length === 0) return;
+
+      // A file paste must never fall through to inserting a local path as text, even while busy.
+      event.preventDefault();
       if (!isConnected || disabled) return;
 
-      const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
-      if (imageFiles.length === 0) return;
+      if (genericFiles.length > 0) {
+        onPasteFiles?.(genericFiles);
+      }
+      if (imageFiles.length === 0 || !onAddImages) return;
 
-      event.preventDefault();
-
+      // Generic upload state can remount this input; the image half of the same paste must survive.
       void filesToImageAttachments(imageFiles)
         .then((pastedAttachments) => {
-          if (disposed || pastedAttachments.length === 0) return;
+          if (pastedAttachments.length === 0) return;
           onAddImages(pastedAttachments);
           return;
         })
@@ -425,10 +438,9 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
 
     textarea.addEventListener("paste", handlePaste);
     return () => {
-      disposed = true;
       textarea.removeEventListener?.("paste", handlePaste);
     };
-  }, [disabled, getWebTextArea, isConnected, onAddImages]);
+  }, [getWebTextArea]);
 }
 
 function useAutoFocusOnWebEffect(
@@ -768,6 +780,8 @@ interface ResolvedMessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteFiles: ((files: readonly File[]) => void) | undefined;
+  isAttachmentPasteDisabled: boolean;
   onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
   client: DaemonClient | null;
   placeholder: string | undefined;
@@ -812,6 +826,8 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentMenuItems: props.attachmentMenuItems,
     onAttachButtonRef: props.onAttachButtonRef,
     onAddImages: props.onAddImages,
+    onPasteFiles: props.onPasteFiles,
+    isAttachmentPasteDisabled: props.isAttachmentPasteDisabled ?? false,
     onPasteImages: props.onPasteImages,
     client: props.client,
     placeholder: props.placeholder,
@@ -864,6 +880,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentMenuItems,
       onAttachButtonRef,
       onAddImages,
+      onPasteFiles,
+      isAttachmentPasteDisabled,
       onPasteImages,
       client,
       placeholder,
@@ -1057,11 +1075,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
-    usePasteImagesEffect({
+    usePasteAttachmentsEffect({
       getWebTextArea,
       isConnected,
-      disabled,
+      disabled: disabled || isAttachmentPasteDisabled,
       onAddImages,
+      onPasteFiles,
     });
 
     const handleSelectionChange = useCallback(

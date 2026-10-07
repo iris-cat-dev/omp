@@ -1684,7 +1684,7 @@ function ComposerContentImpl({
     }
   }, [addDirectory, canPickDirectory, focusInput, t]);
 
-  const handleGenericFilesDropped = useCallback(
+  const handleGenericFileItems = useCallback(
     async (items: DroppedItem[]) => {
       try {
         const directoryPaths = items
@@ -1709,13 +1709,19 @@ function ComposerContentImpl({
         }
         await uploadPickedFiles(files);
       } catch (error) {
-        console.error("[Composer] Failed to process dropped attachments:", error);
+        console.error("[Composer] Failed to process file attachments:", error);
         toastErrorRef.current(
           error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
         );
       }
     },
     [addDirectory, canPickDirectory, client, focusInput, isConnected, t, uploadPickedFiles],
+  );
+  const handleFilesPasted = useCallback(
+    (files: readonly File[]) => {
+      void handleGenericFileItems(files.map((file) => ({ kind: "web-file" as const, file })));
+    },
+    [handleGenericFileItems],
   );
 
   const handleRemoveAttachment = useCallback(
@@ -2185,10 +2191,10 @@ function ComposerContentImpl({
   const fileDropSink = useMemo<FileDropSink>(
     () => ({
       onFiles: addImages,
-      onGenericFiles: handleGenericFilesDropped,
+      onGenericFiles: handleGenericFileItems,
       onWorkspaceFile: handleWorkspaceFileDropped,
     }),
-    [addImages, handleGenericFilesDropped, handleWorkspaceFileDropped],
+    [addImages, handleGenericFileItems, handleWorkspaceFileDropped],
   );
 
   return (
@@ -2248,6 +2254,10 @@ function ComposerContentImpl({
                   attachmentMenuItems={attachmentMenuItems}
                   onAttachButtonRef={handleAttachButtonRef}
                   onAddImages={addImages}
+                  onPasteFiles={handleFilesPasted}
+                  isAttachmentPasteDisabled={
+                    isSubmitLoadingVisible || readOnly || !mode.showAttachments
+                  }
                   onPasteImages={handleNativePasteImages}
                   client={client}
                   placeholder={messagePlaceholder}

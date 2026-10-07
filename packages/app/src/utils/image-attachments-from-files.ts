@@ -10,6 +10,7 @@ export interface ClipboardItemLike {
 
 export interface ClipboardDataLike {
   items?: ArrayLike<ClipboardItemLike> | null;
+  files?: ArrayLike<File> | null;
 }
 
 export type ImageAttachmentFromFile = AttachmentMetadata;
@@ -19,30 +20,60 @@ export interface ClipboardImageFile {
   mimeType: string;
 }
 
-export function collectImageFilesFromClipboardData(
+export interface ClipboardAttachmentFiles {
+  imageFiles: ClipboardImageFile[];
+  genericFiles: File[];
+}
+
+function collectClipboardFile(
+  result: ClipboardAttachmentFiles,
+  file: File,
+  mimeTypeHint?: string,
+): void {
+  const mimeType = resolveRasterImageMimeType({
+    mimeType: file.type || mimeTypeHint,
+    path: file.name,
+  });
+  if (mimeType) {
+    result.imageFiles.push({ file, mimeType });
+  } else {
+    result.genericFiles.push(file);
+  }
+}
+
+export function collectClipboardAttachmentFiles(
   clipboardData?: ClipboardDataLike | null,
-): ClipboardImageFile[] {
-  if (!clipboardData?.items) {
-    return [];
+): ClipboardAttachmentFiles {
+  const result: ClipboardAttachmentFiles = { imageFiles: [], genericFiles: [] };
+  const items = clipboardData?.items;
+  let foundReadableItem = false;
+
+  if (items) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item?.kind !== "file") {
+        continue;
+      }
+      const file = item.getAsFile?.();
+      if (!file) {
+        continue;
+      }
+      foundReadableItem = true;
+      collectClipboardFile(result, file, item.type);
+    }
   }
 
-  const files: ClipboardImageFile[] = [];
-  for (const item of Array.from(clipboardData.items)) {
-    if (item?.kind !== "file") {
-      continue;
+  const files = clipboardData?.files;
+  if (!foundReadableItem && files) {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (file) {
+        collectClipboardFile(result, file);
+      }
     }
-    const mimeType = resolveRasterImageMimeType({ mimeType: item.type });
-    if (!mimeType) {
-      continue;
-    }
-    const file = item.getAsFile?.();
-    if (!file) {
-      continue;
-    }
-    files.push({ file, mimeType });
   }
 
-  return files;
+  return result;
 }
 
 export async function filesToImageAttachments(

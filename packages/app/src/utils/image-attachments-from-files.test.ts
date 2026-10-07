@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  collectImageFilesFromClipboardData,
+  collectClipboardAttachmentFiles,
   filesToImageAttachments,
 } from "./image-attachments-from-files";
 import { __setAttachmentStoreForTests } from "@/attachments/store";
@@ -62,16 +62,19 @@ afterEach(() => {
   __setAttachmentStoreForTests(null);
 });
 
-describe("collectImageFilesFromClipboardData", () => {
-  it("returns only image files from clipboard items", () => {
+describe("collectClipboardAttachmentFiles", () => {
+  it("separates raster images and generic files from mixed clipboard items", () => {
     const imagePng = new File([new Uint8Array([0, 1, 2, 3])], "paste.png", {
       type: "image/png",
     });
     const textFile = new File(["not image"], "notes.txt", {
       type: "text/plain",
     });
+    const svgFile = new File(["<svg />"], "logo.svg", {
+      type: "image/svg+xml",
+    });
 
-    const files = collectImageFilesFromClipboardData({
+    const files = collectClipboardAttachmentFiles({
       items: [
         createClipboardItem({ kind: "string", type: "text/plain" }),
         createClipboardItem({
@@ -86,35 +89,68 @@ describe("collectImageFilesFromClipboardData", () => {
         }),
         createClipboardItem({
           kind: "file",
+          type: "image/svg+xml",
+          file: svgFile,
+        }),
+        createClipboardItem({
+          kind: "file",
           type: "image/jpeg",
           file: null,
         }),
       ],
     });
 
-    expect(files).toEqual([{ file: imagePng, mimeType: "image/png" }]);
+    expect(files).toEqual({
+      imageFiles: [{ file: imagePng, mimeType: "image/png" }],
+      genericFiles: [textFile, svgFile],
+    });
   });
 
-  it("ignores SVG clipboard files", () => {
-    const svgFile = new File(["<svg />"], "logo.svg", {
-      type: "image/svg+xml",
-    });
+  it("recognizes an image with an empty MIME type by its file name", () => {
+    const imagePng = new File([new Uint8Array([0, 1, 2, 3])], "paste.png");
 
-    const files = collectImageFilesFromClipboardData({
-      items: [
-        createClipboardItem({
-          kind: "file",
-          type: "image/svg+xml",
-          file: svgFile,
-        }),
-      ],
+    expect(
+      collectClipboardAttachmentFiles({
+        items: [createClipboardItem({ kind: "file", type: "", file: imagePng })],
+      }),
+    ).toEqual({
+      imageFiles: [{ file: imagePng, mimeType: "image/png" }],
+      genericFiles: [],
     });
-
-    expect(files).toEqual([]);
   });
 
-  it("returns an empty array when clipboard data is missing", () => {
-    expect(collectImageFilesFromClipboardData(undefined)).toEqual([]);
+  it("falls back to clipboard files when items contain no readable files", () => {
+    const documentFile = new File(["report"], "report.pdf", {
+      type: "application/pdf",
+    });
+
+    expect(
+      collectClipboardAttachmentFiles({
+        items: [createClipboardItem({ kind: "file", type: "application/pdf", file: null })],
+        files: [documentFile],
+      }),
+    ).toEqual({
+      imageFiles: [],
+      genericFiles: [documentFile],
+    });
+  });
+
+  it("ignores text-only clipboard items", () => {
+    expect(
+      collectClipboardAttachmentFiles({
+        items: [createClipboardItem({ kind: "string", type: "text/plain" })],
+      }),
+    ).toEqual({
+      imageFiles: [],
+      genericFiles: [],
+    });
+  });
+
+  it("returns empty groups when clipboard data is missing", () => {
+    expect(collectClipboardAttachmentFiles(undefined)).toEqual({
+      imageFiles: [],
+      genericFiles: [],
+    });
   });
 });
 
