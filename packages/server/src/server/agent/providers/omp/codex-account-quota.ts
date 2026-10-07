@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
 import { fetchCodexResetCredits } from "./codex-reset-credits.js";
-import { resolveCodexSubscription } from "./codex-subscription.js";
+import { fetchCodexSubscription } from "./codex-subscription.js";
 
 export const CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -166,10 +166,6 @@ export async function fetchCodexAccountQuota(
   return {
     ...quota,
     resetCredits,
-    subscription: resolveCodexSubscription(
-      options.credential,
-      quota.planLabel ?? null,
-      (options.now ?? Date.now)(),
-    ),
+    subscription: await fetchCodexSubscription(options, quota.planLabel ?? null),
   };
 }

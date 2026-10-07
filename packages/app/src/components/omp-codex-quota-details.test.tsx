@@ -229,8 +229,60 @@ describe("subscription expiry display", () => {
       consumeOmpCodexResetCredit: vi.fn(),
       getOmpProviderManagement: async () => management(value),
     });
-    expect(screen.getByText("Subscription expiry unavailable")).toBeTruthy();
-    expect(screen.queryByText("No subscription")).toBeNull();
+    expect(screen.getByText(codexQuotaStrings.en.subscription_unavailable)).toBeTruthy();
+    expect(screen.queryByText(codexQuotaStrings.en.subscription_none)).toBeNull();
+  });
+
+  it.each([
+    [
+      {
+        status: "unavailable" as const,
+        expiresAt: null,
+        unavailableReason: "unsupported" as const,
+      },
+      codexQuotaStrings.en.subscription_unsupported,
+      null,
+    ],
+    [
+      { status: "unavailable" as const, expiresAt: null, error: "HTTP 403" },
+      codexQuotaStrings.en.subscription_error,
+      "HTTP 403",
+    ],
+  ])("distinguishes unsupported lookup from a failed query: %j", (subscription, label, error) => {
+    const value = account();
+    value.quota!.subscription = subscription;
+    mount(value, {
+      consumeOmpCodexResetCredit: vi.fn(),
+      getOmpProviderManagement: async () => management(value),
+    });
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.queryByRole("alert")?.textContent ?? null).toBe(error);
+    expect(screen.queryByText(codexQuotaStrings.en.subscription_none)).toBeNull();
+    expect(screen.queryByText(codexQuotaStrings.en.subscription_expired)).toBeNull();
+    expect(screen.queryByText(/remaining$/)).toBeNull();
+  });
+
+  it("displays account-reported expiry and remaining time without calling it token metadata", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-10-01T00:00:00Z"));
+    const value = account();
+    value.quota!.subscription = {
+      status: "active",
+      expiresAt: "2026-10-02T00:00:00Z",
+      source: "account",
+    };
+    try {
+      mount(value, {
+        consumeOmpCodexResetCredit: vi.fn(),
+        getOmpProviderManagement: async () => management(value),
+      });
+      expect(screen.getByText(/Expires:.*2026/)).toBeTruthy();
+      expect(screen.getByText("1d0h remaining")).toBeTruthy();
+      expect(screen.getByText(codexQuotaStrings.en.subscriptionAccountNote)).toBeTruthy();
+      expect(screen.queryByText(codexQuotaStrings.en.subscriptionNote)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("changes an active token-reported expiry to expired live without negative remaining time", async () => {
@@ -244,10 +296,10 @@ describe("subscription expiry display", () => {
         consumeOmpCodexResetCredit: vi.fn(),
         getOmpProviderManagement: async () => management(value),
       });
-      expect(screen.getByText("Active · token-reported expiry")).toBeTruthy();
+      expect(screen.getByText(codexQuotaStrings.en.subscription_active)).toBeTruthy();
       expect(screen.getByText("0h1min remaining")).toBeTruthy();
       await act(async () => vi.advanceTimersByTime(1_000));
-      expect(screen.getByText("Expired · token-reported expiry")).toBeTruthy();
+      expect(screen.getByText(codexQuotaStrings.en.subscription_expired)).toBeTruthy();
       expect(screen.queryByText(/remaining$/)).toBeNull();
     } finally {
       vi.useRealTimers();

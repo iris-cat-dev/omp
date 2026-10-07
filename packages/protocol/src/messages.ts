@@ -6393,6 +6393,8 @@ export const OmpCodexResetCreditsSchema = z.object({
 export const OmpCodexSubscriptionSchema = z.object({
   status: z.enum(["active", "expired", "none", "unavailable"]),
   expiresAt: z.string().nullable(),
+  source: z.enum(["token", "account"]).optional(),
+  unavailableReason: z.enum(["not_provided", "unsupported"]).optional(),
   error: z.string().optional(),
 });
 export const OmpCodexResetCreditConsumeResultSchema = z.object({

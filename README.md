@@ -90,12 +90,25 @@ redemption request ID; duplicate submissions do not intentionally spend another 
 server result refreshes both cards and quota. Errors and already-redeemed/nothing-to-reset results
 are displayed separately from a successful reset. Older daemons cannot consume cards.
 
-Subscription validity is separate from quota resets. When the OAuth credential contains a
-timezone-qualified `chatgpt_subscription_active_until` claim, Desktop displays its reported date
-and live remaining time. This is token-reported metadata, not live billing or an auto-renewal
-guarantee. A Free plan displays no subscription; missing, invalid, stale, or unavailable expiry
-metadata displays **Subscription expiry unavailable**, never a fabricated `0` or the OAuth
-token's own expiration. Some Codex credentials omit subscription expiry entirely.
+Subscription validity is separate from quota resets. Desktop displays a timezone-qualified
+`chatgpt_subscription_active_until` claim when the current OAuth credential supplies one.
+Otherwise it queries the official Codex [`/backend-api/wham/accounts/check` account source](https://github.com/openai/codex/blob/a5130128697b10022a88e8f5eae6dca77393b4b0/codex-rs/backend-client/src/client.rs#L398-L407),
+matching the selected account ID rather than using the default workspace. If the response
+includes subscription entitlement expiry, Desktop displays that reported date and live remaining
+time, with its source labeled separately from token metadata. Neither is an auto-renewal guarantee.
+
+Current Codex OAuth responses can contain only account/plan information, with no subscription
+date. Desktop explicitly reports that this sign-in does not support expiry lookup; a successful
+entitlement response with no date instead reports **Subscription expiry unavailable**. HTTP,
+network, malformed-response, and timeout failures report **Could not query subscription expiry**
+without discarding independently available quota/reset cards. None of these states means no
+subscription or an expired subscription. **No subscription** requires a reported Free plan or
+an explicit inactive entitlement without an expiry; Desktop never substitutes OAuth expiration,
+quota reset times, or a fabricated `0`.
+
+ChatGPT browser billing has a separate authentication boundary. Desktop does not scrape browser
+cookies or send Codex credentials to the old browser-only account endpoint; check ChatGPT billing
+settings when the current sign-in does not provide a date.
 
 ## OMP built-in tools
 

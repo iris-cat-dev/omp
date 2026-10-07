@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CODEX_USAGE_ENDPOINT, fetchCodexAccountQuota } from "./codex-account-quota.js";
+import { CODEX_SUBSCRIPTION_ENDPOINT } from "./codex-subscription.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -146,6 +147,46 @@ describe("fetchCodexAccountQuota", () => {
           description: null,
         },
       ],
+    });
+  });
+
+  it("queries the selected account's subscription when OAuth claims omit its expiry", async () => {
+    const quota = await fetchCodexAccountQuota({
+      credential: { accessToken: "access-token", accountId: "account-1" },
+      now: () => NOW,
+      fetch: async (url) => {
+        if (url === CODEX_USAGE_ENDPOINT) {
+          return jsonResponse({
+            plan_type: "plus",
+            rate_limit: { primary_window: { used_percent: 42 } },
+          });
+        }
+        if (url === CODEX_SUBSCRIPTION_ENDPOINT) {
+          return jsonResponse({
+            accounts: {
+              default: {
+                account: { account_id: "another-account" },
+                entitlement: {
+                  has_active_subscription: true,
+                  expires_at: "2026-09-30T00:00:00Z",
+                },
+              },
+              selected: {
+                account: { account_id: "account-1" },
+                entitlement: {
+                  has_active_subscription: true,
+                  expires_at: "2026-10-01T08:00:00+08:00",
+                },
+              },
+            },
+          });
+        }
+        return jsonResponse({ available_count: 0, credits: [] });
+      },
+    });
+    expect(quota.subscription).toMatchObject({
+      status: "active",
+      expiresAt: "2026-10-01T00:00:00.000Z",
     });
   });
 });

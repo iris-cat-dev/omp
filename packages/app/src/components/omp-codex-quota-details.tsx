@@ -57,7 +57,11 @@ function resolveSubscriptionState(
   countdown: string | null,
 ) {
   if (subscription?.status === "none") return "none";
-  if (subscription?.status === "unavailable" || !date) return "unavailable";
+  if (subscription?.status === "unavailable") {
+    if (subscription.error) return "error";
+    return subscription.unavailableReason === "unsupported" ? "unsupported" : "unavailable";
+  }
+  if (!date) return "unavailable";
   if (subscription?.status === "expired" || countdown === "") return "expired";
   return "active";
 }
@@ -83,7 +87,17 @@ function OmpCodexSubscriptionDetails({
       <Text style={styles.muted}>
         {t(`settings.providers.omp.codexQuota.subscription_${state}`)}
       </Text>
-      {date && state !== "none" && state !== "unavailable" ? (
+      {subscription?.error && state === "error" ? (
+        <Text accessibilityRole="alert" style={styles.muted}>
+          {subscription.error}
+        </Text>
+      ) : null}
+      {state === "unavailable" || state === "unsupported" || state === "error" ? (
+        <Text style={styles.muted}>
+          {t("settings.providers.omp.codexQuota.subscriptionUnavailableNote")}
+        </Text>
+      ) : null}
+      {date && (state === "active" || state === "expired") ? (
         <>
           <Text style={styles.muted}>
             {t("settings.providers.omp.codexQuota.expiry", { time: date })}
@@ -94,7 +108,11 @@ function OmpCodexSubscriptionDetails({
             </Text>
           ) : null}
           <Text style={styles.muted}>
-            {t("settings.providers.omp.codexQuota.subscriptionNote")}
+            {t(
+              subscription?.source === "account"
+                ? "settings.providers.omp.codexQuota.subscriptionAccountNote"
+                : "settings.providers.omp.codexQuota.subscriptionNote",
+            )}
           </Text>
         </>
       ) : null}
