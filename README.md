@@ -40,6 +40,12 @@ If the active provider cannot accept steering, Desktop reports the send failure 
 current turn running. Agent-to-agent prompts and completion notifications use the same
 non-destructive rule rather than falling back to replacement.
 
+## Answering grouped questions
+
+When OMP asks several questions together, use the labeled question tabs to move between them in
+any order. Selections and typed answers remain intact while switching. After every required
+question has an answer, **Submit** sends the complete group.
+
 ## Permanently deleting conversation history
 
 Desktop-injected agent tools distinguish four operations: `cancel_agent` stops a run,

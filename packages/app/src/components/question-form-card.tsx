@@ -708,6 +708,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    // React Native Web cancels onPress when a slight pointer drag selects the label.
+    userSelect: "none",
     minHeight: 28,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],

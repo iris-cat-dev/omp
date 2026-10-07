@@ -1,5 +1,6 @@
 import { defineConfig, configDefaults } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
+import type { BrowserCommand } from "vitest/node";
 import path from "path";
 import fs from "fs";
 
@@ -10,6 +11,24 @@ const resolvePackageEntry = (packageName: string) => {
   return fs.existsSync(appPackagePath)
     ? appPackagePath
     : path.resolve(rootNodeModules, packageName);
+};
+
+const dragPointerWithinElement: BrowserCommand<
+  [selector: string, deltaX: number, deltaY: number]
+> = async ({ provider, page, iframe }, selector, deltaX, deltaY) => {
+  if (provider.name !== "playwright") {
+    throw new Error(`dragPointerWithinElement requires Playwright, received ${provider.name}`);
+  }
+  const box = await iframe.locator(selector).boundingBox();
+  if (!box) {
+    throw new Error(`Cannot drag hidden browser-test element: ${selector}`);
+  }
+  const startX = box.x + box.width * 0.75;
+  const startY = box.y + box.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 3 });
+  await page.mouse.up();
 };
 
 export default defineConfig({
@@ -40,6 +59,7 @@ export default defineConfig({
             connectTimeout: 180_000,
             instances: [{ browser: "chromium" }],
             screenshotDirectory: ".vitest-screenshots",
+            commands: { dragPointerWithinElement },
           },
           globalSetup: path.resolve(__dirname, "src/runtime/websocket-test-global-setup.ts"),
         },
