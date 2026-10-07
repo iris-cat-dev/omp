@@ -16,6 +16,18 @@ Packaged macOS, Linux, and Windows applications include OMP and do not require a
 for Agent sessions. Update checks and installs target that same executable. Packaged applications
 label their bundled runtime separately from standalone, configured, and `PATH` installations.
 
+## Completing conversations
+
+After OMP finishes a model turn and reports that it is no longer streaming or compacting,
+Desktop completes the turn automatically; **Stop** is for interruption, not acknowledgement.
+OMP's internal `developer` messages, including project-rule reminders, are accepted in
+completion events and RPC history without appearing as user or assistant chat messages.
+Reopening a saved conversation likewise keeps these reminders out of the visible history.
+
+If an older Desktop build remains running after the final answer, update Desktop and restart
+its daemon after saving any active work. Updating only the bundled OMP executable does not
+update Desktop's RPC adapter.
+
 ## Stopping conversations and subagents
 
 The conversation's **Stop** button interrupts its current run and all running managed descendants,

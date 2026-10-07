@@ -40,6 +40,12 @@ const OmpUserMessageSchema = z
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
+const OmpDeveloperMessageSchema = z
+  .object({
+    role: z.literal("developer"),
+    content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
+  })
+  .passthrough();
 const OmpCustomMessageSchema = z
   .object({
     role: z.literal("custom"),
@@ -81,6 +87,7 @@ const OmpBashExecutionMessageSchema = z
 
 export const OmpAgentMessageSchema = z.discriminatedUnion("role", [
   OmpUserMessageSchema,
+  OmpDeveloperMessageSchema,
   OmpCustomMessageSchema,
   OmpAssistantMessageSchema,
   OmpToolResultMessageSchema,

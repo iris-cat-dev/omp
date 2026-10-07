@@ -24,7 +24,6 @@ const REQUIRED_DESKTOP_BRIDGE_KEYS = [
   "editor",
   "webUtils",
   "menu",
-  "browser",
 ];
 
 function createTempDir(prefix) {

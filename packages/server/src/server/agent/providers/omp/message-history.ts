@@ -100,6 +100,8 @@ export class OmpHistoryMapper {
         case "user":
           events.push(...this.mapUserMessage(message));
           break;
+        case "developer":
+          break;
         case "custom":
           events.push(...this.mapCustomMessage(message));
           break;

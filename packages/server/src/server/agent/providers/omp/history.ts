@@ -345,7 +345,7 @@ export async function readActiveOmpEntryChain(
 function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
   const message = entry.message;
   if (message && typeof message.role === "string") {
-    if (message.role === "system") {
+    if (message.role === "system" || message.role === "developer") {
       return null;
     }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {

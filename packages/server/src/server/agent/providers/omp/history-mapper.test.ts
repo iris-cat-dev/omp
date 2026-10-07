@@ -702,6 +702,15 @@ describe("OMP history mapper", () => {
           parentId: "unknown-active",
           message: { role: "developer", content: "developer note" },
         },
+        {
+          type: "message",
+          id: "assistant-active",
+          parentId: "developer-active",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "active answer" }],
+          },
+        },
       ]
         .map((entry) => JSON.stringify(entry))
         .join("\n"),
@@ -721,7 +730,11 @@ describe("OMP history mapper", () => {
         type: "assistant_message",
         text: "[future_control] Unsupported history record",
       },
-      { type: "assistant_message", text: "[developer] developer note" },
+      {
+        type: "assistant_message",
+        text: "active answer",
+        messageId: "omp-history-assistant-1",
+      },
     ]);
     expect(events[1]).toMatchObject({ timestamp: "2026-08-01T12:00:00.000Z" });
 

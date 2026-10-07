@@ -1,9 +1,13 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
+import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { OmpAgentSession } from "./agent.js";
+import { OmpHistoryMapper } from "./message-history.js";
 import { OmpCliRuntime, resolveOmpBackgroundJobsExtensionPath } from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -332,6 +336,110 @@ describe("OMP CLI runtime", () => {
 
     expect(eventTypes).toEqual(["notice"]);
   });
+
+  test.each(["string", "blocks"] as const)(
+    "completes a turn and restores replies when developer content uses %s",
+    async (format) => {
+      const child = createOmpChild();
+      const userMessage = { role: "user", content: "finish the task", entryId: "user-1" };
+      const developerMessage = {
+        role: "developer",
+        content:
+          format === "string"
+            ? "Internal rule reminder"
+            : [{ type: "text", text: "Internal rule reminder" }],
+        attribution: "agent",
+        timestamp: 1,
+      };
+      const assistantMessage = {
+        role: "assistant",
+        content: [{ type: "text", text: "task completed" }],
+        responseId: "assistant-1",
+        stopReason: "stop",
+      };
+      const messages = [userMessage, developerMessage, assistantMessage];
+      const state = {
+        model: null,
+        isStreaming: false,
+        isCompacting: false,
+        sessionId: "session-1",
+        messageCount: messages.length,
+        queuedMessageCount: 0,
+      };
+      replyToCommands(child, (command) => {
+        switch (command.type) {
+          case "prompt":
+            return { agentInvoked: true };
+          case "get_state":
+            return state;
+          case "get_messages":
+            return { messages };
+          case "get_session_stats":
+            return {
+              tokens: { input: 0, output: 1, cacheRead: 0, cacheWrite: 0, total: 1 },
+              cost: 0,
+            };
+          default:
+            return {};
+        }
+      });
+      const runtimeSession = await createRuntime(child).startSession({
+        cwd: "/workspace/project",
+      });
+      const session = new OmpAgentSession({
+        runtimeSession,
+        initialState: state,
+        config: { provider: "omp", cwd: "/workspace/project" },
+        logger: pino({ level: "silent" }),
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        const completion = session.run(userMessage.content);
+        void completion.catch(() => undefined);
+        await waitForImmediate();
+        for (const event of [
+          { type: "agent_start" },
+          { type: "message_end", message: userMessage },
+          { type: "message_start", message: developerMessage },
+          { type: "message_end", message: developerMessage },
+          { type: "message_start", message: assistantMessage },
+          {
+            type: "message_update",
+            message: assistantMessage,
+            assistantMessageEvent: { type: "text_delta", delta: "task completed" },
+          },
+          { type: "message_end", message: assistantMessage },
+          { type: "agent_end", messages },
+        ]) {
+          child.stdout.write(`${JSON.stringify(event)}\n`);
+        }
+        await waitForImmediate();
+
+        expect(
+          events.filter(
+            (event) =>
+              event.type === "turn_completed" ||
+              event.type === "turn_failed" ||
+              event.type === "turn_canceled",
+          ),
+        ).toEqual([expect.objectContaining({ type: "turn_completed" })]);
+        await expect(completion).resolves.toMatchObject({ finalText: "task completed" });
+        expect(events.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+          { type: "user_message", text: "finish the task", messageId: "user-1" },
+          { type: "assistant_message", text: "task completed", messageId: "assistant-1" },
+        ]);
+
+        const history = new OmpHistoryMapper("omp").mapMessages(await runtimeSession.getMessages());
+        expect(history.map((event) => event.item)).toEqual([
+          { type: "user_message", text: "finish the task" },
+          { type: "assistant_message", text: "task completed", messageId: "assistant-1" },
+        ]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("lists commands through get_available_commands", async () => {
     const child = createOmpChild();
