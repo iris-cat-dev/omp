@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, posix, win32 } from "node:path";
 
 import type { OmpInstallationStatus } from "@omp-desktop/protocol/messages";
 
@@ -87,6 +87,62 @@ export function resolveManagedOmpInstallPath(
     return join(localAppData, "omp", "omp.exe");
   }
   return join(home, ".local", "bin", "omp");
+}
+
+type OmpRuntimeSource = NonNullable<OmpInstallationStatus["source"]>;
+
+interface OmpRuntimeTarget {
+  executablePath: string | null;
+  installPath: string;
+  source: OmpRuntimeSource;
+}
+
+function sameExecutablePath(
+  left: string,
+  right: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const normalizedLeft = pathApi.resolve(left);
+  const normalizedRight = pathApi.resolve(right);
+  return platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+async function resolveOmpRuntimeTarget(
+  options: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+  } = {},
+): Promise<OmpRuntimeTarget> {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.home ?? homedir();
+  const managedInstallPath = resolveManagedOmpInstallPath(platform, env, home);
+  const configuredCommand = env.OMP_COMMAND?.trim();
+
+  if (!configuredCommand) ensureManagedOmpOnPath(platform, env);
+  const executablePath = await findExecutable(configuredCommand || "omp");
+  const installPath = executablePath ?? configuredCommand ?? managedInstallPath;
+  let source: OmpRuntimeSource;
+  if (configuredCommand && env.PASEO_DESKTOP_MANAGED === "1") {
+    source = "bundled";
+  } else if (sameExecutablePath(installPath, managedInstallPath, platform)) {
+    source = "managed";
+  } else if (configuredCommand) {
+    source = "configured";
+  } else {
+    source = "path";
+  }
+  return { executablePath, installPath, source };
+}
+
+function exposeNewManagedOmpOnPath(previousStatus: OmpInstallationStatus): void {
+  if (!previousStatus.installed && !process.env.OMP_COMMAND?.trim()) {
+    ensureManagedOmpOnPath();
+  }
 }
 
 export function resolveOmpUpdatePaths(
@@ -347,10 +403,10 @@ function runtimeUpdateFields(
 async function detectOmpInstallationStatus(
   options: { checkForUpdates?: boolean } = {},
 ): Promise<OmpInstallationStatus> {
-  ensureManagedOmpOnPath();
   const platform = process.platform;
   const arch = process.arch;
-  const installPath = resolveManagedOmpInstallPath();
+  const target = await resolveOmpRuntimeTarget();
+  const { executablePath, installPath, source } = target;
   const supported = supportedPlatform(platform, arch);
   if (!supported) {
     return {
@@ -358,14 +414,13 @@ async function detectOmpInstallationStatus(
       arch,
       supported: false,
       installed: false,
+      source,
       installPath,
       message: `OMP has no managed binary for ${platform}/${arch}`,
     };
   }
-  const executablePath =
-    (await findExecutable("omp")) ?? (existsSync(installPath) ? installPath : null);
   if (!executablePath) {
-    return { platform, arch, supported: true, installed: false, installPath };
+    return { platform, arch, supported: true, installed: false, installPath, source };
   }
   try {
     const version = await readVersion(executablePath);
@@ -376,6 +431,7 @@ async function detectOmpInstallationStatus(
       installed: true,
       version,
       installPath: executablePath,
+      source,
     };
     if (!options.checkForUpdates) return status;
 
@@ -406,6 +462,7 @@ async function detectOmpInstallationStatus(
       supported: true,
       installed: false,
       installPath: executablePath,
+      source,
       message: error instanceof Error ? error.message : String(error),
     };
   }
@@ -415,7 +472,7 @@ export async function getOmpInstallationStatus(
   options: { checkForUpdates?: boolean } = {},
 ): Promise<OmpInstallationStatus> {
   const status = await detectOmpInstallationStatus(options);
-  return { ...status, ...runtimeUpdateFields(resolveManagedOmpInstallPath()) };
+  return { ...status, ...runtimeUpdateFields(status.installPath) };
 }
 
 async function verifyStagedBinary(
@@ -450,7 +507,8 @@ export async function applyPendingOmpUpdate(
   message?: string;
 }> {
   const platform = options.platform ?? process.platform;
-  const installPath = resolveManagedOmpInstallPath(platform, options.env, options.home);
+  const target = await resolveOmpRuntimeTarget(options);
+  const installPath = target.installPath;
   const { stagedPath, checksumPath, previousPath } = resolveOmpUpdatePaths(installPath, platform);
   if (!existsSync(stagedPath)) return { applied: false, pending: false };
   try {
@@ -478,9 +536,10 @@ async function runOmpInstall(
   state: OmpUpdateRuntimeState,
 ): Promise<OmpInstallationStatus> {
   const status = await detectOmpInstallationStatus();
+  if (activeInstall?.state === state) activeInstall.installPath = status.installPath;
   if (!status.supported) return status;
 
-  const installPath = resolveManagedOmpInstallPath();
+  const installPath = status.installPath;
   const { stagedPath, checksumPath, previousPath } = resolveOmpUpdatePaths(installPath);
   const release = await fetchLatestOmpRelease(controller.signal);
   const assetName = await resolveReleaseAssetName(process.platform, process.arch);
@@ -566,7 +625,7 @@ async function runOmpInstall(
     }
     await fs.rm(checksumPath, { force: true }).catch(() => undefined);
 
-    ensureManagedOmpOnPath();
+    exposeNewManagedOmpOnPath(status);
     const installed = await detectOmpInstallationStatus();
     if (!installed.installed) {
       throw new Error(
@@ -603,7 +662,7 @@ export function installOmp(options: OmpInstallOptions = {}): Promise<OmpInstalla
 
   const controller = new AbortController();
   const state: OmpUpdateRuntimeState = { phase: "downloading", downloadedBytes: 0 };
-  const installPath = resolveManagedOmpInstallPath();
+  const installPath = process.env.OMP_COMMAND?.trim() || resolveManagedOmpInstallPath();
   const operation = {} as ActiveOmpInstall;
   const promise = Promise.resolve()
     .then(() => runOmpInstall(options, controller, state))

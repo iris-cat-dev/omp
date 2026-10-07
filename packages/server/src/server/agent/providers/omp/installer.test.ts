@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { delimiter, dirname, join } from "node:path";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -31,12 +31,16 @@ import {
 } from "./installer.js";
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubEnv("OMP_COMMAND", "");
+  vi.stubEnv("PASEO_DESKTOP_MANAGED", "");
+  vi.stubEnv("PI_INSTALL_DIR", "");
   findExecutableMock.mockResolvedValue("/mock/bin/omp");
   execCommandMock.mockResolvedValue({ stdout: "omp/18.1.5", stderr: "" });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function createPendingFetch(markStarted: () => void) {
@@ -67,6 +71,33 @@ describe("OMP managed installer", () => {
         "C:\\Users\\test",
       ),
     ).toBe(join("C:\\Users\\test\\AppData\\Local", "omp", "omp.exe"));
+  });
+
+  test("reports the configured Desktop runtime instead of another OMP on PATH", async () => {
+    const bundledPath = "C:\\Program Files\\OMP Desktop\\resources\\bin\\omp.exe";
+    const standalonePath = "C:\\Users\\test\\AppData\\Local\\omp\\omp.exe";
+    vi.stubEnv("OMP_COMMAND", bundledPath);
+    vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+    findExecutableMock.mockImplementation(async (command: string) =>
+      command === bundledPath ? bundledPath : standalonePath,
+    );
+    execCommandMock.mockImplementation(async (command: string) => ({
+      stdout: command === bundledPath ? "omp/18.4.4" : "omp/18.6.1",
+      stderr: "",
+    }));
+
+    await expect(getOmpInstallationStatus()).resolves.toMatchObject({
+      installed: true,
+      version: "omp/18.4.4",
+      installPath: bundledPath,
+      source: "bundled",
+    });
+    expect(findExecutableMock).toHaveBeenCalledWith(bundledPath);
+    expect(execCommandMock).toHaveBeenCalledWith(
+      bundledPath,
+      ["--version"],
+      expect.objectContaining({ envMode: "internal" }),
+    );
   });
 
   test("uses durable next and previous executable names on Windows", () => {
@@ -190,11 +221,14 @@ describe("OMP managed installer", () => {
     }
   });
 
-  test("applies a verified pending update before the next Agent starts", async () => {
+  test("applies a verified pending update to the configured runtime before Agents start", async () => {
     const directory = await mkdtemp(join(tmpdir(), "omp-pending-update-"));
-    const installPath = join(directory, "omp.exe");
+    const installPath = join(directory, "bundled", "omp.exe");
+    const managedDirectory = join(directory, "managed");
     const { stagedPath, checksumPath, previousPath } = resolveOmpUpdatePaths(installPath, "win32");
+    findExecutableMock.mockResolvedValue(installPath);
     const nextBinary = Buffer.from("verified-new");
+    await mkdir(dirname(installPath), { recursive: true });
     await writeFile(installPath, "old");
     await writeFile(stagedPath, nextBinary);
     await writeFile(checksumPath, createHash("sha256").update(nextBinary).digest("hex"));
@@ -203,7 +237,11 @@ describe("OMP managed installer", () => {
       await expect(
         applyPendingOmpUpdate({
           platform: "win32",
-          env: { PI_INSTALL_DIR: directory },
+          env: {
+            OMP_COMMAND: installPath,
+            PASEO_DESKTOP_MANAGED: "1",
+            PI_INSTALL_DIR: managedDirectory,
+          },
           home: directory,
         }),
       ).resolves.toEqual({ applied: true, pending: false });
@@ -211,6 +249,70 @@ describe("OMP managed installer", () => {
       await expect(access(stagedPath)).rejects.toThrow();
       await expect(access(checksumPath)).rejects.toThrow();
       await expect(access(previousPath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("downloads and replaces the configured Desktop runtime without touching managed OMP", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "omp-bundled-update-"));
+    const installPath = join(directory, "resources", "bin", "omp");
+    const managedPath = join(directory, "managed", "omp");
+    const nextBinary = Buffer.from("downloaded-bundled-runtime");
+    const checksum = createHash("sha256").update(nextBinary).digest("hex");
+    const checksumManifest = [
+      "omp-windows-x64.exe",
+      "omp-windows-arm64.exe",
+      "omp-darwin-x64",
+      "omp-darwin-arm64",
+      "omp-linux-x64",
+      "omp-linux-arm64",
+      "omp-linux-musl-x64",
+      "omp-linux-musl-arm64",
+    ]
+      .map((asset) => `${checksum}  ${asset}`)
+      .join("\n");
+    await mkdir(dirname(installPath), { recursive: true });
+    await mkdir(dirname(managedPath), { recursive: true });
+    await writeFile(installPath, "current-bundled-runtime");
+    await writeFile(managedPath, "standalone-runtime");
+    vi.stubEnv("OMP_COMMAND", installPath);
+    vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+    vi.stubEnv("PI_INSTALL_DIR", dirname(managedPath));
+    findExecutableMock.mockResolvedValue(installPath);
+    execCommandMock.mockImplementation(async (command: string) => {
+      const contents = await readFile(command, "utf8");
+      return {
+        stdout: contents === "current-bundled-runtime" ? "omp/18.1.5" : "omp/18.1.8",
+        stderr: "",
+      };
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/releases/latest")) {
+          return {
+            ok: true,
+            status: 200,
+            url: "https://github.com/can1357/oh-my-pi/releases/tag/v18.1.8",
+          } as Response;
+        }
+        if (url.endsWith("/SHA256SUMS.txt")) return new Response(checksumManifest);
+        return new Response(nextBinary);
+      }),
+    );
+
+    try {
+      await expect(installOmp()).resolves.toMatchObject({
+        installed: true,
+        version: "omp/18.1.8",
+        installPath,
+        source: "bundled",
+        updatePhase: "complete",
+      });
+      await expect(readFile(installPath)).resolves.toEqual(nextBinary);
+      await expect(readFile(managedPath, "utf8")).resolves.toBe("standalone-runtime");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

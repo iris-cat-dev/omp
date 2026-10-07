@@ -12,6 +12,10 @@ Current source version: **0.4.0**.
 
 Packaged macOS, Linux, and Windows applications include OMP and do not require a system OMP installation.
 
+**Host Settings → Agents** reports the version, source, and path of the exact OMP executable used
+for Agent sessions. Update checks and installs target that same executable. Packaged applications
+label their bundled runtime separately from standalone, configured, and `PATH` installations.
+
 ## Stopping conversations and subagents
 
 The conversation's **Stop** button interrupts its current run and all running managed descendants,

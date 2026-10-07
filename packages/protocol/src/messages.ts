@@ -6541,6 +6541,7 @@ export const OmpInstallationStatusSchema = z.object({
   arch: z.string(),
   supported: z.boolean(),
   installed: z.boolean(),
+  source: z.enum(["bundled", "managed", "configured", "path"]).optional(),
   version: z.string().optional(),
   latestVersion: z.string().optional(),
   updateAvailable: z.boolean().optional(),

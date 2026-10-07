@@ -279,6 +279,21 @@ function resolveOmpInstallationStatusText(
   return statusText;
 }
 
+function resolveOmpRuntimeSourceText(t: TFunction, status: OmpInstallationStatus): string {
+  switch (status.source) {
+    case "bundled":
+      return t("settings.providers.omp.install.sourceBundled");
+    case "managed":
+      return t("settings.providers.omp.install.sourceManaged");
+    case "configured":
+      return t("settings.providers.omp.install.sourceConfigured");
+    case "path":
+      return t("settings.providers.omp.install.sourcePath");
+    default:
+      return t("settings.providers.omp.install.sourceUnknown");
+  }
+}
+
 function resolveOmpInstallationAction(
   t: TFunction,
   status: OmpInstallationStatus | null,
@@ -309,6 +324,7 @@ function resolveOmpInstallationPresentation(
   return {
     action,
     statusText,
+    sourceText: status ? resolveOmpRuntimeSourceText(t, status) : null,
     detailText: status
       ? `${status.platform}/${status.arch} · ${status.installPath}`
       : t("settings.providers.omp.install.detectingPath"),
@@ -511,7 +527,7 @@ function OmpInstallationCard({ serverId }: { serverId: string }) {
   }, [checkForUpdates, install, status?.installed, status?.updateAvailable]);
 
   if (!supported) return null;
-  const { statusText, detailText } = resolveOmpInstallationPresentation(
+  const { statusText, sourceText, detailText } = resolveOmpInstallationPresentation(
     t,
     status,
     loading,
@@ -528,6 +544,7 @@ function OmpInstallationCard({ serverId }: { serverId: string }) {
             {t("settings.providers.omp.install.runtimeTitle")}
           </Text>
           <Text style={settingsStyles.rowHint}>{statusText}</Text>
+          {sourceText ? <Text style={settingsStyles.rowHint}>{sourceText}</Text> : null}
           <Text style={styles.ompInstallPath} selectable>
             {detailText}
           </Text>
