@@ -2351,6 +2351,38 @@ export const en = {
         previewAccessibility: "Live preview of content typography, syntax theme, and code font",
         previewContent: "Readable content and code preview",
       },
+      wallpaper: {
+        title: "Wallpaper",
+        enabled: "Enable wallpaper",
+        source: {
+          label: "Source",
+          none: "Disabled",
+          file: "File",
+          url: "URL",
+        },
+        url: {
+          label: "Image or video URL",
+          hint: "URL to a wallpaper image or video (mp4, webm)",
+          accessibilityLabel: "Wallpaper image or video URL",
+        },
+        opacity: {
+          label: "Opacity",
+          hint: "Transparency level of the wallpaper overlay",
+          accessibilityLabel: "Wallpaper opacity",
+        },
+        directory: {
+          label: "Wallpaper directory",
+          hint: "Folder scanned for wallpaper images and videos (used when source is File)",
+          pickerTitle: "Select wallpaper folder",
+          browse: "Browse",
+        },
+        preview: {
+          scanning: "Scanning for wallpapers…",
+          empty: "No images or videos found in this folder",
+          expand: "Show all ({{count}})",
+          collapse: "Show fewer",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "Shortcuts",

@@ -2243,6 +2243,38 @@ export const ja: TranslationResources = {
           "コンテンツの文字組み、構文ハイライトテーマ、コードフォントのライブプレビュー",
         previewContent: "コンテンツとコードのプレビュー",
       },
+      wallpaper: {
+        title: "壁紙",
+        enabled: "壁紙を有効化",
+        source: {
+          label: "ソース",
+          none: "無効",
+          file: "ファイル",
+          url: "URL",
+        },
+        url: {
+          label: "画像URL",
+          hint: "壁紙画像のURL",
+          accessibilityLabel: "壁紙画像URL",
+        },
+        opacity: {
+          label: "不透明度",
+          hint: "壁紙オーバーレイの透明度レベル",
+          accessibilityLabel: "壁紙の不透明度",
+        },
+        directory: {
+          label: "壁紙ディレクトリ",
+          hint: "壁紙画像をスキャンするフォルダ（ソースがファイルの際に使用）",
+          pickerTitle: "壁紙フォルダを選択",
+          browse: "参照",
+        },
+        preview: {
+          scanning: "壁紙をスキャン中…",
+          empty: "このフォルダに画像や動画が見つかりません",
+          expand: "すべて表示（{{count}}）",
+          collapse: "折りたたむ",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "ショートカット",

@@ -1,7 +1,15 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Image,
+  Platform,
+  Pressable,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
 import {
@@ -17,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
+import { buildWallpaperMediaSrc } from "@/wallpaper/media-src";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
@@ -46,6 +55,8 @@ import { isNative } from "@/constants/platform";
 import type { ContributedThemeOption as PluginThemeOption } from "@/appearance/provider";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
+import { pickDirectory } from "@/desktop/pick-directory";
+import { isElectronRuntime } from "@/desktop/host";
 
 // ---------------------------------------------------------------------------
 // Theme-reactive leaf icons (withUnistyles + uniProps color mapping — no
@@ -762,6 +773,7 @@ export function AppearanceSection() {
           />
         </View>
       </SettingsSection>
+      <WallpaperSection />
       <SettingsSection title={t("settings.appearance.syntax.title")}>
         <View style={settingsStyles.card}>
           <SyntaxRow value={settings.syntaxTheme} onChange={handleSyntaxThemeChange} />
@@ -771,6 +783,546 @@ export function AppearanceSection() {
         </View>
       </SettingsSection>
     </View>
+  );
+}
+// ---------------------------------------------------------------------------
+// Wallpaper
+// ---------------------------------------------------------------------------
+
+const WALLPAPER_SOURCES: readonly AppSettings["wallpaperSource"][] = ["none", "file", "url"];
+
+const THUMB_VIDEO_STYLE = { width: "100%", height: "100%", objectFit: "cover" } as const;
+
+const OPACITY_SLIDER_OUTER_STYLE = {
+  width: "100%",
+  height: 24,
+  display: "flex",
+  alignItems: "center",
+  cursor: "pointer",
+  touchAction: "none",
+} as const;
+
+const OPACITY_SLIDER_TRACK_STYLE = {
+  width: "100%",
+  height: 6,
+  borderRadius: 3,
+  position: "relative",
+} as const;
+
+const OPACITY_SLIDER_BASE_STYLE = {
+  position: "absolute",
+  inset: 0,
+  borderRadius: 3,
+  backgroundColor: "rgba(128,128,128,0.2)",
+} as const;
+
+const OPACITY_SLIDER_FILL_STYLE = {
+  position: "absolute",
+  left: 0,
+  top: 0,
+  height: "100%",
+  borderRadius: 3,
+  backgroundColor: "var(--colors-primary, #00dbe4)",
+} as const;
+
+const OPACITY_SLIDER_THUMB_STYLE = {
+  position: "absolute",
+  top: -5,
+  width: 16,
+  height: 16,
+  borderRadius: 8,
+  backgroundColor: "#fff",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+  border: "1px solid rgba(0,0,0,0.1)",
+} as const;
+
+function wallpaperSourceLabel(t: TFunction, value: AppSettings["wallpaperSource"]): string {
+  return t(`settings.appearance.wallpaper.source.${value}`);
+}
+
+function isVideoFilename(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return false;
+  return [".mp4", ".webm", ".m4v", ".mov", ".ogv"].includes(name.slice(dot).toLowerCase());
+}
+
+function WallpaperThumbContent({
+  file,
+  thumb,
+}: {
+  file: { path: string; name: string };
+  thumb?: { dataUrl?: string; video?: boolean };
+}) {
+  const imageSource = useMemo(() => ({ uri: thumb?.dataUrl }), [thumb?.dataUrl]);
+  const htmlProps = useMemo(
+    () => ({
+      dangerouslySetInnerHTML: {
+        __html: `<video src="${buildWallpaperMediaSrc(file.path).replace(/"/g, "&quot;")}" muted autoplay loop playsinline style="width:100%;height:100%;object-fit:cover"></video>`,
+      },
+    }),
+    [file.path],
+  );
+  if (thumb?.video || isVideoFilename(file.name)) {
+    if (Platform.OS !== "web") {
+      return <View style={styles.wallpaperThumbPlaceholder} />;
+    }
+    return <div style={THUMB_VIDEO_STYLE} {...htmlProps} />;
+  }
+  if (thumb?.dataUrl) {
+    return <Image source={imageSource} style={styles.wallpaperThumbImage} resizeMode="cover" />;
+  }
+  return <View style={styles.wallpaperThumbPlaceholder} />;
+}
+
+interface WallpaperSourceMenuItemProps {
+  source: AppSettings["wallpaperSource"];
+  selected: boolean;
+  onSelect: (source: AppSettings["wallpaperSource"]) => void;
+}
+
+function WallpaperSourceMenuItem({ source, selected, onSelect }: WallpaperSourceMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onSelect(source);
+  }, [onSelect, source]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {wallpaperSourceLabel(t, source)}
+    </DropdownMenuItem>
+  );
+}
+
+interface WallpaperDirectoryRowProps {
+  dir: string | null;
+  onPick: () => void;
+}
+
+function WallpaperDirectoryRow({ dir, onPick }: WallpaperDirectoryRowProps) {
+  const { t } = useTranslation();
+  return (
+    <Pressable
+      onPress={onPick}
+      accessibilityRole="button"
+      accessibilityLabel={t("settings.appearance.wallpaper.directory.pickerTitle")}
+    >
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.appearance.wallpaper.directory.label")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {dir || t("settings.appearance.wallpaper.directory.hint")}
+          </Text>
+        </View>
+        <Text style={styles.triggerText}>
+          {t("settings.appearance.wallpaper.directory.browse")}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+interface WallpaperThumbItemProps {
+  file: { path: string; name: string };
+  thumb?: { dataUrl?: string; video?: boolean };
+  selected: boolean;
+  onSelect: (path: string) => void;
+}
+
+function WallpaperThumbItem({ file, thumb, selected, onSelect }: WallpaperThumbItemProps) {
+  const handlePress = useCallback(() => {
+    onSelect(file.path);
+  }, [onSelect, file.path]);
+  return (
+    <Pressable onPress={handlePress} accessibilityRole="button" accessibilityLabel={file.name}>
+      <View style={[styles.wallpaperThumb, selected ? styles.wallpaperThumbSelected : null]}>
+        <WallpaperThumbContent file={file} thumb={thumb} />
+      </View>
+      <Text style={styles.wallpaperThumbName} numberOfLines={1}>
+        {file.name}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface WallpaperPreviewGridProps {
+  scanning: boolean;
+  files: { path: string; name: string }[];
+  thumbnails: Record<string, { dataUrl?: string; video?: boolean }>;
+  selectedPath: string | null;
+  onSelect: (path: string) => void;
+}
+
+function WallpaperPreviewGrid({
+  scanning,
+  files,
+  thumbnails,
+  selectedPath,
+  onSelect,
+}: WallpaperPreviewGridProps) {
+  const { t } = useTranslation();
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [gridRowHeight, setGridRowHeight] = useState<number | null>(null);
+
+  const handleTogglePreview = useCallback(() => {
+    setPreviewExpanded((prev) => !prev);
+  }, []);
+
+  const handleGridLayout = useCallback((event: LayoutChangeEvent) => {
+    const h = event.nativeEvent.layout.height;
+    if (h > 0) {
+      setGridRowHeight((prev) => (prev === null ? h : prev));
+    }
+  }, []);
+
+  if (scanning) {
+    return (
+      <View style={styles.wallpaperPreviewContainer}>
+        <Text style={styles.wallpaperPreviewHint}>
+          {t("settings.appearance.wallpaper.preview.scanning")}
+        </Text>
+      </View>
+    );
+  }
+  if (files.length === 0) {
+    return (
+      <View style={styles.wallpaperPreviewContainer}>
+        <Text style={styles.wallpaperPreviewHint}>
+          {t("settings.appearance.wallpaper.preview.empty")}
+        </Text>
+      </View>
+    );
+  }
+
+  let gridStyle: { opacity: number } | { maxHeight: number; overflow: "hidden" } | null = null;
+  if (gridRowHeight === null) {
+    gridStyle = { opacity: 0 };
+  } else if (!previewExpanded) {
+    gridStyle = { maxHeight: gridRowHeight * 2, overflow: "hidden" };
+  }
+
+  const toggleLabel = previewExpanded
+    ? t("settings.appearance.wallpaper.preview.collapse")
+    : t("settings.appearance.wallpaper.preview.expand");
+  const toggleText = previewExpanded
+    ? t("settings.appearance.wallpaper.preview.collapse")
+    : t("settings.appearance.wallpaper.preview.expand", { count: files.length });
+
+  return (
+    <View style={styles.wallpaperPreviewContainer}>
+      <View style={[styles.wallpaperGrid, gridStyle]} onLayout={handleGridLayout}>
+        {files.map((file) => (
+          <WallpaperThumbItem
+            key={file.path}
+            file={file}
+            thumb={thumbnails[file.path]}
+            selected={selectedPath === file.path}
+            onSelect={onSelect}
+          />
+        ))}
+      </View>
+      {files.length > 8 ? (
+        <Pressable
+          onPress={handleTogglePreview}
+          accessibilityRole="button"
+          accessibilityLabel={toggleLabel}
+          style={styles.wallpaperPreviewToggle}
+        >
+          <Text style={styles.wallpaperPreviewToggleText}>{toggleText}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+interface OpacitySliderProps {
+  opacity: number;
+  onChange: (value: number) => void;
+}
+
+function OpacitySlider({ opacity, onChange }: OpacitySliderProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const fillPercent = ((opacity - 0.1) / 0.9) * 100;
+  const fillStyle = useMemo(
+    () => ({ ...OPACITY_SLIDER_FILL_STYLE, width: `${fillPercent}%` }),
+    [fillPercent],
+  );
+  const thumbStyle = useMemo(
+    () => ({ ...OPACITY_SLIDER_THUMB_STYLE, left: `calc(${fillPercent}% - 7px)` }),
+    [fillPercent],
+  );
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const updateFromEvent = (clientX: number) => {
+      const rect = el.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const value = Math.round((0.1 + ratio * 0.9) * 100) / 100;
+      onChange(value);
+    };
+    const handlePointerDown = (e: PointerEvent) => {
+      e.preventDefault();
+      updateFromEvent(e.clientX);
+      const handleMove = (ev: PointerEvent) => updateFromEvent(ev.clientX);
+      const handleUp = () => {
+        document.removeEventListener("pointermove", handleMove);
+        document.removeEventListener("pointerup", handleUp);
+      };
+      document.addEventListener("pointermove", handleMove);
+      document.addEventListener("pointerup", handleUp);
+    };
+    el.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      el.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [onChange]);
+
+  return (
+    <div ref={containerRef} style={OPACITY_SLIDER_OUTER_STYLE}>
+      <div style={OPACITY_SLIDER_TRACK_STYLE}>
+        <div style={OPACITY_SLIDER_BASE_STYLE} />
+        <div style={fillStyle} />
+        <div style={thumbStyle} />
+      </div>
+    </div>
+  );
+}
+
+function WallpaperSection() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const [wallpaperFiles, setWallpaperFiles] = useState<{ path: string; name: string }[]>([]);
+  const [thumbnails, setThumbnails] = useState<
+    Record<string, { dataUrl?: string; video?: boolean }>
+  >({});
+  const [scanning, setScanning] = useState(false);
+
+  const desktop = typeof window !== "undefined" ? (window.paseoDesktop ?? null) : null;
+
+  const handleToggle = useCallback(
+    (wallpaperEnabled: boolean) => {
+      void updateSettings({ wallpaperEnabled });
+    },
+    [updateSettings],
+  );
+
+  const handleSourceChange = useCallback(
+    (wallpaperSource: AppSettings["wallpaperSource"]) => {
+      void updateSettings({ wallpaperSource });
+    },
+    [updateSettings],
+  );
+
+  const handleUrlChange = useCallback(
+    (url: string) => {
+      void updateSettings({ wallpaperUrl: url || null });
+    },
+    [updateSettings],
+  );
+
+  const handleDirPick = useCallback(async () => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    try {
+      const dir = await pickDirectory();
+      if (dir) {
+        void updateSettings({ wallpaperDir: dir });
+      }
+    } catch {
+      // dialog unavailable or cancelled — silently ignore
+    }
+  }, [updateSettings]);
+
+  const handleSelectWallpaper = useCallback(
+    (filePath: string) => {
+      void updateSettings({ wallpaperPath: filePath });
+    },
+    [updateSettings],
+  );
+
+  // Scan wallpaper directory when it changes
+  useEffect(() => {
+    if (
+      !settings.wallpaperEnabled ||
+      settings.wallpaperSource !== "file" ||
+      !settings.wallpaperDir
+    ) {
+      setWallpaperFiles([]);
+      setThumbnails({});
+      return;
+    }
+    if (!desktop || typeof desktop.invoke !== "function") {
+      setWallpaperFiles([]);
+      return;
+    }
+
+    let cancelled = false;
+    setScanning(true);
+    setWallpaperFiles([]);
+    setThumbnails({});
+
+    const invoke = desktop.invoke;
+    const applyFrame = (path: string, frame: unknown) => {
+      const f = frame as { dataUrl: string | null; video?: boolean } | null;
+      if (f?.dataUrl) {
+        const dataUrl = f.dataUrl;
+        setThumbnails((prev) => ({ ...prev, [path]: { dataUrl } }));
+      } else if (f?.video) {
+        setThumbnails((prev) => ({ ...prev, [path]: { video: true } }));
+      }
+    };
+    invoke("paseo:wallpaper:scanDir", { dir: settings.wallpaperDir })
+      .then((result) => {
+        if (cancelled) return [];
+        const files = (result as { path: string; name: string }[]) ?? [];
+        setWallpaperFiles(files);
+        // Load thumbnails for each file
+        for (const file of files) {
+          invoke("paseo:wallpaper:getFrame", { path: file.path })
+            .then((frame) => {
+              if (!cancelled) applyFrame(file.path, frame);
+              return null;
+            })
+            .catch(() => {
+              // thumbnail load failed — skip
+            });
+        }
+        return files;
+      })
+      .catch(() => {
+        if (!cancelled) setWallpaperFiles([]);
+      })
+      .finally(() => {
+        if (!cancelled) setScanning(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.wallpaperEnabled, settings.wallpaperSource, settings.wallpaperDir, desktop]);
+
+  const handleOpacityChange = useCallback(
+    (value: number) => {
+      void updateSettings({ wallpaperOpacity: value });
+    },
+    [updateSettings],
+  );
+
+  const opacityPercent = Math.round((settings.wallpaperOpacity ?? 0.85) * 100);
+
+  return (
+    <SettingsSection title={t("settings.appearance.wallpaper.title")}>
+      <View style={settingsStyles.card}>
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.appearance.wallpaper.enabled")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.wallpaperEnabled}
+            onValueChange={handleToggle}
+            accessibilityLabel={t("settings.appearance.wallpaper.enabled")}
+            testID="wallpaper-enabled-switch"
+          />
+        </View>
+        {settings.wallpaperEnabled ? (
+          <>
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>
+                  {t("settings.appearance.wallpaper.source.label")}
+                </Text>
+              </View>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  style={dropdownTriggerStyle}
+                  accessibilityLabel={t("settings.appearance.wallpaper.source.label")}
+                  testID="wallpaper-source-trigger"
+                >
+                  <Text style={styles.triggerText}>
+                    {wallpaperSourceLabel(t, settings.wallpaperSource)}
+                  </Text>
+                  <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end" width={160}>
+                  {WALLPAPER_SOURCES.map((source) => (
+                    <WallpaperSourceMenuItem
+                      key={source}
+                      source={source}
+                      selected={settings.wallpaperSource === source}
+                      onSelect={handleSourceChange}
+                    />
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </View>
+
+            {settings.wallpaperSource === "file" ? (
+              <>
+                {/* Directory picker */}
+                <WallpaperDirectoryRow dir={settings.wallpaperDir} onPick={handleDirPick} />
+
+                {/* Preview grid */}
+                {settings.wallpaperDir ? (
+                  <WallpaperPreviewGrid
+                    scanning={scanning}
+                    files={wallpaperFiles}
+                    thumbnails={thumbnails}
+                    selectedPath={settings.wallpaperPath}
+                    onSelect={handleSelectWallpaper}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {settings.wallpaperSource === "url" ? (
+              <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+                <View style={settingsStyles.rowContent}>
+                  <Text style={settingsStyles.rowTitle}>
+                    {t("settings.appearance.wallpaper.url.label")}
+                  </Text>
+                  <Text style={settingsStyles.rowHint}>
+                    {t("settings.appearance.wallpaper.url.hint")}
+                  </Text>
+                </View>
+                <TextInput
+                  initialValue={settings.wallpaperUrl ?? ""}
+                  onChangeText={handleUrlChange}
+                  placeholder={t("settings.appearance.wallpaper.url.hint")}
+                  accessibilityLabel={t("settings.appearance.wallpaper.url.accessibilityLabel")}
+                  style={styles.wallpaperInput}
+                  testID="wallpaper-url-input"
+                />
+              </View>
+            ) : null}
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>
+                  {t("settings.appearance.wallpaper.opacity.label")}
+                </Text>
+                <Text style={settingsStyles.rowHint}>
+                  {t("settings.appearance.wallpaper.opacity.hint")} {opacityPercent}%
+                </Text>
+              </View>
+              <View style={styles.opacitySliderRow}>
+                <View style={styles.opacitySliderContainer}>
+                  {Platform.OS === "web" ? (
+                    <OpacitySlider
+                      opacity={settings.wallpaperOpacity ?? 0.85}
+                      onChange={handleOpacityChange}
+                    />
+                  ) : null}
+                </View>
+                <Text style={styles.opacityValue}>{opacityPercent}%</Text>
+              </View>
+            </View>
+          </>
+        ) : null}
+      </View>
+    </SettingsSection>
   );
 }
 
@@ -850,5 +1402,94 @@ const styles = StyleSheet.create((theme) => ({
   },
   placeholderColor: {
     color: theme.colors.foregroundMuted,
+  },
+  wallpaperInput: {
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: 280,
+    minHeight: 36,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    textAlign: "left",
+  },
+  opacityValue: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    minWidth: 48,
+  },
+  opacitySliderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minWidth: 200,
+  },
+  opacitySliderContainer: {
+    flex: 1,
+    maxWidth: 200,
+  },
+  opacitySlider: {
+    width: "100%",
+    accentColor: theme.colors.primary,
+  },
+  wallpaperPreviewContainer: {
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  wallpaperPreviewHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingVertical: theme.spacing[2],
+  },
+  wallpaperGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  wallpaperPreviewToggle: {
+    alignSelf: "center",
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+  },
+  wallpaperPreviewToggleText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+  },
+  wallpaperThumb: {
+    width: 96,
+    height: 72,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface2,
+  },
+  wallpaperThumbSelected: {
+    borderColor: theme.colors.primary,
+    borderWidth: 2,
+  },
+  wallpaperThumbImage: {
+    width: "100%",
+    height: "100%",
+  },
+  wallpaperThumbPlaceholder: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: theme.colors.surface2,
+  },
+  wallpaperThumbName: {
+    color: theme.colors.foregroundMuted,
+    fontSize: 11,
+    marginTop: theme.spacing[1],
+    maxWidth: 96,
+    textAlign: "center",
   },
 }));

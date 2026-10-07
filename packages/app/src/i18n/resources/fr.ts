@@ -2276,6 +2276,38 @@ export const fr: TranslationResources = {
           "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
         previewContent: "Aperçu du contenu et du code",
       },
+      wallpaper: {
+        title: "Fond d'écran",
+        enabled: "Activer le fond d'écran",
+        source: {
+          label: "Source",
+          none: "Désactivé",
+          file: "Fichier",
+          url: "URL",
+        },
+        url: {
+          label: "URL de l'image",
+          hint: "URL d'une image de fond d'écran",
+          accessibilityLabel: "URL de l'image de fond d'écran",
+        },
+        opacity: {
+          label: "Opacité",
+          hint: "Niveau de transparence de l'overlay de fond d'écran",
+          accessibilityLabel: "Opacité du fond d'écran",
+        },
+        directory: {
+          label: "Dossier de fond d'écran",
+          hint: "Dossier parcouru pour les images de fond d'écran (utilisé lorsque la source est un fichier)",
+          pickerTitle: "Sélectionner un dossier de fond d'écran",
+          browse: "Parcourir",
+        },
+        preview: {
+          scanning: "Recherche de fonds d'écran…",
+          empty: "Aucune image ni vidéo trouvée dans ce dossier",
+          expand: "Tout afficher ({{count}})",
+          collapse: "Réduire",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "Raccourcis",

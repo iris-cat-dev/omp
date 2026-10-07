@@ -126,4 +126,13 @@ if (process.env.PASEO_SERVE_SIM_PREVIEW === "1") {
   };
 }
 
+// Force Metro transformer cache to a project-local directory so that
+// `expo start --clear` reliably wipes it (Expo's default FileStore can
+// persist stale transformed modules across --clear runs on Windows).
+if (process.env.PASEO_METRO_CACHE_DIR) {
+  config.cacheStores = [
+    new (require("metro-cache").FileStore)({ root: process.env.PASEO_METRO_CACHE_DIR }),
+  ];
+}
+
 module.exports = config;

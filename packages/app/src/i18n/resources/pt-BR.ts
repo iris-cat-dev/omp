@@ -2261,6 +2261,38 @@ export const ptBR: TranslationResources = {
           "Prévia ao vivo da tipografia de conteúdo, do tema de sintaxe e da fonte de código",
         previewContent: "Prévia de conteúdo e código",
       },
+      wallpaper: {
+        title: "Papel de parede",
+        enabled: "Ativar papel de parede",
+        source: {
+          label: "Origem",
+          none: "Desativado",
+          file: "Arquivo",
+          url: "URL",
+        },
+        url: {
+          label: "URL da imagem",
+          hint: "URL de uma imagem de papel de parede",
+          accessibilityLabel: "URL da imagem de papel de parede",
+        },
+        opacity: {
+          label: "Opacidade",
+          hint: "Nível de transparência da sobreposição do papel de parede",
+          accessibilityLabel: "Opacidade do papel de parede",
+        },
+        directory: {
+          label: "Diretório de papel de parede",
+          hint: "Pasta escaneada para imagens de papel de parede (usado quando a origem é arquivo)",
+          pickerTitle: "Selecionar pasta de papel de parede",
+          browse: "Navegar",
+        },
+        preview: {
+          scanning: "Procurando papéis de parede…",
+          empty: "Nenhuma imagem ou vídeo encontrada nesta pasta",
+          expand: "Mostrar tudo ({{count}})",
+          collapse: "Mostrar menos",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "Atalhos",

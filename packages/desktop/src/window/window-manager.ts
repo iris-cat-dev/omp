@@ -99,12 +99,6 @@ export interface WindowControlsOverlayUpdate {
   trafficLightOffsetY?: number;
 }
 
-export interface WindowControlsOverlayState {
-  height: number;
-  backgroundColor?: string;
-  foregroundColor?: string;
-}
-
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {
     return input;
@@ -119,23 +113,6 @@ export function resolveSystemWindowTheme(): WindowTheme {
 
 export function getWindowBackgroundColor(theme: WindowTheme): string {
   return theme === "dark" ? "#181B1A" : "#ffffff";
-}
-
-export function createWindowControlsOverlayState(theme: WindowTheme): WindowControlsOverlayState {
-  const overlay = getTitleBarOverlayOptions(theme);
-  return {
-    height: overlay.height ?? 29,
-    backgroundColor: overlay.color,
-    foregroundColor: overlay.symbolColor,
-  };
-}
-
-export function getTitleBarOverlayOptions(theme: WindowTheme): Electron.TitleBarOverlayOptions {
-  if (theme === "dark") {
-    return { color: "#181B1A", symbolColor: "#e4e4e7", height: 29 };
-  }
-
-  return { color: "#ffffff", symbolColor: "#09090b", height: 29 };
 }
 
 export function getMainWindowChromeOptions(input: {
@@ -153,10 +130,12 @@ export function getMainWindowChromeOptions(input: {
     };
   }
 
+  // Windows/Linux: no native titleBarOverlay — the OS-drawn control strip
+  // cannot be made transparent (electron#51014) and would cover the wallpaper.
+  // The renderer draws its own controls instead (WindowControls component).
   return {
     titleBarStyle: "hidden",
     frame: false,
-    titleBarOverlay: getTitleBarOverlayOptions(input.theme),
     autoHideMenuBar: true,
   };
 }
@@ -236,31 +215,6 @@ export function readWindowControlsOverlayUpdate(
   };
 }
 
-export function resolveRuntimeTitleBarOverlayOptions(
-  state: WindowControlsOverlayState,
-): Electron.TitleBarOverlayOptions {
-  return {
-    color: state.backgroundColor?.trim() === "" ? undefined : state.backgroundColor,
-    symbolColor: state.foregroundColor?.trim() === "" ? undefined : state.foregroundColor,
-    height: Math.max(0, state.height - 1),
-  };
-}
-
-export function applyWindowControlsOverlayUpdate(input: {
-  win: Pick<BrowserWindow, "setTitleBarOverlay">;
-  current: WindowControlsOverlayState;
-  update: WindowControlsOverlayUpdate;
-}): WindowControlsOverlayState {
-  const next: WindowControlsOverlayState = {
-    height: input.update.height ?? input.current.height,
-    backgroundColor: input.update.backgroundColor ?? input.current.backgroundColor,
-    foregroundColor: input.update.foregroundColor ?? input.current.foregroundColor,
-  };
-
-  input.win.setTitleBarOverlay(resolveRuntimeTitleBarOverlayOptions(next));
-  return next;
-}
-
 export function applyMacWindowControlsUpdate(input: {
   win: Pick<BrowserWindow, "setWindowButtonPosition">;
   update: WindowControlsOverlayUpdate;
@@ -276,7 +230,6 @@ export function applyMacWindowControlsUpdate(input: {
 }
 
 export function registerWindowManager(): void {
-  const overlayStateByWindow = new WeakMap<BrowserWindow, WindowControlsOverlayState>();
   const windowDragStateByWindow = new WeakMap<BrowserWindow, WindowDragState>();
 
   ipcMain.handle("paseo:window:toggleMaximize", (event) => {
@@ -287,6 +240,14 @@ export function registerWindowManager(): void {
     } else {
       win.maximize();
     }
+  });
+
+  ipcMain.handle("paseo:window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("paseo:window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
   });
 
   ipcMain.handle("paseo:window:beginDrag", (event, input: unknown) => {
@@ -358,17 +319,10 @@ export function registerWindowManager(): void {
 
     if (process.platform === "darwin") {
       applyMacWindowControlsUpdate({ win, update: nextUpdate });
-      return;
     }
 
-    const current =
-      overlayStateByWindow.get(win) ?? createWindowControlsOverlayState(resolveSystemWindowTheme());
-    const nextState = applyWindowControlsOverlayUpdate({
-      win,
-      current,
-      update: nextUpdate,
-    });
-    overlayStateByWindow.set(win, nextState);
+    // Windows/Linux: no native titleBarOverlay exists anymore (renderer draws
+    // its own controls), so there is no overlay state to track here.
   });
 }
 

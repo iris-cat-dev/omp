@@ -149,6 +149,8 @@ export interface DesktopCloseChoiceBridge {
 export interface DesktopWindowBridge {
   label?: string;
   toggleMaximize?: () => Promise<void>;
+  minimize?: () => Promise<void>;
+  close?: () => Promise<void>;
   setFullscreen?: (fullscreen: boolean) => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
   isMaximized?: () => Promise<boolean>;

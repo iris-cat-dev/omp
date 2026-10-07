@@ -6,8 +6,10 @@ $AppDir = (Resolve-Path "$DesktopDir\..\app").Path
 $RootDir = (Resolve-Path "$DesktopDir\..\..").Path
 $env:PATH = "$RootDir\node_modules\.bin;$env:PATH"
 
-# Build the Electron main process
-npm run build:main
+# Build the Electron main process. preview-dev.ps1 hands off with the CWD at the
+# workspace root, which has no build:main script — pin the desktop package.
+npm --prefix "$DesktopDir" run build:main
+if ($LASTEXITCODE -ne 0) { throw "electron main build failed" }
 
 # Prefer Metro's stable default port so dev browser storage keeps the same
 # localhost origin across restarts. Fall back only when earlier ports are busy.
@@ -121,5 +123,5 @@ concurrently `
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
+    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --clear --port $($env:EXPO_PORT)" `
     "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
