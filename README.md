@@ -133,6 +133,11 @@ Cleanup preserves workspaces with agent history (including archived agents), liv
 
 Opening a new conversation from the sidebar keeps the current header tabs visible. The draft still owns a newly created workspace for execution, while the existing workspace remains the tab host until navigation explicitly changes it.
 
+Clicking a conversation notification reveals its tab in the current tab host on the same server,
+preserving the other tabs, their order, and split panes. An unopened conversation is added there
+without changing its owning workspace. Cold starts, notifications from another server, and
+draft-only workspaces navigate to the conversation's own workspace instead.
+
 ## File drag and drop
 
 - Drop files onto the message input to add attachments without sending a message.
