@@ -4794,7 +4794,10 @@ export class OmpAgentClient implements AgentClient {
     return await cancelOmpInstall();
   }
 
-  async startOmpProviderLogin(providerId: string): Promise<OmpProviderLoginStart> {
+  async startOmpProviderLogin(
+    providerId: string,
+    onCompleted?: (flowId: string) => Promise<void>,
+  ): Promise<OmpProviderLoginStart> {
     const runtimeSession = await this.startOmpRuntimeSession({
       cwd: homedir(),
       protocolMode: "rpc-ui",
@@ -4838,18 +4841,23 @@ export class OmpAgentClient implements AgentClient {
       }
     });
     flow.timeout = setTimeout(() => {
-      flow.error = new Error("OMP login timed out");
-      rejectStart(flow.error);
-      flow.resolveActivity();
+      if (!flow.completed) {
+        flow.error = new Error("OMP login timed out");
+        rejectStart(flow.error);
+        flow.resolveActivity();
+      }
       this.deleteLoginFlow(flowId);
     }, 600_000);
     flow.loginPromise = runtimeSession
       .login(providerId)
       .then(() => {
+        // Closing a cancelled runtime can resolve its outstanding login request.
+        if (flow.error || this.loginFlows.get(flowId) !== flow) return;
         flow.completed = true;
         if (!flow.inputRequestId) {
           rejectStart(new Error("OMP login completed without an authorization URL"));
         }
+        flow.inputRequestId = undefined;
         return undefined;
       })
       .catch((error) => {
@@ -4859,6 +4867,14 @@ export class OmpAgentClient implements AgentClient {
       .finally(async () => {
         flow.resolveActivity();
         await runtimeSession.close().catch(() => undefined);
+        if (flow.completed && onCompleted) {
+          try {
+            await onCompleted(flowId);
+          } catch (error) {
+            // Credentials are already saved; a catalog failure is not an OAuth failure.
+            this.logger.error({ err: error, providerId }, "Failed to refresh after OMP login");
+          }
+        }
       });
     this.loginFlows.set(flowId, flow);
     try {
@@ -4906,7 +4922,7 @@ export class OmpAgentClient implements AgentClient {
   }
   async cancelOmpProviderLogin(flowId: string): Promise<boolean> {
     const flow = this.loginFlows.get(flowId);
-    if (!flow) return false;
+    if (!flow || flow.completed) return false;
     this.loginFlows.delete(flowId);
     clearTimeout(flow.timeout);
     flow.unsubscribe();

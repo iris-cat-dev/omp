@@ -236,6 +236,7 @@ export function createProviderSnapshotManagerStub(): {
     applyMutableProviderConfig,
     on,
     off,
+    onOmpProviderLoginCompleted: () => () => {},
     destroy,
   };
   on.mockImplementation(() => stub);

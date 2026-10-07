@@ -1804,6 +1804,7 @@ function OmpManagementPanel({
   const [savingAccountNoteId, setSavingAccountNoteId] = useState<number | null>(null);
   const visibleRef = useRef(visible);
   const loginStartPendingRef = useRef(false);
+  const completedLoginFlowsRef = useRef(new Set<string>());
   const cancellingLoginFlowIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const clientRef = useRef(client);
@@ -1816,6 +1817,18 @@ function OmpManagementPanel({
     setManagement(result);
     setConfigYaml(result.configYaml);
   }, []);
+  useEffect(() => {
+    if (!client) return;
+    return client.on("omp.provider.login.completed", ({ payload }) => {
+      if (loginStartPendingRef.current) completedLoginFlowsRef.current.add(payload.flowId);
+      if (loginFlowRef.current?.flowId !== payload.flowId) return;
+      loginFlowRef.current = null;
+      setLoginFlow(null);
+      setLoginInput("");
+      setLoginProviderId(null);
+      setError(null);
+    });
+  }, [client]);
   useEffect(() => {
     if (!visible) return;
     return queryClient.getQueryCache().subscribe((event) => {
@@ -1974,6 +1987,7 @@ function OmpManagementPanel({
       setError(null);
       try {
         const flow = await client.startOmpProviderLogin(providerId);
+        if (completedLoginFlowsRef.current.has(flow.flowId)) return;
         const nextFlow: OmpProviderLoginFlowState = {
           flowId: flow.flowId,
           providerId: flow.providerId,
@@ -1999,6 +2013,7 @@ function OmpManagementPanel({
         setError(loginError instanceof Error ? loginError.message : String(loginError));
       } finally {
         loginStartPendingRef.current = false;
+        completedLoginFlowsRef.current.clear();
         setLoginProviderId(null);
       }
     },

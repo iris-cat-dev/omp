@@ -67,6 +67,7 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
+import { refreshOmpAccountQuotaManagement } from "@/hooks/use-omp-account-quota";
 
 type TimelineResponsePayload = Extract<
   SessionOutboundMessage,
@@ -94,12 +95,10 @@ export type {
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
-
 // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
 function getTimelineDeliveryMode(selectiveAgentTimeline?: boolean): TimelineDeliveryMode {
   return selectiveAgentTimeline ? "selective" : "legacy";
 }
-
 
 const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
   for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -302,7 +301,6 @@ function finalizeTimelineApplication(input: {
   }
 }
 
-
 interface SessionProviderSharedProps {
   children: ReactNode;
   serverId: string;
@@ -487,7 +485,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ...(serverInfo.features ? { features: serverInfo.features } : {}),
     });
   }, [client, serverId, updateSessionServerInfo]);
-
 
   // If the client drops mid-initialization, clear pending flags
   useEffect(() => {
@@ -707,6 +704,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       recoverTimelineGap,
     });
 
+    const unsubOmpLoginCompleted = client.on("omp.provider.login.completed", () => {
+      void refreshOmpAccountQuotaManagement(queryClient, client, serverId, true).catch((error) => {
+        toast.error(toErrorMessage(error));
+      });
+    });
+
     const unsubAgentStream = client.on("agent_stream", (message) => {
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp, seq, epoch } = message.payload;
@@ -839,7 +842,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
-
     const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
       if (message.type !== "terminal_attention_required") {
         return;
@@ -862,6 +864,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     return () => {
+      unsubOmpLoginCompleted();
       unsubAgentStream();
       unsubAgentTimeline();
       unsubProviderSubagentUpdate();

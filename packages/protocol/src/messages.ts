@@ -6644,6 +6644,15 @@ export const OmpProviderLoginFinishResponseMessageSchema = z.object({
   type: z.literal("omp.provider.login.finish.response"),
   payload: OmpProviderManagementSchema.extend({ requestId: z.string() }),
 });
+
+export const OmpProviderLoginCompletedMessageSchema = z.object({
+  type: z.literal("omp.provider.login.completed"),
+  payload: z.object({
+    flowId: z.string().min(1),
+    providerId: z.string().min(1),
+  }),
+});
+
 export const OmpProviderLoginCancelResponseMessageSchema = z.object({
   type: z.literal("omp.provider.login.cancel.response"),
   payload: z.object({
@@ -7404,6 +7413,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   OmpInstallResponseMessageSchema,
   OmpProviderLoginStartResponseMessageSchema,
   OmpProviderLoginFinishResponseMessageSchema,
+  OmpProviderLoginCompletedMessageSchema,
   OmpProviderLoginCancelResponseMessageSchema,
   OmpProviderLogoutResponseMessageSchema,
   OmpPluginListResponseMessageSchema,
@@ -7659,6 +7669,9 @@ export type OmpProviderLoginCancelResponseMessage = z.infer<
 >;
 export type OmpProviderLoginFinishResponseMessage = z.infer<
   typeof OmpProviderLoginFinishResponseMessageSchema
+>;
+export type OmpProviderLoginCompletedMessage = z.infer<
+  typeof OmpProviderLoginCompletedMessageSchema
 >;
 export type OmpProviderLogoutResponseMessage = z.infer<
   typeof OmpProviderLogoutResponseMessageSchema
