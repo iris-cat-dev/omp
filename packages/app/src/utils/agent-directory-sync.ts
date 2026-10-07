@@ -4,6 +4,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import type { SessionOutboundMessage } from "@omp-desktop/protocol/messages";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import { queryClient } from "@/data/query-client";
 import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -136,6 +137,10 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   if (getInitDeferred(initKey)) {
     rejectInitDeferred(initKey, new Error("Agent was removed during initialization"));
   }
+  // Background deletions bypass useDeleteAgent's mutation callbacks. Refresh
+  // mounted history pages and mark inactive/search caches stale on every host.
+  void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
+  void queryClient.invalidateQueries({ queryKey: allAgentHistoryQueryRootKey() });
 }
 
 interface PendingPermissionEntry {

@@ -1,5 +1,6 @@
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { promises as fs } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
@@ -1714,6 +1715,110 @@ function createStoredAgentRecord(
     archivedAt: overrides.archivedAt ?? null,
   };
 }
+
+test("failed deletion keeps history visible; successful deletion removes it from every subscribed client", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-delete-history-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(join(root, "agents"), logger);
+  const manager = new AgentManager({ clients: {}, registry: storage, logger });
+  const record = createStoredAgentRecord({
+    id: "11111111-1111-4111-8111-111111111193",
+    provider: "omp",
+    cwd: root,
+    workspaceId: "workspace-delete",
+    lastStatus: "closed",
+  });
+  const workspace = {
+    workspaceId: record.workspaceId!,
+    projectId: "project-delete",
+    cwd: root,
+    kind: "directory" as const,
+    displayName: "Delete workspace",
+    title: null,
+    branch: null,
+    baseBranch: null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    archivedAt: null,
+  };
+  const project = { ...createProjectRecord(root), projectId: workspace.projectId };
+  const providers = createProviderSnapshotManagerStub();
+  providers.listRegisteredProviderIds.mockReturnValue(["omp"]);
+  const clients = [1, 2].map((index) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      providerSnapshotManager: providers.manager,
+      agentManager: {
+        getAgent: manager.getAgent.bind(manager),
+        subscribe: manager.subscribe.bind(manager),
+        deleteAgent: manager.deleteAgent.bind(manager),
+      },
+      agentStorage: {
+        get: storage.get.bind(storage),
+        list: storage.list.bind(storage),
+      },
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue(workspace),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        get: vi.fn().mockResolvedValue(project),
+        list: vi.fn().mockResolvedValue([project]),
+      },
+    });
+    return { session, messages, subscriptionId: `delete-sub-${index}` };
+  });
+  try {
+    await storage.upsert(record);
+    for (const client of clients) {
+      await client.session.handleMessage({
+        type: "fetch_agents_request",
+        requestId: "subscribe-delete",
+        subscribe: { subscriptionId: client.subscriptionId },
+      });
+      expect(client.messages).toContainEqual({
+        type: "fetch_agents_response",
+        payload: expect.objectContaining({
+          entries: [expect.objectContaining({ agent: expect.objectContaining({ id: record.id }) })],
+        }),
+      });
+      client.messages.splice(0);
+    }
+    const unlink = vi.spyOn(fs, "unlink").mockRejectedValueOnce(new Error("record is locked"));
+    try {
+      await clients[0].session.handleMessage({
+        type: "delete_agent_request",
+        agentId: record.id,
+        requestId: "delete-failed",
+      });
+    } finally {
+      unlink.mockRestore();
+    }
+    expect(clients[0].messages).toContainEqual({
+      type: "rpc_error",
+      payload: expect.objectContaining({ requestId: "delete-failed", code: "handler_error" }),
+    });
+    expect(
+      clients.flatMap((client) => client.messages).map((message) => message.type),
+    ).not.toContain("agent_deleted");
+    expect(await storage.get(record.id)).toMatchObject({ id: record.id });
+
+    await manager.deleteAgent(record.id);
+    for (const client of clients) {
+      await vi.waitFor(() =>
+        expect(client.messages).toContainEqual({
+          type: "agent_update",
+          payload: expect.objectContaining({ kind: "remove", agentId: record.id }),
+        }),
+      );
+    }
+    expect(await new AgentStorage(join(root, "agents"), logger).get(record.id)).toBeNull();
+  } finally {
+    for (const client of clients) await client.session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("renaming an unloaded agent publishes its persisted title to the subscribed directory", async () => {
   const root = mkdtempSync(join(tmpdir(), "session-unloaded-rename-"));

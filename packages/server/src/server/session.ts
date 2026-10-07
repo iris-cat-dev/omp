@@ -97,7 +97,6 @@ import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
-  closeAgentCommand,
   detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
@@ -310,16 +309,6 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
   return (
     appVersion !== null && !isAppVersionAtLeast(appVersion, MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY)
   );
-}
-
-type DeleteFencedAgentStorage = AgentStorage & {
-  beginDelete(agentId: string): void;
-};
-
-function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
-  if ("beginDelete" in agentStorage && typeof agentStorage.beginDelete === "function") {
-    (agentStorage as DeleteFencedAgentStorage).beginDelete(agentId);
-  }
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
@@ -1626,6 +1615,19 @@ export class Session {
           return;
         }
 
+        if (event.type === "agent_deleted") {
+          void this.agentUpdates.removeAgent(event.agentId);
+          if (event.workspaceId) {
+            void this.emitWorkspaceUpdateForWorkspaceId(event.workspaceId).catch((error) => {
+              this.sessionLogger.error(
+                { err: error, agentId: event.agentId, workspaceId: event.workspaceId },
+                "Failed to update workspace after agent deletion",
+              );
+            });
+          }
+          return;
+        }
+
         if (event.type === "provider_subagent") {
           this.emitProviderSubagentWorkspaceUpdate(event.event);
           if (!this.supports(CLIENT_CAPS.providerSubagents)) {
@@ -2733,35 +2735,7 @@ export class Session {
 
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
-
-    const knownWorkspaceId =
-      this.agentManager.getAgent(agentId)?.workspaceId ??
-      (await this.agentStorage.get(agentId))?.workspaceId ??
-      null;
-
-    // File-backed storage still needs an early delete fence before closeAgent().
-    beginAgentDeleteIfSupported(this.agentStorage, agentId);
-
-    try {
-      await closeAgentCommand({ agentManager: this.agentManager }, agentId);
-    } catch (error) {
-      this.sessionLogger.warn(
-        { err: error, agentId },
-        `Failed to close agent ${agentId} during delete`,
-      );
-    }
-
-    // Drain queued persistence from the just-closed agent before removing its
-    // durable snapshot, otherwise an in-flight background write can recreate it.
-    await this.agentManager.flush();
-
-    try {
-      await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteAgentState(agentId);
-    } catch (error) {
-      this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
-    }
-
+    await this.agentManager.deleteAgent(agentId);
     this.emit({
       type: "agent_deleted",
       payload: {
@@ -2769,12 +2743,6 @@ export class Session {
         requestId,
       },
     });
-
-    await this.agentUpdates.removeAgent(agentId);
-
-    if (knownWorkspaceId) {
-      await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
-    }
   }
 
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {

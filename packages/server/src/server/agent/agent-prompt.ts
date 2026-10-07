@@ -503,6 +503,12 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
+      if (event.type === "agent_deleted") {
+        stop();
+        return;
+      }
+      if (event.type !== "agent_stream") return;
+
       if (event.event.type === "permission_requested") {
         // A permission pause is an intermediate checkpoint. Forget the run
         // observed before it so an idle state during follow-up startup cannot

@@ -20,6 +20,7 @@ const toolsByCapability = {
     "cancel_agent",
     "archive_agent",
     "kill_agent",
+    "delete_agent",
     "update_agent",
     "get_agent_activity",
     "set_agent_mode",

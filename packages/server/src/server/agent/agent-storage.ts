@@ -219,26 +219,28 @@ export class AgentStorage {
     this.deleting.add(agentId);
   }
 
+  cancelDelete(agentId: string): void {
+    this.deleting.delete(agentId);
+  }
+
   async remove(agentId: string): Promise<void> {
     await this.load();
     this.beginDelete(agentId);
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve());
-    const paths = Array.from(this.pathsById.get(agentId) ?? []);
-    await Promise.all(
-      paths.map(async (filePath) => {
+    try {
+      await (this.pendingWrites.get(agentId) ?? Promise.resolve());
+      for (const filePath of this.pathsById.get(agentId) ?? []) {
         try {
           await fs.unlink(filePath);
         } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code && code !== "ENOENT") {
-            this.logger.warn(
-              { err: error, agentId, filePath },
-              "Failed to remove agent record file",
-            );
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
           }
         }
-      }),
-    );
+      }
+    } catch (error) {
+      this.cancelDelete(agentId);
+      throw error;
+    }
 
     this.cache.delete(agentId);
     this.removeOwnerIndex(agentId);
@@ -256,14 +258,18 @@ export class AgentStorage {
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
+      // Resolve the initial title inside the write queue, not before provider
+      // initialization, so loading a session cannot undo a concurrent rename.
+      let title: string | null;
+      if (hasTitleOverride) {
+        title = options?.title ?? null;
+      } else if (existing) {
+        title = existing.title ?? null;
+      } else {
+        title = options?.initialTitle ?? null;
+      }
       const record = toStoredAgentRecord(agent, {
-        // Resolve the initial title inside the write queue, not before provider
-        // initialization, so loading a session cannot undo a concurrent rename.
-        title: hasTitleOverride
-          ? (options?.title ?? null)
-          : existing
-            ? (existing.title ?? null)
-            : (options?.initialTitle ?? null),
+        title,
         createdAt: existing?.createdAt,
         internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
       });

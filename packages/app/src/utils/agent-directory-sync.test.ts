@@ -7,6 +7,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "@/hooks/agent-history-query-key";
 import { createUserMessage } from "@/types/stream";
 import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
 
@@ -97,6 +98,35 @@ function applyAgentStatus(input: {
     delta: { kind: "upsert", agent, project: createEntry(agent).project },
   });
 }
+
+it("refreshes cached searched and all-host history after a background removal", async () => {
+  const serverId = "server-history-removal";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  let records = ["deleted-agent", "retained-agent"];
+  const queries = [
+    [...agentHistoryQueryKey(serverId), "searched"],
+    [...allAgentHistoryQueryKey([serverId]), ""],
+  ].map((queryKey) => ({
+    queryKey,
+    queryFn: async () => records,
+    staleTime: Infinity,
+  }));
+  try {
+    for (const query of queries) {
+      expect(await queryClient.fetchQuery(query)).toEqual(["deleted-agent", "retained-agent"]);
+    }
+    records = ["retained-agent"];
+    applyAgentDirectoryDelta({ serverId, delta: { kind: "remove", agentId: "deleted-agent" } });
+    for (const query of queries) {
+      expect(await queryClient.fetchQuery(query)).toEqual(["retained-agent"]);
+    }
+  } finally {
+    for (const query of queries)
+      queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
+    store.clearSession(serverId);
+  }
+});
 
 describe("turn liveness authority", () => {
   it("normalizes old-daemon status into the shared activity replica", () => {

@@ -578,6 +578,7 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   cancel_agent: "agents",
   archive_agent: "agents",
   kill_agent: "agents",
+  delete_agent: "agents",
   update_agent: "agents",
   get_agent_activity: "agents",
   set_agent_mode: "agents",
@@ -2307,7 +2308,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Archive agent",
       description:
-        "Archive an agent (soft-delete). The agent is interrupted if running and removed from the active list.",
+        "Archive an agent (soft-delete). Interrupts a running agent and hides it from the active list, but retains its persistent history. Use delete_agent only for explicitly authorized permanent history deletion.",
       inputSchema: {
         agentId: z.string(),
       },
@@ -2335,7 +2336,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "kill_agent",
     {
       title: "Kill agent",
-      description: "Terminate an agent session permanently.",
+      description:
+        "Terminate the loaded agent runtime. Persistent conversation records and history are retained; this does not delete an agent. Use delete_agent for explicitly authorized permanent history deletion.",
       inputSchema: {
         agentId: z.string(),
       },
@@ -2348,6 +2350,46 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "delete_agent",
+    {
+      title: "Delete agent history",
+      description:
+        "Permanently delete one agent's Desktop conversation record and retained timeline after explicit user authorization. Supports archived and unloaded agents; closes a loaded runtime first. Does not delete project directories, worktrees, branches, deliverables, or the provider's own session files. Cannot delete the calling agent or its managed ancestors. Returns deleted or not_found; failures are errors, never success.",
+      inputSchema: {
+        agentId: z.string().trim().min(1),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Required confirmation that the user explicitly authorized permanent deletion.",
+          ),
+      },
+      outputSchema: {
+        agentId: z.string(),
+        status: z.enum(["deleted", "not_found"]),
+      },
+    },
+    async ({ agentId }) => {
+      if (
+        callerAgentId &&
+        (agentId === callerAgentId ||
+          (await isManagedAncestor({
+            agentManager,
+            agentStorage,
+            descendantAgentId: callerAgentId,
+            ancestorAgentId: agentId,
+          })))
+      ) {
+        throw new Error("Cannot delete the calling agent or its managed ancestors");
+      }
+      const result = await agentManager.deleteAgent(agentId);
+      return {
+        content: [],
+        structuredContent: ensureValidJson(result),
       };
     },
   );
