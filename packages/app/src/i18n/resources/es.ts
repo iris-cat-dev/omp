@@ -2275,6 +2275,38 @@ export const es: TranslationResources = {
           "Vista previa en vivo de la tipografía de contenido, el tema de sintaxis y la fuente del código",
         previewContent: "Vista previa de contenido y código",
       },
+      wallpaper: {
+        title: "Fondo de pantalla",
+        enabled: "Activar fondo de pantalla",
+        source: {
+          label: "Origen",
+          none: "Desactivado",
+          file: "Archivo",
+          url: "URL",
+        },
+        url: {
+          label: "URL de la imagen",
+          hint: "URL de una imagen de fondo de pantalla",
+          accessibilityLabel: "URL de la imagen de fondo de pantalla",
+        },
+        opacity: {
+          label: "Opacidad",
+          hint: "Nivel de transparencia de la superposición del fondo de pantalla",
+          accessibilityLabel: "Opacidad del fondo de pantalla",
+        },
+        directory: {
+          label: "Directorio de fondo de pantalla",
+          hint: "Carpeta escaneada para imágenes de fondo de pantalla (usado cuando la fuente es archivo)",
+          pickerTitle: "Seleccionar carpeta de fondo de pantalla",
+          browse: "Navegar",
+        },
+        preview: {
+          scanning: "Buscando fondos de pantalla…",
+          empty: "No se encontraron imágenes ni vídeos en esta carpeta",
+          expand: "Mostrar todo ({{count}})",
+          collapse: "Mostrar menos",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "Atajos",

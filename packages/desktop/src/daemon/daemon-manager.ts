@@ -55,7 +55,7 @@ import {
   readLegacySkillSelection,
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
-
+import { scanWallpaperDir } from "../wallpaper/index.js";
 const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
@@ -549,6 +549,76 @@ async function resolveRequestedReleaseChannel(
 // IPC registration
 // ---------------------------------------------------------------------------
 
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".avif",
+  ".svg",
+]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".m4v", ".mov", ".ogv"]);
+
+function readJpegDimensions(buf: Buffer): { width: number; height: number } {
+  let i = 2;
+  while (i < buf.length - 1) {
+    if (buf[i] !== 0xff) {
+      i++;
+      continue;
+    }
+    const marker = buf[i + 1];
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+    }
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return { width: 0, height: 0 };
+}
+
+function readImageDimensions(ext: string, buf: Buffer): { width: number; height: number } {
+  if (ext === ".png" && buf.length >= 24) {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  if ((ext === ".jpg" || ext === ".jpeg") && buf.length >= 2 && buf[0] === 0xff) {
+    return readJpegDimensions(buf);
+  }
+  return { width: 0, height: 0 };
+}
+
+function readWallpaperFrame(input: { path?: string; url?: string }): {
+  dataUrl: string | null;
+  width: number;
+  height: number;
+  video?: boolean;
+} {
+  const filePath = input.path ?? input.url ?? "";
+  if (!filePath) return { dataUrl: null, width: 0, height: 0 };
+
+  const ext = path.extname(filePath).toLowerCase();
+
+  // Video files: signal the renderer to render a <video> element for the
+  // thumbnail instead of an <img>. We can't extract a frame in the main
+  // process without a decoder, but the renderer can play the file directly.
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { dataUrl: null, width: 0, height: 0, video: true };
+  }
+
+  if (!IMAGE_EXTENSIONS.has(ext)) return { dataUrl: null, width: 0, height: 0 };
+
+  try {
+    const buf = readFileSync(filePath);
+    const mime = ext === ".jpg" ? "jpeg" : ext.slice(1);
+    const base64 = buf.toString("base64");
+    const dataUrl = `data:image/${mime};base64,${base64}`;
+
+    const { width, height } = readImageDimensions(ext, buf);
+    return { dataUrl, width, height };
+  } catch {
+    return { dataUrl: null, width: 0, height: 0 };
+  }
+}
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({
@@ -613,6 +683,9 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     uninstall_omp_shortcut: () => uninstallOmpShortcut(),
     read_legacy_skill_selection: () => readLegacySkillSelection(),
     delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
+    "paseo:wallpaper:getFrame": (args) => readWallpaperFrame(args ?? {}),
+    "paseo:wallpaper:scanDir": (args) =>
+      scanWallpaperDir(typeof args === "string" ? args : ((args as { dir?: string })?.dir ?? "")),
   };
 }
 
@@ -658,5 +731,12 @@ export function registerDaemonManager(): void {
       throw new Error(`Unknown desktop command: ${command}`);
     }
     return await handler(args);
+  });
+  ipcMain.handle("paseo:wallpaper:getFrame", (_event, input: { path?: string; url?: string }) => {
+    return readWallpaperFrame(input ?? {});
+  });
+
+  ipcMain.handle("paseo:wallpaper:scanDir", (_event, dir: string) => {
+    return scanWallpaperDir(typeof dir === "string" ? dir : "");
   });
 }

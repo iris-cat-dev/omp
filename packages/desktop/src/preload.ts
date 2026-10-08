@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     },
     getCurrentWindow: () => ({
       toggleMaximize: () => ipcRenderer.invoke("paseo:window:toggleMaximize"),
+      minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
+      close: () => ipcRenderer.invoke("paseo:window:close"),
       setFullscreen: (fullscreen: boolean) =>
         ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
@@ -127,5 +129,25 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:set-context-menu-labels", labels),
     setCapturingShortcut: (capturing: boolean) =>
       ipcRenderer.invoke("paseo:menu:set-capturing-shortcut", capturing),
+  },
+  wallpaper: {
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke("paseo:wallpaper:setEnabled", enabled),
+    setConfig: (config: {
+      source: "none" | "file" | "url";
+      path: string | null;
+      url: string | null;
+      opacity: number;
+    }) => ipcRenderer.invoke("paseo:wallpaper:setConfig", config),
+    getFrame: (input: { path?: string; url?: string }) =>
+      ipcRenderer.invoke("paseo:wallpaper:getFrame", input) as Promise<{
+        dataUrl: string | null;
+        width: number;
+        height: number;
+        video?: boolean;
+      } | null>,
+    scanDir: (dir: string) =>
+      ipcRenderer.invoke("paseo:wallpaper:scanDir", dir) as Promise<
+        { path: string; name: string }[]
+      >,
   },
 });

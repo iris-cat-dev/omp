@@ -105,6 +105,12 @@ export interface AppSettings {
   chatOutlineEnabled: boolean;
   homeAnimationsEnabled: boolean;
   vimKeybindings: boolean;
+  wallpaperEnabled: boolean;
+  wallpaperSource: "none" | "file" | "url";
+  wallpaperPath: string | null;
+  wallpaperUrl: string | null;
+  wallpaperOpacity: number;
+  wallpaperDir: string | null;
 }
 
 export interface Settings extends AppSettings {
@@ -157,6 +163,12 @@ const StoredAppSettingsSchema = z.strictObject({
   chatOutlineEnabled: z.boolean().optional(),
   homeAnimationsEnabled: z.boolean().optional(),
   vimKeybindings: z.boolean().optional(),
+  wallpaperEnabled: z.boolean().optional(),
+  wallpaperSource: z.enum(["none", "file", "url"]).optional(),
+  wallpaperPath: z.string().nullish(),
+  wallpaperUrl: z.string().nullish(),
+  wallpaperOpacity: z.union([z.number(), z.string()]).optional(),
+  wallpaperDir: z.string().nullish(),
   // COMPAT(sidePanelRouting): ignored since the right pane became tool-only; remove after 2027-03-04.
   openSupportingTabsInSidePanel: z.boolean().optional(),
   // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
@@ -191,6 +203,12 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatOutlineEnabled: true,
   homeAnimationsEnabled: true,
   vimKeybindings: false,
+  wallpaperEnabled: false,
+  wallpaperSource: "none",
+  wallpaperPath: null,
+  wallpaperUrl: null,
+  wallpaperOpacity: 0.85,
+  wallpaperDir: null,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -198,7 +216,6 @@ export const DEFAULT_APP_SETTINGS: Settings = {
   manageBuiltInDaemon: true,
   releaseChannel: "stable",
 };
-
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
@@ -229,8 +246,8 @@ export async function saveAppSettings(input: {
     (await loadAppSettingsFromStorage(input.deps));
   const current = normalizeAppSettings(storedCurrent);
   const next = { ...current, ...input.updates };
-  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
 }
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
@@ -246,10 +263,6 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
   }
 }
 
-/**
- * Reads whichever of the settings blobs exists, without migrating. `needsWrite` covers the reads
- * that produce settings the stored blob does not already spell out.
- */
 async function readAppSettings(
   deps: SettingsDeps,
 ): Promise<{ settings: AppSettings; needsWrite: boolean }> {
@@ -359,6 +372,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   if (typeof stored.homeAnimationsEnabled === "boolean") {
     result.homeAnimationsEnabled = stored.homeAnimationsEnabled;
   }
+  if (typeof stored.wallpaperEnabled === "boolean") {
+    result.wallpaperEnabled = stored.wallpaperEnabled;
+  }
   return result;
 }
 
@@ -393,6 +409,45 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     VALID_SIDEBAR_WORKSPACE_TRAILINGS.has(stored.sidebarWorkspaceTrailing)
   ) {
     result.sidebarWorkspaceTrailing = stored.sidebarWorkspaceTrailing;
+  }
+  if (
+    typeof stored.wallpaperSource === "string" &&
+    ["none", "file", "url"].includes(stored.wallpaperSource)
+  ) {
+    result.wallpaperSource = stored.wallpaperSource as AppSettings["wallpaperSource"];
+  }
+  return result;
+}
+
+/**
+ * The wallpaper fields that are media picks rather than plain membership checks: the opacity
+ * needs numeric/string parsing, and path/url/dir accept an explicit `null` (cleared) alongside
+ * their string form. `wallpaperEnabled` and `wallpaperSource` stay with the boolean/enum groups.
+ */
+function pickWallpaperMediaAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  if (typeof stored.wallpaperOpacity === "number") {
+    result.wallpaperOpacity = stored.wallpaperOpacity;
+  } else if (typeof stored.wallpaperOpacity === "string") {
+    const parsed = parseFloat(stored.wallpaperOpacity);
+    if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+      result.wallpaperOpacity = parsed;
+    }
+  }
+  if (typeof stored.wallpaperPath === "string") {
+    result.wallpaperPath = stored.wallpaperPath;
+  } else if (stored.wallpaperPath === null) {
+    result.wallpaperPath = null;
+  }
+  if (typeof stored.wallpaperUrl === "string") {
+    result.wallpaperUrl = stored.wallpaperUrl;
+  } else if (stored.wallpaperUrl === null) {
+    result.wallpaperUrl = null;
+  }
+  if (typeof stored.wallpaperDir === "string" && stored.wallpaperDir.trim()) {
+    result.wallpaperDir = stored.wallpaperDir.trim();
+  } else if (stored.wallpaperDir === null) {
+    result.wallpaperDir = null;
   }
   return result;
 }
@@ -476,6 +531,7 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (toolCallDetailLevel !== null) {
     result.toolCallDetailLevel = toolCallDetailLevel;
   }
+  Object.assign(result, pickWallpaperMediaAppSettings(stored));
   return result;
 }
 

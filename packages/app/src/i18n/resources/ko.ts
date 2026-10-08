@@ -2236,6 +2236,38 @@ export const ko: TranslationResources = {
         previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
         previewContent: "콘텐츠 및 코드 미리보기",
       },
+      wallpaper: {
+        title: "배경화면",
+        enabled: "배경화면 활성화",
+        source: {
+          label: "소스",
+          none: "비활성",
+          file: "파일",
+          url: "URL",
+        },
+        url: {
+          label: "이미지 URL",
+          hint: "배경화면 이미지 URL",
+          accessibilityLabel: "배경화면 이미지 URL",
+        },
+        opacity: {
+          label: "불투명도",
+          hint: "배경화면 오버레이의 투명도 수준",
+          accessibilityLabel: "배경화면 불투명도",
+        },
+        directory: {
+          label: "배경화면 디렉토리",
+          hint: "배경화면 이미지를 스캔하는 폴더 (파일 소스 시 사용)",
+          pickerTitle: "배경화면 폴더 선택",
+          browse: " 탐색",
+        },
+        preview: {
+          scanning: "배경화면 스캔 중…",
+          empty: "이 폴더에서 이미지나 동영상을 찾을 수 없습니다",
+          expand: "전체 보기 ({{count}})",
+          collapse: "접기",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "단축키",

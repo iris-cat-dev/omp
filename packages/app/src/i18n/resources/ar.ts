@@ -2223,6 +2223,38 @@ export const ar: TranslationResources = {
           "معاينة مباشرة لطباعة المحتوى وموضوع بناء الجملة وخط التعليمات البرمجية",
         previewContent: "معاينة المحتوى والرمز",
       },
+      wallpaper: {
+        title: "الخلفية",
+        enabled: "تفعيل الخلفية",
+        source: {
+          label: "المصدر",
+          none: "معطل",
+          file: "ملف",
+          url: "URL",
+        },
+        url: {
+          label: "رابط الصورة",
+          hint: "رابط لصورة الخلفية",
+          accessibilityLabel: "رابط صورة الخلفية",
+        },
+        opacity: {
+          label: "العتامة",
+          hint: "مستوى شفافية تراكب الخلفية",
+          accessibilityLabel: "عتامة الخلفية",
+        },
+        directory: {
+          label: "دليل الخلفية",
+          hint: "المجلد الذي يتم مسح صور الخلفية منه (يُستخدم عندما يكون المصدر ملف)",
+          pickerTitle: "اختر مجلد الخلفية",
+          browse: "تصفح",
+        },
+        preview: {
+          scanning: "جارٍ البحث عن خلفيات…",
+          empty: "لم يتم العثور على صور أو فيديوهات في هذا المجلد",
+          expand: "عرض الكل ({{count}})",
+          collapse: "طي",
+        },
+      },
     },
     shortcuts: {
       dialogTitle: "الاختصارات",
