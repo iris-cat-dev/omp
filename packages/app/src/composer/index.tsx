@@ -43,6 +43,7 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
+import { resolveModelBrowserProviderNamespaceId } from "@/composer/agent-controls/model-sheet-flow";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -185,7 +186,6 @@ function resolveIsComposerLocked(
   return submitBehavior === "preserve-and-lock" && isSubmitLoading;
 }
 
-
 function resolveKeyboardPriority(isMessageInputFocused: boolean): number {
   return isMessageInputFocused ? 200 : 100;
 }
@@ -236,7 +236,6 @@ function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean
   const disabled = !isConnected || isCancellingAgent ? styles.buttonDisabled : undefined;
   return [styles.cancelButton, disabled].filter((value): value is object => Boolean(value));
 }
-
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
@@ -483,7 +482,6 @@ function resolveErrorMessage(error: unknown): string | null {
   if (typeof error === "string") return error;
   return null;
 }
-
 
 function focusMessageInputWithPlatformStrategy(messageInputRef: {
   current: MessageInputRef | null;
@@ -1064,7 +1062,6 @@ function ComposerCancelButton({
     </Tooltip>
   );
 }
-
 
 export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   return (
@@ -1796,7 +1793,6 @@ function ComposerContentImpl({
     enabled: !externalKeyboardShift,
   });
 
-
   const handleEditQueuedMessage = useCallback(
     (id: string) => {
       const result = editQueuedComposerMessage({
@@ -1858,7 +1854,6 @@ function ComposerContentImpl({
     [isConnected, isCancellingAgent],
   );
 
-
   const activeActionContent = useMemo(
     () => (
       <ComposerCancelButton
@@ -1882,7 +1877,6 @@ function ComposerContentImpl({
     ],
   );
 
-
   const { contextWindowMaxTokens, contextWindowUsedTokens } = resolveContextWindowValues(
     agentState.contextWindowMaxTokens,
     agentState.contextWindowUsedTokens,
@@ -1899,7 +1893,12 @@ function ComposerContentImpl({
         agentState.totalCostUsd,
         true,
         serverId,
-        agentState.provider,
+        agentState.provider
+          ? resolveModelBrowserProviderNamespaceId(
+              agentState.provider,
+              agentState.model ?? undefined,
+            )
+          : null,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -1909,6 +1908,7 @@ function ComposerContentImpl({
       agentState.totalCostUsd,
       serverId,
       agentState.provider,
+      agentState.model,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],

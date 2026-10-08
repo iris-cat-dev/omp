@@ -116,12 +116,88 @@ describe("buildCodexProviderUsage", () => {
         planLabel: "pro",
         windows: [
           expect.objectContaining({
+            id: "codex_five_hour",
+            usedPct: 10,
+            remainingPct: 90,
+            percentageDisplay: "remaining",
+          }),
+          expect.objectContaining({
             id: "codex_weekly",
             usedPct: 15,
             remainingPct: 85,
             percentageDisplay: "remaining",
           }),
         ],
+      }),
+    ]);
+  });
+
+  test("only creates reported windows and never treats unknown usage as 100% remaining", () => {
+    const accounts = [
+      {
+        credentialId: 1,
+        quota: {
+          status: "available" as const,
+          planLabel: "pro",
+          fiveHourUsedPct: null,
+          weeklyUsedPct: null,
+          weeklyResetsAt: "2026-09-08T01:00:00.000Z",
+          fetchedAt: "2026-09-02T20:00:00.000Z",
+        },
+      },
+      {
+        credentialId: 2,
+        quota: {
+          status: "available" as const,
+          planLabel: "pro",
+          fiveHourUsedPct: 0,
+          fiveHourResetsAt: "2026-09-03T01:00:00.000Z",
+          weeklyUsedPct: 100,
+          fetchedAt: "2026-09-02T20:00:00.000Z",
+        },
+      },
+      {
+        credentialId: 3,
+        quota: {
+          status: "available" as const,
+          planLabel: "plus",
+          fiveHourUsedPct: null,
+          fiveHourResetsAt: "2026-09-03T01:00:00.000Z",
+          weeklyUsedPct: null,
+          fetchedAt: "2026-09-02T20:00:00.000Z",
+        },
+      },
+    ];
+    const providers = buildCodexProviderUsage(
+      { provider: codexProvider(accounts), accounts, error: null, updatedAt: null },
+      copy,
+    );
+    expect(providers[0]?.windows).toEqual([
+      expect.objectContaining({
+        id: "codex_weekly",
+        usedPct: null,
+        remainingPct: null,
+        resetsAt: "2026-09-08T01:00:00.000Z",
+      }),
+    ]);
+    expect(providers[1]?.windows).toEqual([
+      expect.objectContaining({
+        id: "codex_five_hour",
+        usedPct: 0,
+        remainingPct: 100,
+      }),
+      expect.objectContaining({
+        id: "codex_weekly",
+        usedPct: 100,
+        remainingPct: 0,
+      }),
+    ]);
+    expect(providers[2]?.windows).toEqual([
+      expect.objectContaining({
+        id: "codex_five_hour",
+        usedPct: null,
+        remainingPct: null,
+        resetsAt: "2026-09-03T01:00:00.000Z",
       }),
     ]);
   });

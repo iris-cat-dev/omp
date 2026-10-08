@@ -98,7 +98,7 @@ export function buildCodexProviderUsage(
       fallback: copy.accountFallback(account.accountNumber ?? index + 1),
     });
     const windows = [
-      shouldShowOmpFiveHourQuota(quota?.planLabel)
+      shouldShowOmpFiveHourQuota(quota)
         ? quotaWindow({
             id: "codex_five_hour",
             label: copy.fiveHour,

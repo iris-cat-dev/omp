@@ -78,6 +78,121 @@ describe("fetchCodexAccountQuota", () => {
     });
   });
 
+  it.each([
+    {
+      plan: "pro",
+      primary: { limit_window_seconds: 18_000, used_percent: 20, reset_at: 1_798_122_000 },
+      secondary: { limit_window_seconds: 604_800, used_percent: 65, reset_at: 1_798_640_000 },
+      fiveHourUsedPct: 20,
+      weeklyUsedPct: 65,
+    },
+    {
+      plan: "plus",
+      primary: { limit_window_seconds: 604_800, used_percent: 65, reset_at: 1_798_640_000 },
+      secondary: { limit_window_seconds: 18_000, used_percent: 20, reset_at: 1_798_122_000 },
+      fiveHourUsedPct: 20,
+      weeklyUsedPct: 65,
+    },
+  ])(
+    "maps explicitly timed $plan windows regardless of their positions",
+    async ({ plan, primary, secondary, fiveHourUsedPct, weeklyUsedPct }) => {
+      const quota = await fetchCodexAccountQuota({
+        credential: { accessToken: "access-token" },
+        fetch: async () =>
+          jsonResponse({
+            plan_type: plan,
+            rate_limit: { primary_window: primary, secondary_window: secondary },
+          }),
+        now: () => NOW,
+      });
+      expect(quota).toMatchObject({
+        status: "available",
+        fiveHourUsedPct,
+        fiveHourLimitReached: false,
+        fiveHourResetsAt: "2026-12-24T14:20:00.000Z",
+        weeklyUsedPct,
+        weeklyResetsAt: "2026-12-30T14:13:20.000Z",
+      });
+    },
+  );
+
+  it("keeps a weekly-only explicitly timed window even when the five-hour window is absent", async () => {
+    const quota = await fetchCodexAccountQuota({
+      credential: { accessToken: "access-token" },
+      fetch: async () =>
+        jsonResponse({
+          plan_type: "plus",
+          rate_limit: {
+            secondary_window: {
+              limit_window_seconds: 604_800,
+              used_percent: 41,
+              reset_at: 1_798_640_000,
+            },
+          },
+        }),
+      now: () => NOW,
+    });
+    expect(quota).toMatchObject({
+      status: "available",
+      fiveHourUsedPct: null,
+      fiveHourLimitReached: null,
+      fiveHourResetsAt: null,
+      weeklyUsedPct: 41,
+      weeklyResetsAt: "2026-12-30T14:13:20.000Z",
+    });
+  });
+
+  it("does not coerce null or blank usage to zero or relabel unrecognized explicit durations", async () => {
+    const quota = await fetchCodexAccountQuota({
+      credential: { accessToken: "access-token" },
+      fetch: async () =>
+        jsonResponse({
+          plan_type: "plus",
+          rate_limit: {
+            primary_window: {
+              limit_window_seconds: 86_400,
+              used_percent: 72,
+              reset_at: 1_798_122_000,
+            },
+            secondary_window: {
+              limit_window_seconds: 604_800,
+              used_percent: null,
+              reset_at: 1_798_640_000,
+            },
+          },
+        }),
+      now: () => NOW,
+    });
+    expect(quota).toMatchObject({
+      status: "available",
+      fiveHourUsedPct: null,
+      fiveHourLimitReached: null,
+      fiveHourResetsAt: null,
+      weeklyUsedPct: null,
+      weeklyResetsAt: "2026-12-30T14:13:20.000Z",
+    });
+    const blank = await fetchCodexAccountQuota({
+      credential: { accessToken: "access-token" },
+      fetch: async () =>
+        jsonResponse({
+          plan_type: "pro",
+          rate_limit: {
+            primary_window: {
+              limit_window_seconds: 604_800,
+              used_percent: "  ",
+              reset_at: 1_798_640_000,
+            },
+          },
+        }),
+      now: () => NOW,
+    });
+    expect(blank).toMatchObject({
+      status: "available",
+      weeklyUsedPct: null,
+      weeklyResetsAt: "2026-12-30T14:13:20.000Z",
+    });
+  });
+
   it("marks expired credentials unavailable without attempting refresh", async () => {
     const fetchApi = vi.fn(async () => new Response(null, { status: 401 }));
 

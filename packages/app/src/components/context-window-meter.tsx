@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { useOmpCodexAccountQuota } from "@/hooks/use-omp-account-quota";
+import { buildCodexProviderUsage, mergeCodexProviderUsage } from "@/provider-usage/codex";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -14,7 +16,7 @@ interface ContextWindowMeterProps {
   totalCostUsd?: number | null;
   showPercentage?: boolean;
   serverId?: string;
-  /** The OMP Desktop provider key (`omp`). */
+  /** The active model's provider namespace, including configured OMP providers. */
   provider?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
@@ -109,20 +111,32 @@ export function ContextWindowMeter({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
-  const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
+  const isCodex = provider === "openai-codex";
+  const { view: baseUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
-    { enabled: isTooltipOpen },
+    { enabled: isTooltipOpen && !isCodex, providerId: provider ?? undefined },
   );
+  const codex = useOmpCodexAccountQuota(serverId, isTooltipOpen && isCodex);
+  const providerUsageView = useMemo(() => {
+    if (!isCodex) return baseUsageView;
+    const usage = buildCodexProviderUsage(codex, {
+      providerName: "OpenAI Codex",
+      accountFallback: (number) => t("agentControls.quota.account", { number }),
+      fiveHour: t("agentControls.quota.fiveHour"),
+      weekly: t("agentControls.quota.weekly"),
+    });
+    return mergeCodexProviderUsage({ kind: "loading" }, usage, codex.loading, codex.updatedAt);
+  }, [baseUsageView, codex, isCodex, t]);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
       setIsTooltipOpen(nextOpen);
       if (nextOpen) {
-        void refreshProviderUsage().catch(() => {});
+        void (isCodex ? codex.refresh() : refreshProviderUsage()).catch(() => {});
       }
     },
-    [refreshProviderUsage],
+    [codex.refresh, isCodex, refreshProviderUsage],
   );
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);

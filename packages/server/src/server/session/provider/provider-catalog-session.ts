@@ -24,6 +24,7 @@ import type {
   ProviderUsageListResult,
   ProviderUsageService,
 } from "../../../services/quota-fetcher/service.js";
+import { isZhipuProviderBaseUrl } from "../../../services/quota-fetcher/providers/zhipu.js";
 import { expandTilde } from "../../../utils/path.js";
 import { discoverOmpProviderModels } from "./omp-model-discovery.js";
 
@@ -85,20 +86,17 @@ interface CustomProviderUsageConfig {
   apiKey: string;
 }
 
-export function resolveCustomProviderUsageConfig(
-  configYaml: string,
+function providerUsageConfig(
+  providers: Record<string, { baseUrl?: unknown; apiKey?: unknown }>,
   providerId: string,
+  allowMissingKey = false,
 ): CustomProviderUsageConfig | null {
-  const config = parse(configYaml) as {
-    providers?: Record<string, { baseUrl?: unknown; apiKey?: unknown }>;
-  } | null;
-  const provider = config?.providers?.[providerId];
+  const provider = providers[providerId];
   if (
     !provider ||
     typeof provider.baseUrl !== "string" ||
-    provider.baseUrl.trim().length === 0 ||
-    typeof provider.apiKey !== "string" ||
-    provider.apiKey.trim().length === 0
+    !provider.baseUrl.trim() ||
+    (!allowMissingKey && (typeof provider.apiKey !== "string" || !provider.apiKey.trim()))
   ) {
     return null;
   }
@@ -106,8 +104,29 @@ export function resolveCustomProviderUsageConfig(
     providerId,
     displayName: providerId,
     baseUrl: provider.baseUrl.trim(),
-    apiKey: provider.apiKey.trim(),
+    apiKey: typeof provider.apiKey === "string" ? provider.apiKey.trim() : "",
   };
+}
+
+export function resolveCustomProviderUsageConfig(
+  configYaml: string,
+  providerId: string,
+): CustomProviderUsageConfig | null {
+  const config = parse(configYaml) as {
+    providers?: Record<string, { baseUrl?: unknown; apiKey?: unknown }>;
+  } | null;
+  return config?.providers ? providerUsageConfig(config.providers, providerId) : null;
+}
+
+function configuredZhipuProviders(configYaml: string): CustomProviderUsageConfig[] {
+  const config = parse(configYaml) as {
+    providers?: Record<string, { baseUrl?: unknown; apiKey?: unknown }>;
+  } | null;
+  if (!config?.providers || typeof config.providers !== "object") return [];
+  return Object.keys(config.providers).flatMap((providerId) => {
+    const provider = providerUsageConfig(config.providers!, providerId, true);
+    return provider && isZhipuProviderBaseUrl(provider.baseUrl) ? [provider] : [];
+  });
 }
 
 /**
@@ -1068,10 +1087,10 @@ export class ProviderCatalogSession {
       let usage: ProviderUsageListResult | undefined;
       if (msg.providerId && msg.providerId !== "cursor") {
         const management = await this.providerSnapshotManager.getOmpProviderManagement();
-        const customProvider = resolveCustomProviderUsageConfig(
-          management.configYaml,
-          msg.providerId,
-        );
+        const customProvider =
+          configuredZhipuProviders(management.configYaml).find(
+            (provider) => provider.providerId === msg.providerId,
+          ) ?? resolveCustomProviderUsageConfig(management.configYaml, msg.providerId);
         if (customProvider) {
           const provider = await this.providerUsageService.fetchCustomUsage(customProvider);
           usage = {
@@ -1081,6 +1100,45 @@ export class ProviderCatalogSession {
         }
       }
       usage ??= await this.providerUsageService.listUsage();
+      if (!msg.providerId) {
+        try {
+          const management = await this.providerSnapshotManager.getOmpProviderManagement();
+          const configured = configuredZhipuProviders(management.configYaml);
+          const zhipu = await Promise.all(
+            configured.map(async (provider) => {
+              try {
+                return await this.providerUsageService.fetchCustomUsage(provider);
+              } catch {
+                // A single provider failure must not hide the built-in providers.
+                return {
+                  providerId: provider.providerId,
+                  displayName: provider.displayName,
+                  status: "error" as const,
+                  planLabel: null,
+                  windows: [],
+                  balances: [],
+                  details: [],
+                  error: "Zhipu usage request failed",
+                };
+              }
+            }),
+          );
+          const builtInProviders = usage.providers;
+          usage = {
+            ...usage,
+            providers: [
+              ...builtInProviders,
+              ...zhipu.filter(
+                (provider) =>
+                  !builtInProviders.some((builtIn) => builtIn.providerId === provider.providerId),
+              ),
+            ],
+          };
+        } catch {
+          // Management/configuration may be unavailable independently of Cursor usage.
+          this.logger.debug("Failed to discover Zhipu usage configuration");
+        }
+      }
       this.host.emit({
         type: "provider.usage.list.response",
         payload: {
@@ -1089,15 +1147,15 @@ export class ProviderCatalogSession {
           providers: usage.providers,
         },
       });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.error({ err }, "Failed to list provider usage");
+    } catch {
+      // Never echo configuration, fetch, or parse errors (which may embed API keys).
+      this.logger.error("Failed to list provider usage");
       this.host.emit({
         type: "rpc_error",
         payload: {
           requestId: msg.requestId,
           requestType: msg.type,
-          error: `Failed to list provider usage: ${err.message}`,
+          error: "Failed to list provider usage",
           code: "provider_usage_list_failed",
         },
       });

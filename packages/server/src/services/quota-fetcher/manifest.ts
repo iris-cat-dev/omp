@@ -1,4 +1,5 @@
 import { CursorQuotaProvider } from "./providers/cursor.js";
+import { createStoredZhipuQuotaProviders } from "./providers/zhipu.js";
 import type {
   ProviderUsageFetcher,
   ProviderUsageFetcherFactoryOptions,
@@ -15,5 +16,8 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
-  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+  return [
+    ...PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options)),
+    ...createStoredZhipuQuotaProviders(options),
+  ];
 }

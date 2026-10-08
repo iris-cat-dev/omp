@@ -354,6 +354,198 @@ describe("ProviderCatalogSession", () => {
     ]);
   });
 
+  it("merges every configured Zhipu provider ID into full usage without altering Cursor cache", async () => {
+    const builtIn = {
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "cursor",
+          displayName: "Cursor",
+          status: "available" as const,
+          windows: [],
+          balances: [],
+          details: [],
+        },
+      ],
+    };
+    const fetchCustomUsage = vi.fn(async (config: { providerId: string }) => ({
+      providerId: config.providerId,
+      displayName: config.providerId,
+      status: "available" as const,
+      windows: [{ id: "five-hour", label: "5 hours", usedPct: 20 }],
+      balances: [],
+      details: [],
+    }));
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getOmpProviderManagement: async () => ({
+          configPath: "/tmp/models.yml",
+          configYaml:
+            "providers:\n  glm-cn:\n    baseUrl: https://open.bigmodel.cn/api/anthropic\n    apiKey: key-a\n  team-glm:\n    baseUrl: https://open.bigmodel.cn/api/anthropic\n    apiKey: key-b\n  other:\n    baseUrl: https://other.example\n    apiKey: other-key\n",
+          providerModels: [],
+          loginProviders: [],
+        }),
+      },
+      usage: { listUsage: async () => builtIn, fetchCustomUsage },
+    });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "all",
+    });
+    const result = findByType(emitted, "provider.usage.list.response");
+    expect(result?.payload.providers.map((provider) => provider.providerId)).toEqual([
+      "cursor",
+      "glm-cn",
+      "team-glm",
+    ]);
+    expect(fetchCustomUsage).toHaveBeenCalledTimes(2);
+    expect(fetchCustomUsage).toHaveBeenCalledWith({
+      providerId: "team-glm",
+      displayName: "team-glm",
+      baseUrl: "https://open.bigmodel.cn/api/anthropic",
+      apiKey: "key-b",
+    });
+    expect(builtIn.providers.map((provider) => provider.providerId)).toEqual(["cursor"]);
+  });
+
+  it("isolates Zhipu failures and missing credentials from Cursor and from other configured IDs", async () => {
+    const fetchCustomUsage = vi.fn(async (config: { providerId: string }) => {
+      if (config.providerId === "bad-glm") throw new Error("secret-in-error");
+      return {
+        providerId: config.providerId,
+        displayName: config.providerId,
+        status: "unavailable" as const,
+        windows: [],
+        balances: [],
+        details: [],
+      };
+    });
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getOmpProviderManagement: async () => ({
+          configPath: "/tmp/models.yml",
+          configYaml:
+            "providers:\n  bad-glm:\n    baseUrl: https://open.bigmodel.cn/api/anthropic\n    apiKey: secret-in-error\n  empty-glm:\n    baseUrl: https://open.bigmodel.cn/api/anthropic\n",
+          providerModels: [],
+          loginProviders: [],
+        }),
+      },
+      usage: {
+        listUsage: async () => ({
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "cursor",
+              displayName: "Cursor",
+              status: "available",
+              windows: [],
+              balances: [],
+              details: [],
+            },
+          ],
+        }),
+        fetchCustomUsage,
+      },
+    });
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "all",
+    });
+    const providers = findByType(emitted, "provider.usage.list.response")?.payload.providers;
+    expect(providers?.map((provider) => [provider.providerId, provider.status])).toEqual([
+      ["cursor", "available"],
+      ["bad-glm", "error"],
+      ["empty-glm", "unavailable"],
+    ]);
+    expect(JSON.stringify(emitted)).not.toContain("secret-in-error");
+    expect(fetchCustomUsage).toHaveBeenCalledWith({
+      providerId: "empty-glm",
+      displayName: "empty-glm",
+      baseUrl: "https://open.bigmodel.cn/api/anthropic",
+      apiKey: "",
+    });
+    expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  });
+
+  it("resolves a selected Zhipu ID without credentials as unavailable instead of falling through to Cursor", async () => {
+    const listUsage = vi.fn();
+    const fetchCustomUsage = vi.fn(async () => ({
+      providerId: "glm-cn",
+      displayName: "glm-cn",
+      status: "unavailable" as const,
+      windows: [],
+      balances: [],
+      details: [],
+    }));
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getOmpProviderManagement: async () => ({
+          configPath: "/tmp/models.yml",
+          configYaml:
+            "providers:\n  glm-cn:\n    baseUrl: https://open.bigmodel.cn/api/anthropic\n",
+          providerModels: [],
+          loginProviders: [],
+        }),
+      },
+      usage: { listUsage, fetchCustomUsage },
+    });
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "selected",
+      providerId: "glm-cn",
+    });
+    expect(listUsage).not.toHaveBeenCalled();
+    expect(fetchCustomUsage).toHaveBeenCalledWith({
+      providerId: "glm-cn",
+      displayName: "glm-cn",
+      baseUrl: "https://open.bigmodel.cn/api/anthropic",
+      apiKey: "",
+    });
+    expect(findByType(emitted, "provider.usage.list.response")?.payload.providers[0]?.status).toBe(
+      "unavailable",
+    );
+  });
+
+  it("preserves Cursor usage when models.yml discovery fails and never reflects its contents", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      snapshot: {
+        getOmpProviderManagement: async () => ({
+          configPath: "/tmp/models.yml",
+          configYaml: "providers:\n  bad-glm: [secret-from-config",
+          providerModels: [],
+          loginProviders: [],
+        }),
+      },
+      usage: {
+        listUsage: async () => ({
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "cursor",
+              displayName: "Cursor",
+              status: "available",
+              windows: [],
+              balances: [],
+              details: [],
+            },
+          ],
+        }),
+      },
+    });
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "all",
+    });
+    expect(
+      findByType(emitted, "provider.usage.list.response")?.payload.providers.map(
+        (provider) => provider.providerId,
+      ),
+    ).toEqual(["cursor"]);
+    expect(JSON.stringify(emitted)).not.toContain("secret-from-config");
+    expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  });
+
   it("surfaces a usage-list failure as an rpc_error envelope", async () => {
     const { subsystem, emitted } = makeSubsystem({
       usage: {

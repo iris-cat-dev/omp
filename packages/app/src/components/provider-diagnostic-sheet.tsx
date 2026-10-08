@@ -52,10 +52,11 @@ import {
 } from "@/hooks/use-omp-account-quota";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
-import { resolveLoginProviderUsage } from "@/provider-usage/login-usage";
+import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
+import { resolveLoginProviderUsages } from "@/provider-usage/login-usage";
+import { ProviderUsageCard } from "@/provider-usage/card";
 import type { ProviderUsage } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
-import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
@@ -372,7 +373,7 @@ function OmpAccountQuotaSummary({
         resetsAt={quota?.weeklyResetsAt}
         status={quota?.status}
       />
-      {shouldShowOmpFiveHourQuota(quota?.planLabel) ? (
+      {shouldShowOmpFiveHourQuota(quota) ? (
         <OmpAccountQuotaWindow
           label={t("settings.providers.omp.multiAccount.quotaFiveHour")}
           usedPct={quota?.fiveHourUsedPct}
@@ -585,7 +586,7 @@ interface OmpProviderSummaryRowProps {
   onChangeAccountNote?: (value: string) => void;
   onSaveAccountNote?: () => void;
   onCancelAccountNote?: () => void;
-  usage?: ProviderUsage | null;
+  usages?: ProviderUsage[];
 }
 
 function OmpProviderSummaryActions({
@@ -955,7 +956,7 @@ function OmpProviderSummaryRow({
   editingAccountId = null,
   accountNoteDraft = "",
   savingAccountNoteId = null,
-  usage = null,
+  usages = [],
   onConfigureModels,
   onEdit,
   onLogin,
@@ -1031,16 +1032,26 @@ function OmpProviderSummaryRow({
         onLogoutAccount={onLogoutAccount}
         onReorderAccounts={onReorderAccounts}
       />
-      {usage ? (
-        <View style={sheetStyles.providerUsage} testID={`omp-provider-usage-${summary.id}`}>
-          {usage.windows.map((window) => (
-            <ProviderUsageWindowBar key={window.id} window={window} />
-          ))}
-          {(usage.balances ?? []).map((balance) => (
-            <ProviderUsageBalanceBar key={balance.id} balance={balance} />
-          ))}
+      {(usages ?? []).map((usage) => (
+        <View
+          key={usage.providerId}
+          style={sheetStyles.providerUsage}
+          testID={`omp-provider-usage-${usage.providerId}`}
+        >
+          {usage.providerId.startsWith("zhipu-coding-plan:") ? (
+            <ProviderUsageCard usage={usage} compact />
+          ) : (
+            <>
+              {usage.windows.map((window) => (
+                <ProviderUsageWindowBar key={window.id} window={window} />
+              ))}
+              {(usage.balances ?? []).map((balance) => (
+                <ProviderUsageBalanceBar key={balance.id} balance={balance} />
+              ))}
+            </>
+          )}
         </View>
-      ) : null}
+      ))}
     </View>
   );
 }
@@ -2295,7 +2306,7 @@ function OmpManagementPanel({
           <OmpProviderSummaryRow
             key={summary.id}
             summary={summary}
-            usage={resolveLoginProviderUsage(providerUsageView, summary.id)}
+            usages={resolveLoginProviderUsages(providerUsageView, summary.id)}
             loggingInProviderId={loginProviderId}
             loginFlowActive={loginFlow !== null}
             loggingOutProviderId={logoutProviderId}

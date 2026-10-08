@@ -65,6 +65,8 @@ import {
 } from "@/components/omp-provider-quota";
 import { OmpQuotaCountdown } from "@/components/omp-codex-quota-details";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
+import { ProviderUsageCard } from "@/provider-usage/card";
+import { selectProviderUsages } from "@/provider-usage/login-usage";
 import type { ProviderUsageView } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
@@ -632,10 +634,17 @@ function SidebarProviderUsageDetails({
     return <Text style={styles.sidebarQuotaLoading}>{view.message}</Text>;
   }
 
-  const usage =
-    view.payload.providers.find(
-      (candidate) => candidate.providerId.toLowerCase() === providerId.toLowerCase(),
-    ) ?? null;
+  const usages = selectProviderUsages(view.payload.providers, providerId);
+  if (usages.some((usage) => usage.providerId.toLowerCase() !== providerId.toLowerCase())) {
+    return (
+      <>
+        {usages.map((usage) => (
+          <ProviderUsageCard key={usage.providerId} usage={usage} compact />
+        ))}
+      </>
+    );
+  }
+  const usage = usages[0] ?? null;
   if (!usage) {
     return <Text style={styles.sidebarQuotaLoading}>{t("providerUsage.empty")}</Text>;
   }
@@ -929,7 +938,7 @@ function useSidebarSelectedAccountQuotaRefresh(
     serverId,
     [
       selectedAccount?.quota?.weeklyResetsAt,
-      shouldShowOmpFiveHourQuota(selectedAccount?.quota?.planLabel)
+      shouldShowOmpFiveHourQuota(selectedAccount?.quota)
         ? selectedAccount?.quota?.fiveHourResetsAt
         : null,
     ],
@@ -968,9 +977,7 @@ function useSidebarAccountModel({
   );
   const hasSelectedProviderUsage =
     providerUsageView.kind === "ready" &&
-    providerUsageView.payload.providers.some(
-      (provider) => provider.providerId.toLowerCase() === selectedProviderUsageId.toLowerCase(),
-    );
+    selectProviderUsages(providerUsageView.payload.providers, selectedProviderUsageId).length > 0;
   const selectableAccounts = useMemo(() => {
     if (!accountFeature || accountFeature.type !== "select") return accounts;
     const ids = new Set(accountFeature.options.map((option) => option.id));
@@ -1035,7 +1042,7 @@ function useSidebarAccountModel({
         weeklyRemaining === null
           ? null
           : `${t("agentControls.quota.weekly")} ${Math.round(weeklyRemaining)}%`,
-        shouldShowOmpFiveHourQuota(account.quota?.planLabel) && fiveHourRemaining !== null
+        shouldShowOmpFiveHourQuota(account.quota) && fiveHourRemaining !== null
           ? `${t("agentControls.quota.fiveHour")} ${Math.round(fiveHourRemaining)}%`
           : null,
       ].filter((part): part is string => Boolean(part));
@@ -1235,7 +1242,7 @@ function SidebarProviderAccountDetails({
                 usedPct={selectedAccount.quota?.weeklyUsedPct}
                 resetsAt={selectedAccount.quota?.weeklyResetsAt}
               />
-              {shouldShowOmpFiveHourQuota(selectedAccount.quota?.planLabel) ? (
+              {shouldShowOmpFiveHourQuota(selectedAccount.quota) ? (
                 <SidebarQuotaMeter
                   label={t("agentControls.quota.fiveHour")}
                   usedPct={selectedAccount.quota?.fiveHourUsedPct}

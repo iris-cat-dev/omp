@@ -180,7 +180,7 @@ function useConsumeOmpCodexResetCredit(
           id: credit.id,
           type: credit.resetType,
           effect: t(
-            shouldShowOmpFiveHourQuota(account.quota?.planLabel)
+            shouldShowOmpFiveHourQuota(account.quota)
               ? "settings.providers.omp.codexQuota.fullEffect"
               : "settings.providers.omp.codexQuota.proEffect",
           ),
@@ -416,7 +416,7 @@ export function OmpCodexQuotaDetails({
     serverId,
     [
       account.quota?.weeklyResetsAt,
-      shouldShowOmpFiveHourQuota(account.quota?.planLabel) ? account.quota?.fiveHourResetsAt : null,
+      shouldShowOmpFiveHourQuota(account.quota) ? account.quota?.fiveHourResetsAt : null,
     ],
     now,
   );

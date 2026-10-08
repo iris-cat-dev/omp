@@ -28,9 +28,13 @@ const CodexUsageResponseSchema = z.object({
 const CodexUsageWindowSchema = z.object({
   used_percent: z.unknown().optional(),
   reset_at: z.unknown().optional(),
+  limit_window_seconds: z.unknown().optional(),
 });
 
 function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && (typeof value !== "string" || value.trim() === "")) {
+    return null;
+  }
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -53,13 +57,25 @@ function isProPlan(planLabel: string | null): boolean {
   return planLabel?.trim().toLowerCase() === "pro";
 }
 
-function parseWindow(value: unknown): { usedPct: number | null; resetsAt: string | null } | null {
+interface CodexUsageWindow {
+  usedPct: number | null;
+  resetsAt: string | null;
+  durationSeconds: number | null;
+  hasDuration: boolean;
+}
+
+function parseWindow(value: unknown): CodexUsageWindow | null {
   const parsed = CodexUsageWindowSchema.safeParse(value);
   if (!parsed.success) return null;
   const usedPct = parseUsedPct(parsed.data.used_percent);
   const resetsAt = parseResetAt(parsed.data.reset_at);
   if (usedPct === null && resetsAt === null) return null;
-  return { usedPct, resetsAt };
+  return {
+    usedPct,
+    resetsAt,
+    durationSeconds: finiteNumber(parsed.data.limit_window_seconds),
+    hasDuration: Object.hasOwn(parsed.data, "limit_window_seconds"),
+  };
 }
 
 function failure(
@@ -88,11 +104,30 @@ function parseUsageResponse(payload: unknown, now: () => number): OmpProviderAcc
   const secondary = parseWindow(parsed.data.rate_limit.secondary_window);
   const planLabel = typeof parsed.data.plan_type === "string" ? parsed.data.plan_type : null;
   const hasFiveHourLimit = !isProPlan(planLabel);
-  if (!primary && hasFiveHourLimit) {
+  // An explicitly reported duration takes precedence over the historical plan/position mapping.
+  // Unknown explicit durations must not be relabelled as either known window.
+  const explicitFiveHour =
+    primary?.durationSeconds === 18_000
+      ? primary
+      : secondary?.durationSeconds === 18_000
+        ? secondary
+        : null;
+  const explicitWeekly =
+    primary?.durationSeconds === 604_800
+      ? primary
+      : secondary?.durationSeconds === 604_800
+        ? secondary
+        : null;
+  const legacyWeekly = hasFiveHourLimit ? secondary : primary;
+  const fiveHour =
+    explicitFiveHour ?? (hasFiveHourLimit && primary && !primary.hasDuration ? primary : null);
+  const total = explicitWeekly ?? (legacyWeekly && !legacyWeekly.hasDuration ? legacyWeekly : null);
+  if (!fiveHour && !total) {
+    return failure("error", "Codex usage response did not include a recognized quota window", now);
+  }
+  if (!fiveHour && hasFiveHourLimit && !primary && secondary && !secondary.hasDuration) {
     return failure("error", "Codex usage response did not include the five-hour limit", now);
   }
-  const fiveHour = hasFiveHourLimit ? primary : null;
-  const total = hasFiveHourLimit ? secondary : primary;
   const fiveHourUsedPct = fiveHour?.usedPct ?? null;
   return {
     status: "available",

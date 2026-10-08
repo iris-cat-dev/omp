@@ -62,8 +62,6 @@ mac:
   icon: assets/icon-macos.png
   hardenedRuntime: true
   notarize: true
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.inherit.plist
   electronLanguages:
     [
       ar,

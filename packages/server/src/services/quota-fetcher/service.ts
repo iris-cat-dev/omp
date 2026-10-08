@@ -3,6 +3,7 @@ import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
 import { CustomQuotaProvider, type CustomQuotaProviderOptions } from "./providers/custom.js";
+import { ZhipuQuotaProvider, isZhipuProviderBaseUrl } from "./providers/zhipu.js";
 import { unavailableUsage } from "./usage.js";
 
 export interface ProviderUsageServiceOptions {
@@ -22,7 +23,7 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class ProviderUsageService {
   private readonly logger: Logger;
-  private readonly fetchers: ProviderUsageFetcher[];
+  private readonly fetchers: ProviderUsageFetcher[] | undefined;
   private readonly fetchApi: ProviderApiFetch | undefined;
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
@@ -31,12 +32,7 @@ export class ProviderUsageService {
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
-    this.fetchers =
-      options.fetchers ??
-      createProviderUsageFetchers({
-        logger: this.logger,
-        fetch: options.fetch,
-      });
+    this.fetchers = options.fetchers;
     this.fetchApi = options.fetch;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
@@ -70,30 +66,31 @@ export class ProviderUsageService {
   async fetchCustomUsage(
     options: Omit<CustomQuotaProviderOptions, "logger" | "fetch">,
   ): Promise<ProviderUsage> {
-    const fetcher = new CustomQuotaProvider({
-      ...options,
-      logger: this.logger,
-      fetch: this.fetchApi,
-    });
+    const fetcher = isZhipuProviderBaseUrl(options.baseUrl)
+      ? new ZhipuQuotaProvider({ ...options, logger: this.logger, fetch: this.fetchApi })
+      : new CustomQuotaProvider({ ...options, logger: this.logger, fetch: this.fetchApi });
     try {
       return await fetcher.fetchUsage();
-    } catch (error) {
-      this.logger.debug(
-        { err: error, providerId: fetcher.providerId },
-        "Custom provider usage fetch failed",
-      );
+    } catch {
+      // Do not propagate fetch/parse errors: their messages can contain credentials.
+      this.logger.debug({ providerId: fetcher.providerId }, "Provider usage fetch failed");
       return unavailableUsage({
         providerId: fetcher.providerId,
         displayName: fetcher.displayName,
-        error: error instanceof Error ? error.message : String(error),
+        error: isZhipuProviderBaseUrl(options.baseUrl)
+          ? "Zhipu usage request failed"
+          : "Custom provider usage request failed",
       });
     }
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+    // Discover login credentials on each refresh, not just at daemon startup.
+    const fetchers =
+      this.fetchers ?? createProviderUsageFetchers({ logger: this.logger, fetch: this.fetchApi });
+    const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
-      const fetcher = this.fetchers[index];
+      const fetcher = fetchers[index];
       if (result.status === "fulfilled") {
         return result.value;
       }

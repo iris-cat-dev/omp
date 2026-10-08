@@ -2,16 +2,8 @@ import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ProviderUsageCard } from "./card";
-import type { ProviderUsage, ProviderUsageView } from "./types";
-
-function matchProvider(
-  providers: ProviderUsage[],
-  activeProviderId: string | null | undefined,
-): ProviderUsage | null {
-  if (!activeProviderId) return null;
-  const target = activeProviderId.toLowerCase();
-  return providers.find((usage) => usage.providerId.toLowerCase() === target) ?? null;
-}
+import { selectProviderUsages } from "./login-usage";
+import type { ProviderUsageView } from "./types";
 
 // Renders the active agent's provider usage inside the context-meter tooltip.
 // Returns nothing when the active provider has no usage entry, so the meter's
@@ -42,13 +34,15 @@ export function ProviderUsageTooltipSection({
     );
   }
 
-  const usage = matchProvider(view.payload.providers, activeProviderId);
-  if (!usage) return null;
+  const usages = selectProviderUsages(view.payload.providers, activeProviderId);
+  if (usages.length === 0) return null;
 
   return (
     <>
       <View style={styles.divider} />
-      <ProviderUsageCard usage={usage} compact />
+      {usages.map((usage) => (
+        <ProviderUsageCard key={usage.providerId} usage={usage} compact />
+      ))}
     </>
   );
 }

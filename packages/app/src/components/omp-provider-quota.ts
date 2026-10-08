@@ -23,8 +23,21 @@ export function formatOmpQuotaResetTime(
   });
 }
 
-export function shouldShowOmpFiveHourQuota(planLabel: string | null | undefined): boolean {
-  return planLabel?.trim().toLowerCase() !== "pro";
+export function shouldShowOmpFiveHourQuota(
+  quota:
+    | {
+        planLabel?: string | null;
+        fiveHourUsedPct?: number | null;
+        fiveHourResetsAt?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  return (
+    quota != null &&
+    ((typeof quota.fiveHourUsedPct === "number" && Number.isFinite(quota.fiveHourUsedPct)) ||
+      (typeof quota.fiveHourResetsAt === "string" && quota.fiveHourResetsAt.length > 0))
+  );
 }
 
 export function formatOmpQuotaCountdown(

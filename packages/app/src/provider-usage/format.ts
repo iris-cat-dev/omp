@@ -83,6 +83,7 @@ const LABEL_KEYS: Record<string, string> = {
   team_spend: "providerUsage.labels.monthlyUsage",
   monthly_requests: "providerUsage.labels.monthlyRequests",
   daily: "providerUsage.labels.daily",
+  "five-hour": "agentControls.quota.fiveHour",
   weekly: "providerUsage.labels.weekly",
   monthly: "providerUsage.labels.monthly",
   model: "providerUsage.labels.model",

@@ -83,12 +83,37 @@ Connected clients refresh their directories and history/search caches after dele
 Project files, deliverables, workspaces, Git worktrees/branches, and provider-owned session
 files are not deleted. This tool removes Desktop history, not the provider's independent logs.
 
+## Zhipu Coding Plan usage
+
+The built-in `zhipu-coding-plan` provider reuses API keys saved through OMP sign-in.
+Each enabled stored key has its own labelled usage entry; a rejected key does not
+hide another key's available quota. No `models.yml` entry is required for built-in usage.
+For a custom China Zhipu provider, configure its `baseUrl` (for example,
+`https://open.bigmodel.cn/api/coding/paas/v4`) and `apiKey` in OMP's `models.yml`;
+Desktop retains the custom provider name.
+The sidebar, active model's context tooltip, and Host Settings usage page show the
+quota windows reported by Zhipu: five-hour, weekly when present, and MCP/tool calls.
+Both token-based `TOKENS_LIMIT` and credit-based `CREDIT_LIMIT` responses are supported.
+Percentages show **used quota**; missing percentages remain unknown rather than
+implying an unused quota. Reset times appear only when supplied by the service.
+
+Desktop queries the China service's official-plugin monitor endpoint on
+`https://open.bigmodel.cn` with the raw API key and does not follow redirects.
+This does not add support for the separate `api.z.ai` service or arbitrary
+OpenAI-compatible `/v1/usage` endpoints. Usage lookup failures do not change model
+availability or interrupt inference.
+
 ## Codex quota and reset cards
 
 Open **Host Settings → Model providers → Signed-in providers** to view each Codex account's
-five-hour and weekly quota windows (Pro shows its weekly window only). Settings and the sidebar
-show live compact reset countdowns such as `3d21h` and `2h12min`. At the deadline, Desktop
-refreshes server usage and shows an awaiting-refresh state rather than assuming the quota reset.
+five-hour and weekly quota windows. Desktop identifies windows by their reported durations;
+when durations are absent it retains the legacy plan/window mapping. A five-hour window
+is shown only when its usage or reset time is reported, including for Pro accounts.
+Codex percentages show **remaining quota**; unknown usage is never treated as 100% remaining.
+The context tooltip lists labelled accounts rather than guessing an account from the provider
+namespace alone. Settings and the sidebar show live compact reset countdowns such as
+`3d21h` and `2h12min`. At the deadline, Desktop refreshes server usage and shows an
+awaiting-refresh state rather than assuming the quota reset.
 
 Each account lists its banked Codex reset cards, server-reported available count, status,
 and grant/expiry timestamps with a timezone. **Use reset card** asks you to confirm the selected
@@ -299,6 +324,10 @@ npm install
 npm run dev:desktop
 ```
 
+The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift and
+Dart stream parsers use the same CodeMirror 6 language types as the application.
+Keep this pin when updating dependencies; `6.5.5` uses incompatible streamparser types.
+
 Development uses:
 
 - daemon: `127.0.0.1:6770`
@@ -368,6 +397,9 @@ npm run build:mac
 
 Without notarization credentials this produces an unsigned package and prints a warning. Gatekeeper
 will reject that package unless quarantine is explicitly removed on the test Mac.
+
+macOS signing uses electron-builder's bundled entitlement template for the app and
+helpers; no separate entitlement files are required in `packages/desktop/build`.
 
 For a signed, notarized release, the build machine needs a valid `Developer ID Application`
 certificate (or `CSC_LINK`) and one of electron-builder's notarization credential sets:

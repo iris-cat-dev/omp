@@ -41,16 +41,29 @@ describe("OMP provider quota reset time", () => {
 });
 
 describe("OMP provider quota windows", () => {
-  test.each(["pro", " PRO ", "Pro"])("hides the five-hour window for %s plans", (planLabel) => {
-    expect(shouldShowOmpFiveHourQuota(planLabel)).toBe(false);
-  });
-
-  test.each(["plus", "team", null, undefined])(
-    "keeps the five-hour window for %s plans",
+  test.each(["pro", " PRO ", "Pro", "plus", "team", null, undefined])(
+    "hides the five-hour window for %s when no five-hour data exists",
     (planLabel) => {
-      expect(shouldShowOmpFiveHourQuota(planLabel)).toBe(true);
+      expect(shouldShowOmpFiveHourQuota({ planLabel })).toBe(false);
     },
   );
+
+  test.each(["pro", "plus", null])("shows a real five-hour window for %s", (planLabel) => {
+    expect(shouldShowOmpFiveHourQuota({ planLabel, fiveHourUsedPct: 0 })).toBe(true);
+    expect(
+      shouldShowOmpFiveHourQuota({
+        planLabel,
+        fiveHourUsedPct: null,
+        fiveHourResetsAt: "2026-09-03T01:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  test("does not turn unknown usage into a five-hour window", () => {
+    expect(shouldShowOmpFiveHourQuota(null)).toBe(false);
+    expect(shouldShowOmpFiveHourQuota({ fiveHourUsedPct: Number.NaN })).toBe(false);
+    expect(shouldShowOmpFiveHourQuota({ fiveHourUsedPct: null, fiveHourResetsAt: "" })).toBe(false);
+  });
 });
 
 describe("OMP quota countdown boundaries", () => {
