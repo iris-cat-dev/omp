@@ -28,6 +28,14 @@ If an older Desktop build remains running after the final answer, update Desktop
 its daemon after saving any active work. Updating only the bundled OMP executable does not
 update Desktop's RPC adapter.
 
+## Saving images in the mobile Web client
+
+Long-press an image in the conversation or its fullscreen preview and choose the browser's
+save-image action. Desktop browsers can use the image's right-click menu. Raster image
+attachments stored in the Web client's IndexedDB use self-contained data URLs instead of
+blob URLs, preserving the original bytes for browsers whose image-saving menus cannot
+resolve blob URLs. Non-image attachments retain revocable blob previews.
+
 ## Stopping conversations and subagents
 
 The conversation's **Stop** button interrupts its current run and all running managed descendants,

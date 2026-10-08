@@ -3,6 +3,7 @@ import {
   type AttachmentMetadata,
   type SaveAttachmentInput,
 } from "@/attachments/types";
+import { isRasterImageMimeType } from "@/attachments/file-types";
 import {
   blobToBase64,
   generateAttachmentId,
@@ -169,6 +170,10 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
       const db = await openAttachmentDb();
       try {
         const blob = await loadBlob(db, attachment.storageKey);
+        // Mobile image context menus cannot reliably save blob URLs.
+        if (isRasterImageMimeType(attachment.mimeType)) {
+          return `data:${attachment.mimeType};base64,${await blobToBase64(blob)}`;
+        }
         return URL.createObjectURL(blob);
       } finally {
         db.close();
@@ -176,7 +181,9 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
     },
 
     async releasePreviewUrl({ url }): Promise<void> {
-      URL.revokeObjectURL(url);
+      if (url.startsWith("blob:")) {
+        URL.revokeObjectURL(url);
+      }
     },
 
     async delete({ attachment }): Promise<void> {
