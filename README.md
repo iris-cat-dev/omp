@@ -404,8 +404,7 @@ manual download but cannot be installed by the in-app updater. Publish the gener
 after every target for that release is complete; do not use `--publish always` during the individual
 Windows architecture builds because it can publish incomplete channel metadata.
 
-To build Windows packages that rely on an `omp` installation on `PATH` instead of bundling the
-OMP executable, run:
+To build Windows packages without shipping a new OMP executable, run:
 
 ```bash
 npm run build:windows:no-omp
@@ -416,6 +415,30 @@ npm run build:windows:no-omp:arm64
 These artifacts use `OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe` names so they do not overwrite
 the standard installers. The application still includes its daemon and CLI; only `omp.exe` is
 omitted.
+
+A fresh `no omp` installation uses `omp` on `PATH`. When switching from an installation with
+`resources\bin\omp.exe`, the NSIS installer backs up that existing executable before invoking
+the old uninstaller, then restores the exact file into the selected installation directory.
+This also preserves an independently updated bundled runtime and works when changing the
+installation directory. Repeated `no omp` installations retain it; switching back to the
+standard installer replaces it with that package's bundled runtime.
+
+If the existing runtime cannot be backed up, installation stops before removing the previous
+version. If restoration fails, installation reports the location of the retained backup.
+The `no omp` ZIP payload itself still contains no OMP executable.
+
+Run the installation-switch regression on a clean Windows VM, with standard and `no omp`
+installers for the same version and architecture:
+
+```powershell
+node packages/desktop/e2e/windows-installer-switch-smoke.js --standard "packages/desktop/release/OMP-Desktop-Setup-<version>-<arch>.exe" --no-omp "packages/desktop/release/OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe"
+```
+
+The smoke refuses to run if Desktop is already registered. It checks fresh installation,
+switching to `no omp`, repeated installation with a changed directory, and switching back.
+It verifies the preserved executable's SHA-256 and runs the packaged renderer, daemon, OMP,
+CLI, and terminal checks after the `no omp` upgrades. Wine checks do not replace this real
+Windows installation and startup verification.
 
 Download and checksum-verify the latest supported OMP binaries:
 
