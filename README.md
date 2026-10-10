@@ -82,9 +82,10 @@ version above still applies when native-subagent stopping is not needed.
 ## Guiding a running conversation
 
 The composer defaults to **Steer** while a conversation is running. A steer guides the active turn
-without canceling it or its managed descendants. The submitted message remains visibly pending
-until OMP emits the canonical user-message event that confirms the model consumed it; an RPC
-acknowledgement alone only confirms admission.
+without canceling it or its managed descendants. The parent remains steerable while an OMP-native
+subagent continues in the background. The submitted message remains visibly pending until OMP
+emits the canonical user-message event that confirms the model consumed it; an RPC acknowledgement
+alone only confirms admission.
 
 If the active provider cannot accept steering, Desktop reports the send failure and leaves the
 current turn running. Agent-to-agent prompts and completion notifications use the same

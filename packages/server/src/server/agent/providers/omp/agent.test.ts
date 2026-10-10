@@ -731,6 +731,56 @@ describe("OMP agent client and session", () => {
     expect(omp.wasAborted()).toBe(false);
   });
 
+  test("keeps a parent steerable while a native subagent continues", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("delegate slow work");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("delegate slow work", "initial-message");
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "child-1",
+        agent: "task",
+        status: "started",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    runtime.streamAssistantText("waiting for child", "assistant-before-yield");
+    runtime.emit({
+      type: "agent_end",
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "waiting for child" }],
+          responseId: "assistant-before-yield",
+        },
+      ],
+      isTerminal: false,
+    });
+    await waitForImmediate();
+
+    await expect(
+      omp.steerActiveTurn("change direction", turnId, {
+        clientMessageId: "steer-client-message",
+      }),
+    ).resolves.toEqual({ status: "accepted", userMessageEcho: "provider" });
+    runtime.acceptPrompt("change direction", "steer-native-message");
+
+    expect(runtime.steerRequests).toEqual([{ message: "change direction", imageCount: 0 }]);
+    expect(omp.timeline()).toContainEqual({
+      type: "user_message",
+      text: "change direction",
+      messageId: "steer-native-message",
+      clientMessageId: "steer-client-message",
+    });
+    expect(omp.subagentUpserts()).toEqual([{ id: "child-1", status: "running" }]);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.wasAborted()).toBe(false);
+  });
+
   test("correlates queued steered user messages when the provider consumes them", async () => {
     const omp = new OmpHarness();
     await omp.start();
