@@ -611,6 +611,7 @@ export interface OmpAutomaticCredentialScheduler {
 // v0.2.0-beta.1; remove after January 20, 2027 once the minimum OMP version
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
+const OMP_HTTP_ERROR_CONTINUATION_DELAY_MS = 5_000;
 
 const OMP_SESSION_CREDENTIAL_READ_DELAYS_MS = [0, 20, 40, 80, 160] as const;
 const OMP_AUTOMATIC_CREDENTIAL_RETRY_DELAYS_MS = [20, 40, 80, 160, 320, 640, 1_000] as const;
@@ -724,7 +725,7 @@ const OMP_PLAN_APPROVAL_REQUEST_ID = "omp-plan-approval";
 const OMP_PLAN_APPROVAL_REQUEST_NAME = "OmpPlanApproval";
 type OmpWorkflowMode = "plan" | "goal";
 type OmpWorkflowSelection = "standard" | "enhanced" | OmpWorkflowMode;
-const OMP_LENGTH_CONTINUATION_BY_LOCALE = {
+const OMP_CONTINUATION_BY_LOCALE = {
   ar: "تابع",
   en: "Continue",
   es: "Continúa",
@@ -735,7 +736,7 @@ const OMP_LENGTH_CONTINUATION_BY_LOCALE = {
   ru: "Продолжай",
   "zh-CN": "继续",
 } as const;
-type OmpWorkflowLocale = keyof typeof OMP_LENGTH_CONTINUATION_BY_LOCALE;
+type OmpWorkflowLocale = keyof typeof OMP_CONTINUATION_BY_LOCALE;
 
 function normalizeOmpWorkflowSelection(value: unknown): OmpWorkflowSelection {
   return value === "enhanced" || value === "plan" || value === "goal" ? value : "standard";
@@ -1187,6 +1188,19 @@ function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
     return null;
   }
   return formatOmpErrorMessage(latestAssistant);
+}
+
+function isOmpHttpRequestError(message: Extract<OmpAgentMessage, { role: "assistant" }>): boolean {
+  if (message.stopReason === "aborted") return false;
+  if (typeof message.errorStatus === "number") {
+    return message.errorStatus >= 400 && message.errorStatus < 600;
+  }
+  const errorMessage = message.errorMessage?.trim();
+  if (!errorMessage) return false;
+  return (
+    /^(?:Error:\s*)?(?:HTTP(?:\/[\d.]+)?\s+)?[45]\d{2}\b/i.test(errorMessage) ||
+    /\b(?:HTTP(?:\s+error)?|status(?:\s+code)?)\s*[:=]?\s*[45]\d{2}\b/i.test(errorMessage)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1670,6 +1684,11 @@ export class OmpAgentSession implements AgentSession {
   private activePromptAgentInvoked: boolean | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
+  private pendingHttpErrorContinuation: {
+    timer: NodeJS.Timeout;
+    turnId: string;
+    messages: OmpAgentMessage[];
+  } | null = null;
   private suppressAutonomousEventsAfterInterrupt = false;
   private activeInterrupt: { turnId: string | null; reason: AgentInterruptReason } | null = null;
   private lastKnownThinkingOptionId: string | null;
@@ -1993,6 +2012,7 @@ export class OmpAgentSession implements AgentSession {
         if (interruptReason) {
           this.activeInterrupt = null;
         }
+        this.cancelHttpErrorContinuation();
         this.usagePoller.stopTurn();
         this.stopAutomaticCredentialResolution();
         this.activeTurnId = null;
@@ -2206,7 +2226,7 @@ export class OmpAgentSession implements AgentSession {
     if (featureId === OMP_WORKFLOW_LOCALE_FEATURE_ID) {
       if (
         typeof value !== "string" ||
-        !Object.prototype.hasOwnProperty.call(OMP_LENGTH_CONTINUATION_BY_LOCALE, value)
+        !Object.prototype.hasOwnProperty.call(OMP_CONTINUATION_BY_LOCALE, value)
       ) {
         throw new Error(`Invalid OMP workflow locale '${String(value)}'`);
       }
@@ -2518,6 +2538,8 @@ export class OmpAgentSession implements AgentSession {
 
   async interrupt(reason: AgentInterruptReason = "user"): Promise<void> {
     const turnId = this.activeTurnId;
+    const pendingContinuation = this.pendingHttpErrorContinuation;
+    this.cancelHttpErrorContinuation();
     const interrupt = { turnId, reason };
     this.activeInterrupt = interrupt;
     try {
@@ -2525,6 +2547,12 @@ export class OmpAgentSession implements AgentSession {
     } catch (error) {
       if (this.activeInterrupt === interrupt) {
         this.activeInterrupt = null;
+      }
+      if (pendingContinuation) {
+        this.scheduleHttpErrorContinuation(
+          pendingContinuation.turnId,
+          pendingContinuation.messages,
+        );
       }
       throw error;
     }
@@ -2570,6 +2598,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.cancelHttpErrorContinuation();
     this.backgroundDaemons?.dispose();
     this.stopAutomaticCredentialResolution();
     this.usagePoller.close();
@@ -2604,6 +2633,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private terminalizeActiveWork(): void {
+    this.cancelHttpErrorContinuation();
     this.terminalizeActiveRuntimeToolCalls();
     for (const [toolCallId, toolCall] of this.activeToolCalls) {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
@@ -3497,6 +3527,7 @@ export class OmpAgentSession implements AgentSession {
 
     switch (event.type) {
       case "agent_start":
+        this.cancelHttpErrorContinuation();
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         this.emit({
@@ -3506,6 +3537,7 @@ export class OmpAgentSession implements AgentSession {
         });
         return;
       case "turn_start":
+        this.cancelHttpErrorContinuation();
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         this.emit({
@@ -3587,24 +3619,23 @@ export class OmpAgentSession implements AgentSession {
         );
         const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
         if (
+          selectedWorkflowMode === "enhanced" &&
+          terminalAssistant &&
+          isOmpHttpRequestError(terminalAssistant) &&
+          this.scheduleHttpErrorContinuation(turnId, terminalMessages)
+        ) {
+          return;
+        }
+        if (
           (selectedWorkflowMode === "standard" || selectedWorkflowMode === "enhanced") &&
           terminalAssistant?.stopReason === "length" &&
           !terminalAssistant.errorMessage?.trim()
         ) {
-          this.activeAssistantMessageId = null;
-          this.activeTurnTerminalAssistantMessage = null;
-          const configuredLocale = this.config.featureValues?.[OMP_WORKFLOW_LOCALE_FEATURE_ID];
-          const locale: OmpWorkflowLocale =
-            typeof configuredLocale === "string" &&
-            Object.prototype.hasOwnProperty.call(
-              OMP_LENGTH_CONTINUATION_BY_LOCALE,
-              configuredLocale,
-            )
-              ? (configuredLocale as OmpWorkflowLocale)
-              : "en";
-          this.runtimeSession.followUp(OMP_LENGTH_CONTINUATION_BY_LOCALE[locale]);
+          this.cancelHttpErrorContinuation();
+          this.continueActiveTurn();
           return;
         }
+        this.cancelHttpErrorContinuation();
         // A state request is processed after OMP's RPC loop becomes promptable,
         // so do not advertise Paseo idle until it reports that transition.
         void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
@@ -3613,6 +3644,49 @@ export class OmpAgentSession implements AgentSession {
       default:
         return;
     }
+  }
+
+  private continueActiveTurn(): void {
+    this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
+    const configuredLocale = this.config.featureValues?.[OMP_WORKFLOW_LOCALE_FEATURE_ID];
+    const locale: OmpWorkflowLocale =
+      typeof configuredLocale === "string" &&
+      Object.prototype.hasOwnProperty.call(OMP_CONTINUATION_BY_LOCALE, configuredLocale)
+        ? (configuredLocale as OmpWorkflowLocale)
+        : "en";
+    this.runtimeSession.followUp(OMP_CONTINUATION_BY_LOCALE[locale]);
+  }
+
+  private scheduleHttpErrorContinuation(
+    turnId: string | undefined,
+    messages: OmpAgentMessage[],
+  ): boolean {
+    if (!turnId || this.closed || this.activeTurnId !== turnId || this.activeInterrupt)
+      return false;
+    if (this.pendingHttpErrorContinuation) return true;
+    const timer = setTimeout(() => {
+      if (this.pendingHttpErrorContinuation?.timer !== timer) return;
+      this.pendingHttpErrorContinuation = null;
+      if (this.closed || this.activeTurnId !== turnId || this.activeInterrupt) return;
+      if (normalizeOmpWorkflowSelection(this.features[0]?.value) !== "enhanced") {
+        void this.completeTurnAfterProviderIdle(turnId, messages);
+        return;
+      }
+      try {
+        this.continueActiveTurn();
+      } catch (error) {
+        this.handleProcessExit(toDiagnosticErrorMessage(error));
+      }
+    }, OMP_HTTP_ERROR_CONTINUATION_DELAY_MS);
+    this.pendingHttpErrorContinuation = { timer, turnId, messages };
+    return true;
+  }
+
+  private cancelHttpErrorContinuation(): void {
+    if (!this.pendingHttpErrorContinuation) return;
+    clearTimeout(this.pendingHttpErrorContinuation.timer);
+    this.pendingHttpErrorContinuation = null;
   }
 
   private handleToolExecutionEnd(
@@ -3918,6 +3992,7 @@ export class OmpAgentSession implements AgentSession {
     }
     this.terminalizeActiveRuntimeToolCalls();
     this.stopAutomaticCredentialResolution();
+    this.cancelHttpErrorContinuation();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;

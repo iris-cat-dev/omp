@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import type { OmpAgentMessage } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
 
 const OMP_PLAN_TURN_DIRECTIVE = `<system-directive>
@@ -883,7 +884,7 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().followUpRequests).toEqual([{ message: expected, imageCount: 0 }]);
   });
 
-  test("does not automatically continue failed responses in enhanced workflow", async () => {
+  test("leaves non-HTTP failures terminal in enhanced workflow", async () => {
     const omp = new OmpHarness();
     await omp.start({ featureValues: { workflow_mode: "enhanced" } });
 
@@ -897,6 +898,280 @@ describe("OMP agent client and session", () => {
       }),
     ).rejects.toThrow("provider request failed");
     expect(omp.runtime().followUpRequests).toEqual([]);
+  });
+
+  describe("enhanced HTTP error continuation", () => {
+    const sessions = new Set<OmpHarness>();
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+
+    afterEach(async () => {
+      try {
+        for (const session of sessions) await session.close();
+      } finally {
+        sessions.clear();
+        vi.useRealTimers();
+      }
+    });
+
+    async function startFailedTurn(
+      message: Extract<OmpAgentMessage, { role: "assistant" }>,
+      workflowMode: "standard" | "enhanced" | "plan" | "goal" = "enhanced",
+    ): Promise<OmpHarness> {
+      const omp = new OmpHarness();
+      sessions.add(omp);
+      await omp.start({
+        featureValues: { workflow_mode: workflowMode, workflow_locale: "zh-CN" },
+      });
+      await omp.requireStartTurn("finish the task");
+      const runtime = omp.runtime();
+      runtime.beginTurn();
+      runtime.acceptPrompt("finish the task", "user-1");
+      runtime.finishTurn(message);
+      await waitForImmediate();
+      return omp;
+    }
+
+    test.each([400, 401, 403, 429, 499, 500, 503, 599])(
+      "keeps HTTP %i active until a continuation recovers after five seconds",
+      async (errorStatus) => {
+        const omp = await startFailedTurn({
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus,
+        });
+        const runtime = omp.runtime();
+
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(runtime.followUpRequests).toEqual([]);
+        expect(omp.failedTurnCount()).toBe(0);
+        expect(omp.completedTurnCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(runtime.followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+
+        runtime.beginTurn();
+        runtime.acceptPrompt("继续", "user-2");
+        runtime.streamAssistantText("recovered", "recovery");
+        runtime.finishTurn({
+          role: "assistant",
+          content: [{ type: "text", text: "recovered" }],
+          stopReason: "stop",
+        });
+        await waitForImmediate();
+        expect(omp.failedTurnCount()).toBe(0);
+        expect(omp.completedTurnCount()).toBe(1);
+        expect(omp.timeline()).toContainEqual({
+          type: "assistant_message",
+          text: "recovered",
+          messageId: "recovery",
+        });
+      },
+    );
+
+    test.each([
+      ["400 Bad Request", true],
+      ["Error: 401 Unauthorized", true],
+      ["HTTP/1.1 503 Service Unavailable", true],
+      ["request failed with status code 429", true],
+      ["HTTP error: 599 upstream failure", true],
+      ["request failed after 500 ms", false],
+      ["requested 429 tokens", false],
+      ["399 redirect", false],
+      ["600 unknown status", false],
+    ])("handles legacy model error %s", async (errorMessage, continues) => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage,
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual(
+        continues ? [{ message: "继续", imageCount: 0 }] : [],
+      );
+      expect(omp.failedTurnCount()).toBe(continues ? 0 : 1);
+      expect(omp.completedTurnCount()).toBe(0);
+    });
+
+    test.each([399, 600])(
+      "trusts HTTP status %i over incidental error text",
+      async (errorStatus) => {
+        const omp = await startFailedTurn({
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus,
+          errorMessage: "upstream message mentions 401 Unauthorized",
+        });
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(omp.runtime().followUpRequests).toEqual([]);
+        expect(omp.failedTurnCount()).toBe(1);
+      },
+    );
+
+    test("continues repeated HTTP errors once per five-second wait without completing the turn", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 401,
+      });
+      const runtime = omp.runtime();
+
+      for (const [index, errorStatus] of [401, 503, 400].entries()) {
+        if (index > 0) {
+          runtime.beginTurn();
+          runtime.acceptPrompt("继续", `user-${index + 1}`);
+          runtime.finishTurn({ role: "assistant", content: [], stopReason: "error", errorStatus });
+        }
+        await vi.advanceTimersByTimeAsync(4_999);
+        runtime.emit({ type: "agent_end", messages: runtime.messages });
+        expect(runtime.followUpRequests).toHaveLength(index);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(runtime.followUpRequests).toHaveLength(index + 1);
+        expect(omp.failedTurnCount()).toBe(0);
+        expect(omp.completedTurnCount()).toBe(0);
+      }
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(runtime.followUpRequests).toHaveLength(3);
+    });
+
+    test.each(["standard", "plan", "goal"] as const)(
+      "leaves HTTP failures terminal in %s workflow",
+      async (workflowMode) => {
+        const omp = await startFailedTurn(
+          {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorStatus: 503,
+            errorMessage: "503 Service Unavailable",
+          },
+          workflowMode,
+        );
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(omp.runtime().followUpRequests).toEqual([]);
+        expect(omp.failedTurnCount()).toBe(1);
+      },
+    );
+
+    test("does not resume an aborted HTTP response", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "aborted",
+        errorStatus: 500,
+        errorMessage: "500 Internal Server Error",
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.canceledTurnCount()).toBe(1);
+    });
+
+    test("cancels a pending continuation before a new user turn starts", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 429,
+      });
+      await vi.advanceTimersByTimeAsync(4_999);
+      await omp.interrupt();
+      await omp.requireStartTurn("new task");
+      const runtime = omp.runtime();
+      runtime.beginTurn();
+
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(runtime.followUpRequests).toEqual([]);
+      expect(omp.canceledTurnCount()).toBe(1);
+      expect(omp.failedTurnCount()).toBe(0);
+      runtime.finishTurn({ role: "assistant", content: [], stopReason: "stop" });
+      await waitForImmediate();
+      expect(omp.completedTurnCount()).toBe(1);
+    });
+
+    test("retains automatic continuation when the provider rejects a stop request", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 503,
+      });
+      omp.runtime().abortError = new Error("abort failed");
+      await expect(omp.interrupt()).rejects.toThrow("abort failed");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+      expect(omp.failedTurnCount()).toBe(0);
+      expect(omp.canceledTurnCount()).toBe(0);
+    });
+
+    test("drops a delayed continuation when another provider turn recovers first", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 503,
+      });
+      omp.runtime().beginTurn();
+      omp.runtime().finishTurn({ role: "assistant", content: [], stopReason: "stop" });
+      await waitForImmediate();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.completedTurnCount()).toBe(1);
+      expect(omp.failedTurnCount()).toBe(0);
+    });
+
+    test("stops retrying when enhanced workflow is disabled", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 503,
+        errorMessage: "503 Service Unavailable",
+      });
+      await omp.setFeature("workflow_mode", "standard");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.failedTurnCount()).toBe(1);
+    });
+
+    test("drops a pending continuation after the provider exits", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 503,
+      });
+      omp.runtime().emit({ type: "process_exit", error: "provider exited" });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.failedTurnCount()).toBe(1);
+    });
+
+    test("drops a pending continuation when the session closes", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorStatus: 503,
+      });
+      await omp.close();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.isClosed()).toBe(true);
+    });
   });
 
   test("applies a selected plan workflow to every planning message", async () => {

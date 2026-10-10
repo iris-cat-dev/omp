@@ -2,7 +2,7 @@
 
 An Electron and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through a self-hosted, end-to-end encrypted relay.
 
-Current source version: **0.4.0**.
+Current source version: **0.4.1**.
 
 ## Requirements
 
@@ -27,6 +27,23 @@ Reopening a saved conversation likewise keeps these reminders out of the visible
 If an older Desktop build remains running after the final answer, update Desktop and restart
 its daemon after saving any active work. Updating only the bundled OMP executable does not
 update Desktop's RPC adapter.
+
+## Enhanced workflow
+
+Select **Enhanced**, identified by the Sparkles icon in the workflow menu, to keep
+model-request failures running automatically. Both **Standard** and **Enhanced**
+continue responses that reach the model's output-length limit.
+
+When OMP reports a terminal model-request error with HTTP status **400–599**,
+Enhanced waits **five seconds** and sends a localized **Continue** message
+(`继续` in Chinese). Every 4xx and 5xx status is eligible, including invalid requests,
+authentication failures, rate limits, and server errors. Repeated errors repeat this
+wait with no attempt limit or increasing backoff; non-HTTP errors remain terminal.
+
+The conversation stays active until a continuation succeeds or is stopped.
+**Stop**, closing the session, or leaving Enhanced prevents pending continuations.
+OMP's internal request retries are unchanged; the five-second wait starts after OMP
+reports the terminal error, not after each internal HTTP attempt.
 
 ## Switching approval modes
 

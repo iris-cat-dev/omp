@@ -25,7 +25,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
-import { ListTodo, Settings2, SlidersHorizontal, Target, Zap } from "lucide-react-native";
+import { ListTodo, Settings2, SlidersHorizontal, Sparkles, Target, Zap } from "lucide-react-native";
 import { getAgentFeatureIcon } from "@/agent-controls/icons";
 import {
   formatAgentFeatureLabel,
@@ -1306,6 +1306,7 @@ function FeatureSelectComboboxOption({
   if (featureId === "workflow_mode") {
     if (option.id === "plan") IconComponent = ListTodo;
     else if (option.id === "goal") IconComponent = Target;
+    else if (option.id === "enhanced") IconComponent = Sparkles;
     else IconComponent = SlidersHorizontal;
   }
   const leadingSlot = useMemo(

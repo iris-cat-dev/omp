@@ -61,6 +61,7 @@ const OmpAssistantMessageSchema = z
     responseId: z.string().optional(),
     responseModel: z.string().optional(),
     errorMessage: z.string().nullable().optional(),
+    errorStatus: z.number().nullable().optional(),
     stopReason: z.string().optional(),
   })
   .passthrough();
