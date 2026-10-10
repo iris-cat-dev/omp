@@ -1682,6 +1682,7 @@ export class OmpAgentSession implements AgentSession {
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
   private currentModeId: string | null;
+  private readonly launchModeId: string | null;
   private activeWorkflowMode: OmpWorkflowMode | null;
   private workflowModePending: OmpWorkflowSelection | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
@@ -1728,6 +1729,7 @@ export class OmpAgentSession implements AgentSession {
       options.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID],
     );
     this.currentModeId = configuredModeId;
+    this.launchModeId = configuredModeId;
     this.fastModeSupported = typeof options.initialState.fastModeEnabled === "boolean";
     const configuredFastMode = optionalBoolean(
       options.config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
@@ -2103,10 +2105,21 @@ export class OmpAgentSession implements AgentSession {
     if (this.currentModeId === modeId) {
       return;
     }
-    return {
-      type: "warning",
-      message: "Start a new OMP session to change approval mode",
-    };
+    // Native approval flags cannot change on a live OMP process. Full access
+    // approves its requests in the adapter; restoring the launch mode stops it.
+    if (modeId !== "full" && modeId !== this.launchModeId) {
+      return {
+        type: "warning",
+        message: "Start a new OMP session to change approval mode",
+      };
+    }
+    this.currentModeId = modeId;
+    this.config.modeId = modeId;
+    if (modeId === "full") {
+      for (const request of this.pendingExtensionUiRequests.values()) {
+        this.autoApproveToolPermission(request);
+      }
+    }
   }
 
   // eslint-disable-next-line complexity
@@ -2377,23 +2390,38 @@ export class OmpAgentSession implements AgentSession {
         : undefined;
     }
 
-    this.pendingExtensionUiRequests.delete(requestId);
+    this.respondToExtensionUiPermission(request, response);
+  }
+
+  private respondToExtensionUiPermission(
+    request: AgentPermissionRequest,
+    response: AgentPermissionResponse,
+  ): void {
     if (isCombinedAskUserPermission(request)) {
       const combined = buildCombinedAskUserSelectionResponse(request, response);
       this.pendingAskUserFollowUpResponse = combined.pendingResponse;
-      this.runtimeSession.respondToExtensionUiRequest(requestId, combined.uiResponse);
+      this.runtimeSession.respondToExtensionUiRequest(request.id, combined.uiResponse);
     } else if (optionalString(request.metadata?.freeformSentinel)) {
       const inlineFreeform = buildInlineFreeformSelectionResponse(request, response);
       this.pendingAskUserFollowUpResponse = inlineFreeform.pendingResponse;
-      this.runtimeSession.respondToExtensionUiRequest(requestId, inlineFreeform.uiResponse);
+      this.runtimeSession.respondToExtensionUiRequest(request.id, inlineFreeform.uiResponse);
     } else {
       this.runtimeSession.respondToExtensionUiRequest(
-        requestId,
+        request.id,
         buildOmpRpcUiPermissionResponse(request, response) ??
           buildExtensionUiResponse(request, response),
       );
     }
-    this.emitPermissionResolution(requestId, response);
+    this.pendingExtensionUiRequests.delete(request.id);
+    this.emitPermissionResolution(request.id, response);
+  }
+
+  private autoApproveToolPermission(request: AgentPermissionRequest): boolean {
+    if (this.currentModeId !== "full" || request.kind !== "tool") {
+      return false;
+    }
+    this.respondToExtensionUiPermission(request, { behavior: "allow" });
+    return true;
   }
 
   private emitPermissionResolution(requestId: string, resolution: AgentPermissionResponse): void {
@@ -3004,6 +3032,10 @@ export class OmpAgentSession implements AgentSession {
         allowFreeform: this.activeAskUserDialog?.allowFreeform,
       });
     if (!request) {
+      return;
+    }
+
+    if (this.autoApproveToolPermission(request)) {
       return;
     }
 

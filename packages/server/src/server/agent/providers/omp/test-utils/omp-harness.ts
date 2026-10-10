@@ -536,6 +536,12 @@ export class OmpHarness {
     return this.events.map((event) => event.type);
   }
 
+  permissionEvents() {
+    return this.events.filter(
+      (event) => event.type === "permission_requested" || event.type === "permission_resolved",
+    );
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {
@@ -589,6 +595,10 @@ export class OmpHarness {
 
   async setMode(modeId: string) {
     return await this.requireSession().setMode(modeId);
+  }
+
+  async runtimeInfo() {
+    return await this.requireSession().getRuntimeInfo();
   }
 
   async setModel(

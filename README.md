@@ -28,6 +28,19 @@ If an older Desktop build remains running after the final answer, update Desktop
 its daemon after saving any active work. Updating only the bundled OMP executable does not
 update Desktop's RPC adapter.
 
+## Switching approval modes
+
+Select **Full access** in a running conversation to approve its pending and subsequent
+OMP tool requests automatically. The daemon sends the native approval response without
+restarting the conversation or changing OMP's immutable launch-time approval flags.
+Automatic approval does not depend on an open client. Questions and plan confirmations
+still require an explicit answer.
+
+Switching back to the approval mode used when the current OMP process launched stops
+automatic approval and restores its native behavior. Other approval-mode changes still
+require a new session; a process launched with **Full access** cannot enable native
+approval prompts by switching to **Always ask** or **Write approval**.
+
 ## Saving images in the mobile Web client
 
 Long-press an image in the conversation or its fullscreen preview and choose the browser's

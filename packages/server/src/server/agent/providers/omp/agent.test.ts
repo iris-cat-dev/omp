@@ -1641,6 +1641,97 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("switching to full access resolves pending tools and approves new tools without prompting", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "ask" });
+    omp.emitExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "business-question",
+      method: "select",
+      title: "Which deployment region?",
+      options: ["Production", "Staging"],
+    });
+    omp.requestToolApproval({
+      id: "pending-bash",
+      tool: "bash",
+      detail: "echo approved",
+    });
+
+    await omp.setMode("full");
+    expect((await omp.runtimeInfo()).modeId).toBe("full");
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: "business-question", kind: "question" }),
+    ]);
+
+    omp.requestToolApproval({ id: "new-edit", tool: "edit", detail: "fixture.txt" });
+    omp.emitExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "new-write",
+      method: "select",
+      title: "Allow tool: write\nPath: created.txt\nContent:\nhello",
+      options: ["Approve", "Deny"],
+    });
+    await omp.setMode("full");
+
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: "business-question", kind: "question" }),
+    ]);
+    expect(omp.permissionEvents()).toEqual([
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({ id: "business-question" }),
+      }),
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({ id: "pending-bash" }),
+      }),
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "pending-bash",
+        resolution: { behavior: "allow" },
+      }),
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "new-edit",
+        resolution: { behavior: "allow" },
+      }),
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "new-write",
+        resolution: { behavior: "allow" },
+      }),
+    ]);
+  });
+
+  test("restoring the launch mode stops automatic approvals without claiming a stricter native mode", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "write" });
+    await omp.setMode("full");
+    await omp.setMode("write");
+    const notice = await omp.setMode("ask");
+    expect(notice?.type).toBe("warning");
+    expect((await omp.runtimeInfo()).modeId).toBe("write");
+
+    omp.requestToolApproval({ id: "manual-edit", tool: "edit", detail: "fixture.txt" });
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: "manual-edit", kind: "tool" }),
+    ]);
+    expect(omp.permissionEvents()).toEqual([
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({ id: "manual-edit" }),
+      }),
+    ]);
+  });
+
+  test("a session launched with full access cannot pretend to enable native approvals", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    const notice = await omp.setMode("ask");
+    expect(notice?.type).toBe("warning");
+    expect((await omp.runtimeInfo()).modeId).toBe("full");
+  });
+
   test("folds OMP ask custom input into the Other option", async () => {
     const omp = new OmpHarness();
     await omp.start();
