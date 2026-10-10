@@ -3771,6 +3771,13 @@ export const ServerInfoStatusPayloadSchema = z
     version: ServerInfoVersionSchema.optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
+    // COMPAT(windowsPty): added in v0.4.2; older daemons omit Windows PTY resize metadata.
+    windowsPty: z
+      .object({
+        backend: z.literal("conpty"),
+        buildNumber: z.number().int().positive().optional(),
+      })
+      .optional(),
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({

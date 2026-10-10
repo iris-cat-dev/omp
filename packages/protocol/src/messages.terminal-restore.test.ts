@@ -59,6 +59,23 @@ describe("terminal restore schemas", () => {
     ).toBe(true);
   });
 
+  test("accepts Windows PTY resize metadata and keeps it optional for older daemons", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "windows-server",
+        windowsPty: { backend: "conpty", buildNumber: 26_200 },
+      }).windowsPty,
+    ).toEqual({ backend: "conpty", buildNumber: 26_200 });
+
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "legacy-server",
+      }).windowsPty,
+    ).toBeUndefined();
+  });
+
   test("keeps terminal input mode replay metadata optional for older daemons", () => {
     const parsed = ServerInfoStatusPayloadSchema.parse({
       status: "server_info",

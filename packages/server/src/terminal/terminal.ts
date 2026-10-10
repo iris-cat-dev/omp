@@ -16,6 +16,7 @@ import type {
   TerminalActivity,
   TerminalActivityState,
 } from "@omp-desktop/protocol/terminal-activity";
+import { terminalWindowsPtyOptions } from "./windows-pty.js";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
@@ -981,6 +982,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     cols,
     scrollback: 1000,
     allowProposedApi: true,
+    ...(terminalWindowsPtyOptions ? { windowsPty: terminalWindowsPtyOptions } : {}),
   });
   const promptMarkers = new Set<TerminalPromptMarker>();
   let currentPromptMarker: TerminalPromptMarker | null = null;

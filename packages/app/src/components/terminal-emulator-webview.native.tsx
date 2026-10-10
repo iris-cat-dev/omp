@@ -16,7 +16,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IWindowsPty } from "@xterm/xterm";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import type { TerminalInputModeState } from "@omp-desktop/protocol/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
@@ -38,6 +38,7 @@ type BridgeInboundMessage =
       initialSnapshot: TerminalState | null;
       scrollbackLines: number;
       theme: ITheme;
+      windowsPty?: IWindowsPty;
       fontFamily?: string;
       fontSize?: number;
       pendingModifiers: PendingTerminalModifiers;
@@ -53,6 +54,7 @@ type BridgeInboundMessage =
   | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
   | { type: "setScrollback"; streamKey: string; lines: number }
+  | { type: "setWindowsPty"; streamKey: string; windowsPty?: IWindowsPty }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
@@ -128,6 +130,7 @@ function createMountMessage(input: {
   initialSnapshot: TerminalState | null;
   scrollbackLines: number;
   theme: ITheme;
+  windowsPty?: IWindowsPty;
   fontFamily?: string;
   fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
@@ -139,6 +142,7 @@ function createMountMessage(input: {
     initialSnapshot: input.initialSnapshot,
     scrollbackLines: input.scrollbackLines,
     theme: input.theme,
+    windowsPty: input.windowsPty,
     fontFamily: input.fontFamily,
     fontSize: input.fontSize,
     pendingModifiers: input.pendingModifiers,
@@ -155,6 +159,7 @@ export default function WebViewTerminalEmulator({
     foreground: "#e6e6e6",
     cursor: "#e6e6e6",
   },
+  windowsPty,
   scrollbackLines,
   fontFamily,
   fontSize,
@@ -194,6 +199,7 @@ export default function WebViewTerminalEmulator({
     scrollbackLines,
     theme: xtermTheme,
     fontFamily,
+    windowsPty,
     fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
@@ -204,6 +210,7 @@ export default function WebViewTerminalEmulator({
     scrollbackLines,
     theme: xtermTheme,
     fontFamily,
+    windowsPty,
     fontSize,
     pendingModifiers,
     swipeGesturesEnabled,
@@ -389,6 +396,11 @@ export default function WebViewTerminalEmulator({
     if (!mountRequestedStreamKeyRef.current) return;
     sendToWebView({ type: "setScrollback", streamKey, lines: scrollbackLines });
   }, [scrollbackLines, sendToWebView, streamKey]);
+
+  useEffect(() => {
+    if (!mountRequestedStreamKeyRef.current) return;
+    sendToWebView({ type: "setWindowsPty", streamKey, windowsPty });
+  }, [sendToWebView, streamKey, windowsPty]);
 
   useEffect(() => {
     if (!mountRequestedStreamKeyRef.current) return;

@@ -1,4 +1,4 @@
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IWindowsPty } from "@xterm/xterm";
 import xtermCss from "@xterm/xterm/css/xterm.css";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import type { TerminalInputModeState } from "@omp-desktop/protocol/terminal-input-mode";
@@ -18,6 +18,7 @@ interface MountMessage {
   initialSnapshot: TerminalState | null;
   scrollbackLines: number;
   theme: ITheme;
+  windowsPty?: IWindowsPty;
   fontFamily?: string;
   fontSize?: number;
   pendingModifiers: PendingTerminalModifiers;
@@ -35,6 +36,7 @@ type InboundMessage =
   | { type: "focus"; streamKey: string; forceRefocus?: boolean }
   | { type: "resize"; streamKey: string; forceClaim: boolean; shouldClaim?: boolean }
   | { type: "setTheme"; streamKey: string; theme: ITheme }
+  | { type: "setWindowsPty"; streamKey: string; windowsPty?: IWindowsPty }
   | { type: "setScrollback"; streamKey: string; lines: number }
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
@@ -282,6 +284,9 @@ class TerminalWebViewBridge {
       case "setScrollback":
         this.runtime?.setScrollback({ lines: message.lines });
         return true;
+      case "setWindowsPty":
+        this.runtime?.setWindowsPty({ windowsPty: message.windowsPty });
+        return true;
       case "setFont":
         this.runtime?.setFont({ fontFamily: message.fontFamily, fontSize: message.fontSize });
         return true;
@@ -341,6 +346,7 @@ class TerminalWebViewBridge {
       initialSnapshot: message.initialSnapshot,
       scrollback: message.scrollbackLines,
       theme: message.theme,
+      windowsPty: message.windowsPty,
       fontFamily: message.fontFamily,
       fontSize: message.fontSize,
     });

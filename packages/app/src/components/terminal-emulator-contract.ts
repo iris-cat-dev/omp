@@ -1,5 +1,5 @@
 import type { Ref } from "react";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IWindowsPty } from "@xterm/xterm";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import type { TerminalInputModeState } from "@omp-desktop/protocol/terminal-input-mode";
 import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
@@ -30,6 +30,7 @@ export interface TerminalEmulatorProps {
   supportsTerminalInputModeReplay: boolean;
   testId?: string;
   xtermTheme?: ITheme;
+  windowsPty?: IWindowsPty;
   scrollbackLines: number;
   contextMenuClearLabel?: string;
   fontFamily?: string;

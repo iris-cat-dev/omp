@@ -15,7 +15,7 @@ import {
 import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
 import "@xterm/xterm/css/xterm.css";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IWindowsPty } from "@xterm/xterm";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import type { TerminalInputModeState } from "@omp-desktop/protocol/terminal-input-mode";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
@@ -102,6 +102,7 @@ interface TerminalEmulatorProps {
   supportsTerminalInputModeReplay: boolean;
   testId?: string;
   xtermTheme?: ITheme;
+  windowsPty?: IWindowsPty;
   scrollbackLines: number;
   contextMenuClearLabel?: string;
   fontFamily?: string;
@@ -166,6 +167,7 @@ export default function TerminalEmulator({
     foreground: "#e6e6e6",
     cursor: "#e6e6e6",
   },
+  windowsPty,
   scrollbackLines,
   contextMenuClearLabel = "Clear",
   fontFamily,
@@ -193,10 +195,12 @@ export default function TerminalEmulator({
   const mountedThemeRef = useRef<ITheme>(xtermTheme);
   const fontFamilyRef = useRef(fontFamily);
   const fontSizeRef = useRef(fontSize);
+  const windowsPtyRef = useRef(windowsPty);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
+  windowsPtyRef.current = windowsPty;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
@@ -465,6 +469,7 @@ export default function TerminalEmulator({
       theme: mountedThemeRef.current,
       fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
+      windowsPty: windowsPtyRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
 
@@ -503,6 +508,10 @@ export default function TerminalEmulator({
   useEffect(() => {
     runtimeRef.current?.setPendingModifiers({ pendingModifiers });
   }, [pendingModifiers]);
+
+  useEffect(() => {
+    runtimeRef.current?.setWindowsPty({ windowsPty });
+  }, [windowsPty]);
 
   useEffect(() => {
     runtimeRef.current?.setFont({ fontFamily, fontSize });

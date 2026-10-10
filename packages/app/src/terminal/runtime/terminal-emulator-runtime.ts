@@ -6,7 +6,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
-import { Terminal, type IDecoration, type ITheme } from "@xterm/xterm";
+import { Terminal, type IDecoration, type ITheme, type IWindowsPty } from "@xterm/xterm";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import {
   type TerminalInputModeState,
@@ -38,6 +38,7 @@ export interface TerminalEmulatorRuntimeMountInput {
   initialSnapshot: TerminalState | null;
   scrollback: number;
   theme: ITheme;
+  windowsPty?: IWindowsPty;
   fontFamily?: string;
   fontSize?: number;
 }
@@ -380,6 +381,10 @@ export class TerminalEmulatorRuntime {
     this.pendingModifiers = input.pendingModifiers;
   }
 
+  setWindowsPty(input: { windowsPty?: IWindowsPty }): void {
+    if (this.terminal) this.terminal.options.windowsPty = input.windowsPty ?? {};
+  }
+
   getInputModeState(): TerminalInputModeState {
     return this.inputModeTracker.getState();
   }
@@ -409,6 +414,7 @@ export class TerminalEmulatorRuntime {
       },
       scrollback: input.scrollback,
       theme: withOverviewRulerBorderHidden(input.theme),
+      ...(input.windowsPty ? { windowsPty: input.windowsPty } : {}),
     });
     const fitAddon = new FitAddon();
     const unicode11Addon = new Unicode11Addon();

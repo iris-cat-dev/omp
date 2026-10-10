@@ -249,6 +249,7 @@ export function TerminalPane({
   const supportsTerminalSizeOwnership = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
   );
+  const windowsPty = useSessionStore((state) => state.sessions[serverId]?.serverInfo?.windowsPty);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
@@ -1056,6 +1057,7 @@ export function TerminalPane({
             supportsTerminalInputModeReplay={supportsTerminalInputModeReplay}
             testId="terminal-surface"
             xtermTheme={xtermTheme}
+            windowsPty={windowsPty}
             scrollbackLines={settings.terminalScrollbackLines}
             contextMenuClearLabel={t("workspace.terminal.clear")}
             fontFamily={terminalFontFamily}

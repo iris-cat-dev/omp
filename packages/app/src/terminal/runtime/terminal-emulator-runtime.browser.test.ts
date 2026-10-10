@@ -1,6 +1,7 @@
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@omp-desktop/protocol/terminal-input-mode";
+import type { IWindowsPty } from "@xterm/xterm";
 import type { TerminalState } from "@omp-desktop/protocol/messages";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
@@ -30,6 +31,7 @@ interface TerminalKeyRecord {
 type BrowserTerminal = TerminalSize & {
   input: (data: string, wasUserInput?: boolean) => void;
   refresh: (start: number, end: number) => void;
+  resize: (cols: number, rows: number) => void;
   reset: () => void;
   buffer: {
     active: {
@@ -92,6 +94,7 @@ function createTerminalHost(input: {
   width: number;
   height: number;
   scrollback?: number;
+  windowsPty?: IWindowsPty;
 }): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -138,6 +141,7 @@ function createTerminalHost(input: {
       foreground: "#e6e6e6",
       cursor: "#e6e6e6",
     },
+    windowsPty: input.windowsPty,
   });
 
   const mounted = { host, root, runtime, inputs, sizes, terminalKeys, inputModeChanges };
@@ -395,6 +399,48 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(grownSize.cols).toBeGreaterThan(initialSize.cols);
     expect(grownSize.rows).toBeGreaterThan(initialSize.rows);
     expect(grownSize.shouldClaim).toBe(true);
+  });
+
+  it("preserves scrollback when ConPTY redraws after a vertical resize", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({
+      width: 720,
+      height: 360,
+      windowsPty: { backend: "conpty", buildNumber: 26_200 },
+    });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = getBrowserTerminal();
+    terminal.resize(80, 6);
+    mounted.runtime.write({
+      data: terminalOutput("one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nC:\\project> npm run dev"),
+    });
+    await waitFor({
+      predicate: () =>
+        terminal.buffer.active.getLine(5)?.translateToString(true).includes("npm run dev") === true,
+    });
+
+    terminal.resize(80, 2);
+    terminal.resize(80, 6);
+    expect(terminal.buffer.active.baseY).toBe(4);
+
+    mounted.runtime.write({
+      data: terminalOutput("\u001b[H\u001b[2Jfive\r\nC:\\project> npm run dev"),
+    });
+    await waitFor({
+      predicate: () =>
+        Array.from({ length: terminal.buffer.active.length }, (_, index) =>
+          terminal.buffer.active.getLine(index)?.translateToString(true),
+        )
+          .join("\n")
+          .includes("npm run dev"),
+    });
+
+    const retainedText = Array.from({ length: terminal.buffer.active.length }, (_, index) =>
+      terminal.buffer.active.getLine(index)?.translateToString(true),
+    ).join("\n");
+    expect(retainedText).toContain("one\ntwo\nthree\nfour");
   });
 
   it("keeps passive container measurements local after another client can claim", async () => {

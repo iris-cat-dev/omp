@@ -293,6 +293,7 @@ export interface DaemonServerInfo {
   hostname: string | null;
   version: string | null;
   desktopManaged?: boolean;
+  windowsPty?: ServerInfoStatusPayload["windowsPty"];
   features?: ServerInfoStatusPayload["features"];
 }
 
@@ -399,7 +400,6 @@ export interface SessionState {
   hasHydratedWorkspaces: boolean;
   hasWorkspaceDirectorySnapshot: boolean;
 
-
   // Focus
   focusedAgentId: string | null;
   focusedTerminalId: string | null;
@@ -472,7 +472,6 @@ interface SessionStoreActions {
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
   setViewedTimelineSync: (serverId: string, sync: ViewedTimelineUiBridge | null) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
-
 
   // Focus
   setFocusedAgentId: (serverId: string, agentId: string | null) => void;
@@ -702,7 +701,6 @@ function createInitialSessionState(
   };
 }
 
-
 function areServerInfoFeaturesEqual(
   current: ServerInfoStatusPayload["features"] | undefined,
   next: ServerInfoStatusPayload["features"] | undefined,
@@ -710,11 +708,19 @@ function areServerInfoFeaturesEqual(
   return JSON.stringify(current ?? null) === JSON.stringify(next ?? null);
 }
 
+function areWindowsPtyOptionsEqual(
+  current: ServerInfoStatusPayload["windowsPty"],
+  next: ServerInfoStatusPayload["windowsPty"],
+): boolean {
+  return current?.backend === next?.backend && current?.buildNumber === next?.buildNumber;
+}
+
 function isSessionServerInfoUnchanged(input: {
   currentServerInfo: SessionState["serverInfo"] | undefined;
   nextHostname: string | null;
   nextVersion: string | null;
   nextDesktopManaged: boolean | undefined;
+  nextWindowsPty: ServerInfoStatusPayload["windowsPty"];
   nextFeatures: ServerInfoStatusPayload["features"] | undefined;
   nextServerId: string;
 }): boolean {
@@ -723,6 +729,7 @@ function isSessionServerInfoUnchanged(input: {
     nextHostname,
     nextVersion,
     nextDesktopManaged,
+    nextWindowsPty,
     nextFeatures,
   } = input;
   const prevHostname = currentServerInfo?.hostname?.trim() || null;
@@ -732,6 +739,7 @@ function isSessionServerInfoUnchanged(input: {
     prevHostname === nextHostname &&
     prevVersion === nextVersion &&
     currentServerInfo?.desktopManaged === nextDesktopManaged &&
+    areWindowsPtyOptionsEqual(currentServerInfo?.windowsPty, nextWindowsPty) &&
     areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
   );
 }
@@ -921,6 +929,7 @@ export const useSessionStore = create<SessionStore>()(
           const nextHostname = info.hostname?.trim() || null;
           const nextVersion = info.version?.trim() || null;
           const nextDesktopManaged = info.desktopManaged;
+          const nextWindowsPty = info.windowsPty;
           const nextFeatures = info.features;
 
           if (
@@ -929,6 +938,7 @@ export const useSessionStore = create<SessionStore>()(
               nextHostname,
               nextVersion,
               nextDesktopManaged,
+              nextWindowsPty,
               nextFeatures,
               nextServerId: info.serverId,
             })
@@ -949,6 +959,7 @@ export const useSessionStore = create<SessionStore>()(
                   ...(nextDesktopManaged !== undefined
                     ? { desktopManaged: nextDesktopManaged }
                     : {}),
+                  ...(nextWindowsPty ? { windowsPty: nextWindowsPty } : {}),
                   ...(nextFeatures ? { features: nextFeatures } : {}),
                 },
               },
@@ -960,7 +971,6 @@ export const useSessionStore = create<SessionStore>()(
       getSession: (serverId) => {
         return get().sessions[serverId];
       },
-
 
       // Focus
       setFocusedAgentId: (serverId, agentId) => {
