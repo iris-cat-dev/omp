@@ -357,7 +357,11 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
     })
     .passthrough(),
   z
-    .object({ type: z.literal("agent_end"), messages: z.array(OmpAgentMessageSchema).optional() })
+    .object({
+      type: z.literal("agent_end"),
+      messages: z.array(OmpAgentMessageSchema).optional(),
+      isTerminal: z.boolean().optional(),
+    })
     .passthrough(),
 ]);
 

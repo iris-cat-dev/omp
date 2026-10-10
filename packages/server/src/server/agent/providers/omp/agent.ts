@@ -3600,6 +3600,12 @@ export class OmpAgentSession implements AgentSession {
         });
         return;
       case "agent_end": {
+        // OMP publishes non-terminal ends while queued input or asynchronous work (including
+        // native subagents) will continue the same run. Clearing the turn here would make the
+        // parent look idle and reject steering before that continuation starts.
+        if (event.isTerminal === false) {
+          return;
+        }
         const messages = event.messages ?? [];
         let terminalMessages: OmpAgentMessage[] | null = null;
         if (messages.some((message) => message.role === "assistant")) {
