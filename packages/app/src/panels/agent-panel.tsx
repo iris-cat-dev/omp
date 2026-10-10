@@ -93,11 +93,7 @@ import { WorkspaceDraftAgentTab } from "@/composer/draft/workspace-tab";
 import { AgentTracks, hasAgentTracks } from "@/panels/agent-tracks";
 import { useBackgroundProcesses } from "@/background-processes/query";
 import { hasVisibleBackgroundProcessState } from "@/background-processes/track";
-import {
-  AGENT_TASK_PANEL_DESKTOP_WIDTH,
-  AgentTaskPanel,
-  AgentTaskPanelToggle,
-} from "@/composer/task-list";
+import { AGENT_TASK_PANEL_MIN_PANE_WIDTH, useAgentTaskPanel } from "@/panels/agent-task-panel";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import {
@@ -1168,28 +1164,6 @@ function ChatAgentContent({
   );
 }
 
-function useAgentTaskPanel(tasks: TodoEntry[] | undefined) {
-  const [collapsed, setCollapsed] = useState(true);
-  const collapse = useCallback(() => setCollapsed(true), []);
-  const expand = useCallback(() => setCollapsed(false), []);
-  const isExpanded = Boolean(tasks?.length && !collapsed);
-  const content = (
-    <>
-      {isExpanded ? (
-        <View style={styles.taskPanel}>
-          <AgentTaskPanel tasks={tasks} onCollapse={collapse} />
-        </View>
-      ) : null}
-      {tasks?.length && collapsed ? (
-        <View style={styles.taskPanelToggle}>
-          <AgentTaskPanelToggle tasks={tasks} onExpand={expand} />
-        </View>
-      ) : null}
-    </>
-  );
-  return { isExpanded, content };
-}
-
 const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   serverId,
   workspaceId,
@@ -1248,6 +1222,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
+  const { onLayout: onPaneLayout, isBelow: isPaneTooNarrowForTaskPanel } = useContainerWidthBelow(
+    AGENT_TASK_PANEL_MIN_PANE_WIDTH,
+  );
   const client = useHostRuntimeClient(serverId);
   const goalModeEnabled =
     agentState.features?.some(
@@ -1301,7 +1278,10 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const tasks = useSessionStore((state): TodoEntry[] | undefined =>
     state.sessions[serverId]?.agentTasks.get(agentId),
   );
-  const { isExpanded: isTaskPanelExpanded, content: taskPanelContent } = useAgentTaskPanel(tasks);
+  const { content: taskPanelContent, spacer: taskPanelSpacer } = useAgentTaskPanel(
+    tasks,
+    !isPaneTooNarrowForTaskPanel,
+  );
   const archiveFinishedSubagents = useArchiveFinishedSubagents({
     serverId,
     parentAgentId: agentId,
@@ -1495,7 +1475,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   return (
     <RewindComposerRestoreProvider restoreDraftIfEmpty={agentInputDraft.restoreIfEmpty}>
-      <View style={styles.root}>
+      <View style={styles.root} onLayout={onPaneLayout}>
         <View style={styles.container}>
           <View style={styles.conversationBody}>
             {contentContainer}
@@ -1541,7 +1521,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
                 <FileDropZone disabled>{composerSection}</FileDropZone>
               )}
             </View>
-            {isTaskPanelExpanded ? <View style={styles.composerTaskPanelSpacer} /> : null}
+            {taskPanelSpacer}
           </View>
 
           {showHistorySyncOverlay ? (
@@ -1980,26 +1960,6 @@ const styles = StyleSheet.create((theme) => ({
   composerStack: {
     flex: 1,
     minWidth: 0,
-  },
-  composerTaskPanelSpacer: {
-    display: { xs: "none", md: "flex" },
-    width: AGENT_TASK_PANEL_DESKTOP_WIDTH + theme.spacing[4],
-    flexShrink: 0,
-  },
-  taskPanel: {
-    display: { xs: "none", md: "flex" },
-    flexShrink: 0,
-    alignItems: "flex-end",
-    paddingTop: theme.spacing[4],
-    paddingRight: theme.spacing[4],
-    paddingBottom: theme.spacing[4],
-  },
-  taskPanelToggle: {
-    display: { xs: "none", md: "flex" },
-    position: "absolute",
-    top: theme.spacing[4],
-    right: theme.spacing[4],
-    zIndex: 20,
   },
   timelineSyncCalloutRail: {
     width: "100%",

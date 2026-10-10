@@ -261,6 +261,14 @@ primary-workspace identity or saved name.
 
 Tab-width measurements do not own titles or selection state. The daemon publishes saved metadata changes for unloaded conversations, and loading a provider session preserves any rename made during initialization.
 
+## Split conversation panes
+
+Side-by-side conversations adapt to each pane's width rather than the desktop window's total
+width. If an expanded task rail would leave less than a complete compact conversation and
+composer, the rail and its toggle hide until that pane is wide enough again; its expanded state
+is restored when space returns. Resizing or maximizing the window therefore keeps message text
+and composer controls within each pane.
+
 ## Pinned conversation ordering
 
 In project view, pinned conversations stay above unpinned conversations and can be dragged to
