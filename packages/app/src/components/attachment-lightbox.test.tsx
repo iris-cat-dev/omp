@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { AttachmentLightbox } from "./attachment-lightbox";
+import { AttachmentLightbox, ImageLightbox } from "./attachment-lightbox";
+import { useGlobalWebOverlayLayer } from "@/lib/overlay-root";
 
 const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
   const hoistedTheme = {
@@ -114,6 +115,14 @@ beforeEach(() => {
   vi.stubGlobal("HTMLElement", dom.window.HTMLElement);
   vi.stubGlobal("Node", dom.window.Node);
   vi.stubGlobal("navigator", dom.window.navigator);
+  Object.defineProperty(dom.window, "requestAnimationFrame", {
+    configurable: true,
+    value: vi.fn(() => 1),
+  });
+  Object.defineProperty(dom.window, "cancelAnimationFrame", {
+    configurable: true,
+    value: vi.fn(),
+  });
 
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -146,6 +155,11 @@ function click(element: Element) {
 
 function queryByTestId(testID: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testID}"]`);
+}
+
+function LaterGlobalModalLayer() {
+  const layer = useGlobalWebOverlayLayer("modal", true);
+  return <div data-testid="later-global-modal" data-layer={layer} />;
 }
 
 describe("AttachmentLightbox", () => {
@@ -197,5 +211,26 @@ describe("AttachmentLightbox", () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("places a later global modal above an open image preview", () => {
+    const image = <ImageLightbox uri="blob:preview" onClose={vi.fn()} />;
+    render(image);
+
+    const lightbox = queryByTestId("attachment-lightbox");
+    expect(lightbox).not.toBeNull();
+    expect(lightbox!.closest("#overlay-root")).not.toBeNull();
+    const lightboxLayer = Number(window.getComputedStyle(lightbox!).zIndex);
+
+    render(
+      <>
+        {image}
+        <LaterGlobalModalLayer />
+      </>,
+    );
+
+    const laterModal = queryByTestId("later-global-modal");
+    expect(laterModal).not.toBeNull();
+    expect(Number(laterModal!.dataset.layer)).toBeGreaterThan(lightboxLayer);
   });
 });

@@ -300,6 +300,12 @@ draft-only workspaces navigate to the conversation's own workspace instead.
 - Local text previews support files up to 2 MiB, including extensionless files. Directories, binary files, and larger files show an explanation instead.
 - Terminal surfaces keep their existing file-path drop behavior.
 
+## Image previews
+
+Click an image attachment or generated image to open a full-window preview. If Desktop asks what
+to do when its window closes, that choice dialog stays above the preview; canceling returns to the
+open image.
+
 ## Text editor shortcuts
 
 In an editable source tab, press **Ctrl+/** to comment or uncomment the selected lines. **Cmd+/**

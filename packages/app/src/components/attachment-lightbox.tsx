@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,6 +9,12 @@ import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isWeb } from "@/constants/platform";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { WindowChromeRootRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
 
 interface AttachmentLightboxProps {
@@ -36,18 +43,21 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
     setErrored(false);
   }, [uri]);
 
-  useEffect(() => {
-    if (!isWeb) return;
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => {
-      window.removeEventListener("keydown", handleKeydown);
-    };
-  }, [onClose]);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   const closeButtonRowStyle = useMemo(
     () => [
@@ -64,15 +74,24 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
   );
 
   const handleImageError = useCallback(() => setErrored(true), []);
-  const noopPress = useCallback(() => {}, []);
   const imageSource = useMemo(() => ({ uri: uri ?? "" }), [uri]);
 
   const hasError = errored || !uri;
-
-  return (
-    <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
+  const content = (
+    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
       <WindowChromeRootRegion corners="both">
-        <View style={styles.root}>
+        <View
+          ref={setWebOverlayScope}
+          style={[
+            styles.root,
+            isWeb ? styles.rootWeb : null,
+            isWeb ? { zIndex: modalLayer } : null,
+          ]}
+          testID="attachment-lightbox"
+          role={isWeb ? "dialog" : undefined}
+          aria-modal={isWeb ? true : undefined}
+          tabIndex={isWeb ? -1 : undefined}
+        >
           <Pressable
             testID="attachment-lightbox-backdrop"
             accessibilityRole="button"
@@ -85,7 +104,7 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
               {hasError ? (
                 <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
               ) : (
-                <Pressable onPress={noopPress} style={styles.imagePressable}>
+                <View style={styles.imageContainer}>
                   <ExpoImage
                     testID="attachment-lightbox-image"
                     source={imageSource}
@@ -94,7 +113,7 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
                     onError={handleImageError}
                     style={imageFillStyle}
                   />
-                </Pressable>
+                </View>
               )}
             </View>
             <WindowChromeSafeArea placement="inline" style={closeButtonRowStyle}>
@@ -112,7 +131,23 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
           </View>
         </View>
       </WindowChromeRootRegion>
-    </Modal>
+    </OverlayLayerProvider>
+  );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(content, getOverlayRoot());
+  }
+
+  return createElement(
+    Modal,
+    {
+      transparent: true,
+      animationType: "fade",
+      statusBarTranslucent: true,
+      visible: true,
+      onRequestClose: onClose,
+    },
+    content,
   );
 }
 
@@ -127,6 +162,14 @@ const imageFillStyle = {
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
+  },
+  rootWeb: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    pointerEvents: "auto",
   },
   backdrop: {
     position: "absolute",
@@ -158,7 +201,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     pointerEvents: "box-none",
   },
-  imagePressable: {
+  imageContainer: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
