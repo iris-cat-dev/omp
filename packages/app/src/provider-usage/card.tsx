@@ -10,6 +10,7 @@ import { ProviderUsageBalanceBar } from "./balance-bar";
 import { formatAgo, formatProviderUsageLabel } from "./format";
 import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
+import { OmpExtraUsageDetails } from "./extra-usage";
 
 interface ProviderUsageIconProps {
   iconKey: string;
@@ -71,7 +72,11 @@ export function ProviderUsageCard({
   return (
     <View style={containerStyle}>
       <View style={styles.header}>
-        <ThemedProviderUsageIcon iconKey={usage.providerId} size={14} uniProps={mutedIconColor} />
+        <ThemedProviderUsageIcon
+          iconKey={usage.providerId.split(":")[0] ?? usage.providerId}
+          size={14}
+          uniProps={mutedIconColor}
+        />
         <Text style={styles.name} numberOfLines={1}>
           {usage.displayName}
         </Text>
@@ -94,13 +99,18 @@ export function ProviderUsageCard({
       {usage.windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
           {usage.windows.map((window) => (
-            <ProviderUsageWindowBar key={window.id} window={window} showReset={!compact} />
+            <ProviderUsageWindowBar
+              key={window.id}
+              window={window}
+              showReset={!compact || window.percentageDisplay === "remaining"}
+            />
           ))}
           {balances.map((balance) => (
             <ProviderUsageBalanceBar key={balance.id} balance={balance} showReset={!compact} />
           ))}
         </View>
       ) : null}
+      {usage.extraUsage ? <OmpExtraUsageDetails extraUsage={usage.extraUsage} /> : null}
 
       {details.length > 0 ? (
         <View style={styles.details}>

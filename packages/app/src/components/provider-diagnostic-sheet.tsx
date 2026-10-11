@@ -19,7 +19,15 @@ import {
   X,
 } from "lucide-react-native";
 import type { TFunction } from "i18next";
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Linking, Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -49,10 +57,14 @@ import {
   OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
   ompProviderManagementQueryKey,
   refreshOmpAccountQuotaManagement,
+  useOmpQuotaClock,
+  useOmpQuotaReachedRefresh,
 } from "@/hooks/use-omp-account-quota";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
 import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
+import { OmpExtraUsageDetails } from "@/provider-usage/extra-usage";
+import { formatOmpModelQuotaLabel } from "@/provider-usage/omp-account";
 import { resolveLoginProviderUsages } from "@/provider-usage/login-usage";
 import { ProviderUsageCard } from "@/provider-usage/card";
 import type { ProviderUsage } from "@/provider-usage/types";
@@ -83,7 +95,7 @@ import { updateOmpProviderAccountNote } from "./omp-provider-account-notes";
 import { formatOmpAccountIdentity, resolveOmpLoginAction } from "./omp-provider-accounts";
 import {
   OmpCodexQuotaDetails,
-  OmpCodexQuotaServerContext,
+  OmpQuotaServerContext,
   OmpQuotaCountdown,
 } from "./omp-codex-quota-details";
 import {
@@ -365,6 +377,14 @@ function OmpAccountQuotaSummary({
   quota?: OmpProviderAccount["quota"];
 }) {
   const { t } = useTranslation();
+  const serverId = useContext(OmpQuotaServerContext);
+  const resetTimes = [
+    quota?.weeklyResetsAt,
+    quota?.fiveHourResetsAt,
+    ...(quota?.modelWindows ?? []).map((window) => window.resetsAt),
+  ];
+  const now = useOmpQuotaClock(resetTimes.some(Boolean));
+  useOmpQuotaReachedRefresh(serverId, resetTimes, now);
   return (
     <View style={sheetStyles.accountQuota} testID={`omp-provider-account-quota-${credentialId}`}>
       <OmpAccountQuotaWindow
@@ -382,13 +402,52 @@ function OmpAccountQuotaSummary({
           limitReached={quota?.fiveHourLimitReached === true}
         />
       ) : null}
+      {(quota?.modelWindows ?? []).map((window) => (
+        <OmpAccountQuotaWindow
+          key={window.model}
+          label={formatOmpModelQuotaLabel(window.model, t)}
+          usedPct={window.usedPct}
+          resetsAt={window.resetsAt}
+          status={quota?.status}
+        />
+      ))}
+      {quota?.extraUsage ? <OmpExtraUsageDetails extraUsage={quota.extraUsage} /> : null}
     </View>
+  );
+}
+
+function OmpProviderAccountQuotaDetails({
+  account,
+  providerId,
+  accountLabel,
+}: {
+  account: OmpProviderAccount;
+  providerId: string;
+  accountLabel: string;
+}) {
+  if (providerId !== "openai-codex" && providerId !== "anthropic") return null;
+  return (
+    <>
+      <OmpAccountQuotaSummary credentialId={account.credentialId} quota={account.quota} />
+      {providerId === "openai-codex" ? (
+        <OmpCodexQuotaDetails account={account} accountLabel={accountLabel} />
+      ) : (
+        <>
+          {account.quota?.planLabel ? (
+            <Text style={sheetStyles.mutedText}>{account.quota.planLabel}</Text>
+          ) : null}
+          {account.quota?.error ? (
+            <Text style={sheetStyles.mutedText}>{account.quota.error}</Text>
+          ) : null}
+        </>
+      )}
+    </>
   );
 }
 
 function OmpProviderAccountRow({
   account,
-  showQuota,
+  providerId,
   index,
   note,
   editing,
@@ -408,7 +467,7 @@ function OmpProviderAccountRow({
   onMoveDown,
 }: {
   account: OmpProviderAccount;
-  showQuota: boolean;
+  providerId: string;
   index: number;
   note?: string;
   editing: boolean;
@@ -429,6 +488,11 @@ function OmpProviderAccountRow({
 }) {
   const { t } = useTranslation();
   const identity = formatOmpAccountIdentity(account.identityKey);
+  const accountLabel =
+    identity.primary ??
+    t("settings.providers.omp.multiAccount.fallback", {
+      number: account.accountNumber ?? index + 1,
+    });
   return (
     <View style={sheetStyles.accountRow} testID={`omp-provider-account-${account.credentialId}`}>
       {editing ? (
@@ -471,12 +535,7 @@ function OmpProviderAccountRow({
       ) : (
         <>
           <View style={sheetStyles.providerSummaryText}>
-            <Text style={sheetStyles.accountTitle}>
-              {identity.primary ??
-                t("settings.providers.omp.multiAccount.fallback", {
-                  number: account.accountNumber ?? index + 1,
-                })}
-            </Text>
+            <Text style={sheetStyles.accountTitle}>{accountLabel}</Text>
             {identity.secondary ? (
               <Text style={sheetStyles.mutedText} numberOfLines={1}>
                 {identity.secondary}
@@ -487,20 +546,11 @@ function OmpProviderAccountRow({
                 {note}
               </Text>
             ) : null}
-            {showQuota ? (
-              <>
-                <OmpAccountQuotaSummary credentialId={account.credentialId} quota={account.quota} />
-                <OmpCodexQuotaDetails
-                  account={account}
-                  accountLabel={
-                    identity.primary ??
-                    t("settings.providers.omp.multiAccount.fallback", {
-                      number: account.accountNumber ?? index + 1,
-                    })
-                  }
-                />
-              </>
-            ) : null}
+            <OmpProviderAccountQuotaDetails
+              account={account}
+              providerId={providerId}
+              accountLabel={accountLabel}
+            />
           </View>
           <View style={sheetStyles.accountActions}>
             {canMoveUp || canMoveDown ? (
@@ -744,7 +794,7 @@ function OmpProviderSummaryActions({
 
 function OmpProviderAccountListItem({
   account,
-  showQuota,
+  providerId,
   index,
   credentialIds,
   loginId,
@@ -763,7 +813,7 @@ function OmpProviderAccountListItem({
   onReorderAccounts,
 }: {
   account: OmpProviderAccount;
-  showQuota: boolean;
+  providerId: string;
   index: number;
   credentialIds: number[];
   loginId?: string;
@@ -809,7 +859,7 @@ function OmpProviderAccountListItem({
   return (
     <OmpProviderAccountRow
       account={account}
-      showQuota={showQuota}
+      providerId={providerId}
       index={index}
       note={note}
       editing={editing}
@@ -887,7 +937,7 @@ function OmpProviderAccounts({
         <OmpProviderAccountListItem
           key={account.credentialId}
           account={account}
-          showQuota={summary.id === "openai-codex"}
+          providerId={summary.id}
           index={index}
           credentialIds={credentialIds}
           loginId={summary.login?.id}
@@ -2581,9 +2631,9 @@ function OmpManagementPanel({
   }
 
   return (
-    <OmpCodexQuotaServerContext.Provider value={visible ? serverId : null}>
+    <OmpQuotaServerContext.Provider value={visible ? serverId : null}>
       {renderPanel()}
-    </OmpCodexQuotaServerContext.Provider>
+    </OmpQuotaServerContext.Provider>
   );
 }
 export function OmpProviderConfigurationPanel({ serverId }: { serverId: string }) {

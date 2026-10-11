@@ -76,5 +76,9 @@ describe("OMP provider accounts", () => {
     expect(selectOmpQuotaAccounts(accounts, 2)).toEqual([{ credentialId: 2 }]);
     expect(selectOmpQuotaAccounts(accounts, null)).toEqual([]);
     expect(selectOmpQuotaAccounts([accounts[0]], null)).toEqual([{ credentialId: 1 }]);
+    expect(selectOmpQuotaAccounts([accounts[0]], 2)).toEqual([]);
+    expect(selectOmpQuotaAccounts(accounts, 2, ["1"])).toEqual([]);
+    expect(selectOmpQuotaAccounts(accounts, 2, ["2"])).toEqual([{ credentialId: 2 }]);
+    expect(selectOmpQuotaAccounts(accounts, null, ["2"])).toEqual([{ credentialId: 2 }]);
   });
 });

@@ -49,7 +49,7 @@ import { loadDesktopSettings, useDesktopSettings } from "@/desktop/settings/desk
 import { getDesktopHost, type DesktopRemoteSshProfile } from "@/desktop/host";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useOmpCodexAccountQuota } from "@/hooks/use-omp-account-quota";
+import { useOmpProviderAccountQuota } from "@/hooks/use-omp-account-quota";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
@@ -59,7 +59,11 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { buildCodexProviderUsage, mergeCodexProviderUsage } from "@/provider-usage/codex";
+import {
+  buildOmpAccountProviderUsage,
+  createOmpAccountUsageCopy,
+  mergeOmpAccountProviderUsage,
+} from "@/provider-usage/omp-account";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
@@ -651,39 +655,29 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
   const { view: baseUsageView, refresh: refreshProviderUsage } = useProviderUsage(serverId);
-  const {
-    accounts: codexAccounts,
-    provider: codexProvider,
-    loading: codexLoading,
-    error: codexError,
-    updatedAt: codexUpdatedAt,
-    refresh: refreshCodexUsage,
-  } = useOmpCodexAccountQuota(serverId);
-  const codexUsage = useMemo(
-    () =>
-      buildCodexProviderUsage(
-        {
-          provider: codexProvider,
-          accounts: codexAccounts,
-          error: codexError,
-          updatedAt: codexUpdatedAt,
-        },
-        {
-          providerName: "OpenAI Codex",
-          accountFallback: (number) => t("agentControls.quota.account", { number }),
-          fiveHour: t("agentControls.quota.fiveHour"),
-          weekly: t("agentControls.quota.weekly"),
-        },
-      ),
-    [codexAccounts, codexError, codexProvider, codexUpdatedAt, t],
+  const codex = useOmpProviderAccountQuota(serverId, "openai-codex");
+  const claude = useOmpProviderAccountQuota(serverId, "anthropic");
+  const accountUsage = useMemo(
+    () => [
+      ...buildOmpAccountProviderUsage(codex, createOmpAccountUsageCopy("openai-codex", t)),
+      ...buildOmpAccountProviderUsage(claude, createOmpAccountUsageCopy("anthropic", t)),
+    ],
+    [claude, codex, t],
   );
   const usageView = useMemo(
-    () => mergeCodexProviderUsage(baseUsageView, codexUsage, codexLoading, codexUpdatedAt),
-    [baseUsageView, codexLoading, codexUpdatedAt, codexUsage],
+    () =>
+      mergeOmpAccountProviderUsage(
+        baseUsageView,
+        accountUsage,
+        codex.loading || claude.loading,
+        codex.updatedAt ?? claude.updatedAt,
+      ),
+    [accountUsage, baseUsageView, claude.loading, claude.updatedAt, codex.loading, codex.updatedAt],
   );
+  const refreshAccountUsage = codex.refresh;
   const handleRefresh = useCallback(() => {
-    void Promise.all([refreshProviderUsage(), refreshCodexUsage()]);
-  }, [refreshCodexUsage, refreshProviderUsage]);
+    void Promise.all([refreshProviderUsage(), refreshAccountUsage()]);
+  }, [refreshAccountUsage, refreshProviderUsage]);
 
   if (!host) {
     return <HostNotFound />;

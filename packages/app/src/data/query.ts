@@ -32,6 +32,7 @@ type FetchQueryInput<TQueryFnData, TError, TData, TQueryKey extends QueryKey> = 
   dataShape: "list" | "value";
   queryFn: QueryFnOption<TQueryFnData, TError, TData, TQueryKey>;
   staleTimeMs: number;
+  refetchOnMount?: true | "always";
 };
 
 export function useReplicaQuery<
@@ -111,7 +112,7 @@ function fetchQueryOptions<
         dataShape,
       },
     },
-    refetchOnMount: "always",
+    refetchOnMount: input.refetchOnMount ?? "always",
     staleTime: staleTimeMs,
   };
 }

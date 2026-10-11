@@ -74,6 +74,15 @@ export function formatAmount(
       return value.toLocaleString(locale);
   }
 }
+export function formatOmpExtraUsageUsd(
+  value: number | null | undefined,
+  unknown: string,
+  locale: string,
+): string {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? formatAmount(value, "usd", locale)
+    : unknown;
+}
 
 const LABEL_KEYS: Record<string, string> = {
   balance: "providerUsage.labels.balance",

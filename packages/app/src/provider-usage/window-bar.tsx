@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useOmpQuotaClock } from "@/hooks/use-omp-account-quota";
+import { formatOmpQuotaResetTime } from "@/components/omp-provider-quota";
 import {
   clampPct,
   formatPct,
@@ -44,7 +46,8 @@ export function ProviderUsageWindowBar({
   window: ProviderUsageWindow;
   showReset?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  useOmpQuotaClock(showReset && Boolean(window.resetsAt));
   const usedPct = resolveUsedPct(window);
   const remainingPct = resolveRemainingPct(window);
   const showRemaining = window.percentageDisplay === "remaining";
@@ -59,11 +62,14 @@ export function ProviderUsageWindowBar({
   );
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
-  const trailing = isAtRisk
-    ? formatRunsOutLabel(window.runsOutAt, t)
-    : showReset
-      ? formatResetLabel(window.resetsAt, t)
-      : null;
+  let trailing: string | null = null;
+  if (isAtRisk) {
+    trailing = formatRunsOutLabel(window.runsOutAt, t);
+  } else if (showReset) {
+    trailing = formatResetLabel(window.resetsAt, t);
+  }
+  const resetTime =
+    showReset && showRemaining ? formatOmpQuotaResetTime(window.resetsAt, i18n.language) : null;
 
   return (
     <View style={styles.container}>
@@ -81,6 +87,11 @@ export function ProviderUsageWindowBar({
       <View style={styles.track}>
         <View style={fillStyle} />
       </View>
+      {resetTime ? (
+        <Text style={styles.label}>
+          {t("settings.providers.omp.multiAccount.quotaResetsAt", { time: resetTime })}
+        </Text>
+      ) : null}
     </View>
   );
 }

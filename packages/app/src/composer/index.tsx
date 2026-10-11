@@ -1,11 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import {
-  View,
-  Pressable,
-  Text,
-  StyleSheet as RNStyleSheet,
-  type PressableStateCallbackType,
-} from "react-native";
+import { View, Pressable, Text, StyleSheet as RNStyleSheet } from "react-native";
 import type { TFunction } from "i18next";
 import {
   useState,
@@ -44,6 +38,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { resolveModelBrowserProviderNamespaceId } from "@/composer/agent-controls/model-sheet-flow";
+import { resolveOmpAccountFeatureSelection } from "@/components/omp-provider-accounts";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -109,6 +104,7 @@ import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
 import type { ForgeSearchItem } from "@omp-desktop/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -240,13 +236,17 @@ function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const usage = agent?.lastUsage;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: usage?.totalCostUsd ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
+      accountFeature: agent?.features?.find(
+        (feature) => feature.id === "oauth_account_credential" && feature.type === "select",
+      ),
     };
   };
 }
@@ -258,6 +258,7 @@ function renderContextWindowMeter(
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
+  accountFeature: AgentFeature | undefined,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
@@ -273,6 +274,16 @@ function renderContextWindowMeter(
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
+      accountCredentialId={
+        accountFeature?.type === "select"
+          ? resolveOmpAccountFeatureSelection(accountFeature).effectiveValue
+          : null
+      }
+      accountCredentialIds={
+        accountFeature?.type === "select"
+          ? accountFeature.options.map((option) => option.id)
+          : undefined
+      }
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -1841,8 +1852,6 @@ function ComposerContentImpl({
     [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
   );
 
-  const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
-
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
     (event: ComposerKeyPressEvent) => autocompleteOnKeyPressRef.current(event),
@@ -1899,6 +1908,7 @@ function ComposerContentImpl({
               agentState.model ?? undefined,
             )
           : null,
+        agentState.accountFeature,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -1909,6 +1919,7 @@ function ComposerContentImpl({
       serverId,
       agentState.provider,
       agentState.model,
+      agentState.accountFeature,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],

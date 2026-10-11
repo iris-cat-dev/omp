@@ -134,6 +134,38 @@ This does not add support for the separate `api.z.ai` service or arbitrary
 OpenAI-compatible `/v1/usage` endpoints. Usage lookup failures do not change model
 availability or interrupt inference.
 
+## Claude official-account usage
+
+Claude accounts signed in through OMP's built-in `anthropic` provider now have individual
+usage entries in **Host Settings → Model providers → Signed-in providers**, the host's
+**Usage** page, the sidebar account selector, and the active model's context tooltip.
+Desktop preserves account names, notes, ordering, and selected-credential isolation.
+
+Five-hour and overall weekly percentages show **remaining quota**. Model-specific weekly
+windows appear only when Anthropic actually returns them; unknown window names retain
+their reported identifier rather than being guessed as Opus or Sonnet. Reset dates include
+a timezone, and compact countdowns refresh server usage at the deadline instead of
+locally assuming that quota has reset. Missing percentages and dates remain unknown.
+
+The account and Usage views also show read-only **extra usage** status, reported spending,
+and the monthly spending cap when available. The OAuth endpoint reports these amounts
+in USD cents; Desktop converts them to dollars and does not treat missing amounts as zero
+or missing caps as unlimited. An explicitly non-USD or unknown currency is not labeled as
+USD spending. Extra usage is [billed separately from the subscription](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)
+and is managed in [Claude Settings → Usage](https://claude.ai/settings/usage), not purchased
+or enabled through Desktop.
+
+The daemon makes read-only requests to Anthropic's undocumented OAuth `/api/oauth/usage`
+endpoint, and optionally `/api/oauth/profile` for reported plan metadata. Requests reuse
+the configured OMP proxy, have an abort deadline, and never follow redirects. A profile
+failure does not discard successfully retrieved usage. These endpoints are not a stable
+public API; authorization or service failures are shown without exposing credentials,
+refreshing tokens, or changing the saved account.
+
+Claude extra usage is not a Codex reset card. Claude accounts do not display Codex reset-card
+actions or subscription-expiry controls. Desktop does not infer a subscription end date
+from a token expiry, subscription creation date, or quota reset.
+
 ## Codex quota and reset cards
 
 Open **Host Settings → Model providers → Signed-in providers** to view each Codex account's

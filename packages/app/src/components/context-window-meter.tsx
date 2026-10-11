@@ -6,8 +6,13 @@ import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
-import { useOmpCodexAccountQuota } from "@/hooks/use-omp-account-quota";
-import { buildCodexProviderUsage, mergeCodexProviderUsage } from "@/provider-usage/codex";
+import { useOmpProviderAccountQuota } from "@/hooks/use-omp-account-quota";
+import {
+  buildOmpAccountProviderUsage,
+  createOmpAccountUsageCopy,
+  mergeOmpAccountProviderUsage,
+} from "@/provider-usage/omp-account";
+import { selectOmpQuotaAccounts } from "@/components/omp-provider-accounts";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -18,6 +23,8 @@ interface ContextWindowMeterProps {
   serverId?: string;
   /** The active model's provider namespace, including configured OMP providers. */
   provider?: string | null;
+  accountCredentialId?: string | null;
+  accountCredentialIds?: readonly string[];
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
@@ -105,38 +112,50 @@ export function ContextWindowMeter({
   showPercentage = false,
   serverId,
   provider,
+  accountCredentialId,
+  accountCredentialIds,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
-  const isCodex = provider === "openai-codex";
+  const quotaProviderId = provider === "openai-codex" || provider === "anthropic" ? provider : null;
   const { view: baseUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
-    { enabled: isTooltipOpen && !isCodex, providerId: provider ?? undefined },
+    { enabled: isTooltipOpen && !quotaProviderId, providerId: provider ?? undefined },
   );
-  const codex = useOmpCodexAccountQuota(serverId, isTooltipOpen && isCodex);
+  const accountQuota = useOmpProviderAccountQuota(serverId, quotaProviderId, isTooltipOpen);
   const providerUsageView = useMemo(() => {
-    if (!isCodex) return baseUsageView;
-    const usage = buildCodexProviderUsage(codex, {
-      providerName: "OpenAI Codex",
-      accountFallback: (number) => t("agentControls.quota.account", { number }),
-      fiveHour: t("agentControls.quota.fiveHour"),
-      weekly: t("agentControls.quota.weekly"),
-    });
-    return mergeCodexProviderUsage({ kind: "loading" }, usage, codex.loading, codex.updatedAt);
-  }, [baseUsageView, codex, isCodex, t]);
+    if (!quotaProviderId) return baseUsageView;
+    const usage = buildOmpAccountProviderUsage(
+      {
+        ...accountQuota,
+        accounts: selectOmpQuotaAccounts(
+          accountQuota.accounts,
+          accountCredentialId ? Number(accountCredentialId) : null,
+          accountCredentialIds,
+        ),
+      },
+      createOmpAccountUsageCopy(quotaProviderId, t),
+    );
+    return mergeOmpAccountProviderUsage(
+      { kind: "loading" },
+      usage,
+      accountQuota.loading,
+      accountQuota.updatedAt,
+    );
+  }, [accountCredentialId, accountCredentialIds, accountQuota, baseUsageView, quotaProviderId, t]);
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
       setIsTooltipOpen(nextOpen);
       if (nextOpen) {
-        void (isCodex ? codex.refresh() : refreshProviderUsage()).catch(() => {});
+        if (!quotaProviderId) void refreshProviderUsage().catch(() => {});
       }
     },
-    [codex.refresh, isCodex, refreshProviderUsage],
+    [quotaProviderId, refreshProviderUsage],
   );
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);

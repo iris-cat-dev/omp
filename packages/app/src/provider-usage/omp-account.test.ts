@@ -1,16 +1,18 @@
 import { describe, expect, test } from "vitest";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
-import { buildCodexProviderUsage, mergeCodexProviderUsage } from "./codex";
+import { buildOmpAccountProviderUsage, mergeOmpAccountProviderUsage } from "./omp-account";
 import { deriveRemainingTone } from "./tone";
 import type { ProviderUsageView } from "./types";
 
 type OmpLoginProvider = OmpProviderManagement["loginProviders"][number];
 
 const copy = {
+  providerId: "openai-codex" as const,
   providerName: "OpenAI Codex",
   accountFallback: (number: number) => `Account ${number}`,
   fiveHour: "5-hour limit",
   weekly: "Weekly limit",
+  modelWeekly: (model: string) => `${model} weekly`,
 };
 
 function codexProvider(accounts: NonNullable<OmpLoginProvider["accounts"]>): OmpLoginProvider {
@@ -23,9 +25,9 @@ function codexProvider(accounts: NonNullable<OmpLoginProvider["accounts"]>): Omp
   };
 }
 
-describe("buildCodexProviderUsage", () => {
+describe("buildOmpAccountProviderUsage", () => {
   test("creates one usage card per account and preserves each quota window", () => {
-    const providers = buildCodexProviderUsage(
+    const providers = buildOmpAccountProviderUsage(
       {
         provider: codexProvider([
           {
@@ -168,7 +170,7 @@ describe("buildCodexProviderUsage", () => {
         },
       },
     ];
-    const providers = buildCodexProviderUsage(
+    const providers = buildOmpAccountProviderUsage(
       { provider: codexProvider(accounts), accounts, error: null, updatedAt: null },
       copy,
     );
@@ -208,7 +210,7 @@ describe("buildCodexProviderUsage", () => {
       { credentialId: 61, accountNumber: 1 },
       { credentialId: 62, accountNumber: 2 },
     ];
-    const providers = buildCodexProviderUsage(
+    const providers = buildOmpAccountProviderUsage(
       {
         provider: codexProvider(accounts),
         accounts,
@@ -226,7 +228,7 @@ describe("buildCodexProviderUsage", () => {
 
   test("shows an unavailable Codex card when no subscription account is signed in", () => {
     expect(
-      buildCodexProviderUsage(
+      buildOmpAccountProviderUsage(
         {
           provider: codexProvider([]),
           accounts: [],
@@ -250,9 +252,69 @@ describe("buildCodexProviderUsage", () => {
     expect(deriveRemainingTone(30)).toBe("warning");
     expect(deriveRemainingTone(0)).toBe("danger");
   });
+
+  test("keeps each Claude account's model windows and spending without filling unknowns", () => {
+    const accounts: NonNullable<OmpLoginProvider["accounts"]> = [
+      {
+        credentialId: 71,
+        identityKey: "email:first@example.com",
+        quota: {
+          status: "available",
+          fiveHourUsedPct: 20,
+          weeklyUsedPct: 35,
+          modelWindows: [
+            { model: "opus", usedPct: 60, resetsAt: "2026-10-15T10:00:00.000Z" },
+            { model: "new_model", usedPct: null, resetsAt: null },
+          ],
+          extraUsage: { enabled: true, usedUsd: 1.23, monthlyLimitUsd: null, usedPct: null },
+        },
+      },
+      {
+        credentialId: 72,
+        quota: {
+          status: "available",
+          weeklyUsedPct: 80,
+          extraUsage: { enabled: false, usedUsd: null, monthlyLimitUsd: 0, usedPct: null },
+        },
+      },
+      { credentialId: 73, quota: { status: "available", weeklyUsedPct: 10 } },
+    ];
+    const provider = { ...codexProvider(accounts), id: "anthropic", name: "Claude" };
+    const usage = buildOmpAccountProviderUsage(
+      { provider, accounts, error: null, updatedAt: null },
+      { ...copy, providerId: "anthropic", providerName: "Claude" },
+    );
+    expect(usage.map((account) => account.providerId)).toEqual([
+      "anthropic:71",
+      "anthropic:72",
+      "anthropic:73",
+    ]);
+    expect(usage[0]?.windows).toEqual([
+      expect.objectContaining({ id: "anthropic_five_hour", remainingPct: 80 }),
+      expect.objectContaining({ id: "anthropic_weekly", remainingPct: 65 }),
+      expect.objectContaining({
+        id: "anthropic_weekly_opus",
+        label: "opus weekly",
+        remainingPct: 40,
+        resetsAt: "2026-10-15T10:00:00.000Z",
+      }),
+      expect.objectContaining({
+        label: "new_model weekly",
+        usedPct: null,
+        remainingPct: null,
+        resetsAt: null,
+      }),
+    ]);
+    expect(usage[0]?.extraUsage).toEqual(accounts[0]?.quota?.extraUsage);
+    expect(usage[1]?.windows).toEqual([
+      expect.objectContaining({ id: "anthropic_weekly", remainingPct: 20 }),
+    ]);
+    expect(usage[1]?.extraUsage).toEqual(accounts[1]?.quota?.extraUsage);
+    expect(usage[2]?.extraUsage).toBeUndefined();
+  });
 });
 
-describe("mergeCodexProviderUsage", () => {
+describe("mergeOmpAccountProviderUsage", () => {
   test("prepends Codex accounts while retaining other provider usage", () => {
     const view: ProviderUsageView = {
       kind: "ready",
@@ -280,7 +342,9 @@ describe("mergeCodexProviderUsage", () => {
       },
     ];
 
-    expect(mergeCodexProviderUsage(view, codex, false, "2026-09-02T20:00:00.000Z")).toMatchObject({
+    expect(
+      mergeOmpAccountProviderUsage(view, codex, false, "2026-09-02T20:00:00.000Z"),
+    ).toMatchObject({
       kind: "ready",
       payload: {
         providers: [{ providerId: "openai-codex:41" }, { providerId: "cursor" }],
@@ -301,11 +365,37 @@ describe("mergeCodexProviderUsage", () => {
     ];
 
     expect(
-      mergeCodexProviderUsage({ kind: "loading" }, codex, false, "2026-09-02T20:00:00.000Z"),
+      mergeOmpAccountProviderUsage({ kind: "loading" }, codex, false, "2026-09-02T20:00:00.000Z"),
     ).toMatchObject({
       kind: "ready",
       payload: { providers: [{ providerId: "openai-codex:41" }] },
       isRefreshing: true,
     });
+  });
+
+  test("replaces both official summaries while retaining unrelated namespaces", () => {
+    const accounts = ["openai-codex:41", "anthropic:71", "anthropic:72"].map((providerId) => ({
+      providerId,
+      displayName: providerId,
+      status: "available" as const,
+      planLabel: null,
+      windows: [],
+    }));
+    const existing = ["anthropic", "anthropic:99", "openai-codex", "anthropic-custom"].map(
+      (providerId) => Object.assign({}, accounts[0], { providerId }),
+    );
+    const result = mergeOmpAccountProviderUsage(
+      {
+        kind: "ready",
+        payload: { fetchedAt: "2026-10-11T00:00:00.000Z", providers: existing },
+        isRefreshing: false,
+      },
+      accounts,
+      false,
+      "2026-10-11T00:00:00.000Z",
+    );
+    expect(
+      result.kind === "ready" && result.payload.providers.map((account) => account.providerId),
+    ).toEqual(["openai-codex:41", "anthropic:71", "anthropic:72", "anthropic-custom"]);
   });
 });

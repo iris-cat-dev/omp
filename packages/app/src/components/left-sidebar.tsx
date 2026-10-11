@@ -67,6 +67,7 @@ import { OmpQuotaCountdown } from "@/components/omp-codex-quota-details";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
 import { ProviderUsageCard } from "@/provider-usage/card";
 import { selectProviderUsages } from "@/provider-usage/login-usage";
+import { formatOmpModelQuotaLabel } from "@/provider-usage/omp-account";
 import type { ProviderUsageView } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
@@ -941,6 +942,7 @@ function useSidebarSelectedAccountQuotaRefresh(
       shouldShowOmpFiveHourQuota(selectedAccount?.quota)
         ? selectedAccount?.quota?.fiveHourResetsAt
         : null,
+      ...(selectedAccount?.quota?.modelWindows ?? []).map((window) => window.resetsAt),
     ],
     quotaNow,
     Boolean(selectedAccount),
@@ -971,7 +973,11 @@ function useSidebarAccountModel({
   const { view: providerUsageView, canFetch: canFetchProviderUsage } = useProviderUsage(
     controls.serverId,
     {
-      enabled: selectedProviderUsageId === "cursor" || isOmpProviderSelected,
+      enabled:
+        selectedProviderUsageId === "cursor" ||
+        (isOmpProviderSelected &&
+          selectedProviderUsageId !== "openai-codex" &&
+          selectedProviderUsageId !== "anthropic"),
       providerId: isOmpProviderSelected ? selectedProviderUsageId : undefined,
     },
   );
@@ -1045,6 +1051,12 @@ function useSidebarAccountModel({
         shouldShowOmpFiveHourQuota(account.quota) && fiveHourRemaining !== null
           ? `${t("agentControls.quota.fiveHour")} ${Math.round(fiveHourRemaining)}%`
           : null,
+        ...(account.quota?.modelWindows ?? []).map((window) => {
+          const remaining = resolveOmpRemainingQuotaPct(window.usedPct);
+          return remaining === null
+            ? null
+            : `${formatOmpModelQuotaLabel(window.model, t)} ${Math.round(remaining)}%`;
+        }),
       ].filter((part): part is string => Boolean(part));
       return {
         id: option.id,
@@ -1250,6 +1262,14 @@ function SidebarProviderAccountDetails({
                   limitReached={selectedAccount.quota?.fiveHourLimitReached}
                 />
               ) : null}
+              {(selectedAccount.quota?.modelWindows ?? []).map((window) => (
+                <SidebarQuotaMeter
+                  key={window.model}
+                  label={formatOmpModelQuotaLabel(window.model, t)}
+                  usedPct={window.usedPct}
+                  resetsAt={window.resetsAt}
+                />
+              ))}
             </View>
           ) : null}
         </>

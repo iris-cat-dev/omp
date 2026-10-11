@@ -6,6 +6,7 @@ import {
   fetchOmpAccountQuotaManagement,
   ompProviderManagementQueryKey,
   refreshOmpAccountQuotaManagement,
+  resolveOmpQuotaProviderId,
 } from "./use-omp-account-quota";
 
 function management(quota?: { status: "available"; weeklyUsedPct: number }): OmpProviderManagement {
@@ -94,5 +95,16 @@ describe("shared quota/cards refresh", () => {
       await queryClient.cancelQueries();
       queryClient.clear();
     }
+  });
+});
+
+describe("quota provider matching", () => {
+  test("uses only the selected official provider namespace", () => {
+    expect(resolveOmpQuotaProviderId("anthropic", "claude-sonnet-4-5")).toBe("anthropic");
+    expect(resolveOmpQuotaProviderId("openai-codex", "gpt-5")).toBe("openai-codex");
+    expect(resolveOmpQuotaProviderId("omp", "anthropic/claude-sonnet-4-5")).toBe("anthropic");
+    expect(resolveOmpQuotaProviderId("omp", "openai-codex/gpt-5")).toBe("openai-codex");
+    expect(resolveOmpQuotaProviderId("omp", "custom/claude-sonnet-4-5")).toBeNull();
+    expect(resolveOmpQuotaProviderId("claude", "claude-sonnet-4-5")).toBeNull();
   });
 });

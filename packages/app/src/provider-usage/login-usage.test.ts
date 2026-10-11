@@ -84,5 +84,14 @@ describe("resolveLoginProviderUsages", () => {
     expect(selectProviderUsages(providers, "ZHIPU-CODING-PLAN")).toEqual([failed, available]);
     expect(selectProviderUsages(providers, "zhipu-coding-plan:6")).toEqual([available]);
     expect(selectProviderUsages(providers, "zhipu")).toEqual([]);
+    const claudeAccounts = [
+      cursorUsage({ providerId: "anthropic:7", displayName: "Claude · First" }),
+      cursorUsage({ providerId: "anthropic:8", displayName: "Claude · Second" }),
+    ];
+    expect(selectProviderUsages([...providers, ...claudeAccounts], "ANTHROPIC")).toEqual(
+      claudeAccounts,
+    );
+    expect(selectProviderUsages(claudeAccounts, "anthropic:8")).toEqual([claudeAccounts[1]]);
+    expect(resolveLoginProviderUsages(readyView(claudeAccounts), "anthropic")).toEqual([]);
   });
 });

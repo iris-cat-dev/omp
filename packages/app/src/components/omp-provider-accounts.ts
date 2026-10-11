@@ -131,9 +131,14 @@ export function resolveOmpAccountControlLabels(input: {
 export function selectOmpQuotaAccounts<T extends { credentialId: number }>(
   accounts: readonly T[],
   selectedCredentialId: number | null | undefined,
+  allowedCredentialIds?: readonly string[],
 ): T[] {
-  if (accounts.length <= 1) return [...accounts];
-  if (selectedCredentialId === null || selectedCredentialId === undefined) return [];
-  const selected = accounts.find((account) => account.credentialId === selectedCredentialId);
-  return selected ? [selected] : [];
+  const available =
+    allowedCredentialIds === undefined
+      ? [...accounts]
+      : accounts.filter((account) => allowedCredentialIds.includes(String(account.credentialId)));
+  if (selectedCredentialId !== null && selectedCredentialId !== undefined) {
+    return available.filter((account) => account.credentialId === selectedCredentialId);
+  }
+  return available.length <= 1 ? available : [];
 }
