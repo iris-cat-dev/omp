@@ -9,7 +9,7 @@ import type {
   OmpProviderManagement,
   OmpProviderManagementGetResponseMessage,
 } from "@omp-desktop/protocol/messages";
-import { OmpCodexQuotaDetails, OmpCodexQuotaServerContext } from "./omp-codex-quota-details";
+import { OmpCodexQuotaDetails, OmpQuotaServerContext } from "./omp-codex-quota-details";
 import { ompProviderManagementQueryKey } from "@/hooks/use-omp-account-quota";
 import { codexQuotaStrings } from "@/i18n/resources/codex-quota";
 
@@ -89,9 +89,9 @@ function mount(value: Account, client: Client) {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <OmpCodexQuotaServerContext.Provider value="test">
+      <OmpQuotaServerContext.Provider value="test">
         <OmpCodexQuotaDetails account={value} accountLabel="Selected account" />
-      </OmpCodexQuotaServerContext.Provider>
+      </OmpQuotaServerContext.Provider>
     </QueryClientProvider>,
   );
 }

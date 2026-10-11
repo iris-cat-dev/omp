@@ -160,6 +160,10 @@ import {
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 import { fetchCodexAccountQuota, type CodexAccountQuotaCredential } from "./codex-account-quota.js";
+import {
+  fetchClaudeAccountQuota,
+  type ClaudeAccountQuotaCredential,
+} from "./claude-account-quota.js";
 import { consumeCodexResetCredit } from "./codex-reset-credits.js";
 import { createProxyFetch } from "../../../../services/quota-fetcher/proxy-fetch.js";
 
@@ -242,7 +246,7 @@ export function readStoredOmpSessionCredentialId(
   }
 }
 interface StoredOmpOAuthAccountCredential
-  extends StoredOmpOAuthAccount, CodexAccountQuotaCredential {}
+  extends StoredOmpOAuthAccount, CodexAccountQuotaCredential, ClaudeAccountQuotaCredential {}
 
 function parseStoredOmpOAuthAccountCredential(
   row: Record<string, unknown>,
@@ -281,6 +285,12 @@ function parseStoredOmpOAuthAccountCredential(
     ...(identityKey ? { identityKey } : {}),
     accessToken,
     ...(accountId ? { accountId } : {}),
+    ...(typeof credential.subscriptionType === "string"
+      ? { subscriptionType: credential.subscriptionType }
+      : {}),
+    ...(typeof credential.rateLimitTier === "string"
+      ? { rateLimitTier: credential.rateLimitTier }
+      : {}),
   };
 }
 
@@ -4698,8 +4708,10 @@ export class OmpAgentClient implements AgentClient {
           accounts.push(account);
           storedAccountsByProvider.set(account.provider, accounts);
         }
-        for (const account of readStoredOmpOAuthAccountCredentials(agentDb)) {
-          storedAccountCredentialsById.set(account.credentialId, account);
+        for (const providerId of ["openai-codex", "anthropic"]) {
+          for (const account of readStoredOmpOAuthAccountCredentials(agentDb, providerId)) {
+            storedAccountCredentialsById.set(account.credentialId, account);
+          }
         }
       } catch (error) {
         this.logger.debug({ err: error }, "OMP OAuth account lookup failed");
@@ -4719,16 +4731,16 @@ export class OmpAgentClient implements AgentClient {
       }
       const quotaByCredentialId = new Map<number, OmpProviderAccountQuota>();
       await Promise.all(
-        [...storedAccountCredentialsById.values()]
-          .filter((account) => account.provider === "openai-codex")
-          .map(async (account) => {
-            const quota = await fetchCodexAccountQuota({
-              credential: account,
-              fetch: this.quotaFetch,
-              now: this.quotaNow,
-            });
-            quotaByCredentialId.set(account.credentialId, quota);
-          }),
+        [...storedAccountCredentialsById.values()].map(async (account) => {
+          const fetchQuota =
+            account.provider === "anthropic" ? fetchClaudeAccountQuota : fetchCodexAccountQuota;
+          const quota = await fetchQuota({
+            credential: account,
+            fetch: this.quotaFetch,
+            now: this.quotaNow,
+          });
+          quotaByCredentialId.set(account.credentialId, quota);
+        }),
       );
       // eslint-disable-next-line oxc/no-map-spread
       loginProviders = providers.map((provider) => {
@@ -4741,8 +4753,7 @@ export class OmpAgentClient implements AgentClient {
           ...provider,
           // eslint-disable-next-line oxc/no-map-spread
           accounts: accounts.map(({ credentialId, accountNumber, identityKey }) => {
-            const quota =
-              provider.id === "openai-codex" ? quotaByCredentialId.get(credentialId) : undefined;
+            const quota = quotaByCredentialId.get(credentialId);
             return {
               credentialId,
               accountNumber,

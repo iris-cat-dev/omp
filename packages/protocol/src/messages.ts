@@ -6416,6 +6416,23 @@ export const OmpProviderAccountQuotaSchema = z.object({
   fiveHourResetsAt: z.string().nullable().optional(),
   weeklyUsedPct: z.number().min(0).max(100).nullable().optional(),
   weeklyResetsAt: z.string().nullable().optional(),
+  modelWindows: z
+    .array(
+      z.object({
+        model: z.string(),
+        usedPct: z.number().min(0).max(100).nullable(),
+        resetsAt: z.string().nullable(),
+      }),
+    )
+    .optional(),
+  extraUsage: z
+    .object({
+      enabled: z.boolean(),
+      usedUsd: z.number().nonnegative().nullable(),
+      monthlyLimitUsd: z.number().nonnegative().nullable(),
+      usedPct: z.number().min(0).max(100).nullable(),
+    })
+    .optional(),
   fetchedAt: z.string().nullable().optional(),
   error: z.string().nullable().optional(),
   resetCredits: OmpCodexResetCreditsSchema.optional(),

@@ -8,7 +8,8 @@ export function selectProviderUsages(
 ): ProviderUsage[] {
   if (!providerId) return [];
   const target = providerId.toLowerCase();
-  const hasAccounts = target === CODEX_LOGIN_PROVIDER_ID || target === "zhipu-coding-plan";
+  const hasAccounts =
+    target === CODEX_LOGIN_PROVIDER_ID || target === "anthropic" || target === "zhipu-coding-plan";
   return providers.filter((usage) => {
     const id = usage.providerId.toLowerCase();
     return id === target || (hasAccounts && id.startsWith(`${target}:`));
@@ -19,7 +20,13 @@ export function resolveLoginProviderUsages(
   view: ProviderUsageView,
   providerId: string,
 ): ProviderUsage[] {
-  if (view.kind !== "ready" || providerId === CODEX_LOGIN_PROVIDER_ID) return [];
+  if (
+    view.kind !== "ready" ||
+    providerId === CODEX_LOGIN_PROVIDER_ID ||
+    providerId === "anthropic"
+  ) {
+    return [];
+  }
   return selectProviderUsages(view.payload.providers, providerId).filter(
     (usage) =>
       providerId === "zhipu-coding-plan" ||

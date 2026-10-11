@@ -30,7 +30,7 @@ interface CreditAttempt {
   busy: boolean;
   consumed: boolean;
 }
-export const OmpCodexQuotaServerContext = createContext<string | null>(null);
+export const OmpQuotaServerContext = createContext<string | null>(null);
 const attempts = new Map<string, CreditAttempt>();
 
 export function OmpQuotaCountdown({ resetsAt }: { resetsAt?: string | null }) {
@@ -189,7 +189,7 @@ function useConsumeOmpCodexResetCredit(
         cancelLabel: t("common.actions.cancel"),
         destructive: true,
       }),
-    [account.quota?.planLabel, accountLabel, t],
+    [account.quota, accountLabel, t],
   );
   const isCurrentAccount = useCallback(
     () =>
@@ -410,7 +410,7 @@ export function OmpCodexQuotaDetails({
   account: Account;
   accountLabel: string;
 }) {
-  const serverId = useContext(OmpCodexQuotaServerContext);
+  const serverId = useContext(OmpQuotaServerContext);
   const now = useOmpQuotaClock(Boolean(serverId));
   useOmpQuotaReachedRefresh(
     serverId,

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OmpProviderConfigurationPanel } from "@/components/provider-diagnostic-sheet";
 import {
   ompProviderManagementQueryKey,
-  useOmpCodexAccountQuota,
+  useOmpProviderAccountQuota,
 } from "@/hooks/use-omp-account-quota";
 
 type ManagementClient = Pick<
@@ -157,11 +157,13 @@ function deferredManagement(fallback: ManagementResponse) {
   return { promise, resolve };
 }
 
-function QuotaConsumer() {
-  const { accounts, loading } = useOmpCodexAccountQuota("server-1");
+function QuotaConsumer({ providerId = "openai-codex" }: { providerId?: string }) {
+  const { accounts, loading } = useOmpProviderAccountQuota("server-1", providerId);
   return (
     <aside>
-      <output data-testid="quota-account-order">
+      <output
+        data-testid={providerId === "anthropic" ? "claude-account-order" : "quota-account-order"}
+      >
         {accounts.map((account) => account.credentialId).join(",")}
       </output>
       <output data-testid="quota-status">{loading ? "refreshing" : "idle"}</output>
@@ -225,6 +227,84 @@ describe("OMP provider management loading", () => {
 
     expect(getOmpProviderManagement).toHaveBeenCalledOnce();
     expect(runtime.refresh).not.toHaveBeenCalled();
+  });
+
+  it("shares one management fetch across mounted Codex and Claude account consumers", async () => {
+    const result = management([1]);
+    result.loginProviders.push({
+      id: "anthropic",
+      name: "Claude",
+      authenticated: true,
+      available: true,
+      accounts: [{ credentialId: 7, quota: { status: "available", weeklyUsedPct: 80 } }],
+    });
+    const getOmpProviderManagement = vi.fn(async () => result);
+    runtime.client = { getOmpProviderManagement, reorderOmpProviderAccounts: vi.fn() };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClients.push(queryClient);
+    const mounted = render(
+      <QueryClientProvider client={queryClient}>
+        <QuotaConsumer />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("quota-account-order").textContent).toBe("1");
+    });
+    mounted.rerender(
+      <QueryClientProvider client={queryClient}>
+        <QuotaConsumer />
+        <QuotaConsumer providerId="anthropic" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("quota-account-order").textContent).toBe("1");
+      expect(screen.getByTestId("claude-account-order").textContent).toBe("7");
+    });
+    expect(getOmpProviderManagement).toHaveBeenCalledOnce();
+  });
+
+  it("renders Claude model and spending details without mounting Codex expiry or reset controls", async () => {
+    const result = management([]);
+    result.loginProviders = [
+      {
+        id: "anthropic",
+        name: "Claude",
+        authenticated: true,
+        available: true,
+        accounts: [
+          {
+            credentialId: 7,
+            quota: {
+              status: "available",
+              planLabel: "max",
+              fiveHourUsedPct: 20,
+              weeklyUsedPct: 80,
+              modelWindows: [{ model: "opus", usedPct: 60, resetsAt: null }],
+              extraUsage: { enabled: true, usedUsd: 1.23, monthlyLimitUsd: null, usedPct: null },
+            },
+          },
+        ],
+      },
+    ];
+    const getOmpProviderManagement = vi.fn(async () => result);
+    runtime.client = { getOmpProviderManagement, reorderOmpProviderAccounts: vi.fn() };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClients.push(queryClient);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OmpProviderConfigurationPanel serverId="server-1" />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByTestId("omp-signed-in-providers-toggle"));
+    await screen.findByTestId("omp-provider-account-quota-7");
+    expect(screen.getByText("providerUsage.modelWeekly")).toBeTruthy();
+    expect(screen.getByText(/providerUsage.extraUsage.spent/).textContent).toContain("$1.23");
+    expect(screen.getByText(/providerUsage.extraUsage.limit/).textContent).toContain(
+      "providerUsage.extraUsage.unknown",
+    );
+    expect(screen.queryByText("settings.providers.omp.codexQuota.subscription")).toBeNull();
+    expect(screen.queryByText("settings.providers.omp.codexQuota.cards")).toBeNull();
+    expect(getOmpProviderManagement).toHaveBeenCalledOnce();
   });
   it("bypasses the cache when the user refreshes", async () => {
     const getOmpProviderManagement = vi.fn(async () => management([1]));

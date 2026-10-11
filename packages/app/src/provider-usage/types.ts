@@ -1,4 +1,5 @@
 import type {
+  OmpProviderAccountQuota,
   ProviderUsage as ProtocolProviderUsage,
   ProviderUsageBalance,
   ProviderUsageDetail,
@@ -16,6 +17,7 @@ export type ProviderUsageWindow = ProtocolProviderUsageWindow & {
 
 export type ProviderUsage = Omit<ProtocolProviderUsage, "windows"> & {
   windows: ProviderUsageWindow[];
+  extraUsage?: OmpProviderAccountQuota["extraUsage"];
 };
 
 export type ProviderUsageBalanceUnit = ProviderUsageBalance["unit"];

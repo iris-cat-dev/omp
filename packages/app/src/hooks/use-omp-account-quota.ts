@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
@@ -19,9 +20,12 @@ export function ompProviderManagementQueryKey(serverId: string) {
   return ["ompProviderManagement", serverId] as const;
 }
 
-function isCodexProvider(provider: string | undefined, modelId: string | null): boolean {
-  if (provider === "openai-codex") return true;
-  return provider === "omp" && resolveOmpModelProviderNamespace(modelId ?? "") === "openai-codex";
+export function resolveOmpQuotaProviderId(
+  provider: string | null | undefined,
+  modelId: string | null | undefined,
+): "openai-codex" | "anthropic" | null {
+  const namespace = provider === "omp" ? resolveOmpModelProviderNamespace(modelId ?? "") : provider;
+  return namespace === "openai-codex" || namespace === "anthropic" ? namespace : null;
 }
 
 interface OmpProviderManagementClient {
@@ -125,7 +129,7 @@ export async function fetchOmpAccountQuotaManagement(
   return client.getOmpProviderManagement().catch(() => first);
 }
 
-export interface OmpCodexAccountQuotaResult {
+export interface OmpProviderAccountQuotaResult {
   accounts: OmpAccountQuotaDisplayAccount[];
   provider: OmpProviderManagement["loginProviders"][number] | null;
   loading: boolean;
@@ -134,27 +138,30 @@ export interface OmpCodexAccountQuotaResult {
   refresh: () => Promise<void>;
 }
 
-export function useOmpCodexAccountQuota(
+export function useOmpProviderAccountQuota(
   serverId: string | null | undefined,
+  providerId: string | null | undefined,
   enabled = true,
-): OmpCodexAccountQuotaResult {
+): OmpProviderAccountQuotaResult {
   const queryClient = useQueryClient();
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
   const supportsOmpProviderManagement = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.ompProviderManagement === true,
   );
   const canFetch = Boolean(client && supportsOmpProviderManagement);
-  const active = enabled && canFetch;
+  const active =
+    enabled && canFetch && (providerId === "openai-codex" || providerId === "anthropic");
   const accountNotes = useOmpProviderAccountNotes(active ? serverId : null);
   const query = useFetchQuery({
     queryKey: ompProviderManagementQueryKey(serverId ?? ""),
+    dataShape: "value",
     queryFn: async () => {
       if (!client) throw new Error("OMP provider management is unavailable");
       return fetchOmpAccountQuotaManagement(client);
     },
     enabled: active,
-    dataShape: "value",
-    staleTimeMs: 0,
+    staleTimeMs: OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
+    refetchOnMount: true,
     gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
     refetchInterval: 300_000,
     refetchOnReconnect: true,
@@ -165,13 +172,20 @@ export function useOmpCodexAccountQuota(
     await refreshOmpAccountQuotaManagement(queryClient, client, serverId);
   }, [active, client, queryClient, serverId]);
   const provider = active
-    ? (query.data?.loginProviders.find((entry) => entry.id === "openai-codex") ?? null)
+    ? (query.data?.loginProviders.find((entry) => entry.id === providerId) ?? null)
     : null;
   const accounts = (provider?.accounts ?? []).map((account) =>
     Object.assign({}, account, {
       note: accountNotes.notes[String(account.credentialId)],
     }),
   );
+  const resetTimes = accounts.flatMap((account) => [
+    account.quota?.weeklyResetsAt,
+    account.quota?.fiveHourResetsAt,
+    ...(account.quota?.modelWindows ?? []).map((window) => window.resetsAt),
+  ]);
+  const now = useOmpQuotaClock(active && resetTimes.some(Boolean));
+  useOmpQuotaReachedRefresh(serverId, resetTimes, now, active);
   const updatedAtMs = query.dataUpdatedAt || query.errorUpdatedAt;
 
   return {
@@ -189,10 +203,10 @@ export function useOmpAccountQuota(
   provider: string | null | undefined,
   modelId: string | null | undefined,
 ): { accounts: OmpAccountQuotaDisplayAccount[]; loading: boolean } {
-  const shouldFetch = isCodexProvider(provider ?? undefined, modelId ?? null);
-  const query = useOmpCodexAccountQuota(serverId, shouldFetch);
+  const providerId = resolveOmpQuotaProviderId(provider, modelId);
+  const query = useOmpProviderAccountQuota(serverId, providerId);
   return {
-    accounts: shouldFetch ? query.accounts : [],
-    loading: shouldFetch && query.loading,
+    accounts: query.accounts,
+    loading: query.loading,
   };
 }

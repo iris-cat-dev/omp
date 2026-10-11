@@ -18,6 +18,7 @@ import {
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { CODEX_USAGE_ENDPOINT } from "./codex-account-quota.js";
 import { CODEX_RESET_CREDITS_ENDPOINT } from "./codex-reset-credits.js";
+import { CLAUDE_USAGE_ENDPOINT } from "./claude-account-quota.js";
 
 const tempDirs: string[] = [];
 
@@ -269,6 +270,110 @@ providers:
         .map(([, init]) => new Headers(init?.headers).get("ChatGPT-Account-Id"))
         .sort(),
     ).toEqual(["acct-a", "acct-b"]);
+  });
+  test("isolates Claude usage and keeps Codex reset credits separate without changing credentials", async () => {
+    const quotaFetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("Authorization");
+      if (String(url) === CLAUDE_USAGE_ENDPOINT && authorization === "Bearer claude-one") {
+        return new Response(
+          JSON.stringify({
+            five_hour: { utilization: 17, resets_at: "2026-10-11T05:00Z" },
+            seven_day: { utilization: 22 },
+            extra_usage: { is_enabled: true, used_credits: 250, monthly_limit: 10000 },
+          }),
+        );
+      }
+      if (String(url) === CLAUDE_USAGE_ENDPOINT && authorization === "Bearer claude-two") {
+        return new Response(
+          JSON.stringify({
+            five_hour: { utilization: 84 },
+            seven_day_opus: { utilization: 63 },
+          }),
+        );
+      }
+      return new Response(null, { status: 401 });
+    });
+    const { agentDir, client, runtime } = await createClient({ quotaFetch });
+    const databasePath = path.join(agentDir, "agent.db");
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (11, 'anthropic', 'oauth', '{"access":"claude-one","refresh":"never-write","subscriptionType":"pro"}', NULL, 'email:one@example.com'),
+        (12, 'anthropic', 'oauth', '{"access":"claude-two","rateLimitTier":"default_claude_max_5x"}', NULL, 'email:two@example.com'),
+        (13, 'anthropic', 'oauth', '{"access":"claude-expired"}', NULL, 'email:expired@example.com'),
+        (14, 'anthropic', 'oauth', '{"access":"claude-disabled"}', 'expired', NULL),
+        (15, 'anthropic', 'api_key', '{"key":"claude-api-key"}', NULL, NULL),
+        (16, 'openai-codex', 'oauth', '{"access":"codex-token","accountId":"codex-account"}', NULL, NULL);
+    `);
+    const storedBefore = database.prepare("SELECT * FROM auth_credentials ORDER BY id").all();
+    database.close();
+    runtime.queueModels([]);
+    runtime.queueLoginProviders([
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: true },
+      { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+    ]);
+
+    const management = await client.getOmpProviderManagement();
+    expect(management.loginProviders[0]?.accounts).toMatchObject([
+      {
+        credentialId: 11,
+        accountNumber: 1,
+        identityKey: "email:one@example.com",
+        quota: {
+          status: "available",
+          planLabel: "pro",
+          fiveHourUsedPct: 17,
+          weeklyUsedPct: 22,
+          extraUsage: { enabled: true, usedUsd: 2.5, monthlyLimitUsd: 100 },
+        },
+      },
+      {
+        credentialId: 12,
+        accountNumber: 2,
+        identityKey: "email:two@example.com",
+        quota: {
+          status: "available",
+          planLabel: "Max 5x",
+          fiveHourUsedPct: 84,
+          weeklyUsedPct: null,
+          modelWindows: [{ model: "opus", usedPct: 63 }],
+        },
+      },
+      {
+        credentialId: 13,
+        accountNumber: 3,
+        identityKey: "email:expired@example.com",
+        quota: { status: "unavailable", fiveHourUsedPct: null },
+      },
+    ]);
+    expect(management.loginProviders[1]?.accounts).toMatchObject([
+      {
+        credentialId: 16,
+        quota: { status: "unavailable", resetCredits: { status: "unavailable" } },
+      },
+    ]);
+    expect(
+      quotaFetch.mock.calls
+        .filter(([url]) => String(url) === CLAUDE_USAGE_ENDPOINT)
+        .map(([, init]) => new Headers(init?.headers).get("Authorization"))
+        .sort(),
+    ).toEqual(["Bearer claude-expired", "Bearer claude-one", "Bearer claude-two"]);
+    expect(quotaFetch.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+    expect(JSON.stringify(management)).not.toMatch(
+      /claude-one|claude-two|claude-expired|codex-token|never-write/,
+    );
+    expect(
+      management.loginProviders[0]?.accounts?.every(
+        (account) => !account.quota?.resetCredits && !account.quota?.subscription,
+      ),
+    ).toBe(true);
+    const after = new DatabaseSync(databasePath);
+    expect(after.prepare("SELECT * FROM auth_credentials ORDER BY id").all()).toEqual(storedBefore);
+    after.close();
   });
   test("reads the unexpired OAuth credential selected for an OMP session", async () => {
     const agentDir = await mkdtemp(path.join(tmpdir(), "omp-desktop-session-credential-"));

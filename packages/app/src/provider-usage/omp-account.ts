@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import { formatOmpAccountSelectionLabel } from "@/components/omp-provider-accounts";
 import {
@@ -9,14 +10,35 @@ import type { ProviderUsage, ProviderUsageView, ProviderUsageWindow } from "./ty
 
 type OmpLoginProvider = OmpProviderManagement["loginProviders"][number];
 
-export interface CodexUsageCopy {
+export interface OmpAccountUsageCopy {
+  providerId: "openai-codex" | "anthropic";
   providerName: string;
   accountFallback: (number: number) => string;
   fiveHour: string;
   weekly: string;
+  modelWeekly: (model: string) => string;
 }
 
-export interface CodexUsageSource {
+export function formatOmpModelQuotaLabel(model: string, t: TFunction): string {
+  const name = model === "opus" || model === "sonnet" ? t(`providerUsage.models.${model}`) : model;
+  return t("providerUsage.modelWeekly", { model: name });
+}
+
+export function createOmpAccountUsageCopy(
+  providerId: OmpAccountUsageCopy["providerId"],
+  t: TFunction,
+): OmpAccountUsageCopy {
+  return {
+    providerId,
+    providerName: providerId === "anthropic" ? "Claude" : "OpenAI Codex",
+    accountFallback: (number) => t("agentControls.quota.account", { number }),
+    fiveHour: t("agentControls.quota.fiveHour"),
+    weekly: t("agentControls.quota.weekly"),
+    modelWeekly: (model) => formatOmpModelQuotaLabel(model, t),
+  };
+}
+
+export interface OmpAccountUsageSource {
   provider: OmpLoginProvider | null;
   accounts: readonly OmpAccountQuotaDisplayAccount[];
   error: string | null;
@@ -34,14 +56,15 @@ function quotaWindow(input: {
   return {
     id: input.id,
     label: input.label,
-    usedPct: input.usedPct,
+    usedPct: remainingPct === null ? null : input.usedPct,
     remainingPct,
     resetsAt: input.resetsAt,
     percentageDisplay: "remaining",
   };
 }
 
-function unavailableCodexUsage(input: {
+function unavailableAccountUsage(input: {
+  providerId: string;
   displayName: string;
   sourceLabel: string;
   status: "unavailable" | "error";
@@ -49,7 +72,7 @@ function unavailableCodexUsage(input: {
   fetchedAt: string | null;
 }): ProviderUsage {
   return {
-    providerId: "openai-codex",
+    providerId: input.providerId,
     displayName: input.displayName,
     status: input.status,
     planLabel: null,
@@ -62,14 +85,15 @@ function unavailableCodexUsage(input: {
   };
 }
 
-export function buildCodexProviderUsage(
-  source: CodexUsageSource,
-  copy: CodexUsageCopy,
+export function buildOmpAccountProviderUsage(
+  source: OmpAccountUsageSource,
+  copy: OmpAccountUsageCopy,
 ): ProviderUsage[] {
   const providerName = copy.providerName;
   if (source.error) {
     return [
-      unavailableCodexUsage({
+      unavailableAccountUsage({
+        providerId: copy.providerId,
         displayName: providerName,
         sourceLabel: providerName,
         status: "error",
@@ -81,7 +105,8 @@ export function buildCodexProviderUsage(
   if (!source.provider) return [];
   if (source.accounts.length === 0) {
     return [
-      unavailableCodexUsage({
+      unavailableAccountUsage({
+        providerId: copy.providerId,
         displayName: providerName,
         sourceLabel: providerName,
         status: "unavailable",
@@ -100,22 +125,33 @@ export function buildCodexProviderUsage(
     const windows = [
       shouldShowOmpFiveHourQuota(quota)
         ? quotaWindow({
-            id: "codex_five_hour",
+            id: copy.providerId === "openai-codex" ? "codex_five_hour" : "anthropic_five_hour",
             label: copy.fiveHour,
             usedPct: quota?.fiveHourUsedPct,
             resetsAt: quota?.fiveHourResetsAt,
           })
         : null,
       quotaWindow({
-        id: "codex_weekly",
+        id: copy.providerId === "openai-codex" ? "codex_weekly" : "anthropic_weekly",
         label: copy.weekly,
         usedPct: quota?.weeklyUsedPct,
         resetsAt: quota?.weeklyResetsAt,
       }),
+      ...(quota?.modelWindows ?? []).map((window) => ({
+        id: `${copy.providerId}_weekly_${window.model}`,
+        label: copy.modelWeekly(window.model),
+        usedPct:
+          typeof window.usedPct === "number" && Number.isFinite(window.usedPct)
+            ? window.usedPct
+            : null,
+        remainingPct: resolveOmpRemainingQuotaPct(window.usedPct),
+        resetsAt: window.resetsAt,
+        percentageDisplay: "remaining" as const,
+      })),
     ].filter((window): window is ProviderUsageWindow => window !== null);
 
     return {
-      providerId: `openai-codex:${account.credentialId}`,
+      providerId: `${copy.providerId}:${account.credentialId}`,
       displayName: `${providerName} · ${accountLabel}`,
       status: quota?.status ?? "unavailable",
       planLabel: quota?.planLabel ?? null,
@@ -124,44 +160,39 @@ export function buildCodexProviderUsage(
       windows,
       balances: [],
       details: [],
+      extraUsage: quota?.extraUsage,
       error: quota?.error ?? null,
     };
   });
 }
 
-export function mergeCodexProviderUsage(
+export function mergeOmpAccountProviderUsage(
   view: ProviderUsageView,
-  codexProviders: readonly ProviderUsage[],
-  codexLoading: boolean,
-  codexUpdatedAt: string | null,
+  accountProviders: readonly ProviderUsage[],
+  loading: boolean,
+  updatedAt: string | null,
 ): ProviderUsageView {
-  if (codexProviders.length === 0) {
-    if (view.kind !== "ready" || !codexLoading) return view;
+  if (accountProviders.length === 0) {
+    if (view.kind !== "ready" || !loading) return view;
     return { ...view, isRefreshing: true };
   }
-
   if (view.kind === "ready") {
+    const replacedIds = new Set(
+      accountProviders.map((provider) => provider.providerId.split(":")[0]),
+    );
     const otherProviders = view.payload.providers.filter(
-      (provider) =>
-        provider.providerId !== "openai-codex" && !provider.providerId.startsWith("openai-codex:"),
+      (provider) => !replacedIds.has(provider.providerId.split(":")[0]),
     );
     return {
       kind: "ready",
-      payload: {
-        ...view.payload,
-        providers: [...codexProviders, ...otherProviders],
-      },
-      isRefreshing: view.isRefreshing || codexLoading,
+      payload: { ...view.payload, providers: [...accountProviders, ...otherProviders] },
+      isRefreshing: view.isRefreshing || loading,
     };
   }
-
-  if (!codexUpdatedAt) return view;
+  if (!updatedAt) return view;
   return {
     kind: "ready",
-    payload: {
-      fetchedAt: codexUpdatedAt,
-      providers: [...codexProviders],
-    },
-    isRefreshing: codexLoading || view.kind === "loading",
+    payload: { fetchedAt: updatedAt, providers: [...accountProviders] },
+    isRefreshing: loading || view.kind === "loading",
   };
 }
