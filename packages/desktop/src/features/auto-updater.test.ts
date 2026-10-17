@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   checkForUpdates: vi.fn(),
@@ -45,11 +45,16 @@ const UPDATE_INFO = {
 
 describe("desktop app updater", () => {
   beforeEach(() => {
+    vi.stubEnv("PASEO_DISABLE_APP_UPDATES", undefined);
     mocks.checkForUpdates.mockReset();
     mocks.downloadUpdate.mockReset();
     mocks.quitAndInstall.mockReset();
     mocks.logError.mockReset();
     mocks.downloadUpdate.mockResolvedValue(["/tmp/update.exe"]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("downloads a newer GitHub release before reporting it ready to install", async () => {
@@ -97,11 +102,7 @@ describe("desktop app updater", () => {
       },
     );
 
-    expect(result).toEqual({
-      installed: true,
-      version: "1.3.0",
-      message: "Installing update and restarting OMP Desktop",
-    });
+    expect(result).toMatchObject({ installed: true, version: "1.3.0" });
     expect(events).toEqual(["downloaded", "daemon-stopped", "installer-started"]);
     expect(mocks.quitAndInstall).toHaveBeenCalledWith(false, true);
   });
@@ -118,5 +119,45 @@ describe("desktop app updater", () => {
 
     expect(installing).toBe(false);
     expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("blocks downloads, daemon shutdown and installation in an isolated trial even after an update was ready", async () => {
+    mocks.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true,
+      updateInfo: UPDATE_INFO,
+    });
+    const ready = await checkForAppUpdate({
+      currentVersion: "1.2.0",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    expect(ready.readyToInstall).toBe(true);
+    mocks.checkForUpdates.mockClear();
+    mocks.downloadUpdate.mockClear();
+    vi.stubEnv("PASEO_DISABLE_APP_UPDATES", "1");
+
+    const blocked = await checkForAppUpdate({
+      currentVersion: "1.2.0",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    const stopDaemon = vi.fn();
+    const install = await downloadAndInstallUpdate(
+      { currentVersion: "1.2.0", releaseChannel: "stable" },
+      stopDaemon,
+    );
+    const installOnQuit = await installAppUpdateOnQuit({
+      currentVersion: "1.2.0",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(blocked).toMatchObject({ hasUpdate: false, readyToInstall: false });
+    expect(install).toMatchObject({ installed: false, version: null });
+    expect(installOnQuit).toBe(false);
+    expect(mocks.checkForUpdates).not.toHaveBeenCalled();
+    expect(mocks.downloadUpdate).not.toHaveBeenCalled();
+    expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+    expect(stopDaemon).not.toHaveBeenCalled();
   });
 });

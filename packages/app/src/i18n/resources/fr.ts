@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const fr: TranslationResources = {
   providerUsage: providerUsage.fr,
@@ -2348,18 +2349,7 @@ export const fr: TranslationResources = {
           hint: "Une valeur élevée révèle davantage le fond d'écran ; à 100 %, les panneaux sont transparents.",
           accessibilityLabel: "Transparence de l'interface",
         },
-        directory: {
-          label: "Dossier de fond d'écran",
-          hint: "Dossier parcouru pour les images de fond d'écran (utilisé lorsque la source est un fichier)",
-          pickerTitle: "Sélectionner un dossier de fond d'écran",
-          browse: "Parcourir",
-        },
-        preview: {
-          scanning: "Recherche de fonds d'écran…",
-          empty: "Aucune image ni vidéo trouvée dans ce dossier",
-          expand: "Tout afficher ({{count}})",
-          collapse: "Réduire",
-        },
+        library: wallpaperLibrary.fr,
       },
     },
     shortcuts: {

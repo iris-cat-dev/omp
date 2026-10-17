@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ptBR: TranslationResources = {
   providerUsage: providerUsage["pt-BR"],
@@ -2339,18 +2340,7 @@ export const ptBR: TranslationResources = {
           hint: "Valores maiores revelam mais o papel de parede; 100% remove os fundos dos painéis.",
           accessibilityLabel: "Transparência da interface",
         },
-        directory: {
-          label: "Diretório de papel de parede",
-          hint: "Pasta escaneada para imagens de papel de parede (usado quando a origem é arquivo)",
-          pickerTitle: "Selecionar pasta de papel de parede",
-          browse: "Navegar",
-        },
-        preview: {
-          scanning: "Procurando papéis de parede…",
-          empty: "Nenhuma imagem ou vídeo encontrada nesta pasta",
-          expand: "Mostrar tudo ({{count}})",
-          collapse: "Mostrar menos",
-        },
+        library: wallpaperLibrary["pt-BR"],
       },
     },
     shortcuts: {

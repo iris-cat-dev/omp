@@ -859,3 +859,364 @@ describe("parseClampedFontSize", () => {
     expect(parseClampedFontSize("abc", { min: 11, max: 24 })).toBeNull();
   });
 });
+
+describe("wallpaper migration through the real app settings loader", () => {
+  const importedId = "0199ef80-5ff5-7000-8000-000000000001";
+  const selectedId = "0199ef80-5ff5-7000-8000-000000000002";
+  const oldWallpaper = {
+    wallpaperEnabled: true,
+    wallpaperSource: "file",
+    wallpaperDir: "C:/wallpapers",
+    wallpaperPath: "C:/wallpapers/a.png",
+    language: "ja",
+    sendBehavior: "interrupt",
+  };
+
+  it("keeps the raw path through needsWrite and other migrations until binding is confirmed", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+    });
+    let complete!: (value: { candidateId: string; reason: null }) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const binding = new Promise<{ candidateId: string; reason: null }>((resolve) => {
+      complete = resolve;
+    });
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        async importLegacy() {
+          entered();
+          return binding;
+        },
+      },
+    };
+    const load = loadAppSettingsFromStorage(deps);
+    await started;
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({
+      ...oldWallpaper,
+      sendBehavior: "steer",
+    });
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty(
+      "wallpaperCandidateId",
+    );
+    complete({ candidateId: importedId, reason: null });
+    expect((await load).wallpaperCandidateId).toBe(importedId);
+    const persisted = JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!);
+    expect(persisted.wallpaperCandidateId).toBe(importedId);
+    expect(persisted).not.toHaveProperty("wallpaperPath");
+    expect(persisted).not.toHaveProperty("wallpaperDir");
+  });
+
+  it("does not wait for local migration before using URL settings or saving ordinary edits", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [APP_SETTINGS_KEY]: JSON.stringify({
+        ...oldWallpaper,
+        wallpaperSource: "url",
+        wallpaperUrl: "https://example.com/a.webm",
+      }),
+    });
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        importLegacy() {
+          return new Promise<never>(() => {});
+        },
+      },
+    };
+    const loaded = await loadAppSettingsFromStorage(deps);
+    expect(loaded).toMatchObject({
+      language: "ja",
+      wallpaperSource: "url",
+      wallpaperUrl: "https://example.com/a.webm",
+    });
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, loaded);
+    await saveAppSettings({ deps, queryClient, updates: { theme: "light" } });
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({
+      wallpaperPath: oldWallpaper.wallpaperPath,
+      wallpaperDir: oldWallpaper.wallpaperDir,
+      wallpaperUrl: "https://example.com/a.webm",
+      theme: "light",
+    });
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty(
+      "wallpaperCandidateId",
+    );
+  });
+
+  it.each([null, selectedId])(
+    "does not overwrite a new explicit choice %s with a late binding",
+    async (choice) => {
+      const storage = createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+      });
+      let complete!: (value: { candidateId: string; reason: null }) => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const binding = new Promise<{ candidateId: string; reason: null }>((resolve) => {
+        complete = resolve;
+      });
+      const deps: SettingsDeps = {
+        storage,
+        desktop: createFakeDesktopBridge({ isElectron: true }),
+        wallpaper: {
+          async importLegacy() {
+            entered();
+            return binding;
+          },
+        },
+      };
+      const loading = loadAppSettingsFromStorage(deps);
+      await started;
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+      await saveAppSettings({ deps, queryClient, updates: { wallpaperCandidateId: choice } });
+      complete({ candidateId: importedId, reason: null });
+      expect((await loading).wallpaperCandidateId).toBe(choice);
+      expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!).wallpaperCandidateId).toBe(choice);
+    },
+  );
+
+  it("retries the first main-process binding after the renderer write failed", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+    });
+    const write = storage.setItem.bind(storage);
+    let failBindingWrite = true;
+    storage.setItem = async (key, value) => {
+      if (
+        key === APP_SETTINGS_KEY &&
+        JSON.parse(value).wallpaperCandidateId === importedId &&
+        failBindingWrite
+      ) {
+        failBindingWrite = false;
+        throw new Error("disk full");
+      }
+      await write(key, value);
+    };
+    // The desktop store owns the fixed first binding even if that item was since removed.
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        async importLegacy() {
+          return { candidateId: importedId, reason: null };
+        },
+      },
+    };
+    expect((await loadAppSettingsFromStorage(deps)).wallpaperCandidateId).toBeNull();
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!).wallpaperPath).toBe(
+      oldWallpaper.wallpaperPath,
+    );
+    expect((await loadAppSettingsFromStorage(deps)).wallpaperCandidateId).toBe(importedId);
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty("wallpaperPath");
+  });
+
+  it.each([{}, { wallpaperPath: "C:/missing.png", wallpaperDir: "C:/" }, { wallpaperPath: 42 }])(
+    "seals empty or invalid legacy input once without discarding ordinary settings",
+    async (legacyInput) => {
+      const storage = createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          language: "ja",
+          ...legacyInput,
+        }),
+      });
+      let calls = 0;
+      const deps: SettingsDeps = {
+        storage,
+        desktop: createFakeDesktopBridge({ isElectron: true }),
+        wallpaper: {
+          async importLegacy() {
+            calls += 1;
+            return { candidateId: null, reason: "invalid-file" };
+          },
+        },
+      };
+      expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+        language: "ja",
+        wallpaperCandidateId: null,
+      });
+      await loadAppSettingsFromStorage(deps);
+      expect(calls).toBe(1);
+      expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty(
+        "wallpaperPath",
+      );
+    },
+  );
+
+  it("respects persisted explicit null and normalizes a corrupt candidate without resetting URL settings", async () => {
+    for (const candidateId of [null, 42, "not-a-uuid"]) {
+      const storage = createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          ...oldWallpaper,
+          wallpaperCandidateId: candidateId,
+          wallpaperSource: "url",
+          wallpaperUrl: "https://example.com/a.png",
+        }),
+      });
+      const deps: SettingsDeps = {
+        storage,
+        desktop: createFakeDesktopBridge({ isElectron: true }),
+        wallpaper: {
+          async importLegacy() {
+            throw new Error("must not rebind an explicit choice");
+          },
+        },
+      };
+      expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+        language: "ja",
+        wallpaperCandidateId: null,
+        wallpaperUrl: "https://example.com/a.png",
+      });
+      expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty(
+        "wallpaperPath",
+      );
+    }
+  });
+
+  it("imports the old renderer key without dropping its only media path during normalization", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [LEGACY_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+    });
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        async importLegacy() {
+          return { candidateId: importedId, reason: null };
+        },
+      },
+    };
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      wallpaperEnabled: true,
+      wallpaperSource: "file",
+      wallpaperCandidateId: importedId,
+    });
+    const persisted = JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!);
+    expect(persisted.wallpaperCandidateId).toBe(importedId);
+    expect(persisted).not.toHaveProperty("wallpaperPath");
+    expect(persisted).not.toHaveProperty("wallpaperDir");
+  });
+
+  it("retries a deferred URL migration on entering local mode and keeps ordinary edits", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [APP_SETTINGS_KEY]: JSON.stringify({
+        ...oldWallpaper,
+        wallpaperSource: "url",
+        wallpaperUrl: "https://example.com/a.webm",
+      }),
+    });
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        async importLegacy() {
+          return { candidateId: importedId, reason: null };
+        },
+      },
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, await loadAppSettingsFromStorage(deps));
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty(
+      "wallpaperCandidateId",
+    );
+    await saveAppSettings({
+      deps,
+      queryClient,
+      updates: { wallpaperSource: "file", theme: "light" },
+    });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      wallpaperCandidateId: importedId,
+      wallpaperSource: "file",
+      theme: "light",
+      language: "ja",
+    });
+  });
+
+  it("returns ordinary settings without deleting legacy input when local import fails", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+    });
+    const deps: SettingsDeps = {
+      storage,
+      desktop: createFakeDesktopBridge({ isElectron: true }),
+      wallpaper: {
+        async importLegacy() {
+          throw new Error("library read failed");
+        },
+      },
+    };
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      language: "ja",
+      wallpaperSource: "file",
+      wallpaperCandidateId: null,
+    });
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!).wallpaperPath).toBe(
+      oldWallpaper.wallpaperPath,
+    );
+  });
+
+  it.each(["import", "binding write"] as const)(
+    "keeps newer ordinary edits when a pending wallpaper %s fails",
+    async (failureStage) => {
+      const storage = createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper),
+      });
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const write = storage.setItem.bind(storage);
+      storage.setItem = async (key, value) => {
+        if (
+          failureStage === "binding write" &&
+          key === APP_SETTINGS_KEY &&
+          JSON.parse(value).wallpaperCandidateId === importedId
+        ) {
+          throw new Error("binding write failed");
+        }
+        await write(key, value);
+      };
+      const deps: SettingsDeps = {
+        storage,
+        desktop: createFakeDesktopBridge({ isElectron: true }),
+        wallpaper: {
+          async importLegacy() {
+            entered.resolve();
+            await release.promise;
+            if (failureStage === "import") throw new Error("import failed");
+            return { candidateId: importedId, reason: null };
+          },
+        },
+      };
+      const queryClient = new QueryClient();
+      const initial = await loadAppSettingsFromStorage({ ...deps, wallpaper: undefined });
+      queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, initial);
+      const loading = loadAppSettingsFromStorage(deps);
+      await entered.promise;
+      const updates = {
+        theme: "light",
+        wallpaperSource: "url",
+        wallpaperEnabled: false,
+        wallpaperUrl: "https://example.com/new.webm",
+      } as const;
+      await saveAppSettings({ deps, queryClient, updates });
+      release.resolve();
+      const loaded = await loading;
+      expect(loaded).toMatchObject(updates);
+      // React Query publishes the completed load, so a subsequent edit must not persist a rollback.
+      queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, loaded);
+      await saveAppSettings({ deps, queryClient, updates: { wallpaperOpacity: 0.5 } });
+      expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({
+        ...updates,
+        wallpaperOpacity: 0.5,
+        wallpaperPath: oldWallpaper.wallpaperPath,
+        wallpaperDir: oldWallpaper.wallpaperDir,
+      });
+    },
+  );
+});

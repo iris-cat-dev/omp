@@ -96,10 +96,9 @@ export interface AppSettings {
   vimKeybindings: boolean;
   wallpaperEnabled: boolean;
   wallpaperSource: "none" | "file" | "url";
-  wallpaperPath: string | null;
+  wallpaperCandidateId: string | null;
   wallpaperUrl: string | null;
   wallpaperOpacity: number;
-  wallpaperDir: string | null;
 }
 
 export interface Settings extends AppSettings {
@@ -155,10 +154,12 @@ const StoredAppSettingsSchema = z.strictObject({
   vimKeybindings: z.boolean().optional(),
   wallpaperEnabled: z.boolean().optional(),
   wallpaperSource: z.enum(["none", "file", "url"]).optional(),
-  wallpaperPath: z.string().nullish(),
+  // Normalize a corrupt local identity independently; it must not discard URL or other settings.
+  wallpaperCandidateId: z.unknown().optional(),
+  wallpaperPath: z.unknown().optional(),
   wallpaperUrl: z.string().nullish(),
   wallpaperOpacity: z.union([z.number(), z.string()]).optional(),
-  wallpaperDir: z.string().nullish(),
+  wallpaperDir: z.unknown().optional(),
   // COMPAT(sidePanelRouting): ignored since the right pane became tool-only; remove after 2027-03-04.
   openSupportingTabsInSidePanel: z.boolean().optional(),
   // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
@@ -193,10 +194,9 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   vimKeybindings: false,
   wallpaperEnabled: false,
   wallpaperSource: "none",
-  wallpaperPath: null,
+  wallpaperCandidateId: null,
   wallpaperUrl: null,
   wallpaperOpacity: 0.85,
-  wallpaperDir: null,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -222,8 +222,28 @@ export interface DesktopSettingsBridge {
 export interface SettingsDeps {
   storage: KeyValueStorage;
   desktop: DesktopSettingsBridge;
+  wallpaper?: {
+    importLegacy(input: { directory: string | null; path: string | null }): Promise<{
+      candidateId: string | null;
+      reason: string | null;
+    }>;
+  };
 }
 const appSettingsSaveTails = new WeakMap<KeyValueStorage, Promise<void>>();
+const pendingWallpaperInputs = new WeakMap<
+  KeyValueStorage,
+  {
+    wallpaperDir?: unknown;
+    wallpaperPath?: unknown;
+  }
+>();
+
+function serializeAppSettings(settings: AppSettings, storage: KeyValueStorage): string {
+  const pending = pendingWallpaperInputs.get(storage);
+  if (!pending) return JSON.stringify(settings);
+  const { wallpaperCandidateId: _candidateId, ...rest } = settings;
+  return JSON.stringify({ ...rest, ...pending });
+}
 
 interface SaveAppSettingsInput {
   queryClient: QueryClient;
@@ -242,12 +262,24 @@ async function runQueuedAppSettingsSave(
   }
   const storedCurrent =
     input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
-    (await loadAppSettingsFromStorage(input.deps));
+    (await loadAppSettingsFromStorage({ ...input.deps, wallpaper: undefined }));
   const current = normalizeAppSettings(storedCurrent);
   const next = normalizeAppSettings({ ...current, ...input.updates });
   input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   try {
-    await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+    // An explicit selection (including null) takes precedence over any in-flight import.
+    const pending = pendingWallpaperInputs.get(input.deps.storage);
+    const explicitChoice = Object.hasOwn(input.updates, "wallpaperCandidateId");
+    if (explicitChoice) pendingWallpaperInputs.delete(input.deps.storage);
+    try {
+      await input.deps.storage.setItem(
+        APP_SETTINGS_KEY,
+        serializeAppSettings(next, input.deps.storage),
+      );
+    } catch (error) {
+      if (explicitChoice && pending) pendingWallpaperInputs.set(input.deps.storage, pending);
+      throw error;
+    }
   } catch (error) {
     if (input.queryClient.getQueryData(APP_SETTINGS_QUERY_KEY) === next) {
       input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, current);
@@ -269,16 +301,72 @@ export async function saveAppSettings(input: SaveAppSettingsInput): Promise<void
   }
 }
 
-export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
+async function readLatestAppSettingsAfterSaves(deps: SettingsDeps): Promise<AppSettings> {
+  const previous = appSettingsSaveTails.get(deps.storage) ?? Promise.resolve();
+  const read = previous.catch(() => {}).then(async () => (await readAppSettings(deps)).settings);
+  const tail = read.then(
+    () => undefined,
+    () => undefined,
+  );
+  appSettingsSaveTails.set(deps.storage, tail);
   try {
-    const read = await readAppSettings(deps);
-    if (read.needsWrite) {
-      await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(read.settings));
-    }
-    return await migrateAppSettings(read.settings, deps.storage);
+    return await read;
+  } finally {
+    if (appSettingsSaveTails.get(deps.storage) === tail) appSettingsSaveTails.delete(deps.storage);
+  }
+}
+
+export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
+  const read = await readAppSettings(deps);
+  if (read.needsWrite) {
+    await deps.storage.setItem(APP_SETTINGS_KEY, serializeAppSettings(read.settings, deps.storage));
+  }
+  const settings = await migrateAppSettings(read.settings, deps.storage, (value) =>
+    serializeAppSettings(value, deps.storage),
+  );
+  const pending = pendingWallpaperInputs.get(deps.storage);
+  // A network background must never wait for the local library or legacy filesystem I/O.
+  // Switching back to file mode re-enters this loader with the preserved raw input.
+  if (!pending || !deps.wallpaper || settings.wallpaperSource === "url") return settings;
+  let binding: { candidateId: string | null; reason: string | null };
+  try {
+    binding = await deps.wallpaper.importLegacy({
+      directory: typeof pending.wallpaperDir === "string" ? pending.wallpaperDir : null,
+      path: typeof pending.wallpaperPath === "string" ? pending.wallpaperPath : null,
+    });
   } catch (error) {
-    console.error("[AppSettings] Failed to load settings:", error);
-    throw error;
+    // Keep the raw input for retry without making URL playback or ordinary settings fail.
+    console.error("[AppSettings] Failed to migrate local wallpaper:", error);
+    return readLatestAppSettingsAfterSaves(deps);
+  }
+  const previous = appSettingsSaveTails.get(deps.storage) ?? Promise.resolve();
+  const commit = (async () => {
+    await previous.catch(() => {});
+    const latest = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
+    if (latest && Object.hasOwn(latest, "wallpaperCandidateId")) {
+      pendingWallpaperInputs.delete(deps.storage);
+      return normalizeAppSettings(latest);
+    }
+    const next = {
+      ...normalizeAppSettings(latest ?? settings),
+      wallpaperCandidateId: binding.candidateId,
+    };
+    await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+    pendingWallpaperInputs.delete(deps.storage);
+    return next;
+  })();
+  const tail = commit.then(
+    () => undefined,
+    () => undefined,
+  );
+  appSettingsSaveTails.set(deps.storage, tail);
+  try {
+    return await commit;
+  } catch (error) {
+    console.error("[AppSettings] Failed to save wallpaper migration:", error);
+    return readLatestAppSettingsAfterSaves(deps);
+  } finally {
+    if (appSettingsSaveTails.get(deps.storage) === tail) appSettingsSaveTails.delete(deps.storage);
   }
 }
 
@@ -286,6 +374,14 @@ async function readAppSettings(
   deps: SettingsDeps,
 ): Promise<{ settings: AppSettings; needsWrite: boolean }> {
   const stored = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
+  if (deps.desktop.isElectron() && stored && !Object.hasOwn(stored, "wallpaperCandidateId")) {
+    pendingWallpaperInputs.set(deps.storage, {
+      ...(Object.hasOwn(stored, "wallpaperDir") ? { wallpaperDir: stored.wallpaperDir } : {}),
+      ...(Object.hasOwn(stored, "wallpaperPath") ? { wallpaperPath: stored.wallpaperPath } : {}),
+    });
+  } else {
+    pendingWallpaperInputs.delete(deps.storage);
+  }
   if (stored) {
     return {
       settings: normalizeAppSettings(stored),
@@ -295,7 +391,9 @@ async function readAppSettings(
         stored.workspaceTitleSource !== undefined ||
         stored.sidebarWorkspaceTrailing !== undefined ||
         (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
-        stored.contentFontSize === undefined,
+        stored.contentFontSize === undefined ||
+        stored.wallpaperDir !== undefined ||
+        stored.wallpaperPath !== undefined,
     };
   }
 
@@ -305,6 +403,16 @@ async function readAppSettings(
     LegacyRendererSettingsSchema,
   );
   if (legacyStored) {
+    if (deps.desktop.isElectron() && !Object.hasOwn(legacyStored, "wallpaperCandidateId")) {
+      pendingWallpaperInputs.set(deps.storage, {
+        ...(Object.hasOwn(legacyStored, "wallpaperDir")
+          ? { wallpaperDir: legacyStored.wallpaperDir }
+          : {}),
+        ...(Object.hasOwn(legacyStored, "wallpaperPath")
+          ? { wallpaperPath: legacyStored.wallpaperPath }
+          : {}),
+      });
+    }
     return {
       settings: {
         ...DEFAULT_CLIENT_SETTINGS,
@@ -314,6 +422,7 @@ async function readAppSettings(
     };
   }
 
+  if (deps.desktop.isElectron()) pendingWallpaperInputs.set(deps.storage, {});
   return { settings: DEFAULT_CLIENT_SETTINGS, needsWrite: true };
 }
 
@@ -447,20 +556,12 @@ function pickWallpaperMediaAppSettings(stored: StoredAppSettings): Partial<AppSe
   ) {
     result.wallpaperOpacity = wallpaperOpacity;
   }
-  if (typeof stored.wallpaperPath === "string") {
-    result.wallpaperPath = stored.wallpaperPath;
-  } else if (stored.wallpaperPath === null) {
-    result.wallpaperPath = null;
-  }
+  const candidateId = z.uuid().safeParse(stored.wallpaperCandidateId);
+  result.wallpaperCandidateId = candidateId.success ? candidateId.data : null;
   if (typeof stored.wallpaperUrl === "string") {
     result.wallpaperUrl = stored.wallpaperUrl;
   } else if (stored.wallpaperUrl === null) {
     result.wallpaperUrl = null;
-  }
-  if (typeof stored.wallpaperDir === "string" && stored.wallpaperDir.trim()) {
-    result.wallpaperDir = stored.wallpaperDir.trim();
-  } else if (stored.wallpaperDir === null) {
-    result.wallpaperDir = null;
   }
   return result;
 }
@@ -562,6 +663,8 @@ function pickAppSettingsFromLegacy(
   // The legacy key rendered content on the interface ramp. Freeze that
   // rendered value into the new independent preference during migration.
   result.contentFontSize = legacyInterfaceSize ?? DEFAULT_UI_BASE_FONT_SIZE;
+  Object.assign(result, pickWallpaperMediaAppSettings(legacy), pickBooleanAppSettings(legacy));
+  if (legacy.wallpaperSource !== undefined) result.wallpaperSource = legacy.wallpaperSource;
   return result;
 }
 

@@ -20,6 +20,22 @@ function createStoreMock(): DesktopSettingsStore {
       },
     })),
     subscribe: vi.fn(() => () => undefined),
+    getWallpaperLibrary: vi.fn(async () => ({ version: 1, revision: 0, items: [] })),
+    addWallpaperCandidates: vi.fn(async () => ({
+      library: { version: 1, revision: 0, items: [] },
+      added: [],
+      duplicates: [],
+    })),
+    removeWallpaperCandidates: vi.fn(async () => ({
+      library: { version: 1, revision: 0, items: [] },
+      removedCandidateIds: [],
+    })),
+    importLegacyWallpaper: vi.fn(async () => ({
+      library: { version: 1, revision: 0, items: [] },
+      candidateId: null,
+      reason: null,
+    })),
+    subscribeWallpaperLibrary: vi.fn(() => () => undefined),
   };
 }
 

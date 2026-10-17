@@ -5,23 +5,29 @@ import {
   useMemo,
   useState,
   type CSSProperties,
+  type SyntheticEvent,
 } from "react";
 import { Platform } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { useAppSettings } from "@/hooks/use-settings";
-import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { buildWallpaperMediaSrc } from "@/wallpaper/media-src";
 import { setCssColorAlpha } from "@/wallpaper/color";
-import { getWallpaperSourceKey, parseRemoteWallpaperSource } from "@/wallpaper/source";
+import { getEffectiveWallpaperSourceKey, parseRemoteWallpaperSource } from "@/wallpaper/source";
+import { acquireWallpaperBackground, useWallpaperLibrary } from "./desktop-client";
 import {
   beginWallpaperLoad,
+  endWallpaperLoad,
   finishWallpaperLoad,
   useWallpaperLoadStatus,
-} from "@/wallpaper/load-state";
-import type { WallpaperMediaDescriptor, WallpaperMediaKind } from "@/wallpaper/types";
+  useWallpaperRetryRevision,
+} from "./load-state";
+import type { WallpaperMediaKind } from "@omp-desktop/protocol/desktop-wallpaper";
 
-interface ResolvedWallpaperSource {
+interface LoadAttempt {
   key: string;
+  token: number;
+}
+interface ResolvedWallpaperSource extends LoadAttempt {
   src: string;
   kind: WallpaperMediaKind;
 }
@@ -33,7 +39,6 @@ const LAYER_STYLE: CSSProperties = {
   overflow: "hidden",
   pointerEvents: "none",
 };
-
 const MEDIA_STYLE: CSSProperties = {
   position: "absolute",
   inset: 0,
@@ -42,138 +47,111 @@ const MEDIA_STYLE: CSSProperties = {
   objectFit: "cover",
 };
 
-function isWallpaperMediaDescriptor(value: unknown): value is WallpaperMediaDescriptor {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.id === "string" &&
-    typeof candidate.path === "string" &&
-    typeof candidate.name === "string" &&
-    (candidate.kind === "image" || candidate.kind === "video")
+function WallpaperMedia({
+  source,
+  style,
+}: {
+  source: ResolvedWallpaperSource;
+  style: CSSProperties;
+}) {
+  const token = source.token;
+  const markFailed = useCallback(() => finishWallpaperLoad(token, "error"), [token]);
+  const markReady = useCallback(() => finishWallpaperLoad(token, "ready"), [token]);
+  const handleVideoReady = useCallback(
+    (event: SyntheticEvent<HTMLVideoElement>) => {
+      const video = event.currentTarget;
+      if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        finishWallpaperLoad(token, "ready");
+      }
+    },
+    [token],
   );
+  if (source.kind === "video") {
+    return (
+      <video
+        src={source.src}
+        style={style}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        onLoadedData={handleVideoReady}
+        onError={markFailed}
+      />
+    );
+  }
+  return <img src={source.src} alt="" style={style} onLoad={markReady} onError={markFailed} />;
 }
 
 function WallpaperBackgroundBase({ canvasColor }: { canvasColor: string }) {
-  const { settings } = useAppSettings();
-  const [localSource, setLocalSource] = useState<ResolvedWallpaperSource | null>(null);
-
-  const configuredKey = getWallpaperSourceKey(settings);
-  const configured = configuredKey !== null;
+  const { settings, isLoading } = useAppSettings();
+  const { library, error: libraryError } = useWallpaperLibrary();
+  const configuredKey = isLoading
+    ? null
+    : getEffectiveWallpaperSourceKey(settings, libraryError ? null : library);
+  const retryRevision = useWallpaperRetryRevision();
   const loadStatus = useWallpaperLoadStatus(configuredKey);
-  const remoteSource = useMemo(() => {
-    if (settings.wallpaperSource !== "url") return null;
-    return parseRemoteWallpaperSource(settings.wallpaperUrl);
-  }, [settings.wallpaperSource, settings.wallpaperUrl]);
-  const localKey = settings.wallpaperSource === "file" ? configuredKey : null;
+  const [attempt, setAttempt] = useState<LoadAttempt | null>(null);
+  const [localSource, setLocalSource] = useState<ResolvedWallpaperSource | null>(null);
+  const candidateId =
+    settings.wallpaperSource === "file" && configuredKey ? settings.wallpaperCandidateId : null;
+  const remoteSource = useMemo(
+    () =>
+      settings.wallpaperSource === "url" ? parseRemoteWallpaperSource(settings.wallpaperUrl) : null,
+    [settings.wallpaperSource, settings.wallpaperUrl],
+  );
 
   useLayoutEffect(() => {
-    beginWallpaperLoad(configuredKey);
-    return () => beginWallpaperLoad(null);
-  }, [configuredKey]);
+    const token = beginWallpaperLoad(configuredKey);
+    setAttempt(configuredKey ? { key: configuredKey, token } : null);
+    return () => endWallpaperLoad(token);
+  }, [configuredKey, retryRevision]);
 
   useEffect(() => {
+    if (!attempt || attempt.key !== configuredKey || !candidateId) return;
     let cancelled = false;
-
-    if (!configured || settings.wallpaperSource !== "file" || !localKey) {
-      setLocalSource(null);
-      return;
-    }
-    if (!isElectronRuntime()) {
-      setLocalSource(null);
-      finishWallpaperLoad(localKey, "error");
-      return;
-    }
-
-    const invoke = getDesktopHost()?.invoke;
-    if (typeof invoke !== "function") {
-      setLocalSource(null);
-      finishWallpaperLoad(localKey, "error");
-      return;
-    }
-
-    setLocalSource(null);
-    void invoke("paseo:wallpaper:resolveFile", {
-      directory: settings.wallpaperDir,
-      path: settings.wallpaperPath,
-    })
-      .then((result) => {
-        if (cancelled) return undefined;
-        if (!isWallpaperMediaDescriptor(result)) {
-          finishWallpaperLoad(localKey, "error");
-          return undefined;
+    const lease = acquireWallpaperBackground(candidateId);
+    void lease.result
+      .then((media) => {
+        if (cancelled) return;
+        if (!media || media.candidateId !== candidateId) {
+          return finishWallpaperLoad(attempt.token, "error");
         }
-        setLocalSource({
-          key: localKey,
-          src: buildWallpaperMediaSrc(result.id),
-          kind: result.kind,
+        return setLocalSource({
+          ...attempt,
+          src: buildWallpaperMediaSrc(media.id),
+          kind: media.kind,
         });
-        return undefined;
       })
       .catch(() => {
-        if (!cancelled) finishWallpaperLoad(localKey, "error");
-        return undefined;
+        if (!cancelled) finishWallpaperLoad(attempt.token, "error");
       });
-
     return () => {
       cancelled = true;
+      lease.release();
     };
-  }, [
-    configured,
-    configuredKey,
-    localKey,
-    settings.wallpaperDir,
-    settings.wallpaperPath,
-    settings.wallpaperSource,
-  ]);
+  }, [attempt, candidateId, configuredKey]);
 
-  let source = remoteSource;
-  if (settings.wallpaperSource !== "url") {
-    source = localSource?.key === localKey ? localSource : null;
-  }
-  const sourceKey = source?.key ?? null;
+  const source = useMemo<ResolvedWallpaperSource | null>(() => {
+    if (!attempt || attempt.key !== configuredKey) return null;
+    if (remoteSource && settings.wallpaperSource === "url") {
+      return { ...remoteSource, ...attempt };
+    }
+    return localSource?.token === attempt.token ? localSource : null;
+  }, [attempt, configuredKey, remoteSource, settings.wallpaperSource, localSource]);
   const opacity = Math.max(0, Math.min(1, settings.wallpaperOpacity));
-  const mediaVisible = source !== null && loadStatus !== "error";
-  // The selected theme remains an opaque canvas beneath the media, including
-  // at 0% opacity; never fall through to the document/OS background color.
   const layerStyle = useMemo<CSSProperties>(
     () => ({ ...LAYER_STYLE, backgroundColor: canvasColor }),
     [canvasColor],
   );
   const mediaStyle = useMemo<CSSProperties>(() => ({ ...MEDIA_STYLE, opacity }), [opacity]);
-  const markFailed = useCallback(() => {
-    if (sourceKey) finishWallpaperLoad(sourceKey, "error");
-  }, [sourceKey]);
-  const markReady = useCallback(() => {
-    if (sourceKey) finishWallpaperLoad(sourceKey, "ready");
-  }, [sourceKey]);
 
-  if (Platform.OS !== "web" || !configured) return null;
-
+  if (Platform.OS !== "web" || !configuredKey) return null;
   return (
     <div style={layerStyle} aria-hidden="true">
-      {mediaVisible && source?.kind === "video" ? (
-        <video
-          key={source.key}
-          src={source.src}
-          style={mediaStyle}
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          onLoadedData={markReady}
-          onError={markFailed}
-        />
-      ) : null}
-      {mediaVisible && source?.kind === "image" ? (
-        <img
-          key={source.key}
-          src={source.src}
-          alt=""
-          style={mediaStyle}
-          onLoad={markReady}
-          onError={markFailed}
-        />
+      {source && loadStatus !== "error" ? (
+        <WallpaperMedia key={source.token} source={source} style={mediaStyle} />
       ) : null}
     </div>
   );

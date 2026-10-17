@@ -3,6 +3,7 @@ import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const en = {
   providerUsage: providerUsage.en,
@@ -2465,18 +2466,7 @@ export const en = {
           hint: "Higher values reveal more wallpaper; 100% removes panel backgrounds.",
           accessibilityLabel: "Interface transparency",
         },
-        directory: {
-          label: "Wallpaper directory",
-          hint: "Folder scanned for wallpaper images and videos (used when source is File)",
-          pickerTitle: "Select wallpaper folder",
-          browse: "Browse",
-        },
-        preview: {
-          scanning: "Scanning for wallpapers…",
-          empty: "No images or videos found in this folder",
-          expand: "Show all ({{count}})",
-          collapse: "Show fewer",
-        },
+        library: wallpaperLibrary.en,
       },
     },
     shortcuts: {

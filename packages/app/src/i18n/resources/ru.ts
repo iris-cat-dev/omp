@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ru: TranslationResources = {
   providerUsage: providerUsage.ru,
@@ -2344,18 +2345,7 @@ export const ru: TranslationResources = {
           hint: "Чем выше значение, тем лучше видны обои; при 100% фон панелей исчезает.",
           accessibilityLabel: "Прозрачность интерфейса",
         },
-        directory: {
-          label: "Каталог обоев",
-          hint: "Папка, в которой сканируются изображения обоев (используется при source: file)",
-          pickerTitle: "Выбрать папку с обоями",
-          browse: "Выбрать",
-        },
-        preview: {
-          scanning: "Поиск обоев…",
-          empty: "В этой папке не найдено изображений или видео",
-          expand: "Показать все ({{count}})",
-          collapse: "Свернуть",
-        },
+        library: wallpaperLibrary.ru,
       },
     },
     shortcuts: {

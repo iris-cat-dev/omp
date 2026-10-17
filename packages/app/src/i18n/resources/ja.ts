@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ja: TranslationResources = {
   providerUsage: providerUsage.ja,
@@ -2315,18 +2316,7 @@ export const ja: TranslationResources = {
           hint: "値を上げるほど壁紙が鮮明になり、100% でパネルの背景色が透明になります。",
           accessibilityLabel: "インターフェースの透明度",
         },
-        directory: {
-          label: "壁紙ディレクトリ",
-          hint: "壁紙画像をスキャンするフォルダ（ソースがファイルの際に使用）",
-          pickerTitle: "壁紙フォルダを選択",
-          browse: "参照",
-        },
-        preview: {
-          scanning: "壁紙をスキャン中…",
-          empty: "このフォルダに画像や動画が見つかりません",
-          expand: "すべて表示（{{count}}）",
-          collapse: "折りたたむ",
-        },
+        library: wallpaperLibrary.ja,
       },
     },
     shortcuts: {

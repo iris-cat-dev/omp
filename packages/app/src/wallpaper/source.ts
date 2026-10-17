@@ -1,5 +1,6 @@
 import type { AppSettings } from "@/hooks/use-settings";
-import type { WallpaperMediaKind } from "./types";
+import type { WallpaperMediaKind } from "@omp-desktop/protocol/desktop-wallpaper";
+import type { WallpaperLibrary } from "@omp-desktop/protocol/desktop-wallpaper";
 
 const VIDEO_EXTENSIONS: Record<string, true> = {
   ".mp4": true,
@@ -20,9 +21,22 @@ export function getWallpaperSourceKey(settings: AppSettings): string | null {
   if (settings.wallpaperSource === "url") {
     return parseRemoteWallpaperSource(settings.wallpaperUrl)?.key ?? null;
   }
-  return settings.wallpaperSource === "file" && settings.wallpaperDir && settings.wallpaperPath
-    ? `file:${JSON.stringify([settings.wallpaperDir, settings.wallpaperPath])}`
+  return settings.wallpaperSource === "file" && settings.wallpaperCandidateId
+    ? `file:${settings.wallpaperCandidateId}`
     : null;
+}
+
+export function getEffectiveWallpaperSourceKey(
+  settings: AppSettings,
+  library: WallpaperLibrary | null,
+): string | null {
+  if (
+    settings.wallpaperSource === "file" &&
+    !library?.items.some((item) => item.candidateId === settings.wallpaperCandidateId)
+  ) {
+    return null;
+  }
+  return getWallpaperSourceKey(settings);
 }
 
 export function parseRemoteWallpaperSource(value: string | null): RemoteWallpaperSource | null {

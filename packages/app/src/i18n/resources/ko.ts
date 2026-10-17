@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ko: TranslationResources = {
   providerUsage: providerUsage.ko,
@@ -2307,18 +2308,7 @@ export const ko: TranslationResources = {
           hint: "값을 높이면 배경화면이 더 선명해지며, 100%에서는 패널 배경색이 사라집니다.",
           accessibilityLabel: "인터페이스 투명도",
         },
-        directory: {
-          label: "배경화면 디렉토리",
-          hint: "배경화면 이미지를 스캔하는 폴더 (파일 소스 시 사용)",
-          pickerTitle: "배경화면 폴더 선택",
-          browse: " 탐색",
-        },
-        preview: {
-          scanning: "배경화면 스캔 중…",
-          empty: "이 폴더에서 이미지나 동영상을 찾을 수 없습니다",
-          expand: "전체 보기 ({{count}})",
-          collapse: "접기",
-        },
+        library: wallpaperLibrary.ko,
       },
     },
     shortcuts: {

@@ -4,6 +4,7 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ar: TranslationResources = {
   providerUsage: providerUsage.ar,
@@ -2293,18 +2294,7 @@ export const ar: TranslationResources = {
           hint: "القيم الأعلى تُظهر الخلفية أكثر؛ 100٪ تزيل خلفيات اللوحات.",
           accessibilityLabel: "شفافية الواجهة",
         },
-        directory: {
-          label: "دليل الخلفية",
-          hint: "المجلد الذي يتم مسح صور الخلفية منه (يُستخدم عندما يكون المصدر ملف)",
-          pickerTitle: "اختر مجلد الخلفية",
-          browse: "تصفح",
-        },
-        preview: {
-          scanning: "جارٍ البحث عن خلفيات…",
-          empty: "لم يتم العثور على صور أو فيديوهات في هذا المجلد",
-          expand: "عرض الكل ({{count}})",
-          collapse: "طي",
-        },
+        library: wallpaperLibrary.ar,
       },
     },
     shortcuts: {

@@ -37,6 +37,7 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { setCssColorAlpha } from "@/wallpaper/color";
 import {
   applyAvailableAddProjectHosts,
   backAddProjectPage,
@@ -1119,7 +1120,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: setCssColorAlpha(theme.colors.surface0, 1),
     overflow: "hidden",
     ...theme.shadow.lg,
   },

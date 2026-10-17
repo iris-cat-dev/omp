@@ -1,7 +1,7 @@
 import { type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { app, ipcMain, powerMonitor } from "electron";
+import { app, dialog, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
 import { resolvePaseoHome, spawnProcess } from "@omp-desktop/server";
 import {
@@ -56,6 +56,8 @@ import {
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 import { wallpaperMediaRegistry } from "../wallpaper/media-registry.js";
+import { createWallpaperCommandHandler } from "../wallpaper/commands.js";
+import { isWallpaperCommand } from "@omp-desktop/protocol/desktop-wallpaper";
 import { getMainWindows } from "../window/main-windows.js";
 import { getPetLibrary } from "../pets/library.js";
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -626,9 +628,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     uninstall_omp_shortcut: () => uninstallOmpShortcut(),
     read_legacy_skill_selection: () => readLegacySkillSelection(),
     delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
-    "paseo:wallpaper:scanDir": (args) =>
-      wallpaperMediaRegistry.scanDirectory(typeof args?.dir === "string" ? args.dir : ""),
-    "paseo:wallpaper:resolveFile": (args) => wallpaperMediaRegistry.resolveFile(args ?? {}),
   };
 }
 
@@ -636,8 +635,21 @@ export function registerDaemonManager(): void {
   const handlers = createDaemonCommandHandlers();
   const attachmentReferences = new ManagedAttachmentReferenceRegistry();
   let attachmentGarbageCollectionTail: Promise<void> = Promise.resolve();
+  const handleWallpaperCommand = createWallpaperCommandHandler({
+    registry: wallpaperMediaRegistry,
+    store: getDesktopSettingsStore(),
+    getMainWindows,
+    showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+  });
 
   ipcMain.handle("paseo:invoke", async (event, command: string, args?: Record<string, unknown>) => {
+    if (command.startsWith("paseo:wallpaper:")) {
+      const wallpaperCommand = command.slice("paseo:wallpaper:".length);
+      if (!isWallpaperCommand(wallpaperCommand)) {
+        return { ok: false, code: "invalid-request", message: "Unknown wallpaper command." };
+      }
+      return handleWallpaperCommand(event, wallpaperCommand, args);
+    }
     if (
       (command === "list_desktop_pets" ||
         command === "import_desktop_pet" ||

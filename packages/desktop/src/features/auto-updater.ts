@@ -29,6 +29,7 @@ const UPDATE_REPOSITORY = {
 let configured = false;
 let operationTail: Promise<void> = Promise.resolve();
 let downloadedUpdateChannel: AppReleaseChannel | null = null;
+const DISABLED_UPDATES_MESSAGE = "Application updates are disabled in this isolated trial.";
 
 function configureUpdater(releaseChannel: AppReleaseChannel): void {
   if (!configured) {
@@ -126,6 +127,9 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
+  if (process.env.PASEO_DISABLE_APP_UPDATES === "1") {
+    return { ...noUpdateResult(currentVersion), errorMessage: DISABLED_UPDATES_MESSAGE };
+  }
   try {
     return await runUpdateOperation(() =>
       checkAndDownloadUpdate({ currentVersion, releaseChannel }),
@@ -148,6 +152,9 @@ export async function downloadAndInstallUpdate(
   { currentVersion, releaseChannel }: { currentVersion: string; releaseChannel: AppReleaseChannel },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
+  if (process.env.PASEO_DISABLE_APP_UPDATES === "1") {
+    return { installed: false, version: null, message: DISABLED_UPDATES_MESSAGE };
+  }
   return await runUpdateOperation(async () => {
     try {
       const update = await checkAndDownloadUpdate({ currentVersion, releaseChannel });
@@ -193,6 +200,9 @@ export async function installAppUpdateOnQuit({
   releaseChannel: AppReleaseChannel;
   signal: AbortSignal;
 }): Promise<boolean> {
+  if (process.env.PASEO_DISABLE_APP_UPDATES === "1") {
+    return false;
+  }
   if (downloadedUpdateChannel !== releaseChannel) {
     return false;
   }

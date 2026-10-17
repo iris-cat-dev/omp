@@ -22,6 +22,7 @@ const STEER_DEFAULT_MIGRATION = "steer-default";
 export async function migrateAppSettings(
   settings: AppSettings,
   storage: KeyValueStorage,
+  serialize: (settings: AppSettings) => string = JSON.stringify,
 ): Promise<AppSettings> {
   const stored = await readValidatedJson(storage, SETTINGS_MIGRATIONS_KEY, AppliedMigrationsSchema);
   const applied = new Set(stored?.applied ?? []);
@@ -32,7 +33,7 @@ export async function migrateAppSettings(
   const migrated: AppSettings =
     settings.sendBehavior === "interrupt" ? { ...settings, sendBehavior: "steer" } : settings;
   if (migrated !== settings) {
-    await storage.setItem(APP_SETTINGS_KEY, JSON.stringify(migrated));
+    await storage.setItem(APP_SETTINGS_KEY, serialize(migrated));
   }
 
   applied.add(STEER_DEFAULT_MIGRATION);

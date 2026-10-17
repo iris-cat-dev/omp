@@ -2,7 +2,8 @@ import { createContext, type ReactNode, useContext, useEffect } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings } from "@/hooks/use-settings";
 import { PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES, type Theme } from "@/styles/theme";
-import { getWallpaperSourceKey } from "@/wallpaper/source";
+import { getEffectiveWallpaperSourceKey } from "@/wallpaper/source";
+import { useWallpaperLibrary } from "@/wallpaper/desktop-client";
 import { useWallpaperLoadStatus } from "@/wallpaper/load-state";
 import { applyAppearance } from "./apply";
 
@@ -30,7 +31,8 @@ const ContributedThemesContext = createContext<ContributedThemes | null>(null);
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, isLoading } = useAppSettings();
-  const wallpaperKey = getWallpaperSourceKey(settings);
+  const { library, error: libraryError } = useWallpaperLibrary();
+  const wallpaperKey = getEffectiveWallpaperSourceKey(settings, libraryError ? null : library);
   const wallpaperActive = useWallpaperLoadStatus(wallpaperKey) === "ready";
 
   useEffect(() => {

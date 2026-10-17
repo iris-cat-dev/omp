@@ -5,6 +5,7 @@ import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
 import { schedules } from "./schedules";
+import { wallpaperLibrary } from "./wallpaper-library";
 
 export const zhCN: TranslationResources = {
   providerUsage: providerUsage["zh-CN"],
@@ -2376,18 +2377,7 @@ export const zhCN: TranslationResources = {
           hint: "数值越高，壁纸越清晰；100% 去除主界面底色。",
           accessibilityLabel: "界面透明度",
         },
-        directory: {
-          label: "壁纸目录",
-          hint: "扫描壁纸图片和视频的文件夹（文件来源时使用）",
-          pickerTitle: "选择壁纸文件夹",
-          browse: "浏览",
-        },
-        preview: {
-          scanning: "正在扫描壁纸…",
-          empty: "该文件夹中没有找到图片或视频",
-          expand: "显示全部（{{count}}）",
-          collapse: "收起",
-        },
+        library: wallpaperLibrary["zh-CN"],
       },
     },
     shortcuts: {

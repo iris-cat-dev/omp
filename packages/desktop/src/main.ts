@@ -8,9 +8,7 @@ import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createReadStream, existsSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
@@ -41,6 +39,8 @@ import {
   setupDragDropPrevention,
 } from "./window/window-manager.js";
 import { wallpaperMediaRegistry } from "./wallpaper/media-registry.js";
+import { registerWallpaperWindow } from "./wallpaper/commands.js";
+import { createWallpaperMediaResponse } from "./wallpaper/media-response.js";
 import { BackgroundModeController } from "./window/background-mode.js";
 import { CloseChoiceRequestBroker } from "./window/close-choice-request.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
@@ -207,7 +207,13 @@ ipcMain.handle("paseo:window:respondCloseChoice", (event, response: unknown) => 
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
   },
 ]);
 
@@ -225,36 +231,6 @@ function getAppDistDir(): string {
   }
 
   return path.resolve(__dirname, "../../app/dist");
-}
-
-/**
- * Parse a single-range `Range: bytes=` header against a known file size.
- * Returns null for malformed/unsatisfiable ranges, or for forms the media
- * stack does not use (multiple ranges) — callers fall back to 416.
- */
-function parseByteRange(header: string, size: number): { start: number; end: number } | null {
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match) return null;
-  const [, startRaw, endRaw] = match;
-  if (startRaw === "" && endRaw === "") return null;
-
-  let start: number;
-  let end: number;
-  if (startRaw === "") {
-    // suffix range: last N bytes
-    const suffix = Number(endRaw);
-    if (!Number.isFinite(suffix) || suffix <= 0) return null;
-    start = Math.max(0, size - suffix);
-    end = size - 1;
-  } else {
-    start = Number(startRaw);
-    end = endRaw === "" ? size - 1 : Number(endRaw);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-    if (start >= size) return null;
-    end = Math.min(end, size - 1);
-    if (start > end) return null;
-  }
-  return { start, end };
 }
 
 function getWindowIconCandidates(): string[] {
@@ -389,7 +365,11 @@ async function createWindow(
       webviewTag: false,
     },
   });
+  if (APP_NAME !== "OMP Desktop") {
+    mainWindow.on("page-title-updated", (event) => event.preventDefault());
+  }
   registerMainWindow(mainWindow);
+  registerWallpaperWindow(mainWindow);
   backgroundModeController.registerWindow(mainWindow);
 
   const webContentsId = mainWindow.webContents.id;
@@ -602,7 +582,8 @@ function setupSingleInstanceLock(): boolean {
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
-    app.quit();
+    // This process owns no windows or daemon; do not run the primary's quit hooks.
+    app.exit(0);
     return false;
   }
 
@@ -658,6 +639,13 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  // Load and publish authoritative membership independently of optional pet startup.
+  try {
+    await getDesktopSettingsStore().getWallpaperLibrary();
+  } catch (error) {
+    // Keep settings and URL wallpapers usable; getLibrary reports the persisted error.
+    log.error("[wallpaper] failed to load candidate library", error);
+  }
   try {
     await clearRetiredBrowserProfiles(session, (partition, error) => {
       log.warn("[browser-profile] failed to clear retired partition", { partition, error });
@@ -675,62 +663,16 @@ async function bootstrap(): Promise<void> {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     }
+
+    if (decodedPath === "/wallpaper-media") {
+      return createWallpaperMediaResponse(
+        request,
+        wallpaperMediaRegistry,
+        app.isPackaged ? null : new URL(DEV_SERVER_URL).origin,
+      );
+    }
     const petResource = await getPetLibrary().handleResource(decodedPath);
     if (petResource) return petResource;
-
-    // Local wallpaper paths never cross into renderer-controlled URLs. The
-    // renderer receives an opaque capability after the main process validates
-    // that a selected path is a supported regular file inside its directory.
-    if (decodedPath === "/wallpaper-media") {
-      const mediaId = new URL(request.url).searchParams.get("id") ?? "";
-      const media = wallpaperMediaRegistry.get(mediaId);
-      if (!media) {
-        return new Response("Not found", { status: 404 });
-      }
-
-      let canonicalPath: string;
-      let size: number;
-      try {
-        canonicalPath = await realpath(media.path);
-        if (canonicalPath !== media.path) return new Response("Not found", { status: 404 });
-        const file = await stat(canonicalPath);
-        if (!file.isFile()) return new Response("Not found", { status: 404 });
-        size = file.size;
-      } catch {
-        return new Response("Not found", { status: 404 });
-      }
-
-      const rangeHeader = request.headers.get("range");
-      const baseHeaders = {
-        "content-type": media.mime,
-        "accept-ranges": "bytes",
-        "cache-control": "private, max-age=3600",
-        "x-content-type-options": "nosniff",
-      };
-      const parsed = rangeHeader ? parseByteRange(rangeHeader, size) : null;
-      if (rangeHeader && !parsed) {
-        return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
-      }
-      if (parsed) {
-        const { start, end } = parsed;
-        const stream = Readable.toWeb(
-          createReadStream(canonicalPath, { start, end }),
-        ) as ReadableStream;
-        return new Response(stream, {
-          status: 206,
-          headers: {
-            ...baseHeaders,
-            "content-range": `bytes ${start}-${end}/${size}`,
-            "content-length": String(end - start + 1),
-          },
-        });
-      }
-      const stream = Readable.toWeb(createReadStream(canonicalPath)) as ReadableStream;
-      return new Response(stream, {
-        status: 200,
-        headers: { ...baseHeaders, "content-length": String(size) },
-      });
-    }
 
     // Chromium can occasionally request the exported entrypoint directly.
     // Canonicalize it back to the route URL so Expo Router sees `/`, not `/index.html`.
@@ -778,7 +720,14 @@ async function bootstrap(): Promise<void> {
     openTask: (task) =>
       focusExistingWindowOnAgent({ serverId: task.serverId, agentId: task.agentId }),
   });
-  await petController.initialize();
+  try {
+    await petController.initialize();
+  } catch (error) {
+    // A damaged persisted library must remain untouched, not prevent the UI from opening.
+    petController.dispose();
+    petController = null;
+    log.error("[desktop-settings] Companion unavailable; opening the main window", error);
+  }
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).
