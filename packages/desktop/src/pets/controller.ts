@@ -12,6 +12,19 @@ import { clampPetBounds } from "./geometry.js";
 import { PetActivitySnapshots, parsePetActivity } from "./activity.js";
 import type { DesktopPetSettings, DesktopPetTask, PetDescriptor } from "./types.js";
 
+const MENU_TASK_TITLE_LENGTH = 20;
+let menuTitleSegmenter: Intl.Segmenter | undefined;
+
+function compactMenuTaskTitle(title: string): string {
+  if (title.length <= MENU_TASK_TITLE_LENGTH) return title;
+  menuTitleSegmenter ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  let characters = 0;
+  for (const { index } of menuTitleSegmenter.segment(title)) {
+    if (characters++ === MENU_TASK_TITLE_LENGTH) return `${title.slice(0, index)}…`;
+  }
+  return title;
+}
+
 interface PetControllerOptions {
   openApp: () => void | Promise<void>;
   openTask: (task: DesktopPetTask) => void;
@@ -196,7 +209,8 @@ export class DesktopPetController {
         window.webContents.send("paseo:pet:pointer", lastPointer);
       }
     }, 50);
-    await window.loadURL("omp-desktop://app/desktop-pet");
+    // Chromium shares zoom by origin. Main-window zoom must not resize the companion.
+    await window.loadURL("omp-desktop://pet/desktop-pet");
     if (this.stopped || window.isDestroyed()) return;
     this.sendState();
     window.showInactive();
@@ -271,7 +285,7 @@ export class DesktopPetController {
     Menu.buildFromTemplate([
       { label: labels.openApp, click: () => invoke(this.options.openApp) },
       ...activity.tasks.map((task) => ({
-        label: `${labels[task.status]} — ${task.title || labels.openTask}`,
+        label: `${labels[task.status]} — ${compactMenuTaskTitle(task.title || labels.openTask)}`,
         click: () => this.options.openTask(task),
       })),
       { type: "separator" },

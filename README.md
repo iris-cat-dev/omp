@@ -58,6 +58,20 @@ is enabled. Disabling it preserves the creation draft and model selection.
   Dragging does not trigger petting. Click the status bubble to restore OMP and
   open the task that needs attention, or open the app when there is no pending task.
 - The status bubble stays close to the kitten's upper left and follows its size.
+  The corner nearest the pet stays anchored when captions or task counts change;
+  longer captions expand left and are ellipsized within the available space.
+  Main-window zoom does not change the companion's scale. Layout and pointer hit
+  bounds refresh when the companion's viewport changes.
+- Only main conversations contribute to the pet's status, task count, menu, and
+  click target. Subagents are excluded even when their parent is missing or they
+  use a separate workspace. Independent main conversations in the same workspace
+  remain separate tasks.
+- Task names follow workspace-tab names: the primary conversation uses the renamed
+  workspace title, while other independent conversations keep their own names.
+  Renames refresh these labels without waiting for new task activity.
+- The native context menu shortens long task names after 20 displayed characters
+  and adds an ellipsis, without splitting composed characters or changing the
+  full task title or conversation selected by a click.
 - Connected hosts supply real task state. Permissions take priority over errors,
   unread completions, and running work. No task or animation triggers a model call.
 - On daemons with directory revisions, completed directory reads determine freshness,
@@ -1088,6 +1102,18 @@ npm run typecheck
 ```
 
 Run only targeted Vitest files; do not run the full test suite locally.
+
+After building the workspace dependencies, run the companion's native regression:
+
+```bash
+npm run build:main --workspace=@omp-desktop/desktop
+node packages/desktop/e2e/pet-layout-smoke.js
+```
+
+The smoke briefly opens a non-focusing companion with an isolated temporary profile.
+It covers changing captions and task counts, all three sizes, main-window zoom,
+viewport changes, and opaque/transparent pointer targets without calling a model.
+Set `ELECTRON_PATH` to use an existing Electron executable instead of the npm binary.
 
 ## License
 

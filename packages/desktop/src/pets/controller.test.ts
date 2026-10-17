@@ -18,6 +18,7 @@ const mock = vi.hoisted(() => ({
   getSelected: vi.fn(),
   report: vi.fn(),
   patch: vi.fn(),
+  menus: [] as { label?: string; click?: () => void }[][],
 }));
 
 vi.mock("electron-log/main", () => ({ default: { error: vi.fn() } }));
@@ -75,7 +76,12 @@ vi.mock("electron", async () => {
         mock.handlers.set(channel, handler),
       removeHandler: (channel: string) => mock.handlers.delete(channel),
     }),
-    Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
+    Menu: {
+      buildFromTemplate: vi.fn((template: (typeof mock.menus)[number]) => {
+        mock.menus.push(template);
+        return { popup: vi.fn() };
+      }),
+    },
     screen: Object.assign(new EventEmitter(), {
       getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
       getAllDisplays: () => [{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }],
@@ -110,6 +116,7 @@ beforeEach(() => {
   mock.handlers.clear();
   mock.subscribers.clear();
   mock.windows.length = 0;
+  mock.menus.length = 0;
   mock.settings = { ...DEFAULT_DESKTOP_SETTINGS, pet: { ...DEFAULT_DESKTOP_SETTINGS.pet } };
   mock.getSelected.mockReset().mockResolvedValue(descriptor);
   mock.report.mockReset();
@@ -244,5 +251,55 @@ describe("native companion controller", () => {
     expect(mock.handlers.size).toBe(0);
     expect(mock.subscribers.size).toBe(0);
     expect(mock.patch).not.toHaveBeenCalled();
+  });
+  it.each([
+    { name: "long Chinese name", title: "壁纸与宠物功能开发".repeat(6), compact: true },
+    { name: "long emoji name", title: "🧑🏽‍💻".repeat(26), compact: true },
+    { name: "short emoji name", title: "🧑🏽‍💻".repeat(8), compact: false },
+  ])("bounds the $name without changing the selected task", async ({ title, compact }) => {
+    mock.settings.pet.enabled = true;
+    const { instance, openTask } = controller();
+    await instance.initialize();
+    const mainFrame = {};
+    const task = {
+      serverId: "local",
+      agentId: "named-task",
+      title,
+      status: "running",
+      updatedAt: 20,
+    };
+    mock.handlers.get("paseo:pet:publishActivity")!(
+      { sender: { id: 12, main: true, mainFrame }, senderFrame: mainFrame },
+      {
+        ...DEFAULT_PET_ACTIVITY,
+        connected: true,
+        serverIds: ["local"],
+        revisions: { local: null },
+        tasks: [task],
+      },
+    );
+    const window = mock.windows[0];
+    mock.handlers.get("paseo:pet:menu")!({
+      sender: window.webContents,
+      senderFrame: window.webContents.mainFrame,
+    });
+    const item = mock.menus.at(-1)![1];
+    const prefix = `${DEFAULT_PET_ACTIVITY.labels.running} — `;
+    expect(item.label?.startsWith(prefix)).toBe(true);
+    const displayed = item.label!.slice(prefix.length);
+    if (compact) {
+      expect(displayed.endsWith("…")).toBe(true);
+      expect(displayed.length).toBeLessThan(title.length);
+      expect(title.startsWith(displayed.slice(0, -1))).toBe(true);
+      let characters = 0;
+      for (const _ of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(displayed))
+        characters++;
+      expect(characters).toBeLessThanOrEqual(25);
+      if (title.startsWith("🧑🏽‍💻")) expect(displayed).toMatch(/^(?:🧑🏽‍💻)+…$/u);
+    } else {
+      expect(displayed).toBe(title);
+    }
+    item.click!();
+    expect(openTask).toHaveBeenCalledWith(task);
   });
 });

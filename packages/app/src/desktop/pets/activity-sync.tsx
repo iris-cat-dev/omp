@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useShallow } from "zustand/shallow";
 import { useTranslation } from "react-i18next";
 import { useAppSettings } from "@/hooks/use-settings";
 import { DEFAULT_UI_FONT_STACK } from "@/styles/theme";
 import { getDesktopHost } from "@/desktop/host";
 import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
+import { useSessionStore } from "@/stores/session-store";
 import {
   getHostRuntimeStore,
   useHosts,
@@ -40,9 +42,21 @@ function ConnectedDesktopPetActivitySync() {
   const hosts = useHosts();
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const statuses = useHostRuntimeConnectionStatuses(serverIds);
+  // Renames update session metadata independently of committed directory activity.
+  const namingSources = useSessionStore(
+    useShallow((state) => {
+      const sources: unknown[] = [];
+      for (const serverId of serverIds) {
+        const session = state.sessions[serverId];
+        sources.push(session?.agents, session?.agentDetails, session?.workspaces);
+      }
+      return sources;
+    }),
+  );
   const activity = useMemo<DesktopPetActivity>(() => {
     // Match runtime selectors: this version invalidates reads of the mutable store.
     void version;
+    void namingSources;
     const connectedServerIds = new Set(serverIds.filter((id) => statuses.get(id) === "online"));
     const tasks: DesktopPetActivity["tasks"] = [];
     const revisions: DesktopPetActivity["revisions"] = {};
@@ -56,6 +70,7 @@ function ConnectedDesktopPetActivitySync() {
           connectedServerIds,
           t("desktop.pets.untitledTask"),
           serverId,
+          useSessionStore.getState().sessions[serverId],
         ),
       );
     }
@@ -79,7 +94,7 @@ function ConnectedDesktopPetActivitySync() {
         taskCount: t("desktop.pets.activity.taskCount"),
       },
     };
-  }, [runtime, version, serverIds, statuses, t, fontFamily]);
+  }, [runtime, version, namingSources, serverIds, statuses, t, fontFamily]);
 
   useEffect(() => {
     const publish = getDesktopHost()?.pet?.publishActivity;

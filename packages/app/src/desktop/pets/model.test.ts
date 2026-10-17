@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { PARENT_AGENT_ID_LABEL } from "@omp-desktop/protocol/agent-labels";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { deriveDesktopPetTasks } from "./model";
 
 function agent(id: string, overrides: Partial<AggregatedAgent> = {}): AggregatedAgent {
@@ -19,6 +21,25 @@ function agent(id: string, overrides: Partial<AggregatedAgent> = {}): Aggregated
     attentionTimestamp: null,
     pendingPermissionCount: 0,
     ...overrides,
+  };
+}
+
+function workspace(id: string, title: string | null): WorkspaceDescriptor {
+  return {
+    id,
+    title,
+    name: "main",
+    projectId: "project-1",
+    projectDisplayName: "Project",
+    projectRootPath: "/repo",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "checkout",
+    status: "running",
+    archivingAt: null,
+    statusEnteredAt: null,
+    diffStat: null,
+    scripts: [],
   };
 }
 const connected = new Set(["local"]);
@@ -123,20 +144,33 @@ describe("desktop pet task activity", () => {
       { serverId: "local", agentId: "same", title: "未命名任务", updatedAt: 1000 },
     ]);
   });
-  it("derives committed directory maps without merging a shared workspace or hiding child permissions", () => {
+  it("keeps independent main conversations in a shared workspace without child attention", () => {
     const root = {
       ...agent("root", { status: "running", workspaceId: "shared" }),
       pendingPermissions: [],
     };
+    const otherMain = agent("other-main", {
+      workspaceId: "shared",
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
     const child = {
-      ...agent("child", { workspaceId: "shared", pendingPermissionCount: undefined }),
-      parentAgentId: "root",
+      ...agent("child", {
+        workspaceId: "separate-child-workspace",
+        labels: { [PARENT_AGENT_ID_LABEL]: "root" },
+        pendingPermissionCount: undefined,
+      }),
       pendingPermissions: [{}],
     };
-    const directory = new Map<string, typeof root | typeof child>([
-      ["root", root],
-      ["child", child],
-    ]);
+    const grandchild = agent("grandchild", {
+      workspaceId: "shared",
+      labels: { [PARENT_AGENT_ID_LABEL]: "child" },
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    const directory = new Map(
+      [root, otherMain, child, grandchild].map((entry) => [entry.id, entry]),
+    );
     const tasks = deriveDesktopPetTasks(
       directory.values(),
       new Set(["remote"]),
@@ -144,8 +178,116 @@ describe("desktop pet task activity", () => {
       "remote",
     );
     expect(tasks.map(({ serverId, agentId, status }) => [serverId, agentId, status])).toEqual([
-      ["remote", "child", "needs_input"],
+      ["remote", "other-main", "ready"],
       ["remote", "root", "running"],
+    ]);
+  });
+
+  it("remains idle when only an orphaned subagent is running", () => {
+    const child = agent("orphan", {
+      status: "running",
+      labels: { [PARENT_AGENT_ID_LABEL]: "missing-parent" },
+    });
+    expect(deriveDesktopPetTasks([child], connected, "Untitled")).toEqual([]);
+  });
+
+  it("shows a conversation again when its parent relationship is removed", () => {
+    const child = agent("promoted", {
+      status: "running",
+      labels: { [PARENT_AGENT_ID_LABEL]: "old-parent" },
+    });
+    expect(deriveDesktopPetTasks([child], connected, "Untitled")).toEqual([]);
+    const tasks = deriveDesktopPetTasks([{ ...child, labels: {} }], connected, "Untitled");
+    expect(tasks.map(({ agentId, status }) => [agentId, status])).toEqual([
+      ["promoted", "running"],
+    ]);
+  });
+
+  it("uses the renamed workspace only for its primary conversation and keeps independent names", () => {
+    const root = agent("root", {
+      workspaceId: "workspace-1",
+      title: "Original first request",
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    const other = agent("other", {
+      workspaceId: "workspace-1",
+      title: "Old independent name",
+      status: "running",
+      createdAt: new Date(1000),
+    });
+    const child = agent("child", {
+      workspaceId: "workspace-1",
+      createdAt: new Date(-1000),
+      labels: { [PARENT_AGENT_ID_LABEL]: "root" },
+      pendingPermissionCount: 1,
+    });
+    const presentation = {
+      agents: new Map([
+        ["root", { ...root, parentAgentId: null }],
+        ["other", { ...other, parentAgentId: null, title: "独立会话新名称" }],
+        ["child", { ...child, parentAgentId: "root" }],
+      ]),
+      agentDetails: new Map(),
+      workspaces: new Map([["cached-workspace-key", workspace("workspace-1", "壁纸与宠物开发")]]),
+    };
+    const tasks = deriveDesktopPetTasks(
+      [root, other, child],
+      connected,
+      "Untitled",
+      "local",
+      presentation,
+    );
+    expect(tasks.map(({ agentId, title }) => [agentId, title])).toEqual([
+      ["root", "壁纸与宠物开发"],
+      ["other", "独立会话新名称"],
+    ]);
+    presentation.workspaces = new Map([["cached-workspace-key", workspace("workspace-1", null)]]);
+    expect(
+      deriveDesktopPetTasks([root, other, child], connected, "Untitled", "local", presentation)[0]
+        ?.title,
+    ).toBe("main");
+  });
+
+  it("refreshes a renamed conversation without replacing committed attention with live session state", () => {
+    const committed = agent("task", {
+      title: "Original first request",
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date(2000),
+    });
+    const live = {
+      ...committed,
+      parentAgentId: null,
+      title: "First custom name",
+      requiresAttention: false,
+      status: "idle" as const,
+    };
+    const presentation = {
+      agents: new Map([["task", live]]),
+      agentDetails: new Map(),
+      workspaces: new Map<string, WorkspaceDescriptor>(),
+    };
+    const derive = () =>
+      deriveDesktopPetTasks([committed], connected, "Untitled", "local", presentation);
+    expect(derive()).toEqual([
+      {
+        serverId: "local",
+        agentId: "task",
+        title: "First custom name",
+        status: "ready",
+        updatedAt: 2000,
+      },
+    ]);
+    presentation.agents = new Map([["task", { ...live, title: "Renamed while waiting" }]]);
+    expect(derive()).toEqual([
+      {
+        serverId: "local",
+        agentId: "task",
+        title: "Renamed while waiting",
+        status: "ready",
+        updatedAt: 2000,
+      },
     ]);
   });
 });

@@ -5,7 +5,7 @@ export const PET_HTML = String.raw`<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src omp-desktop:; style-src 'unsafe-inline'; script-src 'nonce-omp-pet-renderer'; connect-src 'none'"><style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;user-select:none;font-family:'Segoe UI',sans-serif}
 #mascot{position:absolute;right:8px;bottom:8px;touch-action:none;cursor:grab}#mascot.dragging{cursor:grabbing}
-#bubble{position:absolute;z-index:1;left:8px;max-width:calc(100% - 16px);padding:9px 12px;border:1px solid #F6A9C6;border-radius:14px 14px 3px 14px;background:#FFF0E4;color:#42436B;font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;cursor:pointer;box-sizing:border-box;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bubble{position:absolute;z-index:1;right:8px;max-width:calc(100% - 16px);padding:9px 12px;border:1px solid #F6A9C6;border-radius:14px 14px 3px 14px;background:#FFF0E4;color:#42436B;font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;cursor:pointer;box-sizing:border-box;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #bubble:focus-visible{outline:2px solid #DFAB4D;outline-offset:2px}
 </style></head><body><button id="bubble" type="button" hidden></button><canvas id="mascot"></canvas><script nonce="omp-pet-renderer">
 const bridge=window.ompPet, canvas=document.getElementById('mascot'), bubble=document.getElementById('bubble');
@@ -165,19 +165,23 @@ function update(next){
   const pixelWidth=Math.round(width*devicePixelRatio),pixelHeight=Math.round(height*devicePixelRatio);
   if(canvas.width!==pixelWidth||canvas.height!==pixelHeight){canvas.width=pixelWidth;canvas.height=pixelHeight}
   canvas.style.width=width+'px';canvas.style.height=height+'px';
-  const bubbleX=Math.max(8,canvas.offsetLeft-40);
-  bubble.style.left=bubbleX+'px';bubble.style.maxWidth=(innerWidth-bubbleX-8)+'px';
+  // Keep the pet-side corner anchored: longer captions must grow away from the face.
+  const bubbleRight=8+width-Math.min(40,width/4);
+  bubble.style.right=bubbleRight+'px';bubble.style.maxWidth='calc(100% - '+(bubbleRight+8)+'px)';
   bubble.style.bottom=Math.round(height*.8+10)+'px';
   if(imageUrl!==state.descriptor.spriteUrl){
     imageUrl=state.descriptor.spriteUrl;image=null;const generation=++loadGeneration;
     const pending=new Image();pending.onload=()=>{if(generation===loadGeneration){image=pending;const now=performance.now();if(syncChatter(now))renderBubble();syncPose(now);requestDraw()}};
-    pending.onerror=()=>{if(generation===loadGeneration)fail(new Error('Cannot load selected companion spritesheet'))};pending.src=imageUrl;
+    pending.onerror=()=>{if(generation===loadGeneration)fail(new Error('Cannot load selected companion spritesheet'))};
+    // The pet has its own origin; keep canvas pixels readable for alpha hit-testing.
+    const spriteUrl=new URL(imageUrl);spriteUrl.host=location.host;pending.src=spriteUrl.href;
   }
   const now=performance.now();
   syncChatter(now);renderBubble();syncPose(now);requestDraw();
 }
 bridge.onState(update);bridge.onPointer(point=>{pointer=point;hitTest()});
 bridge.ready().then(update).catch(fail);
+addEventListener('resize',()=>{if(state)update(state)});
 bubble.addEventListener('click',()=>bridge.open().catch(fail));
 document.addEventListener('contextmenu',event=>{event.preventDefault();bridge.menu().catch(fail)});
 canvas.addEventListener('pointerdown',event=>{
