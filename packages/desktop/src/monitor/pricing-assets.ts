@@ -3,9 +3,9 @@
 export const BUNDLED_PRICING_METADATA = {
   priceTable: {
     url: "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json",
-    sha256: "d6450c58fd70a1da2ff2dbc866d6707b5486481c4a356105a49eac2d32460c13",
-    updated: "2026-10-23",
-    version: 1,
+    sha256: "033728b1d33d59f3f508ed187a43bfed4d463a08e7819c6da7a966ec34173d12",
+    updated: "2026-10-24",
+    version: 2,
   },
   currencies: {
     url: "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/currencies.json",
@@ -19,8 +19,8 @@ export const BUNDLED_PRICE_TABLE: unknown = {
   _comment:
     "API list prices for API-equivalent costs (METRICS 9). USD per million tokens. Edit by hand: raise version by one, set updated and each changed entry's checked date, add tests for new id forms, run python3 spec/tools/prices.py. Apps sync this file from main daily (spec/NETWORK.md).",
   schema: 1,
-  version: 1,
-  updated: "2026-10-23",
+  version: 2,
+  updated: "2026-10-24",
   currency: "USD",
   unit: "perMillionTokens",
   providers: {
@@ -1576,9 +1576,14 @@ export const BUNDLED_PRICE_TABLE: unknown = {
           },
         },
       ],
-      aliases: ["gemini 4 argon (low)", "gemini 4 argon (medium)", "gemini 4 argon (high)"],
+      aliases: [
+        "gemini 4 argon (low)",
+        "gemini 4 argon (medium)",
+        "gemini 4 argon (high)",
+        "gemini 4 argon",
+      ],
       source: "https://ai.google.dev/gemini-api/docs/pricing",
-      checked: "2026-10-22",
+      checked: "2026-10-24",
       note: "Announced price change on 2026-12-01.",
     },
     {
@@ -1601,9 +1606,14 @@ export const BUNDLED_PRICE_TABLE: unknown = {
           },
         },
       ],
-      aliases: ["gemini 3.8 flash (low)", "gemini 3.8 flash (medium)", "gemini 3.8 flash (high)"],
+      aliases: [
+        "gemini 3.8 flash (low)",
+        "gemini 3.8 flash (medium)",
+        "gemini 3.8 flash (high)",
+        "gemini 3.8 flash",
+      ],
       source: "https://ai.google.dev/gemini-api/docs/pricing",
-      checked: "2026-10-22",
+      checked: "2026-10-24",
       note: "Announced price change on 2027-01-01.",
     },
     {
@@ -2855,9 +2865,14 @@ export const BUNDLED_PRICE_TABLE: unknown = {
           },
         },
       ],
-      aliases: ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"],
+      aliases: [
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-vision-exp",
+        "deepseek-v4.1-flash",
+        "deepseek-v4.1-flash-1017",
+      ],
       source: "https://api-docs.deepseek.com/quick_start/pricing",
-      checked: "2026-10-22",
+      checked: "2026-10-24",
       note: "Peak = 01:00-04:00 and 06:00-10:00 UTC, Monday-Friday except Chinese public holidays; off-peak is half price. offPeakDates: the weekday holidays of the 2026 State Council schedule (Mid-Autumn, National Day; https://www.news.cn/politics/20251104/88bcffd88ae249e58c699b8772548e3d/c.html); weekend make-up workdays are treated as off-peak. Earlier periods: V4 Flash prices before the 2026-09-10 switch; the 2026-08 period assumes the later Monday-Friday rule.",
     },
     {
@@ -4447,6 +4462,18 @@ export const BUNDLED_PRICE_TABLE: unknown = {
     {
       model: "default-1.2",
       expect: "unknown",
+    },
+    {
+      model: "deepseek-v4.1-flash-1017",
+      expect: "deepseek-flash",
+    },
+    {
+      model: "gemini 3.8 flash",
+      expect: "gemini-3.8-flash",
+    },
+    {
+      model: "gemini 4 argon",
+      expect: "gemini-4-argon",
     },
   ],
 };

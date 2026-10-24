@@ -51,6 +51,7 @@ function snapshot(): OmpMonitorSnapshot {
     },
     status: "ready",
     rate: { measuredTps: 20, estimatedTps: 5, estimatedShare: 0.2 },
+    activity: { lastResponseAt: null, peakAt: null, peakObservedAt: null },
     today: usage,
     days: [{ ...usage, date: "2026-10-24" }],
     agents: [
@@ -166,5 +167,29 @@ describe("monitor CSV", () => {
     expect(
       parseCsv(buildMonitorCsv(data)).find((row) => row.section === "today")?.recorded_cost_usd,
     ).toBe("0");
+  });
+
+  it("exports only the selected inclusive history dates without today's live or machine-wide rows", () => {
+    const data = snapshot();
+    const usage = data.today;
+    data.days = [
+      { ...usage, date: "2026-10-22", requests: 2, outputTokens: 22 },
+      { ...usage, date: "2026-10-23", requests: 3, outputTokens: 33 },
+      { ...usage, date: "2026-10-24", requests: 4, outputTokens: 44 },
+    ];
+    const rows = parseCsv(
+      buildMonitorCsv(data, { startDate: "2026-10-23", endDate: "2026-10-24" }),
+    );
+    expect(rows.map((row) => [row.section, row.date, row.requests, row.output_tokens])).toEqual([
+      ["daily", "2026-10-23", "3", "33"],
+      ["daily", "2026-10-24", "4", "44"],
+    ]);
+    expect(rows[0]).toMatchObject({
+      range_start: "2026-10-23",
+      range_end: "2026-10-24",
+      recorded_cost_usd: "0.5",
+      current_catalog_estimate_usd: "1.5",
+      rate_source: "rates.example",
+    });
   });
 });

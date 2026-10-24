@@ -103,6 +103,14 @@ export interface OmpMonitorSnapshot {
   resources: OmpMonitorResources;
   pricing: OmpMonitorPricing;
   status: "scanning" | "ready" | "unavailable" | "partial" | "error";
+  activity: {
+    /** Latest successful, non-sidecall, positive-output completion in the retained scope. */
+    lastResponseAt: number | null;
+    /** Exclusive end of today's earliest winning measured three-second bucket window. */
+    peakAt: number | null;
+    /** Latest contributing measured completion, not the log's discovery time. */
+    peakObservedAt: number | null;
+  };
   rate: {
     measuredTps: number;
     estimatedTps: number;

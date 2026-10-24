@@ -1,5 +1,5 @@
 import { calendarDays, measuredPeak } from "./math.js";
-import type { MonitorCalendarDay } from "./math.js";
+import type { MeasuredPeak, MonitorCalendarDay } from "./math.js";
 import { emptyUsage } from "./parser.js";
 import type { NumericResponse } from "./parser.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
@@ -8,6 +8,9 @@ import type { OmpMonitorDay, OmpMonitorScope, OmpMonitorUsage } from "./types.js
 const USAGE_FIELDS = Object.keys(emptyUsage()) as Array<keyof OmpMonitorUsage>;
 export interface HistoryProjection {
   days: OmpMonitorDay[];
+  /** Peak provenance aligned with days, kept out of additive usage fields. */
+  peaks: MeasuredPeak[];
+  lastResponseAt: number | null;
   limited: boolean;
 }
 interface CachedHistory extends HistoryProjection {
@@ -72,8 +75,12 @@ export class OmpMonitorHistory {
     if (cached?.version === version) return cached;
     const days = dates.map((day) => ({ date: day.date, ...emptyUsage() }));
     const peakIntervals: NumericResponse[][] = dates.map(() => []);
+    const peaks: MeasuredPeak[] = [];
+    let lastResponseAt: number | null = null;
     let limited = false;
     for (const response of responses) {
+      if (!response.sideCall && response.failedRequests === 0 && response.outputTokens > 0)
+        lastResponseAt = Math.max(lastResponseAt ?? response.endMs, response.endMs);
       const responseDayIndex = dates.findIndex(
         (day) => response.endMs >= day.start && response.endMs < day.end,
       );
@@ -85,13 +92,11 @@ export class OmpMonitorHistory {
     }
     for (let peakDayIndex = 0; peakDayIndex < days.length; peakDayIndex++) {
       const day = dates[peakDayIndex]!;
-      days[peakDayIndex]!.peakOutputTps = measuredPeak(
-        peakIntervals[peakDayIndex]!,
-        day.start,
-        day.end,
-      );
+      const peak = measuredPeak(peakIntervals[peakDayIndex]!, day.start, day.end);
+      days[peakDayIndex]!.peakOutputTps = peak.value;
+      peaks.push(peak);
     }
-    const result = { version, days, limited };
+    const result = { version, days, peaks, lastResponseAt, limited };
     if (this.histories.size >= 9 && !this.histories.has(key))
       this.histories.delete(this.histories.keys().next().value!);
     this.histories.set(key, result);

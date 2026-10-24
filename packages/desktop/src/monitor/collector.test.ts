@@ -108,12 +108,14 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(await missing.poll()).toMatchObject({
       status: "unavailable",
       today: { requests: 0 },
+      activity: { lastResponseAt: null, peakAt: null, peakObservedAt: null },
       coverage: { roots: [{ available: false }] },
     });
     const empty = monitor(root);
     expect(await empty.poll()).toMatchObject({
       status: "ready",
       today: { requests: 0 },
+      activity: { lastResponseAt: null, peakAt: null, peakObservedAt: null },
       coverage: { limited: false },
     });
   });
@@ -163,6 +165,11 @@ describe("OMP local numeric filesystem monitor", () => {
       measuredOutputTokens: 40,
       measuredDurationMs: 2_000,
     });
+    expect(snapshot.activity).toEqual({
+      lastResponseAt: NOW - 3_000,
+      peakAt: NOW - 3_000,
+      peakObservedAt: NOW - 3_000,
+    });
     expect(snapshot.agents[0]).toMatchObject({
       model: "model-a",
       phase: "idle",
@@ -208,16 +215,31 @@ describe("OMP local numeric filesystem monitor", () => {
     await utimes(original, new Date(NOW - 10_000), new Date(NOW - 10_000));
     await utimes(copy, new Date(NOW - 9_000), new Date(NOW - 9_000));
     const current = monitor(root);
-    expect((await current.poll()).today).toMatchObject({ requests: 2, outputTokens: 30 });
+    const initial = await current.poll();
+    expect(initial.today).toMatchObject({ requests: 2, outputTokens: 30 });
+    expect(initial.activity).toEqual({
+      lastResponseAt: NOW - 1_000,
+      peakAt: NOW - 1_000,
+      peakObservedAt: NOW - 1_000,
+    });
     await appendFile(original, `${JSON.stringify(response("same-id", NOW - 4_000, 15))}\n`);
-    expect((await current.poll({ refresh: true })).today).toMatchObject({
+    const corrected = await current.poll({ refresh: true });
+    expect(corrected.today).toMatchObject({
       requests: 2,
       outputTokens: 35,
     });
+    expect(corrected.today.peakOutputTps).toBeCloseTo(35 / 3);
+    expect(corrected.activity).toEqual(initial.activity);
     await rm(original);
-    expect((await current.poll({ refresh: true })).today).toMatchObject({
+    const remainingCopy = await current.poll({ refresh: true });
+    expect(remainingCopy.today).toMatchObject({
       requests: 1,
       outputTokens: 10,
+    });
+    expect(remainingCopy.activity).toEqual({
+      lastResponseAt: NOW - 3_000,
+      peakAt: NOW - 3_000,
+      peakObservedAt: NOW - 3_000,
     });
   });
 
@@ -256,6 +278,11 @@ describe("OMP local numeric filesystem monitor", () => {
     const generating = await current.poll();
     expect(generating.rate.measuredTps).toBe(0);
     expect(generating.rate.estimatedTps).toBeCloseTo(200 / 3);
+    expect(generating.activity).toEqual({
+      lastResponseAt: NOW - 19_000,
+      peakAt: NOW - 19_000,
+      peakObservedAt: NOW - 19_000,
+    });
     now += 1_000;
     await appendFile(
       file,
@@ -274,6 +301,11 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(tools.agents[0]!.phase).toBe("tools");
     expect(tools.rate.estimatedTps).toBe(0);
     expect(tools.rate.measuredTps).toBeCloseTo(50);
+    expect(tools.activity).toEqual({
+      lastResponseAt: NOW + 1_000,
+      peakAt: NOW + 1_000,
+      peakObservedAt: NOW + 1_000,
+    });
     expect(tools.series.find((point) => point.timestamp === NOW - 2_000)).toMatchObject({
       measuredTps: 0,
       estimatedTps: 0,
@@ -294,6 +326,7 @@ describe("OMP local numeric filesystem monitor", () => {
     const resumed = await current.poll();
     expect(resumed.rate.measuredTps).toBe(0);
     expect(resumed.rate.estimatedTps).toBeGreaterThan(0);
+    expect(resumed.activity).toEqual(tools.activity);
     expect(resumed.series.find((point) => point.timestamp === NOW + 2_000)).toMatchObject({
       measuredTps: 0,
       estimatedTps: 0,
@@ -321,6 +354,153 @@ describe("OMP local numeric filesystem monitor", () => {
       (snapshot.today.measuredOutputTokens * 1_000) / snapshot.today.measuredDurationMs,
     ).toBeCloseTo(75);
     expect(snapshot.today.peakOutputTps).toBeCloseTo(150);
+    expect(snapshot.activity).toEqual({
+      lastResponseAt: NOW,
+      peakAt: NOW,
+      peakObservedAt: NOW,
+    });
+  });
+
+  it("reports successful unknown-timing completions without counting failures, side calls or input-only usage as response events", async () => {
+    const root = await directory();
+    const file = await session(root, "main.jsonl", [
+      header(),
+      response("unknown-timing", NOW - 10_000, 20, {
+        duration: undefined,
+        completedAt: NOW - 9_000,
+      }),
+    ]);
+    const current = monitor(root);
+    const completed = await current.poll();
+    expect(completed.today.peakOutputTps).toBe(0);
+    expect(completed.activity).toEqual({
+      lastResponseAt: NOW - 9_000,
+      peakAt: null,
+      peakObservedAt: null,
+    });
+    await appendFile(
+      file,
+      [
+        response("failed", NOW - 6_000, 1_000, { stopReason: "error" }),
+        response("aborted", NOW - 5_000, 1_000, { stopReason: "aborted" }),
+        {
+          type: "model_usage",
+          id: "side-call",
+          timestamp: new Date(NOW - 1_000).toISOString(),
+          model: "side-model",
+          provider: "fixture",
+          api: "fixture-api",
+          usage: { input: 1, output: 1_000 },
+        },
+        response("input-only", NOW - 1_000, 0),
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") + "\n",
+    );
+    const excluded = await current.poll();
+    expect(excluded.today).toMatchObject({
+      requests: 5,
+      failedRequests: 2,
+      measuredOutputTokens: 0,
+      peakOutputTps: 0,
+    });
+    expect(excluded.activity).toEqual(completed.activity);
+  });
+
+  it("preserves actual old completion times when a backfill raises the peak, then identifies a fresh measured completion", async () => {
+    const root = await directory();
+    let now = NOW;
+    const file = await session(root, "main.jsonl", [
+      header(NOW - 2 * 60 * 60_000),
+      response("baseline", NOW - 60_000, 30, { duration: 3_000 }),
+    ]);
+    const current = monitor(root, () => now);
+    const baseline = await current.poll();
+    expect(baseline.today.peakOutputTps).toBe(10);
+    await appendFile(
+      file,
+      `${JSON.stringify(response("old-backfill", NOW - 60 * 60_000, 600, { duration: 3_000 }))}\n`,
+    );
+    const backfill = await current.poll();
+    expect(backfill.today.peakOutputTps).toBe(200);
+    expect(backfill.activity).toEqual({
+      lastResponseAt: NOW - 57_000,
+      peakAt: NOW - 60 * 60_000 + 3_000,
+      peakObservedAt: NOW - 60 * 60_000 + 3_000,
+    });
+    now += 1_000;
+    await appendFile(
+      file,
+      `${JSON.stringify(response("fresh", now - 3_000, 900, { duration: 3_000 }))}\n`,
+    );
+    const fresh = await current.poll();
+    expect(fresh.today.peakOutputTps).toBe(300);
+    expect(fresh.activity).toEqual({
+      lastResponseAt: now,
+      peakAt: now,
+      peakObservedAt: now,
+    });
+    expect(current.getSnapshot()).toBe(fresh);
+    expect((await current.poll()).activity).toEqual(fresh.activity);
+  });
+
+  it("attributes an earlier winning window to a genuinely fresh long response that contributed to it", async () => {
+    const root = await directory();
+    const file = await session(root, "main.jsonl", [
+      header(NOW - 10 * 60_000),
+      response("earlier-burst", NOW - 110_000, 600, { duration: 3_000 }),
+      response("later-small-call", NOW - 5_000, 5),
+    ]);
+    const current = monitor(root);
+    const before = await current.poll();
+    expect(before.today.peakOutputTps).toBe(200);
+    expect(before.activity).toEqual({
+      lastResponseAt: NOW - 4_000,
+      peakAt: NOW - 107_000,
+      peakObservedAt: NOW - 107_000,
+    });
+    await appendFile(
+      file,
+      `${JSON.stringify(response("long-completion", NOW - 120_000, 12_000, { duration: 120_000 }))}\n`,
+    );
+    const completed = await current.poll();
+    expect(completed.today.peakOutputTps).toBe(300);
+    expect(completed.activity).toEqual({
+      lastResponseAt: NOW,
+      peakAt: NOW - 107_000,
+      peakObservedAt: NOW,
+    });
+  });
+
+  it("keeps the earliest tied peak window and its contributing completion across sparse long intervals", async () => {
+    const root = await directory();
+    await session(root, "main.jsonl", [
+      header(NOW - 180_000),
+      response("first-plateau", NOW - 120_000, 3_000, { duration: 30_000 }),
+      response("equal-later-plateau", NOW - 30_000, 3_000, { duration: 30_000 }),
+    ]);
+    const snapshot = await monitor(root).poll();
+    expect(snapshot.today.peakOutputTps).toBe(100);
+    expect(snapshot.activity).toEqual({
+      lastResponseAt: NOW,
+      peakAt: NOW - 117_000,
+      peakObservedAt: NOW - 90_000,
+    });
+  });
+
+  it("retains partial-second peak math and completion provenance beyond the winning window", async () => {
+    const root = await directory();
+    await session(root, "main.jsonl", [
+      header(),
+      response("fractional-buckets", NOW - 3_750, 350, { duration: 3_500 }),
+    ]);
+    const snapshot = await monitor(root).poll();
+    expect(snapshot.today.peakOutputTps).toBeCloseTo(275 / 3);
+    expect(snapshot.activity).toEqual({
+      lastResponseAt: NOW - 250,
+      peakAt: NOW - 1_000,
+      peakObservedAt: NOW - 250,
+    });
   });
 
   it("bounds speed to valid native timing, normalizes short calls and never parses string TTFT", async () => {
@@ -384,6 +564,71 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(snapshot.agents.find((agent) => agent.kind === "main")!.outputTps).toBe(20);
     expect(snapshot.agents.find((agent) => agent.kind === "subagent")!.outputTps).toBe(265);
     expect(snapshot.rate.estimatedTps).toBeCloseTo(265 / 3);
+  });
+
+  it("keeps event provenance scoped and invalidates each cached scope after a real completion", async () => {
+    const first = await directory();
+    const second = await directory();
+    let now = NOW;
+    const file = await session(first, "main.jsonl", [
+      header(),
+      response("first-profile", NOW - 33_000, 300, { duration: 3_000 }),
+    ]);
+    await session(second, "other.jsonl", [
+      header(NOW - 60_000, "/private/project-beta"),
+      response("second-profile", NOW - 13_000, 600, { duration: 3_000 }),
+    ]);
+    const current = new OmpLocalMonitor({
+      roots: [
+        { path: first, label: "default" },
+        { path: second, label: "work" },
+      ],
+      now: () => now,
+    });
+    monitors.push(current);
+    const all = await current.poll();
+    const firstProject = all.scopes.projects.find((label) => label.startsWith("project-alpha ["))!;
+    const secondProject = all.scopes.projects.find((label) => label.startsWith("project-beta ["))!;
+    const firstScope = { profile: "default", project: firstProject };
+    const secondScope = { profile: "work", project: secondProject };
+    const firstSnapshot = current.getSnapshot(firstScope);
+    const secondSnapshot = current.getSnapshot(secondScope);
+    expect(all.activity).toEqual(secondSnapshot.activity);
+    expect(firstSnapshot.today.peakOutputTps).toBe(100);
+    expect(firstSnapshot.activity).toEqual({
+      lastResponseAt: NOW - 30_000,
+      peakAt: NOW - 30_000,
+      peakObservedAt: NOW - 30_000,
+    });
+    expect(secondSnapshot.today.peakOutputTps).toBe(200);
+    expect(secondSnapshot.activity).toEqual({
+      lastResponseAt: NOW - 10_000,
+      peakAt: NOW - 10_000,
+      peakObservedAt: NOW - 10_000,
+    });
+    expect(current.getSnapshot({ profile: "default", project: secondProject }).activity).toEqual({
+      lastResponseAt: null,
+      peakAt: null,
+      peakObservedAt: null,
+    });
+    expect(current.getSnapshot(firstScope)).toBe(firstSnapshot);
+    now += 1_000;
+    await appendFile(
+      file,
+      `${JSON.stringify(response("fresh-first-profile", now - 3_000, 900, { duration: 3_000 }))}\n`,
+    );
+    await current.poll();
+    expect(current.getSnapshot(firstScope)).toMatchObject({
+      today: { requests: 2, peakOutputTps: 300 },
+      activity: { lastResponseAt: now, peakAt: now, peakObservedAt: now },
+    });
+    expect(current.getSnapshot(secondScope).activity).toEqual(secondSnapshot.activity);
+    expect(current.getSnapshot(secondScope).today.peakOutputTps).toBe(200);
+    expect(current.getSnapshot().activity).toEqual({
+      lastResponseAt: now,
+      peakAt: now,
+      peakObservedAt: now,
+    });
   });
 
   it("filters every numeric projection by profile/project using one retained filesystem state", async () => {
@@ -615,6 +860,38 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(next.coverage.issues).toContain("scan_pending");
   });
 
+  it("resets current-day peak provenance at local midnight without losing retained completion times", async () => {
+    const root = await directory();
+    const day = new Date(NOW);
+    day.setHours(0, 0, 0, 0);
+    const midnight = day.getTime();
+    let now = midnight + 1_000;
+    await session(root, "main.jsonl", [
+      header(midnight - 60_000),
+      response("cross-midnight", midnight - 2_000, 600, { duration: 3_000 }),
+    ]);
+    const current = monitor(root, () => now);
+    const completed = await current.poll();
+    expect(completed.days.at(-2)!.peakOutputTps).toBeCloseTo(400 / 3);
+    expect(completed.today).toMatchObject({ requests: 1, measuredDurationMs: 3_000 });
+    expect(completed.today.peakOutputTps).toBeCloseTo(200 / 3);
+    expect(completed.activity).toEqual({
+      lastResponseAt: midnight + 1_000,
+      peakAt: midnight + 1_000,
+      peakObservedAt: midnight + 1_000,
+    });
+    day.setDate(day.getDate() + 1);
+    now = day.getTime() + 1_000;
+    const nextDay = await current.poll();
+    expect(nextDay.today).toMatchObject({ requests: 0, peakOutputTps: 0 });
+    expect(nextDay.activity).toEqual({
+      lastResponseAt: midnight + 1_000,
+      peakAt: null,
+      peakObservedAt: null,
+    });
+    expect(nextDay.days.at(-2)!.peakOutputTps).toBeCloseTo(200 / 3);
+  });
+
   it("uses local calendar retention, keeps inactive ancestors, and expires numeric records without a ledger", async () => {
     const root = await directory();
     let now = NOW;
@@ -635,7 +912,13 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(first.agents).toHaveLength(2);
     expect(first.agents[1]!.parentId).toBe(first.agents[0]!.id);
     now += 31 * 86_400_000;
-    expect((await current.poll()).days.every((day) => day.requests === 0)).toBe(true);
+    const expired = await current.poll();
+    expect(expired.days.every((day) => day.requests === 0)).toBe(true);
+    expect(expired.activity).toEqual({
+      lastResponseAt: null,
+      peakAt: null,
+      peakObservedAt: null,
+    });
   });
 
   it("rejects non-numeric usage guards and caps hostile numeric facts safely", async () => {
@@ -762,6 +1045,7 @@ describe("OMP local numeric filesystem monitor", () => {
       unestimatedRequests: 1,
     });
     expect(inputs).toHaveLength(6);
+    expect(current.getSnapshot().activity).toEqual(first.activity);
   });
 });
 

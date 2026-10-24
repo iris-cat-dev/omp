@@ -927,13 +927,15 @@ if (!isPetCreationCli) {
   const quitLifecycle = createQuitLifecycle({
     app,
     closeTransportSessions: closeAllTransportSessions,
-    stopDesktopManagedDaemonIfNeeded: () =>
-      stopDesktopManagedDaemonOnQuitIfNeeded({
+    stopDesktopManagedDaemonIfNeeded: async () => {
+      await monitorController?.dispose();
+      return stopDesktopManagedDaemonOnQuitIfNeeded({
         settingsStore: getDesktopSettingsStore(),
         isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
         stopDaemon: () => stopDesktopDaemonViaCli("quit"),
         showShutdownFeedback: showDaemonShutdownDialog,
-      }),
+      });
+    },
     installAppUpdateOnQuit: async (signal) => {
       // Startup exception: updater loading belongs to an update/quit operation,
       // not the first-window critical path.
@@ -966,7 +968,7 @@ if (!isPetCreationCli) {
     beginMainWindowShutdown();
     backgroundModeController.markAppQuitting();
     petController?.beginShutdown();
-    monitorController?.dispose();
+    void monitorController?.dispose();
     quitLifecycle.handleBeforeQuit(event);
   });
   registerExternalQuitSignals({ signals: process, quit: () => app.quit() });

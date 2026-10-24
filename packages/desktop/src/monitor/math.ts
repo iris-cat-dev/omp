@@ -53,12 +53,20 @@ function addInterval(events: Map<number, number>, start: number, end: number, sp
   }
 }
 
+export interface MeasuredPeak {
+  value: number;
+  /** Exclusive end of the earliest winning three-second bucket window. */
+  at: number | null;
+  /** Latest completion of a measured response contributing output to that window. */
+  observedAt: number | null;
+}
+
 /** Peak measured concurrent output, averaged over three one-second buckets. */
 export function measuredPeak(
   responses: readonly NumericResponse[],
   start: number,
   end: number,
-): number {
+): MeasuredPeak {
   const events = new Map<number, number>();
   for (const response of responses) {
     if (response.startMs === null || !response.measuredDurationMs) continue;
@@ -70,28 +78,56 @@ export function measuredPeak(
     );
   }
   const entries = [...events].sort((a, b) => a[0] - b[0]);
-  if (!entries.length) return 0;
+  if (!entries.length) return { value: 0, at: null, observedAt: null };
   let cursor = entries[0]![0];
   let value = 0;
   let previous = 0;
   let beforePrevious = 0;
   let peak = 0;
+  let peakAt: number | null = null;
   for (const [second, delta] of entries) {
     const gap = second - cursor;
     for (let count = 0; count < Math.min(3, gap); count++) {
-      peak = Math.max(peak, (beforePrevious + previous + value) / 3);
+      const candidate = (beforePrevious + previous + value) / 3;
+      if (candidate > peak) {
+        peak = candidate;
+        peakAt = (cursor + count + 1) * 1_000;
+      }
       beforePrevious = previous;
       previous = value;
     }
     if (gap > 3) {
-      peak = Math.max(peak, value);
+      if (value > peak) {
+        peak = value;
+        peakAt = (cursor + 3) * 1_000;
+      }
       beforePrevious = value;
       previous = value;
     }
     cursor = second;
     value = Math.max(0, value + delta);
   }
-  return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, peak));
+  let observedAt: number | null = null;
+  if (peakAt !== null) {
+    for (const response of responses) {
+      if (
+        response.startMs === null ||
+        response.measuredDurationMs <= 0 ||
+        response.outputTokens <= 0
+      )
+        continue;
+      if (
+        Math.max(start, response.startMs, peakAt - LIVE_WINDOW_MS) <
+        Math.min(end, response.endMs, peakAt)
+      )
+        observedAt = Math.max(observedAt ?? response.endMs, response.endMs);
+    }
+  }
+  return {
+    value: Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, peak)),
+    at: peakAt,
+    observedAt,
+  };
 }
 
 export interface LiveMetrics {

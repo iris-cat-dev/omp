@@ -36,6 +36,14 @@ const QUOTE: OmpMonitorCostInput = {
   cacheReadTokens: 1_000_000,
   cacheWriteTokens: 1_000_000,
 };
+const CACHED_QUOTE: OmpMonitorCostInput = {
+  provider: null,
+  model: null,
+  inputTokens: 100,
+  outputTokens: 100,
+  cacheReadTokens: 900,
+  cacheWriteTokens: 0,
+};
 interface TestModel extends Record<string, unknown> {
   id: string;
   prices?: Record<string, unknown>;
@@ -50,9 +58,19 @@ interface TestTable {
   normalize: Record<string, unknown>;
 }
 
-function newTable(version = 2): TestTable {
+function newTable(): TestTable {
   const document = structuredClone(BUNDLED_PRICE_TABLE) as TestTable;
-  document.version = version;
+  document.version++;
+  return document;
+}
+function quoteTable(): TestTable {
+  const document = newTable();
+  // USD per million tokens; cache writes intentionally use the uncached-input fallback.
+  document.models.find((model) => model.id === "gpt-5")!.prices = {
+    input: 2,
+    cachedInput: 0.125,
+    output: 10,
+  };
   return document;
 }
 function jsonResponse(value: unknown, status = 200): Response {
@@ -189,19 +207,99 @@ describe("real bundled API-list equivalents", () => {
     ).toBeNull();
   });
 
+  it.each(["deepseek-v4.1-flash-1017", "deepseek-v4.1-flash", "deepseek-flash"])(
+    "prices %s as canonical Flash without charging cached input twice",
+    (model) => {
+      const table = validatePriceTable(BUNDLED_PRICE_TABLE, NOW);
+      for (const provider of [null, "deepseek", "custom"]) {
+        const quote = { ...CACHED_QUOTE, model, provider };
+        expect(table.resolve(model, provider).model?.id).toBe("deepseek-flash");
+        expect(table.estimateCost(quote, NOW)).toBe(0.000078);
+        expect(table.estimateCost({ ...quote, inputTokens: 1000, cacheReadTokens: 0 }, NOW)).toBe(
+          0.00021,
+        );
+        expect(table.estimateCost({ ...quote, inputTokens: 0, cacheReadTokens: 1000 }, NOW)).toBe(
+          0.000063,
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["2026-04-26T12:14Z", 67],
+    ["2026-04-26T12:15Z", 45],
+    ["2026-08-16T16:00Z", 94],
+    ["2026-09-10T03:59Z", 189],
+    ["2026-09-10T04:00Z", 78],
+    ["2026-10-23T02:00Z", 155],
+    ["2026-10-23T04:00Z", 78],
+    ["2026-10-24T02:00Z", 78],
+    ["2026-10-01T02:00Z", 78],
+  ] as const)("keeps DeepSeek Flash periods and off-peak boundaries at %s", (at, microUsd) => {
+    const table = validatePriceTable(BUNDLED_PRICE_TABLE, NOW);
+    for (const model of ["deepseek-v4.1-flash-1017", "deepseek-v4.1-flash", "deepseek-flash"])
+      expect(
+        table.estimateCost({ ...CACHED_QUOTE, model, provider: "deepseek" }, Date.parse(at)),
+      ).toBe(microUsd / 1_000_000);
+  });
+
+  it.each([
+    { model: "Gemini 3.8 Flash", canonical: "gemini-3.8-flash", microUsd: 518 },
+    { model: "Gemini 4 Argon", canonical: "gemini-4-argon", microUsd: 1290 },
+  ])(
+    "quotes the documented $model display alias even without a provider",
+    ({ model, canonical, microUsd }) => {
+      const table = validatePriceTable(BUNDLED_PRICE_TABLE, NOW);
+      for (const provider of [null, "google", "custom"]) {
+        expect(table.resolve(model, provider).model?.id).toBe(canonical);
+        expect(table.estimateCost({ ...CACHED_QUOTE, model, provider }, NOW)).toBe(
+          microUsd / 1_000_000,
+        );
+        expect(table.estimateCost({ ...CACHED_QUOTE, model: canonical, provider }, NOW)).toBe(
+          microUsd / 1_000_000,
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["Gemini 4 Argon", "2026-11-30T23:59:59.999Z", 1290],
+    ["Gemini 4 Argon", "2026-12-01T00:00:00Z", 2580],
+    ["Gemini 3.8 Flash", "2026-12-31T23:59:59.999Z", 518],
+    ["Gemini 3.8 Flash", "2027-01-01T00:00:00Z", 1035],
+  ] as const)("keeps %s on its published price at %s", (model, at, microUsd) => {
+    const table = validatePriceTable(BUNDLED_PRICE_TABLE, NOW);
+    expect(table.estimateCost({ ...CACHED_QUOTE, model }, Date.parse(at))).toBe(
+      microUsd / 1_000_000,
+    );
+  });
+
   it("keeps unknown and unsafe matches unknown, while recognizing documented free/local usage", () => {
     const table = validatePriceTable(BUNDLED_PRICE_TABLE, NOW);
     for (const model of [
       null,
       "",
+      " \t",
       "default-model",
       "gpt-5-made-up-discount",
       "gpt-5.999",
       "openrouter/auto",
       "codex-auto-review",
+      "deepseek-v4.1-flash-9999",
+      "deepseek-v4.1-flash-1017-other",
+      "deepseek-unrecognized-model",
+      "Gemini Unannounced Model",
+      "gemini-pro-default",
+      "gemini-3.1-flash",
+      "neko-model-gemini-4-argon",
+      "gemini-internal-router",
     ])
-      expect(table.estimateCost({ ...QUOTE, model }, NOW)).toBeNull();
-    expect(table.estimateCost({ ...QUOTE, model: null, provider: "ollama" }, NOW)).toBeNull();
+      for (const provider of [null, "openai", "deepseek", "google", "custom"]) {
+        expect(table.resolve(model, provider).kind).toBe("unknown");
+        expect(table.estimateCost({ ...QUOTE, model, provider }, NOW)).toBeNull();
+      }
+    for (const model of [null, "", " \t"])
+      expect(table.estimateCost({ ...QUOTE, model, provider: "ollama" }, NOW)).toBeNull();
     expect(
       table.estimateCost({ ...QUOTE, model: "qwen3-coder:30b", provider: "ollama" }, NOW),
     ).toBe(0);
@@ -408,10 +506,11 @@ describe("network settings, persistence and cadence", () => {
 
   it("honors the 60-second launch delay, daily success schedule and USD's zero-FX rule", async () => {
     let now = NOW;
+    const document = newTable();
     const calls: Array<{ url: string; options: RequestInit | undefined }> = [];
     const fetcher: typeof globalThis.fetch = async (url, options) => {
       calls.push({ url: String(url), options });
-      return jsonResponse(newTable());
+      return jsonResponse(document);
     };
     const { catalog } = await createCatalog(fetcher, () => now);
     await catalog.initialize();
@@ -433,8 +532,8 @@ describe("network settings, persistence and cadence", () => {
     expect(calls[0]!.options?.headers).toEqual({ Accept: "application/json" });
     expect(catalog.getState().prices).toMatchObject({
       status: "fresh",
-      version: "2",
-      updatedAt: "2026-10-23",
+      version: String(document.version),
+      updatedAt: document.updated,
       fetchedAt: now,
       source: PRICE_URL,
     });
@@ -452,15 +551,19 @@ describe("network settings, persistence and cadence", () => {
     expect(calls.every((call) => call.url === PRICE_URL)).toBe(true);
   });
 
-  it("tries only the fixed mirror after invalid data and never downgrades the current catalog", async () => {
-    let mode: "mirror" | "downgrade" | "mismatch" = "mirror";
+  it("tries only the fixed mirror, adopts newer quotes, and preserves them across rejected updates and restart", async () => {
+    const accepted = quoteTable();
+    let mode: "mirror" | "downgrade" | "mismatch" | "rewrite" = "mirror";
     const calls: string[] = [];
     const fetcher: typeof globalThis.fetch = async (url) => {
       calls.push(String(url));
       if (mode === "mirror" && String(url) === PRICE_URL) return jsonResponse({ schema: 1 });
-      const document = newTable(mode === "downgrade" ? 1 : 2);
+      const document = structuredClone(accepted);
+      if (mode !== "mirror")
+        document.models.find((model) => model.id === "gpt-5")!.prices!.input = 4;
+      if (mode === "downgrade") document.version--;
       if (mode === "mismatch") {
-        document.version = 3;
+        document.version++;
         document.tests[0]!.expect = "unknown";
       }
       return jsonResponse(document);
@@ -468,23 +571,31 @@ describe("network settings, persistence and cadence", () => {
     const { catalog, cacheDir } = await createCatalog(fetcher);
     await catalog.refresh({ force: true });
     expect(calls).toEqual([PRICE_URL, MIRROR_URL]);
-    expect(catalog.getState().prices).toMatchObject({ version: "2", source: MIRROR_URL });
-    const quote = catalog.estimateCost(QUOTE);
+    expect(catalog.getState().prices).toMatchObject({
+      version: String(accepted.version),
+      source: MIRROR_URL,
+    });
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125); // 2 + .125 + 2 + 10
     mode = "downgrade";
     await catalog.refresh({ force: true });
     expect(catalog.getState().prices).toMatchObject({
-      version: "2",
+      version: String(accepted.version),
       status: "error",
       source: MIRROR_URL,
     });
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
     mode = "mismatch";
     await catalog.refresh({ force: true });
-    expect(catalog.estimateCost(QUOTE)).toBe(quote);
-    expect(catalog.getState().prices.version).toBe("2");
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
+    expect(catalog.getState().prices.version).toBe(String(accepted.version));
+    mode = "rewrite";
+    await catalog.refresh({ force: true });
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
     catalog.dispose();
     const { catalog: restarted } = await createCatalog(fetcher, () => NOW, cacheDir);
     await restarted.initialize();
-    expect(restarted.getState().prices.version).toBe("2");
+    expect(restarted.getState().prices.version).toBe(String(accepted.version));
+    expect(restarted.estimateCost(QUOTE)).toBe(14.125);
   });
 
   it("backs off failures for an hour, then daily after the second failed price round", async () => {
@@ -529,22 +640,32 @@ describe("network settings, persistence and cadence", () => {
     };
     const { catalog } = await createCatalog(fetcher);
     await catalog.initialize();
+    const beforePrices = catalog.getState().prices;
+    const beforeQuote = catalog.estimateCost(QUOTE);
+    const document = newTable();
+    document.models.find((model) => model.id === "gpt-5")!.prices!.input = 4;
     const first = catalog.refresh({ force: true });
     const second = catalog.refresh({ force: true });
     await started;
     expect(calls).toHaveLength(1);
     await catalog.configure({ networkEnabled: false });
     expect(calls[0]!.signal?.aborted).toBe(true);
-    deliver(jsonResponse(newTable(5)));
+    deliver(jsonResponse(document));
     await Promise.all([first, second]);
     await catalog.refresh({ force: true });
     expect(calls).toHaveLength(1);
-    expect(catalog.getState().prices.version).toBe("1");
-    expect(catalog.estimateCost(QUOTE)).toBe(12.625);
+    expect(catalog.getState().prices).toMatchObject({
+      version: beforePrices.version,
+      updatedAt: beforePrices.updatedAt,
+      fetchedAt: beforePrices.fetchedAt,
+      source: beforePrices.source,
+    });
+    expect(catalog.estimateCost(QUOTE)).toBe(beforeQuote);
   });
 
   it("preserves corrupt caches and unrelated data, then atomically persists a valid replacement", async () => {
-    const fetcher: typeof globalThis.fetch = async () => jsonResponse(newTable());
+    const document = quoteTable();
+    const fetcher: typeof globalThis.fetch = async () => jsonResponse(document);
     const { catalog, cacheDir } = await createCatalog(fetcher);
     await writeFile(path.join(cacheDir, "prices.json"), "{corrupt user-visible evidence");
     await writeFile(path.join(cacheDir, "unrelated.txt"), "do not delete");
@@ -553,6 +674,7 @@ describe("network settings, persistence and cadence", () => {
       "{corrupt user-visible evidence",
     );
     await catalog.refresh({ force: true });
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
     const names = await readdir(cacheDir);
     const preserved = names.find((name) => name.startsWith("prices.json.invalid-"));
     expect(preserved).toBeTruthy();
@@ -563,7 +685,7 @@ describe("network settings, persistence and cadence", () => {
     expect(names.some((name) => name.endsWith(".tmp"))).toBe(false);
     const stored: unknown = JSON.parse(await readFile(path.join(cacheDir, "prices.json"), "utf8"));
     if (!isObject(stored)) throw new Error("invalid stored table envelope");
-    expect(validatePriceTable(stored.table, NOW).version).toBe(2);
+    expect(validatePriceTable(stored.table, NOW).document).toEqual(document);
   });
 });
 
@@ -585,15 +707,25 @@ describe("hard body and timeout policy", () => {
       return new Response(body, { headers: { "content-length": "1" } });
     };
     const { catalog } = await createCatalog(fetcher);
+    const beforePrices = catalog.getState().prices;
+    const beforeQuote = catalog.estimateCost(QUOTE);
     await catalog.refresh({ force: true });
     expect(pulls).toBeLessThanOrEqual(PRICE_MAX_BYTES / (64 << 10) + 2);
     expect(cancellations).toBe(1);
-    expect(catalog.getState().prices).toMatchObject({ status: "error", version: "1" });
+    expect(catalog.getState().prices).toMatchObject({
+      status: "error",
+      version: beforePrices.version,
+      fetchedAt: beforePrices.fetchedAt,
+      source: beforePrices.source,
+    });
+    expect(catalog.estimateCost(QUOTE)).toBe(beforeQuote);
   });
 
   it("rejects advertised oversize, redirects, and invalid UTF-8 without replacing last-good data", async () => {
-    let mode: "size" | "redirect" | "utf8" = "size";
+    const document = quoteTable();
+    let mode: "good" | "size" | "redirect" | "utf8" = "good";
     const fetcher: typeof globalThis.fetch = async () => {
+      if (mode === "good") return jsonResponse(document);
       if (mode === "size")
         return new Response("{}", { headers: { "content-length": String(PRICE_MAX_BYTES + 1) } });
       if (mode === "redirect")
@@ -604,10 +736,20 @@ describe("hard body and timeout policy", () => {
       return new Response(new Uint8Array([0xff, 0xfe, 0xfd]));
     };
     const { catalog } = await createCatalog(fetcher);
+    await catalog.refresh({ force: true });
+    const beforePrices = catalog.getState().prices;
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
     for (const next of ["size", "redirect", "utf8"] as const) {
       mode = next;
       await catalog.refresh({ force: true });
-      expect(catalog.getState().prices.version).toBe("1");
+      expect(catalog.getState().prices).toMatchObject({
+        status: "error",
+        version: beforePrices.version,
+        updatedAt: beforePrices.updatedAt,
+        fetchedAt: beforePrices.fetchedAt,
+        source: beforePrices.source,
+      });
+      expect(catalog.estimateCost(QUOTE)).toBe(14.125);
     }
   });
 

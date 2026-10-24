@@ -1,4 +1,5 @@
 import type { OmpMonitorSnapshot, OmpMonitorUsage } from "./types.js";
+import type { OmpMonitorExportRange } from "./view-types.js";
 
 type CsvValue = string | number | boolean | null | undefined;
 const COLUMNS = [
@@ -46,6 +47,8 @@ const COLUMNS = [
   "price_source",
   "rate_date",
   "rate_source",
+  "range_start",
+  "range_end",
   "notes",
 ] as const;
 
@@ -66,7 +69,10 @@ function csvCell(value: CsvValue): string {
 }
 
 /** Export numeric current-log facts with scope and pricing provenance, never raw transcripts. */
-export function buildMonitorCsv(snapshot: OmpMonitorSnapshot): string {
+export function buildMonitorCsv(
+  snapshot: OmpMonitorSnapshot,
+  range?: OmpMonitorExportRange,
+): string {
   const { pricing, coverage, scope } = snapshot;
   const rate = pricing.exchangeRate;
   const common: CsvRow = {
@@ -86,6 +92,8 @@ export function buildMonitorCsv(snapshot: OmpMonitorSnapshot): string {
     price_source: pricing.prices.source,
     rate_date: pricing.rates.updatedAt,
     rate_source: pricing.rates.source,
+    range_start: range?.startDate,
+    range_end: range?.endDate,
   };
   const usageRow = (usage: OmpMonitorUsage): CsvRow => ({
     requests: usage.requests,
@@ -117,8 +125,9 @@ export function buildMonitorCsv(snapshot: OmpMonitorSnapshot): string {
         : null,
     peak_measured_aggregate_output_tps: usage.peakOutputTps,
   });
-  const rows: CsvRow[] = [
-    {
+  const rows: CsvRow[] = [];
+  if (!range)
+    rows.push({
       ...common,
       ...usageRow(snapshot.today),
       section: "today",
@@ -126,11 +135,12 @@ export function buildMonitorCsv(snapshot: OmpMonitorSnapshot): string {
       estimated_output_tps: snapshot.rate.estimatedTps,
       notes:
         "Currently available OMP logs only; current-catalog estimates are not historic invoices. Live TPS sums concurrent outputs; request average excludes tools and includes TTFT. Not added to native /stats.",
-    },
-  ];
+    });
   for (const day of snapshot.days) {
+    if (range && (day.date < range.startDate || day.date > range.endDate)) continue;
     rows.push({ ...common, ...usageRow(day), section: "daily", date: day.date });
   }
+  if (range) return encodeRows(rows);
   for (const agent of snapshot.agents) {
     rows.push({
       ...common,
@@ -159,6 +169,10 @@ export function buildMonitorCsv(snapshot: OmpMonitorSnapshot): string {
     private_bytes: resources.privateBytes,
     notes: `${resources.status}${resources.reason ? `: ${resources.reason}` : ""}; native executable names only, excludes Node/Bun wrappers; RSS is not unique physical memory`,
   });
+  return encodeRows(rows);
+}
+
+function encodeRows(rows: readonly CsvRow[]): string {
   const lines = [COLUMNS.map(csvCell).join(",")];
   for (const row of rows) lines.push(COLUMNS.map((column) => csvCell(row[column])).join(","));
   return `${lines.join("\r\n")}\r\n`;

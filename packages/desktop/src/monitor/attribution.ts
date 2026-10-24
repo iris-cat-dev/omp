@@ -1,10 +1,12 @@
-/** Distributed with the translated measurement rules, title ladders and public price assets. */
+/** Distributed with the upstream visual ports, measurement rules and public price assets. */
 export const AGENT_SPEED_ATTRIBUTION =
-  "OMP local monitoring uses OMP measurement rules, speed-title ladders and public model pricing from Agent Speed (https://github.com/zoefix/agent-speed), adapted for OMP Desktop. Instrument SVG rendering and Desktop integration are local implementations.";
+  "OMP local monitoring adapts Agent Speed v1.4.1 (https://github.com/zoefix/agent-speed, a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c): its original orb/dashboard design, shaders, vector vehicles, OMP measurement rules, title ladders and public model pricing. Native window management, collection and Desktop integration are OMP Desktop implementations. Simplex noise is by Ashima Arts and Stefan Gustavson.";
 
 export const AGENT_SPEED_LICENSE = `MIT License
 
 Copyright (c) 2026 zoefix
+Copyright (C) 2011 by Ashima Arts (Simplex noise)
+Copyright (C) 2011-2016 by Stefan Gustavson (Classic noise and others)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

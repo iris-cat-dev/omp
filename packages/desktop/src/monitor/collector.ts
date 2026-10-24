@@ -139,6 +139,7 @@ export class OmpLocalMonitor {
       this.numericRevision,
       priceVersion,
     );
+    const currentPeak = history.peaks.at(-1)!;
     const coverage = projectCoverage(files.all, this.roots, {
       issues: this.discoveryIssues,
       skipped: this.discoverySkipped,
@@ -161,6 +162,11 @@ export class OmpLocalMonitor {
       },
       pricing,
       status: coverageStatus(coverage),
+      activity: {
+        lastResponseAt: history.lastResponseAt,
+        peakAt: currentPeak.at,
+        peakObservedAt: currentPeak.observedAt,
+      },
       rate: {
         measuredTps: live.measuredTps,
         estimatedTps: live.estimatedTps,
