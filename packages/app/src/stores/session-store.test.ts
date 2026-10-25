@@ -575,7 +575,7 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.scripts).toEqual([]);
   });
 
-  it("defaults missing archivingAt to null", () => {
+  it("defaults missing archive metadata and preserves archived-only workspace visibility", () => {
     const payload = {
       id: "1",
       projectId: "1",
@@ -594,6 +594,15 @@ describe("normalizeWorkspaceDescriptor", () => {
     const workspace = normalizeWorkspaceDescriptor(payload);
 
     expect(workspace.archivingAt).toBeNull();
+    expect(workspace.hasOnlyArchivedAgents).toBe(false);
+    expect(
+      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: true })
+        .hasOnlyArchivedAgents,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: false })
+        .hasOnlyArchivedAgents,
+    ).toBe(false);
   });
 
   it("normalizes statusEnteredAt strings to Date and missing or null values to null", () => {

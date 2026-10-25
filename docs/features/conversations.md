@@ -101,6 +101,8 @@ Desktop-injected tools distinguish:
 | `kill_agent`    | Terminates a loaded runtime, retaining its record.                         |
 | `delete_agent`  | Permanently removes the Desktop conversation record and retained timeline. |
 
+Native `archive_agent` updates connected sidebars without a refresh. A workspace whose conversations are all archived is hidden from the project and status lists, including their keyboard shortcuts, but its workspace record, files, and history remain intact. New empty workspaces and workspaces with another unarchived conversation remain visible. Reopening an archived conversation restores its sidebar entry.
+
 Use `delete_agent({ agentId, confirm: true })` only after explicit user authorization. It supports loaded, archived, and unloaded records without loading a provider session. Results are `deleted` or `not_found`; runtime-close/storage errors are failures, not successful deletions. The caller and its managed ancestors cannot be deleted through this tool.
 
 Connected clients refresh directories and history/search caches after deletion. Project files, deliverables, workspaces, Git worktrees/branches, and provider-owned session files are not deleted: this removes Desktop history, not providers' independent logs.

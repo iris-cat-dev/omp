@@ -120,6 +120,22 @@ On macOS, every renderer must service native AppKit application events even thou
 
 For the [local idle-scheduling runtime](packaging.md#macos-runtime), run its `macos-idle-pump-smoke.js`, `macos-idle-visibility-smoke.js`, and `macos-threaded-animation-smoke.js` alongside the responsiveness regression. These regressions belong to the mini-electron checkout. Select the rebuilt runtime with `MINI_ELECTRON_DIST_PATH`; rebuilding only the frontend does not add the native changes. A visible animated homepage is still active GPU work, not a zero-CPU idle page.
 
+#### Terminal trackpad scrolling
+
+The macOS `0.1.21` runtime can deliver nonzero `WheelEvent.deltaY` with zero `wheelDeltaY`: its precise-wheel path leaves Blink's wheel ticks unset. xterm prefers the legacy field, so terminal scrollback ignores trackpad gestures while ordinary mouse-wheel input still works. The native repair populates ticks from the physical-pixel deltas divided by 120; Blink then applies display scaling to both DOM representations. Do not add a second frontend wheel handler.
+
+Build the repaired mini-electron checkout with Python 3.12 or newer and `build.py --package-dist`. To install its validated distribution for development:
+
+```bash
+MINI_ELECTRON_DIST_PATH=/absolute/path/to/repaired/runtime-dist \
+  npx mini-electron --update-runtime
+npm run dev:desktop
+```
+
+For packaged builds, select the repaired distribution using the [packaging override](packaging.md#local-runtime-distributions); an already-installed application must be rebuilt/reinstalled, not merely have its frontend reloaded. This is an unpublished local runtime repair, not a new npm-installer version.
+
+Run the runtime's `test/macos-precise-wheel-smoke.js` to check precise-wheel standard/legacy deltas in both directions on both axes, including one-pixel input, without requiring application focus. Native qualification must also exercise the production terminal runtime with scrollback: trackpad up reveals older rows, down returns toward the prompt, horizontal input does not scroll vertically, and an ordinary wheel still works without sending shell input. The existing `test/macos-scroll-smoke.js` hidden-window mouse-wheel assertion also fails on the unmodified `0.1.21` runtime (`0` versus `80` pixels); it is not counted as passing qualification for this repair. The broader pointer-interaction smoke additionally requires native window activation; failure to acquire focus is not a precise-wheel contract result.
+
 ### Packaged Windows application
 
 Windows runtime builds disable Inspector/CDP, so the CDP-based `PASEO_DESKTOP_SMOKE=1` check is not supported there. Verify the real native window and bundled CLI/daemon instead; **do not enable Inspector or bypass IPC frame checks to pass a smoke**.

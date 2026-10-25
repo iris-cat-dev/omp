@@ -4322,6 +4322,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     archivingAt: z.string().nullable().optional().default(null),
+    // Sidebar-only visibility hint; absent on older daemons means false.
+    hasOnlyArchivedAgents: z.boolean().optional(),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
