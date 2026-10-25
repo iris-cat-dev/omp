@@ -2,7 +2,7 @@
 
 A [mini-electron](https://github.com/iris-cat-dev/mini-electron) and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through an end-to-end encrypted relay.
 
-Current source version: **0.5.2**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
+Current source version: **0.5.3**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
 
 ## Features
 

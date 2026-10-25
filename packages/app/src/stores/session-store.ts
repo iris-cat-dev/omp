@@ -123,6 +123,7 @@ export interface WorkspaceDescriptor {
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
+  hasOnlyArchivedAgents?: boolean;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
@@ -161,6 +162,7 @@ export function normalizeWorkspaceDescriptor(
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
+    hasOnlyArchivedAgents: payload.hasOnlyArchivedAgents ?? false,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,

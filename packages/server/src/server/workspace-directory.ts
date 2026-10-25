@@ -247,17 +247,33 @@ export class WorkspaceDirectory {
         }),
       ),
     );
+    const activeAgents: AgentSnapshotPayload[] = [];
+    const hasOnlyArchivedAgentsByWorkspaceId = new Map<string, boolean>();
+    for (const agent of agents) {
+      if (!this.deps.isProviderVisibleToClient(agent.provider)) {
+        continue;
+      }
+      if (!agent.archivedAt) {
+        activeAgents.push(agent);
+      }
+      const workspaceId = agent.workspaceId;
+      if (!workspaceId || !activeWorkspaceIds.has(workspaceId)) {
+        continue;
+      }
+      hasOnlyArchivedAgentsByWorkspaceId.set(
+        workspaceId,
+        (hasOnlyArchivedAgentsByWorkspaceId.get(workspaceId) ?? true) && Boolean(agent.archivedAt),
+      );
+    }
     for (let i = 0; i < includedWorkspaces.length; i += 1) {
       const workspaceId = includedWorkspaces[i].workspaceId;
       descriptorsByWorkspaceId.set(workspaceId, {
         ...workspaceDescriptors[i],
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
+        hasOnlyArchivedAgents: hasOnlyArchivedAgentsByWorkspaceId.get(workspaceId) ?? false,
       });
     }
 
-    const activeAgents = agents.filter(
-      (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
-    );
     this.applyAgentBucketContributions({
       activeAgents,
       descriptorsByWorkspaceId,

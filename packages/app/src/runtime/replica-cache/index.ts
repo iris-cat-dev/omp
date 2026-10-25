@@ -611,6 +611,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,
+    hasOnlyArchivedAgents: workspace.hasOnlyArchivedAgents ?? false,
     diffStat: workspace.diffStat,
     scripts: workspace.scripts.map((script) => ({
       scriptName: script.scriptName,

@@ -52,8 +52,17 @@ const PROJECT_STATUS_RANK: Record<SidebarWorkspaceEntry["statusBucket"], number>
 };
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
+  // Archive visibility is sidebar-only: keep the project header and source workspace
+  // metadata, but remove its conversation row before grouping and shortcut projection.
+  const visibleProjects = input.projects.map((project) => {
+    const workspaces = project.workspaces.filter(
+      (workspace) =>
+        input.workspaceEntriesByKey.get(workspace.workspaceKey)?.hasOnlyArchivedAgents !== true,
+    );
+    return workspaces.length === project.workspaces.length ? project : { ...project, workspaces };
+  });
   let projects = orderPinnedSidebarProjects({
-    projects: input.projects,
+    projects: visibleProjects,
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
   });

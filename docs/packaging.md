@@ -58,7 +58,7 @@ For local installer builds, pass `--publish never` to avoid uploading release ar
 
 ## GitHub Actions release packaging
 
-The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64, both bundled-OMP and no-OMP variants**, by default. It runs when a digit-prefixed tag such as `0.5.2` is pushed or through **Actions → Package release → Run workflow**.
+The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64, both bundled-OMP and no-OMP variants**, by default. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
 
 - The root and desktop package versions must match. A tag build also requires the exact tag `<packages/desktop/package.json version>` without a `v` prefix; the workflow does not bump versions.
 - Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64`, `OMP-Desktop-No-OMP-Setup-<version>-x64`, or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. GitHub downloads each artifact as an outer ZIP containing the original installers, package ZIPs, and blockmaps when generated, not unpacked apps or builder diagnostics. Bundled-OMP builds also include update YAML metadata. Publish the files inside this outer ZIP, not the Actions wrapper itself; installer names and update metadata references are unchanged.
@@ -225,6 +225,8 @@ Retained frames must preserve pixel geometry rather than stretch to changed wind
 Every renderer must service native AppKit application events even though it is a windowless `LSUIElement` process; live JavaScript or daemon requests do not establish WindowServer responsiveness. See [the responsiveness regression](development.md#locally-repaired-runtime-regressions).
 
 The local macOS idle-scheduling runtime additionally replaces the fixed 10 ms AppKit/libuv poll with native events, backend I/O readiness and timer deadlines. It propagates physical visibility to Blink/Viz, including BrowserViews and guests, while preserving hidden first-frame preparation and `backgroundThrottling: false`. Select that rebuilt runtime with `MINI_ELECTRON_DIST_PATH`; rebuilding only the frontend does not add these native changes. The [idle regressions and frontend scheduling notes](development.md) distinguish hidden/inactive work from a visible animated homepage, which remains active GPU work.
+
+Precise trackpad input must populate Blink's wheel ticks as well as pixel deltas. macOS runtime `0.1.21` leaves those ticks at zero, making xterm ignore gestures because it reads `wheelDeltaX/Y` before `deltaX/Y`. Package the locally repaired runtime until that native fix is released; [terminal qualification and local installation](development.md#terminal-trackpad-scrolling) describe the regression and selection steps. Rebuilding only the frontend cannot repair these native event fields.
 
 QQ clipboard compatibility requires native runtime `0.1.12` or newer: QQ can advertise PNG bytes as TIFF, so the runtime must identify the actual encoding. The distribution override also selects a locally built fix.
 

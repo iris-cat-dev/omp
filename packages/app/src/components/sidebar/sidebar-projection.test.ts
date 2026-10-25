@@ -107,6 +107,56 @@ function twoProjectInput(groupMode: "project" | "status") {
 }
 
 describe("buildSidebarProjection", () => {
+  for (const groupMode of ["project", "status"] as const) {
+    it(`hides archived-only conversations in ${groupMode} rows and shortcuts without deleting metadata`, () => {
+      const archived = makeWorkspace("archived");
+      archived.entry.hasOnlyArchivedAgents = true;
+      const empty = makeWorkspace("empty");
+      const active = makeWorkspace("active", "running");
+      active.entry.hasOnlyArchivedAgents = false;
+      const rows = [archived, empty, active];
+      const archivedProject = makeProject([archived.placement], "archived-project");
+      const input = {
+        ...projectionInput({ groupMode }),
+        projects: [
+          archivedProject,
+          makeProject([empty.placement, active.placement]),
+          makeProject([], "empty-project"),
+        ],
+        workspaceEntriesByKey: new Map(rows.map(({ entry }) => [entry.workspaceKey, entry])),
+      };
+      const projection = buildSidebarProjection(input);
+      expect(projection.projects.map((project) => project.viewKey)).toEqual([
+        "archived-project",
+        "project",
+        "empty-project",
+      ]);
+      expect(projection.projects[0]?.workspaces).toEqual([]);
+      expect(projection.projects[1]?.workspaces.map((row) => row.workspaceId).sort()).toEqual([
+        "active",
+        "empty",
+      ]);
+      expect(projection.shortcutModel.shortcutTargets.map((row) => row.workspaceId).sort()).toEqual([
+        "active",
+        "empty",
+      ]);
+      expect(
+        projection.workspaceGroups.flatMap((group) => group.rows.map((row) => row.workspaceId)).sort(),
+      ).toEqual(groupMode === "status" ? ["active", "empty"] : []);
+      expect(archivedProject.workspaces).toEqual([archived.placement]);
+      expect(input.workspaceEntriesByKey.get(archived.entry.workspaceKey)).toBe(archived.entry);
+      expect(input.workspaceEntriesByKey.size).toBe(3);
+      const restoredEntries = new Map(input.workspaceEntriesByKey);
+      restoredEntries.set(archived.entry.workspaceKey, {
+        ...archived.entry,
+        hasOnlyArchivedAgents: undefined,
+      });
+      const restored = buildSidebarProjection({ ...input, workspaceEntriesByKey: restoredEntries });
+      expect(restored.projects[0]?.workspaces).toEqual([archived.placement]);
+      expect(restored.shortcutModel.shortcutTargets.map((row) => row.workspaceId)).toContain("archived");
+    });
+  }
+
   it("orders project chats by task status, preserving pins and same-status order", () => {
     const rows = [
       makeWorkspace("done"),

@@ -10,6 +10,8 @@ import type { ProviderSubagentWorkspaceActivity } from "./workspace-directory.js
 const NOW = "2026-03-01T12:00:00.000Z";
 
 class WorkspaceStatus {
+  constructor(private readonly providerVisible: (provider: string) => boolean = () => true) {}
+
   private readonly project: PersistedProjectRecord = {
     projectId: "project-1",
     rootPath: "/workspace/project",
@@ -72,7 +74,7 @@ class WorkspaceStatus {
     listAgentPayloads: async () => this.agents,
     listProviderSubagentActivity: async () => this.providerSubagents,
     listTerminalActivityContributions: async () => this.terminals,
-    isProviderVisibleToClient: () => true,
+    isProviderVisibleToClient: (provider) => this.providerVisible(provider),
     buildWorkspaceDescriptor: async ({ workspace }) => ({
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -225,6 +227,22 @@ class WorkspaceStatus {
     });
   }
 
+  get persistedWorkspaces(): readonly PersistedWorkspaceRecord[] {
+    return this.workspaces;
+  }
+
+  workspaceDescriptors(workspaceIds?: string[]): Promise<Map<string, WorkspaceDescriptorPayload>> {
+    return this.directory.buildDescriptorMap({ includeGitData: false, workspaceIds });
+  }
+
+  archiveAgent(agentId: string): void {
+    const agent = this.agents.find((entry) => entry.id === agentId);
+    if (!agent) {
+      throw new Error(`No agent found: ${agentId}`);
+    }
+    agent.archivedAt = NOW;
+  }
+
   async workspaceDescriptor(): Promise<WorkspaceDescriptorPayload> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
@@ -244,6 +262,8 @@ interface AgentState {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
+  archivedAt?: string | null;
+  provider?: AgentSnapshotPayload["provider"];
 }
 
 function createAgent(
@@ -252,7 +272,7 @@ function createAgent(
   const pendingPermissionCount = input.pendingPermissionCount ?? 0;
   return {
     id: input.id,
-    provider: "codex",
+    provider: input.provider ?? "codex",
     cwd: input.cwd,
     ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     model: null,
@@ -288,11 +308,134 @@ function createAgent(
     requiresAttention: input.requiresAttention ?? false,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
-    archivedAt: null,
+    archivedAt: input.archivedAt ?? null,
   } satisfies AgentSnapshotPayload;
 }
 
 describe("WorkspaceDirectory", () => {
+  test("retains archived-only workspace descriptors with a sidebar visibility flag", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "archived-agent", status: "idle", archivedAt: NOW });
+    const persistedBefore = structuredClone(workspace.persistedWorkspaces);
+
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      id: "workspace-1",
+      name: "main",
+      archivingAt: null,
+      hasOnlyArchivedAgents: true,
+    });
+    expect(workspace.persistedWorkspaces).toEqual(persistedBefore);
+  });
+
+  test("keeps a never-used empty workspace visible", async () => {
+    const workspace = new WorkspaceStatus();
+
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      id: "workspace-1",
+      hasOnlyArchivedAgents: false,
+    });
+  });
+
+  test.each([true, false])("keeps active peers visible regardless of order (%s)", async (archivedFirst) => {
+    const workspace = new WorkspaceStatus();
+    const archived: AgentState = { id: "archived-agent", status: "idle", archivedAt: NOW };
+    const active: AgentState = { id: "active-agent", status: "idle" };
+    for (const agent of archivedFirst ? [archived, active] : [active, archived]) {
+      workspace.hasRootAgent(agent);
+    }
+
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: false,
+    });
+  });
+
+  test("scopes archive visibility to workspace identity rather than a shared cwd", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasRootAgent({ id: "archived-agent", status: "idle", archivedAt: NOW });
+
+    let descriptors = await workspace.workspaceDescriptors();
+    expect(descriptors.get("workspace-1")?.hasOnlyArchivedAgents).toBe(true);
+    expect(descriptors.get("workspace-1-sibling")?.hasOnlyArchivedAgents).toBe(false);
+
+    workspace.hasStampedRootAgent({
+      id: "active-sibling-agent",
+      status: "running",
+      workspaceId: "workspace-1-sibling",
+    });
+    descriptors = await workspace.workspaceDescriptors(["workspace-1"]);
+    expect(descriptors.size).toBe(1);
+    expect(descriptors.get("workspace-1")?.hasOnlyArchivedAgents).toBe(true);
+  });
+
+  test("ignores agents from providers not visible to the client", async () => {
+    const workspace = new WorkspaceStatus((provider) => provider === "omp");
+    workspace.hasRootAgent({
+      id: "hidden-archived",
+      provider: "codex",
+      status: "idle",
+      archivedAt: NOW,
+    });
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: false,
+    });
+
+    workspace.hasRootAgent({
+      id: "visible-archived",
+      provider: "omp",
+      status: "idle",
+      archivedAt: NOW,
+    });
+    workspace.hasRootAgent({ id: "hidden-active", provider: "codex", status: "running" });
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: true,
+      status: "done",
+    });
+  });
+
+  test("counts active delegated agents even when their parent is archived", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle", archivedAt: NOW });
+    workspace.hasDelegatedAgent({ id: "active-child", status: "idle" });
+
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: false,
+    });
+  });
+
+  test("recomputes the flag for scoped live updates and subsequent snapshots", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "agent", status: "idle" });
+    expect((await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"))
+      .toMatchObject({ hasOnlyArchivedAgents: false });
+
+    workspace.archiveAgent("agent");
+    expect((await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"))
+      .toMatchObject({ hasOnlyArchivedAgents: true });
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: true,
+    });
+
+    workspace.hasRootAgent({ id: "new-agent", status: "idle" });
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: false,
+    });
+  });
+
+  test("does not change terminal activity or workspace records for archived-only agents", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "archived-agent", status: "idle", archivedAt: NOW });
+    workspace.hasWorkingTerminal(Date.parse(NOW));
+    const persistedBefore = structuredClone(workspace.persistedWorkspaces);
+
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      hasOnlyArchivedAgents: true,
+      status: "running",
+      archivingAt: null,
+    });
+    expect(workspace.persistedWorkspaces).toEqual(persistedBefore);
+  });
+
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 

@@ -599,6 +599,26 @@ describe("workspace message schemas", () => {
     ).toBe(archivingAt);
   });
 
+  test.each([undefined, false, true])(
+    "preserves optional archived-only sidebar visibility (%s)",
+    (hasOnlyArchivedAgents) => {
+      const parsed = WorkspaceDescriptorPayloadSchema.parse({
+        id: "ws-archived-agents",
+        projectId: "project",
+        projectDisplayName: "repo",
+        projectRootPath: "/repo",
+        projectKind: "git",
+        workspaceKind: "local_checkout",
+        name: "main",
+        status: "done",
+        activityAt: null,
+        ...(hasOnlyArchivedAgents === undefined ? {} : { hasOnlyArchivedAgents }),
+      });
+
+      expect(parsed.hasOnlyArchivedAgents).toBe(hasOnlyArchivedAgents);
+    },
+  );
+
   // The protocol `statusEnteredAt` field is optional and defaults to null.
   // Old daemons omit it entirely and old clients must keep accepting that.
   test("defaults statusEnteredAt to null for legacy descriptors", () => {
