@@ -19,21 +19,28 @@ export function useOverlayFlatListScrollbar<ItemT>(
   });
 
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setMetrics((previous) => ({
-      ...previous,
-      offset: Math.max(0, event.nativeEvent.contentOffset.y),
-      viewportSize: Math.max(0, event.nativeEvent.layoutMeasurement.height),
-      contentSize: Math.max(0, event.nativeEvent.contentSize.height),
-    }));
+    const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+    const viewportSize = Math.max(0, event.nativeEvent.layoutMeasurement.height);
+    const contentSize = Math.max(0, event.nativeEvent.contentSize.height);
+    setMetrics((previous) =>
+      previous.offset === offset &&
+      previous.viewportSize === viewportSize &&
+      previous.contentSize === contentSize
+        ? previous
+        : { offset, viewportSize, contentSize },
+    );
   }, []);
   const onLayout = useCallback((event: LayoutChangeEvent) => {
-    setMetrics((previous) => ({
-      ...previous,
-      viewportSize: Math.max(0, event.nativeEvent.layout.height),
-    }));
+    const viewportSize = Math.max(0, event.nativeEvent.layout.height);
+    setMetrics((previous) =>
+      previous.viewportSize === viewportSize ? previous : { ...previous, viewportSize },
+    );
   }, []);
   const onContentSizeChange = useCallback((_width: number, height: number) => {
-    setMetrics((previous) => ({ ...previous, contentSize: Math.max(0, height) }));
+    const contentSize = Math.max(0, height);
+    setMetrics((previous) =>
+      previous.contentSize === contentSize ? previous : { ...previous, contentSize },
+    );
   }, []);
   const scrollToOffset = useCallback(
     (offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }),

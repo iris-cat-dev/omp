@@ -409,11 +409,16 @@ export class CheckoutSession {
     const abort = new AbortController();
     const unsubscribe = () => abort.abort();
     this.diffSubscriptions.set(msg.subscriptionId, unsubscribe);
+    const isCurrent = () =>
+      !abort.signal.aborted && this.diffSubscriptions.get(msg.subscriptionId) === unsubscribe;
 
     try {
       const subscription = await this.checkoutDiffManager.subscribe(
         { cwd, compare: msg.compare, signal: abort.signal },
         (snapshot) => {
+          if (!isCurrent()) {
+            return;
+          }
           this.host.emit({
             type: "checkout_diff_update",
             payload: {
@@ -423,6 +428,10 @@ export class CheckoutSession {
           });
         },
       );
+      if (!isCurrent()) {
+        subscription.unsubscribe();
+        return;
+      }
 
       this.host.emit({
         type: "subscribe_checkout_diff_response",
@@ -433,6 +442,9 @@ export class CheckoutSession {
         },
       });
     } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
       if (this.diffSubscriptions.get(msg.subscriptionId) === unsubscribe) {
         this.diffSubscriptions.delete(msg.subscriptionId);
       }

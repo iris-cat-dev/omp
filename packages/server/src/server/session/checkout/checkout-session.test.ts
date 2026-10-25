@@ -14,9 +14,10 @@ import { createGitHubService } from "../../../services/github-service.js";
 import { ForgeCliMissingError } from "../../../services/forge-cli-command.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { SessionOutboundMessage } from "../../messages.js";
-import type {
-  CheckoutDiffCompareInput,
-  CheckoutDiffSnapshotPayload,
+import {
+  CheckoutDiffManager,
+  type CheckoutDiffCompareInput,
+  type CheckoutDiffSnapshotPayload,
 } from "../../checkout-diff-manager.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -628,15 +629,15 @@ describe("CheckoutSession", () => {
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
     });
 
-    it("replaces an existing subscription when the same id subscribes again", async () => {
+    it("replaces an opening subscription without emitting its late initial response", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
         cwd: "/repo",
         files: [],
         error: null,
       });
-      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      const first = checkout.handleSubscribeDiffRequest({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
@@ -650,10 +651,114 @@ describe("CheckoutSession", () => {
         compare: { mode: "uncommitted" },
         requestId: "second",
       });
+      await first;
 
       expect(subscriptions).toHaveLength(2);
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(0);
+      expect(emitted).toEqual([
+        {
+          type: "subscribe_checkout_diff_response",
+          payload: {
+            subscriptionId: "s1",
+            cwd: "/repo",
+            files: [],
+            error: null,
+            requestId: "second",
+          },
+        },
+      ]);
+    });
+
+    it.each(["unsubscribe", "cleanup"] as const)(
+      "suppresses an already resolved initial response after %s",
+      async (action) => {
+        const { subscriber, subscriptions } = createFakeDiffSubscriber({
+          cwd: "/repo",
+          files: [],
+          error: null,
+        });
+        const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
+        const pending = checkout.handleSubscribeDiffRequest({
+          type: "subscribe_checkout_diff_request",
+          subscriptionId: "s1",
+          cwd: "/repo",
+          compare: { mode: "uncommitted" },
+          requestId: "late",
+        });
+        if (action === "cleanup") {
+          checkout.cleanup();
+        } else {
+          checkout.handleUnsubscribeDiffRequest({
+            type: "unsubscribe_checkout_diff_request",
+            subscriptionId: "s1",
+          });
+        }
+        await pending;
+
+        expect(emitted).toEqual([]);
+        expect(subscriptions[0].unsubscribeCalls).toBe(1);
+      },
+    );
+
+    it("silently settles an abandoned real manager open while its replacement stays live", async () => {
+      const watches: Array<() => void> = [];
+      const unsubscribes = [vi.fn(), vi.fn()];
+      const getCheckoutDiff = vi.fn<WorkspaceGitService["getCheckoutDiff"]>().mockResolvedValue({
+        diff: "",
+        structured: [],
+      });
+      const manager = new CheckoutDiffManager({
+        logger: pino({ level: "silent" }),
+        paseoHome: "/tmp/paseo-home",
+        workspaceGitService: createNoopWorkspaceGitService({
+          getCheckoutDiff,
+          requestWorkingTreeWatch: async () =>
+            new Promise((resolve) => {
+              const unsubscribe = unsubscribes[watches.length];
+              watches.push(resolve.bind(null, { repoRoot: "/repo", unsubscribe }));
+            }),
+        }),
+      });
+      const { checkout, emitted } = makeCheckoutSession({ diff: manager });
+      const first = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "first",
+      });
+      const second = checkout.handleSubscribeDiffRequest({
+        type: "subscribe_checkout_diff_request",
+        subscriptionId: "s1",
+        cwd: "/repo",
+        compare: { mode: "uncommitted" },
+        requestId: "second",
+      });
+      expect(watches).toHaveLength(2);
+      watches[1]();
+      await second;
+      watches[0]();
+      await first;
+
+      expect(emitted).toEqual([
+        {
+          type: "subscribe_checkout_diff_response",
+          payload: {
+            subscriptionId: "s1",
+            cwd: "/repo",
+            files: [],
+            error: null,
+            requestId: "second",
+          },
+        },
+      ]);
+      expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
+      expect(unsubscribes[0]).toHaveBeenCalledTimes(1);
+      expect(unsubscribes[1]).not.toHaveBeenCalled();
+      checkout.cleanup();
+      expect(unsubscribes[1]).toHaveBeenCalledTimes(1);
+      expect(manager.getMetrics().checkoutDiffTargetCount).toBe(0);
     });
 
     it("unsubscribes every live subscription on cleanup", async () => {

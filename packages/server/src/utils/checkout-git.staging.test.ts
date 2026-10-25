@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { lstat } from "fs/promises";
+import type * as FsPromises from "fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commitChanges,
@@ -11,6 +21,12 @@ import {
   stageChanges,
   unstageChanges,
 } from "./checkout-git.js";
+
+// Observe inspections while retaining real filesystem and Git behavior.
+vi.mock("fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return { ...actual, lstat: vi.fn(actual.lstat) };
+});
 
 describe("checkout git staging", () => {
   let tempDir: string;
@@ -23,6 +39,7 @@ describe("checkout git staging", () => {
     execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
     execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir });
     execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
+    execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: repoDir });
     writeFileSync(join(repoDir, "staged.txt"), "before staged\n");
     writeFileSync(join(repoDir, "unstaged.txt"), "before unstaged\n");
     execFileSync("git", ["add", "-A"], { cwd: repoDir });
@@ -32,6 +49,7 @@ describe("checkout git staging", () => {
   });
 
   afterEach(() => {
+    vi.mocked(lstat).mockClear();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -126,7 +144,7 @@ describe("checkout git staging", () => {
 
   it("preserves unusual rename paths and filters literal paths before rendering", async () => {
     const oldPath = "旧 文件.ts";
-    const newPath = "新\t[one]\n文件.ts ";
+    const newPath = process.platform === "win32" ? "新 [one] 文件.ts" : "新\t[one]\n文件.ts ";
     writeFileSync(join(repoDir, oldPath), "const a = 1;\nconst b = 2;\nconst c = 3;\n");
     execFileSync("git", ["add", "--", oldPath], { cwd: repoDir });
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "rename source"], {
@@ -207,6 +225,83 @@ describe("checkout git staging", () => {
       expect.objectContaining({ path: "binary.bin", status: "binary", hunks: [] }),
     ]);
   });
+
+  it("inspects each untracked path once per summary and rereads it on the next request", async () => {
+    writeFileSync(join(repoDir, "binary.bin"), Buffer.from([0, 1, 2, 3]));
+    writeFileSync(join(repoDir, "empty.txt"), "");
+    writeFileSync(join(repoDir, "large.txt"), "line\n".repeat(220_000) + "last");
+    writeFileSync(join(repoDir, "notes.txt"), "first\nlast");
+    writeFileSync(join(repoDir, "staged.txt"), "index version\n");
+    await stageChanges(repoDir, ["staged.txt"]);
+    vi.mocked(lstat).mockClear();
+
+    const summary = await getCheckoutDiff(repoDir, { mode: "uncommitted", detail: "summary" });
+    const untracked = [
+      expect.objectContaining({ path: "binary.bin", additions: 0, deletions: 0, status: "binary" }),
+      expect.objectContaining({ path: "empty.txt", additions: 0, deletions: 0, status: "ok" }),
+      expect.objectContaining({
+        path: "large.txt",
+        additions: 220_001,
+        deletions: 0,
+        status: "too_large",
+      }),
+      expect.objectContaining({ path: "notes.txt", additions: 2, deletions: 0, status: "ok" }),
+    ];
+    expect(summary.structured).toEqual([
+      ...untracked,
+      expect.objectContaining({ path: "staged.txt", additions: 1, deletions: 1 }),
+    ]);
+    expect(summary.staging?.stagedFiles).toEqual([
+      expect.objectContaining({ path: "staged.txt", additions: 1, deletions: 1 }),
+    ]);
+    expect(summary.staging?.unstagedFiles).toEqual(untracked);
+    for (const path of ["binary.bin", "empty.txt", "large.txt", "notes.txt"]) {
+      expect(
+        vi.mocked(lstat).mock.calls.filter(([file]) => file === join(repoDir, path)),
+      ).toHaveLength(1);
+    }
+
+    writeFileSync(join(repoDir, "notes.txt"), "changed\n");
+    const refreshed = await getCheckoutDiff(repoDir, { mode: "uncommitted", detail: "summary" });
+    expect(refreshed.structured?.find((file) => file.path === "notes.txt")).toMatchObject({
+      additions: 1,
+      deletions: 0,
+      status: "ok",
+    });
+    expect(refreshed.staging?.unstagedFiles).toEqual(
+      refreshed.structured?.filter((file) => file.path !== "staged.txt"),
+    );
+    for (const path of ["binary.bin", "empty.txt", "large.txt", "notes.txt"]) {
+      expect(
+        vi.mocked(lstat).mock.calls.filter(([file]) => file === join(repoDir, path)),
+      ).toHaveLength(2);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shares symlink metadata without inspecting its binary target",
+    async () => {
+      writeFileSync(join(tempDir, "target.bin"), Buffer.from([0, 1, 2, 3]));
+      symlinkSync("../target.bin", join(repoDir, "link"));
+      vi.mocked(lstat).mockClear();
+
+      const summary = await getCheckoutDiff(repoDir, { mode: "uncommitted", detail: "summary" });
+      expect(summary.structured).toEqual([
+        expect.objectContaining({
+          path: "link",
+          additions: 1,
+          deletions: 0,
+          status: "ok",
+          hunks: [],
+        }),
+      ]);
+      expect(summary.staging?.stagedFiles).toEqual([]);
+      expect(summary.staging?.unstagedFiles).toEqual(summary.structured);
+      expect(
+        vi.mocked(lstat).mock.calls.filter(([file]) => file === join(repoDir, "link")),
+      ).toHaveLength(1);
+    },
+  );
 
   it("retains binary metadata alongside a staged deletion", async () => {
     writeFileSync(join(repoDir, "tracked.bin"), Buffer.from([0, 1, 2, 3]));

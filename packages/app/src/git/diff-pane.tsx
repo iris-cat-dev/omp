@@ -892,11 +892,14 @@ function FolderChangeButtons({
   dirPath: string;
   testID: string;
 }) {
-  const pathspecs = useMemo(() => folderChangePathspecs(files, dirPath), [dirPath, files]);
-  const handleStage = useCallback(() => stageAction?.onPress(pathspecs), [pathspecs, stageAction]);
+  // Resolve descendants only when invoked, not for every mounted folder row.
+  const handleStage = useCallback(
+    () => stageAction?.onPress(folderChangePathspecs(files, dirPath)),
+    [dirPath, files, stageAction],
+  );
   const handleDiscard = useCallback(
-    () => discardAction?.onPress(pathspecs, dirPath),
-    [dirPath, discardAction, pathspecs],
+    () => discardAction?.onPress(folderChangePathspecs(files, dirPath), dirPath),
+    [dirPath, discardAction, files],
   );
   return (
     <View style={styles.changeRowActions}>

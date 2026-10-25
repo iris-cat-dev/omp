@@ -2048,11 +2048,16 @@ async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
   }
 }
 
+interface UntrackedFileInspection {
+  stat: FileStat;
+  truncated: boolean;
+}
+
 async function inspectUntrackedFile(
   cwd: string,
   relativePath: string,
   countLargeFileLines = true,
-): Promise<{ stat: FileStat; truncated: boolean }> {
+): Promise<UntrackedFileInspection> {
   const absolutePath = resolve(cwd, relativePath);
   const entry = await lstat(absolutePath);
   if (entry.isSymbolicLink()) {
@@ -3221,11 +3226,14 @@ async function resolveCheckoutDiffRefs(
   };
 }
 
+type UntrackedFileInspections = Map<string, Promise<UntrackedFileInspection>>;
+
 async function buildCheckoutDiffSummary(
   cwd: string,
   refs: CheckoutDiffRefs,
   changes: CheckoutFileChange[],
   ignoreWhitespace: boolean,
+  untrackedInspections: UntrackedFileInspections,
 ): Promise<ParsedDiffFile[]> {
   const stats = changes.some((change) => !change.isUntracked)
     ? await getTrackedNumstatByPath(cwd, refs, ignoreWhitespace)
@@ -3236,7 +3244,12 @@ async function buildCheckoutDiffSummary(
     let truncated = false;
     if (change.isUntracked) {
       try {
-        ({ stat, truncated } = await inspectUntrackedFile(cwd, change.path));
+        let inspection = untrackedInspections.get(change.path);
+        if (!inspection) {
+          inspection = inspectUntrackedFile(cwd, change.path);
+          untrackedInspections.set(change.path, inspection);
+        }
+        ({ stat, truncated } = await inspection);
       } catch (error) {
         // A deleted untracked path can race the directory listing.
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -3309,24 +3322,41 @@ async function buildCheckoutSummaryResult(input: {
   context?: CheckoutContext;
 }): Promise<CheckoutDiffResult> {
   const { cwd, compare, refsForDiff, changes, context } = input;
+  // Share in-flight reads only within this request, so net and unstaged views
+  // count the same untracked contents without scanning each file twice.
+  const untrackedInspections: UntrackedFileInspections = new Map();
   const summary = buildCheckoutDiffSummary(
     cwd,
     refsForDiff,
     changes,
     compare.ignoreWhitespace === true,
+    untrackedInspections,
   );
   if (compare.mode !== "uncommitted") return { diff: "", structured: await summary };
   // HEAD -> worktree is intentionally computed separately: staging and then
   // reverting a file to HEAD leaves two staging entries but no net file change.
+  const loadStagingSummary = async (mode: "staged" | "unstaged") => {
+    const sideCompare = { ...compare, mode };
+    const refs = await resolveCheckoutDiffRefs(cwd, sideCompare, context);
+    if (!refs) return [];
+    const side = await loadCheckoutDiffChanges(cwd, refs, sideCompare);
+    return buildCheckoutDiffSummary(
+      cwd,
+      side.refsForDiff,
+      side.changes,
+      compare.ignoreWhitespace === true,
+      untrackedInspections,
+    );
+  };
   const [structured, staged, unstaged] = await Promise.all([
     summary,
-    getCheckoutDiff(cwd, { ...compare, mode: "staged" }, context),
-    getCheckoutDiff(cwd, { ...compare, mode: "unstaged" }, context),
+    loadStagingSummary("staged"),
+    loadStagingSummary("unstaged"),
   ]);
   return {
     diff: "",
     structured,
-    staging: { stagedFiles: staged.structured ?? [], unstagedFiles: unstaged.structured ?? [] },
+    staging: { stagedFiles: staged, unstagedFiles: unstaged },
   };
 }
 

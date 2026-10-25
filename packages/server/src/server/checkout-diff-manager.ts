@@ -79,13 +79,11 @@ export class CheckoutDiffManager {
     params: CheckoutDiffSubscriptionRequest,
     listener: (snapshot: CheckoutDiffSnapshotPayload) => void,
   ): Promise<CheckoutDiffSubscription> {
+    params.signal?.throwIfAborted();
     const cwd = params.cwd;
     const compare = this.normalizeCompare(params.compare);
     const target = this.ensureTarget(cwd, compare);
     target.listeners.add(listener);
-    target.openPromise ??= this.openTarget(target).then(() =>
-      this.refreshTarget(target, false, false),
-    );
 
     let isSubscribed = true;
     const unsubscribe = () => {
@@ -101,13 +99,23 @@ export class CheckoutDiffManager {
       unsubscribe();
     }
 
+    target.openPromise ??= this.openTarget(target).then(() =>
+      this.refreshTarget(target, false, false),
+    );
+
     try {
       await target.openPromise;
+      if (!isSubscribed || !this.isTargetActive(target)) {
+        throw new DOMException("Checkout diff subscription was canceled", "AbortError");
+      }
       const initial =
         target.latestPayload ??
         (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
           diffCwd: target.diffCwd,
         }));
+      if (!isSubscribed || !this.isTargetActive(target)) {
+        throw new DOMException("Checkout diff subscription was canceled", "AbortError");
+      }
       target.latestPayload = initial;
       target.latestFingerprint = JSON.stringify(initial);
       return { initial, unsubscribe };
@@ -178,6 +186,10 @@ export class CheckoutDiffManager {
     ]);
   }
 
+  private isTargetActive(target: CheckoutDiffWatchTarget): boolean {
+    return this.targets.get(target.key) === target && target.listeners.size > 0;
+  }
+
   private closeTarget(target: CheckoutDiffWatchTarget): void {
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
@@ -245,6 +257,9 @@ export class CheckoutDiffManager {
   }
 
   private scheduleTargetRefresh(target: CheckoutDiffWatchTarget, force = true): void {
+    if (!this.isTargetActive(target)) {
+      return;
+    }
     target.revision += 1;
     target.pendingDebounceForce ||= force;
     if (target.debounceTimer) {
@@ -312,6 +327,9 @@ export class CheckoutDiffManager {
     force: boolean,
     notify = true,
   ): Promise<void> {
+    if (!this.isTargetActive(target)) {
+      return;
+    }
     if (target.refreshPromise) {
       target.refreshQueued = true;
       target.refreshQueuedForce ||= force;
@@ -321,6 +339,9 @@ export class CheckoutDiffManager {
     target.refreshPromise = (async () => {
       let currentForce = force;
       do {
+        if (!this.isTargetActive(target)) {
+          break;
+        }
         target.refreshQueued = false;
         target.refreshQueuedForce = false;
         const revision = target.revision;
@@ -329,7 +350,7 @@ export class CheckoutDiffManager {
           force: currentForce,
           ...(currentForce ? { reason: "working-tree-watch" } : {}),
         });
-        if (target.listeners.size === 0) {
+        if (!this.isTargetActive(target)) {
           break;
         }
         // Never publish a snapshot read across a newer edit/mutation. This also
@@ -398,6 +419,9 @@ export class CheckoutDiffManager {
   }
 
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
+    if (!this.isTargetActive(target)) {
+      return;
+    }
     if (target.compare.mode === "base") {
       const snapshot =
         this.workspaceGitService.peekSnapshot(target.cwd) ??
