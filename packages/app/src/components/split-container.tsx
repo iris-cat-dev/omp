@@ -1281,6 +1281,10 @@ function SplitPaneView({
             tabDropPreviewIndex={
               tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
             }
+            showNewTerminalAction={
+              pane.id !== sidePanelPaneId &&
+              paneTabs.some((tab) => getWorkspaceTabZone(tab.target) === "terminal")
+            }
             showPaneMaximizeAction={pane.id === sidePanelPaneId && !focusModeEnabled}
             paneMaximized={pane.id === maximizedPaneId}
             onTogglePaneMaximized={handleToggleMaximized}

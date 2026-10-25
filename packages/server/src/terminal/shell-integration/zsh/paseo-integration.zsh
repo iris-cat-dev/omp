@@ -25,7 +25,16 @@ function _paseo_preexec() {
   _PASEO_ZSH_COMMAND_ACTIVE=1
   _paseo_osc633 "B"
   _paseo_osc633 "C"
-  printf '\e]2;%s\a' "$1"
+  # Lex the expanded command without evaluating it; arguments belong in the
+  # terminal output, not its tab title. Skip leading environment assignments.
+  local command_line="${2:-$1}"
+  local -a command_words
+  command_words=("${(@z)command_line}")
+  while (( ${#command_words} > 1 )) && [[ "${command_words[1]}" =~ '^[[:alpha:]_][[:alnum:]_]*=' ]]; do
+    shift command_words
+  done
+  local command_name="${(Q)command_words[1]}"
+  printf '\e]2;%s\a' "${command_name:t}"
 }
 
 add-zsh-hook precmd _paseo_precmd

@@ -871,7 +871,15 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     unsubscribeTitle();
   });
 
-  it.skipIf(!hasZsh)("emits zsh shell integration titles for commands and prompts", async () => {
+  it
+    .skipIf(!hasZsh)
+    .each([
+      "sleep 30",
+      "/bin/sleep 30",
+      "'/bin/sleep' 30",
+      "PASEO_TEST=1 /bin/sleep 30",
+      "snooze 30",
+    ])("emits the process name and restores the prompt title for %s", async (command) => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-integration-home-"));
     temporaryDirs.push(homeDir);
     const realZdotdir = join(homeDir, ".config", "zsh");
@@ -879,7 +887,7 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     mkdirSync(realZdotdir, { recursive: true });
     mkdirSync(workingDir, { recursive: true });
     writeFileSync(join(realZdotdir, ".zshenv"), "");
-    writeFileSync(join(realZdotdir, ".zshrc"), "PS1='$ '\n");
+    writeFileSync(join(realZdotdir, ".zshrc"), "PS1='$ '\nalias snooze='/bin/sleep'\n");
 
     const session = trackSession(
       await createTerminal({
@@ -892,15 +900,95 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
         },
       }),
     );
+    const seenTitles: Array<string | undefined> = [];
+    const seenMessages: Array<string | undefined> = [];
+    session.onTitleChange((title) => seenTitles.push(title));
+    session.subscribe((message) => {
+      if (message.type === "titleChange") {
+        seenMessages.push(message.title);
+      }
+    });
 
     await waitForLines(session, ["$"]);
     await waitForTitle(session, (title) => title === "~/dev/faro");
 
-    session.send({ type: "input", data: "sleep 1\r" });
+    session.send({ type: "input", data: `${command}\r` });
 
-    await waitForTitle(session, (title) => title === "sleep 1");
-    await waitForTitle(session, (title) => title === "~/dev/faro", 4000);
+    await waitForTitle(session, (title) => title === "sleep");
+    expect(session.getState().title).toBe("sleep");
+    session.send({ type: "input", data: "\x03" });
+    await waitForTitle(session, (title) => title === "~/dev/faro");
+
+    expect(seenTitles).toEqual(["~/dev/faro", "sleep", "~/dev/faro"]);
+    expect(seenMessages).toEqual(seenTitles);
+    expect(session.getState().title).toBe("~/dev/faro");
   });
+
+  it.skipIf(!hasZsh)(
+    "allows foreground application OSC titles to override the process name",
+    async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-app-title-"));
+      temporaryDirs.push(homeDir);
+      writeFileSync(join(homeDir, ".zshrc"), "PS1='$ '\n");
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: homeDir,
+          shell: "/bin/zsh",
+          env: { HOME: homeDir, ZDOTDIR: homeDir },
+        }),
+      );
+
+      await waitForTitle(session, (title) => title === "~");
+      session.send({
+        type: "input",
+        data: "printf '\\033]2;Application title\\007'; sleep 30\r",
+      });
+      await waitForTitle(session, (title) => title === "Application title");
+      expect(session.getState().title).toBe("Application title");
+
+      session.send({ type: "input", data: "\x03" });
+      await waitForTitle(session, (title) => title === "~");
+    },
+  );
+
+  it.skipIf(!hasZsh).each(["preset", "manual"] as const)(
+    "protects %s titles across zsh command start and completion",
+    async (mode) => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-custom-title-"));
+      temporaryDirs.push(homeDir);
+      writeFileSync(join(homeDir, ".zshrc"), "PS1='$ '\n");
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: homeDir,
+          shell: "/bin/zsh",
+          env: { HOME: homeDir, ZDOTDIR: homeDir },
+          ...(mode === "preset" ? { title: "Custom terminal" } : {}),
+        }),
+      );
+      let started = 0;
+      let finished = 0;
+      session.onCommandStarted?.(() => started++);
+      session.onCommandFinished(() => finished++);
+
+      await waitForLines(session, ["$"]);
+      if (mode === "manual") {
+        await waitForTitle(session, (title) => title === "~");
+        session.setTitle("Custom terminal");
+      }
+      session.send({ type: "input", data: "sleep 30\r" });
+      await waitForState(session, () => started === 1);
+      await delay(250);
+      expect(session.getTitle()).toBe("Custom terminal");
+
+      session.send({ type: "input", data: "\x03" });
+      await waitForState(session, () => finished === 1);
+      await delay(250);
+      expect(session.getTitle()).toBe("Custom terminal");
+      expect(session.getState().title).toBe("Custom terminal");
+    },
+  );
 
   it.skipIf(!hasZsh)("loads the user's zsh prompt when the integration dir is packaged", () => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-packaged-home-"));

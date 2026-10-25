@@ -700,7 +700,7 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
 
       session.send({ type: "input", data: "sleep 1\r" });
 
-      await waitForTitle(session, (title) => title === "sleep 1");
+      await waitForTitle(session, (title) => title === "sleep");
       await waitForTitle(session, (title) => title === "~/dev/faro", 4000);
       const completedPromptState = await waitForState(
         session,

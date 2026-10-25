@@ -24,6 +24,7 @@ import {
   Copy,
   FolderTree,
   Pencil,
+  Plus,
   RotateCw,
   Maximize2,
   Minimize2,
@@ -93,6 +94,7 @@ import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispat
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { useNewTabLauncher } from "@/workspace-tabs/launcher";
 
 const DROPDOWN_WIDTH = 220;
 // Keep the strip's rendered geometry and its overflow measurements in sync.
@@ -112,6 +114,7 @@ const TAB_SCROLL_EDGE_EPSILON = 1;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
+const ThemedPlus = withUnistyles(Plus);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
 
@@ -223,6 +226,42 @@ function TabLabelMeasurement({
     >
       {label}
     </Text>
+  );
+}
+
+function WorkspaceNewTerminalButton({
+  paneId,
+  onLayout,
+}: {
+  paneId?: string;
+  onLayout: (event: LayoutChangeEvent) => void;
+}) {
+  const { t } = useTranslation();
+  const launcher = useNewTabLauncher();
+  const label = t("workspace.tabs.actions.newTerminal");
+  const handlePress = useCallback(() => {
+    if (launcher.terminalDisabled) return;
+    launcher.launch({ kind: "terminal" }, { kind: "open", paneId });
+  }, [launcher, paneId]);
+
+  return (
+    <View style={styles.inlineAddButton} onLayout={onLayout}>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger
+          testID="workspace-new-terminal"
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          disabled={launcher.terminalDisabled}
+          onPress={handlePress}
+          style={inlineAddActionButtonStyle}
+        >
+          <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.newTabTooltipText}>{label}</Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
   );
 }
 
@@ -450,6 +489,7 @@ interface WorkspaceDesktopTabsRowProps {
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
+  showNewTerminalAction?: boolean;
   showPaneMaximizeAction?: boolean;
   paneMaximized?: boolean;
   onTogglePaneMaximized?: () => void;
@@ -1002,6 +1042,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   externalDndContext = false,
   activeDragTabId = null,
   tabDropPreviewIndex = null,
+  showNewTerminalAction = false,
   showPaneMaximizeAction = false,
   paneMaximized = false,
   onTogglePaneMaximized,
@@ -1012,6 +1053,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const isLocalDaemon = useIsLocalDaemon(normalizedServerId);
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [paneMaximizeButtonWidth, setPaneMaximizeButtonWidth] = useState<number>(0);
+  const [newTerminalButtonWidth, setNewTerminalButtonWidth] = useState<number>(0);
   const [, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollOffset = useSharedValue(0);
   const tabScrollViewportWidth = useSharedValue(0);
@@ -1031,6 +1073,10 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const handlePaneMaximizeButtonLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setPaneMaximizeButtonWidth, event);
+  }, []);
+
+  const handleNewTerminalButtonLayout = useCallback((event: LayoutChangeEvent) => {
+    updateMeasuredWidth(setNewTerminalButtonWidth, event);
   }, []);
 
   const handleTabScrollLayout = useCallback(
@@ -1066,10 +1112,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   const layoutMetrics = useMemo(
     () => ({
       rowHorizontalInset: 0,
-      actionsReservedWidth: resolvePaneMaximizeReservedWidth(
-        showPaneMaximizeAction,
-        paneMaximizeButtonWidth,
-      ),
+      actionsReservedWidth:
+        resolvePaneMaximizeReservedWidth(showPaneMaximizeAction, paneMaximizeButtonWidth) +
+        (showNewTerminalAction ? newTerminalButtonWidth : 0),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
       minTabWidth: TAB_MIN_WIDTH,
@@ -1079,7 +1124,12 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [paneMaximizeButtonWidth, showPaneMaximizeAction],
+    [
+      newTerminalButtonWidth,
+      paneMaximizeButtonWidth,
+      showNewTerminalAction,
+      showPaneMaximizeAction,
+    ],
   );
 
   const fallbackTabLabels = useMemo(
@@ -1357,7 +1407,15 @@ function ResolvedWorkspaceDesktopTabsRow({
         onPress={onExitFocusMode}
         onLayout={handleExitFocusModeLayout}
       />
-      <View style={styles.tabsScrollContainer}>
+      <View
+        style={[
+          styles.tabsScrollContainer,
+          showNewTerminalAction && [
+            styles.terminalTabsScrollContainer,
+            { width: layout.items.reduce((width, item) => width + item.width, 0) },
+          ],
+        ]}
+      >
         <Animated.ScrollView
           horizontal
           scrollEnabled={layout.requiresHorizontalScrollFallback}
@@ -1389,6 +1447,9 @@ function ResolvedWorkspaceDesktopTabsRow({
           rightStyle={rightTabScrollShadeStyle}
         />
       </View>
+      {showNewTerminalAction ? (
+        <WorkspaceNewTerminalButton paneId={paneId} onLayout={handleNewTerminalButtonLayout} />
+      ) : null}
       <WorkspacePaneMaximizeButton
         visible={showPaneMaximizeAction}
         maximized={paneMaximized}
@@ -1588,6 +1649,11 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flex: 1,
     alignSelf: "stretch",
+  },
+  terminalTabsScrollContainer: {
+    flexGrow: 0,
+    flexShrink: 1,
+    flexBasis: "auto",
   },
   tabsScrollFitContent: {
     flex: 1,

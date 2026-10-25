@@ -64,6 +64,12 @@ export function NewTabLauncherProvider({
   return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
 }
 
+export function useNewTabLauncher(): NewTabLauncher {
+  const launcher = useContext(NewTabLauncherContext);
+  invariant(launcher, "NewTabLauncherProvider is required");
+  return launcher;
+}
+
 const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   agent: { kind: "agent" },
   terminal: { kind: "terminal" },
@@ -79,8 +85,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const { serverId, purpose } = input;
   const { t } = useTranslation();
   const router = useRouter();
-  const launcher = useContext(NewTabLauncherContext);
-  invariant(launcher, "NewTabLauncherProvider is required");
+  const launcher = useNewTabLauncher();
   const { config } = useDaemonConfig(serverId);
 
   const launchSelection = useCallback(
