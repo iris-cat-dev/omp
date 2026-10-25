@@ -46,6 +46,7 @@ import {
   normalizeWorkspacePath,
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
+import { buildWorkspaceExplorerStateKey } from "@/file-explorer/state-key";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -280,6 +281,8 @@ interface ExplorerRequestState {
 }
 
 export interface AgentFileExplorerState {
+  // Recreated caches get a new identity so delayed replies cannot resurrect retired data.
+  requestScope: object;
   directories: Map<string, ExplorerDirectory>;
   files: Map<string, ExplorerFile>;
   refreshRevision: number;
@@ -290,6 +293,70 @@ export interface AgentFileExplorerState {
   history: string[];
   lastVisitedPath: string;
   selectedEntryPath: string | null;
+}
+
+function pruneWorkspaceFileExplorer(
+  fileExplorer: Map<string, AgentFileExplorerState>,
+  previous: Map<string, WorkspaceDescriptor>,
+  next: Map<string, WorkspaceDescriptor>,
+  removedWorkspaceId?: string,
+): Map<string, AgentFileExplorerState> {
+  if (fileExplorer.size === 0 || (previous === next && !removedWorkspaceId)) {
+    return fileExplorer;
+  }
+
+  const retainedIdentities = new Set<string>();
+  const retainedRoots = new Set<string>();
+  const nextById = new Map<string, WorkspaceDescriptor>();
+  for (const [key, workspace] of next) {
+    const id = normalizeWorkspaceOpaqueId(workspace.id);
+    if (id) {
+      nextById.set(id, workspace);
+      retainedIdentities.add(id);
+    }
+    const identity = normalizeWorkspaceOpaqueId(key);
+    if (identity) retainedIdentities.add(identity);
+    const root = normalizeWorkspacePath(workspace.workspaceDirectory);
+    if (root) retainedRoots.add(root);
+  }
+
+  let result = fileExplorer;
+  const remove = (key: string | null) => {
+    if (!key || !result.has(key)) return;
+    if (result === fileExplorer) result = new Map(fileExplorer);
+    result.delete(key);
+  };
+  const removeIdentity = (
+    identity: string | null | undefined,
+    invalidate = false,
+    rootAlias = false,
+  ) => {
+    const normalized = normalizeWorkspaceOpaqueId(identity);
+    if (!normalized || (!invalidate && retainedIdentities.has(normalized))) return;
+    // Legacy workspace keys may be a cwd shared with another workspace.
+    const root = normalizeWorkspacePath(normalized);
+    if (rootAlias && !invalidate && root && retainedRoots.has(root)) return;
+    remove(buildWorkspaceExplorerStateKey({ workspaceId: normalized }));
+  };
+
+  for (const [key, workspace] of previous) {
+    const id = normalizeWorkspaceOpaqueId(workspace.id);
+    const current = id ? nextById.get(id) : undefined;
+    const root = normalizeWorkspacePath(workspace.workspaceDirectory);
+    if (current && normalizeWorkspacePath(current.workspaceDirectory) === root) continue;
+
+    // The same ID at a different root must not reuse directory/file metadata.
+    removeIdentity(id, Boolean(current));
+    removeIdentity(key, Boolean(current), key !== id);
+    if (!root || retainedRoots.has(root)) continue;
+    removeIdentity(workspace.workspaceDirectory, false, true);
+    removeIdentity(root, false, true);
+    remove(buildWorkspaceExplorerStateKey({ workspaceRoot: workspace.workspaceDirectory }));
+    remove(buildWorkspaceExplorerStateKey({ workspaceRoot: root }));
+  }
+
+  removeIdentity(removedWorkspaceId, false, true);
+  return result;
 }
 
 export interface DaemonServerInfo {
@@ -1814,7 +1881,15 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: preservedWorkspaces },
+              [serverId]: {
+                ...session,
+                workspaces: preservedWorkspaces,
+                fileExplorer: pruneWorkspaceFileExplorer(
+                  session.fileExplorer,
+                  session.workspaces,
+                  preservedWorkspaces,
+                ),
+              },
             },
           };
         });
@@ -1943,6 +2018,11 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 workspaces: next,
+                fileExplorer: pruneWorkspaceFileExplorer(
+                  session.fileExplorer,
+                  session.workspaces,
+                  next,
+                ),
                 restoringWorkspaces: nextRestoring ?? session.restoringWorkspaces,
               },
             },
@@ -1957,16 +2037,21 @@ export const useSessionStore = create<SessionStore>()(
             workspaces: session?.workspaces,
             workspaceId,
           });
-          if (!session || !workspaceKey) {
-            return prev;
-          }
-          const next = new Map(session.workspaces);
-          next.delete(workspaceKey);
+          if (!session) return prev;
+          const next = workspaceKey ? new Map(session.workspaces) : session.workspaces;
+          if (workspaceKey) next.delete(workspaceKey);
+          const fileExplorer = pruneWorkspaceFileExplorer(
+            session.fileExplorer,
+            session.workspaces,
+            next,
+            workspaceId,
+          );
+          if (next === session.workspaces && fileExplorer === session.fileExplorer) return prev;
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: next },
+              [serverId]: { ...session, workspaces: next, fileExplorer },
             },
           };
         });

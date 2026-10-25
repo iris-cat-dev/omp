@@ -378,6 +378,7 @@ function seedFileExplorer(serverId: string, workspaceStateKeys: string[] = ["roo
           [
             workspaceStateKey,
             {
+              requestScope: {},
               directories: new Map(),
               files: new Map(),
               refreshRevision: 0,
@@ -3006,6 +3007,7 @@ describe("HostRuntimeStore", () => {
         [
           "root:/repo",
           {
+            requestScope: {},
             directories: new Map(),
             files: new Map(),
             refreshRevision: 0,

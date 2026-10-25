@@ -94,6 +94,7 @@ const TEXT_MIME_TYPES: Record<string, string> = {
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
 const FILE_TYPE_SAMPLE_BYTES = 8192;
+const DIRECTORY_METADATA_CONCURRENCY = 32;
 export const FILE_EXPLORER_STREAM_CHUNK_BYTES = 256 * 1024;
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
@@ -154,24 +155,32 @@ export async function listDirectoryEntries({
 
   const dirents = await fs.readdir(directoryPath.resolvedPath, { withFileTypes: true });
 
-  const entriesWithNulls = await Promise.all(
-    dirents.map(async (dirent) => {
-      const targetPath = path.join(directoryPath.requestedPath, dirent.name);
-      const kind: ExplorerEntryKind = dirent.isDirectory() ? "directory" : "file";
-      try {
-        return await buildEntryPayload({
-          root,
-          targetPath,
-          name: dirent.name,
-          kind,
-        });
-      } catch (error) {
-        // Directories can contain dangling links (e.g. AGENTS.md -> CLAUDE.md).
-        // Skip entries whose targets disappeared instead of failing the whole listing.
-        if (isMissingEntryError(error) || isOutsideWorkspaceError(error)) {
-          return null;
+  const entriesWithNulls: (FileExplorerEntry | null)[] = [];
+  entriesWithNulls.length = dirents.length;
+  let nextIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(DIRECTORY_METADATA_CONCURRENCY, dirents.length) }, async () => {
+      while (nextIndex < dirents.length) {
+        const index = nextIndex++;
+        const dirent = dirents[index]!;
+        const targetPath = path.join(directoryPath.requestedPath, dirent.name);
+        const kind: ExplorerEntryKind = dirent.isDirectory() ? "directory" : "file";
+        try {
+          entriesWithNulls[index] = await buildEntryPayload({
+            root,
+            targetPath,
+            name: dirent.name,
+            kind,
+          });
+        } catch (error) {
+          // Skip dangling links and entries that disappeared or leave the workspace.
+          if (isMissingEntryError(error) || isOutsideWorkspaceError(error)) {
+            entriesWithNulls[index] = null;
+            continue;
+          }
+          nextIndex = dirents.length;
+          throw error;
         }
-        throw error;
       }
     }),
   );

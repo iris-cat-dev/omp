@@ -5,6 +5,13 @@ import { filterVisibleExplorerEntries } from "./visibility";
 
 export const MAX_AUTO_EXPANDED_DIRECTORY_DEPTH = 5;
 
+// Listing updates replace directory objects. Weak keys let discarded listings and
+// their cached orders be collected without retaining a second directory tree.
+const sortedDirectoryEntries = new WeakMap<
+  ExplorerDirectory,
+  Map<SortOption, { visible?: ExplorerEntry[]; all?: ExplorerEntry[] }>
+>();
+
 export interface ExplorerTreeRow {
   entry: ExplorerEntry;
   depth: number;
@@ -180,8 +187,25 @@ function rowsForDirectory(
   sortOption: SortOption,
   showHiddenFiles: boolean,
 ): ExplorerTreeRow[] {
-  const visibleEntries = filterVisibleExplorerEntries(directory.entries, showHiddenFiles);
-  const sortedEntries = sortExplorerEntries(visibleEntries, sortOption);
+  let orders = sortedDirectoryEntries.get(directory);
+  if (!orders) {
+    orders = new Map();
+    sortedDirectoryEntries.set(directory, orders);
+  }
+  let order = orders.get(sortOption);
+  if (!order) {
+    order = {};
+    orders.set(sortOption, order);
+  }
+  const visibility = showHiddenFiles ? "all" : "visible";
+  let sortedEntries = order[visibility];
+  if (!sortedEntries) {
+    sortedEntries = sortExplorerEntries(
+      filterVisibleExplorerEntries(directory.entries, showHiddenFiles),
+      sortOption,
+    );
+    order[visibility] = sortedEntries;
+  }
   return sortedEntries.map((entry) => ({ entry, depth }));
 }
 

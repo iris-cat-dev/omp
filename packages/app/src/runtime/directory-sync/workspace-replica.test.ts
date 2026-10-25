@@ -5,6 +5,7 @@ import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   useSessionStore,
+  type AgentFileExplorerState,
 } from "@/stores/session-store";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
 
@@ -25,6 +26,22 @@ function workspace(id: string, projectId = "project"): WorkspaceDescriptorPayloa
     archivingAt: null,
     diffStat: null,
     scripts: [],
+  };
+}
+
+function explorerState(): AgentFileExplorerState {
+  return {
+    requestScope: {},
+    directories: new Map([[".", { path: ".", entries: [] }]]),
+    files: new Map(),
+    refreshRevision: 0,
+    isLoading: false,
+    lastError: null,
+    pendingRequest: null,
+    currentPath: ".",
+    history: ["."],
+    lastVisitedPath: ".",
+    selectedEntryPath: null,
   };
 }
 
@@ -162,3 +179,83 @@ it("does not invent a null-key project from a workspace update", () => {
   expect(session?.projects.has("fresh-project")).toBe(false);
   store.clearSession(serverId);
 });
+
+it.each(["snapshot", "project-delta", "buffered-project-delta"] as const)(
+  "releases removed workspace caches through %s and preserves surviving roots",
+  (route) => {
+    const serverId = `workspace-cache-${route}`;
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new WorkspaceDirectoryReplica(serverId);
+    const removed = normalizeWorkspaceDescriptor(workspace("removed", "removed-project"));
+    const shared = {
+      ...normalizeWorkspaceDescriptor(workspace("removed-shared", "removed-project")),
+      workspaceDirectory: "/shared",
+    };
+    const kept = {
+      ...normalizeWorkspaceDescriptor(workspace("kept", "kept-project")),
+      workspaceDirectory: "/shared",
+    };
+    const unrelated = normalizeWorkspaceDescriptor(workspace("unrelated", "other-project"));
+    const allWorkspaces = new Map([
+      [removed.id, removed],
+      [shared.id, shared],
+      [kept.id, kept],
+      [unrelated.id, unrelated],
+    ]);
+    const projects = new Map([
+      [
+        "removed-project",
+        normalizeProjectDescriptor({
+          projectId: "removed-project",
+          projectDisplayName: "Removed",
+          projectRootPath: "/repo/removed-project",
+          projectKind: "git",
+        }),
+      ],
+    ]);
+    replica.commitSnapshot({ workspaces: allWorkspaces, projects }, []);
+    const caches = new Map([
+      ["workspace:removed", explorerState()],
+      ["workspace:removed-shared", explorerState()],
+      [`workspace:${removed.workspaceDirectory}`, explorerState()],
+      [`root:${removed.workspaceDirectory}`, explorerState()],
+      ["workspace:/shared", explorerState()],
+      ["root:/shared", explorerState()],
+      ["workspace:kept", explorerState()],
+      ["workspace:unrelated", explorerState()],
+    ]);
+    store.setFileExplorer(serverId, caches);
+
+    if (route === "snapshot") {
+      replica.commitSnapshot(
+        {
+          workspaces: new Map([
+            [kept.id, kept],
+            [unrelated.id, unrelated],
+          ]),
+          projects: new Map(),
+        },
+        [],
+      );
+    } else if (route === "project-delta") {
+      replica.applyDelta({ kind: "remove", projectId: "removed-project" });
+    } else {
+      replica.commitSnapshot({ workspaces: allWorkspaces, projects }, [
+        { kind: "remove", projectId: "removed-project" },
+      ]);
+    }
+
+    const session = store.getSession(serverId)!;
+    expect([...session.workspaces.keys()]).toEqual(["kept", "unrelated"]);
+    expect([...session.fileExplorer.keys()]).toEqual([
+      "workspace:/shared",
+      "root:/shared",
+      "workspace:kept",
+      "workspace:unrelated",
+    ]);
+    for (const [key, cache] of session.fileExplorer) expect(cache).toBe(caches.get(key));
+    expect(session.projects.has("removed-project")).toBe(false);
+    store.clearSession(serverId);
+  },
+);

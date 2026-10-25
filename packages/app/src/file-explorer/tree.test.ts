@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ExplorerEntry } from "@/stores/session-store";
+import type { SortOption } from "@/stores/panel-store/state";
 import {
   MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   flattenExplorerTree,
@@ -115,6 +116,94 @@ describe("file explorer tree", () => {
     expect(rows).toHaveLength(fileCount + 1);
     expect(rows[0]).toEqual({ entry: child, depth: 0 });
     expect(rows.at(-1)).toEqual({ entry: files[fileCount - 1], depth: 1 });
+  });
+
+  it("preserves directories-first ordering, stable ties and hidden filtering across cached modes", () => {
+    const file = (name: string, size: number, day: string): ExplorerEntry => ({
+      ...makeDirectoryEntry(name, name),
+      kind: "file",
+      size,
+      modifiedAt: `2026-01-${day}T00:00:00.000Z`,
+    });
+    const root = {
+      path: ".",
+      entries: [
+        file("z", 2, "02"),
+        makeDirectoryEntry("folder-b", "folder-b"),
+        file("a", 2, "02"),
+        file(".hidden", 3, "03"),
+        makeDirectoryEntry("folder-a", "folder-a"),
+        file("b", 1, "01"),
+      ],
+    };
+    const directories = new Map([[".", root]]);
+    const paths = (sortOption: SortOption, showHiddenFiles: boolean) =>
+      flattenExplorerTree({
+        directories,
+        expandedPaths: new Set(["."]),
+        sortOption,
+        showHiddenFiles,
+      }).map(({ entry }) => entry.path);
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      expect(paths("name", false)).toEqual(["folder-a", "folder-b", "a", "b", "z"]);
+      expect(paths("name", true)).toEqual(["folder-a", "folder-b", ".hidden", "a", "b", "z"]);
+      for (const sort of ["size", "modified"] as const) {
+        expect(paths(sort, false)).toEqual(["folder-b", "folder-a", "z", "a", "b"]);
+        expect(paths(sort, true)).toEqual(["folder-b", "folder-a", ".hidden", "z", "a", "b"]);
+      }
+    }
+    expect(root.entries.map((entry) => entry.path)).toEqual([
+      "z",
+      "folder-b",
+      "a",
+      ".hidden",
+      "folder-a",
+      "b",
+    ]);
+    directories.set(".", { path: ".", entries: [file("replacement", 0, "01")] });
+    expect(paths("name", false)).toEqual(["replacement"]);
+  });
+
+  it("does not sort unchanged directories again when another listing is replaced", () => {
+    const directories = new Map([
+      [
+        ".",
+        {
+          path: ".",
+          entries: [makeDirectoryEntry("bravo", "bravo"), makeDirectoryEntry("alpha", "alpha")],
+        },
+      ],
+      [
+        "alpha",
+        {
+          path: "alpha",
+          entries: [makeDirectoryEntry("two", "alpha/two"), makeDirectoryEntry("one", "alpha/one")],
+        },
+      ],
+    ]);
+    const input = {
+      directories,
+      expandedPaths: new Set([".", "alpha"]),
+      sortOption: "name" as const,
+      showHiddenFiles: true,
+    };
+    flattenExplorerTree(input);
+    const compare = vi.spyOn(String.prototype, "localeCompare");
+    try {
+      directories.set("alpha", {
+        path: "alpha",
+        entries: [makeDirectoryEntry("new", "alpha/new")],
+      });
+      expect(flattenExplorerTree(input).map(({ entry }) => entry.path)).toEqual([
+        "alpha",
+        "alpha/new",
+        "bravo",
+      ]);
+      expect(compare).not.toHaveBeenCalled();
+    } finally {
+      compare.mockRestore();
+    }
   });
 
   it("restores five rendered directory levels rather than counting path segments", async () => {

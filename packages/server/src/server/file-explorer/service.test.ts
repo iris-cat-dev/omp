@@ -7,6 +7,7 @@ import {
   rm,
   stat,
   truncate,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -18,6 +19,7 @@ import {
   deleteExplorerEntry,
   duplicateExplorerEntry,
   getExplorerFileVersion,
+  listDirectoryEntries,
   moveExplorerEntry,
   readExplorerFile,
   renameExplorerEntry,
@@ -34,6 +36,36 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 describe("file explorer service", () => {
+  it("returns complete, sorted metadata across large directory listings", async () => {
+    const root = await createTempDir("paseo-file-listing-");
+    try {
+      expect(await listDirectoryEntries({ root })).toEqual({ path: ".", entries: [] });
+      const expected = await Promise.all(
+        Array.from({ length: 67 }, async (_, index) => {
+          const name = `entry-${String(index).padStart(2, "0")}.txt`;
+          const content = `entry ${index}`;
+          const modifiedAt = new Date(Date.UTC(2025, 0, 1, 0, 0, index));
+          await writeFile(path.join(root, name), content);
+          await utimes(path.join(root, name), modifiedAt, modifiedAt);
+          return {
+            name,
+            path: name,
+            kind: "file",
+            size: Buffer.byteLength(content),
+            modifiedAt: modifiedAt.toISOString(),
+          };
+        }),
+      );
+
+      expect(await listDirectoryEntries({ root })).toEqual({
+        path: ".",
+        entries: expected.toReversed(),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("atomically writes an existing text file at the expected revision", async () => {
     const root = await createTempDir("paseo-file-write-");
     try {

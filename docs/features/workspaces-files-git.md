@@ -94,7 +94,15 @@ File tabs preview PNG, JPEG, GIF, WebP, SVG, and case-insensitive `.ico` as imag
 
 A file tab's **Reveal in Files** opens the right Files panel, expands parents, selects, and scrolls to the file, making hidden files visible if needed. It uses the owning workspace on local/remote hosts and cannot reveal files outside that workspace.
 
-Files-tree roots and expanded directories refresh when a conversation in their workspace finishes, fails, or is canceled. Background conversations refresh only their own workspace. Every completion requests fresh listings; older replies cannot overwrite newer ones. Reopening collapsed directories rereads children instead of trusting unchecked cache. Failed directory refreshes stay visible even if another succeeds. Manual refresh covers external filesystem changes.
+Visible Files-tree roots and expanded directories refresh when a conversation in their workspace finishes, fails, or is canceled. Hidden retained panels defer initialization and coalesce completion revisions until shown again. Background conversations refresh only their own workspace, and older replies cannot overwrite newer ones. Reopening collapsed directories rereads children instead of trusting unchecked cache. Failed directory refreshes stay visible even if another succeeds. Manual refresh covers external filesystem changes.
+
+Large directories remain complete: listing metadata work has bounded concurrency, and the tree mounts a viewport-sized window rather than every file. Measured row geometry provides the full scroll range, including the last file, while preserving inline create/rename and move-mode sizing. Unchanged directory ordering is reused until its listing, sort, or hidden-file setting changes; selections in collapsed directories remain available.
+
+Directory caches preserve existing collapsed branches, but successful parent refreshes and confirmed rename, move, or delete operations remove obsolete subtrees and cached previews. Archiving/removing a workspace or changing its checkout root retires its explorer cache. Delayed replies from an earlier cache lifetime or connection cannot recreate it.
+
+Unobserved Files refresh queries are collected without a cache grace period. Bulk listing-derived data is kept outside the event callbacks' shared render scope, so earlier callbacks do not accumulate old tree rows. Selection, expansion, and move actions read the current listing while preserving complete directory contents.
+
+Desktop/Web ScrollView ref changes use React's attach/detach lifecycle so the styling registry releases its DOM references when their owner changes or unmounts. Hidden panels with open tabs remain intentionally mounted; closing the final owning tab releases the view.
 
 Desktop native editing shortcuts:
 
@@ -121,6 +129,8 @@ Open **Changes → Git actions → Diff mode**. The checked mode is:
 Modes can switch with empty or populated lists. Forge account setup never blocks local diff viewing or mode changes. Operation names, comparison labels, and action feedback follow General language in every supported locale. **Archive workspace** and **Open Changes tab** are not Git-menu actions.
 
 Diff scrolling preserves transparent wallpaper without accumulated red/green shading or text trails. Pixel reuse depends on document/viewport heights, not a fixed changed-line threshold.
+
+The Changes tree keeps full file summaries while virtualizing rows. Folder stage, unstage, and discard actions resolve descendant paths when invoked, preserving rename source/destination pathspecs. A single uncommitted summary shares untracked-file inspections across its net and unstaged views; later requests reread files. Closing or replacing a subscription prevents abandoned results and queued refreshes from being published, without canceling remaining shared consumers. Already-running Git and filesystem operations may finish.
 
 ### Discard behavior and large selections
 

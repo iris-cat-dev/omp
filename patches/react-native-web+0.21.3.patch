@@ -1,0 +1,123 @@
+diff --git a/node_modules/react-native-web/src/exports/ScrollView/index.js b/node_modules/react-native-web/src/exports/ScrollView/index.js
+--- a/node_modules/react-native-web/src/exports/ScrollView/index.js
++++ b/node_modules/react-native-web/src/exports/ScrollView/index.js
+@@ -15,7 +15,8 @@
+ import Dimensions from '../Dimensions';
+ import dismissKeyboard from '../../modules/dismissKeyboard';
+ import invariant from 'fbjs/lib/invariant';
+ import mergeRefs from '../../modules/mergeRefs';
++import memoizeOne from 'memoize-one';
+ import Platform from '../Platform';
+ import ScrollViewBase from './ScrollViewBase';
+ import StyleSheet from '../StyleSheet';
+@@ -48,7 +49,9 @@
+ class ScrollView extends React.Component<ScrollViewProps> {
+   _scrollNodeRef: any = null;
+   _innerViewRef: any = null;
++  // Let React detach the previous forwarded ref when its identity changes.
++  _getScrollNodeRef = memoizeOne(mergeRefs);
+ 
+   /**
+    * ------------------------------------------------------
+    * START SCROLLRESPONDER
+@@ -657,7 +660,10 @@
+     );
+ 
+     const scrollView = (
+-      <ScrollViewClass {...props} ref={this._setScrollNodeRef}>
++      <ScrollViewClass
++        {...props}
++        ref={this._getScrollNodeRef(this._setScrollNodeRef, forwardedRef)}
++      >
+         {contentContainer}
+       </ScrollViewClass>
+     );
+@@ -720,8 +726,6 @@
+       node.scrollResponderScrollNativeHandleToKeyboard =
+         this.scrollResponderScrollNativeHandleToKeyboard;
+     }
+-    const ref = mergeRefs(this.props.forwardedRef);
+-    ref(node);
+   };
+ }
+ 
+diff --git a/node_modules/react-native-web/dist/exports/ScrollView/index.js b/node_modules/react-native-web/dist/exports/ScrollView/index.js
+--- a/node_modules/react-native-web/dist/exports/ScrollView/index.js
++++ b/node_modules/react-native-web/dist/exports/ScrollView/index.js
+@@ -17,7 +17,8 @@
+ import Dimensions from '../Dimensions';
+ import dismissKeyboard from '../../modules/dismissKeyboard';
+ import invariant from 'fbjs/lib/invariant';
+ import mergeRefs from '../../modules/mergeRefs';
++import memoizeOne from 'memoize-one';
+ import Platform from '../Platform';
+ import ScrollViewBase from './ScrollViewBase';
+ import StyleSheet from '../StyleSheet';
+@@ -33,7 +34,9 @@
+     super(...arguments);
+     this._scrollNodeRef = null;
+     this._innerViewRef = null;
++    // Let React detach the previous forwarded ref when its identity changes.
++    this._getScrollNodeRef = memoizeOne(mergeRefs);
+     this.isTouching = false;
+     this.lastMomentumScrollBeginTime = 0;
+     this.lastMomentumScrollEndTime = 0;
+     this.observedScrollSinceBecomingResponder = false;
+@@ -266,8 +269,6 @@
+         node.scrollResponderZoomTo = this.scrollResponderZoomTo;
+         node.scrollResponderScrollNativeHandleToKeyboard = this.scrollResponderScrollNativeHandleToKeyboard;
+       }
+-      var ref = mergeRefs(this.props.forwardedRef);
+-      ref(node);
+     };
+   }
+   /**
+@@ -595,7 +596,7 @@
+     var ScrollViewClass = ScrollViewBase;
+     invariant(ScrollViewClass !== undefined, 'ScrollViewClass must not be undefined');
+     var scrollView = /*#__PURE__*/React.createElement(ScrollViewClass, _extends({}, props, {
+-      ref: this._setScrollNodeRef
++      ref: this._getScrollNodeRef(this._setScrollNodeRef, forwardedRef)
+     }), contentContainer);
+     if (refreshControl) {
+       return /*#__PURE__*/React.cloneElement(refreshControl, {
+diff --git a/node_modules/react-native-web/dist/cjs/exports/ScrollView/index.js b/node_modules/react-native-web/dist/cjs/exports/ScrollView/index.js
+--- a/node_modules/react-native-web/dist/cjs/exports/ScrollView/index.js
++++ b/node_modules/react-native-web/dist/cjs/exports/ScrollView/index.js
+@@ -20,7 +20,8 @@
+ var _Dimensions = _interopRequireDefault(require("../Dimensions"));
+ var _dismissKeyboard = _interopRequireDefault(require("../../modules/dismissKeyboard"));
+ var _invariant = _interopRequireDefault(require("fbjs/lib/invariant"));
+ var _mergeRefs = _interopRequireDefault(require("../../modules/mergeRefs"));
++var _memoizeOne = _interopRequireDefault(require("memoize-one"));
+ var _Platform = _interopRequireDefault(require("../Platform"));
+ var _ScrollViewBase = _interopRequireDefault(require("./ScrollViewBase"));
+ var _StyleSheet = _interopRequireDefault(require("../StyleSheet"));
+@@ -37,7 +38,9 @@
+     super(...arguments);
+     this._scrollNodeRef = null;
+     this._innerViewRef = null;
++    // Let React detach the previous forwarded ref when its identity changes.
++    this._getScrollNodeRef = (0, _memoizeOne.default)(_mergeRefs.default);
+     this.isTouching = false;
+     this.lastMomentumScrollBeginTime = 0;
+     this.lastMomentumScrollEndTime = 0;
+     this.observedScrollSinceBecomingResponder = false;
+@@ -270,8 +273,6 @@
+         node.scrollResponderZoomTo = this.scrollResponderZoomTo;
+         node.scrollResponderScrollNativeHandleToKeyboard = this.scrollResponderScrollNativeHandleToKeyboard;
+       }
+-      var ref = (0, _mergeRefs.default)(this.props.forwardedRef);
+-      ref(node);
+     };
+   }
+   /**
+@@ -599,7 +600,7 @@
+     var ScrollViewClass = _ScrollViewBase.default;
+     (0, _invariant.default)(ScrollViewClass !== undefined, 'ScrollViewClass must not be undefined');
+     var scrollView = /*#__PURE__*/_react.default.createElement(ScrollViewClass, (0, _extends2.default)({}, props, {
+-      ref: this._setScrollNodeRef
++      ref: this._getScrollNodeRef(this._setScrollNodeRef, forwardedRef)
+     }), contentContainer);
+     if (refreshControl) {
+       return /*#__PURE__*/_react.default.cloneElement(refreshControl, {

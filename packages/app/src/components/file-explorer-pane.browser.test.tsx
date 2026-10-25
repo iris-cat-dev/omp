@@ -14,6 +14,7 @@ import { buildWorkspaceExplorerStateKey } from "@/file-explorer/state-key";
 import { EXPLORER_ENTRY_DRAG_MIME } from "@/file-explorer/entry-drag";
 import { WORKSPACE_FILE_DRAG_MIME } from "@/attachments/workspace-file-drag";
 import { FileExplorerPane } from "./file-explorer-pane";
+import { RetainedPanelActivity } from "./retained-panel";
 
 const fixture = vi.hoisted(() => ({
   directories: new Map<string, ExplorerDirectory>(),
@@ -25,6 +26,12 @@ const fixture = vi.hoisted(() => ({
     }
   >,
   expandedPathsByWorkspace: {} as Record<string, string[]>,
+  revealRequest: null as {
+    serverId: string;
+    workspaceKey: string;
+    path: string;
+    revision: number;
+  } | null,
   requestDirectoryListing: vi.fn<(path: string) => Promise<ExplorerDirectory | null>>(),
   moveEntry: vi.fn<
     (input: { path: string; parentPath: string }) => Promise<{
@@ -43,6 +50,16 @@ const fixture = vi.hoisted(() => ({
   openFile: vi.fn(),
 }));
 
+interface FixturePanelState {
+  explorerSortOption: "name";
+  explorerShowHiddenFiles: boolean;
+  expandedPathsByWorkspace: Record<string, string[]>;
+  explorerRevealRequest: typeof fixture.revealRequest;
+  setExplorerSortOption: typeof fixture.setExplorerSortOption;
+  toggleExplorerShowHiddenFiles: typeof fixture.toggleExplorerShowHiddenFiles;
+  setExpandedPathsForWorkspace: typeof fixture.setExpandedPathsForWorkspace;
+}
+
 // Keep the pane, menus, RN web DOM, and drag hook real; replace daemon/persistence boundaries.
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -56,28 +73,23 @@ vi.mock("@/stores/session-store", () => ({
   useSessionStore: (selector: (state: { sessions: typeof fixture.sessions }) => unknown) =>
     selector({ sessions: fixture.sessions }),
 }));
-vi.mock("@/stores/panel-store", () => ({
-  usePanelStore: (
-    selector: (state: {
-      explorerSortOption: "name";
-      explorerShowHiddenFiles: boolean;
-      expandedPathsByWorkspace: typeof fixture.expandedPathsByWorkspace;
-      explorerRevealRequest: null;
-      setExplorerSortOption: typeof fixture.setExplorerSortOption;
-      toggleExplorerShowHiddenFiles: typeof fixture.toggleExplorerShowHiddenFiles;
-      setExpandedPathsForWorkspace: typeof fixture.setExpandedPathsForWorkspace;
-    }) => unknown,
-  ) =>
-    selector({
-      explorerSortOption: "name",
-      explorerShowHiddenFiles: true,
-      expandedPathsByWorkspace: fixture.expandedPathsByWorkspace,
-      explorerRevealRequest: null,
-      setExplorerSortOption: fixture.setExplorerSortOption,
-      toggleExplorerShowHiddenFiles: fixture.toggleExplorerShowHiddenFiles,
-      setExpandedPathsForWorkspace: fixture.setExpandedPathsForWorkspace,
-    }),
-}));
+vi.mock("@/stores/panel-store", () => {
+  const getState = (): FixturePanelState => ({
+    explorerSortOption: "name",
+    explorerShowHiddenFiles: true,
+    expandedPathsByWorkspace: fixture.expandedPathsByWorkspace,
+    explorerRevealRequest: fixture.revealRequest,
+    setExplorerSortOption: fixture.setExplorerSortOption,
+    toggleExplorerShowHiddenFiles: fixture.toggleExplorerShowHiddenFiles,
+    setExpandedPathsForWorkspace: fixture.setExpandedPathsForWorkspace,
+  });
+  return {
+    usePanelStore: Object.assign(
+      (selector: (state: FixturePanelState) => unknown) => selector(getState()),
+      { getState },
+    ),
+  };
+});
 vi.mock("@/hooks/use-file-explorer-actions", () => ({
   useFileExplorerActions: () => ({
     requestDirectoryListing: fixture.requestDirectoryListing,
@@ -177,10 +189,29 @@ function dispatchDrag(
   return event;
 }
 
+async function renderPane(active = true, workspaceRoot = "/workspace") {
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <RetainedPanelActivity active={active}>
+          <FileExplorerPane
+            serverId="server-1"
+            workspaceId="workspace-1"
+            workspaceRoot={workspaceRoot}
+            onOpenFile={fixture.openFile}
+            revealRequests
+          />
+        </RetainedPanelActivity>
+      </QueryClientProvider>,
+    ),
+  );
+}
+
 beforeEach(async () => {
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.shortcutOs = "mac";
+  fixture.revealRequest = null;
   fixture.directories.clear();
   fixture.directories.set(".", {
     path: ".",
@@ -202,6 +233,7 @@ beforeEach(async () => {
         [
           stateKey,
           {
+            requestScope: {},
             directories: fixture.directories,
             files: new Map(),
             refreshRevision: 0,
@@ -231,18 +263,7 @@ beforeEach(async () => {
   container.style.cssText = "display:flex;width:700px;height:600px";
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () =>
-    root.render(
-      <QueryClientProvider client={queryClient}>
-        <FileExplorerPane
-          serverId="server-1"
-          workspaceId="workspace-1"
-          workspaceRoot="/workspace"
-          onOpenFile={fixture.openFile}
-        />
-      </QueryClientProvider>,
-    ),
-  );
+  await renderPane();
 });
 
 afterEach(async () => {
@@ -254,7 +275,170 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+describe("retained file explorer activity", () => {
+  it("releases obsolete refresh queries without dropping the mounted pane's query", async () => {
+    const explorer = fixture.sessions["server-1"].fileExplorer.values().next().value!;
+    for (let revision = 1; revision <= 3; revision++) {
+      explorer.refreshRevision = revision;
+      await renderPane();
+    }
+    await vi.waitFor(() => {
+      const queries = queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] });
+      expect(queries).toHaveLength(1);
+      expect(queries[0]!.queryKey.at(-1)).toBe(3);
+    });
+    await renderPane(false);
+    expect(queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] })).toHaveLength(
+      1,
+    );
+    await act(async () => root.render(<QueryClientProvider client={queryClient} />));
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] })).toEqual(
+        [],
+      );
+    });
+  });
+
+  it("defers hidden reveals and does not replay a completed reveal on reactivation", async () => {
+    await renderPane(false);
+    fixture.requestDirectoryListing.mockClear();
+    fixture.revealRequest = {
+      serverId: "server-1",
+      workspaceKey: buildWorkspaceExplorerStateKey({ workspaceId: "workspace-1" })!,
+      path: "root.txt",
+      revision: 1,
+    };
+    await renderPane(false);
+    expect(fixture.requestDirectoryListing).not.toHaveBeenCalled();
+    await renderPane();
+    expect(fixture.requestDirectoryListing.mock.calls.map(([path]) => path)).toEqual(["."]);
+    expect(fixture.selectExplorerEntry).toHaveBeenCalledWith("root.txt");
+    await renderPane(false);
+    await renderPane();
+    expect(fixture.requestDirectoryListing).toHaveBeenCalledTimes(1);
+  });
+
+  it("coalesces hidden revisions into one refresh on activation", async () => {
+    await renderPane(false);
+    fixture.requestDirectoryListing.mockClear();
+    const explorer = fixture.sessions["server-1"].fileExplorer.values().next().value!;
+    explorer.refreshRevision = 1;
+    await renderPane(false);
+    explorer.refreshRevision = 3;
+    await renderPane(false);
+    expect(fixture.requestDirectoryListing).not.toHaveBeenCalled();
+
+    await renderPane();
+    expect(fixture.requestDirectoryListing.mock.calls.map(([path]) => path)).toEqual([".", "src"]);
+    await renderPane();
+    expect(fixture.requestDirectoryListing).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not initialize hidden mounts or duplicate their pending revision on activation", async () => {
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    fixture.requestDirectoryListing.mockClear();
+    await renderPane(false);
+    const explorer = fixture.sessions["server-1"].fileExplorer.values().next().value!;
+    explorer.refreshRevision = 4;
+    await renderPane(false);
+    expect(fixture.requestDirectoryListing).not.toHaveBeenCalled();
+    await renderPane();
+    expect(fixture.requestDirectoryListing.mock.calls.map(([path]) => path)).toEqual([".", "src"]);
+  });
+
+  it("ignores obsolete initialization after hiding and changing workspace scope", async () => {
+    const { promise, resolve: resolveOldRoot } = Promise.withResolvers<ExplorerDirectory | null>();
+    fixture.requestDirectoryListing.mockImplementationOnce(() => promise);
+    await renderPane(true, "/old-workspace");
+    await renderPane(false, "/workspace");
+    fixture.requestDirectoryListing.mockClear();
+    fixture.setExpandedPathsForWorkspace.mockClear();
+    await renderPane();
+    expect(fixture.requestDirectoryListing.mock.calls.map(([path]) => path)).toEqual([".", "src"]);
+    expect(fixture.setExpandedPathsForWorkspace).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveOldRoot(fixture.directories.get(".")!));
+    expect(fixture.requestDirectoryListing).toHaveBeenCalledTimes(2);
+    expect(fixture.setExpandedPathsForWorkspace).toHaveBeenCalledTimes(1);
+    await renderPane(false);
+    await renderPane();
+    expect(fixture.requestDirectoryListing).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("file explorer virtualized extent", () => {
+  it("exposes the full scroll extent and reaches the final file without sweeping earlier rows", async () => {
+    const count = 1500;
+    fixture.directories.clear();
+    fixture.directories.set(".", {
+      path: ".",
+      entries: Array.from({ length: count }, (_, index) =>
+        entry(`file-${String(index).padStart(4, "0")}.ts`, "file"),
+      ),
+    });
+    const explorerStates = fixture.sessions["server-1"].fileExplorer;
+    const [key, explorer] = [...explorerStates.entries()][0];
+    explorerStates.set(key, { ...explorer, directories: new Map(fixture.directories) });
+    await renderPane();
+    const scroll = requireElement("file-explorer-tree-scroll");
+    await vi.waitFor(() => {
+      // Each row includes at least its 16px icon; the unseen tail must already exist.
+      expect(scroll.scrollHeight).toBeGreaterThan(count * 16);
+    });
+    await act(async () => {
+      scroll.scrollTop = scroll.scrollHeight;
+      scroll.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => {
+      expect(row("file-1499.ts")).toBeTruthy();
+    });
+    expect(
+      container.querySelectorAll('[data-testid^="file-explorer-row-"][aria-label]').length,
+    ).toBeLessThan(count);
+  });
+});
+
 describe("file explorer selection and menus", () => {
+  it("uses the refreshed visible paths for range selection and batch actions", async () => {
+    fixture.directories.set(".", {
+      path: ".",
+      entries: ["alpha.txt", "beta.txt", "gamma.txt"].map((path) => entry(path, "file")),
+    });
+    const explorers = fixture.sessions["server-1"].fileExplorer;
+    const [key, explorer] = [...explorers.entries()][0];
+    explorers.set(key, { ...explorer, directories: new Map(fixture.directories) });
+    fixture.expandedPathsByWorkspace[key] = ["."];
+    await renderPane();
+    await act(async () => {
+      await userEvent.click(row("alpha.txt"));
+      await userEvent.click(row("gamma.txt"), { modifiers: ["Shift"] });
+    });
+    for (const name of ["alpha.txt", "beta.txt", "gamma.txt"]) {
+      expect(row(name).getAttribute("aria-selected")).toBe("true");
+    }
+    await act(async () => userEvent.click(siblingAction("gamma.txt", "more")));
+    await act(async () =>
+      userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
+    );
+    expect(fixture.copyText).toHaveBeenCalledExactlyOnceWith("alpha.txt\nbeta.txt\ngamma.txt");
+  });
+
+  it("keeps selected entries from collapsed cached directories in batch actions", async () => {
+    await act(async () => {
+      await userEvent.click(row("archive"), { modifiers: ["Meta"] });
+      await userEvent.click(row("source.ts"), { modifiers: ["Meta"] });
+    });
+    const stateKey = buildWorkspaceExplorerStateKey({ workspaceId: "workspace-1" })!;
+    fixture.expandedPathsByWorkspace[stateKey] = ["."];
+    await renderPane();
+    await act(async () => userEvent.click(siblingAction("archive", "more")));
+    await act(async () =>
+      userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
+    );
+    expect(fixture.copyText).toHaveBeenCalledExactlyOnceWith("archive\nsrc/source.ts");
+  });
+
   it("keeps Mac Control-click as a menu gesture without opening or toggling the file", async () => {
     await act(async () => {
       await userEvent.click(row("source.ts"), { modifiers: ["Meta"] });

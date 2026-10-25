@@ -65,7 +65,7 @@ function createPendingManager() {
     resolve(): void;
   }> = [];
   const workspaceGitService = {
-    getCheckoutDiff: async () => ({ diff: "", structured: [] }),
+    getCheckoutDiff: vi.fn(async () => ({ diff: "", structured: [] })),
     getSnapshot: async () => createWorkspaceSnapshot(),
     peekSnapshot: () => null,
     registerWorkspace: () => ({ unsubscribe: () => {} }),
@@ -94,7 +94,7 @@ function createPendingManager() {
     paseoHome: "/tmp/paseo-test",
     workspaceGitService,
   });
-  return { manager, watches };
+  return { manager, watches, workspaceGitService };
 }
 
 describe("CheckoutDiffManager", () => {
@@ -197,7 +197,7 @@ describe("CheckoutDiffManager", () => {
   });
 
   test("cancels a subscription while its working tree watch is still opening", async () => {
-    const { manager, watches } = createPendingManager();
+    const { manager, watches, workspaceGitService } = createPendingManager();
     const abort = new AbortController();
 
     const pendingSubscription = manager.subscribe(
@@ -210,15 +210,111 @@ describe("CheckoutDiffManager", () => {
     );
     abort.abort();
     watches[0].resolve();
-    await pendingSubscription;
+    await expect(pendingSubscription).rejects.toMatchObject({ name: "AbortError" });
 
     expect(watches[0].unsubscribeCalls).toBe(1);
+    expect(workspaceGitService.getCheckoutDiff).not.toHaveBeenCalled();
     expect(manager.getMetrics()).toEqual({
       checkoutDiffTargetCount: 0,
       checkoutDiffSubscriptionCount: 0,
       checkoutDiffWatcherCount: 0,
       checkoutDiffFallbackRefreshTargetCount: 0,
     });
+  });
+
+  test("does not initialize a subscription that was already aborted", async () => {
+    const { manager, watches, workspaceGitService } = createPendingManager();
+    const abort = new AbortController();
+    abort.abort();
+
+    await expect(
+      manager.subscribe(
+        {
+          cwd: "/tmp/repo",
+          compare: { mode: "uncommitted" },
+          signal: abort.signal,
+        },
+        () => {},
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(watches).toHaveLength(0);
+    expect(workspaceGitService.getCheckoutDiff).not.toHaveBeenCalled();
+    expect(manager.getMetrics().checkoutDiffTargetCount).toBe(0);
+  });
+
+  test("canceling one opening consumer leaves the shared subscription live", async () => {
+    const { manager, watches, workspaceGitService } = createPendingManager();
+    const abort = new AbortController();
+    const canceledListener = vi.fn();
+    const canceled = manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "uncommitted" }, signal: abort.signal },
+      canceledListener,
+    );
+    const live = manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "uncommitted" } },
+      () => {},
+    );
+    abort.abort();
+    watches[0].resolve();
+    await expect(canceled).rejects.toMatchObject({ name: "AbortError" });
+    const subscription = await live;
+
+    expect(subscription.initial).toEqual({ cwd: "/tmp/repo", files: [], error: null });
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledTimes(1);
+    expect(canceledListener).not.toHaveBeenCalled();
+    expect(watches[0].unsubscribeCalls).toBe(0);
+    expect(manager.getMetrics().checkoutDiffSubscriptionCount).toBe(1);
+    subscription.unsubscribe();
+    expect(watches[0].unsubscribeCalls).toBe(1);
+  });
+
+  test("drops an abandoned initial read without a fallback or queued refresh", async () => {
+    const diff = createDeferred<{ diff: string; structured: [] }>();
+    const started = createDeferred<void>();
+    const getCheckoutDiff = vi.fn(() => {
+      started.resolve();
+      return diff.promise;
+    });
+    const { manager, getOnChange, unsubscribe } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+    const abort = new AbortController();
+    const listener = vi.fn();
+    const pending = manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "uncommitted" }, signal: abort.signal },
+      listener,
+    );
+    await started.promise;
+    manager.scheduleRefreshForCwd("/tmp/repo");
+    abort.abort();
+    getOnChange()?.();
+    diff.resolve({ diff: "", structured: [] });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
+    expect(listener).not.toHaveBeenCalled();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(manager.getMetrics().checkoutDiffTargetCount).toBe(0);
+  });
+
+  test("does not initialize a base diff after its workspace read is abandoned", async () => {
+    const snapshot = createDeferred<WorkspaceGitRuntimeSnapshot>();
+    const { manager, workspaceGitService } = createManager();
+    workspaceGitService.getSnapshot.mockImplementation(() => snapshot.promise);
+    const abort = new AbortController();
+    const pending = manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "base" }, signal: abort.signal },
+      () => {},
+    );
+    abort.abort();
+    snapshot.resolve(createWorkspaceSnapshot());
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(workspaceGitService.registerWorkspace).not.toHaveBeenCalled();
+    expect(workspaceGitService.getCheckoutDiff).not.toHaveBeenCalled();
+    expect(manager.getMetrics().checkoutDiffTargetCount).toBe(0);
   });
 
   test("shares one opening target between concurrent subscriptions", async () => {

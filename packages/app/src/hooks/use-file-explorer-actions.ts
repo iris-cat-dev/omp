@@ -14,6 +14,7 @@ import {
 
 function createExplorerState(): AgentFileExplorerState {
   return {
+    requestScope: {},
     directories: new Map(),
     files: new Map(),
     refreshRevision: 0,
@@ -36,7 +37,76 @@ function pushHistory(history: string[], path: string): string[] {
   return [...normalizedHistory, path];
 }
 
-const latestDirectoryRequestByTarget = new Map<string, object>();
+interface ExplorerRequest {
+  path: string;
+  mode: "list" | "file";
+}
+
+const latestRequestByScope = new WeakMap<object, Map<string, ExplorerRequest>>();
+
+function getExplorerRequests(requestScope: object): Map<string, ExplorerRequest> {
+  let requests = latestRequestByScope.get(requestScope);
+  if (!requests) {
+    requests = new Map();
+    latestRequestByScope.set(requestScope, requests);
+  }
+  return requests;
+}
+
+function firstChildExplorerPath(parentPath: string, path: string): string | null {
+  if (path === parentPath || path === ".") {
+    return null;
+  }
+  const prefix = parentPath === "." ? "" : `${parentPath}/`;
+  if (!path.startsWith(prefix)) {
+    return null;
+  }
+  const separator = path.indexOf("/", prefix.length);
+  return separator === -1 ? path : path.slice(0, separator);
+}
+
+function pruneExplorerState(
+  state: AgentFileExplorerState,
+  shouldPrune: (path: string, mode: ExplorerRequest["mode"]) => boolean,
+): AgentFileExplorerState {
+  const requests = latestRequestByScope.get(state.requestScope);
+  for (const [target, request] of requests ?? []) {
+    if (shouldPrune(request.path, request.mode)) {
+      requests!.delete(target);
+    }
+  }
+
+  let directories = state.directories;
+  for (const path of state.directories.keys()) {
+    if (shouldPrune(path, "list")) {
+      if (directories === state.directories) {
+        directories = new Map(directories);
+      }
+      directories.delete(path);
+    }
+  }
+  let files = state.files;
+  for (const path of state.files.keys()) {
+    if (shouldPrune(path, "file")) {
+      if (files === state.files) {
+        files = new Map(files);
+      }
+      files.delete(path);
+    }
+  }
+  const cancelsPendingRequest =
+    state.pendingRequest !== null &&
+    shouldPrune(state.pendingRequest.path, state.pendingRequest.mode);
+  if (directories === state.directories && files === state.files && !cancelsPendingRequest) {
+    return state;
+  }
+  return {
+    ...state,
+    directories,
+    files,
+    ...(cancelsPendingRequest ? { isLoading: false, pendingRequest: null } : {}),
+  };
+}
 
 export function useFileExplorerActions(params: { serverId: string } & FileExplorerWorkspaceScope) {
   const { t } = useTranslation();
@@ -57,18 +127,45 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   );
 
   const updateExplorerState = useCallback(
-    (updater: (prev: AgentFileExplorerState) => AgentFileExplorerState) => {
-      if (!workspaceStateKey) {
-        return;
+    (
+      updater: (prev: AgentFileExplorerState) => AgentFileExplorerState,
+      expectedRequestScope?: object,
+    ): object | null => {
+      if (!workspaceStateKey || useSessionStore.getState().sessions[serverId]?.client !== client) {
+        return null;
       }
+      let requestScope: object | null = null;
       setFileExplorer(serverId, (prev) => {
+        const existing = prev.get(workspaceStateKey);
+        if (expectedRequestScope && existing?.requestScope !== expectedRequestScope) {
+          return prev;
+        }
+        const current = existing ?? createExplorerState();
+        requestScope = current.requestScope;
+        const updated = updater(current);
+        if (updated === existing) {
+          return prev;
+        }
         const next = new Map(prev);
-        const current = next.get(workspaceStateKey) ?? createExplorerState();
-        next.set(workspaceStateKey, updater(current));
+        next.set(workspaceStateKey, updated);
         return next;
       });
+      return requestScope;
     },
-    [serverId, setFileExplorer, workspaceStateKey],
+    [client, serverId, setFileExplorer, workspaceStateKey],
+  );
+
+  const invalidateSubtree = useCallback(
+    (requestScope: object, path: string) =>
+      updateExplorerState(
+        (state) =>
+          pruneExplorerState(
+            state,
+            (target) => path === "." || target === path || target.startsWith(`${path}/`),
+          ),
+        requestScope,
+      ),
+    [updateExplorerState],
   );
 
   const requestDirectoryListing = useCallback(
@@ -80,13 +177,9 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         return null;
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
-      const requestTarget = JSON.stringify([serverId, workspaceStateKey, normalizedPath]);
-      const requestToken = {};
-      latestDirectoryRequestByTarget.set(requestTarget, requestToken);
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
       const shouldRecordHistory = options?.recordHistory ?? shouldSetCurrentPath;
-
-      updateExplorerState((state) => ({
+      const requestScope = updateExplorerState((state) => ({
         ...state,
         isLoading: true,
         lastError: null,
@@ -101,47 +194,64 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
             }
           : {}),
       }));
+      if (!requestScope) {
+        return null;
+      }
+      const requests = getExplorerRequests(requestScope);
+      const requestTarget = `list:${normalizedPath}`;
+      const requestToken: ExplorerRequest = { path: normalizedPath, mode: "list" };
+      requests.set(requestTarget, requestToken);
 
       try {
-        if (!normalizedWorkspaceRoot) {
-          updateExplorerState((state) => ({
-            ...state,
-            isLoading: false,
-            lastError: t("workspace.fileExplorer.states.unavailable"),
-            pendingRequest: null,
-          }));
-          return null;
-        }
-
-        if (!client) {
-          updateExplorerState((state) => ({
-            ...state,
-            isLoading: false,
-            lastError: t("workspace.terminal.hostDisconnected"),
-            pendingRequest: null,
-          }));
+        if (!normalizedWorkspaceRoot || !client) {
+          updateExplorerState(
+            (state) => ({
+              ...state,
+              isLoading: false,
+              lastError: t(
+                !normalizedWorkspaceRoot
+                  ? "workspace.fileExplorer.states.unavailable"
+                  : "workspace.terminal.hostDisconnected",
+              ),
+              pendingRequest: null,
+            }),
+            requestScope,
+          );
           return null;
         }
 
         const directory = await client.listDirectory(normalizedWorkspaceRoot, normalizedPath);
-        if (latestDirectoryRequestByTarget.get(requestTarget) !== requestToken) {
+        if (requests.get(requestTarget) !== requestToken) {
           return directory;
         }
         updateExplorerState((state) => {
+          const entryKinds = new Map<string, "file" | "directory">();
+          for (const entry of directory.entries) {
+            entryKinds.set(entry.path, entry.kind);
+          }
+          const prunedState = pruneExplorerState(state, (targetPath, mode) => {
+            const childPath = firstChildExplorerPath(directory.path, targetPath);
+            if (childPath === null) {
+              return false;
+            }
+            const expectedKind = mode === "file" && childPath === targetPath ? "file" : "directory";
+            return entryKinds.get(childPath) !== expectedKind;
+          });
           const ownsLoadingState =
-            state.pendingRequest?.mode === "list" && state.pendingRequest.path === normalizedPath;
-          const directories = new Map(state.directories);
+            prunedState.pendingRequest?.mode === "list" &&
+            prunedState.pendingRequest.path === normalizedPath;
+          const directories = new Map(prunedState.directories);
           directories.set(directory.path, directory);
           return {
-            ...state,
-            isLoading: ownsLoadingState ? false : state.isLoading,
-            pendingRequest: ownsLoadingState ? null : state.pendingRequest,
+            ...prunedState,
+            isLoading: ownsLoadingState ? false : prunedState.isLoading,
+            pendingRequest: ownsLoadingState ? null : prunedState.pendingRequest,
             directories,
           };
-        });
+        }, requestScope);
         return directory;
       } catch (error) {
-        if (latestDirectoryRequestByTarget.get(requestTarget) !== requestToken) {
+        if (requests.get(requestTarget) !== requestToken) {
           return null;
         }
         updateExplorerState((state) => {
@@ -157,15 +267,15 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
                 : t("workspace.fileExplorer.errors.failedToListDirectory"),
             pendingRequest: ownsLoadingState ? null : state.pendingRequest,
           };
-        });
+        }, requestScope);
         return null;
       } finally {
-        if (latestDirectoryRequestByTarget.get(requestTarget) === requestToken) {
-          latestDirectoryRequestByTarget.delete(requestTarget);
+        if (requests.get(requestTarget) === requestToken) {
+          requests.delete(requestTarget);
         }
       }
     },
-    [client, normalizedWorkspaceRoot, serverId, t, updateExplorerState, workspaceStateKey],
+    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
   );
 
   const requestFilePreview = useCallback(
@@ -174,59 +284,74 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         return;
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
-      updateExplorerState((state) => ({
+      const requestScope = updateExplorerState((state) => ({
         ...state,
         isLoading: true,
         lastError: null,
         pendingRequest: { path: normalizedPath, mode: "file" },
       }));
-
-      if (!normalizedWorkspaceRoot) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: t("workspace.fileExplorer.states.unavailable"),
-          pendingRequest: null,
-        }));
+      if (!requestScope) {
         return;
       }
-
-      if (!client) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: t("workspace.terminal.hostDisconnected"),
-          pendingRequest: null,
-        }));
-        return;
-      }
+      const requests = getExplorerRequests(requestScope);
+      const requestTarget = `file:${normalizedPath}`;
+      const requestToken: ExplorerRequest = { path: normalizedPath, mode: "file" };
+      requests.set(requestTarget, requestToken);
 
       try {
-        const file = await client.readFile(normalizedWorkspaceRoot, normalizedPath);
-        updateExplorerState((state) => {
-          const nextState: AgentFileExplorerState = {
-            ...state,
-            isLoading: false,
-            lastError: null,
-            pendingRequest: null,
-            directories: state.directories,
-            files: state.files,
-          };
+        if (!normalizedWorkspaceRoot || !client) {
+          updateExplorerState(
+            (state) => ({
+              ...state,
+              isLoading: false,
+              lastError: t(
+                !normalizedWorkspaceRoot
+                  ? "workspace.fileExplorer.states.unavailable"
+                  : "workspace.terminal.hostDisconnected",
+              ),
+              pendingRequest: null,
+            }),
+            requestScope,
+          );
+          return;
+        }
 
+        const file = await client.readFile(normalizedWorkspaceRoot, normalizedPath);
+        if (requests.get(requestTarget) !== requestToken) {
+          return;
+        }
+        updateExplorerState((state) => {
+          const ownsLoadingState =
+            state.pendingRequest?.mode === "file" && state.pendingRequest.path === normalizedPath;
           const files = new Map(state.files);
           const explorerFile = explorerFileFromReadResult(file);
           files.set(explorerFile.path, explorerFile);
-          nextState.files = files;
-
-          return nextState;
-        });
+          return {
+            ...state,
+            isLoading: ownsLoadingState ? false : state.isLoading,
+            pendingRequest: ownsLoadingState ? null : state.pendingRequest,
+            files,
+          };
+        }, requestScope);
       } catch (error) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: error instanceof Error ? error.message : t("panels.file.failedToLoadPreview"),
-          pendingRequest: null,
-        }));
+        if (requests.get(requestTarget) !== requestToken) {
+          return;
+        }
+        updateExplorerState((state) => {
+          const ownsLoadingState =
+            state.pendingRequest?.mode === "file" && state.pendingRequest.path === normalizedPath;
+          return {
+            ...state,
+            isLoading: ownsLoadingState ? false : state.isLoading,
+            lastError:
+              error instanceof Error ? error.message : t("panels.file.failedToLoadPreview"),
+            pendingRequest: ownsLoadingState ? null : state.pendingRequest,
+          };
+        }, requestScope);
+      } finally {
+        if (requests.get(requestTarget) === requestToken) {
+          requests.delete(requestTarget);
+        }
       }
     },
     [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
@@ -254,11 +379,15 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
+      const requestScope = updateExplorerState((state) => state);
+      if (!requestScope) {
+        return null;
+      }
       const payload = await client.createFileEntry({
         cwd: normalizedWorkspaceRoot,
         ...input,
       });
-      if (payload.success) {
+      if (payload.success && updateExplorerState((state) => state, requestScope)) {
         await requestDirectoryListing(input.parentPath, {
           recordHistory: false,
           setCurrentPath: false,
@@ -266,7 +395,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, updateExplorerState],
   );
 
   const renameEntry = useCallback(
@@ -274,11 +403,15 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
+      const requestScope = updateExplorerState((state) => state);
+      if (!requestScope) {
+        return null;
+      }
       const payload = await client.renameFileEntry({
         cwd: normalizedWorkspaceRoot,
         ...input,
       });
-      if (payload.success) {
+      if (payload.success && invalidateSubtree(requestScope, input.path)) {
         await requestDirectoryListing(parentExplorerPath(input.path), {
           recordHistory: false,
           setCurrentPath: false,
@@ -286,18 +419,28 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [
+      client,
+      invalidateSubtree,
+      normalizedWorkspaceRoot,
+      requestDirectoryListing,
+      updateExplorerState,
+    ],
   );
   const moveEntry = useCallback(
     async (input: { path: string; parentPath: string }) => {
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
+      const requestScope = updateExplorerState((state) => state);
+      if (!requestScope) {
+        return null;
+      }
       const payload = await client.moveFileEntry({
         cwd: normalizedWorkspaceRoot,
         ...input,
       });
-      if (payload.success) {
+      if (payload.success && invalidateSubtree(requestScope, input.path)) {
         const previousParentPath = parentExplorerPath(input.path);
         const changedParentPaths =
           previousParentPath === input.parentPath
@@ -314,7 +457,13 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [
+      client,
+      invalidateSubtree,
+      normalizedWorkspaceRoot,
+      requestDirectoryListing,
+      updateExplorerState,
+    ],
   );
 
   const duplicateEntry = useCallback(
@@ -322,8 +471,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
+      const requestScope = updateExplorerState((state) => state);
+      if (!requestScope) {
+        return null;
+      }
       const payload = await client.duplicateFileEntry({ cwd: normalizedWorkspaceRoot, path });
-      if (payload.success) {
+      if (payload.success && updateExplorerState((state) => state, requestScope)) {
         await requestDirectoryListing(parentExplorerPath(path), {
           recordHistory: false,
           setCurrentPath: false,
@@ -331,7 +484,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, updateExplorerState],
   );
 
   const deleteEntry = useCallback(
@@ -339,8 +492,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
+      const requestScope = updateExplorerState((state) => state);
+      if (!requestScope) {
+        return null;
+      }
       const payload = await client.deleteFileEntry({ cwd: normalizedWorkspaceRoot, path });
-      if (payload.success) {
+      if (payload.success && invalidateSubtree(requestScope, path)) {
         await requestDirectoryListing(parentExplorerPath(path), {
           recordHistory: false,
           setCurrentPath: false,
@@ -348,7 +505,13 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [
+      client,
+      invalidateSubtree,
+      normalizedWorkspaceRoot,
+      requestDirectoryListing,
+      updateExplorerState,
+    ],
   );
 
   const selectExplorerEntry = useCallback(
