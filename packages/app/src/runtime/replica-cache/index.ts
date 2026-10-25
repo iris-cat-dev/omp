@@ -258,6 +258,7 @@ const StoredWorkspaceSchema = z.strictObject({
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
+  hasOnlyArchivedAgents: z.boolean().optional(),
   diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
   scripts: z.array(WorkspaceScriptSchema),
   gitRuntime: WorkspaceGitRuntimeSchema,

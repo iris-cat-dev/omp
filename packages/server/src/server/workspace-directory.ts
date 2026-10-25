@@ -76,6 +76,7 @@ export interface WorkspaceDirectoryDeps {
   workspaceRegistry: {
     list(): Promise<PersistedWorkspaceRecord[]>;
   };
+  // Includes archived agents, but excludes internal agents.
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
   listTerminalActivityContributions(): Promise<

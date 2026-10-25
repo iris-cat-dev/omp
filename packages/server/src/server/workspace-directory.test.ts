@@ -336,18 +336,21 @@ describe("WorkspaceDirectory", () => {
     });
   });
 
-  test.each([true, false])("keeps active peers visible regardless of order (%s)", async (archivedFirst) => {
-    const workspace = new WorkspaceStatus();
-    const archived: AgentState = { id: "archived-agent", status: "idle", archivedAt: NOW };
-    const active: AgentState = { id: "active-agent", status: "idle" };
-    for (const agent of archivedFirst ? [archived, active] : [active, archived]) {
-      workspace.hasRootAgent(agent);
-    }
+  test.each([true, false])(
+    "keeps active peers visible regardless of order (%s)",
+    async (archivedFirst) => {
+      const workspace = new WorkspaceStatus();
+      const archived: AgentState = { id: "archived-agent", status: "idle", archivedAt: NOW };
+      const active: AgentState = { id: "active-agent", status: "idle" };
+      for (const agent of archivedFirst ? [archived, active] : [active, archived]) {
+        workspace.hasRootAgent(agent);
+      }
 
-    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
-      hasOnlyArchivedAgents: false,
-    });
-  });
+      await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+        hasOnlyArchivedAgents: false,
+      });
+    },
+  );
 
   test("scopes archive visibility to workspace identity rather than a shared cwd", async () => {
     const workspace = new WorkspaceStatus();
@@ -406,12 +409,14 @@ describe("WorkspaceDirectory", () => {
   test("recomputes the flag for scoped live updates and subsequent snapshots", async () => {
     const workspace = new WorkspaceStatus();
     workspace.hasRootAgent({ id: "agent", status: "idle" });
-    expect((await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"))
-      .toMatchObject({ hasOnlyArchivedAgents: false });
+    expect(
+      (await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"),
+    ).toMatchObject({ hasOnlyArchivedAgents: false });
 
     workspace.archiveAgent("agent");
-    expect((await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"))
-      .toMatchObject({ hasOnlyArchivedAgents: true });
+    expect(
+      (await workspace.workspaceDescriptors(["workspace-1"])).get("workspace-1"),
+    ).toMatchObject({ hasOnlyArchivedAgents: true });
     await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
       hasOnlyArchivedAgents: true,
     });

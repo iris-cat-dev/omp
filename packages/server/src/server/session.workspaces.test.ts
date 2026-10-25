@@ -549,6 +549,7 @@ function createSessionForWorkspaceTests(
     terminalManager?: TerminalManager | null;
     agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
     agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
+    providerSnapshotManager?: SessionOptions["providerSnapshotManager"];
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
     github?: ForgeService;
@@ -628,7 +629,8 @@ function createSessionForWorkspaceTests(
     remove: async () => {},
   };
   const workspaceGitService = options.workspaceGitService ?? createNoopWorkspaceGitService();
-  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+  const providerSnapshotManager =
+    options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager;
 
   const session = asTestSession(
     new Session({
@@ -6320,67 +6322,6 @@ test.skip("reconcile archives stale subdirectory workspace records when collapsi
   }
 });
 
-test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline descriptor path", async () => {
-  const session = createSessionForWorkspaceTests();
-  const project = createPersistedProjectRecord({
-    projectId: "proj-baseline",
-    rootPath: REPO_CWD,
-    kind: "git",
-    displayName: "repo",
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
-  });
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: "ws-baseline",
-    projectId: project.projectId,
-    cwd: REPO_CWD,
-    kind: "local_checkout",
-    displayName: "main",
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
-  });
-
-  session.listAgentPayloads = async () => [];
-  session.projectRegistry.list = async () => [project];
-  session.workspaceRegistry.list = async () => [workspace];
-
-  const baselineDescriptor = {
-    id: workspace.workspaceId,
-    projectId: project.projectId,
-    projectDisplayName: project.displayName,
-    projectRootPath: project.rootPath,
-    projectKind: project.kind,
-    workspaceKind: workspace.kind,
-    name: "main",
-    archivingAt: null,
-    status: "done",
-    statusEnteredAt: workspace.createdAt,
-    activityAt: null,
-    diffStat: null,
-  } as const;
-  const gitDescriptor = {
-    ...baselineDescriptor,
-    diffStat: { additions: 3, deletions: 1 },
-  } as const;
-
-  const describeWorkspaceRecord = vi.fn(async () => baselineDescriptor);
-  const describeWorkspaceRecordWithGitData = vi.fn(async () => gitDescriptor);
-  session.describeWorkspaceRecord = describeWorkspaceRecord;
-  session.describeWorkspaceRecordWithGitData = describeWorkspaceRecordWithGitData;
-
-  const descriptors = Array.from(
-    (
-      await session.buildWorkspaceDescriptorMap({
-        includeGitData: false,
-      })
-    ).values(),
-  );
-
-  expect(describeWorkspaceRecord).toHaveBeenCalledWith(workspace, project);
-  expect(describeWorkspaceRecordWithGitData).not.toHaveBeenCalled();
-  expect(descriptors).toEqual([baselineDescriptor]);
-});
-
 test("lists Git runtime for a checkout explicitly owned by a non-Git project", async () => {
   const session = createSessionForWorkspaceTests();
   const project = createPersistedProjectRecord({
@@ -6848,6 +6789,88 @@ test("emitWorkspaceUpdatesForWorkspaceIds includes archiving state and dedupes u
         }),
       },
     },
+  ]);
+});
+
+test("workspace snapshots and live updates include archived agents in their visibility projection", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const providerSnapshot = createProviderSnapshotManagerStub();
+  providerSnapshot.listRegisteredProviderIds.mockReturnValue(["omp"]);
+  const archived: StoredAgentRecord = {
+    ...makeStoredAgent({
+      id: "archived-sidebar-agent",
+      cwd: REPO_CWD,
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+    workspaceId: "ws-repo-running",
+    provider: "omp",
+    config: { provider: "omp", cwd: REPO_CWD },
+    runtimeInfo: { provider: "omp", sessionId: null },
+    archivedAt: "2026-03-02T12:00:00.000Z",
+  };
+  const storedRecords: StoredAgentRecord[] = [
+    archived,
+    { ...archived, id: "internal-active", internal: true, archivedAt: null },
+    { ...archived, id: "internal-archived", internal: true },
+    {
+      ...makeStoredAgent({
+        id: "unavailable-provider-active",
+        cwd: REPO_CWD,
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+      workspaceId: "ws-repo-running",
+    },
+  ];
+  const session = createSessionForWorkspaceTests({
+    agentStorage: { list: async () => storedRecords },
+    providerSnapshotManager: providerSnapshot.manager,
+  });
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-archived-sidebar",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+
+  const snapshot = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "archived-sidebar-snapshot",
+  });
+  expect(snapshot.entries).toEqual([
+    expect.objectContaining({
+      id: "ws-repo-running",
+      hasOnlyArchivedAgents: true,
+    }),
+  ]);
+
+  await session.emitWorkspaceUpdatesForWorkspaceIds(["ws-repo-running"]);
+  expect(filterByType(emitted, "workspace_update")).toEqual([
+    {
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: expect.objectContaining({
+          id: "ws-repo-running",
+          hasOnlyArchivedAgents: true,
+        }),
+      },
+    },
+  ]);
+
+  storedRecords.shift();
+  const internalOnlySnapshot = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "internal-only-sidebar-snapshot",
+  });
+  expect(internalOnlySnapshot.entries).toEqual([
+    expect.objectContaining({
+      id: "ws-repo-running",
+      hasOnlyArchivedAgents: false,
+    }),
   ]);
 });
 

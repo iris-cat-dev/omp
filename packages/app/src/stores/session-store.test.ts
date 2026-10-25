@@ -580,10 +580,12 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.archivingAt).toBeNull();
     expect(workspace.hasOnlyArchivedAgents).toBe(false);
     expect(
-      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: true }).hasOnlyArchivedAgents,
+      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: true })
+        .hasOnlyArchivedAgents,
     ).toBe(true);
     expect(
-      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: false }).hasOnlyArchivedAgents,
+      normalizeWorkspaceDescriptor({ ...payload, hasOnlyArchivedAgents: false })
+        .hasOnlyArchivedAgents,
     ).toBe(false);
   });
 

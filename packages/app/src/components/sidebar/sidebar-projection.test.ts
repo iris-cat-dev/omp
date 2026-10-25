@@ -136,12 +136,13 @@ describe("buildSidebarProjection", () => {
         "active",
         "empty",
       ]);
-      expect(projection.shortcutModel.shortcutTargets.map((row) => row.workspaceId).sort()).toEqual([
-        "active",
-        "empty",
-      ]);
+      expect(projection.shortcutModel.shortcutTargets.map((row) => row.workspaceId).sort()).toEqual(
+        ["active", "empty"],
+      );
       expect(
-        projection.workspaceGroups.flatMap((group) => group.rows.map((row) => row.workspaceId)).sort(),
+        projection.workspaceGroups
+          .flatMap((group) => group.rows.map((row) => row.workspaceId))
+          .sort(),
       ).toEqual(groupMode === "status" ? ["active", "empty"] : []);
       expect(archivedProject.workspaces).toEqual([archived.placement]);
       expect(input.workspaceEntriesByKey.get(archived.entry.workspaceKey)).toBe(archived.entry);
@@ -153,7 +154,9 @@ describe("buildSidebarProjection", () => {
       });
       const restored = buildSidebarProjection({ ...input, workspaceEntriesByKey: restoredEntries });
       expect(restored.projects[0]?.workspaces).toEqual([archived.placement]);
-      expect(restored.shortcutModel.shortcutTargets.map((row) => row.workspaceId)).toContain("archived");
+      expect(restored.shortcutModel.shortcutTargets.map((row) => row.workspaceId)).toContain(
+        "archived",
+      );
     });
   }
 
