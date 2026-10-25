@@ -1613,9 +1613,10 @@ export function FileExplorerPane({
   ]);
 
   const refreshExplorer = useCallback(
-    () =>
+    ({ signal }: { signal: AbortSignal }) =>
       refreshExplorerDirectories({
         hasWorkspaceScope,
+        signal,
         expandedPaths: expandedPathsRef.current,
         requestDirectoryListing,
       }),
@@ -2715,34 +2716,42 @@ async function initializeExplorer({
 
 async function refreshExplorerDirectories({
   hasWorkspaceScope,
+  signal,
   expandedPaths,
   requestDirectoryListing,
 }: {
   hasWorkspaceScope: boolean;
+  signal: AbortSignal;
   expandedPaths: Set<string>;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<ExplorerDirectory | null>;
 }): Promise<null> {
-  if (!hasWorkspaceScope) {
+  if (!hasWorkspaceScope || signal.aborted) {
     return null;
   }
   const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
-  const directoryPaths = Array.from(expandedPaths).filter(
-    (path) => showHiddenFiles || !isHiddenExplorerPath(path),
-  );
-  if (!directoryPaths.includes(".")) {
-    directoryPaths.unshift(".");
-  }
-  await Promise.all(
-    directoryPaths.map((path) =>
-      requestDirectoryListing(path, {
-        recordHistory: false,
-        setCurrentPath: false,
-      }),
-    ),
-  );
+  const rootDirectory = await requestDirectoryListing(".", {
+    recordHistory: false,
+    setCurrentPath: false,
+  });
+  if (!rootDirectory || signal.aborted) return null;
+
+  // Validate descendants against fresh parents, not stale expansion paths after moves/deletes.
+  await restoreExpandedDirectories({
+    rootDirectory,
+    persistedExpandedPaths: expandedPaths,
+    showHiddenFiles,
+    maxDepth: Number.POSITIVE_INFINITY,
+    requestDirectoryListing: (path) =>
+      signal.aborted
+        ? Promise.resolve(null)
+        : requestDirectoryListing(path, {
+            recordHistory: false,
+            setCurrentPath: false,
+          }),
+  });
   return null;
 }
 

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExplorerEntry } from "@/stores/session-store";
 import type { SortOption } from "@/stores/panel-store/state";
 import {
-  MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
   restoreExpandedDirectories,
@@ -206,43 +205,45 @@ describe("file explorer tree", () => {
     }
   });
 
-  it("restores five rendered directory levels rather than counting path segments", async () => {
-    const paths = [
-      "generated/cache/level-1",
-      "generated/cache/level-1/level-2",
-      "generated/cache/level-1/level-2/level-3",
-      "generated/cache/level-1/level-2/level-3/level-4",
-      "generated/cache/level-1/level-2/level-3/level-4/level-5",
-      "generated/cache/level-1/level-2/level-3/level-4/level-5/level-6",
-    ];
-    const directories = new Map<string, { path: string; entries: ExplorerEntry[] }>();
-    const rootDirectory = {
-      path: ".",
-      entries: [makeDirectoryEntry("level-1", paths[0])],
-    };
-    directories.set(".", rootDirectory);
-    for (let index = 0; index < paths.length - 1; index += 1) {
-      directories.set(paths[index], {
-        path: paths[index],
-        entries: [makeDirectoryEntry(`level-${index + 2}`, paths[index + 1])],
+  it.each([
+    { maxDepth: undefined, restoredDepth: 5 },
+    { maxDepth: Number.POSITIVE_INFINITY, restoredDepth: 6 },
+  ])(
+    "restores $restoredDepth rendered levels with maxDepth=$maxDepth",
+    async ({ maxDepth, restoredDepth }) => {
+      const paths = [
+        "generated/cache/level-1",
+        "generated/cache/level-1/level-2",
+        "generated/cache/level-1/level-2/level-3",
+        "generated/cache/level-1/level-2/level-3/level-4",
+        "generated/cache/level-1/level-2/level-3/level-4/level-5",
+        "generated/cache/level-1/level-2/level-3/level-4/level-5/level-6",
+      ];
+      const directories = new Map<string, { path: string; entries: ExplorerEntry[] }>();
+      const rootDirectory = {
+        path: ".",
+        entries: [makeDirectoryEntry("level-1", paths[0])],
+      };
+      directories.set(".", rootDirectory);
+      for (let index = 0; index < paths.length - 1; index += 1) {
+        directories.set(paths[index], {
+          path: paths[index],
+          entries: [makeDirectoryEntry(`level-${index + 2}`, paths[index + 1])],
+        });
+      }
+      directories.set(paths[5], { path: paths[5], entries: [] });
+
+      const expandedPaths = await restoreExpandedDirectories({
+        rootDirectory,
+        persistedExpandedPaths: new Set(paths),
+        showHiddenFiles: true,
+        maxDepth,
+        requestDirectoryListing: async (path) => directories.get(path) ?? null,
       });
-    }
 
-    const requestedPaths: string[] = [];
-    const expandedPaths = await restoreExpandedDirectories({
-      rootDirectory,
-      persistedExpandedPaths: new Set(paths),
-      showHiddenFiles: true,
-      requestDirectoryListing: async (path) => {
-        requestedPaths.push(path);
-        return directories.get(path) ?? null;
-      },
-    });
-
-    expect(MAX_AUTO_EXPANDED_DIRECTORY_DEPTH).toBe(5);
-    expect(requestedPaths).toEqual(paths.slice(0, 5));
-    expect(expandedPaths).toEqual([".", ...paths.slice(0, 5)]);
-  });
+      expect(expandedPaths).toEqual([".", ...paths.slice(0, restoredDepth)]);
+    },
+  );
 
   it("does not restore persisted descendants beneath a collapsed rendered directory", async () => {
     const rootDirectory = {

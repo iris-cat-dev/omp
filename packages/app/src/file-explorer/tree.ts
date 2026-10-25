@@ -28,6 +28,7 @@ interface RestoreExpandedDirectoriesInput {
   rootDirectory: ExplorerDirectory;
   persistedExpandedPaths: ReadonlySet<string>;
   showHiddenFiles: boolean;
+  maxDepth?: number;
   requestDirectoryListing: (path: string) => Promise<ExplorerDirectory | null>;
 }
 
@@ -92,13 +93,14 @@ export async function restoreExpandedDirectories({
   rootDirectory,
   persistedExpandedPaths,
   showHiddenFiles,
+  maxDepth = MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   requestDirectoryListing,
 }: RestoreExpandedDirectoriesInput): Promise<string[]> {
   const restoredPaths = ["."];
   const restoredPathSet = new Set(restoredPaths);
   let parentDirectories = [rootDirectory];
 
-  for (let depth = 1; depth <= MAX_AUTO_EXPANDED_DIRECTORY_DEPTH; depth += 1) {
+  for (let depth = 1; depth <= maxDepth; depth += 1) {
     const pathsToRequest: string[] = [];
     for (const directory of parentDirectories) {
       const entries = filterVisibleExplorerEntries(directory.entries, showHiddenFiles);
