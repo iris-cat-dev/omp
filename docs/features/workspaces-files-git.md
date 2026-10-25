@@ -98,6 +98,12 @@ Visible Files-tree roots and expanded directories refresh when a conversation in
 
 Large directories remain complete: listing metadata work has bounded concurrency, and the tree mounts a viewport-sized window rather than every file. Measured row geometry provides the full scroll range, including the last file, while preserving inline create/rename and move-mode sizing. Unchanged directory ordering is reused until its listing, sort, or hidden-file setting changes; selections in collapsed directories remain available.
 
+Directory caches preserve existing collapsed branches, but successful parent refreshes and confirmed rename, move, or delete operations remove obsolete subtrees and cached previews. Archiving/removing a workspace or changing its checkout root retires its explorer cache. Delayed replies from an earlier cache lifetime or connection cannot recreate it.
+
+Unobserved Files refresh queries are collected without a cache grace period. Bulk listing-derived data is kept outside the event callbacks' shared render scope, so earlier callbacks do not accumulate old tree rows. Selection, expansion, and move actions read the current listing while preserving complete directory contents.
+
+Desktop/Web ScrollView ref changes use React's attach/detach lifecycle so the styling registry releases its DOM references when their owner changes or unmounts. Hidden panels with open tabs remain intentionally mounted; closing the final owning tab releases the view.
+
 Desktop native editing shortcuts:
 
 | Action                                 | macOS         | Windows        |

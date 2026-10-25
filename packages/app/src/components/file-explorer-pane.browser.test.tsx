@@ -233,6 +233,7 @@ beforeEach(async () => {
         [
           stateKey,
           {
+            requestScope: {},
             directories: fixture.directories,
             files: new Map(),
             refreshRevision: 0,
@@ -275,6 +276,29 @@ afterEach(async () => {
 });
 
 describe("retained file explorer activity", () => {
+  it("releases obsolete refresh queries without dropping the mounted pane's query", async () => {
+    const explorer = fixture.sessions["server-1"].fileExplorer.values().next().value!;
+    for (let revision = 1; revision <= 3; revision++) {
+      explorer.refreshRevision = revision;
+      await renderPane();
+    }
+    await vi.waitFor(() => {
+      const queries = queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] });
+      expect(queries).toHaveLength(1);
+      expect(queries[0]!.queryKey.at(-1)).toBe(3);
+    });
+    await renderPane(false);
+    expect(queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] })).toHaveLength(
+      1,
+    );
+    await act(async () => root.render(<QueryClientProvider client={queryClient} />));
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryCache().findAll({ queryKey: ["fileExplorerRefresh"] })).toEqual(
+        [],
+      );
+    });
+  });
+
   it("defers hidden reveals and does not replay a completed reveal on reactivation", async () => {
     await renderPane(false);
     fixture.requestDirectoryListing.mockClear();
@@ -376,6 +400,30 @@ describe("file explorer virtualized extent", () => {
 });
 
 describe("file explorer selection and menus", () => {
+  it("uses the refreshed visible paths for range selection and batch actions", async () => {
+    fixture.directories.set(".", {
+      path: ".",
+      entries: ["alpha.txt", "beta.txt", "gamma.txt"].map((path) => entry(path, "file")),
+    });
+    const explorers = fixture.sessions["server-1"].fileExplorer;
+    const [key, explorer] = [...explorers.entries()][0];
+    explorers.set(key, { ...explorer, directories: new Map(fixture.directories) });
+    fixture.expandedPathsByWorkspace[key] = ["."];
+    await renderPane();
+    await act(async () => {
+      await userEvent.click(row("alpha.txt"));
+      await userEvent.click(row("gamma.txt"), { modifiers: ["Shift"] });
+    });
+    for (const name of ["alpha.txt", "beta.txt", "gamma.txt"]) {
+      expect(row(name).getAttribute("aria-selected")).toBe("true");
+    }
+    await act(async () => userEvent.click(siblingAction("gamma.txt", "more")));
+    await act(async () =>
+      userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
+    );
+    expect(fixture.copyText).toHaveBeenCalledExactlyOnceWith("alpha.txt\nbeta.txt\ngamma.txt");
+  });
+
   it("keeps selected entries from collapsed cached directories in batch actions", async () => {
     await act(async () => {
       await userEvent.click(row("archive"), { modifiers: ["Meta"] });

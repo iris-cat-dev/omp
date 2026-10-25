@@ -35,6 +35,22 @@ function createWorkspace(
   };
 }
 
+function explorerState(refreshRevision = 0): AgentFileExplorerState {
+  return {
+    requestScope: {},
+    directories: new Map([[".", { path: ".", entries: [] }]]),
+    files: new Map(),
+    refreshRevision,
+    isLoading: false,
+    lastError: null,
+    pendingRequest: null,
+    currentPath: ".",
+    history: ["."],
+    lastVisitedPath: ".",
+    selectedEntryPath: null,
+  };
+}
+
 afterEach(() => {
   useSessionStore.getState().clearSession("test-server");
 });
@@ -783,24 +799,160 @@ describe("setWorkspaces", () => {
     expect(after.workspaces).toBe(before.workspaces);
     expect(after.workspaces.get(workspace.id)).toBe(before.workspaces.get(workspace.id));
   });
+
+  it("releases removed workspace identities and aliases while keeping shared roots", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const removed = createWorkspace({ id: "removed", workspaceDirectory: "/shared" });
+    const privateWorkspace = createWorkspace({ id: "private", workspaceDirectory: "/private" });
+    const kept = createWorkspace({ id: "kept", workspaceDirectory: "/shared" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        ["legacy-removed", removed],
+        [privateWorkspace.id, privateWorkspace],
+        [kept.id, kept],
+      ]),
+    );
+    const caches = new Map([
+      ["workspace:removed", explorerState()],
+      ["workspace:legacy-removed", explorerState()],
+      ["workspace:private", explorerState()],
+      ["workspace:/private", explorerState()],
+      ["root:/private", explorerState()],
+      ["workspace:/shared", explorerState()],
+      ["root:/shared", explorerState()],
+      ["workspace:kept", explorerState()],
+      ["root:/unrelated", explorerState()],
+    ]);
+    store.setFileExplorer("test-server", caches);
+
+    store.setWorkspaces("test-server", new Map([[kept.id, kept]]));
+
+    const after = getTestSessionReferences().session.fileExplorer;
+    expect([...after.keys()]).toEqual([
+      "workspace:/shared",
+      "root:/shared",
+      "workspace:kept",
+      "root:/unrelated",
+    ]);
+    for (const [key, cache] of after) expect(cache).toBe(caches.get(key));
+  });
+
+  it("keeps cache identity for metadata changes and canonical rekeying", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const workspace = createWorkspace({ id: "canonical", workspaceDirectory: "C:\\repo\\" });
+    store.setWorkspaces("test-server", new Map([["legacy", workspace]]));
+    const caches = new Map([["workspace:canonical", explorerState()]]);
+    store.setFileExplorer("test-server", caches);
+
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [
+          workspace.id,
+          {
+            ...workspace,
+            workspaceDirectory: "C:/repo",
+            status: "running",
+          },
+        ],
+      ]),
+    );
+
+    expect(getTestSessionReferences().session.fileExplorer).toBe(caches);
+  });
+
+  it.each(["set", "merge"] as const)("invalidates same-ID root changes through %s", (method) => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const workspace = createWorkspace({ id: "moved", workspaceDirectory: "/old" });
+    const kept = createWorkspace({ id: "kept", workspaceDirectory: "/unrelated" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [workspace.id, workspace],
+        [kept.id, kept],
+      ]),
+    );
+    const unrelated = explorerState();
+    store.setFileExplorer(
+      "test-server",
+      new Map([
+        ["workspace:moved", explorerState()],
+        ["workspace:/old", explorerState()],
+        ["root:/old", explorerState()],
+        ["workspace:kept", unrelated],
+      ]),
+    );
+    const moved = { ...workspace, workspaceDirectory: "/new" };
+
+    if (method === "set") {
+      store.setWorkspaces(
+        "test-server",
+        new Map([
+          [moved.id, moved],
+          [kept.id, kept],
+        ]),
+      );
+    } else {
+      store.mergeWorkspaces("test-server", [moved]);
+    }
+
+    const after = getTestSessionReferences().session.fileExplorer;
+    expect([...after.keys()]).toEqual(["workspace:kept"]);
+    expect(after.get("workspace:kept")).toBe(unrelated);
+  });
+
+  it("invalidates legacy scopes on root changes but keeps roots still used by survivors", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const workspace = createWorkspace({ id: "moved", workspaceDirectory: "/old" });
+    const kept = createWorkspace({ id: "kept", workspaceDirectory: "/old" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        ["legacy", workspace],
+        [kept.id, kept],
+      ]),
+    );
+    const caches = new Map([
+      ["workspace:moved", explorerState()],
+      ["workspace:legacy", explorerState()],
+      ["workspace:/old", explorerState()],
+      ["root:/old", explorerState()],
+      ["workspace:kept", explorerState()],
+    ]);
+    store.setFileExplorer("test-server", caches);
+
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        ["legacy", { ...workspace, workspaceDirectory: "/new" }],
+        [kept.id, kept],
+      ]),
+    );
+
+    const after = getTestSessionReferences().session.fileExplorer;
+    expect([...after.keys()]).toEqual(["workspace:/old", "root:/old", "workspace:kept"]);
+    for (const [key, cache] of after) expect(cache).toBe(caches.get(key));
+  });
+
+  it("keeps the original empty explorer map when removing a workspace", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const workspace = createWorkspace({ id: "removed" });
+    store.setWorkspaces("test-server", new Map([[workspace.id, workspace]]));
+    const caches = getTestSessionReferences().session.fileExplorer;
+
+    store.setWorkspaces("test-server", new Map());
+
+    expect(getTestSessionReferences().session.fileExplorer).toBe(caches);
+  });
 });
 
 describe("file explorer refresh", () => {
-  function explorerState(refreshRevision: number): AgentFileExplorerState {
-    return {
-      directories: new Map(),
-      files: new Map(),
-      refreshRevision,
-      isLoading: false,
-      lastError: null,
-      pendingRequest: null,
-      currentPath: ".",
-      history: ["."],
-      lastVisitedPath: ".",
-      selectedEntryPath: null,
-    };
-  }
-
   it("increments only the loaded workspace requested by a completed turn", () => {
     initializeTestSession();
     const store = useSessionStore.getState();
@@ -836,6 +988,93 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
+  });
+
+  it.each(["canonical", "legacy"] as const)(
+    "releases canonical and legacy caches by %s ID",
+    (id) => {
+      initializeTestSession();
+      const store = useSessionStore.getState();
+      const workspace = createWorkspace({ id: "canonical", workspaceDirectory: "/removed" });
+      const kept = createWorkspace({ id: "kept", workspaceDirectory: "/kept" });
+      store.setWorkspaces(
+        "test-server",
+        new Map([
+          ["legacy", workspace],
+          [kept.id, kept],
+        ]),
+      );
+      const unrelated = explorerState();
+      store.setFileExplorer(
+        "test-server",
+        new Map([
+          ["workspace:canonical", explorerState()],
+          ["workspace:legacy", explorerState()],
+          ["workspace:/removed", explorerState()],
+          ["root:/removed", explorerState()],
+          ["workspace:kept", unrelated],
+        ]),
+      );
+
+      store.removeWorkspace("test-server", id);
+
+      const after = getTestSessionReferences();
+      expect([...after.workspaces.keys()]).toEqual(["kept"]);
+      expect([...after.session.fileExplorer.keys()]).toEqual(["workspace:kept"]);
+      expect(after.session.fileExplorer.get("workspace:kept")).toBe(unrelated);
+    },
+  );
+
+  it("keeps fallback and cwd aliases while another workspace uses the root", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const removed = createWorkspace({ id: "removed", workspaceDirectory: "/shared/" });
+    const kept = createWorkspace({ id: "kept", workspaceDirectory: "\\shared" });
+    store.setWorkspaces(
+      "test-server",
+      new Map([
+        [removed.id, removed],
+        [kept.id, kept],
+      ]),
+    );
+    const caches = new Map([
+      ["workspace:removed", explorerState()],
+      ["workspace:/shared/", explorerState()],
+      ["root:/shared/", explorerState()],
+      ["workspace:kept", explorerState()],
+    ]);
+    store.setFileExplorer("test-server", caches);
+
+    store.removeWorkspace("test-server", removed.id);
+
+    const after = getTestSessionReferences().session.fileExplorer;
+    expect(after.has("workspace:removed")).toBe(false);
+    for (const key of ["workspace:/shared/", "root:/shared/", "workspace:kept"]) {
+      expect(after.get(key)).toBe(caches.get(key));
+    }
+  });
+
+  it("removes a known orphan key without recreating workspaces or unrelated caches", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const unrelated = explorerState();
+    store.setFileExplorer(
+      "test-server",
+      new Map([
+        ["workspace:orphan", explorerState()],
+        ["workspace:unrelated", unrelated],
+      ]),
+    );
+    const before = getTestSessionReferences();
+
+    store.removeWorkspace("test-server", "orphan");
+
+    const after = getTestSessionReferences();
+    expect(after.workspaces).toBe(before.workspaces);
+    expect([...after.session.fileExplorer.keys()]).toEqual(["workspace:unrelated"]);
+    expect(after.session.fileExplorer.get("workspace:unrelated")).toBe(unrelated);
+    store.removeWorkspace("test-server", "orphan");
+    expect(getTestSessionReferences().session).toBe(after.session);
   });
 });
 

@@ -88,12 +88,15 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       "react/jsx-runtime",
+      "@react-native/normalize-colors",
       "@tanstack/react-query",
       "@dnd-kit/core",
       "@dnd-kit/sortable",
       "@dnd-kit/utilities",
     ],
     exclude: [
+      // Real component subpaths must share the React alias with the renderer.
+      "react-native-unistyles",
       "react-native-reanimated",
       "expo-image",
       "expo-clipboard",

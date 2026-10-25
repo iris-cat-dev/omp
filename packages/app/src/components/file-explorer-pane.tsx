@@ -870,6 +870,72 @@ function ExplorerSelectionToolbar({
   );
 }
 
+// Memoized event callbacks share their enclosing V8 context. Keep bulk snapshots
+// and derived rows out of that context rather than linking old renders together.
+function useExplorerRenderData(
+  state: AgentFileExplorerState | undefined,
+  expandedPaths: Set<string>,
+  sortOption: SortOption,
+  showHiddenFiles: boolean,
+  selectedEntryPaths: Set<string>,
+  pendingEdit: ExplorerPendingEdit | null,
+) {
+  const fields = useMemo(() => deriveExplorerFields(state), [state]);
+  const { directories } = fields;
+  const treeRows = useMemo(
+    () => flattenExplorerTree({ directories, expandedPaths, sortOption, showHiddenFiles }),
+    [directories, expandedPaths, showHiddenFiles, sortOption],
+  );
+  const visibleEntryPaths = useMemo(() => treeRows.map((row) => row.entry.path), [treeRows]);
+  const selectedDragEntries = useMemo(() => {
+    if (selectedEntryPaths.size === 0) return [];
+    const entries: ExplorerEntryDragItem[] = [];
+    for (const path of selectedEntryPaths) {
+      const entry = directories
+        .get(parentExplorerPath(path))
+        ?.entries.find((candidate) => candidate.path === path);
+      if (entry) entries.push({ path, kind: entry.kind });
+    }
+    return entries;
+  }, [directories, selectedEntryPaths]);
+  const listRows = useMemo<ExplorerListRow[]>(() => {
+    const rows: ExplorerListRow[] = treeRows.map((row) =>
+      pendingEdit?.type === "rename" && pendingEdit.entry.path === row.entry.path
+        ? { type: "rename", entry: row.entry, depth: row.depth }
+        : { type: "entry", row },
+    );
+    if (pendingEdit?.type !== "create") return rows;
+    let insertionIndex = 0;
+    let depth = 0;
+    if (pendingEdit.parentPath !== ".") {
+      const parentIndex = treeRows.findIndex((row) => row.entry.path === pendingEdit.parentPath);
+      if (parentIndex >= 0) {
+        insertionIndex = parentIndex + 1;
+        depth = treeRows[parentIndex].depth + 1;
+      }
+    }
+    rows.splice(insertionIndex, 0, {
+      type: "draft",
+      parentPath: pendingEdit.parentPath,
+      kind: pendingEdit.kind,
+      depth,
+    });
+    return rows;
+  }, [pendingEdit, treeRows]);
+  return {
+    ...fields,
+    visibleEntryPaths,
+    selectedDragEntries,
+    listRows,
+    errorRecoveryPath: getErrorRecoveryPath(state),
+  };
+}
+
+// This memo also stays outside the pane's long-lived event-callback scope.
+function useExplorerExpandedPaths(paths: string[] | undefined): Set<string> {
+  return useMemo(() => new Set(paths && paths.length > 0 ? paths : ["."]), [paths]);
+}
+
 export function FileExplorerPane({
   serverId,
   workspaceId,
@@ -972,14 +1038,31 @@ export function FileExplorerPane({
   });
   const completedRevealRequestRef = useRef<typeof revealRequest>(null);
   const [scrollReveal, setScrollReveal] = useState<{ path: string; revision: number } | null>(null);
-  const expandedPaths = useMemo(
-    () => new Set(expandedPathsArray && expandedPathsArray.length > 0 ? expandedPathsArray : ["."]),
-    [expandedPathsArray],
+  const expandedPaths = useExplorerExpandedPaths(expandedPathsArray);
+  const renderData = useExplorerRenderData(
+    explorerState,
+    expandedPaths,
+    sortOption,
+    showHiddenFiles,
+    selectedEntryPaths,
+    pendingEdit,
   );
-
-  const explorerDerived = useMemo(() => deriveExplorerFields(explorerState), [explorerState]);
-  const { directories, pendingRequest, isExplorerLoading, error, selectedEntryPath } =
-    explorerDerived;
+  const {
+    directories,
+    pendingRequest,
+    isExplorerLoading,
+    error,
+    selectedEntryPath,
+    selectedDragEntries,
+    listRows,
+    errorRecoveryPath,
+  } = renderData;
+  const renderDataRef = useRef(renderData);
+  renderDataRef.current = renderData;
+  const expandedPathsRef = useRef(expandedPaths);
+  expandedPathsRef.current = expandedPaths;
+  const moveEntriesRef = useRef(moveEntries);
+  moveEntriesRef.current = moveEntries;
   const selectedEntryPathRef = useRef(selectedEntryPath);
   selectedEntryPathRef.current = selectedEntryPath;
 
@@ -1123,11 +1206,11 @@ export function FileExplorerPane({
       toggleDirectory({
         entry,
         workspaceStateKey,
-        expandedPaths,
+        expandedPaths: expandedPathsRef.current,
         requestDirectoryListing,
         setExpandedPathsForWorkspace,
       }),
-    [workspaceStateKey, expandedPaths, requestDirectoryListing, setExpandedPathsForWorkspace],
+    [workspaceStateKey, requestDirectoryListing, setExpandedPathsForWorkspace],
   );
 
   const handleOpenFile = useCallback(
@@ -1230,7 +1313,7 @@ export function FileExplorerPane({
             expanded: true,
           }),
         );
-        if (!directories.has(parentPath)) {
+        if (!renderDataRef.current.directories.has(parentPath)) {
           void requestDirectoryListing(parentPath, {
             recordHistory: false,
             setCurrentPath: false,
@@ -1239,7 +1322,7 @@ export function FileExplorerPane({
       }
       setPendingEdit({ type: "create", parentPath, kind });
     },
-    [directories, requestDirectoryListing, setExpandedPathsForWorkspace, workspaceStateKey],
+    [requestDirectoryListing, setExpandedPathsForWorkspace, workspaceStateKey],
   );
 
   const handleEditCancel = useCallback(() => {
@@ -1283,8 +1366,9 @@ export function FileExplorerPane({
 
   const reconcileRelocatedEntry = useCallback(
     async (entry: Pick<ExplorerEntry, "path" | "kind">, relocatedPath: string): Promise<void> => {
+      const activeSelectionPath = selectedEntryPathRef.current;
       if (workspaceStateKey && entry.kind === "directory") {
-        const expandedRelocatedPaths = Array.from(expandedPaths)
+        const expandedRelocatedPaths = Array.from(expandedPathsRef.current)
           .filter((expandedPath) => isExplorerPathWithin(expandedPath, entry.path))
           .map((expandedPath) =>
             replaceExplorerPathPrefix(expandedPath, entry.path, relocatedPath),
@@ -1328,9 +1412,9 @@ export function FileExplorerPane({
           relocatedPath,
         );
       }
-      if (selectedEntryPath && isExplorerPathWithin(selectedEntryPath, entry.path)) {
+      if (activeSelectionPath && isExplorerPathWithin(activeSelectionPath, entry.path)) {
         const relocatedSelection = replaceExplorerPathPrefix(
-          selectedEntryPath,
+          activeSelectionPath,
           entry.path,
           relocatedPath,
         );
@@ -1342,11 +1426,9 @@ export function FileExplorerPane({
     },
     [
       commitSelectedEntryPaths,
-      expandedPaths,
       onOpenFile,
       requestDirectoryListing,
       selectExplorerEntry,
-      selectedEntryPath,
       setExpandedPathsForWorkspace,
       workspaceStateKey,
     ],
@@ -1498,14 +1580,15 @@ export function FileExplorerPane({
       toggleExplorerShowHiddenFiles();
       return;
     }
-    const rootDirectory = directories.get(".");
+    const rootDirectory = renderDataRef.current.directories.get(".");
     if (!rootDirectory || !workspaceStateKey) {
       toggleExplorerShowHiddenFiles();
       return;
     }
+    const expandedSnapshot = expandedPathsRef.current;
     void showHiddenFilesAndRestoreExpandedDirectories({
       rootDirectory,
-      persistedExpandedPaths: expandedPaths,
+      persistedExpandedPaths: expandedSnapshot,
       showHiddenFiles: toggleExplorerShowHiddenFiles,
       requestDirectoryListing: (path) =>
         requestDirectoryListing(path, {
@@ -1515,7 +1598,7 @@ export function FileExplorerPane({
     }).then((restoredPaths) => {
       setExpandedPathsForWorkspace(workspaceStateKey, (currentPaths) =>
         reconcileRestoredExpandedPaths({
-          persistedExpandedPaths: expandedPaths,
+          persistedExpandedPaths: expandedSnapshot,
           currentExpandedPaths: new Set(currentPaths),
           restoredExpandedPaths: restoredPaths,
         }),
@@ -1523,8 +1606,6 @@ export function FileExplorerPane({
       return null;
     });
   }, [
-    directories,
-    expandedPaths,
     requestDirectoryListing,
     setExpandedPathsForWorkspace,
     toggleExplorerShowHiddenFiles,
@@ -1535,10 +1616,10 @@ export function FileExplorerPane({
     () =>
       refreshExplorerDirectories({
         hasWorkspaceScope,
-        expandedPaths,
+        expandedPaths: expandedPathsRef.current,
         requestDirectoryListing,
       }),
-    [expandedPaths, hasWorkspaceScope, requestDirectoryListing],
+    [hasWorkspaceScope, requestDirectoryListing],
   );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     // A completion during the first in-flight refresh must not reuse its older listing.
@@ -1551,6 +1632,8 @@ export function FileExplorerPane({
     ],
     queryFn: refreshExplorer,
     enabled: false,
+    // A retired refresh query must not keep this pane's captured listings alive.
+    gcTime: 0,
   });
   useEffect(() => {
     if (!isActive) return;
@@ -1592,36 +1675,19 @@ export function FileExplorerPane({
   );
   const currentSortLabel = resolveCurrentSortLabel(sortOption, sortLabels);
 
-  const treeRows = useMemo(
-    () => flattenExplorerTree({ directories, expandedPaths, sortOption, showHiddenFiles }),
-    [directories, expandedPaths, showHiddenFiles, sortOption],
-  );
-  const visibleEntryPaths = useMemo(() => treeRows.map((row) => row.entry.path), [treeRows]);
-  const selectedDragEntries = useMemo(() => {
-    if (selectedEntryPaths.size === 0) return [];
-    const entries: ExplorerEntryDragItem[] = [];
-    for (const path of selectedEntryPaths) {
-      const entry = directories
-        .get(parentExplorerPath(path))
-        ?.entries.find((candidate) => candidate.path === path);
-      if (entry) {
-        entries.push({ path, kind: entry.kind });
-      }
-    }
-    return entries;
-  }, [directories, selectedEntryPaths]);
-
   const resolveMoveToDirectory = useCallback(
-    (parentPath: string) =>
-      workspaceId && moveEntries
+    (parentPath: string) => {
+      const entries = moveEntriesRef.current;
+      return workspaceId && entries
         ? resolveExplorerEntryMoves({
-            payload: { version: 1, serverId, workspaceId, entries: moveEntries },
+            payload: { version: 1, serverId, workspaceId, entries },
             serverId,
             workspaceId,
             parentPath,
           })
-        : null,
-    [moveEntries, serverId, workspaceId],
+        : null;
+    },
+    [serverId, workspaceId],
   );
   const handleMoveToDirectory = useCallback(
     async (parentPath: string) => {
@@ -1645,8 +1711,8 @@ export function FileExplorerPane({
   }, []);
   const handleStartMove = useCallback(() => {
     setSelectionMode(true);
-    setMoveEntries(selectedDragEntries);
-  }, [selectedDragEntries]);
+    setMoveEntries(renderDataRef.current.selectedDragEntries);
+  }, []);
   const handleMoveToRoot = useCallback(() => {
     void handleMoveToDirectory(".");
   }, [handleMoveToDirectory]);
@@ -1655,7 +1721,7 @@ export function FileExplorerPane({
     (entry: ExplorerEntry) => {
       const result = resolveExplorerSelection({
         path: entry.path,
-        visiblePaths: visibleEntryPaths,
+        visiblePaths: renderDataRef.current.visibleEntryPaths,
         selectedPaths: selectedEntryPathsRef.current,
         anchorPath: selectionAnchorPathRef.current,
         additive: true,
@@ -1665,13 +1731,14 @@ export function FileExplorerPane({
       commitSelectedEntryPaths(result.selectedPaths);
       selectExplorerEntry(result.activePath);
     },
-    [commitSelectedEntryPaths, selectExplorerEntry, visibleEntryPaths],
+    [commitSelectedEntryPaths, selectExplorerEntry],
   );
+  const isMoveMode = moveEntries !== null;
   const touchControls = useMemo<ExplorerTouchControls>(
     () => ({
       selectionMode,
       onToggleSelection: handleToggleSelection,
-      onMoveToDirectory: moveEntries ? handleMoveToDirectory : undefined,
+      onMoveToDirectory: isMoveMode ? handleMoveToDirectory : undefined,
       canMoveToDirectory: (path) => Boolean(resolveMoveToDirectory(path)),
       moving: isMoving,
     }),
@@ -1679,7 +1746,7 @@ export function FileExplorerPane({
       handleMoveToDirectory,
       handleToggleSelection,
       isMoving,
-      moveEntries,
+      isMoveMode,
       resolveMoveToDirectory,
       selectionMode,
     ],
@@ -1703,15 +1770,15 @@ export function FileExplorerPane({
   const handleEntryPress = useCallback(
     (entry: ExplorerEntry, event: GestureResponderEvent) => {
       if (!hasWorkspaceScope) return;
-      if (moveEntries || selectionMode) {
+      if (moveEntriesRef.current || selectionMode) {
         if (entry.kind === "directory") handleToggleDirectory(entry);
-        else if (!moveEntries) handleToggleSelection(entry);
+        else if (!moveEntriesRef.current) handleToggleSelection(entry);
         return;
       }
       const modifiers = getExplorerPressModifiers(event);
       const result = resolveExplorerSelection({
         path: entry.path,
-        visiblePaths: visibleEntryPaths,
+        visiblePaths: renderDataRef.current.visibleEntryPaths,
         selectedPaths: selectedEntryPathsRef.current,
         anchorPath: selectionAnchorPathRef.current,
         additive: modifiers.additive,
@@ -1730,54 +1797,22 @@ export function FileExplorerPane({
     },
     [
       commitSelectedEntryPaths,
-      moveEntries,
       selectionMode,
       handleToggleSelection,
       handleOpenFile,
       handleToggleDirectory,
       hasWorkspaceScope,
       selectExplorerEntry,
-      visibleEntryPaths,
     ],
   );
 
-  const listRows = useMemo<ExplorerListRow[]>(() => {
-    const rows: ExplorerListRow[] = treeRows.map((row) =>
-      pendingEdit?.type === "rename" && pendingEdit.entry.path === row.entry.path
-        ? { type: "rename", entry: row.entry, depth: row.depth }
-        : { type: "entry", row },
-    );
-    if (pendingEdit?.type !== "create") {
-      return rows;
-    }
-    let insertionIndex = 0;
-    let depth = 0;
-    if (pendingEdit.parentPath !== ".") {
-      const parentIndex = treeRows.findIndex((row) => row.entry.path === pendingEdit.parentPath);
-      if (parentIndex >= 0) {
-        insertionIndex = parentIndex + 1;
-        depth = treeRows[parentIndex].depth + 1;
-      }
-    }
-    rows.splice(insertionIndex, 0, {
-      type: "draft",
-      parentPath: pendingEdit.parentPath,
-      kind: pendingEdit.kind,
-      depth,
-    });
-    return rows;
-  }, [pendingEdit, treeRows]);
-
   const [entryRowHeight, setEntryRowHeight] = useState(0);
   const [inputRowHeight, setInputRowHeight] = useState(0);
-  const handleEntryRowLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const { height } = event.nativeEvent.layout;
-      // Move mode removes the action rail from files, so its rows are not uniform.
-      if (height > 0 && !moveEntries) setEntryRowHeight(height);
-    },
-    [moveEntries],
-  );
+  const handleEntryRowLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    // Move mode removes the action rail from files, so its rows are not uniform.
+    if (height > 0 && !moveEntriesRef.current) setEntryRowHeight(height);
+  }, []);
   const handleInputRowLayout = useCallback((event: LayoutChangeEvent) => {
     const { height } = event.nativeEvent.layout;
     if (height > 0) setInputRowHeight(height);
@@ -1789,7 +1824,6 @@ export function FileExplorerPane({
     pendingRequest,
   });
   const showBackFromError = Boolean(error && selectedEntryPath);
-  const errorRecoveryPath = useMemo(() => getErrorRecoveryPath(explorerState), [explorerState]);
 
   const renderTreeRow = useCallback(
     (info: ListRenderItemInfo<ExplorerListRow>) => {
@@ -1823,8 +1857,8 @@ export function FileExplorerPane({
           workspaceRoot={normalizedWorkspaceRoot}
           row={info.item.row}
           index={info.index}
-          expandedPaths={expandedPaths}
-          selectedEntryPaths={selectedEntryPaths}
+          expandedPaths={expandedPathsRef.current}
+          selectedEntryPaths={selectedEntryPathsRef.current}
           isDirectoryLoading={isDirectoryLoading}
           onEntryPress={handleEntryPress}
           onSelectEntry={handleSelectEntry}
@@ -1839,7 +1873,7 @@ export function FileExplorerPane({
           onCollapseDirectory={handleCollapseDirectory}
           onRenameEntry={fsEntryOpsEnabled ? handleRenameEntry : undefined}
           onMoveEntry={fsEntryMoveEnabled ? handleMoveEntry : undefined}
-          selectedEntries={selectedDragEntries}
+          selectedEntries={renderDataRef.current.selectedDragEntries}
           touchControls={touchControls}
           onLayout={handleEntryRowLayout}
           onDuplicateEntry={fsEntryDuplicateEnabled ? handleDuplicateEntry : undefined}
@@ -1850,7 +1884,6 @@ export function FileExplorerPane({
     [
       handleEntryRowLayout,
       handleInputRowLayout,
-      expandedPaths,
       fsEntryDuplicateEnabled,
       fsEntryMoveEnabled,
       fsEntryOpsEnabled,
@@ -1868,13 +1901,11 @@ export function FileExplorerPane({
       handleRenameCommit,
       handleMoveEntry,
       handleRenameEntry,
-      selectedDragEntries,
       touchControls,
       handleRevealEntry,
       handleSelectEntry,
       isDirectoryLoading,
       fileManagerTarget,
-      selectedEntryPaths,
       onAddToChat,
       onAddDirectoryToChat,
       serverId,
