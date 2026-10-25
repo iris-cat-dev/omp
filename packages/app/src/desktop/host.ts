@@ -275,6 +275,7 @@ export interface DesktopHostBridge {
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
   pet?: DesktopPetBridge;
+  monitor?: { open: () => Promise<void> };
   events?: DesktopEventsBridge;
   remoteSsh?: DesktopRemoteSshBridge;
   window?: DesktopWindowModuleBridge;

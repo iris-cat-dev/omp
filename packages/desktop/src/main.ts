@@ -104,6 +104,8 @@ import { DesktopPetController } from "./pets/controller.js";
 import { PET_HTML } from "./pets/html.js";
 import { getPetLibrary } from "./pets/library.js";
 import { tryRunPetCreationCli } from "./pets/creation-cli.js";
+import { OmpMonitorController } from "./monitor/controller.js";
+import { MONITOR_HTML } from "./monitor/html.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "omp-desktop";
@@ -114,6 +116,7 @@ const isPetCreationCli = process.argv.includes("--desktop-pet-install");
 const agentNavigationInbox = new AgentNavigationInbox();
 const closeChoiceRequests = new CloseChoiceRequestBroker();
 let petController: DesktopPetController | null = null;
+let monitorController: OmpMonitorController | null = null;
 let ownsDesktopInstance = false;
 let mainWindowsQuitting = false;
 const presentedMainWindows = new WeakSet<BrowserWindow>();
@@ -533,6 +536,14 @@ function updateBackgroundTrayContextMenu(): void {
   backgroundTray.setContextMenu(
     Menu.buildFromTemplate([
       { label: labels.showApp, click: backgroundTrayActions.restore },
+      {
+        label: app.getLocale().startsWith("zh") ? "OMP 本地监控" : "OMP Local Monitor",
+        click: () => {
+          void bootstrapComplete
+            .then(() => monitorController?.open())
+            .catch((error: unknown) => log.error("[local-monitor] Failed to open", error));
+        },
+      },
       { type: "separator" },
       { label: labels.quitApp, click: backgroundTrayActions.quit },
     ]),
@@ -769,8 +780,14 @@ async function bootstrap(): Promise<void> {
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, async (request) => {
-    const { pathname, search, hash } = new URL(request.url);
+    const { hostname, pathname, search, hash } = new URL(request.url);
     const decodedPath = decodeURIComponent(pathname);
+    if (hostname === "monitor") {
+      if (decodedPath !== "/local-monitor") return new Response("Not found", { status: 404 });
+      return new Response(MONITOR_HTML, {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
     if (decodedPath === "/desktop-pet") {
       return new Response(PET_HTML, {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
@@ -826,6 +843,8 @@ async function bootstrap(): Promise<void> {
   registerOpenerHandlers();
   registerEditorTargetHandlers();
   registerRemoteSshHandlers();
+  monitorController = new OmpMonitorController();
+  monitorController.initialize();
   petController = new DesktopPetController({
     openApp: async () => {
       await bootstrapComplete;
@@ -908,13 +927,15 @@ if (!isPetCreationCli) {
   const quitLifecycle = createQuitLifecycle({
     app,
     closeTransportSessions: closeAllTransportSessions,
-    stopDesktopManagedDaemonIfNeeded: () =>
-      stopDesktopManagedDaemonOnQuitIfNeeded({
+    stopDesktopManagedDaemonIfNeeded: async () => {
+      await monitorController?.dispose();
+      return stopDesktopManagedDaemonOnQuitIfNeeded({
         settingsStore: getDesktopSettingsStore(),
         isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
         stopDaemon: () => stopDesktopDaemonViaCli("quit"),
         showShutdownFeedback: showDaemonShutdownDialog,
-      }),
+      });
+    },
     installAppUpdateOnQuit: async (signal) => {
       // Startup exception: updater loading belongs to an update/quit operation,
       // not the first-window critical path.
@@ -947,6 +968,7 @@ if (!isPetCreationCli) {
     beginMainWindowShutdown();
     backgroundModeController.markAppQuitting();
     petController?.beginShutdown();
+    void monitorController?.dispose();
     quitLifecycle.handleBeforeQuit(event);
   });
   registerExternalQuitSignals({ signals: process, quit: () => app.quit() });

@@ -260,6 +260,8 @@ Desktop packaging keeps build/test-only dependencies out of the production depen
 
 The early OMP catalog hook is loaded through an encoded module URL, so installation directories containing spaces remain valid. Windows ConPTY files are loaded from the matching node-pty prebuild, not its duplicate `third_party` directory.
 
+The Windows local monitor lazily loads Koffi 3.3.4 and its `@koromix/koffi-win32-x64` Node-API binding for process-local HWND passthrough. Keep optional dependencies enabled. Koffi's `src/` contains runtime JavaScript and must not be excluded as build-only source; the after-pack hook checks its complete loader chain and native binary. Existing `asar: false` keeps these relative loaders on disk. The adapter pairs Windows layered/transparent input flags only while needed, preserves DirectComposition and unrelated window styles, and never installs native callbacks or global hooks.
+
 Daemon command execution collects `execFile` callback stdout and stderr explicitly. The mini-electron runtime does not expose Node's custom `promisify(execFile)` result shape; using it can misreport a supported bundled OMP as older than the required version. The actual minimum remains **OMP 18.8.7**.
 
 The Electron language allowlists retain all nine application languages and common regional variants. macOS also retains each selected language's grammatical-gender `.lproj` variants. Update both platform allowlists in [`packages/desktop/electron-builder.yml`](../packages/desktop/electron-builder.yml) when adding a language.

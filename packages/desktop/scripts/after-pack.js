@@ -60,6 +60,48 @@ function pruneKeyring(nodeModules, platform, arch) {
   }
 }
 
+function pruneKoffi(nodeModules, platform, arch) {
+  const nativeDir = path.join(nodeModules, "@koromix");
+  if (!fs.existsSync(nativeDir)) return;
+
+  const arches = arch === "universal" ? ["x64", "arm64"] : [arch];
+  const keep = new Set(arches.map((targetArch) => `koffi-${platform}-${targetArch}`));
+  for (const entry of fs.readdirSync(nativeDir)) {
+    if (entry.startsWith("koffi-") && !keep.has(entry)) {
+      rmSafe(path.join(nativeDir, entry));
+    }
+  }
+}
+exports.pruneKoffi = pruneKoffi;
+
+function assertNativeKoffiBinding(resourcesDir, platform, arch) {
+  if (platform !== "win32") return;
+
+  const nodeModules = path.join(resourcesDir, "app", "node_modules");
+  const nativePackage = path.join("@koromix", `koffi-${platform}-${arch}`);
+  // Koffi 3's entrypoint executes JavaScript under src/ before loading its
+  // sibling platform package. Those files are runtime code, not build sources.
+  const runtimeFiles = [
+    path.join("koffi", "package.json"),
+    path.join("koffi", "index.cjs"),
+    path.join("koffi", "src", "koffi", "index.cjs"),
+    path.join("koffi", "src", "koffi", "src", "static.cjs"),
+    path.join(nativePackage, "package.json"),
+    path.join(nativePackage, "index.js"),
+    path.join(nativePackage, `${platform}_${arch}`, "koffi.node"),
+  ];
+  for (const relativePath of runtimeFiles) {
+    const runtimePath = path.join(nodeModules, relativePath);
+    if (!fs.existsSync(runtimePath) || !fs.statSync(runtimePath).isFile()) {
+      throw new Error(
+        `Packaged Windows Koffi runtime is missing for ${arch}: ${runtimePath}. ` +
+          "Install production dependencies with optional packages enabled before packaging.",
+      );
+    }
+  }
+}
+exports.assertNativeKoffiBinding = assertNativeKoffiBinding;
+
 function keyringBindingPath(resourcesDir, arch) {
   const bindingName = `win32-${arch}-msvc`;
   return path.join(
@@ -100,6 +142,7 @@ function pruneNativeModules(appOutDir, platform, arch) {
   pruneNodePty(nodeModules, platform, arch);
   pruneSharpLibvips(nodeModules, platform, arch);
   pruneKeyring(nodeModules, platform, arch);
+  pruneKoffi(nodeModules, platform, arch);
 
   const after = dirSizeSync(nodeModules);
   const savedMB = ((before - after) / 1024 / 1024).toFixed(1);
@@ -186,6 +229,7 @@ exports.default = async function afterPack(context) {
   assertOmpExtensions(resourcesDir);
   pruneNativeModules(context.appOutDir, platform, arch);
   assertNativeKeyringBinding(resourcesDir, platform, arch);
+  assertNativeKoffiBinding(resourcesDir, platform, arch);
 
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {

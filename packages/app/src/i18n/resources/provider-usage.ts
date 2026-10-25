@@ -1,4 +1,11 @@
 const en = {
+  localMonitor: {
+    title: "OMP local performance monitor",
+    description:
+      "Open the local-only OMP dashboard or floating instruments: live throughput, child agents, history and process resources. Optional public prices and exchange rates never upload your usage. Separate from native /stats.",
+    open: "Open monitor",
+    openFailed: "The local monitor could not open. Retry or check the Desktop logs.",
+  },
   nativeStats: {
     title: "OMP native statistics (/stats)",
     scope: "This host · profile: {{profile}}",
@@ -139,6 +146,13 @@ export const providerUsage = {
   en,
   "zh-CN": {
     ...en,
+    localMonitor: {
+      title: "OMP 本地性能监控",
+      description:
+        "打开本机 OMP 仪表盘或悬浮仪表，查看实时吞吐、子代理、历史与进程资源。可选的公开价格与汇率更新不上传用量；本监控与原生 /stats 分开统计。",
+      open: "打开监控",
+      openFailed: "无法打开本地监控，请重试或检查 Desktop 日志。",
+    },
     nativeStats: {
       title: "OMP 原生统计（/stats）",
       scope: "此主机 · 配置：{{profile}}",

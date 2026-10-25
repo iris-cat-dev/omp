@@ -1,5 +1,6 @@
 electronVersion: 41.2.0
 npmRebuild: false
+# Native addons and their relative loaders must stay on the real filesystem.
 asar: false
 appId: sh.omp.desktop
 productName: OMP Desktop

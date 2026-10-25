@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     publishActivity: (activity: DesktopPetActivity): Promise<DesktopPetActivityResult> =>
       ipcRenderer.invoke("paseo:pet:publishActivity", activity),
   },
+  monitor: {
+    open: () => ipcRenderer.invoke("paseo:monitor:open") as Promise<void>,
+  },
   remoteSsh: {
     start: (input: Record<string, unknown>) => ipcRenderer.invoke("paseo:remote-ssh:start", input),
     writeInput: (input: { operationId: string; input: string }) =>

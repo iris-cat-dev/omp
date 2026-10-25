@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { OmpClaudeLimitResetDetails } from "@/components/omp-claude-limit-reset-details";
 import { OmpCodexQuotaDetails, OmpQuotaServerContext } from "@/components/omp-codex-quota-details";
+import { DesktopLocalMonitorSection } from "@/desktop/components/local-monitor-section";
 import { useOmpProviderAccountQuota } from "@/hooks/use-omp-account-quota";
 import {
   buildOmpAccountProviderUsage,
@@ -78,6 +79,7 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <OmpQuotaServerContext.Provider value={serverId}>
+      <DesktopLocalMonitorSection serverId={serverId} />
       <OmpStatsSettingsSection serverId={serverId} />
       <ProviderUsageSettingsSection
         view={usageView}
