@@ -28,3 +28,13 @@ declare module "@oh-my-pi/pi-coding-agent/async" {
     getJob(id: string): AsyncJob | undefined;
   }
 }
+
+declare module "@oh-my-pi/pi-ai/auth-gateway" {
+  export function createAuthGatewayRouter(options: {
+    storage: unknown;
+    resolveModel(id: string): unknown;
+  }): {
+    route(request: Request, peer: string): Promise<Response>;
+    close(): void;
+  };
+}

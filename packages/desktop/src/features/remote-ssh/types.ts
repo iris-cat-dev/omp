@@ -54,6 +54,7 @@ export const RemoteSshProfileInputSchema = z.object({
   target: RemoteSshTargetSchema,
   runtimeRoot: z.string().trim().min(1).max(4096),
   deployedVersion: z.string().trim().min(1).max(255),
+  modelSource: z.enum(["local", "remote"]).optional(),
 });
 
 export const RemoteSshServerIdInputSchema = z.object({

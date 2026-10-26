@@ -80,6 +80,8 @@ import { hasDaemonReconnectedAfter, type DaemonConnectionMarker } from "./daemon
 import { restartDaemonFromSettings } from "./daemon-restart";
 import { OmpAgentShellCard } from "./omp-agent-shell-card";
 import { OmpBuiltinToolsCard } from "./omp-builtin-tools-card";
+import { SshModelSourceSection } from "./ssh-model-source-section";
+import { useLocalModelBridgeStatus } from "@/runtime/local-model-bridge-runtime";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedArrowDown = withUnistyles(ArrowDown);
@@ -622,9 +624,13 @@ export function HostProxyPage({ serverId }: { serverId: string }) {
 export function HostProvidersPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
+  const modelBridge = useLocalModelBridgeStatus(serverId);
 
   if (!host) {
     return <HostNotFound />;
+  }
+  if (modelBridge && modelBridge.profile.modelSource !== "remote") {
+    return <SshModelSourceSection serverId={serverId} />;
   }
 
   return (
@@ -670,6 +676,7 @@ export function HostSettingsPage({
       <HostStatusBadges serverId={serverId} />
       <HostConnectionError serverId={serverId} />
       <ConnectionsSection host={host} />
+      <SshModelSourceSection serverId={serverId} />
 
       <HostAppearanceSection host={host} />
       <PairDeviceSection key={serverId} serverId={serverId} />

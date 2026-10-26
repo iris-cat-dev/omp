@@ -279,6 +279,41 @@ test("Hub management requires daemon support before dispatching requests", async
   expect(mock.sent).toEqual([]);
 });
 
+test("local models fail explicitly on old daemons without dispatching retry or fallback traffic", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "local_model_feature_gate_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  expect(client.supportsLocalModelBridge()).toBe(false);
+  for (const operation of [
+    () => client.openLocalModelSource(),
+    () => client.closeLocalModelSource(),
+    () => client.attachLocalModels([]),
+    () => client.detachLocalModels(),
+  ]) {
+    await expect(operation()).rejects.toThrow("Upgrade this host's daemon");
+  }
+  expect(() =>
+    client.requestLocalModel("request", {
+      modelId: "openai/model",
+      context: { messages: [] },
+      stream: true,
+    }),
+  ).toThrow("Upgrade this host's daemon");
+  expect(() => client.cancelLocalModel("request")).toThrow("Upgrade this host's daemon");
+  expect(() => client.sendLocalModelFrame("request", { type: "end" })).toThrow(
+    "Upgrade this host's daemon",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
 test("sets the complete viewed timeline subscription only when the daemon supports it", async () => {
   const supportedTransport = createMockTransport();
   const supportedClient = new DaemonClient({

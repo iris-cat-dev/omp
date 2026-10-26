@@ -9,6 +9,7 @@ import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writ
 import { createUserMessage, generateMessageId } from "@/types/stream";
 import type { PetCreationWorkspace } from "./types";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
+import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
 
 // Mirrors the existing workspace draft's real create request, but never reuses
 // a current workspace, draft id or conversation for the authoring directory.
@@ -35,6 +36,7 @@ export async function launchDesktopPetCreation(input: {
   });
   const clientMessageId = generateMessageId();
   const timestamp = new Date();
+  assertLocalModelBridgeReady(client);
   const agent = await client.createAgent({
     config: buildWorkspaceDraftAgentConfig({ ...preferences, cwd }),
     workspaceId: normalizedWorkspace.id,

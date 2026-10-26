@@ -2491,6 +2491,7 @@ export const ru: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "Оформление",
         name: {

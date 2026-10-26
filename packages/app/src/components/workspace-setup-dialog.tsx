@@ -10,6 +10,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore, type PendingWorkspaceSetup } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -280,6 +281,7 @@ export function WorkspaceSetupDialog() {
           workspaceId: ensuredWorkspace.id,
           workspaceDirectory: ensuredWorkspace.workspaceDirectory,
         });
+        assertLocalModelBridgeReady(connectedClient);
         const agent = await connectedClient.createAgent(
           buildCreateAgentOptions({
             composerState,

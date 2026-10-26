@@ -2463,6 +2463,7 @@ export const ja: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "外観",
         name: {

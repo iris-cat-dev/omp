@@ -2487,6 +2487,7 @@ export const ptBR: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "Aparência",
         name: {

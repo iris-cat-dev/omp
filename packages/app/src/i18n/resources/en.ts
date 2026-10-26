@@ -1810,7 +1810,7 @@ export const en = {
       entry: "Connect via SSH",
       title: "Connect a remote host via SSH",
       helper:
-        "OMP Desktop uses your system SSH configuration to install and pair the remote daemon. The ongoing connection uses the encrypted relay.",
+        "OMP Desktop uses your system SSH configuration to install and pair the remote daemon. Models use your local configuration and credentials by default; credentials are never copied to the remote host. Tools and files stay remote over the encrypted connection. Keep OMP Desktop and its local daemon running. You can explicitly switch to remote models in Host Settings.",
       host: "SSH host or config alias",
       username: "Username (optional)",
       port: "Port (optional)",
@@ -2612,6 +2612,21 @@ export const en = {
       },
     },
     host: {
+      modelSource: {
+        title: "Model source",
+        useLocal: "Use models configured on this computer",
+        localHint:
+          "Provider credentials stay on this computer. Tools, files, and terminals run on the remote host. Keep OMP Desktop and its local daemon running; a disconnected source never falls back to remote models.",
+        remoteHint:
+          "Use models and credentials configured on the remote host instead. Local credentials are not copied or synchronized.",
+        openLocalSettings: "Open local model settings",
+        status: {
+          remote: "Source: remote host",
+          connecting: "Connecting to local model source…",
+          ready: "Source: this computer · {{count}} models available",
+          error: "Local model source unavailable — no remote fallback",
+        },
+      },
       appearance: {
         title: "Appearance",
         name: {

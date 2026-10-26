@@ -41,6 +41,8 @@ import {
   formatProviderDiagnosticError,
 } from "./providers/diagnostic-utils.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
+import type { LocalModelBridge } from "../local-model-bridge.js";
+import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
 import type {
   HubExecutionAgentValidationIssue,
   OmpCustomProviderInput,
@@ -105,6 +107,7 @@ export interface ProviderSnapshotManagerOptions {
   managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
   desktopConfigDir?: string;
+  localModelBridge?: LocalModelBridge;
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
@@ -216,6 +219,7 @@ export class ProviderSnapshotManager {
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly isDev: boolean;
   private readonly desktopConfigDir?: string;
+  private readonly localModelBridge?: LocalModelBridge;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
@@ -231,6 +235,7 @@ export class ProviderSnapshotManager {
     this.managedProcesses = options.managedProcesses;
     this.isDev = options.isDev === true;
     this.desktopConfigDir = options.desktopConfigDir;
+    this.localModelBridge = options.localModelBridge;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
@@ -452,6 +457,15 @@ export class ProviderSnapshotManager {
     const diagnostic = `${baseDiagnostic}\n  Models: ${modelCount}\n  Status: ${status}`;
     return { provider, diagnostic };
   }
+  async openLocalModelGateway(): Promise<OmpLocalModelGateway> {
+    const definition = this.providerRegistry.omp;
+    if (!definition?.enabled) throw new Error("The local OMP provider is disabled");
+    const client = this.ensureClient("omp", definition);
+    if (!client.openLocalModelGateway)
+      throw new Error("Local model forwarding requires an updated daemon");
+    return client.openLocalModelGateway();
+  }
+
   async getOmpProviderManagement(): Promise<OmpProviderManagement> {
     const definition = this.providerRegistry.omp;
     if (!definition) {
@@ -827,6 +841,7 @@ export class ProviderSnapshotManager {
       managedProcesses: this.managedProcesses,
       isDev: this.isDev,
       desktopConfigDir: this.desktopConfigDir,
+      localModelBridge: this.localModelBridge,
     });
 
     for (const [provider, client] of Object.entries(this.extraClients) as Array<

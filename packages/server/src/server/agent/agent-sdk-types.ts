@@ -22,6 +22,7 @@ import type {
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
+import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
 
 export type { AgentProviderNotice, AgentTaskItem };
 
@@ -856,6 +857,7 @@ export interface AgentClient {
   isAvailable(signal?: AbortSignal): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   getOmpProviderManagement?(): Promise<OmpProviderManagement>;
+  openLocalModelGateway?(): Promise<OmpLocalModelGateway>;
   getOmpStats?(range: OmpStatsRange): Promise<OmpStatsResult>;
   consumeOmpCodexResetCredit?(
     credentialId: number,

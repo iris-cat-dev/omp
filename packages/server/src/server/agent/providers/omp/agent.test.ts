@@ -1130,6 +1130,22 @@ describe("OMP agent client and session", () => {
       return omp;
     }
 
+    test("finishes a disconnected local source instead of continuing enhanced mode forever", async () => {
+      const omp = await startFailedTurn({
+        role: "assistant",
+        provider: "desktop-local",
+        model: "fixture/model",
+        content: [],
+        stopReason: "error",
+        errorStatus: 410,
+        errorMessage: "Local model source unavailable. Reconnect OMP Desktop.",
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(omp.failedTurnCount()).toBe(1);
+      expect(omp.completedTurnCount()).toBe(0);
+      expect(omp.runtime().followUpRequests).toEqual([]);
+    });
+
     test.each([400, 401, 403, 429, 499, 500, 503, 599])(
       "keeps HTTP %i active until a continuation recovers after five seconds",
       async (errorStatus) => {

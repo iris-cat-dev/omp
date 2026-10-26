@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { buildProviderRegistry, createAllClients } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
+import { LocalModelBridge } from "../local-model-bridge.js";
 
 const logger = createTestLogger();
 
@@ -51,6 +52,45 @@ describe("OMP provider registry", () => {
 
     expect(registry.omp.label).toBe("OMP");
     expect(registry.omp.description).toBe("Local OMP runtime");
+  });
+
+  test("local source takes precedence over cached remote replacement and additional models", async () => {
+    const bridge = new LocalModelBridge();
+    try {
+      await bridge.attach(
+        "desktop",
+        [{ provider: "local-provider", id: "local-model", api: "openai-completions" }],
+        () => {},
+      );
+      const runtime = new FakeOmp();
+      runtime.queueModels([
+        { provider: "desktop-local", id: "local-provider/local-model", api: "openai-completions" },
+        { provider: "remote-provider", id: "remote-model" },
+      ]);
+      const registry = buildProviderRegistry(logger, {
+        ompRuntime: runtime,
+        localModelBridge: bridge,
+        providerOverrides: {
+          omp: {
+            models: [{ id: "remote-provider/replacement", label: "Remote replacement" }],
+            additionalModels: [{ id: "remote-provider/addition", label: "Remote addition" }],
+          },
+        },
+      });
+      const cachedClient = registry.omp.createClient(logger);
+      const localCatalog = await registry.omp.fetchCatalog({ scope: "global" }, cachedClient);
+      expect(localCatalog.models.map((model) => model.id)).toEqual([
+        "desktop-local/local-provider/local-model",
+      ]);
+      bridge.detach("desktop", { disable: true });
+      const remoteCatalog = await registry.omp.fetchCatalog({ scope: "global" }, cachedClient);
+      expect(remoteCatalog.models.map((model) => model.id)).toEqual([
+        "remote-provider/replacement",
+        "remote-provider/addition",
+      ]);
+    } finally {
+      await bridge.close();
+    }
   });
 
   test("rejects unknown custom providers", () => {

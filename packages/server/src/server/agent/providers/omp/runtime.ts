@@ -39,6 +39,7 @@ export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   getImageGenerationConfig?: OmpImageSettingsGetter;
+  localModelGateway?: boolean;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
@@ -68,6 +69,7 @@ export interface OmpRuntimeSession {
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
+  getLocalModelGatewayPort?(): Promise<number>;
   getLoginProviders(): Promise<OmpLoginProvider[]>;
   login(providerId: string): Promise<void>;
   setModel(provider: string, modelId: string): Promise<OmpModel>;

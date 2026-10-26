@@ -228,6 +228,7 @@ export interface DesktopRemoteSshProfile {
   target: DesktopRemoteSshTarget;
   runtimeRoot: string;
   deployedVersion: string;
+  modelSource?: "local" | "remote";
 }
 
 export type DesktopRemoteSshEvent =

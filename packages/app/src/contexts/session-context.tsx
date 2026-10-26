@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { startPushNotifications } from "@/push-notifications";
+import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
 import {
   createSetAgentInitializing,
   refreshAgentInitializationTimeout,
@@ -983,6 +984,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       } catch (error) {
         console.error("[Session] Failed to prepare images for agent creation:", error);
       }
+      assertLocalModelBridgeReady(client);
       await client.createAgent({
         config,
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),

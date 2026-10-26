@@ -138,6 +138,7 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { LocalModelBridge } from "./local-model-bridge.js";
 import { applyPendingOmpUpdate } from "./agent/providers/omp/installer.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
@@ -971,7 +972,9 @@ export async function createPaseoDaemon(
     logger,
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
+  const localModelBridge = new LocalModelBridge();
   const providerSnapshotManager = new ProviderSnapshotManager({
+    localModelBridge,
     logger: providerSnapshotLogger,
     refreshTimeoutMs: config.providerCatalogRefreshTimeoutMs,
     runtimeSettings: config.agentProviderSettings,
@@ -1649,6 +1652,7 @@ export async function createPaseoDaemon(
               undefined,
               orchestrationSkills,
               workspaceLabelService,
+              localModelBridge,
             );
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
@@ -1709,6 +1713,7 @@ export async function createPaseoDaemon(
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
+    await localModelBridge.close();
     await providerSnapshotManager.shutdown();
     terminalManager.killAll();
     await scheduleService.stop().catch(() => undefined);

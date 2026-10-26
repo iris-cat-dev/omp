@@ -1,3 +1,8 @@
+import type {
+  LocalModel,
+  LocalModelInferenceRequest,
+  LocalModelStreamFrame,
+} from "@omp-desktop/protocol/local-models";
 import type { OmpStatsGetResponseMessage, OmpStatsRange } from "@omp-desktop/protocol/omp-stats";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
@@ -306,6 +311,9 @@ export type ConnectionState =
   | { status: "disposed" };
 
 export type DaemonEvent =
+  | { type: "local_model_request"; requestId: string; body: LocalModelInferenceRequest }
+  | { type: "local_model_cancel"; requestId: string }
+  | { type: "local_model_frame"; requestId: string; frame: LocalModelStreamFrame }
   | {
       type: "agent_update";
       agentId: string;
@@ -4880,6 +4888,67 @@ export class DaemonClient {
     });
   }
 
+  supportsLocalModelBridge(): boolean {
+    return this.lastServerInfoMessage?.features?.localModelBridge === true;
+  }
+
+  private requireLocalModelBridge(): void {
+    if (!this.supportsLocalModelBridge()) {
+      throw new Error("Upgrade this host's daemon to use models from your local machine.");
+    }
+  }
+
+  async openLocalModelSource(): Promise<{ models: LocalModel[] }> {
+    this.requireLocalModelBridge();
+    const result = await this.sendCorrelatedSessionRequest({
+      message: { type: "local_model.source.open" },
+      responseType: "local_model.source.open.response",
+      timeout: 180000,
+    });
+    return { models: result.models };
+  }
+
+  async closeLocalModelSource(): Promise<void> {
+    this.requireLocalModelBridge();
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "local_model.source.close" },
+      responseType: "local_model.source.close.response",
+    });
+  }
+
+  requestLocalModel(requestId: string, body: LocalModelInferenceRequest): void {
+    this.requireLocalModelBridge();
+    this.sendSessionMessage({ type: "local_model.source.request", requestId, body });
+  }
+
+  cancelLocalModel(requestId: string): void {
+    this.requireLocalModelBridge();
+    this.sendSessionMessage({ type: "local_model.source.cancel", requestId });
+  }
+
+  async attachLocalModels(models: LocalModel[]): Promise<void> {
+    this.requireLocalModelBridge();
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "local_model.attach", models },
+      responseType: "local_model.attach.response",
+      timeout: 180000,
+    });
+  }
+
+  async detachLocalModels(): Promise<void> {
+    this.requireLocalModelBridge();
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "local_model.detach" },
+      responseType: "local_model.detach.response",
+      timeout: 180000,
+    });
+  }
+
+  sendLocalModelFrame(requestId: string, frame: LocalModelStreamFrame): void {
+    this.requireLocalModelBridge();
+    this.sendSessionMessage({ type: "local_model.frame", requestId, frame });
+  }
+
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
     providers?: AgentProvider[];
@@ -6716,6 +6785,12 @@ export class DaemonClient {
 
   private toEvent(msg: SessionOutboundMessage): DaemonEvent | null {
     switch (msg.type) {
+      case "local_model.request":
+        return { type: "local_model_request", ...msg.payload };
+      case "local_model.cancel":
+        return { type: "local_model_cancel", ...msg.payload };
+      case "local_model.source.frame":
+        return { type: "local_model_frame", ...msg.payload };
       case "agent_update":
         return {
           type: "agent_update",

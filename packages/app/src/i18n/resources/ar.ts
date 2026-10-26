@@ -2439,6 +2439,7 @@ export const ar: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "المظهر",
         name: {

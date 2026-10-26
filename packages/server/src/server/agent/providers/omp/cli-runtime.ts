@@ -37,6 +37,9 @@ import {
 } from "../../../bundled-omp-plugins.js";
 import { beginBundledOmpInitialization } from "../../../bundled-omp-initialization.js";
 import { createProviderEnv } from "../../provider-launch-config.js";
+import { LOCAL_MODEL_PROVIDER } from "@omp-desktop/protocol/local-models";
+import type { LocalModelBridge } from "../../../local-model-bridge.js";
+import { withTimeout } from "../../../../utils/promise-timeout.js";
 import {
   prepareOmpImageSettingsLaunch,
   OMP_IMAGE_SETTINGS_TOKEN_ENV,
@@ -136,6 +139,7 @@ export class OmpReadyTimeoutError extends Error {
 export interface OmpCliRuntimeOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  localModelBridge?: LocalModelBridge;
   disabledBuiltInTools?: readonly string[];
   command?: [string, ...string[]];
   commandsRpcName?: "get_available_commands";
@@ -220,12 +224,56 @@ export class OmpCliRuntime implements OmpRuntime {
     }
   }
 
+  private async prepareLocalModelsLaunch(
+    launch: OmpRuntimeLaunch,
+    input: OmpStartSessionInput,
+  ): Promise<{ bridge: LocalModelBridge | undefined; enabled: boolean }> {
+    const bridge = input.localModelGateway ? undefined : this.options.localModelBridge;
+    const enabled = bridge?.isEnabled() === true;
+    if (enabled) {
+      const configuration = await bridge!.getLaunchConfig();
+      if (!configuration)
+        throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+      const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
+        ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
+        : input.model;
+      const selected = requested
+        ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
+        : configuration.models[0];
+      if (!selected) throw new Error("Select an available model from this Desktop.");
+      const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
+      // The final CLI selector wins over persisted defaults and resumed remote models.
+      launch.argv.push("--model", reference);
+      launch.model = reference;
+      const compiled = fileURLToPath(new URL("./local-models-extension.js", import.meta.url));
+      const source = fileURLToPath(new URL("./local-models-extension.ts", import.meta.url));
+      launch.argv.push(
+        "--extension",
+        (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked"),
+      );
+      launch.env = {
+        ...launch.env,
+        OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
+          baseUrl: configuration.baseUrl,
+          token: configuration.token,
+        }),
+      };
+    } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
+      throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+    }
+    return { bridge, enabled };
+  }
+
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     const launch = buildOmpLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
+    const { bridge, enabled: localModelsEnabled } = await this.prepareLocalModelsLaunch(
+      launch,
+      input,
+    );
     const effectiveCommand = resolveOmpRuntimeCommand(this.command, this.options.runtimeSettings);
     const providerEnv = createProviderEnv({ overlays: [launch.env] });
     const hostVerifier = createBundledOmpHostVerifier();
@@ -251,7 +299,7 @@ export class OmpCliRuntime implements OmpRuntime {
       launch.env = { ...launch.env, [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token };
     }
     try {
-      await this.applyBuiltInToolPolicy(launch, effectiveCommand);
+      if (!input.localModelGateway) await this.applyBuiltInToolPolicy(launch, effectiveCommand);
       if (input.protocolMode === "rpc-ui") {
         launch.argv.push("--extension", resolveOmpBackgroundJobsExtensionPath());
       }
@@ -279,6 +327,8 @@ export class OmpCliRuntime implements OmpRuntime {
         input.getImageGenerationConfig,
         imageLaunch?.token,
         imageToolAllowed,
+        bridge,
+        localModelsEnabled,
       );
       if (imageLaunch)
         process.onExit(() => {
@@ -411,6 +461,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   private imageEndpointPort: number | undefined;
   private appliedImageSettings: string | undefined;
   private imageUpdates = Promise.resolve();
+  private readonly localModelGatewayEndpoint = Promise.withResolvers<number | Error>();
 
   constructor(
     private readonly process: JsonlRpcProcess,
@@ -418,8 +469,15 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     private readonly getImageGenerationConfig?: OmpImageSettingsGetter,
     private readonly imageToken?: string,
     private readonly imageToolAllowed = true,
+    private readonly localModelBridge?: LocalModelBridge,
+    private readonly usesLocalModels = false,
   ) {
     process.onMessage((message) => {
+      if (message.type === "desktop_local_model_gateway_ready") {
+        const endpoint = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(message);
+        if (endpoint.success) this.localModelGatewayEndpoint.resolve(endpoint.data.port);
+        return;
+      }
       if (message.type === "desktop_image_settings_ready") {
         const endpoint = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(message);
         if (endpoint.success) {
@@ -446,8 +504,19 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
     process.onExit(({ error }) => {
       this.appliedImageSettings = undefined;
+      this.localModelGatewayEndpoint.resolve(new Error("The local OMP model worker stopped"));
       this.emit({ type: "process_exit", error: error.message });
     });
+  }
+
+  async getLocalModelGatewayPort(): Promise<number> {
+    const endpoint = await withTimeout(
+      this.localModelGatewayEndpoint.promise,
+      OMP_READY_TIMEOUT_MS,
+      "Local models require an OMP version with native model gateway support. Update local OMP.",
+    );
+    if (endpoint instanceof Error) throw endpoint;
+    return endpoint;
   }
 
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void {
@@ -508,10 +577,17 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await update;
   }
 
+  private assertModelSource(): void {
+    if (this.localModelBridge && this.localModelBridge.isEnabled() !== this.usesLocalModels) {
+      throw new Error("The model source changed. Restart this agent before continuing.");
+    }
+  }
+
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<OmpPromptAck> {
+    this.assertModelSource();
     await this.refreshImageSettings();
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
@@ -526,6 +602,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async compact(customInstructions?: string): Promise<void> {
+    this.assertModelSource();
     await this.request(
       {
         type: "compact",
@@ -627,6 +704,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async setModel(provider: string, modelId: string): Promise<OmpModel> {
+    this.assertModelSource();
+    if (this.usesLocalModels && provider !== LOCAL_MODEL_PROVIDER) {
+      throw new Error("Select a model from this Desktop while local models are enabled.");
+    }
     return OmpModelSchema.parse(await this.request({ type: "set_model", provider, modelId }));
   }
 
@@ -711,6 +792,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
+    this.assertModelSource();
     await this.refreshImageSettings();
     await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
   }
@@ -719,6 +801,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void {
+    this.assertModelSource();
     if (!this.getImageGenerationConfig || !this.imageToken) {
       this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
       return;

@@ -68,6 +68,7 @@ import { revokePushNotifications } from "@/push-notifications";
 import { mountProjectLayoutMigrationRuntime } from "@/workspace-tabs/project-layout-migration-runtime";
 import { createAppWebSocketFactory } from "./websocket-factory";
 import { buildWorkspaceExplorerStateKey } from "@/file-explorer/state-key";
+import { mountLocalModelBridgeRuntime } from "./local-model-bridge-runtime";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -2548,11 +2549,13 @@ export function getHostRuntimeStore(): HostRuntimeStore {
   const existing = Reflect.get(globalThis, HOST_RUNTIME_STORE_GLOBAL_KEY);
   if (existing instanceof HostRuntimeStore) {
     singletonHostRuntimeStore = existing;
+    mountLocalModelBridgeRuntime(existing);
     return existing;
   }
 
   singletonHostRuntimeStore = new HostRuntimeStore();
   Reflect.set(globalThis, HOST_RUNTIME_STORE_GLOBAL_KEY, singletonHostRuntimeStore);
+  mountLocalModelBridgeRuntime(singletonHostRuntimeStore);
   return singletonHostRuntimeStore;
 }
 

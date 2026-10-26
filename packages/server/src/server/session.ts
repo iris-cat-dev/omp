@@ -86,6 +86,8 @@ import {
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { LocalModelBridge } from "./local-model-bridge.js";
+import { LocalModelSession } from "./session/provider/local-model-session.js";
 import type {
   AgentManagerEvent,
   AgentTimelineCursor,
@@ -482,6 +484,7 @@ export interface SessionOptions {
   mcpBaseUrl?: string | null;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  localModelBridge?: LocalModelBridge;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
@@ -721,6 +724,7 @@ export class Session {
   private registeredPushToken: string | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
+  private readonly localModelSession: LocalModelSession;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
@@ -1050,6 +1054,20 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
+    this.localModelSession = new LocalModelSession({
+      bridge: options.localModelBridge,
+      openGateway: () => providerSnapshotManager.openLocalModelGateway(),
+      refresh: () => providerSnapshotManager.refreshSettingsSnapshot({ providers: ["omp"] }),
+      retireRuntimes: async () => {
+        const agents = this.agentManager.listAgents({ includeInternal: true });
+        await Promise.all(
+          agents
+            .filter((agent) => agent.provider === "omp")
+            .map((agent) => this.agentManager.closeAgent(agent.id)),
+        );
+      },
+      emit: (message, source) => this.emitForSource(message, source),
+    });
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -1110,6 +1128,7 @@ export class Session {
   }
 
   clearAgentTimelineSubscription(source: object): void {
+    this.localModelSession.disconnect(source);
     for (const [unsubscribe, observerSource] of this.initializationObservers) {
       if (observerSource === source) unsubscribe();
     }
@@ -1918,7 +1937,7 @@ export class Session {
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchOrchestrationSkillsMessage(msg) ??
-      this.dispatchProviderMessage(msg) ??
+      this.dispatchProviderMessage(msg, source) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
@@ -2524,7 +2543,10 @@ export class Session {
     }
   }
 
-  private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchProviderMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "list_provider_models_request":
         return this.providerCatalogSession.handleListProviderModelsRequest(msg);
@@ -2546,6 +2568,7 @@ export class Session {
         return this.providerCatalogSession.handleOmpStatsGetRequest(msg);
       default:
         return (
+          this.localModelSession.handle(msg, source) ??
           this.dispatchOmpProviderManagementMessage(msg) ??
           this.dispatchOmpProviderAuthenticationMessage(msg) ??
           this.dispatchOmpSettingsMessage(msg)
@@ -8214,6 +8237,7 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    await this.localModelSession.dispose();
     for (const unsubscribe of this.initializationObservers.keys()) unsubscribe();
     for (const search of this.workspaceTextSearches.values()) search.abort();
     this.workspaceTextSearches.clear();

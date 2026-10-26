@@ -18,6 +18,7 @@ import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -195,6 +196,7 @@ async function submitDraftCreateRequest(input: {
 
   const imagesData = await encodeImages(images);
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
+  assertLocalModelBridgeReady(client);
   const result = await client.createAgent({
     config,
     workspaceId,
@@ -330,7 +332,7 @@ export function WorkspaceDraftAgentTab({
   workspaceId,
   tabId,
   draftId,
-  initialSetup = undefined,
+  initialSetup,
   isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
@@ -649,11 +651,13 @@ export function WorkspaceDraftAgentTab({
     }),
     [composerState.agentControls, handleDropdownCloseFocus, isSubmitting],
   );
-  const draftGoalEnabled = composerState.featureValues?.workflow_mode === "goal";
-  const draftGoalObjective =
-    typeof composerState.featureValues?.goal_objective === "string"
-      ? composerState.featureValues.goal_objective
-      : "";
+  let draftGoalEnabled = false;
+  let draftGoalObjective = "";
+  if (composerState.featureValues) {
+    draftGoalEnabled = composerState.featureValues.workflow_mode === "goal";
+    const objective = composerState.featureValues.goal_objective;
+    if (typeof objective === "string") draftGoalObjective = objective;
+  }
   const saveDraftGoal = useCallback(
     async (objective: string) => {
       draftOnSetFeature?.("goal_objective", objective);

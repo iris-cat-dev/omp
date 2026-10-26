@@ -1782,7 +1782,7 @@ export const zhCN: TranslationResources = {
       entry: "通过 SSH 连接",
       title: "通过 SSH 连接远程 Host",
       helper:
-        "OMP Desktop 使用系统 SSH 配置安装并配对远端 Daemon。部署完成后的日常连接走端到端加密 Relay。",
+        "OMP Desktop 使用系统 SSH 配置安装并配对远端 Daemon。模型默认使用本机配置和凭据，凭据不会复制到远端；工具和文件通过加密连接在远端运行。请保持 OMP Desktop 及本地 Daemon 运行。可在主机设置中明确切换为远端模型。",
       host: "SSH Host 或配置别名",
       username: "用户名（可选）",
       port: "端口（可选）",
@@ -2520,6 +2520,20 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      modelSource: {
+        title: "模型来源",
+        useLocal: "使用本机配置的模型",
+        localHint:
+          "模型服务商凭据保留在本机，工具、文件和终端在远端主机运行。请保持 OMP Desktop 及本地 Daemon 运行；来源断开时不会自动回退到远端模型。",
+        remoteHint: "改为使用远端主机配置的模型和凭据，不会复制或同步本机凭据。",
+        openLocalSettings: "打开本机模型设置",
+        status: {
+          remote: "模型来源：远端主机",
+          connecting: "正在连接本机模型来源…",
+          ready: "模型来源：本机 · {{count}} 个可用模型",
+          error: "本机模型来源不可用，不会回退到远端模型",
+        },
+      },
       appearance: {
         title: "外观",
         name: {

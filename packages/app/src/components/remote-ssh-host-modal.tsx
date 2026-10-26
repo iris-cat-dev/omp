@@ -12,6 +12,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { PairHostError, pairHostFromOffer } from "@/pairing/pair-host-from-offer";
 import { useHostMutations } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
+import { reloadLocalModelBridgeProfile } from "@/runtime/local-model-bridge-runtime";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "./ui/button";
 
@@ -131,7 +132,9 @@ export function RemoteSshHostModal({
         target: result.target,
         runtimeRoot: result.runtimeRoot,
         deployedVersion: result.deployedVersion,
+        modelSource: managedProfile?.modelSource ?? "local",
       });
+      await reloadLocalModelBridgeProfile(profile.serverId);
       onSaved?.(profile);
       onClose();
     } catch (error) {

@@ -2494,6 +2494,7 @@ export const es: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "Apariencia",
         name: {

@@ -24,6 +24,12 @@ import type {
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
 import { refreshAndReadOmpStats } from "./stats.js";
+import {
+  LOCAL_MODEL_PROVIDER,
+  LOCAL_MODEL_UNAVAILABLE_STATUS,
+} from "@omp-desktop/protocol/local-models";
+import type { LocalModelBridge } from "../../../local-model-bridge.js";
+import { startOmpLocalModelGateway, type OmpLocalModelGateway } from "./local-model-gateway.js";
 import { isMap, parseDocument } from "yaml";
 
 import {
@@ -609,6 +615,7 @@ export interface OmpAgentClientOptions {
   providerParams?: unknown;
   desktopConfigDir?: string;
   runtime?: OmpRuntime;
+  localModelBridge?: LocalModelBridge;
   subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
@@ -1708,11 +1715,13 @@ function createRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
   disabledBuiltInTools: readonly string[] | undefined,
+  localModelBridge?: LocalModelBridge,
 ): OmpRuntime {
   return new OmpCliRuntime({
     logger,
     runtimeSettings,
     disabledBuiltInTools,
+    localModelBridge,
     command: [DEFAULT_OMP_BINARY],
     commandsRpcName: "get_available_commands",
   });
@@ -3907,6 +3916,10 @@ export class OmpAgentSession implements AgentSession {
           selectedWorkflowMode === "enhanced" &&
           terminalAssistant &&
           terminalAssistant.stopReason === "error" &&
+          !(
+            terminalAssistant.provider === LOCAL_MODEL_PROVIDER &&
+            terminalAssistant.errorStatus === LOCAL_MODEL_UNAVAILABLE_STATUS
+          ) &&
           this.scheduleModelErrorContinuation(turnId, terminalMessages)
         ) {
           return;
@@ -4451,6 +4464,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly quotaFetch: typeof fetch;
   private readonly quotaNow: () => number;
   private readonly runtime: OmpRuntime;
+  private readonly localModelBridge?: LocalModelBridge;
   private readonly claudeQuotaState: ClaudeQuotaState;
   private readonly oauthAccountsOverride?: readonly StoredOmpOAuthAccount[];
   private readonly sessionCredentialReader?: (
@@ -4492,9 +4506,15 @@ export class OmpAgentClient implements AgentClient {
     this.quotaFetch = options.quotaFetch ?? this.proxyFetch;
     this.quotaNow = options.quotaNow ?? Date.now;
     this.claudeQuotaState = new ClaudeQuotaState(this.quotaNow);
+    this.localModelBridge = options.localModelBridge;
     this.runtime =
       options.runtime ??
-      createRuntime(options.logger, runtimeSettings, runtimeProviderParams.disabledBuiltInTools);
+      createRuntime(
+        options.logger,
+        runtimeSettings,
+        runtimeProviderParams.disabledBuiltInTools,
+        options.localModelBridge,
+      );
     this.sessionCredentialReader = options.sessionCredentialReader;
     this.oauthAccountsOverride = options.oauthAccounts;
   }
@@ -4878,10 +4898,17 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
+  async openLocalModelGateway(): Promise<OmpLocalModelGateway> {
+    return startOmpLocalModelGateway((input) => this.startOmpRuntimeSession(input));
+  }
+
   async fetchCatalog(
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
+    if (this.localModelBridge?.isEnabled() && !(await this.localModelBridge.getLaunchConfig())) {
+      return { models: [], modes: [...OMP_MODES] };
+    }
     const launchMode = this.resolveLaunchMode(undefined);
     let runtimeSession: OmpRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
@@ -4912,7 +4939,12 @@ export class OmpAgentClient implements AgentClient {
           )
         )
           .map((model) => mapOmpModel(model, this.provider))
-          .filter((model) => !isOmpDesktopRpcBootstrapModel(model)),
+          .filter(
+            (model) =>
+              !isOmpDesktopRpcBootstrapModel(model) &&
+              (!this.localModelBridge?.isEnabled() ||
+                model.metadata?.provider === LOCAL_MODEL_PROVIDER),
+          ),
       );
       return { models, modes: [...OMP_MODES] };
     } finally {

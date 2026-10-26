@@ -16,6 +16,11 @@ import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { OmpStatsGetRequestMessageSchema, OmpStatsGetResponseMessageSchema } from "./omp-stats.js";
 import {
+  LocalModelCatalogSchema,
+  LocalModelInferenceRequestSchema,
+  LocalModelStreamFrameSchema,
+} from "./local-models.js";
+import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
   ChatInspectRequestSchema,
@@ -3557,7 +3562,47 @@ export const HubExecutionControlRequestSchema = z.object({
 
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
 
+const LocalModelRequestIdSchema = z.string().min(1).max(255);
+export const LocalModelSourceOpenSchema = z.object({
+  type: z.literal("local_model.source.open"),
+  requestId: LocalModelRequestIdSchema,
+});
+export const LocalModelSourceCloseSchema = z.object({
+  type: z.literal("local_model.source.close"),
+  requestId: LocalModelRequestIdSchema,
+});
+export const LocalModelSourceRequestSchema = z.object({
+  type: z.literal("local_model.source.request"),
+  requestId: LocalModelRequestIdSchema,
+  body: LocalModelInferenceRequestSchema,
+});
+export const LocalModelSourceCancelSchema = z.object({
+  type: z.literal("local_model.source.cancel"),
+  requestId: LocalModelRequestIdSchema,
+});
+export const LocalModelAttachSchema = z.object({
+  type: z.literal("local_model.attach"),
+  requestId: LocalModelRequestIdSchema,
+  models: LocalModelCatalogSchema,
+});
+export const LocalModelDetachSchema = z.object({
+  type: z.literal("local_model.detach"),
+  requestId: LocalModelRequestIdSchema,
+});
+export const LocalModelFrameSchema = z.object({
+  type: z.literal("local_model.frame"),
+  requestId: LocalModelRequestIdSchema,
+  frame: LocalModelStreamFrameSchema,
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  LocalModelSourceOpenSchema,
+  LocalModelSourceCloseSchema,
+  LocalModelSourceRequestSchema,
+  LocalModelSourceCancelSchema,
+  LocalModelAttachSchema,
+  LocalModelDetachSchema,
+  LocalModelFrameSchema,
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
   HubExecutionControlRequestSchema,
@@ -3849,6 +3894,7 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        localModelBridge: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(backgroundProcesses): added 2026-09-09, remove gate after 2027-03-09.
         backgroundProcesses: z.boolean().optional(),
@@ -7408,7 +7454,46 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
   }),
 });
 
+export const LocalModelSourceOpenResponseSchema = z.object({
+  type: z.literal("local_model.source.open.response"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema, models: LocalModelCatalogSchema }),
+});
+export const LocalModelSourceCloseResponseSchema = z.object({
+  type: z.literal("local_model.source.close.response"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema }),
+});
+export const LocalModelAttachResponseSchema = z.object({
+  type: z.literal("local_model.attach.response"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema }),
+});
+export const LocalModelDetachResponseSchema = z.object({
+  type: z.literal("local_model.detach.response"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema }),
+});
+export const LocalModelRequestSchema = z.object({
+  type: z.literal("local_model.request"),
+  payload: z.object({
+    requestId: LocalModelRequestIdSchema,
+    body: LocalModelInferenceRequestSchema,
+  }),
+});
+export const LocalModelCancelSchema = z.object({
+  type: z.literal("local_model.cancel"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema }),
+});
+export const LocalModelSourceFrameSchema = z.object({
+  type: z.literal("local_model.source.frame"),
+  payload: z.object({ requestId: LocalModelRequestIdSchema, frame: LocalModelStreamFrameSchema }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  LocalModelSourceOpenResponseSchema,
+  LocalModelSourceCloseResponseSchema,
+  LocalModelAttachResponseSchema,
+  LocalModelDetachResponseSchema,
+  LocalModelRequestSchema,
+  LocalModelCancelSchema,
+  LocalModelSourceFrameSchema,
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
   HubExecutionControlResponseSchema,

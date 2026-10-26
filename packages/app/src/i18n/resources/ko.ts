@@ -2454,6 +2454,7 @@ export const ko: TranslationResources = {
       },
     },
     host: {
+      modelSource: en.settings.host.modelSource,
       appearance: {
         title: "모양",
         name: {

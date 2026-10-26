@@ -18,6 +18,7 @@ import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/mo
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
 import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
+import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
 
 export interface QueuedComposerMessage {
   id: string;
@@ -206,6 +207,7 @@ export interface DispatchComposerAgentMessageInput {
 export async function dispatchComposerAgentMessage(
   input: DispatchComposerAgentMessageInput,
 ): Promise<void> {
+  assertLocalModelBridgeReady(input.client);
   const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
     format: input.attachmentSubmitFormat,
   });
@@ -223,6 +225,7 @@ export async function dispatchComposerAgentMessage(
   input.submission.begin(input.agentId, userMessage);
   try {
     const imagesData = await input.encodeImages(wirePayload.images);
+    assertLocalModelBridgeReady(input.client);
     await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
       ...(input.activeTurnBehavior ? { activeTurnBehavior: input.activeTurnBehavior } : {}),

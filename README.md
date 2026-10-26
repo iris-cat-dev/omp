@@ -10,7 +10,7 @@ Current source version: **0.5.3**. Packaged applications are available from [Git
 - Project workspaces with split conversations, files, Git changes, terminals, and background processes.
 - Scheduled tasks and heartbeats, provider usage and quotas, native OMP tools, and plugins.
 - Desktop appearance controls, wallpaper, an optional desktop pet, and image/media previews.
-- SSH-managed remote hosts and Web access through a hosted or self-hosted relay.
+- SSH-managed remote hosts that can use locally configured models without copying credentials, plus Web access through a hosted or self-hosted relay.
 
 See the [documentation index](docs/README.md) for feature guides and operational details.
 

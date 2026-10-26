@@ -39,6 +39,7 @@ import { mergeRuntimeSettings, toRuntimeSettings } from "./provider-launch-confi
 import { ToolPolicyUnsupportedError, validateProviderOptions } from "./provider-options.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
 import type { OmpRuntime } from "./providers/omp/runtime.js";
+import type { LocalModelBridge } from "../local-model-bridge.js";
 import { CodexImportClientFacade } from "./providers/external-import/codex-provider.js";
 import { PiImportClientFacade } from "./providers/external-import/pi-provider.js";
 import {
@@ -93,11 +94,16 @@ export interface BuildProviderRegistryOptions {
   isDev?: boolean;
   ompRuntime?: OmpRuntime;
   desktopConfigDir?: string;
+  localModelBridge?: LocalModelBridge;
 }
 
 interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
-  "workspaceGitService" | "managedProcesses" | "ompRuntime" | "desktopConfigDir"
+  | "workspaceGitService"
+  | "managedProcesses"
+  | "ompRuntime"
+  | "desktopConfigDir"
+  | "localModelBridge"
 > {
   providerParams?: unknown;
 }
@@ -144,6 +150,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams,
       desktopConfigDir: options?.desktopConfigDir,
       runtime: options?.ompRuntime,
+      localModelBridge: options?.localModelBridge,
     }),
   // Import-only providers wrap the same OMP client: sessions run on the OMP
   // binary, while listing/import read external transcripts (pi / Codex).
@@ -154,6 +161,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams,
       desktopConfigDir: options?.desktopConfigDir,
       runtime: options?.ompRuntime,
+      localModelBridge: options?.localModelBridge,
     });
     return new PiImportClientFacade(ompClient, logger);
   },
@@ -164,6 +172,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams,
       desktopConfigDir: options?.desktopConfigDir,
       runtime: options?.ompRuntime,
+      localModelBridge: options?.localModelBridge,
     });
     return new CodexImportClientFacade(ompClient, logger);
   },
@@ -471,6 +480,7 @@ function wrapClientProvider(
       : undefined,
     isAvailable: (signal) => inner.isAvailable(signal),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
+    openLocalModelGateway: inner.openLocalModelGateway?.bind(inner),
     ...bindOmpClientMethods(inner),
   };
 }
@@ -479,6 +489,7 @@ function createRegistryEntry(
   logger: Logger,
   provider: AgentProvider,
   resolved: ResolvedProvider,
+  localModelBridge?: LocalModelBridge,
 ): ProviderDefinition {
   const modelClient = resolved.createBaseClient(logger);
   const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
@@ -535,6 +546,12 @@ function createRegistryEntry(
       client?: AgentClient,
       context?: ProviderRefreshContext,
     ) => {
+      if (provider === "omp" && localModelBridge?.isEnabled()) {
+        // Server-side model overrides belong to the remote source, not the
+        // advertised local catalog. Use the unwrapped native client here.
+        const catalog = await modelClient.fetchCatalog(options, context);
+        return { ...catalog, modes: decorateModes(catalog.modes) };
+      }
       const catalogClient = client ?? modelClient;
       if (hasReplacementModels) {
         // Replacement models skip runtime model discovery, but additionalModels
@@ -607,7 +624,11 @@ function buildResolvedBuiltinProviders(
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
   options: Pick<
     BuildProviderRegistryOptions,
-    "workspaceGitService" | "managedProcesses" | "ompRuntime" | "desktopConfigDir"
+    | "workspaceGitService"
+    | "managedProcesses"
+    | "ompRuntime"
+    | "desktopConfigDir"
+    | "localModelBridge"
   >,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
@@ -644,6 +665,7 @@ function buildResolvedBuiltinProviders(
           managedProcesses: options.managedProcesses,
           ompRuntime: options.ompRuntime,
           desktopConfigDir: options.desktopConfigDir,
+          localModelBridge: options.localModelBridge,
           providerParams: override?.params,
         }),
       contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
@@ -680,6 +702,7 @@ export function buildProviderRegistry(
       managedProcesses: options?.managedProcesses,
       ompRuntime: options?.ompRuntime,
       desktopConfigDir: options?.desktopConfigDir,
+      localModelBridge: options?.localModelBridge,
     },
     options?.isDev === true,
   );
@@ -688,7 +711,7 @@ export function buildProviderRegistry(
   return Object.fromEntries(
     [...resolvedProviders.entries()].map(([provider, resolved]) => [
       provider,
-      createRegistryEntry(logger, provider, resolved),
+      createRegistryEntry(logger, provider, resolved, options?.localModelBridge),
     ]),
   ) as Record<AgentProvider, ProviderDefinition>;
 }
