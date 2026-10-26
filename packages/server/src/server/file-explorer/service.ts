@@ -139,7 +139,6 @@ interface EntryPayloadParams {
   root: string;
   targetPath: string;
   name: string;
-  kind: ExplorerEntryKind;
 }
 
 export async function listDirectoryEntries({
@@ -153,24 +152,23 @@ export async function listDirectoryEntries({
     throw new Error("Requested path is not a directory");
   }
 
-  const dirents = await fs.readdir(directoryPath.resolvedPath, { withFileTypes: true });
+  // Dirent fallback stats can fail for disappearing children before our per-entry catch.
+  const names = await fs.readdir(directoryPath.resolvedPath);
 
   const entriesWithNulls: (FileExplorerEntry | null)[] = [];
-  entriesWithNulls.length = dirents.length;
+  entriesWithNulls.length = names.length;
   let nextIndex = 0;
   await Promise.all(
-    Array.from({ length: Math.min(DIRECTORY_METADATA_CONCURRENCY, dirents.length) }, async () => {
-      while (nextIndex < dirents.length) {
+    Array.from({ length: Math.min(DIRECTORY_METADATA_CONCURRENCY, names.length) }, async () => {
+      while (nextIndex < names.length) {
         const index = nextIndex++;
-        const dirent = dirents[index]!;
-        const targetPath = path.join(directoryPath.requestedPath, dirent.name);
-        const kind: ExplorerEntryKind = dirent.isDirectory() ? "directory" : "file";
+        const name = names[index]!;
+        const targetPath = path.join(directoryPath.requestedPath, name);
         try {
           entriesWithNulls[index] = await buildEntryPayload({
             root,
             targetPath,
-            name: dirent.name,
-            kind,
+            name,
           });
         } catch (error) {
           // Skip dangling links and entries that disappeared or leave the workspace.
@@ -178,7 +176,7 @@ export async function listDirectoryEntries({
             entriesWithNulls[index] = null;
             continue;
           }
-          nextIndex = dirents.length;
+          nextIndex = names.length;
           throw error;
         }
       }
@@ -881,7 +879,6 @@ async function buildEntryPayload({
   root,
   targetPath,
   name,
-  kind,
 }: EntryPayloadParams): Promise<FileExplorerEntry> {
   const entryPath = await resolveScopedPath({
     root,
@@ -891,7 +888,7 @@ async function buildEntryPayload({
   return {
     name,
     path: normalizeRelativePath({ root, targetPath }),
-    kind,
+    kind: stats.isDirectory() ? "directory" : "file",
     size: stats.size,
     modifiedAt: stats.mtime.toISOString(),
   };

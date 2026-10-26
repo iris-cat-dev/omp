@@ -35,6 +35,28 @@ describe.skipIf(isPlatform("win32"))("service POSIX-only", () => {
     }
   });
 
+  it("lists workspace directory symlinks as browsable directories", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+    try {
+      await mkdir(path.join(root, "target"));
+      await writeFile(path.join(root, "target", "README.md"), "visible\n");
+      await symlink("target", path.join(root, "linked"));
+
+      const result = await listDirectoryEntries({ root });
+      expect(result.entries.find((entry) => entry.name === "linked")).toMatchObject({
+        path: "linked",
+        kind: "directory",
+      });
+      const linked = await listDirectoryEntries({ root, relativePath: "linked" });
+      expect(linked.path).toBe("linked");
+      expect(linked.entries).toEqual([
+        expect.objectContaining({ name: "README.md", path: "linked/README.md", kind: "file" }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects symlinked files that resolve outside the workspace", async () => {
     const root = await createTempDir("paseo-file-explorer-");
     const outsideRoot = await createTempDir("paseo-file-explorer-outside-");

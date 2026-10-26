@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import {
   appendFile,
   chmod,
@@ -12,7 +13,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import {
   createExplorerEntry,
@@ -62,6 +63,55 @@ describe("file explorer service", () => {
         entries: expected.toReversed(),
       });
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps readable entries when a child disappears during directory enumeration", async () => {
+    const root = await createTempDir("paseo-file-listing-race-");
+    const volatilePath = path.join(root, "@t@");
+    const originalReaddir = fs.readdir;
+    try {
+      await writeFile(path.join(root, "README.md"), "visible\n");
+      await mkdir(volatilePath);
+      const enumeration = vi
+        .spyOn(fs, "readdir")
+        .mockImplementationOnce(async (directory, options) => {
+          const entries = await originalReaddir(directory, options);
+          await rm(volatilePath, { recursive: true });
+          // Emulate DT_UNKNOWN: typed enumeration stats children after reading their names.
+          if (typeof options === "object" && options.withFileTypes) {
+            await fs.lstat(volatilePath);
+          }
+          return entries;
+        });
+      try {
+        const result = await listDirectoryEntries({ root });
+        expect(result.path).toBe(".");
+        expect(result.entries).toEqual([
+          expect.objectContaining({ name: "README.md", path: "README.md", kind: "file", size: 8 }),
+        ]);
+      } finally {
+        enumeration.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates errors when the requested directory disappears before enumeration", async () => {
+    const root = await createTempDir("paseo-file-listing-missing-");
+    const originalReaddir = fs.readdir;
+    const enumeration = vi
+      .spyOn(fs, "readdir")
+      .mockImplementationOnce(async (directory, options) => {
+        await rm(root, { recursive: true });
+        return originalReaddir(directory, options);
+      });
+    try {
+      await expect(listDirectoryEntries({ root })).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      enumeration.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });
