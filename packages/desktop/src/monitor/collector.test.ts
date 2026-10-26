@@ -7,6 +7,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   utimes,
   writeFile,
@@ -85,6 +86,16 @@ async function session(
     records.map((record) => JSON.stringify(record)).join("\n") + (newline ? "\n" : ""),
   );
   return file;
+}
+
+function largeHistoryPadding() {
+  return {
+    type: "custom",
+    customType: "tool_execution_start",
+    id: "fixture-history-padding",
+    timestamp: new Date(NOW - 40_000).toISOString(),
+    content: "x".repeat(9 * 1_024 * 1_024),
+  };
 }
 
 function monitor(root: string, clock: () => number = () => NOW): OmpLocalMonitor {
@@ -336,6 +347,120 @@ describe("OMP local numeric filesystem monitor", () => {
       `${JSON.stringify(event("yield", now, { role: "toolResult", toolName: "yield", isError: false }))}\n`,
     );
     expect((await current.poll()).agents[0]!.phase).toBe("idle");
+  });
+
+  it("projects native 18.12.3 numeric completions, estimates only active output, and decays without replay spikes", async () => {
+    const root = await directory();
+    let now = NOW;
+    // Native numeric fields only; stamps are rebased and all identity/content is fixture-owned.
+    const first = {
+      ...response("native-first", NOW - 5_018, 38, {
+        duration: 5016.345299999986,
+        completedAt: NOW - 1,
+        ttft: 4647.639000000025,
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "native-tool" }],
+        usage: {
+          input: 12_248,
+          output: 38,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 12_286,
+          premiumRequests: 1,
+        },
+      }),
+      timestamp: new Date(NOW).toISOString(),
+    };
+    const file = await session(root, "main.jsonl", [header(NOW - 120_000), first]);
+    const current = monitor(root, () => now);
+    const measured = await current.poll();
+    const priorSpeed = (38 * 1_000) / 5_016;
+    expect(measured.status).toBe("ready");
+    expect(measured.today).toMatchObject({
+      requests: 1,
+      inputTokens: 12_248,
+      outputTokens: 38,
+      totalTokens: 12_286,
+      measuredOutputTokens: 38,
+      measuredDurationMs: 5_016,
+    });
+    expect(measured.rate.measuredTps).toBeCloseTo((priorSpeed * 2_998) / 3_000);
+    expect(measured.rate.estimatedTps).toBe(0);
+    expect(measured.agents[0]).toMatchObject({ phase: "tools", ttftMs: 4_647 });
+
+    now += 3_001;
+    expect((await current.poll()).rate.measuredTps).toBe(0);
+    await appendFile(
+      file,
+      `${JSON.stringify(event("native-result", now, { role: "toolResult", toolCallId: "native-tool" }))}\n`,
+    );
+    await current.poll();
+    now += 1_000;
+    const generating = await current.poll();
+    expect(generating.agents[0]!.phase).toBe("generating");
+    expect(generating.rate.measuredTps).toBe(0);
+    expect(generating.rate.estimatedTps).toBeCloseTo(priorSpeed / 3);
+    expect(generating.rate.estimatedShare).toBe(1);
+
+    now += 2_000;
+    const completedAt = now - 2;
+    const second = {
+      ...response("native-second", now - 1_897, 29, {
+        duration: 1895.9005999999936,
+        completedAt: now - 1,
+        ttft: 1671.6255999999703,
+        usage: {
+          input: 993,
+          output: 29,
+          cacheRead: 12_160,
+          cacheWrite: 0,
+          totalTokens: 13_182,
+          premiumRequests: 1,
+        },
+      }),
+      timestamp: new Date(now).toISOString(),
+    };
+    const serialized = `${JSON.stringify(second)}\n`;
+    await appendFile(file, serialized + serialized);
+    const completed = await current.poll();
+    expect(completed.today).toMatchObject({
+      requests: 2,
+      outputTokens: 67,
+      cacheReadTokens: 12_160,
+      measuredOutputTokens: 67,
+      measuredDurationMs: 6_911,
+    });
+    expect(completed.agents[0]!.phase).toBe("idle");
+    expect(completed.rate.measuredTps).toBeCloseTo(29 / 3);
+    expect(completed.rate.estimatedTps).toBe(0);
+    expect(completed.activity.lastResponseAt).toBe(completedAt);
+    expect(JSON.stringify(completed)).not.toContain("PRIVATE PROMPT AND ANSWER");
+    expect(JSON.stringify(completed)).not.toContain("native-tool");
+    expect(
+      completed.series.every(
+        (point) => Number.isFinite(point.measuredTps) && Number.isFinite(point.estimatedTps),
+      ),
+    ).toBe(true);
+
+    now += 2_000;
+    const decaying = await current.poll();
+    expect(decaying.rate.measuredTps).toBeCloseTo((((29 * 1_000) / 1_895) * 998) / 3_000);
+    now += 1_001;
+    expect((await current.poll()).rate).toEqual({
+      measuredTps: 0,
+      estimatedTps: 0,
+      estimatedShare: 0,
+    });
+    await appendFile(
+      file,
+      `${JSON.stringify(response("historical-replay", NOW - 60_000, 9_000))}\n`,
+    );
+    const replay = await current.poll();
+    expect(replay.rate).toEqual({ measuredTps: 0, estimatedTps: 0, estimatedShare: 0 });
+    expect(replay.today.peakOutputTps).toBe(3_000);
+    expect(replay.activity.lastResponseAt).toBe(completedAt);
+    expect(replay.activity.peakObservedAt).toBe(NOW - 59_000);
+    expect(replay.agents[0]!.phase).toBe("idle");
   });
 
   it("reports concurrent output as a sum, not a false per-call average", async () => {
@@ -848,6 +973,10 @@ describe("OMP local numeric filesystem monitor", () => {
     const current = monitor(root);
     const first = await current.poll();
     expect(first.today.outputTokens).toBe(99);
+    // The controller/renderer hide "scanning" feeds; valid live facts must stay consumable.
+    expect(first.status).toBe("partial");
+    expect(first.rate.measuredTps).toBeCloseTo(33);
+    expect(first.rate.estimatedTps).toBe(0);
     expect(first.coverage.issues).toContain("scan_pending");
     const child = await session(root, "main/child.jsonl", [
       header(),
@@ -856,8 +985,309 @@ describe("OMP local numeric filesystem monitor", () => {
     await utimes(child, new Date(NOW), new Date(NOW));
     const next = await current.poll({ refresh: true });
     expect(next.today.outputTokens).toBe(199);
+    expect(next.status).toBe("partial");
+    expect(next.rate.measuredTps).toBeCloseTo(199 / 3);
     expect(next.agents.some((agent) => agent.kind === "subagent" && agent.parentId)).toBe(true);
     expect(next.coverage.issues).toContain("scan_pending");
+  });
+
+  it("reads a recent >8 MiB file's numeric tail immediately while disjoint history catches up", async () => {
+    const root = await directory();
+    let now = NOW;
+    const latest = {
+      ...response("tail-revision", NOW - 3_000, 300, {
+        duration: 3_000,
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "tail-tool" }],
+      }),
+      timestamp: new Date(NOW).toISOString(),
+    };
+    const tailPadding = {
+      type: "custom",
+      id: "tail-window-padding",
+      timestamp: new Date(NOW - 30_000).toISOString(),
+      content: "",
+    };
+    // Exactly one MiB after the prefix newline exercises the already-aligned split too.
+    tailPadding.content = "y".repeat(
+      1_024 * 1_024 -
+        Buffer.byteLength(JSON.stringify(tailPadding)) -
+        1 -
+        Buffer.byteLength(JSON.stringify(latest)) -
+        1,
+    );
+    const file = await session(root, "large.jsonl", [
+      header(NOW - 120_000),
+      response("tail-revision", NOW - 3_000, 10, { duration: 3_000 }),
+      response("old-peak", NOW - 60_000, 9_000),
+      // A prefix timestamp must not override tail state even if it is later by wall clock.
+      event("historical-user", NOW + 5_000, { role: "user" }),
+      largeHistoryPadding(),
+      tailPadding,
+      latest,
+    ]);
+    await utimes(file, new Date(NOW), new Date(NOW));
+    expect((await stat(file)).size).toBeGreaterThan(MONITOR_LIMITS.pollBytes);
+    const current = monitor(root, () => now);
+    const first = await current.poll();
+    expect(first.status).toBe("partial");
+    expect(first.coverage.issues).toEqual(["scan_pending"]);
+    expect(first.rate.measuredTps).toBeCloseTo(100);
+    expect(first.rate.estimatedTps).toBe(0);
+    expect(first.today).toMatchObject({ requests: 2, outputTokens: 9_300, peakOutputTps: 3_000 });
+    expect(first.agents[0]).toMatchObject({ phase: "tools", lastActivityAt: NOW });
+    expect(first.activity).toEqual({
+      lastResponseAt: null,
+      peakAt: NOW - 59_000,
+      peakObservedAt: null,
+    });
+
+    now += 1_000;
+    await appendFile(
+      file,
+      `${JSON.stringify(event("tail-result", now, { role: "toolResult", toolCallId: "tail-tool" }))}\n`,
+    );
+    expect((await current.poll()).agents[0]!.phase).toBe("generating");
+    now += 1_000;
+    await appendFile(file, `${JSON.stringify(response("actual-append", now - 1_000, 60))}\n`);
+    const live = await current.poll();
+    expect(live.status).toBe("partial");
+    expect(live.today).toMatchObject({ requests: 3, outputTokens: 9_360 });
+    expect(live.agents[0]).toMatchObject({ phase: "idle", lastActivityAt: now });
+    expect(live.activity.lastResponseAt).toBe(now);
+    expect(live.activity.peakObservedAt).toBeNull();
+
+    let completed = live;
+    for (let poll = 0; poll < 8 && completed.coverage.issues.includes("scan_pending"); poll++) {
+      completed = await current.poll();
+      expect(completed.today).toMatchObject({ requests: 3, outputTokens: 9_360 });
+      expect(completed.agents[0]).toMatchObject({ phase: "idle", lastActivityAt: now });
+      expect(completed.activity).toEqual(live.activity);
+    }
+    expect(completed.status).toBe("ready");
+    expect(completed.coverage).toMatchObject({ malformedLines: 0, limited: false });
+    expect(JSON.stringify(completed)).not.toContain("fixture-history-padding");
+    now += 3_001;
+    expect((await current.poll()).rate).toEqual({
+      measuredTps: 0,
+      estimatedTps: 0,
+      estimatedShare: 0,
+    });
+  });
+
+  it("resets both large-file cursors and pending fragments on replacement and truncation", async () => {
+    const root = await directory();
+    Object.assign(MONITOR_LIMITS, { pendingBytes: 9 * 1_024 * 1_024 + 512 });
+    const file = await session(root, "replace.jsonl", [
+      header(),
+      largeHistoryPadding(),
+      response("before-replacement", NOW - 1_000, 99),
+    ]);
+    await utimes(file, new Date(NOW), new Date(NOW));
+    const current = monitor(root);
+    expect((await current.poll()).today).toMatchObject({ requests: 1, outputTokens: 99 });
+    // Leave fragments in both the unfinished history line and the live tail.
+    await appendFile(file, `{"type":"message","id":"${"q".repeat(1_024)}`);
+    await current.poll();
+    await rename(file, `${file}.backup`);
+    await session(root, "replace.jsonl", [
+      header(),
+      largeHistoryPadding(),
+      response("after-replacement", NOW - 1_000, 77),
+    ]);
+    await utimes(file, new Date(NOW), new Date(NOW));
+    let replaced = await current.poll({ refresh: true });
+    expect(replaced.status).toBe("partial");
+    expect(replaced.today).toMatchObject({ requests: 1, outputTokens: 77 });
+    expect(replaced.activity.lastResponseAt).toBeNull();
+    for (let poll = 0; poll < 8 && replaced.coverage.issues.includes("scan_pending"); poll++)
+      replaced = await current.poll();
+    expect(replaced.status).toBe("ready");
+    expect(replaced.coverage).toMatchObject({ malformedLines: 0, limited: false });
+    expect(replaced.today).toMatchObject({ requests: 1, outputTokens: 77 });
+
+    await appendFile(file, `{"type":"message","id":"${"r".repeat(1_024)}`);
+    await current.poll();
+    await writeFile(
+      file,
+      `${JSON.stringify(header())}\n${JSON.stringify(response("after-truncation", NOW - 1_000, 5))}\n`,
+    );
+    const truncated = await current.poll();
+    expect(truncated.status).toBe("ready");
+    expect(truncated.today).toMatchObject({ requests: 1, outputTokens: 5 });
+    expect(truncated.agents[0]!.phase).toBe("idle");
+    expect(truncated.coverage).toMatchObject({ malformedLines: 0, limited: false });
+  });
+
+  it("promotes an unfinished historical file when it becomes active without replaying its prefix", async () => {
+    const root = await directory();
+    let now = NOW;
+    const file = await session(root, "resumed.jsonl", [
+      header(),
+      largeHistoryPadding(),
+      response("resumed-history", NOW - 20_000, 1),
+    ]);
+    await utimes(file, new Date(NOW - 86_400_000), new Date(NOW - 86_400_000));
+    const current = monitor(root, () => now);
+    const historical = await current.poll();
+    expect(historical.today.requests).toBe(0);
+    expect(historical.coverage.issues).toContain("scan_pending");
+    now += 1_000;
+    await appendFile(file, `${JSON.stringify(response("resumed-current", now - 1_000, 99))}\n`);
+    await utimes(file, new Date(now), new Date(now));
+    const promoted = await current.poll({ refresh: true });
+    expect(promoted.status).toBe("partial");
+    expect(promoted.rate.measuredTps).toBeCloseTo(33);
+    expect(promoted.today).toMatchObject({ requests: 2, outputTokens: 100 });
+    expect(promoted.agents[0]).toMatchObject({ phase: "idle", lastActivityAt: now });
+    expect(promoted.activity.lastResponseAt).toBeNull();
+    now += 1_000;
+    await appendFile(file, `${JSON.stringify(response("resumed-append", now - 1_000, 3))}\n`);
+    const appended = await current.poll();
+    expect(appended.today).toMatchObject({ requests: 3, outputTokens: 103 });
+    expect(appended.activity.lastResponseAt).toBe(now);
+  });
+
+  it.each(["reconcile", "newer-completion"] as const)(
+    "reconciles multi-tool state across the physical split without rewinding a %s",
+    async (mode) => {
+      const root = await directory();
+      let now = NOW;
+      const file = await session(root, "split-tools.jsonl", [
+        header(),
+        response("prefix-tools", NOW - 20_000, 100, {
+          stopReason: "toolUse",
+          content: [
+            { type: "toolCall", id: "split-a" },
+            { type: "toolCall", id: "split-b" },
+          ],
+        }),
+        event("large-result-a", NOW - 2_000, {
+          role: "toolResult",
+          toolCallId: "split-a",
+          content: "x".repeat(3 * 1_024 * 1_024),
+        }),
+        event("small-result-b", NOW - 1_000, { role: "toolResult", toolCallId: "split-b" }),
+      ]);
+      await utimes(file, new Date(NOW), new Date(NOW));
+      const current = monitor(root, () => now);
+      let snapshot = await current.poll();
+      expect(snapshot.status).toBe("partial");
+      expect(snapshot.agents[0]).toMatchObject({ phase: "tools", lastActivityAt: NOW - 1_000 });
+      if (mode === "newer-completion") {
+        now += 1_000;
+        await appendFile(file, `${JSON.stringify(response("newer-terminal", now - 1_000, 25))}\n`);
+      }
+      for (let poll = 0; poll < 5 && snapshot.coverage.issues.includes("scan_pending"); poll++)
+        snapshot = await current.poll();
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.coverage).toMatchObject({ limited: false, malformedLines: 0 });
+      if (mode === "reconcile") {
+        expect(snapshot.agents[0]).toMatchObject({
+          phase: "generating",
+          lastActivityAt: NOW - 1_000,
+        });
+        expect(snapshot.rate.measuredTps).toBe(0);
+        expect(snapshot.rate.estimatedTps).toBeCloseTo(100 / 3);
+        expect(snapshot.activity.lastResponseAt).toBeNull();
+      } else {
+        expect(snapshot.agents[0]).toMatchObject({ phase: "idle", lastActivityAt: now });
+        expect(snapshot.rate.estimatedTps).toBe(0);
+        expect(snapshot.activity.lastResponseAt).toBe(now);
+      }
+    },
+  );
+
+  it("treats a large line completed beyond initial EOF as a real append even through the prefix cursor", async () => {
+    const root = await directory();
+    let now = NOW;
+    const file = await session(root, "unfinished-response.jsonl", [
+      header(),
+      event("unfinished-prompt", NOW - 1_000, { role: "user" }),
+    ]);
+    const line = JSON.stringify(
+      response("unfinished-completion", NOW, 120, {
+        completedAt: NOW + 1_000,
+        content: [{ type: "text", text: "z".repeat(3 * 1_024 * 1_024) }],
+      }),
+    );
+    await appendFile(file, line.slice(0, -100));
+    await utimes(file, new Date(NOW), new Date(NOW));
+    const current = monitor(root, () => now);
+    const unfinished = await current.poll();
+    expect(unfinished.status).toBe("partial");
+    expect(unfinished.today.requests).toBe(0);
+    expect(unfinished.agents[0]!.phase).toBe("generating");
+    expect(unfinished.activity.lastResponseAt).toBeNull();
+    now += 1_000;
+    await appendFile(file, `${line.slice(-100)}\n`);
+    let completed = await current.poll();
+    for (let poll = 0; poll < 4 && completed.coverage.issues.includes("scan_pending"); poll++)
+      completed = await current.poll();
+    expect(completed.status).toBe("ready");
+    expect(completed.today).toMatchObject({ requests: 1, outputTokens: 120 });
+    expect(completed.rate.measuredTps).toBeCloseTo(40);
+    expect(completed.rate.estimatedTps).toBe(0);
+    expect(completed.agents[0]).toMatchObject({ phase: "idle", lastActivityAt: now });
+    expect(completed.activity.lastResponseAt).toBe(now);
+    expect(completed.activity.peakObservedAt).toBe(now);
+    expect((await current.poll()).today.requests).toBe(1);
+  });
+
+  it("does not upgrade a captured completion or rewind tool state when its record is replayed", async () => {
+    const root = await directory();
+    let now = NOW;
+    const current = monitor(root, () => now);
+    await current.poll();
+    const captured = response("captured-completion", NOW - 1_000, 300, {
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "captured-tool" }],
+    });
+    const file = await session(root, "captured.jsonl", [header(), largeHistoryPadding(), captured]);
+    await utimes(file, new Date(NOW), new Date(NOW));
+    const baseline = await current.poll({ refresh: true });
+    expect(baseline.today).toMatchObject({ requests: 1, outputTokens: 300 });
+    expect(baseline.activity.lastResponseAt).toBeNull();
+    expect(baseline.activity.peakObservedAt).toBeNull();
+    now += 500;
+    const resultAt = now;
+    await appendFile(
+      file,
+      `${JSON.stringify(
+        event("captured-result", resultAt, {
+          role: "toolResult",
+          toolCallId: "captured-tool",
+        }),
+      )}\n`,
+    );
+    expect((await current.poll()).agents[0]!.phase).toBe("generating");
+    now += 500;
+    await appendFile(file, `${JSON.stringify(captured)}\n`);
+    const replay = await current.poll();
+    expect(replay.today).toMatchObject({ requests: 1, outputTokens: 300 });
+    expect(replay.activity.lastResponseAt).toBeNull();
+    expect(replay.activity.peakObservedAt).toBeNull();
+    expect(replay.agents[0]).toMatchObject({ phase: "generating", lastActivityAt: resultAt });
+    now += 500;
+    await appendFile(
+      file,
+      `${JSON.stringify({ ...captured, timestamp: new Date(now).toISOString() })}\n`,
+    );
+    const rewrapped = await current.poll();
+    expect(rewrapped.activity.lastResponseAt).toBeNull();
+    expect(rewrapped.activity.peakObservedAt).toBeNull();
+    expect(rewrapped.agents[0]).toMatchObject({ phase: "generating", lastActivityAt: resultAt });
+    // A genuinely revised completion can qualify; it is still the same billed request.
+    now += 500;
+    await appendFile(
+      file,
+      `${JSON.stringify(response("captured-completion", NOW - 1_000, 600))}\n`,
+    );
+    const revised = await current.poll();
+    expect(revised.today).toMatchObject({ requests: 1, outputTokens: 600 });
+    expect(revised.activity.lastResponseAt).toBe(NOW);
+    expect(revised.activity.peakObservedAt).toBe(NOW);
+    expect(revised.agents[0]!.phase).toBe("idle");
   });
 
   it("resets current-day peak provenance at local midnight without losing retained completion times", async () => {

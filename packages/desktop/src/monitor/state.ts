@@ -28,7 +28,21 @@ export const FALLBACK_MS = 30 * 60_000;
 export const MAX_CLOCK_MS = 253_402_128_000_000;
 export type MonitorIssue = OmpMonitorCoverage["issues"][number];
 
-export interface FileState {
+/** Independent fragments are required when the live tail leads the history cursor. */
+export interface FileReadCursor {
+  offset: number;
+  parts: Buffer[];
+  pendingLength: number;
+  discardLine: boolean;
+}
+
+export interface FileTailCursor extends FileReadCursor {
+  /** Exclusive history boundary, advanced once to the first complete tail line. */
+  start: number;
+  boundaryPending: boolean;
+}
+
+export interface FileState extends FileReadCursor {
   path: string;
   id: string;
   root: OmpMonitorRoot;
@@ -41,22 +55,24 @@ export interface FileState {
   mtime: number;
   observedMtime: number;
   ctime: number;
-  offset: number;
   initialized: boolean;
   complete: boolean;
   dirty: boolean;
   read: boolean;
   malformed: number;
   issues: Set<MonitorIssue>;
-  parts: Buffer[];
-  pendingLength: number;
-  discardLine: boolean;
   prefixStart: number;
   prefixLength: number;
   prefixHash: string;
   guardStart: number;
   guardLength: number;
   guardHash: string;
+  tail: FileTailCursor | null;
+  headerEnd: number;
+  feedbackStart: number;
+  ingestPosition: number;
+  ingestFeedback: boolean;
+  readAllowance: number;
   keys: Set<string>;
   sink?: NumericSink;
   toolCount: number;
@@ -65,6 +81,7 @@ export interface FileState {
 export interface Candidate {
   file: FileState;
   response: NumericResponse;
+  position: number;
 }
 export interface ReadBudget {
   bytes: number;
@@ -137,6 +154,12 @@ export function newFileState(entry: DiscoveredFile, order: number): FileState {
     guardLength: 0,
     guardHash: "",
     keys: new Set(),
+    tail: null,
+    headerEnd: 0,
+    feedbackStart: 0,
+    ingestPosition: 0,
+    ingestFeedback: true,
+    readAllowance: 0,
   };
 }
 

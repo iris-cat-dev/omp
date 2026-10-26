@@ -57,7 +57,7 @@ export interface MeasuredPeak {
   value: number;
   /** Exclusive end of the earliest winning three-second bucket window. */
   at: number | null;
-  /** Latest completion of a measured response contributing output to that window. */
+  /** Latest feedback-eligible completion contributing output to that window. */
   observedAt: number | null;
 }
 
@@ -112,6 +112,7 @@ export function measuredPeak(
     for (const response of responses) {
       if (
         response.startMs === null ||
+        response.feedbackEligible === false ||
         response.measuredDurationMs <= 0 ||
         response.outputTokens <= 0
       )

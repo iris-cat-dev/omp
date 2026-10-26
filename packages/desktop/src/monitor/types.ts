@@ -104,11 +104,11 @@ export interface OmpMonitorSnapshot {
   pricing: OmpMonitorPricing;
   status: "scanning" | "ready" | "unavailable" | "partial" | "error";
   activity: {
-    /** Latest successful, non-sidecall, positive-output completion in the retained scope. */
+    /** Latest successful positive-output completion eligible for feedback; fast-tail catchup is excluded. */
     lastResponseAt: number | null;
     /** Exclusive end of today's earliest winning measured three-second bucket window. */
     peakAt: number | null;
-    /** Latest contributing measured completion, not the log's discovery time. */
+    /** Latest feedback-eligible measured completion contributing to the peak, never discovery time. */
     peakObservedAt: number | null;
   };
   rate: {
@@ -131,5 +131,8 @@ export type OmpMonitorWorkerRequest =
   | { type: "scopes"; scopes: Array<{ id: string; scope: OmpMonitorScope }> };
 
 export type OmpMonitorWorkerResponse =
-  | { type: "snapshot"; scopeId: string; snapshot: OmpMonitorSnapshot }
+  | {
+      type: "snapshots";
+      snapshots: Array<{ scopeId: string; snapshot: OmpMonitorSnapshot }>;
+    }
   | { type: "error" };

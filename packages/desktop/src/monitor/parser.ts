@@ -6,6 +6,14 @@ export const TOKEN_LIMIT = 1_000_000_000_000;
 export const MAX_DURATION_MS = 15 * 60_000;
 export const MAX_TOOL_CALLS = 512;
 const MAX_STAMP = Number.MAX_SAFE_INTEGER;
+const COMPLETION_STOP_KEYS: Record<string, true> = {
+  stop: true,
+  toolUse: true,
+  length: true,
+  error: true,
+  aborted: true,
+  pause_turn: true,
+};
 type JsonObject = Record<string, unknown>;
 
 export interface NumericResponse extends OmpMonitorUsage {
@@ -18,11 +26,16 @@ export interface NumericResponse extends OmpMonitorUsage {
   startMs: number | null;
   ttftMs: number | null;
   sideCall: boolean;
+  /** Hash of safe stop/pause keys and hashed tool IDs, never message text. */
+  completionState: string;
+  /** Fast-tail baseline/history facts are measured, but cannot announce a live completion. */
+  feedbackEligible?: boolean;
 }
 
 export interface NumericSink {
   otherOwner(key: string): boolean;
-  upsert(response: NumericResponse): void;
+  /** False for a replay/older revision; numeric billing corrections may still be retained. */
+  upsert(response: NumericResponse): boolean;
   limit(): void;
   acceptTools(count: number): boolean;
 }
@@ -68,6 +81,10 @@ function milliseconds(value: unknown, positive: boolean): number | null {
 function readTtft(message: JsonObject): number | null {
   const value = milliseconds(message.ttft, false);
   return value !== null && value <= MAX_DURATION_MS ? value : null;
+}
+
+function readStopReason(message: JsonObject): string {
+  return typeof message.stopReason === "string" ? message.stopReason : "aborted";
 }
 
 function recordedCost(usage: JsonObject): number | null {
@@ -171,16 +188,36 @@ export class OmpNumericParser {
   inFlightStartMs: number | null = null;
   lastActivityAt = 0;
   private stateAt = -Infinity;
+  private statePosition = -Infinity;
+  private mergeToolResults = false;
+  private lostToolResultPosition = -Infinity;
+  private readonly completedToolCalls = new Map<string, { position: number; at: number }>();
+  private lastToolResultPosition = -Infinity;
+  private lastToolResultAt: number | null = null;
+  private responseChanged = true;
+  private readonly responseToolCalls: string[] = [];
+  private responseToolOverflow = false;
   private readonly pendingToolCalls = new Set<string>();
   private toolOverflow = false;
 
   constructor(private readonly agentId: string) {}
 
-  get pendingToolCount(): number {
-    return this.pendingToolCalls.size;
+  get retainedToolCount(): number {
+    return this.pendingToolCalls.size + this.completedToolCalls.size;
   }
 
-  apply(value: unknown, sink: NumericSink): void {
+  startTailMerge(): void {
+    this.mergeToolResults = true;
+  }
+
+  finishTailMerge(): boolean {
+    if (!this.mergeToolResults) return false;
+    this.mergeToolResults = false;
+    this.completedToolCalls.clear();
+    return true;
+  }
+
+  apply(value: unknown, sink: NumericSink, historyOnly = false, position = 0): void {
     const entry = object(value);
     if (!entry || entry.type === "title") return;
     const ts = timestamp(entry.timestamp);
@@ -195,21 +232,31 @@ export class OmpNumericParser {
       (this.headerMs !== null && ts < this.headerMs - 2_000)
     )
       return;
-    this.lastActivityAt = Math.max(this.lastActivityAt, ts);
+    const assistant = entry.type === "message" && object(entry.message)?.role === "assistant";
+    if (!historyOnly && !assistant) this.lastActivityAt = Math.max(this.lastActivityAt, ts);
     if (entry.id.length > 4_096) {
       sink.limit();
       return;
     }
-    if (entry.type === "custom" && entry.customType === "session_exit" && ts >= this.stateAt) {
-      this.setPhase("idle", ts, null);
-      this.clearTools();
-      return;
-    }
+    if (this.applySessionExit(entry, ts, position)) return;
     if (entry.type === "model_usage") {
       this.assistant(entry, entry, ts, true, sink);
       return;
     }
-    if (entry.type === "message") this.applyMessage(entry, ts, sink);
+    if (entry.type === "message") this.applyMessage(entry, ts, sink, historyOnly, position);
+  }
+
+  private applySessionExit(entry: JsonObject, ts: number, position: number): boolean {
+    if (
+      !this.acceptsState(ts, position) ||
+      entry.type !== "custom" ||
+      entry.customType !== "session_exit"
+    )
+      return false;
+    this.beginState(ts, position);
+    this.setPhase("idle", ts, null);
+    this.clearTools();
+    return true;
   }
 
   private applyHeader(entry: JsonObject, ts: number | null, sink: NumericSink): void {
@@ -238,39 +285,80 @@ export class OmpNumericParser {
     this.project = `${name} [${this.projectId.slice(0, 12)}]`;
   }
 
-  private applyMessage(entry: JsonObject, ts: number, sink: NumericSink): void {
+  private applyMessage(
+    entry: JsonObject,
+    ts: number,
+    sink: NumericSink,
+    historyOnly: boolean,
+    position: number,
+  ): void {
     const message = object(entry.message);
     if (!message) return;
     switch (message.role) {
       case "user":
       case "developer":
-        if (ts >= this.stateAt) this.clearTools();
-        this.setPhase("generating", ts, ts);
+        if (this.acceptsState(ts, position)) {
+          this.beginState(ts, position);
+          this.setPhase("generating", ts, ts);
+        }
         break;
       case "assistant":
-        this.assistant(entry, message, ts, false, sink);
+        this.assistant(entry, message, ts, false, sink, historyOnly, position);
         break;
       case "toolResult":
-        this.applyToolResult(message, ts);
+        this.applyToolResult(message, ts, position, sink);
         break;
     }
   }
 
-  private applyToolResult(message: JsonObject, ts: number): void {
-    if (ts < this.stateAt) return;
-    if (typeof message.toolCallId === "string" && message.toolCallId.length <= 4_096)
-      this.pendingToolCalls.delete(hashId(message.toolCallId));
+  private applyToolResult(
+    message: JsonObject,
+    ts: number,
+    position: number,
+    sink: NumericSink,
+  ): void {
+    if (!this.acceptsState(ts, position)) return;
     if (message.toolName === "yield" && message.isError !== true) {
-      this.clearTools();
+      this.beginState(ts, position);
       this.setPhase("idle", ts, null);
-    } else if (this.phase === "tools" && !this.toolOverflow && this.pendingToolCalls.size === 0) {
-      this.setPhase("generating", ts, ts);
+      return;
+    }
+    if (typeof message.toolCallId !== "string" || message.toolCallId.length > 4_096) return;
+    const id = hashId(message.toolCallId);
+    const completed = this.completedToolCalls.get(id);
+    if (completed && completed.position >= position) return;
+    const matched = this.pendingToolCalls.delete(id);
+    if (this.mergeToolResults) {
+      if (
+        !completed &&
+        (this.completedToolCalls.size >= MAX_TOOL_CALLS ||
+          !sink.acceptTools(this.retainedToolCount + 1))
+      ) {
+        this.lostToolResultPosition = Math.max(this.lostToolResultPosition, position);
+        this.toolOverflow = true;
+        sink.limit();
+      } else {
+        this.completedToolCalls.set(id, { position, at: ts });
+      }
+    }
+    if (matched) {
+      if (position >= this.lastToolResultPosition) {
+        this.lastToolResultPosition = position;
+        this.lastToolResultAt = ts;
+      }
+      if (this.phase === "tools" && !this.toolOverflow && this.pendingToolCalls.size === 0) {
+        const at = this.lastToolResultAt ?? ts;
+        this.setPhase("generating", at, at);
+      }
     }
   }
 
   discardStaleTools(now: number): void {
-    if (now - this.lastActivityAt <= 300_000 || !this.pendingToolCalls.size) return;
+    if (now - this.lastActivityAt <= 300_000 || this.retainedToolCount === 0) return;
     this.pendingToolCalls.clear();
+    for (const completed of this.completedToolCalls.values())
+      this.lostToolResultPosition = Math.max(this.lostToolResultPosition, completed.position);
+    this.completedToolCalls.clear();
     // A delayed result cannot prove that every forgotten call completed.
     this.toolOverflow = true;
   }
@@ -281,6 +369,8 @@ export class OmpNumericParser {
     ts: number,
     sideCall: boolean,
     sink: NumericSink,
+    historyOnly = false,
+    position = 0,
   ): void {
     const usage = object(message.usage);
     if (
@@ -298,8 +388,11 @@ export class OmpNumericParser {
       return;
     }
     const end = this.emit(message, usage, key, start, ts, sideCall, sink);
-    if (sideCall || ts < this.stateAt) return;
-    this.applyAssistantPhase(message, usage, ts, end, sink);
+    if (sideCall || !this.responseChanged) return;
+    if (!historyOnly) this.lastActivityAt = Math.max(this.lastActivityAt, ts);
+    if (!this.acceptsState(ts, position)) return;
+    this.beginState(ts, position);
+    this.applyAssistantPhase(message, usage, ts, end, sink, position);
   }
 
   private applyAssistantPhase(
@@ -308,8 +401,9 @@ export class OmpNumericParser {
     ts: number,
     end: number,
     sink: NumericSink,
+    position: number,
   ): void {
-    const reason = typeof message.stopReason === "string" ? message.stopReason : "aborted";
+    const reason = readStopReason(message);
     const hasUsage =
       token(usage.input) + token(usage.output) + token(usage.cacheRead) + token(usage.cacheWrite) >
       0;
@@ -323,12 +417,13 @@ export class OmpNumericParser {
       return;
     }
     this.clearTools();
-    const calls = this.toolCallIds(message, sink);
+    const calls = this.responseToolCalls;
+    this.toolOverflow ||= this.responseToolOverflow;
     if (
       (calls.length || this.toolOverflow) &&
       (reason === "toolUse" || reason === "stop" || reason === "length")
     ) {
-      this.acceptToolCalls(calls, ts, sink);
+      this.acceptToolCalls(calls, ts, position, sink);
     } else if (
       (reason === "stop" && object(message.stopDetails)?.type === "pause_turn") ||
       reason === "pause_turn"
@@ -341,31 +436,51 @@ export class OmpNumericParser {
     }
   }
 
-  private toolCallIds(message: JsonObject, sink: NumericSink): string[] {
-    const calls: string[] = [];
-    if (!Array.isArray(message.content)) return calls;
+  private readToolCalls(message: JsonObject, sink: NumericSink): void {
+    const calls = this.responseToolCalls;
+    if (!Array.isArray(message.content)) return;
     for (const block of message.content) {
       const call = object(block);
       if (call?.type !== "toolCall" || typeof call.id !== "string") continue;
       if (call.id.length > 4_096 || calls.length >= MAX_TOOL_CALLS) {
-        this.toolOverflow = true;
+        this.responseToolOverflow = true;
         sink.limit();
         break;
       }
       calls.push(hashId(call.id));
     }
-    return calls;
+    if (calls.length > 1) calls.sort();
   }
 
-  private acceptToolCalls(calls: string[], ts: number, sink: NumericSink): void {
-    if (!sink.acceptTools(calls.length)) {
+  private acceptToolCalls(calls: string[], ts: number, position: number, sink: NumericSink): void {
+    let pending = 0;
+    for (const id of calls) {
+      const completed = this.completedToolCalls.get(id);
+      if (!completed || completed.position <= position) pending++;
+    }
+    if (!sink.acceptTools(pending + this.completedToolCalls.size)) {
       calls.length = 0;
       this.toolOverflow = true;
       sink.limit();
     }
     this.pendingToolCalls.clear();
-    for (const id of calls) this.pendingToolCalls.add(id);
-    this.setPhase("tools", ts, null);
+    for (const id of calls) {
+      const completed = this.completedToolCalls.get(id);
+      if (completed && completed.position > position) {
+        if (completed.position > this.lastToolResultPosition) {
+          this.lastToolResultPosition = completed.position;
+          this.lastToolResultAt = completed.at;
+        }
+      } else {
+        this.pendingToolCalls.add(id);
+      }
+    }
+    if (!this.toolOverflow && this.pendingToolCalls.size === 0) {
+      const at = this.lastToolResultAt ?? ts;
+      this.setPhase("generating", at, at);
+    } else {
+      this.setPhase("tools", ts, null);
+    }
   }
 
   private emit(
@@ -377,6 +492,11 @@ export class OmpNumericParser {
     sideCall: boolean,
     sink: NumericSink,
   ): number {
+    this.responseChanged = true;
+    this.responseToolCalls.length = 0;
+    this.responseToolOverflow = false;
+    const reason = readStopReason(message);
+    if (!sideCall && reason !== "error" && reason !== "aborted") this.readToolCalls(message, sink);
     const duration = sideCall ? null : milliseconds(message.duration, false);
     const completedAt = milliseconds(message.completedAt, true);
     const end =
@@ -388,13 +508,12 @@ export class OmpNumericParser {
     const cacheReadTokens = token(usage.cacheRead);
     const cacheWriteTokens = token(usage.cacheWrite);
     if (!(inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens)) return end;
-    const reason = typeof message.stopReason === "string" ? message.stopReason : "aborted";
     const failed = !sideCall && (reason === "error" || reason === "aborted");
     // Missing/invalid native duration is unknown, not a guessed user-to-response interval.
     const normalizedDuration = measuredDuration(start, duration, sideCall, failed);
     const measured = normalizedDuration > 0;
     const cost = recordedCost(usage);
-    sink.upsert({
+    this.responseChanged = sink.upsert({
       key,
       agentId: this.agentId,
       model: modelLabel(message.model as string),
@@ -404,6 +523,7 @@ export class OmpNumericParser {
       startMs: measured ? end - normalizedDuration : null,
       ttftMs: sideCall ? null : readTtft(message),
       sideCall,
+      completionState: this.completionState(message, reason, sideCall),
       requests: 1,
       failedRequests: failed ? 1 : 0,
       inputTokens,
@@ -425,13 +545,35 @@ export class OmpNumericParser {
     return end;
   }
 
+  private completionState(message: JsonObject, reason: string, sideCall: boolean): string {
+    if (sideCall) return "side";
+    return hashId(
+      `${COMPLETION_STOP_KEYS[reason] === true ? reason : "other"}:` +
+        `${object(message.stopDetails)?.type === "pause_turn" ? 1 : 0}:` +
+        `${this.responseToolOverflow ? 1 : 0}:${this.responseToolCalls.join(":")}`,
+    );
+  }
+
+  private acceptsState(at: number, position: number): boolean {
+    return position > 0 ? position >= this.statePosition : at >= this.stateAt;
+  }
+
+  private beginState(at: number, position: number): void {
+    if (position > 0) this.statePosition = position;
+    this.stateAt = at;
+    this.lastToolResultPosition = -Infinity;
+    this.lastToolResultAt = null;
+    for (const [id, completed] of this.completedToolCalls)
+      if (completed.position <= position) this.completedToolCalls.delete(id);
+    this.clearTools();
+  }
+
   private clearTools(): void {
     this.pendingToolCalls.clear();
-    this.toolOverflow = false;
+    this.toolOverflow = this.mergeToolResults && this.lostToolResultPosition > this.statePosition;
   }
 
   private setPhase(phase: OmpMonitorPhase, at: number, start: number | null): void {
-    if (at < this.stateAt) return;
     this.stateAt = at;
     this.phase = phase;
     this.inFlightStartMs = phase === "generating" ? start : null;

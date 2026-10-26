@@ -87,6 +87,15 @@ function preventNavigation(event: ElectronEvent): void {
   event.preventDefault();
 }
 
+function isFreshActivity(
+  at: number | null,
+  previous: number,
+  createdAt: number,
+  now: number,
+): boolean {
+  return at !== null && at > previous && at >= createdAt && at <= now && now - at <= 3_000;
+}
+
 /** Native original-design surfaces share at most eight numeric OMP scopes. */
 export class OmpMonitorController {
   private readonly orbs = new Map<string, OrbSession>();
@@ -595,14 +604,19 @@ export class OmpMonitorController {
         this.workerFailed(false);
         return;
       }
-      const orb = this.orbs.get(message.scopeId);
-      if (
-        !orb ||
-        message.snapshot.scope.profile !== orb.record.scope.profile ||
-        message.snapshot.scope.project !== orb.record.scope.project
-      )
-        return;
-      this.acceptSnapshot(orb, message.snapshot);
+      let accepted = false;
+      for (const entry of message.snapshots) {
+        const orb = this.orbs.get(entry.scopeId);
+        if (
+          !orb ||
+          entry.snapshot.scope.profile !== orb.record.scope.profile ||
+          entry.snapshot.scope.project !== orb.record.scope.project
+        )
+          continue;
+        this.acceptSnapshot(orb, entry.snapshot);
+        accepted = true;
+      }
+      if (accepted) this.sendStates();
     });
     const failed = () => {
       if (this.worker === worker && !this.disposed) this.workerFailed();
@@ -632,7 +646,6 @@ export class OmpMonitorController {
     orb.workerError = false;
     orb.refreshing = snapshot.status === "scanning";
     this.updateActivity(orb, snapshot);
-    this.sendStates();
   }
 
   private updateActivity(orb: OrbSession, snapshot: OmpMonitorSnapshot): void {
@@ -643,27 +656,25 @@ export class OmpMonitorController {
       orb.previousPeak = 0;
       orb.day = day;
     }
-    const freshResponse =
-      lastResponseAt !== null &&
-      lastResponseAt > orb.lastResponse &&
-      lastResponseAt >= orb.createdAt &&
-      lastResponseAt <= now &&
-      now - lastResponseAt <= 3_000;
-    const freshPeak =
-      peakObservedAt !== null &&
-      peakObservedAt >= orb.createdAt &&
-      peakObservedAt <= now &&
-      now - peakObservedAt <= 3_000;
+    const freshResponse = isFreshActivity(lastResponseAt, orb.lastResponse, orb.createdAt, now);
+    const freshPeak = isFreshActivity(
+      peakObservedAt,
+      orb.activity.lastPeakAt ?? 0,
+      orb.createdAt,
+      now,
+    );
     if (orb.baseline && freshResponse) orb.activity.responseSequence++;
     if (
       orb.baseline &&
+      freshResponse &&
       freshPeak &&
       now >= orb.peakMutedUntil &&
       snapshot.today.peakOutputTps > orb.previousPeak + 1e-6
     )
       orb.activity.peakSequence++;
     orb.activity.lastResponseAt = lastResponseAt;
-    orb.activity.lastPeakAt = peakObservedAt;
+    if (peakObservedAt !== null)
+      orb.activity.lastPeakAt = Math.max(orb.activity.lastPeakAt ?? 0, peakObservedAt);
     orb.lastResponse = Math.max(orb.lastResponse, lastResponseAt ?? 0);
     orb.previousPeak = Math.max(orb.previousPeak, snapshot.today.peakOutputTps);
     orb.baseline = true;
