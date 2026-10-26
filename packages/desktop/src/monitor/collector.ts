@@ -7,7 +7,7 @@ import { TextDecoder } from "node:util";
 import { OmpFileDiscovery } from "./discovery.js";
 import { currentDayUsage, OmpMonitorHistory } from "./history.js";
 import { calendarDays, liveMetrics } from "./math.js";
-import { hashId, object, OmpNumericParser, safeLabel } from "./parser.js";
+import { emptyUsage, hashId, object, OmpNumericParser, safeLabel } from "./parser.js";
 import type { NumericResponse, NumericSink } from "./parser.js";
 import { getBundledPricingState } from "./pricing.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
@@ -28,6 +28,7 @@ import {
   MONITOR_LIMITS,
   newFileState,
   normalizedPath,
+  RECENT_MS,
   REDISCOVER_MS,
   scheduleFiles,
   STALE_MS,
@@ -35,6 +36,7 @@ import {
 import type {
   Candidate,
   DiscoveredFile,
+  FileReadCursor,
   FileState,
   MonitorIssue,
   ReadBudget,
@@ -48,6 +50,29 @@ import type {
 } from "./types.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
+const RESPONSE_FIELDS: ReadonlyArray<keyof NumericResponse> = [
+  "model",
+  "provider",
+  "serviceTier",
+  "endMs",
+  "startMs",
+  "ttftMs",
+  "sideCall",
+  "completionState",
+  ...(Object.keys(emptyUsage()) as Array<keyof NumericResponse>),
+];
+
+function sameCompletionFacts(left: NumericResponse, right: NumericResponse): boolean {
+  return (
+    left.endMs === right.endMs &&
+    left.startMs === right.startMs &&
+    left.outputTokens === right.outputTokens &&
+    left.measuredDurationMs === right.measuredDurationMs &&
+    left.failedRequests === right.failedRequests &&
+    left.sideCall === right.sideCall &&
+    left.completionState === right.completionState
+  );
+}
 
 export interface OmpLocalMonitorOptions {
   roots?: OmpMonitorRoot[];
@@ -199,8 +224,7 @@ export class OmpLocalMonitor {
     await this.readScheduled();
     for (const file of this.files.values()) {
       file.parser.discardStaleTools(this.currentNow);
-      this.pendingTools += file.parser.pendingToolCount - file.toolCount;
-      file.toolCount = file.parser.pendingToolCount;
+      this.syncToolCount(file);
     }
     this.snapshots.clear();
     return this.getSnapshot();
@@ -238,6 +262,7 @@ export class OmpLocalMonitor {
     this.checkCursor = scheduled.nextCursor;
     const budget: ReadBudget = { bytes: MONITOR_LIMITS.pollBytes, lines: MONITOR_LIMITS.pollLines };
     let checked = 0;
+    // All selected live tails get their priority lane before any large-file history.
     for (const file of scheduled.files) {
       if (
         this.disposed ||
@@ -246,8 +271,26 @@ export class OmpLocalMonitor {
         budget.lines <= 0
       )
         break;
-      // An incomplete history file must not block fresh files elsewhere in this batch.
-      await this.read(file, budget);
+      file.readAllowance = MONITOR_LIMITS.perFileBytes;
+      if (file.tail || file.observedMtime >= this.currentNow - RECENT_MS)
+        await this.read(file, budget, true);
+    }
+    checked = 0;
+    for (const file of scheduled.files) {
+      if (
+        this.disposed ||
+        checked++ >= MONITOR_LIMITS.pollFiles ||
+        budget.bytes <= 0 ||
+        budget.lines <= 0
+      )
+        break;
+      if (
+        file.tail
+          ? file.offset >= file.tail.start
+          : file.observedMtime >= this.currentNow - RECENT_MS
+      )
+        continue;
+      await this.read(file, budget, false);
     }
   }
 
@@ -296,7 +339,7 @@ export class OmpLocalMonitor {
 
   private reset(file: FileState): void {
     for (const key of file.keys) this.removeCandidate(key, file.id);
-    this.pendingBytes -= file.pendingLength;
+    this.pendingBytes -= file.pendingLength + (file.tail?.pendingLength ?? 0);
     this.pendingTools -= file.toolCount;
     file.toolCount = 0;
     file.parser = new OmpNumericParser(file.id);
@@ -304,6 +347,11 @@ export class OmpLocalMonitor {
     file.parts = [];
     file.pendingLength = 0;
     file.discardLine = false;
+    file.tail = null;
+    file.headerEnd = 0;
+    file.feedbackStart = 0;
+    file.ingestPosition = 0;
+    file.ingestFeedback = true;
     file.initialized = false;
     file.complete = false;
     file.malformed = 0;
@@ -331,7 +379,8 @@ export class OmpLocalMonitor {
     return info;
   }
 
-  private async read(file: FileState, budget: ReadBudget): Promise<void> {
+  private async read(file: FileState, budget: ReadBudget, liveFirst: boolean): Promise<void> {
+    if (file.readAllowance <= 0) return;
     let handle: FileHandle | undefined;
     try {
       const info = await this.inspectFile(file);
@@ -349,8 +398,19 @@ export class OmpLocalMonitor {
         return;
       }
       await this.prepareRead(file, handle, info, changed, identity);
-      await this.readAppends(file, handle, info.size, budget);
-      await this.finishRead(file, handle);
+      if (file.tail) {
+        await this.readCursor(
+          file,
+          liveFirst ? file.tail : file,
+          handle,
+          liveFirst ? info.size : file.tail.start,
+          budget,
+          !liveFirst,
+        );
+      } else {
+        await this.readCursor(file, file, handle, info.size, budget, false);
+      }
+      await this.finishRead(file, handle, info.size);
     } catch (error) {
       this.readFailure(file, error);
     } finally {
@@ -368,7 +428,7 @@ export class OmpLocalMonitor {
     if (!file.initialized) return false;
     if (
       identity !== file.identity ||
-      info.size < file.offset ||
+      info.size < Math.max(file.offset, file.tail?.offset ?? 0) ||
       (changed && info.size <= file.size)
     )
       return true;
@@ -399,6 +459,13 @@ export class OmpLocalMonitor {
   ): Promise<void> {
     if (await this.needsReset(file, handle, info, changed, identity)) this.reset(file);
     if (!file.initialized) await this.initializeFile(file, handle, info.size);
+    else if (
+      !file.tail &&
+      info.size > MONITOR_LIMITS.perFileBytes &&
+      info.size <= MONITOR_LIMITS.fileBytes &&
+      file.observedMtime >= this.currentNow - RECENT_MS
+    )
+      await this.initializeTail(file, handle, info.size);
     file.identity = identity;
     file.size = info.size;
     file.mtime = info.mtimeMs;
@@ -420,15 +487,26 @@ export class OmpLocalMonitor {
         /* The ordinary reader accounts for malformed complete lines. */
       }
       if (line === 0 && object(value)?.type === "title") file.prefixStart = newline + 1;
-      if (tail && object(value)?.type === "session") this.apply(file, value);
+      if (object(value)?.type === "session") {
+        file.headerEnd = newline + 1;
+        if (tail) this.apply(file, value);
+      }
       start = newline + 1;
     }
   }
 
   private async initializeFile(file: FileState, handle: FileHandle, size: number): Promise<void> {
+    const fastTail =
+      size > MONITOR_LIMITS.perFileBytes &&
+      size <= MONITOR_LIMITS.fileBytes &&
+      file.observedMtime >= this.currentNow - RECENT_MS;
     const header = Buffer.allocUnsafe(Math.min(64 * 1_024, size));
     const { bytesRead } = await handle.read(header, 0, header.length, 0);
-    this.probeHeaderLines(file, header.subarray(0, bytesRead), size > MONITOR_LIMITS.fileBytes);
+    this.probeHeaderLines(
+      file,
+      header.subarray(0, bytesRead),
+      fastTail || size > MONITOR_LIMITS.fileBytes,
+    );
     file.prefixLength = Math.max(0, Math.min(512, bytesRead - file.prefixStart));
     file.prefixHash = hashId(
       header.subarray(file.prefixStart, file.prefixStart + file.prefixLength).toString("base64"),
@@ -436,40 +514,92 @@ export class OmpLocalMonitor {
     if (size > MONITOR_LIMITS.fileBytes) {
       file.offset = size - MONITOR_LIMITS.tailBytes;
       file.discardLine = true;
+      file.feedbackStart = size;
       file.issues.add("file_limit");
+    } else if (fastTail) {
+      await this.initializeTail(file, handle, size);
     }
     file.initialized = true;
   }
 
-  private async readAppends(
+  private async initializeTail(file: FileState, handle: FileHandle, size: number): Promise<void> {
+    const windowBytes = Math.max(
+      1,
+      Math.min(1_024 * 1_024, Math.floor(MONITOR_LIMITS.perFileBytes / 2)),
+    );
+    const start = size - windowBytes;
+    if (!file.parser.headerSeen || file.offset >= start) return;
+    const previous = Buffer.allocUnsafe(1);
+    const { bytesRead } = await handle.read(previous, 0, 1, start - 1);
+    const boundaryPending = bytesRead !== 1 || previous[0] !== 10;
+    file.tail = {
+      start,
+      offset: start,
+      parts: [],
+      pendingLength: 0,
+      discardLine: boundaryPending,
+      boundaryPending,
+    };
+    file.feedbackStart = size;
+    file.parser.startTailMerge();
+  }
+
+  private async readCursor(
     file: FileState,
+    reader: FileReadCursor,
     handle: FileHandle,
-    size: number,
+    end: number,
     budget: ReadBudget,
+    historyOnly: boolean,
   ): Promise<void> {
-    let allowance = Math.min(MONITOR_LIMITS.perFileBytes, budget.bytes);
-    while (file.offset < size && allowance > 0 && budget.lines > 0 && !this.disposed) {
-      const bytes = Math.min(256 * 1_024, allowance, size - file.offset);
+    while (
+      reader.offset < end &&
+      file.readAllowance > 0 &&
+      budget.bytes > 0 &&
+      budget.lines > 0 &&
+      !this.disposed
+    ) {
+      const bytes = Math.min(256 * 1_024, file.readAllowance, budget.bytes, end - reader.offset);
       const buffer = Buffer.allocUnsafe(bytes);
-      const { bytesRead } = await handle.read(buffer, 0, bytes, file.offset);
+      const { bytesRead } = await handle.read(buffer, 0, bytes, reader.offset);
       if (!bytesRead) break;
-      const consumed = this.consume(file, buffer.subarray(0, bytesRead), budget);
-      file.offset += consumed;
+      const consumed = this.consume(
+        file,
+        reader,
+        buffer.subarray(0, bytesRead),
+        budget,
+        historyOnly,
+      );
+      reader.offset += consumed;
       budget.bytes -= bytesRead;
-      allowance -= bytesRead;
+      file.readAllowance -= bytesRead;
       if (consumed < bytesRead) break;
     }
     file.read = true;
-    file.complete = file.offset >= size;
   }
 
-  private async finishRead(file: FileState, handle: FileHandle): Promise<void> {
-    file.guardStart = Math.max(file.prefixStart, file.offset - 512);
-    file.guardLength = Math.min(512, Math.max(0, file.offset - file.guardStart));
-    if (file.guardLength) {
-      const guard = Buffer.allocUnsafe(file.guardLength);
-      const { bytesRead } = await handle.read(guard, 0, guard.length, file.guardStart);
-      file.guardHash = hashId(guard.subarray(0, bytesRead).toString("base64"));
+  private async finishRead(file: FileState, handle: FileHandle, size: number): Promise<void> {
+    if (
+      file.tail &&
+      !file.tail.boundaryPending &&
+      file.offset >= file.tail.start &&
+      file.parser.finishTailMerge()
+    )
+      this.syncToolCount(file);
+    file.complete = file.tail
+      ? !file.tail.boundaryPending && file.offset >= file.tail.start && file.tail.offset >= size
+      : file.offset >= size;
+    const offset = file.tail?.offset ?? file.offset;
+    const start = Math.max(file.prefixStart, offset - 512);
+    const length = Math.min(512, Math.max(0, offset - start));
+    if (start !== file.guardStart || length !== file.guardLength || !file.guardHash) {
+      file.guardStart = start;
+      file.guardLength = length;
+      if (length) {
+        const guard = Buffer.allocUnsafe(length);
+        const { bytesRead } = await handle.read(guard, 0, length, start);
+        file.guardHash = hashId(guard.subarray(0, bytesRead).toString("base64"));
+      }
     }
     const after = await lstat(file.path);
     if (after.isSymbolicLink() || !after.isFile()) {
@@ -490,38 +620,44 @@ export class OmpLocalMonitor {
     file.dirty = false;
   }
 
-  private releasePendingLine(file: FileState): void {
-    this.pendingBytes -= file.pendingLength;
-    file.pendingLength = 0;
-    file.parts = [];
+  private releasePendingLine(reader: FileReadCursor): void {
+    this.pendingBytes -= reader.pendingLength;
+    reader.pendingLength = 0;
+    reader.parts = [];
   }
 
-  private discardLimitedLine(file: FileState, length: number): void {
-    if (file.discardLine) return;
+  private discardLimitedLine(file: FileState, reader: FileReadCursor, length: number): void {
+    if (reader.discardLine) return;
     if (
-      file.pendingLength + length <= MONITOR_LIMITS.lineBytes &&
+      reader.pendingLength + length <= MONITOR_LIMITS.lineBytes &&
       this.pendingBytes + length <= MONITOR_LIMITS.pendingBytes
     )
       return;
     file.issues.add("line_limit");
-    this.releasePendingLine(file);
-    file.discardLine = true;
+    this.releasePendingLine(reader);
+    reader.discardLine = true;
   }
 
-  private appendFragment(file: FileState, fragment: Buffer): void {
+  private appendFragment(reader: FileReadCursor, fragment: Buffer): void {
     if (!fragment.length) return;
-    file.parts.push(Buffer.from(fragment));
-    file.pendingLength += fragment.length;
+    reader.parts.push(Buffer.from(fragment));
+    reader.pendingLength += fragment.length;
     this.pendingBytes += fragment.length;
   }
 
-  private completeLine(file: FileState, fragment: Buffer): void {
+  private completeLine(
+    file: FileState,
+    reader: FileReadCursor,
+    fragment: Buffer,
+    position: number,
+    historyOnly: boolean,
+  ): void {
     let raw = fragment;
-    if (file.pendingLength) {
-      file.parts.push(fragment);
-      raw = Buffer.concat(file.parts, file.pendingLength + fragment.length);
+    if (reader.pendingLength) {
+      reader.parts.push(fragment);
+      raw = Buffer.concat(reader.parts, reader.pendingLength + fragment.length);
     }
-    this.releasePendingLine(file);
+    this.releasePendingLine(reader);
     let value: unknown;
     try {
       const text = utf8.decode(raw);
@@ -535,32 +671,50 @@ export class OmpLocalMonitor {
       file.malformed++;
       return;
     }
-    this.apply(file, value);
+    if (position <= file.headerEnd && object(value)?.type !== "session") return;
+    file.ingestPosition = position;
+    file.ingestFeedback = position > file.feedbackStart;
+    this.apply(file, value, historyOnly && position <= file.feedbackStart);
   }
 
-  private consume(file: FileState, buffer: Buffer, budget: ReadBudget): number {
-    let cursor = 0;
-    while (cursor < buffer.length && budget.lines > 0) {
-      const newline = buffer.indexOf(10, cursor);
+  private consume(
+    file: FileState,
+    reader: FileReadCursor,
+    buffer: Buffer,
+    budget: ReadBudget,
+    historyOnly: boolean,
+  ): number {
+    let position = 0;
+    while (position < buffer.length && budget.lines > 0) {
+      const newline = buffer.indexOf(10, position);
       const end = newline < 0 ? buffer.length : newline;
-      this.discardLimitedLine(file, end - cursor);
-      if (!file.discardLine) {
-        const fragment = buffer.subarray(cursor, end);
-        if (newline < 0) this.appendFragment(file, fragment);
-        else this.completeLine(file, fragment);
+      this.discardLimitedLine(file, reader, end - position);
+      if (!reader.discardLine) {
+        const fragment = buffer.subarray(position, end);
+        if (newline < 0) this.appendFragment(reader, fragment);
+        else this.completeLine(file, reader, fragment, reader.offset + end + 1, historyOnly);
       }
       if (newline < 0) return buffer.length;
-      file.discardLine = false;
+      if (file.tail && reader === file.tail && file.tail.boundaryPending) {
+        file.tail.start = reader.offset + end + 1;
+        file.tail.boundaryPending = false;
+      }
+      reader.discardLine = false;
       budget.lines--;
-      cursor = newline + 1;
+      position = newline + 1;
     }
-    return cursor;
+    return position;
   }
 
-  private apply(file: FileState, value: unknown): void {
-    file.parser.apply(value, this.sink(file));
-    this.pendingTools += file.parser.pendingToolCount - file.toolCount;
-    file.toolCount = file.parser.pendingToolCount;
+  private apply(file: FileState, value: unknown, historyOnly = false): void {
+    file.parser.apply(value, this.sink(file), historyOnly, file.ingestPosition);
+    this.syncToolCount(file);
+  }
+
+  private syncToolCount(file: FileState): void {
+    const count = file.parser.retainedToolCount;
+    this.pendingTools += count - file.toolCount;
+    file.toolCount = count;
   }
 
   private sink(file: FileState): NumericSink {
@@ -573,7 +727,7 @@ export class OmpLocalMonitor {
         return owner !== undefined && owner.file.id !== file.id && owner.file.order < file.order;
       },
       upsert: (response) => {
-        this.upsert(file, response);
+        return this.upsert(file, response);
       },
       limit: () => {
         file.issues.add("record_limit");
@@ -581,22 +735,38 @@ export class OmpLocalMonitor {
     });
   }
 
-  private upsert(file: FileState, response: NumericResponse): void {
-    if (
-      this.disposed ||
-      response.endMs < this.cutoff ||
-      response.endMs > this.currentNow + STALE_MS
-    )
-      return;
+  private upsert(file: FileState, response: NumericResponse): boolean {
+    if (this.disposed) return false;
+    if (response.endMs < this.cutoff || response.endMs > this.currentNow + STALE_MS) return true;
     const composite = `${file.id}:${response.key}`;
     const existing = this.candidates.get(response.key)?.get(file.id);
+    // Tail-first extraction may encounter a newer revision before an older history copy.
+    if (existing && existing.position > file.ingestPosition) return false;
+    const sameCompletion =
+      existing !== undefined && sameCompletionFacts(existing.response, response);
+    response.feedbackEligible = sameCompletion
+      ? existing.response.feedbackEligible
+      : file.ingestFeedback;
+    if (existing) {
+      let unchanged = true;
+      for (const field of RESPONSE_FIELDS) {
+        if (existing.response[field] !== response[field]) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) {
+        existing.position = file.ingestPosition;
+        return false;
+      }
+    }
     if (!existing && this.insertionOrder.size >= MONITOR_LIMITS.records) {
       const oldest = this.insertionOrder.values().next().value;
       if (oldest) this.removeCandidate(oldest.key, oldest.fileId);
       this.droppedRecords = true;
     }
     const entries = this.candidates.get(response.key) ?? new Map<string, Candidate>();
-    const candidate = { file, response };
+    const candidate = { file, response, position: file.ingestPosition };
     entries.set(file.id, candidate);
     this.candidates.set(response.key, entries);
     file.keys.add(response.key);
@@ -607,6 +777,7 @@ export class OmpLocalMonitor {
       this.canonical.set(response.key, candidate);
       this.numericRevision++;
     }
+    return !sameCompletion;
   }
 
   private removeCandidate(key: string, fileId: string): void {
@@ -633,7 +804,7 @@ export class OmpLocalMonitor {
   private removeFile(file: FileState): void {
     if (!this.files.has(normalizedPath(file.path))) return;
     for (const key of file.keys) this.removeCandidate(key, file.id);
-    this.pendingBytes -= file.pendingLength;
+    this.pendingBytes -= file.pendingLength + (file.tail?.pendingLength ?? 0);
     this.pendingTools -= file.toolCount;
     this.files.delete(normalizedPath(file.path));
   }

@@ -290,7 +290,10 @@ function snapshot(scope: OmpMonitorScope = { profile: null, project: null }): Om
   };
 }
 function publish(window: MockWindow, value = snapshot(), worker = mock.workers.at(-1)!): void {
-  worker.emit("message", { type: "snapshot", scopeId: state(window).instanceId, snapshot: value });
+  worker.emit("message", {
+    type: "snapshots",
+    snapshots: [{ scopeId: state(window).instanceId, snapshot: value }],
+  });
 }
 function interact(window: MockWindow, value: boolean, frame = window.webContents.mainFrame): void {
   mock.listeners.get("paseo:monitor:interactive")!(
@@ -435,6 +438,31 @@ describe("original-design native OMP monitor", () => {
     expect(other.pinned).toBe(false);
   });
 
+  it("applies a valid sibling snapshot when another scope changed during the same poll", async () => {
+    const instance = controller();
+    await instance.open();
+    const first = surfaces("orb")[0]!;
+    publish(first);
+    await invoke("new-window", first);
+    const second = surfaces("orb")[1]!;
+    publish(second);
+    await invoke("scope", first, { profile: null, project: "A" });
+    const next = snapshot();
+    next.today.requests = 7;
+    mock.workers.at(-1)!.emit("message", {
+      type: "snapshots",
+      snapshots: [
+        { scopeId: state(first).instanceId, snapshot: snapshot() },
+        { scopeId: state(second).instanceId, snapshot: next },
+      ],
+    });
+    expect(state(first).scope.project).toBe("A");
+    expect(state(first).snapshot).toBeNull();
+    expect(state(first).refreshing).toBe(true);
+    expect(state(second).snapshot?.today.requests).toBe(7);
+    expect(state(second).refreshing).toBe(false);
+  });
+
   it("keeps click-through recoverable from the dashboard and a hidden orb can be restored without recreation", async () => {
     const instance = controller();
     await instance.open();
@@ -538,6 +566,57 @@ describe("original-design native OMP monitor", () => {
     expect(state(orb).activity.peakSequence).toBe(1);
   });
 
+  it("keeps partial scans live without replaying a fresh completion when history fills a higher peak", async () => {
+    const instance = controller();
+    await instance.open();
+    const orb = surfaces("orb")[0]!;
+    const initial = snapshot();
+    initial.status = "partial";
+    initial.coverage.issues = ["scan_pending"];
+    publish(orb, initial);
+    expect(state(orb).refreshing).toBe(false);
+    mock.now += 2000;
+    const fresh = snapshot();
+    fresh.status = "partial";
+    fresh.today.peakOutputTps = 80;
+    fresh.activity = {
+      lastResponseAt: mock.now - 5,
+      peakAt: mock.now - 3000,
+      peakObservedAt: mock.now - 5,
+    };
+    publish(orb, fresh);
+    expect(state(orb).activity).toMatchObject({ responseSequence: 1, peakSequence: 1 });
+    mock.now += 100;
+    const backfilled = {
+      ...fresh,
+      updatedAt: mock.now,
+      today: { ...fresh.today, peakOutputTps: 120 },
+    };
+    publish(orb, backfilled);
+    expect(state(orb).activity).toMatchObject({ responseSequence: 1, peakSequence: 1 });
+    publish(orb, {
+      ...backfilled,
+      activity: { ...fresh.activity, peakObservedAt: mock.now - 60_000 },
+    });
+    publish(orb, { ...backfilled, today: { ...backfilled.today, peakOutputTps: 140 } });
+    expect(state(orb).activity).toMatchObject({
+      responseSequence: 1,
+      peakSequence: 1,
+      lastPeakAt: fresh.activity.peakObservedAt,
+    });
+    mock.now += 100;
+    const next = snapshot();
+    next.status = "partial";
+    next.today.peakOutputTps = 200;
+    next.activity = {
+      lastResponseAt: mock.now - 5,
+      peakAt: mock.now - 3000,
+      peakObservedAt: mock.now - 5,
+    };
+    publish(orb, next);
+    expect(state(orb).activity).toMatchObject({ responseSequence: 2, peakSequence: 2 });
+  });
+
   it("suppresses peaks after a scope change and recovers a failed worker without accepting its late messages", async () => {
     const instance = controller();
     await instance.open();
@@ -556,9 +635,13 @@ describe("original-design native OMP monitor", () => {
     expect(state(orb).workerError).toBe(true);
     await invoke("refresh", orb);
     oldWorker.emit("message", {
-      type: "snapshot",
-      scopeId: state(orb).instanceId,
-      snapshot: { ...fresh, today: { ...fresh.today, requests: 999 } },
+      type: "snapshots",
+      snapshots: [
+        {
+          scopeId: state(orb).instanceId,
+          snapshot: { ...fresh, today: { ...fresh.today, requests: 999 } },
+        },
+      ],
     });
     expect(state(orb).snapshot?.today.requests).toBe(1);
     publish(orb, fresh);

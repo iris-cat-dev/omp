@@ -1,5 +1,5 @@
 // GPU hosting for the Agent Speed v1.4.1 shader port (zoefix, MIT; a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c).
-// Static previews share one detached WebGL2 owner; their visible canvases retain real shader snapshots, not substitute art.
+// Settings previews share one window-lifetime WebGL2 owner; their visible canvases retain real shader snapshots, not substitute art.
 export const ORB_GPU_SCRIPT = String.raw`
 const GPU_UNIFORMS=['uRes','uS','uLogicalS','uThumbnail','uReduced','uTime','uH','uO','uDark','uNew','uLevel','uFlash','uPeak','uSweep','uTier','uComet','uFlow','uPhase','uPhase2','uWarp','uCorona','uWaves','uTicks','uFx','uMoving','uEmbedded','uIdleSweep','uSurface','uPhases','uRipples','uReadout','uReadoutOld','uDecorative','uReadoutOn','uReadoutRoll','uReadoutValue','uReadoutUnit','uReadoutTitle','uReadoutBelowTitle','uLiquidColors','uLiquidInk','uMeniscus','uWaveColors'];
 function orbGl(canvas){
@@ -28,22 +28,35 @@ function createGpuResources(gl){
     gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);return resources;
   }catch(error){disposeGpuResources(resources);throw error;}
 }
-let thumbnailGpuPool=null;
+let thumbnailGpuPool=null,thumbnailGpuDisposed=false;
 function retainThumbnailGpu(lost,restored){
+  if(thumbnailGpuDisposed)throw new Error('Preview GPU has been disposed');
   if(!thumbnailGpuPool){
     const pool={canvas:document.createElement('canvas'),gl:null,resources:null,error:null,lost:false,users:new Set(),onLost:null,onRestored:null};
     thumbnailGpuPool=pool;
     pool.onLost=event=>{event.preventDefault();pool.lost=true;pool.resources=null;for(const user of Array.from(pool.users))user.lost(event);};
-    pool.onRestored=()=>{pool.lost=false;pool.error=null;try{pool.resources=createGpuResources(pool.gl);}catch(error){pool.error=error;}for(const user of Array.from(pool.users))user.restored();};
+    // Restoration invalidates the old programs, but rebuilding waits for an actual visible draw.
+    pool.onRestored=()=>{pool.lost=false;pool.error=null;for(const user of Array.from(pool.users))user.restored();};
     pool.canvas.addEventListener('webglcontextlost',pool.onLost);pool.canvas.addEventListener('webglcontextrestored',pool.onRestored);
-    try{pool.gl=orbGl(pool.canvas);pool.resources=createGpuResources(pool.gl);}catch(error){pool.error=error;}
   }
   const user={lost,restored},lease={pool:thumbnailGpuPool,user,released:false};thumbnailGpuPool.users.add(user);return lease;
 }
+function thumbnailGpuResources(pool){
+  if(thumbnailGpuDisposed||pool.lost)return null;
+  if(!pool.resources&&!pool.error){
+    try{if(!pool.gl)pool.gl=orbGl(pool.canvas);pool.resources=createGpuResources(pool.gl);}catch(error){pool.error=error;}
+  }
+  if(pool.error)throw pool.error;return pool.resources;
+}
 function releaseThumbnailGpu(lease){
-  if(!lease||lease.released)return;lease.released=true;const pool=lease.pool;pool.users.delete(lease.user);if(pool.users.size)return;
+  if(!lease||lease.released)return;lease.released=true;const pool=lease.pool;pool.users.delete(lease.user);
+  // No animation or work belongs to an idle pool. Keep successful programs until page teardown,
+  // while allowing a failed initialization to recover on the next visible activation.
+  if(!pool.users.size)pool.error=null;
+}
+function disposeThumbnailGpu(){
+  if(thumbnailGpuDisposed)return;thumbnailGpuDisposed=true;const pool=thumbnailGpuPool;thumbnailGpuPool=null;if(!pool)return;
   pool.canvas.removeEventListener('webglcontextlost',pool.onLost);pool.canvas.removeEventListener('webglcontextrestored',pool.onRestored);
-  disposeGpuResources(pool.resources);loseOrbGl(pool.gl);pool.resources=null;pool.gl=null;pool.canvas.width=pool.canvas.height=1;
-  if(thumbnailGpuPool===pool)thumbnailGpuPool=null;
+  disposeGpuResources(pool.resources);loseOrbGl(pool.gl);pool.resources=null;pool.gl=null;pool.users.clear();pool.canvas.width=pool.canvas.height=1;
 }
 `;

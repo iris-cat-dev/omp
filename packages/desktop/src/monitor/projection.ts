@@ -316,9 +316,12 @@ export function coverageStatus(coverage: OmpMonitorCoverage): OmpMonitorSnapshot
   if (
     coverage.issues.length === 1 &&
     coverage.issues[0] === "scan_pending" &&
-    !coverage.malformedLines
+    !coverage.malformedLines &&
+    coverage.readFiles === 0
   )
     return "scanning";
+  // Backfill is incomplete coverage, not an unusable live feed. Consumers deliberately
+  // suppress "scanning" snapshots; keep numeric facts already read available as partial.
   if (coverage.limited) return "partial";
   return "ready";
 }

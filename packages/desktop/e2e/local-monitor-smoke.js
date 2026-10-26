@@ -223,7 +223,7 @@ async function runNative() {
   let expectedOutput = 350;
   let lastLiveEnd = 0;
   const append = (file, record) => fs.appendFileSync(file, JSON.stringify(record) + "\n");
-  const appendCompletion = async (id, output, offset = 0) => {
+  const appendCompletion = async (id, output, offset = 0, file = mainFile) => {
     // Three-second numeric intervals end in the recent past. An unaligned case
     // distinguishes completion/event time from the measured bucket endpoint.
     // Discovery still comes from the real worker poll, never snapshot injection.
@@ -233,7 +233,7 @@ async function runNative() {
     );
     const endAt = Math.floor(Date.now() / 1_000) * 1_000 + offset;
     lastLiveEnd = endAt;
-    append(mainFile, response(id, output, { endAt, duration: 3_000 }));
+    append(file, response(id, output, { endAt, duration: 3_000 }));
     expectedRequests++;
     expectedOutput += output;
     return endAt;
@@ -290,7 +290,8 @@ async function runNative() {
       physicalDraggingExercised: false,
       positionPath:
         "Owned BrowserWindow.setBounds plus real beginDrag/endDrag and persisted cold reopen",
-      pointerPath: "Owned native pointer IPC coordinates; not physical cursor input",
+      pointerPath:
+        "Owned-process cursor fixture through real controller pointerTick and pointer IPC; no physical cursor input",
       passthroughPath:
         "Win32 WindowFromPoint against a second owned runtime process; no injected clicks",
     },
@@ -968,7 +969,7 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
       window,
       `(() => {
         if(window.__ownedArtProbe?.timer)clearInterval(window.__ownedArtProbe.timer);
-        const probe=window.__ownedArtProbe={samples:0,pulse:false,peak:false,fx:false,stationaryRing:false,pill:false,pillMotion:false,static:true,errors:[]};
+        const probe=window.__ownedArtProbe={samples:0,pulse:false,peak:false,fx:false,stationaryRing:false,pill:false,pillMotion:false,static:true,clockMin:null,clockMax:null,errors:[]};
         const sample=()=>{
           const host=document.getElementById('orb-art'),canvas=host?.querySelector('.as-orb-gl'),fx=host?.querySelector('.as-orb-fx'),paint=host?.querySelector('.as-orb-paint');if(!host||document.hidden)return;
           probe.samples++;probe.static=probe.static&&host.dataset.static==='true';
@@ -978,6 +979,7 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
             const uniform=name=>{const location=program&&gl.getUniformLocation(program,name);return location===null||!program?null:gl.getUniform(program,location);};
             const waves=uniform('uWaves'),peak=uniform('uPeak');if(waves)for(let i=0;i<waves.length;i+=4)if(waves[i]>=0&&waves[i]<1)probe.pulse=true;
             if(peak!==null&&peak>=0&&peak<1.8)probe.peak=true;
+            const clock=uniform('uTime');if(typeof clock==='number'&&Number.isFinite(clock)){probe.clockMin=probe.clockMin===null?clock:Math.min(probe.clockMin,clock);probe.clockMax=probe.clockMax===null?clock:Math.max(probe.clockMax,clock);}
           }
           if(fx?.width){const data=fx.getContext('2d').getImageData(0,0,fx.width,fx.height).data;for(let i=3;i<data.length;i+=4)if(data[i]>0){probe.fx=true;break;}}
           if(paint?.width&&!probe.stationaryRing){
@@ -1002,7 +1004,7 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
   const effectsResult = async (window, stop = false) =>
     evaluate(
       window,
-      `(() => { const p=window.__ownedArtProbe;if(!p)return null;${stop ? "clearInterval(p.timer);clearTimeout(p.stop);p.timer=null;" : ""}return {samples:p.samples,pulse:p.pulse,peak:p.peak,fx:p.fx,stationaryRing:p.stationaryRing,pill:p.pill,pillMotion:p.pillMotion,static:p.static,errors:p.errors}; })()`,
+      `(() => { const p=window.__ownedArtProbe;if(!p)return null;${stop ? "clearInterval(p.timer);clearTimeout(p.stop);p.timer=null;" : ""}return {samples:p.samples,pulse:p.pulse,peak:p.peak,fx:p.fx,stationaryRing:p.stationaryRing,pill:p.pill,pillMotion:p.pillMotion,static:p.static,clockMin:p.clockMin,clockMax:p.clockMax,errors:p.errors}; })()`,
     );
   const waitActivity = async (orb, baseline, { response: responseChanged, peak: peakChanged }) => {
     await until(
@@ -1438,7 +1440,13 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
         await until(
           async () => {
             const probe = await effectsResult(first);
-            return probe.pulse && probe.peak && probe.pill && probe.fx;
+            return (
+              probe.pulse &&
+              probe.peak &&
+              probe.pill &&
+              probe.fx &&
+              probe.clockMax - probe.clockMin > 0.05
+            );
           },
           "actual measured-peak waves, particle pixels and animated original peak pill",
           3_000,
@@ -1454,6 +1462,61 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
         assert.equal(hero.gpu.effects, 1, "Original dashboard hero must stay capped at Soft");
         await capture(first, "original-measured-peak-effects.png", true);
         await capture(dashboard, "original-dashboard-measured-peak.png");
+        const backlog = path.join(bucket, "numeric-backfill");
+        fs.mkdirSync(backlog);
+        const oldMtime = new Date(fixtureNow - 86_400_000);
+        for (let index = 0; index < 2048; index++) {
+          const file = path.join(backlog, `history-${index}.jsonl`);
+          writeLines(file, [header("workspace-a")]);
+          fs.utimesSync(file, oldMtime, oldMtime);
+        }
+        await until(async () => {
+          const current = await state(first);
+          return (
+            current.snapshot.status === "partial" &&
+            current.snapshot.coverage.issues.includes("scan_pending")
+          );
+        }, "real bounded historical backlog exposes usable partial data");
+        const duringBackfill = await state(first);
+        assert.equal(duringBackfill.refreshing, false);
+        baseline = duringBackfill.activity;
+        await armEffects(first);
+        const partialAt = await appendCompletion("partial-live-measured-peak", 18_000);
+        const partialView = await waitActivity(first, baseline, { response: true, peak: true });
+        assert.equal(partialView.snapshot.status, "partial");
+        assert.ok(partialView.snapshot.rate.measuredTps > 0);
+        await until(
+          async () => {
+            const probe = await effectsResult(first);
+            return (
+              probe.pulse &&
+              probe.peak &&
+              probe.pill &&
+              probe.fx &&
+              probe.clockMax - probe.clockMin > 0.05 &&
+              (await evaluate(
+                first,
+                "document.querySelector('#orb-art .as-orb-value').textContent!=='—' && document.querySelector('#orb-art .as-orb-value').textContent!=='0'",
+              ))
+            );
+          },
+          "partial data drives actual tok/s, response waves, particles and peak animation",
+          3_000,
+        );
+        entry.partialBackfill = {
+          at: partialAt,
+          status: partialView.snapshot.status,
+          rate: partialView.snapshot.rate,
+          coverage: partialView.snapshot.coverage,
+          effects: await effectsResult(first, true),
+        };
+        assert.deepEqual(entry.partialBackfill.effects.errors, []);
+        await capture(first, "original-partial-measured-peak-effects.png", true);
+        await until(
+          async () => !(await state(first)).snapshot.coverage.issues.includes("scan_pending"),
+          "numeric history finishes without blocking live rendering",
+        );
+        fs.rmSync(backlog, { recursive: true });
         for (const window of [first, dashboard, settings]) await fixtureMotion(window, true);
         await expectArt(first, { style: "led", appearance: "dark", static: true });
         await until(
@@ -1539,6 +1602,18 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
           "real collector in-flight estimate",
           5_000,
         );
+        await until(
+          async () =>
+            (await evaluate(
+              first,
+              "document.querySelector('#orb-art .as-orb-value').textContent.startsWith('≈')",
+            )) &&
+            (await evaluate(
+              dashboard,
+              "document.getElementById('speed-value').textContent.startsWith('≈') && /estimat/i.test(document.getElementById('hero').getAttribute('aria-label'))",
+            )),
+          "estimated native readouts are explicitly approximate, including accessibility",
+        );
         assert.deepEqual(
           (await state(first)).activity,
           baseline,
@@ -1575,6 +1650,96 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
         entry.estimatedOnly = estimate;
         entry.activitySource =
           "Appended numeric records -> production collector -> native activity bridge -> actual art uniforms/pixels/animations";
+      },
+    );
+    await group(
+      "Fresh large-log tail is visible before history finishes and subsequent appends remain live",
+      async (entry) => {
+        await select(settings, "effects", "max");
+        await expectArt(first, { style: "led", appearance: "dark", static: false });
+        const largeFile = path.join(bucket, "large-native-numeric.jsonl");
+        const padding =
+          JSON.stringify({
+            type: "custom",
+            customType: "owned-history-padding",
+            data: "x".repeat(32 * 1024),
+          }) + "\n";
+        const descriptor = fs.openSync(largeFile, "wx");
+        try {
+          fs.writeSync(descriptor, JSON.stringify(header("workspace-a")) + "\n");
+          for (let index = 0; index < 384; index++) fs.writeSync(descriptor, padding);
+          const endAt = Date.now();
+          const initial = response("large-native-tail-initial", 600, { endAt, duration: 3000 });
+          initial.message.completedAt = endAt;
+          fs.writeSync(descriptor, JSON.stringify(initial) + "\n");
+        } finally {
+          fs.closeSync(descriptor);
+        }
+        expectedRequests++;
+        expectedOutput += 600;
+        await invoke(first, "refresh");
+        await until(
+          async () => {
+            const current = await state(first);
+            return (
+              current.snapshot.today.requests === expectedRequests &&
+              current.snapshot.today.outputTokens === expectedOutput
+            );
+          },
+          "first bounded tail window exposes the newest native numeric completion",
+          5000,
+        );
+        const initial = await state(first);
+        assert.equal(initial.snapshot.status, "partial");
+        assert.ok(initial.snapshot.coverage.issues.includes("scan_pending"));
+        assert.ok(initial.snapshot.rate.measuredTps > 0);
+        assert.equal(initial.refreshing, false);
+        await until(
+          () =>
+            evaluate(
+              first,
+              "document.querySelector('#orb-art .as-orb-value').textContent!=='—' && document.querySelector('#orb-art .as-orb-value').textContent!=='0'",
+            ),
+          "real native orb displays the initial measured tail while history is incomplete",
+        );
+        entry.initial = {
+          bytes: fs.statSync(largeFile).size,
+          status: initial.snapshot.status,
+          rate: initial.snapshot.rate,
+          coverage: initial.snapshot.coverage,
+        };
+        await capture(first, "original-large-log-tail-first.png", true);
+        const baseline = (await state(first)).activity;
+        await armEffects(first);
+        await appendCompletion("large-native-tail-append", 1000, 0, largeFile);
+        const appended = await waitActivity(first, baseline, { response: true, peak: false });
+        assert.ok(appended.snapshot.rate.measuredTps > 0);
+        await until(
+          async () => (await effectsResult(first)).pulse,
+          "append after the initial tail produces a genuine native response wave",
+          3000,
+        );
+        entry.appended = {
+          rate: appended.snapshot.rate,
+          activity: appended.activity,
+          effects: await effectsResult(first, true),
+        };
+        assert.deepEqual(entry.appended.effects.errors, []);
+        await until(async () => {
+          const current = await state(first);
+          return !current.snapshot.coverage.issues.includes("scan_pending");
+        }, "large-file historical prefix catches up in bounded polls");
+        const completed = await state(first);
+        assert.equal(completed.snapshot.today.requests, expectedRequests);
+        assert.equal(completed.snapshot.today.outputTokens, expectedOutput);
+        assert.equal(completed.activity.responseSequence, baseline.responseSequence + 1);
+        assert.equal(completed.activity.peakSequence, baseline.peakSequence);
+        entry.completed = {
+          requests: completed.snapshot.today.requests,
+          outputTokens: completed.snapshot.today.outputTokens,
+          activity: completed.activity,
+        };
+        await select(settings, "effects", "off");
       },
     );
     await group(
@@ -1717,20 +1882,29 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
         assert.equal(nativePinned.ownerVerified, true);
         assert.equal(nativePinned.topmost, true);
         const calls = observeNativeInput(first);
+        const originalCursor = screen.getCursorScreenPoint;
+        let fixtureCursor = originalCursor.call(screen);
+        const readFixtureCursor = () => fixtureCursor;
         const pointer = async (point, hovered) => {
-          first.webContents.send("paseo:monitor:pointer", point);
+          const bounds = first.getBounds();
+          fixtureCursor = { x: bounds.x + point.x, y: bounds.y + point.y };
+          controller.pointerTick();
           await until(
-            () =>
-              evaluate(
+            async () =>
+              (await evaluate(
                 first,
                 `document.getElementById('orb-surface').dataset.hovered === ${JSON.stringify(String(hovered))}`,
-              ),
+              )) && calls.at(-1)?.ignore === !hovered,
             "real pointer bridge hit policy",
             3_000,
           );
         };
         const backdrop = await startInputBackdrop(first);
         try {
+          // Keep unrelated physical mouse movement from racing the owned pointer
+          // fixture. The controller, preload, native adapter and HWND probes remain real.
+          screen.getCursorScreenPoint = readFixtureCursor;
+          assert.equal(screen.getCursorScreenPoint, readFixtureCursor);
           const size = (await state(first)).preferences.size;
           await pointer({ x: 0, y: 0 }, false);
           await pointer({ x: 0.75 * size, y: 0.75 * size }, true);
@@ -1824,6 +1998,7 @@ if($env:OMP_MONITOR_NATIVE_BACKDROP_HWND){
             "click-through can be disabled from settings",
           );
         } finally {
+          screen.getCursorScreenPoint = originalCursor;
           await stopInputBackdrop(backdrop);
         }
         // Observe and cancel the exact owned OS popup, not recursive SDK

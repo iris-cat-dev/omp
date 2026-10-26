@@ -12,6 +12,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const artInstances = new Map();
 const moneyFormatters = new Map();
 const orbRows = new Map();
+const scopeOptions = new Map();
 const titleThresholds = [0, .5, .02, .03, .04, .06, .08, .12, .17, .24, .34, .5, .7, 1];
 let view = null, language = 'en', appearance = 'light', settingsPage = 'general';
 let formatters = {}, timeFormatters = {}, currencyNames = null;
@@ -22,9 +23,11 @@ let selectedHistoryDate = null, chartPoints = [], historyChartDays = [], liveCha
 let popoverAnchor = null, dragging = null, dragEnding = false, orbHovered = false, lastPointer = null, interactive = null, orbIdleSince = null;
 let titleTracker = { level: 0, candidate: 0, pending: null, pendingSince: 0, belowFirstSince: null }, orbRowSerial = 0;
 let activityBaseline = null, pendingActivity = { responsePulse: false, newPeak: false };
+let ladderOptions = null, currencyOptions = null;
+let previewInitialization = null, previewsReady = false, rendererDestroyed = false;
 function node(id) { return document.getElementById(id); }
 function t(key) { return monitorStrings[language][key] || monitorStrings.en[key] || key; }
-function text(id, value) { node(id).textContent = String(value); }
+function text(id, value) { const element = node(id), next = String(value); if (element.textContent !== next) element.textContent = next; }
 function finite(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
 function number(value, digits = 0) { const n = finite(value); return n === null ? '—' : formatters[digits].format(n); }
 function compact(value) {
@@ -80,9 +83,12 @@ function snapshotFacts() {
   const snapshot = view && view.snapshot;
   return snapshot && !['unavailable', 'error'].includes(snapshot.status) && !(snapshot.status === 'scanning' && snapshot.coverage.readFiles === 0) ? snapshot : null;
 }
-function liveFacts() { const snapshot = snapshotFacts(); return snapshot && !view.workerError && !view.refreshing && ['ready', 'partial'].includes(snapshot.status) ? snapshot : null; }
+function hasLiveSnapshot(snapshot) { return snapshot && (snapshot.status === 'ready' || snapshot.status === 'partial'); }
+function liveFacts() { const snapshot = snapshotFacts(); return snapshot && !view.workerError && !view.refreshing && hasLiveSnapshot(snapshot) ? snapshot : null; }
 function currentStatus() { return view && view.workerError ? 'error' : !view || view.refreshing ? 'scanning' : view.snapshot ? view.snapshot.status : 'scanning'; }
 function liveValue() { const snapshot = liveFacts(); return snapshot ? snapshot.rate.measuredTps + snapshot.rate.estimatedTps : null; }
+function liveEstimated() { const snapshot = liveFacts(); return !!snapshot && snapshot.rate.estimatedTps > 0; }
+function liveReadout(value, unit = false) { return value === null ? '—' : (liveEstimated() ? '≈' : '') + (value < .05 ? '0' : compact(value)) + (unit ? ' tok/s' : ''); }
 function orbName() { return !view ? 'OMP' : view.scope.project || (view.scope.profile ? 'OMP · ' + view.scope.profile : 'OMP'); }
 function applyLanguage() {
   document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -128,12 +134,23 @@ function fillVisualChoices() {
     card.lastChild.textContent = names[language === 'zh' ? 0 : 1]; card.title = t('style_' + id); card.setAttribute('aria-label', names[language === 'zh' ? 0 : 1] + '. ' + t('style_' + id));
   }
 }
+function sameOptionValues(previous, next) {
+  if (previous === next) return true;
+  if (!previous || previous.length !== next.length) return false;
+  for (let index = 0; index < next.length; index++) if (previous[index] !== next[index]) return false;
+  return true;
+}
 function fillScope(id, values, selected, allLabel) {
   const select = node(id); if (document.activeElement === select && select.options.length) return;
-  const fragment = document.createDocumentFragment(), all = document.createElement('option'); all.value = ''; all.textContent = t(allLabel); fragment.append(all);
-  for (const value of values) { const option = document.createElement('option'); option.value = value; option.textContent = value; fragment.append(option); }
-  if (selected !== null && !values.includes(selected)) { const option = document.createElement('option'); option.value = selected; option.textContent = selected + ' ' + t('unavailableOption'); fragment.append(option); }
-  select.replaceChildren(fragment); select.value = selected === null ? '' : selected;
+  const missing = selected !== null && !values.includes(selected) ? selected : null, previous = scopeOptions.get(id);
+  if (!previous || previous.language !== language || previous.allLabel !== allLabel || previous.missing !== missing || !sameOptionValues(previous.values, values)) {
+    const fragment = document.createDocumentFragment(), all = document.createElement('option'); all.value = ''; all.textContent = t(allLabel); fragment.append(all);
+    for (const value of values) { const option = document.createElement('option'); option.value = value; option.textContent = value; fragment.append(option); }
+    if (missing !== null) { const option = document.createElement('option'); option.value = missing; option.textContent = missing + ' ' + t('unavailableOption'); fragment.append(option); }
+    select.replaceChildren(fragment);
+    scopeOptions.set(id, { values, language, allLabel, missing });
+  }
+  const value = selected === null ? '' : selected; if (select.value !== value) select.value = value;
 }
 function syncPreferences() {
   if (!view) return;
@@ -155,14 +172,18 @@ function syncPreferences() {
   node('new-window').disabled = view.windowCount >= view.maxWindows;
   text('settings-orb-name', orbName()); text('settings-orb-detail', agentSpeedVisuals.styles[preferences.style][language === 'zh' ? 0 : 1] + ' · ' + number(preferences.size) + ' DIP');
   renderOrbList();
-  for (const [id, kind] of [['profile', 'profile'], ['project', 'project'], ['history-profile', 'profile'], ['history-project', 'project']]) fillScope(id, view.scopes[kind === 'profile' ? 'profiles' : 'projects'], view.scope[kind], kind === 'profile' ? 'allProfiles' : 'allProjects');
-  const theme = agentSpeedVisuals.themes[preferences.titleTheme], labels = theme[language], strip = document.createDocumentFragment(), ladder = document.createDocumentFragment();
-  for (let level = 1; level <= 13; level++) {
-    const threshold = level === 1 ? .5 : titleThresholds[level] * preferences.redline;
-    const tick = document.createElement('i'); tick.style.left = Math.min(1, Math.pow(threshold / preferences.redline, .6)) * 100 + '%'; strip.append(tick);
-    const row = document.createElement('span'); row.append(document.createTextNode(labels[level])); const value = document.createElement('strong'); value.textContent = compact(threshold); value.style.color = agentSpeedVisuals.color(agentSpeedVisuals.heat(threshold, preferences.redline), appearance); row.append(value); ladder.append(row);
+  if (settingsPage === 'orb') for (const [id, kind] of [['profile', 'profile'], ['project', 'project']]) fillScope(id, view.scopes[kind === 'profile' ? 'profiles' : 'projects'], view.scope[kind], kind === 'profile' ? 'allProfiles' : 'allProjects');
+  if (!ladderOptions || ladderOptions.theme !== preferences.titleTheme || ladderOptions.redline !== preferences.redline || ladderOptions.language !== language || ladderOptions.appearance !== appearance) {
+    const theme = agentSpeedVisuals.themes[preferences.titleTheme], labels = theme[language], strip = document.createDocumentFragment(), ladder = document.createDocumentFragment();
+    for (let level = 1; level <= 13; level++) {
+      const threshold = level === 1 ? .5 : titleThresholds[level] * preferences.redline;
+      const tick = document.createElement('i'); tick.style.left = Math.min(1, Math.pow(threshold / preferences.redline, .6)) * 100 + '%'; strip.append(tick);
+      const row = document.createElement('span'); row.append(document.createTextNode(labels[level])); const value = document.createElement('strong'); value.textContent = compact(threshold); value.style.color = agentSpeedVisuals.color(agentSpeedVisuals.heat(threshold, preferences.redline), appearance); row.append(value); ladder.append(row);
+    }
+    node('title-heat-strip').replaceChildren(strip); node('title-ladder').replaceChildren(ladder);
+    ladderOptions = { theme: preferences.titleTheme, redline: preferences.redline, language, appearance };
   }
-  node('title-heat-strip').replaceChildren(strip); node('title-ladder').replaceChildren(ladder); node('reduced-motion-note').hidden = !reducedMotion.matches;
+  node('reduced-motion-note').hidden = !reducedMotion.matches;
 }
 function renderOrbList() {
   if (!view || view.surface !== 'settings') return;
@@ -189,7 +210,7 @@ function renderOrbList() {
     const name = summary.scope.project || (summary.scope.profile ? 'OMP · ' + summary.scope.profile : 'OMP');
     const status = [t(summary.visible ? 'visibleOrb' : 'hiddenOrb')]; if (summary.clickThrough) status.push(t('clickThrough')); if (summary.pinned) status.push(t('pin'));
     entry.name.textContent = name; entry.detail.textContent = agentSpeedVisuals.styles[summary.style][language === 'zh' ? 0 : 1] + ' · ' + number(summary.size) + ' DIP';
-    entry.rate.textContent = !summary.visible ? t('hiddenOrb') : selected ? speed(liveValue(), true) : '—';
+    entry.rate.textContent = !summary.visible ? t('hiddenOrb') : selected ? liveReadout(liveValue(), true) : '—';
     entry.indicators.textContent = (summary.pinned ? '\uE718 ' : '') + (summary.clickThrough ? '\uE7C9 ' : '') + (summary.visible ? '\uE890' : '\uED1A');
     entry.row.dataset.shown = String(summary.visible); entry.row.setAttribute('aria-selected', String(selected)); entry.row.tabIndex = selected ? 0 : -1;
     entry.row.title = t('orb') + ' ' + number(index + 1) + ' · ' + name + '\n' + t('profile') + ': ' + (summary.scope.profile || t('allProfiles')) + '\n' + t('project') + ': ' + (summary.scope.project || t('allProjects')) + '\n' + status.join(' · ');
@@ -229,40 +250,62 @@ function trackedTitle(value) {
   if (deadline !== null && !document.hidden) titleDeadlineTimer = setTimeout(() => { titleDeadlineTimer = null; if (view && !document.hidden) renderArt(); }, Math.max(1, deadline - performance.now()));
   const theme = agentSpeedVisuals.themes[preferences.titleTheme]; return { label: theme[language][titleTracker.level], level: titleTracker.level };
 }
-function ensureArt(id, embedded, thumbnail) {
+function cancelPreviewInitialization() {
+  const pending = previewInitialization; if (!pending) return;
+  previewInitialization = null;
+  if (pending.raf) cancelAnimationFrame(pending.raf);
+  clearTimeout(pending.timer);
+}
+function initializePreviewsAfterPaint() {
+  if (previewsReady || previewInitialization || rendererDestroyed) return;
+  const pending = { raf: 0, timer: 0 }; previewInitialization = pending;
+  // Let the tab's controls and labels paint before the first shader/preview initialization.
+  pending.raf = requestAnimationFrame(() => {
+    pending.raf = 0; if (previewInitialization !== pending) return;
+    pending.timer = setTimeout(() => {
+      pending.timer = 0; if (previewInitialization !== pending) return;
+      previewInitialization = null;
+      if (rendererDestroyed || document.hidden || !view || view.surface !== 'settings' || settingsPage !== 'orb') return;
+      previewsReady = true; renderArt();
+    }, 0);
+  });
+}
+function ensureArt(id, embedded, thumbnail, sharedGpu) {
   let entry = artInstances.get(id);
-  if (!entry) { entry = { instance: agentSpeedVisuals.create(node(id), { embedded, thumbnail }), visible: false }; artInstances.set(id, entry); }
+  if (!entry) { entry = { instance: agentSpeedVisuals.create(node(id), { embedded, thumbnail, sharedGpu }), visible: false }; artInstances.set(id, entry); }
   return entry;
 }
-function updateArt(id, embedded, frame, visible, thumbnail = false) {
+function updateArt(id, embedded, frame, visible, thumbnail = false, sharedGpu = false) {
   if (!visible && !artInstances.has(id)) return;
-  const entry = ensureArt(id, embedded, thumbnail); entry.instance.setVisible(visible); entry.visible = visible; if (visible) entry.instance.update(frame);
+  const entry = ensureArt(id, embedded, thumbnail, sharedGpu); entry.instance.setVisible(visible); entry.visible = visible; if (visible) entry.instance.update(frame);
 }
 function renderArt() {
-  if (!view) return;
+  if (!view || rendererDestroyed) return;
   const preferences = view.preferences, facts = liveFacts(), value = liveValue(), title = trackedTitle(value);
   const agents = facts ? facts.agents : [], active = agents.filter(agent => agent.phase === 'generating').length, tools = agents.filter(agent => agent.phase === 'tools').length;
   if (value === null || value >= .05) orbIdleSince = null;
   else if (orbIdleSince === null) orbIdleSince = performance.now();
   const faded = preferences.fadeWhenIdle && orbIdleSince !== null && performance.now() - orbIdleSince >= 60000 && !orbHovered;
   const dimmed = (value === null ? .55 : 1) * (faded ? .45 : 1);
-  const base = { value, formattedValue: value === null ? '—' : value < .05 ? '0' : compact(value), unit: 'tok/s', title: title.label, style: preferences.style, titleTheme: preferences.titleTheme, language, redline: preferences.redline, appearance, effects: preferences.effects, reduceMotion: reducedMotion.matches, maxFps: view.maxFps, size: preferences.size, opacity: preferences.opacity * dimmed, hovered: view.surface === 'orb' && orbHovered, activeAgents: active, toolsAgents: tools, responsePulse: pendingActivity.responsePulse, newPeak: pendingActivity.newPeak, hoverLabel: orbName() + ' · ' + (value === null ? t('unknown') : number(value, 1) + ' tok/s') };
+  const base = { value, formattedValue: liveReadout(value), unit: 'tok/s', title: title.label, style: preferences.style, titleTheme: preferences.titleTheme, language, redline: preferences.redline, appearance, effects: preferences.effects, reduceMotion: reducedMotion.matches, maxFps: view.maxFps, size: preferences.size, opacity: preferences.opacity * dimmed, hovered: view.surface === 'orb' && orbHovered, activeAgents: active, toolsAgents: tools, responsePulse: pendingActivity.responsePulse, newPeak: pendingActivity.newPeak, hoverLabel: orbName() + ' · ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ' (' + t('estimated') + ')' : '')) };
   const visible = !document.hidden;
   updateArt('orb-art', false, base, visible && view.surface === 'orb' && view.orbVisible);
   updateArt('hero-art', true, { ...base, size: 112, opacity: 1, hovered: false }, visible && view.surface === 'dashboard');
-  const previewsVisible = visible && view.surface === 'settings' && settingsPage === 'orb';
+  const previewPageVisible = visible && view.surface === 'settings' && settingsPage === 'orb';
+  if (previewPageVisible) initializePreviewsAfterPaint(); else cancelPreviewInitialization();
+  const previewsVisible = previewPageVisible && previewsReady;
   for (const summary of view.orbs) {
     const row = orbRows.get(summary.instanceId); if (!row) continue;
     const selected = summary.instanceId === view.instanceId;
     updateArt(row.preview.id, false, { ...base, value: selected ? value : null, formattedValue: selected ? base.formattedValue : '—', title: selected ? title.label : t('unknown'), style: summary.style, size: 38, opacity: 1, effects: 'off', reduceMotion: true, hovered: false, activeAgents: selected ? active : 0, toolsAgents: selected ? tools : 0, responsePulse: false, newPeak: false }, previewsVisible && previewOnScreen(row.preview.id), true);
   }
-  for (const style of Object.keys(agentSpeedVisuals.styles)) updateArt('preview-' + style, false, { ...base, style, size: 64, opacity: 1, effects: 'off', reduceMotion: true, hovered: false, responsePulse: false, newPeak: false }, previewsVisible && previewOnScreen('preview-' + style));
+  for (const style of Object.keys(agentSpeedVisuals.styles)) updateArt('preview-' + style, false, { ...base, style, size: 64, opacity: 1, effects: 'off', reduceMotion: true, hovered: false, responsePulse: false, newPeak: false }, previewsVisible && previewOnScreen('preview-' + style), false, true);
   if (pendingActivity.newPeak && preferences.effects !== 'off' && view.surface === 'dashboard') { node('peak-badge').hidden = false; clearTimeout(peakBadgeTimer); peakBadgeTimer = setTimeout(() => { node('peak-badge').hidden = true; }, 1800); }
   pendingActivity = { responsePulse: false, newPeak: false };
-  text('speed-value', value === null ? '—' : value < .05 ? '0' : compact(value)); text('speed-title', title.label);
+  text('speed-value', liveReadout(value)); text('speed-title', title.label);
   node('hero').style.setProperty('--heat', agentSpeedVisuals.color(value === null ? 0 : agentSpeedVisuals.heat(value, preferences.redline), appearance));
-  text('hero-context', facts ? t('generating') + ' ' + number(active) + ' · ' + t('tools') + ' ' + number(tools) : view.workerError ? t('stale') : t('status_' + currentStatus()));
-  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : number(value, 1) + ' tok/s') + ', ' + title.label);
+  text('hero-context', facts ? (liveEstimated() ? t('estimated') + ' · ' : '') + t('generating') + ' ' + number(active) + ' · ' + t('tools') + ' ' + number(tools) : view.workerError ? t('stale') : t('status_' + currentStatus()));
+  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ', ' + t('estimated') : '')) + ', ' + title.label);
   const orb = node('orb-surface'); orb.dataset.clickThrough = String(preferences.clickThrough); orb.dataset.hovered = String(base.hovered); orb.setAttribute('aria-label', base.hoverLabel + ', ' + title.label); orb.title = base.hoverLabel;
   text('orb-name', orbName()); const plate = node('orb-nameplate'); plate.hidden = preferences.size < 80 || preferences.nameMode === 'never' || (preferences.nameMode === 'auto' && view.windowCount < 2 && !view.scope.profile && !view.scope.project);
   const font = Math.max(9, Math.min(12, Math.round(preferences.size * .066 * 2) / 2)), height = Math.round(1.78 * font), gap = Math.max(4, Math.min(7, Math.round(.034 * preferences.size))), dot = Math.max(5, .6 * font);
@@ -301,7 +344,7 @@ function renderToday(snapshot) {
   text('measured-speed', number(live ? live.rate.measuredTps : null, 1)); text('estimated-speed', number(live ? live.rate.estimatedTps : null, 1)); text('estimated-fraction', percent(live ? live.rate.estimatedShare : null));
   node('estimate-legend').hidden = !live || live.rate.estimatedTps <= 0;
   const listed = !!usage && (usage.outputTokens > 0 || value > 0); node('source-omp').hidden = !listed; node('sources-empty').hidden = listed;
-  text('source-today', usage ? compact(usage.outputTokens) + ' · ' + costText(usage, 'recorded') : '—'); text('source-live', speed(value));
+  text('source-today', usage ? compact(usage.outputTokens) + ' · ' + costText(usage, 'recorded') : '—'); text('source-live', value !== null && value >= .05 ? liveReadout(value) : '–');
   const scoped = !!view.scope.profile || !!view.scope.project; node('selected-scope').hidden = !scoped;
   text('selected-scope', (view.scope.profile || t('allProfiles')) + ' · ' + (view.scope.project || t('allProjects'))); node('selected-scope').title = node('selected-scope').textContent;
   const pricing = view.snapshot ? view.snapshot.pricing : null;
@@ -446,7 +489,11 @@ function renderPublicData(pricing) {
   enabled.disabled = !pricing; enabled.checked = !!(pricing && pricing.networkEnabled); refresh.disabled = !pricing || !pricing.networkEnabled || pricing.prices.status === 'updating' || pricing.rates.status === 'updating'; currency.disabled = !pricing;
   if (!pricing) { text('public-status', t('unknown')); text('public-details', t('scanning')); text('currency-rate', t('unknown')); return; }
   if (document.activeElement !== currency || !currency.options.length) {
-    const fragment = document.createDocumentFragment(); for (const code of pricing.currencies) { const option = document.createElement('option'); option.value = code; option.textContent = code + (currencyNames ? ' · ' + currencyNames.of(code) : ''); fragment.append(option); } currency.replaceChildren(fragment); currency.value = pricing.currency;
+    if (!currencyOptions || currencyOptions.language !== language || !sameOptionValues(currencyOptions.values, pricing.currencies)) {
+      const fragment = document.createDocumentFragment(); for (const code of pricing.currencies) { const option = document.createElement('option'); option.value = code; option.textContent = code + (currencyNames ? ' · ' + currencyNames.of(code) : ''); fragment.append(option); } currency.replaceChildren(fragment);
+      currencyOptions = { language, values: pricing.currencies };
+    }
+    if (currency.value !== pricing.currency) currency.value = pricing.currency;
   }
   text('public-status', t(pricing.networkEnabled ? 'networkOn' : 'networkOff'));
   for (const [key, feed] of [['prices', pricing.prices], ['rates', pricing.rates]]) {
@@ -604,14 +651,20 @@ function renderData(snapshot) {
   text('today-total', compact(usage ? usage.totalTokens : null)); text('today-cache', usage ? compact(usage.cacheReadTokens) + ' / ' + compact(usage.cacheWriteTokens) : '—'); text('today-failures', number(usage ? usage.failedRequests : null)); text('today-duration', usage ? number(usage.measuredDurationMs / 1000, 1) + ' s' : '—');
   renderCoverage(snapshot); renderResources(snapshot ? snapshot.resources : null);
 }
+function renderSettingsContent() {
+  syncPreferences(); text('settings-title', t(settingsPage === 'data' ? 'localData' : settingsPage));
+  if (settingsPage === 'cost') renderPublicData(view.snapshot ? view.snapshot.pricing : null);
+  else if (settingsPage === 'data') renderData(view.snapshot);
+}
 function setSettingsPage(page, focus = false) {
   if (!['general', 'orb', 'effects', 'cost', 'data', 'about'].includes(page)) return;
+  monitorSelectPicker.close();
   settingsPage = page;
   for (const panel of document.querySelectorAll('.settings-page')) panel.hidden = panel.dataset.page !== page;
   for (const button of document.querySelectorAll('.settings-nav [role=tab]')) { const selected = button.dataset.page === page; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; }
   text('settings-title', t(page === 'data' ? 'localData' : page)); node('settings-scroller').scrollTop = 0;
   if (focus) node('nav-' + page).focus();
-  if (view) { syncPreferences(); renderPublicData(view.snapshot ? view.snapshot.pricing : null); renderData(view.snapshot); renderArt(); }
+  if (view) { renderSettingsContent(); renderArt(); }
 }
 function closePopover(restoreFocus = false) {
   for (const element of document.querySelectorAll('.popover')) element.hidden = true;
@@ -626,7 +679,7 @@ function openPopover(id, anchor) {
   const first = popup.querySelector('button,input'); if (first) first.focus();
 }
 function renderView() {
-  if (!view) return;
+  if (!view || rendererDestroyed) return;
   appearance = view.preferences.appearance === 'system' ? systemAppearance.matches ? 'dark' : 'light' : view.preferences.appearance;
   document.body.dataset.surface = view.surface; document.body.dataset.appearance = appearance; document.body.dataset.effects = view.preferences.effects; document.body.dataset.hidden = String(document.hidden); document.documentElement.style.setProperty('--orb-size', view.preferences.size + 'px');
   for (const surface of ['orb', 'dashboard', 'history', 'settings']) node(surface + '-surface').hidden = view.surface !== surface;
@@ -634,12 +687,13 @@ function renderView() {
   if (document.hidden) { renderArt(); return; }
   if (view.surface === 'dashboard') { renderToday(snapshotFacts()); renderChart(liveFacts()); renderAgents(snapshotFacts() ? snapshotFacts().agents : []); }
   else if (view.surface === 'history') { for (const [id, kind] of [['history-profile', 'profile'], ['history-project', 'project']]) fillScope(id, view.scopes[kind === 'profile' ? 'profiles' : 'projects'], view.scope[kind], kind === 'profile' ? 'allProfiles' : 'allProjects'); renderHistory(snapshotFacts()); }
-  else if (view.surface === 'settings') { syncPreferences(); text('settings-title', t(settingsPage === 'data' ? 'localData' : settingsPage)); renderPublicData(view.snapshot ? view.snapshot.pricing : null); renderData(view.snapshot); }
+  else if (view.surface === 'settings') renderSettingsContent();
   renderArt();
 }
 function receiveState(next) {
+  if (rendererDestroyed) return;
   const changed = !view || next.scope.profile !== view.scope.profile || next.scope.project !== view.scope.project || next.instanceId !== view.instanceId;
-  const canCelebrate = !!view && !changed && !document.hidden && !view.workerError && !view.refreshing && !next.workerError && !next.refreshing && view.snapshot && view.snapshot.status === 'ready' && next.snapshot && next.snapshot.status === 'ready';
+  const canCelebrate = !!view && !changed && !document.hidden && !view.workerError && !view.refreshing && !next.workerError && !next.refreshing && hasLiveSnapshot(view.snapshot) && hasLiveSnapshot(next.snapshot);
   const now = Date.now(), activity = next.activity;
   pendingActivity = {
     responsePulse: !!(canCelebrate && activityBaseline && activity.responseSequence > activityBaseline.responseSequence && activity.lastResponseAt !== null && now - activity.lastResponseAt >= 0 && now - activity.lastResponseAt <= 3000),
@@ -652,7 +706,7 @@ function receiveState(next) {
   }
   if (changed) { resetTitleTracker(); selectedHistoryDate = null; chartPoints = []; orbIdleSince = null; clearTimeout(peakBadgeTimer); node('peak-badge').hidden = true; }
   if (languageChanged) { language = next.language; applyLanguage(); }
-  if (!document.hidden) renderView(); else { trackedTitle(liveValue()); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; syncInteraction(); for (const entry of artInstances.values()) entry.instance.setVisible(false); }
+  if (!document.hidden) renderView(); else { cancelPreviewInitialization(); trackedTitle(liveValue()); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; syncInteraction(); for (const entry of artInstances.values()) entry.instance.setVisible(false); }
 }
 function syncInteraction() {
   if (!bridge || !view || view.surface !== 'orb') return;
@@ -718,6 +772,7 @@ function bindRadioKeyboard(id) {
   });
 }
 function bindControls() {
+  monitorSelectPicker.install();
   for (const element of document.querySelectorAll('#close,[data-close]')) element.addEventListener('click', () => action(() => bridge.close()));
   for (const element of document.querySelectorAll('#refresh,[data-refresh]')) element.addEventListener('click', () => action(() => bridge.refresh()));
   for (const element of document.querySelectorAll('[data-open]')) element.addEventListener('click', () => action(() => bridge.openSurface(element.dataset.open)));
@@ -781,10 +836,10 @@ function startMonitor() {
   bindControls(); unsubscribe = bridge.onState(receiveState);
   unsubscribePointer = bridge.onPointer(pointer => { lastPointer = pointer; syncInteraction(); });
   unsubscribeDrag = bridge.onDragCancelled(() => cancelLocalDrag());
-  bridge.ready().then(receiveState).catch(() => toast(t('bridgeError')));
-  document.addEventListener('visibilitychange', () => { document.body.dataset.hidden = String(document.hidden); if (document.hidden) { cancelLocalDrag(false); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; for (const entry of artInstances.values()) entry.instance.setVisible(false); } else renderView(); });
+  bridge.ready().then(receiveState).catch(() => { if (!rendererDestroyed) toast(t('bridgeError')); });
+  document.addEventListener('visibilitychange', () => { if (rendererDestroyed) return; document.body.dataset.hidden = String(document.hidden); if (document.hidden) { cancelPreviewInitialization(); cancelLocalDrag(false); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; for (const entry of artInstances.values()) entry.instance.setVisible(false); } else renderView(); });
   systemAppearance.addEventListener('change', renderView); reducedMotion.addEventListener('change', renderView); window.addEventListener('blur', finishDrag);
   window.addEventListener('resize', () => { closePopover(); renderView(); });
-  window.addEventListener('pagehide', () => { cancelLocalDrag(false); if (unsubscribe) unsubscribe(); if (unsubscribePointer) unsubscribePointer(); if (unsubscribeDrag) unsubscribeDrag(); clearTimeout(toastTimer); clearTimeout(selectedDayTimer); clearTimeout(peakBadgeTimer); clearTimeout(titleDeadlineTimer); for (const entry of artInstances.values()) entry.instance.destroy(); artInstances.clear(); orbRows.clear(); systemAppearance.removeEventListener('change', renderView); reducedMotion.removeEventListener('change', renderView); });
+  window.addEventListener('pagehide', () => { if (rendererDestroyed) return; rendererDestroyed = true; cancelPreviewInitialization(); cancelLocalDrag(false); if (unsubscribe) unsubscribe(); if (unsubscribePointer) unsubscribePointer(); if (unsubscribeDrag) unsubscribeDrag(); clearTimeout(toastTimer); clearTimeout(selectedDayTimer); clearTimeout(peakBadgeTimer); clearTimeout(titleDeadlineTimer); for (const entry of artInstances.values()) entry.instance.destroy(); agentSpeedVisuals.disposeSharedGpu(); artInstances.clear(); orbRows.clear(); systemAppearance.removeEventListener('change', renderView); reducedMotion.removeEventListener('change', renderView); });
 }
 `;

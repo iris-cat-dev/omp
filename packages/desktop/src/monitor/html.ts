@@ -1,5 +1,6 @@
 import { MONITOR_ORB_CSS, MONITOR_VISUALS_SCRIPT } from "./visuals.js";
 import { MONITOR_RENDERER_SCRIPT } from "./renderer.js";
+import { MONITOR_SELECT_PICKER_SCRIPT } from "./select-picker.js";
 import { MONITOR_UI_CSS } from "./ui-styles.js";
 import { MONITOR_UI_MARKUP } from "./ui-markup.js";
 import { AGENT_SPEED_ATTRIBUTION, AGENT_SPEED_LICENSE } from "./attribution.js";
@@ -18,6 +19,7 @@ ${MONITOR_UI_MARKUP}
 const monitorAttribution = ${JSON.stringify(AGENT_SPEED_ATTRIBUTION).replace(/</g, "\\u003c")};
 const monitorLicense = ${JSON.stringify(AGENT_SPEED_LICENSE).replace(/</g, "\\u003c")};
 ${MONITOR_VISUALS_SCRIPT}
+${MONITOR_SELECT_PICKER_SCRIPT}
 ${MONITOR_RENDERER_SCRIPT}
 startMonitor();
 </script></body></html>`;

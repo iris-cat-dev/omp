@@ -62,7 +62,7 @@ const READOUTS={
 const FX_LEVELS={off:0,soft:1,standard:2,max:3};
 const VERTEX_SHADER='#version 300 es\nin vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
 function create(host,options){
-  const thumbnail=!!options.thumbnail,embedded=!!options.embedded&&!thumbnail;
+  const thumbnail=!!options.thumbnail,sharedGpu=thumbnail||!!options.sharedGpu,embedded=!!options.embedded&&!thumbnail;
   host.classList.add('as-orb-art');host.dataset.embedded=String(embedded);host.dataset.thumbnail=String(thumbnail);host.dataset.hovered='false';
   const glCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),fxCanvas=document.createElement('canvas'),transitionCanvas=document.createElement('canvas');
   glCanvas.className='as-orb-gl';paintCanvas.className='as-orb-paint';fxCanvas.className='as-orb-fx';transitionCanvas.className='as-orb-transition';
@@ -70,8 +70,8 @@ function create(host,options){
   const readout=document.createElement('div'),number=document.createElement('div'),value=document.createElement('span'),oldValue=document.createElement('span'),unit=document.createElement('div'),titleLine=document.createElement('div'),titleLabel=document.createElement('span'),info=document.createElement('span'),pill=document.createElement('div');
   readout.className='as-orb-readout';readout.setAttribute('aria-hidden','true');number.className='as-orb-number';value.className='as-orb-value';oldValue.className='as-orb-old-value';unit.className='as-orb-unit';titleLine.className='as-orb-title-line';titleLabel.className='as-orb-title';info.className='as-orb-info';pill.className='as-orb-peak';pill.setAttribute('aria-hidden','true');
   number.append(oldValue,value);titleLine.append(titleLabel,info);readout.append(number,unit,titleLine);host.append(glCanvas,paintCanvas,transitionCanvas,readout,fxCanvas,pill);
-  const paint=paintCanvas.getContext('2d'),fx=fxCanvas.getContext('2d'),transitionPaint=transitionCanvas.getContext('2d'),thumbnailPaint=thumbnail?glCanvas.getContext('2d'):null;
-  if(!paint||!fx||!transitionPaint||thumbnail&&!thumbnailPaint)throw new Error('Agent Speed instruments require Canvas 2D');
+  const paint=paintCanvas.getContext('2d'),fx=fxCanvas.getContext('2d'),transitionPaint=transitionCanvas.getContext('2d'),sharedPaint=sharedGpu?glCanvas.getContext('2d'):null;
+  if(!paint||!fx||!transitionPaint||sharedGpu&&!sharedPaint)throw new Error('Agent Speed instruments require Canvas 2D');
   const st={S:148,dpr:1,dark:true,embedded,thumbnail,reduced:false,maxFps:60,resources:null,style:'led',fx:2,level:1,moving:true,value:0,h:0,o:0,targetH:0,targetO:0,time:0,tier:0,candidateTier:0,tierHold:0,flash:0,peakAge:99,pulseAge:99,comet:0,flow:0,phase:0,phase2:0,warp:0,corona:0,heroMotePhase:0,idleSweep:-1,sweepAge:99,hovered:false,jitterX:0,jitterY:0,jitterAt:0,needleShown:0,readoutAnimate:false,
     heatSpring:{value:0,velocity:0},overSpring:{value:0,velocity:0},needle:{value:0,velocity:0},liquid:{value:.08,velocity:0},liquidSurge:{value:0,velocity:0},liquidPhases:new Float32Array(4),rotors:new Float64Array([.3,1.1,2]),rotorFrom:new Float64Array(3),rotorTo:new Float64Array(3),bandPhase:0,kick:0,waves:Array.from({length:4},()=>({age:99,strength:1,heat:0})),ripples:Array.from({length:4},()=>({age:99,x:0,amplitude:0}))};
   const effects=createEffects(st,value,fxCanvas),hero=embedded?createHero():null,liquidText=createLiquidReadout(st),readoutMetrics={},waveUniforms=new Float32Array(16),rippleUniforms=new Float32Array(16),waveColorUniforms=new Float32Array(16);
@@ -81,9 +81,9 @@ function create(host,options){
     if(programs)return true;if(gpuError||contextLost)return false;
     try{
       let resources;
-      if(thumbnail){
+      if(sharedGpu){
         if(!thumbnailLease)thumbnailLease=retainThumbnailGpu(lost,restored);
-        const pool=thumbnailLease.pool;if(pool.error)throw pool.error;if(pool.lost||!pool.resources)return false;resources=pool.resources;
+        resources=thumbnailGpuResources(thumbnailLease.pool);if(!resources)return false;
       }else{
         if(!nativeGpu){gl=orbGl(glCanvas);nativeGpu=createGpuResources(gl);}resources=nativeGpu;
       }
@@ -199,7 +199,7 @@ function create(host,options){
   }
   function drawGpu(){
     if(!gpu())return false;
-    const renderCanvas=thumbnail?thumbnailLease.pool.canvas:glCanvas;
+    const renderCanvas=sharedGpu?thumbnailLease.pool.canvas:glCanvas;
     if(renderCanvas.width!==glCanvas.width||renderCanvas.height!==glCanvas.height){renderCanvas.width=glCanvas.width;renderCanvas.height=glCanvas.height;}
     const p=programs[st.style],u=p.locations;gl.useProgram(p.program);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.enableVertexAttribArray(0);gl.viewport(0,0,glCanvas.width,glCanvas.height);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
     const peakAge=st.fx>0&&(st.moving||st.style==='liquid'&&st.reduced)?st.peakAge:99;
@@ -217,7 +217,7 @@ function create(host,options){
     }
     if(st.style==='liquid'){const c=liquidColors(st);gl.uniform4fv(u.uLiquidColors,c.values);gl.uniform3fv(u.uLiquidInk,c.ink);gl.uniform2f(u.uMeniscus,c.width,c.sigma);gl.uniform4fv(u.uWaveColors,waveColorUniforms);liquidText.bind(gl,u,paintCanvas);}
     gl.uniform4fv(u.uWaves,waveUniforms);gl.uniform4fv(u.uRipples,rippleUniforms);gl.drawArrays(gl.TRIANGLES,0,3);
-    if(thumbnail){thumbnailPaint.clearRect(0,0,glCanvas.width,glCanvas.height);thumbnailPaint.drawImage(renderCanvas,0,0);}
+    if(sharedGpu){sharedPaint.clearRect(0,0,glCanvas.width,glCanvas.height);sharedPaint.drawImage(renderCanvas,0,0);}
     return true;
   }
   function shared(ctx){
@@ -309,7 +309,7 @@ function create(host,options){
       transitionPaint.drawImage(paintCanvas,0,0);transitionPaint.drawImage(fxCanvas,0,0);
     }
     frame=next;st.style=embedded?'led':next.style;st.S=thumbnail?clamp(next.size,1,63):clamp(next.size,64,240);st.dark=next.appearance!=='light';st.reduced=!!next.reduceMotion;st.maxFps=next.maxFps===30?30:60;
-    if(thumbnail&&st.style!=='led'&&st.style!=='liquid')releaseThumbnail();
+    if(sharedGpu&&st.style!=='led'&&st.style!=='liquid')releaseThumbnail();
     const requested=FX_LEVELS[next.effects];st.fx=st.reduced||thumbnail?Math.min(requested,1):requested;st.level=st.fx===3?1.6:1;st.moving=st.fx>0&&!st.reduced&&!thumbnail;
     st.value=next.value===null?0:Math.max(0,next.value);st.targetH=heat(st.value,next.redline);st.targetO=clamp((st.value-next.redline)/next.redline);
     host.dataset.style=st.style;host.dataset.appearance=st.dark?'dark':'light';host.dataset.static=String(!st.moving);host.style.opacity=String(clamp(next.opacity,0,1));host.setAttribute('aria-label',next.formattedValue+' '+next.unit+' · '+next.title);
@@ -349,19 +349,19 @@ function create(host,options){
   function visibility(){
     if(document.hidden){stop(true);releaseThumbnail();}else if(visible&&frame){snap();if(hero)hero.pause();dirty=true;schedule();}
   }
-  function lost(event){event.preventDefault();contextLost=true;nativeGpu=null;programs=buffer=null;liquidText.reset(null);stop(true);if(hero)hero.pause();if(thumbnailPaint)thumbnailPaint.clearRect(0,0,glCanvas.width,glCanvas.height);gpuError=gpuError||'WebGL context lost';host.dataset.renderError=gpuError;showError(true);}
+  function lost(event){event.preventDefault();contextLost=true;nativeGpu=null;programs=buffer=null;liquidText.reset(null);stop(true);if(hero)hero.pause();if(sharedPaint)sharedPaint.clearRect(0,0,glCanvas.width,glCanvas.height);gpuError=gpuError||'WebGL context lost';host.dataset.renderError=gpuError;showError(true);}
   function restored(){contextLost=false;programs=buffer=null;nativeGpu=null;gpuError=null;delete host.dataset.renderError;if(frame){snap();dirty=true;schedule();}}
   function windowResize(){if(frame&&visible&&!document.hidden){st.readoutAnimate=false;resize();layout();dirty=true;schedule();}}
-  document.addEventListener('visibilitychange',visibility);window.addEventListener('resize',windowResize);if(!thumbnail){glCanvas.addEventListener('webglcontextlost',lost);glCanvas.addEventListener('webglcontextrestored',restored);}
+  document.addEventListener('visibilitychange',visibility);window.addEventListener('resize',windowResize);if(!sharedGpu){glCanvas.addEventListener('webglcontextlost',lost);glCanvas.addEventListener('webglcontextrestored',restored);}
   function destroy(){
     if(destroyed)return;destroyed=true;stop(true);
-    document.removeEventListener('visibilitychange',visibility);window.removeEventListener('resize',windowResize);if(!thumbnail){glCanvas.removeEventListener('webglcontextlost',lost);glCanvas.removeEventListener('webglcontextrestored',restored);}
-    if(thumbnail)releaseThumbnail();else{liquidText.reset(contextLost?null:gl);disposeGpuResources(nativeGpu);loseOrbGl(gl);nativeGpu=null;}
+    document.removeEventListener('visibilitychange',visibility);window.removeEventListener('resize',windowResize);if(!sharedGpu){glCanvas.removeEventListener('webglcontextlost',lost);glCanvas.removeEventListener('webglcontextrestored',restored);}
+    if(sharedGpu)releaseThumbnail();else{liquidText.reset(contextLost?null:gl);disposeGpuResources(nativeGpu);loseOrbGl(gl);nativeGpu=null;}
     for(const node of [glCanvas,paintCanvas,fxCanvas,transitionCanvas,readout,pill,errorLabel])if(node)node.remove();
     host.classList.remove('as-orb-art');delete host.dataset.renderError;
   }
   return {update,setVisible,destroy};
 }
-return {styles,themes,title,heat,color,create};
+return {styles,themes,title,heat,color,create,disposeSharedGpu:disposeThumbnailGpu};
 })();
 `;

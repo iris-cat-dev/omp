@@ -79,7 +79,12 @@ export class OmpMonitorHistory {
     let lastResponseAt: number | null = null;
     let limited = false;
     for (const response of responses) {
-      if (!response.sideCall && response.failedRequests === 0 && response.outputTokens > 0)
+      if (
+        response.feedbackEligible !== false &&
+        !response.sideCall &&
+        response.failedRequests === 0 &&
+        response.outputTokens > 0
+      )
         lastResponseAt = Math.max(lastResponseAt ?? response.endMs, response.endMs);
       const responseDayIndex = dates.findIndex(
         (day) => response.endMs >= day.start && response.endMs < day.end,

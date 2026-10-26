@@ -159,15 +159,13 @@ class OmpMonitorWorker {
   }
 
   private publish(fromPoll = false): void {
-    if (!this.hasSnapshot || this.disposed || (this.running && !fromPoll)) return;
-    for (const entry of this.scopes) {
-      const snapshot = this.monitor.getSnapshot(entry.scope);
-      this.post({
-        type: "snapshot",
-        scopeId: entry.id,
-        snapshot: { ...snapshot, resources: this.resources },
-      });
-    }
+    if (!this.hasSnapshot || this.disposed || !this.scopes.length || (this.running && !fromPoll))
+      return;
+    const snapshots = this.scopes.map((entry) => ({
+      scopeId: entry.id,
+      snapshot: { ...this.monitor.getSnapshot(entry.scope), resources: this.resources },
+    }));
+    this.post({ type: "snapshots", snapshots });
   }
 
   private async refreshReadyCatalog(catalog: OmpPriceCatalog, force: boolean): Promise<void> {
