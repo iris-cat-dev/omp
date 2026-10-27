@@ -9,6 +9,7 @@ import {
   VISUAL_FEEDBACK_MAX_IMAGE_PIXELS,
 } from "@omp-desktop/protocol/visual-feedback";
 import { isMainWindowSender, showMainWindow } from "../window/main-windows.js";
+import { captureWindowsScreenshot } from "./screenshot-windows.js";
 
 const runFile = promisify(execFile);
 let capturing = false;
@@ -25,28 +26,7 @@ async function captureSystemScreen(destination: string): Promise<boolean> {
       throw new Error(`Screen capture failed: ${detail}`, { cause: error });
     }
   }
-  const script = [
-    "Add-Type -AssemblyName System.Windows.Forms",
-    "Add-Type -AssemblyName System.Drawing",
-    "$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen",
-    "$bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)",
-    "$graphics = [System.Drawing.Graphics]::FromImage($bitmap)",
-    "try {",
-    "  $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)",
-    `  $bitmap.Save('${destination.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)`,
-    "} finally { $graphics.Dispose(); $bitmap.Dispose() }",
-  ].join("\n");
-  await runFile(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64"),
-    ],
-    { timeout: 30000, windowsHide: true },
-  );
-  return true;
+  return captureWindowsScreenshot(destination);
 }
 
 async function readCapturedImage(destination: string) {
