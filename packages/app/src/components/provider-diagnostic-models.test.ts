@@ -105,4 +105,49 @@ describe("groupOmpDiscoveredModels", () => {
       { id: "openai-codex", label: "OpenAI Codex", models: [codexModel] },
     ]);
   });
+
+  it("refreshes exact Unicode names while preserving provider and model identities", () => {
+    const model: AgentModelDefinition = {
+      provider: "omp",
+      id: "custom-123/gpt-5",
+      label: "私有-服务_API/GPT-5",
+      metadata: { provider: "custom-123", providerName: "  私有-服务_API  " },
+    };
+    const ready = resolveModels({ provider: "omp", currentModels: [model] });
+    const renamedModel: AgentModelDefinition = {
+      ...model,
+      label: "新的服务商/GPT-5",
+      metadata: { ...model.metadata, providerName: "  新的服务商  " },
+    };
+    const refreshed = resolveModels({
+      provider: "omp",
+      currentModels: [renamedModel],
+      cache: ready.cache,
+    });
+
+    expect(groupOmpDiscoveredModels(ready.models)).toEqual([
+      { id: "custom-123", label: "私有-服务_API", models: [model] },
+    ]);
+    expect(groupOmpDiscoveredModels(refreshed.models)).toEqual([
+      { id: "custom-123", label: "新的服务商", models: [renamedModel] },
+    ]);
+    expect(refreshed.models[0]?.id).toBe(model.id);
+    expect(refreshed.cache?.models).toEqual([renamedModel]);
+  });
+
+  it.each([undefined, "", " \t "])(
+    "keeps namespace formatting for a missing or blank provider name (%j)",
+    (providerName) => {
+      const model: AgentModelDefinition = {
+        provider: "omp",
+        id: "custom-123/gpt-5",
+        label: "不是供应商名称/GPT-5",
+        metadata: { provider: "custom-123", providerName },
+      };
+
+      expect(groupOmpDiscoveredModels([model])).toEqual([
+        { id: "custom-123", label: "Custom 123", models: [model] },
+      ]);
+    },
+  );
 });

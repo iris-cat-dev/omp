@@ -1,5 +1,5 @@
 import type { OmpCustomProviderInput, OmpProviderApi } from "@omp-desktop/protocol/messages";
-import { parse, parseDocument } from "yaml";
+import { isMap, isSeq, parse, parseDocument } from "yaml";
 
 export const OMP_PROVIDER_APIS = [
   "openai-responses",
@@ -28,14 +28,19 @@ export interface OmpProviderModelDraft {
 
 export interface OmpProviderDraft {
   providerId: string;
+  name: string;
   baseUrl: string;
   apiKey: string;
   models: OmpProviderModelDraft[];
 }
 
-export function createEmptyProviderDraft(modelKey: string): OmpProviderDraft {
+export function createEmptyProviderDraft(
+  modelKey: string,
+  providerId = `custom-${crypto.randomUUID()}`,
+): OmpProviderDraft {
   return {
-    providerId: "",
+    providerId,
+    name: "",
     baseUrl: "",
     apiKey: "",
     models: [
@@ -85,21 +90,13 @@ export function configureDiscoveredProviderModels(
         maxTokens:
           existing.maxTokens.trim() ||
           (model.maxOutputTokens !== undefined ? String(model.maxOutputTokens) : ""),
-        ...(model.reasoning !== undefined
-          ? { reasoning: model.reasoning }
-          : existing.reasoning !== undefined
-            ? { reasoning: existing.reasoning }
-            : {}),
+        ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
         ...(model.defaultReasoningLevel
           ? { defaultReasoningLevel: model.defaultReasoningLevel }
-          : existing.defaultReasoningLevel
-            ? { defaultReasoningLevel: existing.defaultReasoningLevel }
-            : {}),
+          : {}),
         ...(model.supportedReasoningLevels
           ? { supportedReasoningLevels: [...model.supportedReasoningLevels] }
-          : existing.supportedReasoningLevels
-            ? { supportedReasoningLevels: existing.supportedReasoningLevels }
-            : {}),
+          : {}),
       };
     }
     return {
@@ -151,6 +148,7 @@ export function parseCustomProviderDraft(
       providers?: Record<
         string,
         {
+          name?: unknown;
           baseUrl?: unknown;
           apiKey?: unknown;
           api?: unknown;
@@ -205,9 +203,13 @@ export function parseCustomProviderDraft(
     );
     return {
       providerId,
+      name:
+        typeof provider.name === "string" && provider.name.trim()
+          ? provider.name.trim()
+          : providerId,
       baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : "",
       apiKey: typeof provider.apiKey === "string" ? provider.apiKey : "",
-      models: models.length > 0 ? models : createEmptyProviderDraft("model-0").models,
+      models: models.length > 0 ? models : createEmptyProviderDraft("model-0", providerId).models,
     };
   } catch {
     return null;
@@ -216,6 +218,7 @@ export function parseCustomProviderDraft(
 
 function providerInputToYamlValue(provider: OmpCustomProviderInput) {
   return {
+    ...(provider.name?.trim() ? { name: provider.name.trim() } : {}),
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     api: provider.models[0]?.api ?? "openai-responses",
@@ -249,6 +252,30 @@ export function updateCustomProviderConfigYaml(
   provider: OmpCustomProviderInput,
 ): string {
   const document = parseDocument(configYaml);
-  document.setIn(["providers", providerId], providerInputToYamlValue(provider));
+  const value = providerInputToYamlValue(provider);
+  const providerPath = ["providers", providerId];
+  for (const [key, field] of Object.entries(value)) {
+    if (key !== "models") document.setIn([...providerPath, key], field);
+  }
+  const currentModels = document.getIn([...providerPath, "models"], true);
+  const modelsById = new Map(
+    isSeq(currentModels)
+      ? currentModels.items.filter(isMap).map((model) => [model.get("id"), model])
+      : [],
+  );
+  const models = document.createNode<unknown[]>([]);
+  for (const model of value.models) {
+    const node = modelsById.get(model.id);
+    if (!node) {
+      models.items.push(document.createNode(model));
+      continue;
+    }
+    for (const key of ["contextWindow", "maxTokens", "reasoning", "thinking"]) {
+      if (!Object.hasOwn(model, key)) node.delete(key);
+    }
+    for (const [key, field] of Object.entries(model)) node.set(key, field);
+    models.items.push(node);
+  }
+  document.setIn([...providerPath, "models"], models);
   return document.toString();
 }

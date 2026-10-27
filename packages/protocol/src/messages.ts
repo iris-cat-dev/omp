@@ -1960,6 +1960,7 @@ export const OmpCustomProviderInputSchema = z.object({
     .string()
     .trim()
     .regex(/^[a-z0-9][a-z0-9._-]*$/),
+  name: z.string().trim().min(1).optional(),
   baseUrl: z.string().trim().url(),
   apiKey: z.string().trim().min(1),
   api: OmpProviderApiSchema,
@@ -6635,6 +6636,7 @@ export const OmpProviderManagementSchema = z.object({
   providerModels: z.array(
     z.object({
       id: z.string(),
+      name: z.string().trim().min(1).optional(),
       modelCount: z.number().int().nonnegative(),
       source: z.enum(["built-in", "custom"]).optional(),
       models: z

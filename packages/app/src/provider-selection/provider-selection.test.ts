@@ -11,6 +11,7 @@ import {
   buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
+  getAllProviderModelRows,
   matchesModelSearch,
   resolveSelectedModelLabel,
   resolveSubmissionReadiness,
@@ -72,6 +73,72 @@ describe("combined model selector data", () => {
       },
     ]);
   });
+
+  it("refreshes explicit Unicode provider names without changing model row identity", () => {
+    const rows = ["  私有-服务_API  ", "  新的服务商  "].map(
+      (providerName) =>
+        getAllProviderModelRows(
+          buildSelectableProviderSelectorProviders([
+            snapshotEntry({
+              provider: "omp",
+              label: "OMP",
+              models: [
+                {
+                  provider: "omp",
+                  id: "custom-123/gpt-5",
+                  label: "GPT-5",
+                  metadata: { provider: "custom-123", providerName },
+                },
+              ],
+            }),
+          ]),
+        )[0]!,
+    );
+
+    expect(rows[0]).toMatchObject({
+      favoriteKey: "omp:custom-123/gpt-5",
+      provider: "omp",
+      providerName: "私有-服务_API",
+      providerLabel: "私有-服务_API",
+      modelId: "custom-123/gpt-5",
+    });
+    expect(rows[1]).toMatchObject({
+      favoriteKey: rows[0]!.favoriteKey,
+      provider: rows[0]!.provider,
+      modelId: rows[0]!.modelId,
+      providerName: "新的服务商",
+      providerLabel: "新的服务商",
+    });
+    expect(matchesModelSearch(rows[0]!, "私有")).toBe(true);
+    expect(matchesModelSearch(rows[1]!, "新的服务商")).toBe(true);
+    expect(matchesModelSearch(rows[1]!, "私有")).toBe(false);
+    expect(buildProviderQualifiedDescription(rows[1]!)).toBe("新的服务商 · custom-123/gpt-5");
+  });
+
+  it.each([undefined, "", " \t "])(
+    "keeps the existing provider fallback for a missing or blank name (%j)",
+    (providerName) => {
+      const [row] = getAllProviderModelRows(
+        buildSelectableProviderSelectorProviders([
+          snapshotEntry({
+            provider: "omp",
+            label: "OMP",
+            models: [
+              {
+                provider: "omp",
+                id: "custom-123/gpt-5",
+                label: "中文标签/GPT-5",
+                metadata: { provider: "custom-123", providerName },
+              },
+            ],
+          }),
+        ]),
+      );
+
+      expect(row?.providerLabel).toBe("OMP");
+      expect(row?.providerName).toBeUndefined();
+    },
+  );
 
   it("hides compatibility-only model entries from new clients", () => {
     const compatibilityModel: AgentModelDefinition = {

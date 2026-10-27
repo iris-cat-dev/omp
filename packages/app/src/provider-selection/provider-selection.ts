@@ -9,6 +9,10 @@ import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@omp-desktop/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
+import {
+  resolveOmpModelProviderLabel,
+  resolveOmpModelProviderNamespace,
+} from "./omp-model-provider";
 
 export interface ProviderSelectionModelRow {
   /**
@@ -19,6 +23,7 @@ export interface ProviderSelectionModelRow {
   favoriteKey: string;
   provider: string;
   providerLabel: string;
+  providerName?: string;
   modelId: string;
   modelLabel: string;
   description?: string;
@@ -60,18 +65,31 @@ function buildModelRows(
   providerLabel: string,
   models: AgentModelDefinition[],
 ): ProviderSelectionModelRow[] {
-  return models.map((model) => ({
-    favoriteKey: buildModelRowKey(provider, model.id),
-    provider,
-    providerLabel,
-    modelId: model.id,
-    modelLabel: model.label,
-    description: model.description ?? model.id,
-    isDefault: model.isDefault,
-    ...(model.contextWindowMaxTokens !== undefined
-      ? { contextWindowMaxTokens: model.contextWindowMaxTokens }
-      : {}),
-  }));
+  return models.map((model) => {
+    const providerName =
+      typeof model.metadata?.providerName === "string"
+        ? model.metadata.providerName.trim() || undefined
+        : undefined;
+    return {
+      favoriteKey: buildModelRowKey(provider, model.id),
+      provider,
+      providerLabel:
+        provider === "omp" && providerName
+          ? resolveOmpModelProviderLabel(
+              resolveOmpModelProviderNamespace(model.id, model.metadata?.provider),
+              providerName,
+            )
+          : providerLabel,
+      ...(providerName ? { providerName } : {}),
+      modelId: model.id,
+      modelLabel: model.label,
+      description: model.description ?? model.id,
+      isDefault: model.isDefault,
+      ...(model.contextWindowMaxTokens !== undefined
+        ? { contextWindowMaxTokens: model.contextWindowMaxTokens }
+        : {}),
+    };
+  });
 }
 
 function buildSyntheticDefaultRow(
@@ -243,7 +261,13 @@ export function matchesModelSearch(
 }
 
 function getModelRowSearchFields(row: ProviderSelectionModelRow): string[] {
-  return [row.modelLabel, row.modelId, row.providerLabel, row.description ?? ""];
+  return [
+    row.modelLabel,
+    row.modelId,
+    row.providerLabel,
+    row.providerName ?? "",
+    row.description ?? "",
+  ];
 }
 
 export function scoreModelRow(row: ProviderSelectionModelRow, normalizedQuery: string) {

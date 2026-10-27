@@ -144,6 +144,25 @@ describe("mapOmpModel thinking options", () => {
     expect(result.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
   });
 
+  test("uses a Unicode provider name only for display", () => {
+    expect(mapOmpModel(baseModel(), "omp", "  我的模型 / 实验室  ")).toMatchObject({
+      id: "pioneer/canada-quant/glm-5.2",
+      label: "我的模型 / 实验室/GLM-5.2",
+      description: "pioneer/canada-quant/glm-5.2",
+      metadata: {
+        provider: "pioneer",
+        providerName: "我的模型 / 实验室",
+        modelId: "canada-quant/glm-5.2",
+      },
+    });
+  });
+
+  test.each([undefined, "", "  "])("keeps the technical provider fallback for name %s", (name) => {
+    const model = mapOmpModel(baseModel(), "omp", name);
+    expect(model.label).toBe("pioneer/GLM-5.2");
+    expect(model.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
+  });
+
   test("maps a valid context window into the agent model definition", () => {
     expect(mapOmpModel(baseModel({ contextWindow: 1_000_000 }), "omp")).toMatchObject({
       contextWindowMaxTokens: 1_000_000,

@@ -5,6 +5,7 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 ## Contents
 
 - [Getting started and host scope](#getting-started-and-host-scope)
+- [Custom provider names](#custom-provider-names)
 - [Catalog refresh and sign-in](#catalog-refresh-and-sign-in)
 - [Thinking and Fast settings](#thinking-and-fast-settings)
 - [Subagent model overrides](#subagent-model-overrides)
@@ -25,6 +26,14 @@ On touch/compact interfaces, **Settings → Providers** for the selected host ma
 Official providers assign OAuth accounts stable, provider-local display numbers. Deleting an account releases its number; the next account takes the smallest free positive number. Other accounts retain numbers through reordering and daemon restarts. Settings, account selectors, and usage cards use these when no name or note exists.
 
 These numbers are separate from OMP's globally increasing credential IDs. Their mapping lives in `agent.db` without renumbering credentials or changing notes, provider configuration, or session references. Disabled credential records stay disabled; a freed display number does not reactivate or reuse a credential.
+
+## Custom provider names
+
+**Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
+
+Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, credentials, or profile references. Different providers may share a display name; their internal IDs remain distinct.
+
+Names are stored as `providers.<id>.name` in the host's native `models.yml`. Existing entries without a name keep their previous display fallback; opening **Edit** prefills the old ID as the name so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
 
 ## Catalog refresh and sign-in
 

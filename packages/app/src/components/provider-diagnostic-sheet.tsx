@@ -111,7 +111,13 @@ function DiscoveredModelRow({
   providerId: string;
 }) {
   const prefix = `${providerId}/`;
-  const label = model.label.startsWith(prefix) ? model.label.slice(prefix.length) : model.label;
+  const namePrefix = `${model.metadata?.providerName ?? providerId}/`;
+  let label = model.label;
+  if (label.startsWith(namePrefix)) {
+    label = label.slice(namePrefix.length);
+  } else if (label.startsWith(prefix)) {
+    label = label.slice(prefix.length);
+  }
   const modelId = model.id.startsWith(prefix) ? model.id.slice(prefix.length) : model.id;
   const description = model.description?.startsWith(prefix)
     ? model.description.slice(prefix.length)
@@ -251,6 +257,7 @@ function CollapsibleSectionHeader({
 }
 interface OmpProviderSummary {
   id: string;
+  name?: string;
   modelCount: number;
   models?: OmpManagedProviderModel[];
   login?: OmpProviderManagement["loginProviders"][number];
@@ -793,7 +800,7 @@ function OmpProviderSummaryIdentity({ summary }: { summary: OmpProviderSummary }
   }
   return (
     <View style={sheetStyles.providerSummaryText}>
-      <Text style={sheetStyles.modelTitle}>{login?.name ?? summary.id}</Text>
+      <Text style={sheetStyles.modelTitle}>{summary.name ?? login?.name ?? summary.id}</Text>
       <Text style={sheetStyles.mutedText}>
         {modelCount}
         {loginStatus}
@@ -1232,8 +1239,8 @@ function OmpProviderForm({
   const [error, setError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [discoveredCount, setDiscoveredCount] = useState<number | null>(null);
-  const updateProviderId = useCallback(
-    (providerId: string) => setDraft((current) => ({ ...current, providerId })),
+  const updateName = useCallback(
+    (name: string) => setDraft((current) => ({ ...current, name })),
     [],
   );
   const updateBaseUrl = useCallback(
@@ -1314,7 +1321,7 @@ function OmpProviderForm({
   const handleDiscoverModelsPress = useCallback(() => void discoverModels(), [discoverModels]);
   const canDiscover = draft.baseUrl.trim().length > 0 && draft.apiKey.trim().length > 0;
   const canAdd =
-    draft.providerId.trim().length > 0 &&
+    draft.name.trim().length > 0 &&
     draft.baseUrl.trim().length > 0 &&
     draft.apiKey.trim().length > 0 &&
     draft.models.length > 0 &&
@@ -1326,7 +1333,8 @@ function OmpProviderForm({
     setError(null);
     try {
       const provider: OmpCustomProviderInput = {
-        providerId: draft.providerId.trim().toLowerCase(),
+        providerId: editingProviderId ?? draft.providerId,
+        name: draft.name.trim(),
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim(),
         api: draft.models[0]?.api ?? "openai-responses",
@@ -1399,17 +1407,25 @@ function OmpProviderForm({
 
   return (
     <View style={sheetStyles.formGroup}>
-      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.providerId")}</Text>
+      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.providerName")}</Text>
       <AdaptiveTextInput
-        initialValue={draft.providerId}
-        resetKey={`${revision}-provider-id`}
-        onChangeText={updateProviderId}
-        placeholder="mintcat"
-        autoCapitalize="none"
+        initialValue={draft.name}
+        resetKey={`${revision}-provider-name`}
+        onChangeText={updateName}
+        placeholder={t("settings.providers.omp.custom.providerNamePlaceholder")}
+        accessibilityLabel={t("settings.providers.omp.custom.providerName")}
+        testID="omp-provider-name"
         autoCorrect={false}
-        editable={!editingProviderId}
         style={sheetStyles.formInput}
       />
+      <Text style={sheetStyles.descriptionInline}>
+        {t("settings.providers.omp.custom.providerNameHint")}
+      </Text>
+      {editingProviderId ? (
+        <Text selectable style={sheetStyles.mutedText} testID="omp-provider-stable-id">
+          {t("settings.providers.omp.custom.stableId", { id: editingProviderId })}
+        </Text>
+      ) : null}
       <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.endpointUrl")}</Text>
       <AdaptiveTextInput
         initialValue={draft.baseUrl}
@@ -2009,8 +2025,12 @@ function OmpManagementPanel({
     const loginProviderIds = new Set(management.loginProviders.map((provider) => provider.id));
     return management.providerModels
       .filter((provider) => isCustomOmpProvider(provider, loginProviderIds))
-      .map((provider) => ({ id: provider.id, modelCount: provider.modelCount }))
-      .sort((left, right) => left.id.localeCompare(right.id));
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        modelCount: provider.modelCount,
+      }))
+      .sort((left, right) => (left.name ?? left.id).localeCompare(right.name ?? right.id));
   }, [management]);
   const tabOptions = useMemo(
     () => [
@@ -2047,7 +2067,7 @@ function OmpManagementPanel({
         editingProvider
           ? "settings.providers.omp.custom.editTitle"
           : "settings.providers.omp.custom.title",
-        editingProvider ? { provider: editingProvider.id } : undefined,
+        editingProvider ? { provider: editingProvider.draft.name } : undefined,
       ),
     }),
     [editingProvider, t],
@@ -2100,7 +2120,10 @@ function OmpManagementPanel({
     async (providerId: string) => {
       if (!client || removingProviderId) return;
       const confirmed = await confirmDialog({
-        title: t("settings.providers.omp.custom.removeConfirmTitle", { provider: providerId }),
+        title: t("settings.providers.omp.custom.removeConfirmTitle", {
+          provider:
+            customProviders.find((provider) => provider.id === providerId)?.name ?? providerId,
+        }),
         message: t("settings.providers.omp.custom.removeConfirmMessage"),
         confirmLabel: t("settings.providers.omp.custom.removeProvider"),
         destructive: true,
@@ -2117,7 +2140,7 @@ function OmpManagementPanel({
         setRemovingProviderId(null);
       }
     },
-    [applyManagement, client, removingProviderId, t],
+    [applyManagement, client, customProviders, removingProviderId, t],
   );
   const handleRemoveProvider = useCallback(
     (providerId: string) => void removeProvider(providerId),

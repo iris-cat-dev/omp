@@ -1,4 +1,4 @@
-import { parse } from "yaml";
+import { parse, parseDocument } from "yaml";
 import { describe, expect, it } from "vitest";
 import {
   configureDiscoveredProviderModels,
@@ -37,6 +37,7 @@ describe("OMP custom provider editing", () => {
   it("prefills provider and model fields from models.yml", () => {
     expect(parseCustomProviderDraft(configYaml, "mintcat")).toEqual({
       providerId: "mintcat",
+      name: "mintcat",
       baseUrl: "https://old.example.com/v1",
       apiKey: "old-key",
       models: [
@@ -54,6 +55,43 @@ describe("OMP custom provider editing", () => {
         },
       ],
     });
+  });
+
+  it("renames a provider without changing its ID, connection, or model configuration", () => {
+    const document = parseDocument(configYaml);
+    document.setIn(["providers", "mintcat", "name"], "薄荷猫");
+    document.setIn(["providers", "mintcat", "headers"], { "X-Team": "engineering" });
+    document.setIn(["providers", "mintcat", "models", 0, "cost"], { input: 1, output: 2 });
+    const original = document.toJS();
+    const renamed = updateCustomProviderConfigYaml(document.toString(), "mintcat", {
+      providerId: "mintcat",
+      name: "  薄荷猫 · 工作  ",
+      baseUrl: "https://old.example.com/v1",
+      apiKey: "old-key",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-old",
+          name: "GPT Old",
+          api: "openai-responses",
+          supportsImages: true,
+          contextWindow: 128000,
+          maxTokens: 8192,
+          reasoning: true,
+          defaultReasoningLevel: "medium",
+          supportedReasoningLevels: ["low", "medium", "high"],
+        },
+      ],
+    });
+
+    expect(parse(renamed)).toEqual({
+      ...original,
+      providers: {
+        ...original.providers,
+        mintcat: { ...original.providers.mintcat, name: "薄荷猫 · 工作" },
+      },
+    });
+    expect(parseCustomProviderDraft(renamed, "mintcat")?.name).toBe("薄荷猫 · 工作");
   });
 
   it("updates only the selected provider and preserves comments and siblings", () => {

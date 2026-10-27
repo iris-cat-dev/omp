@@ -21,3 +21,9 @@ export function formatOmpModelProviderNamespace(namespace: string): string {
     })
     .join(" ");
 }
+
+export function resolveOmpModelProviderLabel(namespace: string, providerName?: unknown): string {
+  return typeof providerName === "string" && providerName.trim()
+    ? providerName.trim()
+    : formatOmpModelProviderNamespace(namespace);
+}

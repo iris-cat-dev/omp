@@ -104,6 +104,96 @@ describe("OMP model provider grouping", () => {
     expect(runtimeProviderIds(providers)).toEqual(["omp", "omp"]);
   });
 
+  it("shows a sole custom provider's explicit name without changing its runtime identity", () => {
+    const providers = groupOmpModelsByProviderNamespace([
+      {
+        id: "omp",
+        label: "OMP",
+        modelSelection: {
+          kind: "models",
+          rows: [
+            {
+              favoriteKey: "omp:custom-123/gpt-5",
+              provider: "omp",
+              providerLabel: "OMP",
+              providerName: "  中文-服务_API  ",
+              modelId: "custom-123/gpt-5",
+              modelLabel: "中文-服务_API/GPT-5",
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(providers[0]).toMatchObject({
+      id: "omp",
+      label: "中文-服务_API",
+      modelSelection: {
+        rows: [
+          {
+            favoriteKey: "omp:custom-123/gpt-5",
+            provider: "omp",
+            providerLabel: "中文-服务_API",
+            modelId: "custom-123/gpt-5",
+          },
+        ],
+      },
+    });
+    expect(
+      resolveModelSheetOpening({
+        canSwitchProvider: true,
+        providers,
+        selectedProvider: "omp",
+      }),
+    ).toEqual({
+      kind: "provider",
+      providerId: "omp",
+      providerLabel: "中文-服务_API",
+    });
+    expect(resolveModelBrowserProviderId("omp", "custom-123/gpt-5", providers)).toBe("omp");
+  });
+
+  it("keeps distinct provider groups and selected references stable across a rename", () => {
+    const catalogs = [];
+    for (const providerName of ["同名服务商", "重命名服务商"]) {
+      catalogs.push(
+        groupOmpModelsByProviderNamespace([
+          {
+            id: "omp",
+            label: "OMP",
+            modelSelection: {
+              kind: "models",
+              rows: ["custom-a", "custom-b"].map((namespace) => ({
+                favoriteKey: `omp:${namespace}/gpt-5`,
+                provider: "omp",
+                providerLabel: "OMP",
+                providerName,
+                modelId: `${namespace}/gpt-5`,
+                modelLabel: `${providerName}/GPT-5`,
+              })),
+            },
+          },
+        ]),
+      );
+    }
+    const before = catalogs[0]!;
+    const after = catalogs[1]!;
+
+    expect(before.map((provider) => provider.id)).toEqual(["omp:custom-a", "omp:custom-b"]);
+    expect(after.map((provider) => provider.id)).toEqual(before.map((provider) => provider.id));
+    expect(after.map((provider) => provider.label)).toEqual(["重命名服务商", "重命名服务商"]);
+    expect(resolveModelBrowserProviderId("omp", "custom-a/gpt-5", after)).toBe("omp:custom-a");
+    expect(resolveProviderSwitchModel(after[0]!, "custom-a/gpt-5")).toMatchObject({
+      favoriteKey: "omp:custom-a/gpt-5",
+      provider: "omp",
+      providerLabel: "重命名服务商",
+      modelId: "custom-a/gpt-5",
+    });
+    expect(
+      isModelBrowserRowSelected("omp", "custom-a/gpt-5", "omp:custom-a", "custom-a/gpt-5"),
+    ).toBe(true);
+  });
+
   it("resolves the selected live OMP model to its grouped provider", () => {
     const providers = groupOmpModelsByProviderNamespace([
       {
@@ -131,23 +221,15 @@ describe("OMP model provider grouping", () => {
       },
     ]);
 
-    expect(
-      resolveModelBrowserProviderId(
-        "omp",
-        "openai-codex/gpt-5.6-sol",
-        providers,
-      ),
-    ).toBe("omp:openai-codex");
+    expect(resolveModelBrowserProviderId("omp", "openai-codex/gpt-5.6-sol", providers)).toBe(
+      "omp:openai-codex",
+    );
   });
   it("resolves grouped OMP provider ids to their underlying namespace", () => {
     expect(resolveModelBrowserProviderNamespaceId("omp:cursor")).toBe("cursor");
-    expect(resolveModelBrowserProviderNamespaceId("omp:openai-codex")).toBe(
-      "openai-codex",
-    );
+    expect(resolveModelBrowserProviderNamespaceId("omp:openai-codex")).toBe("openai-codex");
     expect(resolveModelBrowserProviderNamespaceId("cursor")).toBe("cursor");
-    expect(resolveModelBrowserProviderNamespaceId("omp", "mintcat/gpt-5")).toBe(
-      "mintcat",
-    );
+    expect(resolveModelBrowserProviderNamespaceId("omp", "mintcat/gpt-5")).toBe("mintcat");
   });
 
   it("marks a selected model inside its grouped virtual provider", () => {
@@ -197,9 +279,9 @@ describe("OMP model provider grouping", () => {
       },
     ]);
 
-    expect(
-      resolveProviderSwitchModel(provider!, "cursor/claude-sonnet")?.modelId,
-    ).toBe("cursor/claude-sonnet");
+    expect(resolveProviderSwitchModel(provider!, "cursor/claude-sonnet")?.modelId).toBe(
+      "cursor/claude-sonnet",
+    );
   });
 
   it("falls back to the provider default when the remembered model is unavailable", () => {
@@ -221,9 +303,7 @@ describe("OMP model provider grouping", () => {
       },
     };
 
-    expect(resolveProviderSwitchModel(provider, "retired-model")?.modelId).toBe(
-      "gpt-5.6",
-    );
+    expect(resolveProviderSwitchModel(provider, "retired-model")?.modelId).toBe("gpt-5.6");
   });
 });
 

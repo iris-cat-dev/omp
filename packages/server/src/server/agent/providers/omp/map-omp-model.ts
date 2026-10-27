@@ -37,15 +37,21 @@ function mapThinkingOption(
   return mapped;
 }
 
-export function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefinition {
+export function mapOmpModel(
+  model: OmpModel,
+  provider: AgentProvider,
+  configuredProviderName?: string,
+): AgentModelDefinition {
   const { thinkingOptions, defaultThinkingOptionId } = resolveOmpThinkingConfig(model);
+  const providerName = configuredProviderName?.trim() || undefined;
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
+    label: `${providerName ?? model.provider}/${model.name ?? model.id}`,
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,
+      ...(providerName ? { providerName } : {}),
       modelId: model.id,
     },
     ...(typeof model.contextWindow === "number" &&

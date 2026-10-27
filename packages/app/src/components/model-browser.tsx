@@ -291,7 +291,8 @@ export function useModelBrowser({
       };
     }
     return {
-      title: view.providerLabel,
+      title:
+        providers.find((provider) => provider.id === view.providerId)?.label ?? view.providerLabel,
       leading: (
         <ModelProviderGlyph provider={view.providerId} size={ICON_SIZE.md} tone="foreground" />
       ),
@@ -310,6 +311,7 @@ export function useModelBrowser({
     autoFocusSearch,
     browseProviders,
     handleSearchQueryChange,
+    providers,
     searchResetKey,
     singleProviderView,
     showAll,

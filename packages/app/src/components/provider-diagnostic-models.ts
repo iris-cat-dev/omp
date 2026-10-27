@@ -1,7 +1,7 @@
 import type { AgentModelDefinition } from "@omp-desktop/protocol/agent-types";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import {
-  formatOmpModelProviderNamespace,
+  resolveOmpModelProviderLabel,
   resolveOmpModelProviderNamespace,
 } from "@/provider-selection/omp-model-provider";
 
@@ -30,7 +30,13 @@ export function groupOmpDiscoveredModels(
   return [...grouped]
     .map(([id, providerModels]) => ({
       id,
-      label: formatOmpModelProviderNamespace(id),
+      label: resolveOmpModelProviderLabel(
+        id,
+        providerModels.find(
+          (model) =>
+            typeof model.metadata?.providerName === "string" && model.metadata.providerName.trim(),
+        )?.metadata?.providerName,
+      ),
       models: providerModels,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));

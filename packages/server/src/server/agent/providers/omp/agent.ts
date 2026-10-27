@@ -913,7 +913,10 @@ function normalizeOmpModelLabel(label: string): string {
 
 export function transformOmpModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
   return models.map((model) => {
-    if (!model.label.includes("/")) {
+    if (
+      (typeof model.metadata?.providerName === "string" && model.metadata.providerName.trim()) ||
+      !model.label.includes("/")
+    ) {
       return model;
     }
 
@@ -4932,13 +4935,26 @@ export class OmpAgentClient implements AgentClient {
       });
       if (!runtimeSession) throw new Error("OMP catalog runtime did not start");
       const catalogSession = runtimeSession;
+      const configYaml = await fs
+        .readFile(this.resolveModelsConfigPath(), "utf8")
+        .catch((error: NodeJS.ErrnoException) =>
+          error.code === "ENOENT" ? "providers: {}\n" : Promise.reject(error),
+        );
+      const providerNames = new Map<string, string>();
+      for (const [id, provider] of Object.entries(
+        parseOmpModelsDocument(configYaml).providers ?? {},
+      )) {
+        if (!isRecord(provider)) continue;
+        const name = optionalString(provider.name)?.trim();
+        if (name) providerNames.set(id, name);
+      }
       const models = transformOmpModels(
         (
           await runProviderRefreshActivity(context, "get_available_models", () =>
             catalogSession.getAvailableModels(null),
           )
         )
-          .map((model) => mapOmpModel(model, this.provider))
+          .map((model) => mapOmpModel(model, this.provider, providerNames.get(model.provider)))
           .filter(
             (model) =>
               !isOmpDesktopRpcBootstrapModel(model) &&
@@ -5076,12 +5092,15 @@ export class OmpAgentClient implements AgentClient {
       }>
     >();
     const customProviderIds = new Set<string>();
+    const providerNames = new Map<string, string>();
     const contextWindowOverrides = new Map<string, Map<string, number>>();
     try {
       const configuredProviders = parseOmpModelsDocument(displayConfigYaml).providers;
       for (const [providerId, configuredProvider] of Object.entries(configuredProviders ?? {})) {
         providerModels.set(providerId, []);
         if (!isRecord(configuredProvider)) continue;
+        const name = optionalString(configuredProvider.name)?.trim();
+        if (name) providerNames.set(providerId, name);
         if (Array.isArray(configuredProvider.models) && configuredProvider.models.length > 0) {
           customProviderIds.add(providerId);
         }
@@ -5222,6 +5241,7 @@ export class OmpAgentClient implements AgentClient {
         .filter(([id]) => id !== OMP_DESKTOP_RPC_BOOTSTRAP_PROVIDER_ID)
         .map(([id, models]) => ({
           id,
+          name: providerNames.get(id),
           modelCount: models.length,
           source: customProviderIds.has(id) ? ("custom" as const) : ("built-in" as const),
           models: models.sort((left, right) => left.name.localeCompare(right.name)),
@@ -5477,7 +5497,9 @@ export class OmpAgentClient implements AgentClient {
     if (!providers) {
       document.set("providers", {});
     }
+    const name = input.name?.trim();
     document.setIn(["providers", input.providerId], {
+      ...(name ? { name } : {}),
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
       api: input.api,

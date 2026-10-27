@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { parse } from "yaml";
+import { parse, parseDocument } from "yaml";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import {
@@ -1091,6 +1091,101 @@ providers:
       },
     });
   });
+
+  test("persists Unicode provider names and refreshes catalog display after a name-only edit", async () => {
+    const { agentDir, client, runtime } = await createClient();
+    const model = { provider: "mintcat", id: "gpt-test", name: "GPT Test" };
+    runtime.queueModels([]);
+    runtime.queueModels([model]);
+
+    const created = await client.addOmpProvider({
+      providerId: "mintcat",
+      name: "  我的模型 / 实验室  ",
+      baseUrl: "https://api.example.test/v1",
+      apiKey: "test-key",
+      api: "openai-responses",
+      models: [{ id: "gpt-test", name: "GPT Test" }],
+    });
+    expect(created.providerModels).toEqual([
+      {
+        id: "mintcat",
+        name: "我的模型 / 实验室",
+        modelCount: 1,
+        source: "custom",
+        models: [{ id: "gpt-test", name: "GPT Test" }],
+      },
+    ]);
+    const configPath = path.join(agentDir, "models.yml");
+    const original = parse(await readFile(configPath, "utf8"));
+    expect(original.providers.mintcat.name).toBe("我的模型 / 实验室");
+    runtime.queueModels([model]);
+    const before = await client.fetchCatalog({ scope: "global", force: true });
+    expect(before.models).toMatchObject([
+      {
+        id: "mintcat/gpt-test",
+        label: "我的模型 / 实验室/GPT Test",
+        description: "mintcat/gpt-test",
+        metadata: { provider: "mintcat", providerName: "我的模型 / 实验室", modelId: "gpt-test" },
+      },
+    ]);
+
+    const document = parseDocument(created.configYaml);
+    document.setIn(["providers", "mintcat", "name"], "重命名的供应商");
+    runtime.queueModels([model]);
+    const renamed = await client.saveOmpProviderConfig(document.toString());
+    expect(renamed.providerModels[0]).toMatchObject({
+      id: "mintcat",
+      name: "重命名的供应商",
+    });
+    expect(parse(await readFile(configPath, "utf8"))).toEqual({
+      ...original,
+      providers: {
+        ...original.providers,
+        mintcat: { ...original.providers.mintcat, name: "重命名的供应商" },
+      },
+    });
+    runtime.queueModels([model]);
+    const after = await client.fetchCatalog({ scope: "global", force: true });
+    expect(after.models).toMatchObject([
+      {
+        id: "mintcat/gpt-test",
+        label: "重命名的供应商/GPT Test",
+        description: "mintcat/gpt-test",
+        metadata: { provider: "mintcat", providerName: "重命名的供应商", modelId: "gpt-test" },
+      },
+    ]);
+  });
+
+  test.each([undefined, "", "  ", 42])(
+    "keeps nameless catalog behavior for configured name %s",
+    async (name) => {
+      const { agentDir, client, runtime } = await createClient();
+      await writeFile(
+        path.join(agentDir, "models.yml"),
+        JSON.stringify({ providers: { mintcat: { name, models: [{ id: "gpt-test" }] } } }),
+      );
+      const model = { provider: "mintcat", id: "gpt-test", name: "GPT Test" };
+      runtime.queueModels([model]);
+      const management = await client.getOmpProviderManagement();
+      expect(management.providerModels[0]).toEqual({
+        id: "mintcat",
+        modelCount: 1,
+        source: "custom",
+        models: [{ id: "gpt-test", name: "GPT Test" }],
+      });
+      runtime.queueModels([model]);
+      const catalog = await client.fetchCatalog({ scope: "global", force: true });
+      expect(catalog.models).toMatchObject([
+        {
+          id: "mintcat/gpt-test",
+          label: "GPT Test",
+          description: "mintcat/gpt-test",
+          metadata: { provider: "mintcat", modelId: "gpt-test" },
+        },
+      ]);
+      expect(catalog.models[0]?.metadata).not.toHaveProperty("providerName");
+    },
+  );
 
   test("removes only the requested custom provider", async () => {
     const { agentDir, client } = await createClient();
