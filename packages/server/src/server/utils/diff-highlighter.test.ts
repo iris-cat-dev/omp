@@ -605,6 +605,50 @@ describe("highlightDiffWithFileContent", () => {
     expect(addedLine?.tokens).toContainEqual({ text: "3", style: "number" });
   });
 
+  it.each([
+    { path: "example.h", oldEol: "\r\n" },
+    { path: "example.cpp", oldEol: "\n" },
+  ])(
+    "highlights both sides of CRLF $path without carriage returns in tokens",
+    async ({ path, oldEol }) => {
+      const sourceLines = [
+        "#pragma once",
+        '#include "CoreMinimal.h"',
+        "",
+        "// Native accessors",
+        "const int value = 1;",
+        "",
+      ];
+      const oldFileContent = sourceLines.join(oldEol);
+      const newFileContent = sourceLines.join("\r\n").replace("value = 1", "value = 2");
+      const [file] = parseDiff(
+        [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          "@@ -4,2 +4,2 @@",
+          " // Native accessors",
+          "-const int value = 1;",
+          "+const int value = 2;",
+        ].join("\n"),
+      );
+
+      const highlighted = await highlightDiffWithFileContent(file, ".", {
+        oldFileContent,
+        newFileContent,
+      });
+      const lines = highlighted.hunks[0].lines;
+      expect(lines[1].tokens).toEqual([{ text: "// Native accessors", style: "comment" }]);
+      expect(lines[2].tokens).toContainEqual({ text: "const", style: "keyword" });
+      expect(lines[2].tokens).toContainEqual({ text: "1", style: "number" });
+      expect(lines[3].tokens).toContainEqual({ text: "const", style: "keyword" });
+      expect(lines[3].tokens).toContainEqual({ text: "2", style: "number" });
+      for (const line of lines.slice(1)) {
+        expect(line.tokens?.map((token) => token.text).join("")).toBe(line.content);
+      }
+    },
+  );
+
   it("uses the old file content to preserve syntax context for removed lines", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "diff-highlight-old-file-"));
 

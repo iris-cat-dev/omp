@@ -17,6 +17,39 @@ describe("highlightCode", () => {
     expect(numberToken?.style).toBe("number");
   });
 
+  it("preserves C++ highlighting after preprocessor directives in CRLF files", () => {
+    const lines = [
+      "#pragma once",
+      '#include "CoreMinimal.h"',
+      "",
+      "// Native accessors",
+      "const int GetCount() { return 42; }",
+      "",
+    ];
+    const result = highlightCode(lines.join("\r\n"), "MissionDNA.h");
+
+    expect(result).toHaveLength(lines.length);
+    for (const [index, tokens] of result.entries()) {
+      expect(tokens.map((token) => token.text).join("")).toBe(lines[index]);
+    }
+    expect(result[3]).toEqual([{ text: "// Native accessors", style: "comment" }]);
+    expect(result[4]).toContainEqual({ text: "const", style: "keyword" });
+    expect(result[4]).toContainEqual({ text: "int", style: "type" });
+    expect(result[4]).toContainEqual({ text: "return", style: "keyword" });
+    expect(result[4]).toContainEqual({ text: "42", style: "number" });
+  });
+
+  it.each([
+    { filename: "example.ts", code: '// 注释\n\nconst message = "hello";\n' },
+    { filename: "example.swift", code: '// 注释\n\nlet message = "hello"\n' },
+    { filename: "example.txt", code: "first line\n\nlast line\n" },
+  ])("keeps CRLF and mixed line endings out of $filename tokens", ({ filename, code }) => {
+    const expected = highlightCode(code, filename);
+
+    expect(highlightCode(code.replace(/\n/g, "\r\n"), filename)).toEqual(expected);
+    expect(highlightCode(code.replace("\n", "\r\n"), filename)).toEqual(expected);
+  });
+
   it("highlights Python code", () => {
     const code = 'def hello():\n    print("world")';
     const result = highlightCode(code, "test.py");

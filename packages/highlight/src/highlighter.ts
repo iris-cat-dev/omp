@@ -5,6 +5,8 @@ import { getParserForFile } from "./parsers.js";
 import { staticSyntaxHighlighter } from "./syntax-roles.js";
 
 export function highlightCode(code: string, filename: string): HighlightToken[][] {
+  // Parsers and per-line tokens must share LF boundaries; CRLF can corrupt C++ preprocessor recovery.
+  code = code.replace(/\r\n/g, "\n");
   const parser = getParserForFile(filename);
 
   if (!parser) {

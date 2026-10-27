@@ -136,6 +136,8 @@ Open **Changes → Git actions → Diff mode**. The checked mode is:
 
 Modes can switch with empty or populated lists. Forge account setup never blocks local diff viewing or mode changes. Operation names, comparison labels, and action feedback follow General language in every supported locale. **Archive workspace** and **Open Changes tab** are not Git-menu actions.
 
+Syntax highlighting for supported file types is consistent across LF, Windows CRLF, and mixed line endings. Each diff side keeps its own syntax context even when the committed file uses LF and the working tree uses CRLF, including C/C++ files with preprocessor directives.
+
 Diff scrolling preserves transparent wallpaper without accumulated red/green shading or text trails. Pixel reuse depends on document/viewport heights, not a fixed changed-line threshold.
 
 The Changes tree keeps full file summaries while virtualizing rows. Folder stage, unstage, and discard actions resolve descendant paths when invoked, preserving rename source/destination pathspecs. A single uncommitted summary shares untracked-file inspections across its net and unstaged views; later requests reread files. Closing or replacing a subscription prevents abandoned results and queued refreshes from being published, without canceling remaining shared consumers. Already-running Git and filesystem operations may finish.
