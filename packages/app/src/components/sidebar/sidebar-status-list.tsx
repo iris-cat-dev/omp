@@ -1036,11 +1036,9 @@ function StatusWorkspaceActionSlot({
           workspaceKey={workspace.workspaceKey}
           onDelete={onDelete}
           onArchive={onArchive}
-          onFork={canFork ? onFork : undefined}
           deleteStatus={deleteStatus}
           archiveStatus={archiveStatus}
-          forkPending={isForking}
-          disabled={disabled}
+          disabled={disabled || isForking}
           visible={isHovered && !isTouchPlatform}
         />
         {kebab.showKebab && onArchive ? (

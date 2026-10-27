@@ -1,4 +1,8 @@
+import * as Clipboard from "expo-clipboard";
+import { getParentAgentIdFromLabels } from "@omp-desktop/protocol/agent-labels";
+import type { FetchAgentHistoryEntry } from "@omp-desktop/client/internal/daemon-client";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -24,6 +28,9 @@ import {
   Trash2,
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { pickWorkspacePrimaryAgentId } from "@/subagents/policies";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { Theme } from "@/styles/theme";
@@ -189,6 +196,40 @@ function SidebarWorkspaceMenuItems({
   rootAgentCount = 0,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
+  const toast = useToast();
+  const copyAgentId = useCallback(async () => {
+    if (!serverId || !workspaceId) return;
+    try {
+      const client = getHostRuntimeStore().getClient(serverId);
+      if (!client) throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
+      const entries: FetchAgentHistoryEntry[] = [];
+      let cursor: string | null = null;
+      do {
+        const history = await client.fetchAgentHistory({
+          filter: { includeArchived: true, workspaceIds: [workspaceId] },
+          sort: [{ key: "created_at", direction: "asc" }],
+          page: { limit: 200, ...(cursor ? { cursor } : {}) },
+        });
+        entries.push(...history.entries);
+        cursor = history.pageInfo.hasMore ? history.pageInfo.nextCursor : null;
+      } while (cursor);
+      const agentId = pickWorkspacePrimaryAgentId(
+        entries.map(({ agent }) => ({
+          id: agent.id,
+          workspaceId: agent.workspaceId,
+          parentAgentId: getParentAgentIdFromLabels(agent.labels),
+          createdAt: agent.createdAt,
+          archivedAt: agent.archivedAt,
+        })),
+        workspaceId,
+      );
+      if (!agentId) throw new Error(t("workspace.tabs.toasts.copyFailed"));
+      await Clipboard.setStringAsync(agentId);
+      toast.copied(t("workspace.tabs.toasts.agentIdCopiedLabel"));
+    } catch {
+      toast.error(t("workspace.tabs.toasts.copyFailed"));
+    }
+  }, [serverId, workspaceId, t, toast]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -208,6 +249,16 @@ function SidebarWorkspaceMenuItems({
           onSelect={onCopyPath}
         >
           {t("sidebar.workspace.actions.copyPath")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {serverId && workspaceId ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-copy-agent-id-${workspaceKey}`}
+          leading={copyLeadingIcon}
+          onSelect={copyAgentId}
+        >
+          {t("workspace.tabs.menu.copyAgentId")}
         </WorkspaceMenuItem>
       ) : null}
       <OpenInFileManagerMenuItem

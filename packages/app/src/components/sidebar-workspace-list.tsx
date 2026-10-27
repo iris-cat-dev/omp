@@ -752,10 +752,8 @@ function WorkspaceRowRightGroup({
               workspaceKey={workspace.workspaceKey}
               onDelete={onDelete}
               onArchive={onArchive}
-              onFork={onFork}
               deleteStatus={deleteStatus}
               archiveStatus={archiveStatus}
-              forkPending={forkPending}
               disabled={
                 isCreating ||
                 deleteStatus === "pending" ||
