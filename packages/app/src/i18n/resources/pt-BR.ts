@@ -10,6 +10,7 @@ export const ptBR: TranslationResources = {
   providerUsage: providerUsage["pt-BR"],
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules["pt-BR"],
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Voltar",

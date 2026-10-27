@@ -42,6 +42,7 @@ import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { LocalModelBridge } from "./local-model-bridge.js";
+import type { VisualFeedbackService } from "./visual-feedback-service.js";
 import { attachMutableProviderConfigOwner } from "./agent/mutable-provider-config-owner.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -491,6 +492,7 @@ export class PaseoWebSocketServer {
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly localModelBridge: LocalModelBridge | undefined;
+  private readonly visualFeedbackService: VisualFeedbackService | undefined;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
@@ -554,10 +556,12 @@ export class PaseoWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     localModelBridge?: LocalModelBridge,
+    visualFeedbackService?: VisualFeedbackService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.localModelBridge = localModelBridge;
+    this.visualFeedbackService = visualFeedbackService;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
     this.advertiseRelayConfig = wsConfig.relayConfig !== false;
     this.connectionLifecycle = wsConfig.startPaused === true ? "starting" : "accepting";
@@ -1320,6 +1324,7 @@ export class PaseoWebSocketServer {
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       localModelBridge: this.localModelBridge,
+      visualFeedbackService: this.visualFeedbackService,
       providerUsageService: this.providerUsageService,
       hubExecutionAgents: options.hubExecutionAgents,
       hubRelationships: options.hubRelationships,
@@ -1490,6 +1495,7 @@ export class PaseoWebSocketServer {
       ...(terminalWindowsPtyOptions ? { windowsPty: terminalWindowsPtyOptions } : {}),
       features: {
         localModelBridge: this.localModelBridge !== undefined,
+        visualFeedback: this.visualFeedbackService !== undefined,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.

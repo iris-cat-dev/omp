@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { DesktopPetActivity, DesktopPetActivityResult } from "@/desktop/pets/types";
+import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
 
@@ -277,6 +278,7 @@ export interface DesktopHostBridge {
   agentNavigation?: DesktopAgentNavigationBridge;
   pet?: DesktopPetBridge;
   monitor?: { open: () => Promise<void> };
+  screenshot?: { capture: () => Promise<VisualFeedbackImage | null> };
   events?: DesktopEventsBridge;
   remoteSsh?: DesktopRemoteSshBridge;
   window?: DesktopWindowModuleBridge;

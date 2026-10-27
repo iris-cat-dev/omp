@@ -1,4 +1,8 @@
 import type {
+  VisualFeedbackRequest,
+  VisualFeedbackResponse,
+} from "@omp-desktop/protocol/visual-feedback";
+import type {
   LocalModel,
   LocalModelInferenceRequest,
   LocalModelStreamFrame,
@@ -311,6 +315,7 @@ export type ConnectionState =
   | { status: "disposed" };
 
 export type DaemonEvent =
+  | { type: "visual_feedback_requests"; requests: VisualFeedbackRequest[] }
   | { type: "local_model_request"; requestId: string; body: LocalModelInferenceRequest }
   | { type: "local_model_cancel"; requestId: string }
   | { type: "local_model_frame"; requestId: string; frame: LocalModelStreamFrame }
@@ -4888,6 +4893,32 @@ export class DaemonClient {
     });
   }
 
+  supportsVisualFeedback(): boolean {
+    return this.lastServerInfoMessage?.features?.visualFeedback === true;
+  }
+
+  async listVisualFeedbackRequests(): Promise<VisualFeedbackRequest[]> {
+    if (!this.supportsVisualFeedback())
+      throw new Error("This daemon does not support visual feedback");
+    const result = await this.sendCorrelatedSessionRequest({
+      message: { type: "visual_feedback.list" },
+      responseType: "visual_feedback.list.response",
+    });
+    return result.requests;
+  }
+
+  async respondToVisualFeedback(
+    requestId: string,
+    response: VisualFeedbackResponse,
+  ): Promise<void> {
+    if (!this.supportsVisualFeedback())
+      throw new Error("This daemon does not support visual feedback");
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "visual_feedback.respond", feedbackRequestId: requestId, response },
+      responseType: "visual_feedback.respond.response",
+    });
+  }
+
   supportsLocalModelBridge(): boolean {
     return this.lastServerInfoMessage?.features?.localModelBridge === true;
   }
@@ -6785,6 +6816,8 @@ export class DaemonClient {
 
   private toEvent(msg: SessionOutboundMessage): DaemonEvent | null {
     switch (msg.type) {
+      case "visual_feedback.requests":
+        return { type: "visual_feedback_requests", ...msg.payload };
       case "local_model.request":
         return { type: "local_model_request", ...msg.payload };
       case "local_model.cancel":

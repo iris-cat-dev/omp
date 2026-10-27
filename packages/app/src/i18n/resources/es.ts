@@ -10,6 +10,7 @@ export const es: TranslationResources = {
   providerUsage: providerUsage.es,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.es,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Atrás",

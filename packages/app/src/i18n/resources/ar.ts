@@ -10,6 +10,7 @@ export const ar: TranslationResources = {
   providerUsage: providerUsage.ar,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ar,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "خلف",

@@ -61,6 +61,7 @@ import { registerOpenerHandlers } from "./features/opener.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
 import { resolveAppIconPath } from "./features/stamped-icon.js";
 import { registerRemoteSshHandlers } from "./features/remote-ssh/ipc.js";
+import { registerScreenshotHandler } from "./features/screenshot.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
   getDesktopContextMenuLabels,
@@ -843,6 +844,7 @@ async function bootstrap(): Promise<void> {
   registerOpenerHandlers();
   registerEditorTargetHandlers();
   registerRemoteSshHandlers();
+  registerScreenshotHandler();
   monitorController = new OmpMonitorController();
   monitorController.initialize();
   petController = new DesktopPetController({

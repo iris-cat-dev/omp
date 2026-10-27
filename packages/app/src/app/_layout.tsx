@@ -30,6 +30,7 @@ import { AddProjectFlowHost } from "@/components/add-project-flow-host";
 import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
 import { CloseChoiceDialogHost } from "@/components/close-choice-dialog-host";
 import { ExternalFileDropPreview } from "@/components/file-drop/external-file-drop-preview";
+import { VisualFeedbackHost } from "@/visual-feedback/host";
 import { PairingLinkListener } from "@/components/pairing-link-listener";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { DownloadToast } from "@/components/download-toast";
@@ -1090,6 +1091,7 @@ function RootAppTree() {
           <RuntimeProviders>
             <AppShell />
             <ExternalFileDropPreview />
+            <VisualFeedbackHost />
           </RuntimeProviders>
         </RootProviders>
       </View>

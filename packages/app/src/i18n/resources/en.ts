@@ -4,11 +4,13 @@ import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
 import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
+import { visualFeedback } from "./visual-feedback";
 
 export const en = {
   providerUsage: providerUsage.en,
   backgroundProcesses: backgroundProcesses.en,
   schedules: schedules.en,
+  visualFeedback: visualFeedback.en,
   externalFilePreview: {
     title: "Local file preview",
     localOnly: "Read-only. Files stay on this device and are not uploaded.",

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DesktopPetActivity, DesktopPetActivityResult } from "./pets/types.js";
+import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
@@ -30,6 +31,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   monitor: {
     open: () => ipcRenderer.invoke("paseo:monitor:open") as Promise<void>,
   },
+  screenshot:
+    process.platform === "darwin" || process.platform === "win32"
+      ? {
+          capture: () =>
+            ipcRenderer.invoke("paseo:screenshot:capture") as Promise<VisualFeedbackImage | null>,
+        }
+      : undefined,
   remoteSsh: {
     start: (input: Record<string, unknown>) => ipcRenderer.invoke("paseo:remote-ssh:start", input),
     writeInput: (input: { operationId: string; input: string }) =>

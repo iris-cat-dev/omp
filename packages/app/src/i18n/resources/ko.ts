@@ -10,6 +10,7 @@ export const ko: TranslationResources = {
   providerUsage: providerUsage.ko,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ko,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "뒤로",

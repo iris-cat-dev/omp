@@ -10,6 +10,7 @@ export const ru: TranslationResources = {
   providerUsage: providerUsage.ru,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ru,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Назад",

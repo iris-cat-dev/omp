@@ -88,6 +88,8 @@ import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { LocalModelBridge } from "./local-model-bridge.js";
 import { LocalModelSession } from "./session/provider/local-model-session.js";
+import type { VisualFeedbackService } from "./visual-feedback-service.js";
+import { VisualFeedbackSession } from "./session/visual-feedback-session.js";
 import type {
   AgentManagerEvent,
   AgentTimelineCursor,
@@ -485,6 +487,7 @@ export interface SessionOptions {
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   localModelBridge?: LocalModelBridge;
+  visualFeedbackService?: VisualFeedbackService;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
@@ -725,6 +728,7 @@ export class Session {
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly localModelSession: LocalModelSession;
+  private readonly visualFeedbackSession: VisualFeedbackSession;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
@@ -1067,6 +1071,11 @@ export class Session {
         );
       },
       emit: (message, source) => this.emitForSource(message, source),
+    });
+    this.visualFeedbackSession = new VisualFeedbackSession({
+      service: options.visualFeedbackService,
+      emit: (message) => this.emit(message),
+      emitForSource: (message, source) => this.emitForSource(message, source),
     });
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
@@ -2569,6 +2578,7 @@ export class Session {
       default:
         return (
           this.localModelSession.handle(msg, source) ??
+          this.visualFeedbackSession.handle(msg, source) ??
           this.dispatchOmpProviderManagementMessage(msg) ??
           this.dispatchOmpProviderAuthenticationMessage(msg) ??
           this.dispatchOmpSettingsMessage(msg)
@@ -8238,6 +8248,7 @@ export class Session {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
     await this.localModelSession.dispose();
+    this.visualFeedbackSession.dispose();
     for (const unsubscribe of this.initializationObservers.keys()) unsubscribe();
     for (const search of this.workspaceTextSearches.values()) search.abort();
     this.workspaceTextSearches.clear();

@@ -10,6 +10,7 @@ export const ja: TranslationResources = {
   providerUsage: providerUsage.ja,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ja,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "戻る",

@@ -10,6 +10,7 @@ export const fr: TranslationResources = {
   providerUsage: providerUsage.fr,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.fr,
+  visualFeedback: en.visualFeedback,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Dos",

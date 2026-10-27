@@ -139,6 +139,7 @@ import {
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { LocalModelBridge } from "./local-model-bridge.js";
+import { VisualFeedbackService } from "./visual-feedback-service.js";
 import { applyPendingOmpUpdate } from "./agent/providers/omp/installer.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
@@ -973,6 +974,7 @@ export async function createPaseoDaemon(
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
   const localModelBridge = new LocalModelBridge();
+  const visualFeedbackService = new VisualFeedbackService();
   const providerSnapshotManager = new ProviderSnapshotManager({
     localModelBridge,
     logger: providerSnapshotLogger,
@@ -1337,6 +1339,7 @@ export async function createPaseoDaemon(
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
     providerSnapshotManager,
+    visualFeedbackService,
     daemonConfigStore,
     github,
     workspaceGitService,
@@ -1653,6 +1656,7 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               localModelBridge,
+              visualFeedbackService,
             );
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
@@ -1706,6 +1710,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    visualFeedbackService.close();
     const relayStopped = relayRuntime?.stop().catch((error) => {
       logger.warn({ err: error }, "Failed to stop relay transport");
     });

@@ -20,6 +20,7 @@ import {
   LocalModelInferenceRequestSchema,
   LocalModelStreamFrameSchema,
 } from "./local-models.js";
+import { VisualFeedbackRequestSchema, VisualFeedbackResponseSchema } from "./visual-feedback.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -3596,7 +3597,20 @@ export const LocalModelFrameSchema = z.object({
   frame: LocalModelStreamFrameSchema,
 });
 
+export const VisualFeedbackListRequestSchema = z.object({
+  type: z.literal("visual_feedback.list"),
+  requestId: z.string().min(1).max(255),
+});
+export const VisualFeedbackRespondRequestSchema = z.object({
+  type: z.literal("visual_feedback.respond"),
+  requestId: z.string().min(1).max(255),
+  feedbackRequestId: z.string().min(1).max(255),
+  response: VisualFeedbackResponseSchema,
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  VisualFeedbackListRequestSchema,
+  VisualFeedbackRespondRequestSchema,
   LocalModelSourceOpenSchema,
   LocalModelSourceCloseSchema,
   LocalModelSourceRequestSchema,
@@ -3896,6 +3910,7 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         localModelBridge: z.boolean().optional(),
+        visualFeedback: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(backgroundProcesses): added 2026-09-09, remove gate after 2027-03-09.
         backgroundProcesses: z.boolean().optional(),
@@ -7488,7 +7503,26 @@ export const LocalModelSourceFrameSchema = z.object({
   payload: z.object({ requestId: LocalModelRequestIdSchema, frame: LocalModelStreamFrameSchema }),
 });
 
+export const VisualFeedbackListResponseSchema = z.object({
+  type: z.literal("visual_feedback.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    requests: z.array(VisualFeedbackRequestSchema),
+  }),
+});
+export const VisualFeedbackRespondResponseSchema = z.object({
+  type: z.literal("visual_feedback.respond.response"),
+  payload: z.object({ requestId: z.string() }),
+});
+export const VisualFeedbackRequestsSchema = z.object({
+  type: z.literal("visual_feedback.requests"),
+  payload: z.object({ requests: z.array(VisualFeedbackRequestSchema) }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  VisualFeedbackListResponseSchema,
+  VisualFeedbackRespondResponseSchema,
+  VisualFeedbackRequestsSchema,
   LocalModelSourceOpenResponseSchema,
   LocalModelSourceCloseResponseSchema,
   LocalModelAttachResponseSchema,

@@ -6,6 +6,7 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 
 - [OMP built-in tools](#omp-built-in-tools)
 - [Browser and computer use](#browser-and-computer-use)
+- [Screenshot annotation and text feedback](#screenshot-annotation-and-text-feedback)
 - [Plugin management and native commands](#plugin-management-and-native-commands)
 - [Bundled-plugin ownership and verification](#bundled-plugin-ownership-and-verification)
 - [Private Windows three-plugin distribution](#private-windows-three-plugin-distribution)
@@ -24,6 +25,33 @@ Known releases use their tool catalog; unfamiliar versions use the combined know
 For an idle conversation, choose **Browser use** from the composer's attachment menu for visible browser tools, or **Computer use** for session-specific native desktop capture/input. These run `/browser visible` and `/computer on`, retaining the current draft. They are unavailable while a conversation runs.
 
 The external-link browser preference is separate from assistant browser relay/CDP configuration; see [Messages and media](messages-and-media.md#external-browser-selection).
+
+## Screenshot annotation and text feedback
+
+Choose **+ → Screenshot annotation** (**截图批注**) in the conversation composer to open the visual feedback editor. Import, paste, or drop a PNG, JPEG, or WebP image, take a screenshot, or edit text without an image. The existing composer text becomes editable in the window. **Submit feedback** sends the edited text, overall feedback, numbered annotations, original image, and annotated preview through the conversation's normal send/queue path.
+
+AI can open the same editor with the Desktop host tool `request_visual_feedback`:
+
+OMP receives this tool through its native host-tool catalog; this feature does not start a separate MCP service. When enabled, the existing shared MCP endpoint exposes the same tool for MCP integrations. The **+** menu opens the editor directly and does not require MCP.
+
+```json
+{
+  "title": "Review the homepage",
+  "instructions": "Mark the areas to change and revise the heading.",
+  "text": "Current heading",
+  "imagePath": "screenshots/homepage.png"
+}
+```
+
+All fields are optional; relative image paths resolve against the calling agent's workspace. The tool requires an agent-scoped session and the optional Desktop host-tool capability. Requests appear globally, even when another conversation is selected, and wait for an explicit submission or cancellation. Pending requests remain available after reconnect. Closing the window, aborting the tool, daemon shutdown, or the 30-minute timeout returns cancellation without draft text or images.
+
+The editor supports points, rectangles, arrows, freehand strokes, editable numbered notes, annotation movement, rectangle resizing, undo/redo, fit, and zoom. Replacing or removing an image clears incompatible annotations and history after confirmation. Failed submissions preserve edits in the open editor; editor drafts are not persisted across a renderer reload.
+
+Annotations use the submitted original image's pixel coordinates, with a top-left origin, independent of display scaling or zoom. AI receives coordinate metadata and separate original/annotated image content, not base64 embedded in feedback text. The preview may be scaled to a 4096-pixel longest edge; coordinates always refer to the original. Each image is limited to 8 MiB, 32 × 1024 × 1024 pixels, and 32768 pixels per side.
+
+On macOS Desktop, **Take screenshot** uses the system's interactive region selector and temporarily hides the requesting window. Screen-recording permission is required. On Windows Desktop it captures the virtual desktop. Web uses the browser's screen/window/tab picker and stops sharing after capturing one frame. Unsupported or denied capture reports an error; importing or pasting a screenshot remains independent. Capture and editing are local; submitted feedback and images are sent to the selected agent and its configured AI service.
+
+This is an original implementation inspired by [EditHere's feedback workflow](https://github.com/Inginnng/EditHere), not an installation or copy of its noncommercial source.
 
 ## Plugin management and native commands
 

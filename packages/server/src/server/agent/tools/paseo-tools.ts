@@ -95,6 +95,10 @@ import type {
   PaseoToolResult,
 } from "./types.js";
 import { inspectPresentImage, resolvePresentImagePath } from "./present-image.js";
+import {
+  readVisualFeedbackImage,
+  type VisualFeedbackService,
+} from "../../visual-feedback-service.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -103,6 +107,7 @@ export interface PaseoToolHostDependencies {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  visualFeedbackService?: VisualFeedbackService;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   github?: ForgeService;
   workspaceGitService?: Pick<
@@ -599,6 +604,7 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   list_profiles: "providers",
   inspect_provider: "providers",
   present_image: "optional",
+  request_visual_feedback: "optional",
 };
 
 function buildCreateAgentGuidance(input: {
@@ -1307,6 +1313,105 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       };
     },
   );
+  if (options.visualFeedbackService) {
+    registerTool(
+      "request_visual_feedback",
+      {
+        title: "Request visual feedback",
+        description:
+          "Open the user's visual feedback editor and wait for explicit submission or cancellation. " +
+          "The user can edit text and annotate an optional local image, or capture a screenshot. " +
+          "Returns only submitted text, feedback, annotations, and actual original/annotated images; " +
+          "cancellation never returns an unsubmitted draft.",
+        inputSchema: {
+          title: z.string().max(200).optional().describe("Short editor title."),
+          instructions: z
+            .string()
+            .max(10000)
+            .optional()
+            .describe("What the user should review or change."),
+          text: z.string().max(200000).optional().describe("Editable text to review."),
+          imagePath: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              "Optional PNG/JPEG/WebP file; relative paths resolve against your workspace. Maximum 8 MiB.",
+            ),
+        },
+      },
+      async (args, context) => {
+        if (!callerAgentId) {
+          throw new Error(
+            "request_visual_feedback requires an agent-scoped tool session (callerAgentId)",
+          );
+        }
+        const callerAgent = agentManager.getAgent?.(callerAgentId) ?? null;
+        const image = args.imagePath
+          ? await readVisualFeedbackImage(
+              resolvePresentImagePath({
+                path: args.imagePath,
+                cwd: callerAgent?.cwd ?? null,
+              }),
+            )
+          : undefined;
+        const response = await options.visualFeedbackService!.request(
+          {
+            agentId: callerAgentId,
+            title: args.title ?? "Review and annotate",
+            instructions: args.instructions ?? "",
+            text: args.text ?? "",
+            ...(image ? { image } : {}),
+          },
+          { signal: context.signal },
+        );
+        if (response.status === "cancelled") {
+          return {
+            content: [{ type: "text", text: "Visual feedback cancelled. No draft was submitted." }],
+            structuredContent: { status: "cancelled" },
+          };
+        }
+        const { image: original, preview, ...submitted } = response.submission;
+        const describeImage = (raster: NonNullable<typeof original>) => ({
+          width: raster.width,
+          height: raster.height,
+          mimeType: raster.mimeType,
+        });
+        const summary = {
+          status: "submitted",
+          coordinateSpace: "original-image-pixels",
+          coordinateOrigin: "top-left",
+          submission: {
+            ...submitted,
+            annotations: submitted.annotations.map((annotation, index) =>
+              Object.assign({ number: index + 1 }, annotation),
+            ),
+            ...(original ? { image: describeImage(original) } : {}),
+            ...(preview ? { preview: describeImage(preview) } : {}),
+          },
+        };
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(summary) },
+            ...(original
+              ? [
+                  { type: "text", text: "Original image:" },
+                  { type: "image", data: original.data, mimeType: original.mimeType },
+                ]
+              : []),
+            ...(preview
+              ? [
+                  { type: "text", text: "Annotated image:" },
+                  { type: "image", data: preview.data, mimeType: preview.mimeType },
+                ]
+              : []),
+          ],
+          structuredContent: ensureValidJson(summary),
+        };
+      },
+    );
+  }
 
   registerTool(
     "create_workspace",

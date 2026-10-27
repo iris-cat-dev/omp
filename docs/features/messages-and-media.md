@@ -19,6 +19,8 @@ Image-tool badges follow interface language and show one action label without re
 
 Native generation/publication previews are copied into private content-addressed image files. History also understands OMP image-blob references, avoiding dependence on native temporary files. Workspace tabs preview ICO (case-insensitive `.ico`) alongside PNG, JPEG, GIF, WebP, and SVG; see [File discovery](workspaces-files-git.md#file-discovery-and-editing).
 
+To annotate a screenshot or revise text before sending it back to AI, choose **+ → Screenshot annotation**. See [Screenshot annotation and text feedback](tools-and-plugins.md#screenshot-annotation-and-text-feedback) for the editor, AI tool, capture permissions, and submission behavior.
+
 ### Copy and save
 
 On Desktop, right-click generated/displayed images, including fullscreen previews, for **Copy Image** or **Save Image As…**. Copy writes image pixels to the system clipboard; save preserves the original file, including `data:`/`blob:` previews. Native menus follow interface language.

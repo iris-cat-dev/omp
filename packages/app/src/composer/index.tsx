@@ -27,6 +27,7 @@ import {
   Monitor,
   Paperclip,
   Quote,
+  ScanLine,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import Animated from "react-native-reanimated";
@@ -155,6 +156,8 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+import { useManualVisualFeedbackStore } from "@/visual-feedback/manual-store";
+import { prepareVisualFeedbackMessage } from "@/visual-feedback/submission";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -1499,6 +1502,7 @@ function ComposerContentImpl({
         result,
         outgoingAttachments,
       });
+      return result;
     },
     [
       allowEmptySubmit,
@@ -1960,6 +1964,28 @@ function ComposerContentImpl({
     [githubSearchItems, githubSearchQueryTrimmed],
   );
 
+  const openVisualFeedback = useCallback(() => {
+    useManualVisualFeedbackStore.getState().open({
+      request: {
+        id: `manual-feedback:${serverId}:${agentId}:${Date.now()}`,
+        agentId,
+        title: t("visualFeedback.title"),
+        instructions: "",
+        text: userInput,
+      },
+      onSubmit: async (submission) => {
+        const message = await prepareVisualFeedbackMessage(submission);
+        const result = await sendMessageWithContent(message.text, [
+          ...selectedAttachments,
+          ...message.attachments,
+        ]);
+        if (result === "failed" || result === "noop")
+          throw new Error(t("visualFeedback.submitError"));
+        focusInput();
+      },
+    });
+  }, [agentId, focusInput, selectedAttachments, sendMessageWithContent, serverId, t, userInput]);
+
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
     const items: AttachmentMenuItem[] = [
       {
@@ -1969,6 +1995,13 @@ function ComposerContentImpl({
         onSelect: () => {
           void handlePickImage();
         },
+      },
+      {
+        id: "visual-feedback",
+        label: t("visualFeedback.menuLabel"),
+        icon: <ThemedScanLine size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        disabled: !isWeb || !isConnected || isComposerLocked || isProcessing || isSubmitLoading,
+        onSelect: openVisualFeedback,
       },
     ];
     if (isNative) {
@@ -2034,6 +2067,11 @@ function ComposerContentImpl({
     return items;
   }, [
     canPickDirectory,
+    isComposerLocked,
+    isConnected,
+    isProcessing,
+    isSubmitLoading,
+    openVisualFeedback,
     canRunOmpToolCommand,
     forgePresentation,
     handlePasteImage,
@@ -2421,6 +2459,7 @@ const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFileText = withUnistyles(FileText);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedQuote = withUnistyles(Quote);
+const ThemedScanLine = withUnistyles(ScanLine);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const filledIconForegroundMapping = (theme: Theme) => ({
