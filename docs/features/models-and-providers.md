@@ -41,6 +41,8 @@ Updating OMP, saving provider configuration, or signing in/out refreshes the aff
 
 Browser OAuth refreshes catalogs as soon as OMP confirms authorization, closes sign-in, and updates signed-in state; **Complete sign-in** need not be pressed again. Providers requesting an OAuth code or redirect URL still accept manual completion. Refresh never changes an existing conversation's selected model.
 
+When OMP offers both Codex sign-in methods, they appear under one Codex provider and share the same account list and models. Browser sign-in is recommended; use device-code sign-in for remote environments or when browser callbacks are unavailable. Either method can add another account.
+
 Official Codex OAuth accepts dynamic models only from the dedicated Codex catalog and requires Codex capability metadata per entry. Credentials are never sent to the generic ChatGPT model catalog as a fallback. Temporary failure, invalid JSON, or non-Codex responses preserve the last validated catalog or OMP's built-in models and reasoning options. When upgrading from affected older versions, legacy Codex cache entries whose endpoint/protocol cannot be proven are removed; credentials, other provider caches, and conversation settings are untouched.
 
 ## Thinking and Fast settings

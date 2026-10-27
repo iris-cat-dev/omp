@@ -261,6 +261,7 @@ interface OmpProviderSummary {
   modelCount: number;
   models?: OmpManagedProviderModel[];
   login?: OmpProviderManagement["loginProviders"][number];
+  deviceCodeLogin?: OmpProviderManagement["loginProviders"][number];
 }
 
 const EMPTY_OMP_ACCOUNT_NOTES: Record<string, string> = {};
@@ -493,7 +494,7 @@ function OmpProviderSummaryActions({
   onConfigureModels: () => void;
   onEdit: () => void;
   onRemove: () => void;
-  onLogin: () => void;
+  onLogin: (providerId: string) => void;
   onLogout: () => void;
 }) {
   const { t } = useTranslation();
@@ -521,19 +522,50 @@ function OmpProviderSummaryActions({
     }
     return (
       <Button
-        variant="secondary"
+        variant={summary.deviceCodeLogin?.available ? "default" : "secondary"}
         size="sm"
         leftIcon={loggingInProviderId === login.id ? undefined : LogIn}
-        onPress={onLogin}
+        onPress={() => onLogin(login.id)}
         disabled={Boolean(loggingInProviderId || loggingOutProviderId || loginFlowActive)}
         testID={`omp-login-provider-${login.id}`}
       >
         {loggingInProviderId === login.id
           ? t("settings.providers.omp.provider.starting")
+          : summary.deviceCodeLogin?.available
+            ? t(
+                login.authenticated
+                  ? "settings.providers.omp.provider.codexBrowserAddAccount"
+                  : "settings.providers.omp.provider.codexBrowserSignIn",
+              )
+            : t(
+                loginAction === "add-account"
+                  ? "settings.providers.omp.multiAccount.add"
+                  : "settings.providers.omp.provider.signIn",
+              )}
+      </Button>
+    );
+  }
+
+  function renderDeviceCodeLoginAction(): ReactElement | null {
+    const deviceLogin = summary.deviceCodeLogin;
+    if (!deviceLogin?.available || !login) {
+      return null;
+    }
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        leftIcon={loggingInProviderId === deviceLogin.id ? undefined : LogIn}
+        onPress={() => onLogin(deviceLogin.id)}
+        disabled={Boolean(loggingInProviderId || loggingOutProviderId || loginFlowActive)}
+        testID={`omp-login-provider-${deviceLogin.id}`}
+      >
+        {loggingInProviderId === deviceLogin.id
+          ? t("settings.providers.omp.provider.starting")
           : t(
-              loginAction === "add-account"
-                ? "settings.providers.omp.multiAccount.add"
-                : "settings.providers.omp.provider.signIn",
+              login.authenticated
+                ? "settings.providers.omp.provider.codexDeviceAddAccount"
+                : "settings.providers.omp.provider.codexDeviceSignIn",
             )}
       </Button>
     );
@@ -605,6 +637,7 @@ function OmpProviderSummaryActions({
     <View style={sheetStyles.providerSummaryActions}>
       {renderConfigureModelsAction()}
       {renderLoginAction()}
+      {renderDeviceCodeLoginAction()}
       {renderLogoutAction()}
       {renderEditAction()}
       {renderRemoveAction()}
@@ -805,6 +838,11 @@ function OmpProviderSummaryIdentity({ summary }: { summary: OmpProviderSummary }
         {modelCount}
         {loginStatus}
       </Text>
+      {login?.available && summary.deviceCodeLogin?.available ? (
+        <Text style={sheetStyles.mutedText}>
+          {t("settings.providers.omp.provider.codexLoginHint")}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -839,9 +877,6 @@ function OmpProviderSummaryRow({
   const loginAction = login ? resolveOmpLoginAction(login) : null;
   const loggingOutAll =
     login !== undefined && loggingOutProviderId === login.id && loggingOutCredentialId === null;
-  const handleLogin = useCallback(() => {
-    if (login) onLogin(login.id);
-  }, [login, onLogin]);
   const handleLogout = useCallback(() => {
     if (login) onLogout?.(login.id);
   }, [login, onLogout]);
@@ -856,7 +891,12 @@ function OmpProviderSummaryRow({
   }, [onConfigureModels, summary.id]);
   return (
     <View style={sheetStyles.providerSummaryBlock}>
-      <View style={sheetStyles.providerSummaryRow}>
+      <View
+        style={[
+          sheetStyles.providerSummaryRow,
+          summary.deviceCodeLogin?.available && sheetStyles.providerSummaryRowWithMethods,
+        ]}
+      >
         <OmpProviderSummaryIdentity summary={summary} />
         <OmpProviderSummaryActions
           summary={summary}
@@ -874,7 +914,7 @@ function OmpProviderSummaryRow({
           onConfigureModels={handleConfigureModels}
           onEdit={handleEdit}
           onRemove={handleRemove}
-          onLogin={handleLogin}
+          onLogin={onLogin}
           onLogout={handleLogout}
         />
       </View>
@@ -1980,14 +2020,25 @@ function OmpManagementPanel({
 
   const signInProviders = useMemo<OmpProviderSummary[]>(() => {
     if (!management) return [];
+    // These two OMP login methods share the openai-codex credential store.
+    const codexLogin = management.loginProviders.find((provider) => provider.id === "openai-codex");
+    const codexDeviceLogin = management.loginProviders.find(
+      (provider) => provider.id === "openai-codex-device",
+    );
     return management.loginProviders
+      .filter((login) => login.id !== "openai-codex-device" || !codexLogin)
       .map((login) => {
+        const deviceCodeLogin = login.id === "openai-codex" ? codexDeviceLogin : undefined;
         const provider = management.providerModels.find((candidate) => candidate.id === login.id);
         return {
           id: login.id,
           modelCount: provider?.modelCount ?? 0,
           models: provider?.models,
-          login,
+          login:
+            deviceCodeLogin?.authenticated && !login.authenticated
+              ? { ...login, authenticated: true }
+              : login,
+          deviceCodeLogin,
         };
       })
       .sort((left, right) =>
@@ -2001,7 +2052,9 @@ function OmpManagementPanel({
   const availableSignInProviders = useMemo(
     () =>
       signInProviders.filter(
-        (provider) => provider.login?.available && !provider.login.authenticated,
+        (provider) =>
+          (provider.login?.available || provider.deviceCodeLogin?.available) &&
+          !provider.login?.authenticated,
       ),
     [signInProviders],
   );
@@ -2012,6 +2065,8 @@ function OmpManagementPanel({
         ? rankModels(availableSignInProviders, providerSearch, (provider) => [
             provider.login?.name ?? "",
             provider.id,
+            provider.deviceCodeLogin?.name ?? "",
+            provider.deviceCodeLogin?.id ?? "",
           ])
         : availableSignInProviders,
     [availableSignInProviders, providerSearch],
@@ -2237,11 +2292,17 @@ function OmpManagementPanel({
     if (!loginFlow) {
       return null;
     }
+    const codexProvider = signInProviders.find(
+      (provider) =>
+        provider.id === "openai-codex" &&
+        (provider.login?.id === loginFlow.providerId ||
+          provider.deviceCodeLogin?.id === loginFlow.providerId),
+    );
     return (
       <View style={sheetStyles.section}>
         <SectionHeader
           title={t("settings.providers.omp.login.completeTitle", {
-            provider: loginFlow.providerId,
+            provider: codexProvider?.login?.name ?? loginFlow.providerId,
           })}
         />
         <SurfaceCard>
@@ -3113,6 +3174,10 @@ const sheetStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
+  },
+  providerSummaryRowWithMethods: {
+    flexDirection: "column",
+    alignItems: "stretch",
   },
   providerSummaryActions: {
     flexDirection: "row",
