@@ -19,6 +19,12 @@ On macOS, **Cmd-click a project in the workspace sidebar** to focus it. Ordinary
 
 Switching projects restores panels without closing conversations, terminating terminals, or archiving workspaces. Unsent drafts and unsaved editors survive. Files and terminals retain their owning checkout even when two worktrees have identical relative paths. Empty projects can be focused without creating workspaces; **New conversation** creates the first draft.
 
+### Importing folders with unavailable Git data
+
+**Add project** still imports an existing folder when Git inspection fails, including a corrupt index or a missing `HEAD` object. The folder is registered as a non-Git project; local workspaces can still be created and files remain accessible. The daemon logs the inspection failure without deleting, repairing, or rewriting `.git` or project files.
+
+Adding the same folder again reuses its project. After Git data is repaired, adding it again refreshes the same project to Git mode. Missing paths and files selected instead of folders remain errors; Git operations and archived-workspace restoration retain their existing error handling.
+
 ### Existing layout migration
 
 Old mixed layouts are automatically assigned using the same ownership/checkout context as new tabs. Conversations and terminals follow their actual workspace. Files follow their recorded opener or focused checkout, defaulting to the original route workspace if no opener was saved. No manual workspace-selection page is needed.
