@@ -101,7 +101,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("renders source-backed counts, cost and scope after the initial load", async () => {
+it("keeps source-backed metrics accessible across breakdown tabs and collapsed index details", async () => {
   let resolve: (payload: StatsPayload) => void = () => {
     throw new Error("No pending request");
   };
@@ -117,33 +117,66 @@ it("renders source-backed counts, cost and scope after the initial load", async 
   expect(screen.queryByTestId("omp-native-stats-summary")).toBeNull();
   expect(screen.getByTestId("omp-native-stats-refresh").getAttribute("aria-disabled")).toBe("true");
   resolve({ requestId: "stats", stats: snapshot() });
-  const section = await screen.findByTestId("omp-native-stats-summary");
-  expect(within(section).getByText("此主机 · 配置：默认配置")).toBeTruthy();
+  await screen.findByTestId("omp-native-stats-summary");
   expect(screen.getByTestId("omp-native-stats-requests").textContent).toBe("2");
+  expect(screen.getByTestId("omp-native-stats-failed").textContent).toBe("1");
   expect(screen.getByTestId("omp-native-stats-totalTokens").textContent).toBe("246");
   expect(screen.getByTestId("omp-native-stats-cost").textContent).toBe("US$2.50");
-  expect(screen.getByText("子代理")).toBeTruthy();
-  expect(screen.getByText("openai-codex / gpt-5.4")).toBeTruthy();
-  expect(screen.getByText("最近 1 小时")).toBeTruthy();
-  expect(screen.getByText("全部时间")).toBeTruthy();
-  const model = screen.getByTestId("omp-native-stats-byModel-row");
-  expect(within(model).getByTestId("omp-native-stats-breakdown-label").textContent).toBe(
-    "openai-codex / gpt-5.4",
-  );
-  expect(within(model).getByTestId("omp-native-stats-breakdown-metrics").textContent).toBe(
-    "2 次请求 · 246 词元 · US$2.50",
-  );
-  expect(screen.getByText(/包含已报告的服务商编排词元/)).toBeTruthy();
+  expect(screen.getByTestId("omp-native-stats-transcripts").textContent).toBe("1");
+  expect(screen.getByTestId("omp-native-stats-cacheWrite").textContent).toBe("80");
+  expect(screen.queryByTestId("omp-native-stats-byModel")).toBeNull();
+  expect(screen.queryByTestId("omp-native-stats-details")).toBeNull();
+
+  fireEvent.click(screen.getByTestId("omp-native-stats-tab-byModel"));
+  const model = within(screen.getByTestId("omp-native-stats-byModel-row"));
+  expect(model.getByTestId("omp-native-stats-breakdown-label").textContent).toBe("gpt-5.4");
+  expect(model.getByTestId("omp-native-stats-breakdown-provider").textContent).toBe("openai-codex");
+  expect(model.getByTestId("omp-native-stats-breakdown-requests").textContent).toBe("2");
+  expect(model.getByTestId("omp-native-stats-breakdown-tokens").textContent).toBe("246");
+  expect(model.getByTestId("omp-native-stats-breakdown-cost").textContent).toBe("US$2.50");
+  expect(screen.queryByTestId("omp-native-stats-byProvider")).toBeNull();
+
+  fireEvent.click(screen.getByTestId("omp-native-stats-tab-byAgentType"));
+  const agent = within(screen.getByTestId("omp-native-stats-byAgentType-row"));
+  expect(agent.getByTestId("omp-native-stats-breakdown-requests").textContent).toBe("2");
+  expect(screen.queryByTestId("omp-native-stats-byModel")).toBeNull();
+
+  const toggle = screen.getByTestId("omp-native-stats-details-toggle");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByTestId("omp-native-stats-indexedThrough").textContent).toContain(
-    "最新已索引请求：",
+    new Date(snapshot().indexedThrough!).toLocaleString("zh-CN"),
   );
-  expect(screen.getByTestId("omp-native-stats-fetchedAt").textContent).toContain("索引读取时间：");
-  const content = screen.getByTestId("omp-native-stats-section").textContent;
-  expect(content).toContain("不代表订阅扣费或账单");
-  expect(content).not.toMatch(
-    /Loading|Refresh|Requests|Input tokens|Main agent|Subagent|Unavailable/,
+  expect(screen.getByTestId("omp-native-stats-fetchedAt").textContent).toContain(
+    new Date(snapshot().fetchedAt).toLocaleString("zh-CN"),
   );
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByTestId("omp-native-stats-details")).toBeNull();
 });
+
+it.each([
+  { input: 20, read: 60, write: 80, expected: "37.5%" },
+  { input: 0, read: 80, write: 0, expected: "100.0%" },
+  { input: 80, read: 0, write: 0, expected: "0.0%" },
+  { input: 0, read: 0, write: 80, expected: "0.0%" },
+  { input: 0, read: 0, write: 0, expected: "—" },
+])(
+  "calculates token cache hits for input=$input, read=$read, write=$write",
+  async ({ input, read, write, expected }) => {
+    const stats = snapshot();
+    Object.assign(stats.overall, {
+      totalInputTokens: input,
+      totalCacheReadTokens: read,
+      totalCacheWriteTokens: write,
+      totalOutputTokens: 999_999,
+      totalTokens: 1_234_567,
+    });
+    runtime.clients.first = { getOmpStats: async () => ({ requestId: "stats", stats }) };
+    render(page());
+    expect((await screen.findByTestId("omp-native-stats-cacheHitRate")).textContent).toBe(expected);
+  },
+);
 
 it("distinguishes unpriced usage from a recorded zero in summary and breakdown costs", async () => {
   let cost = 0;
@@ -166,33 +199,32 @@ it("distinguishes unpriced usage from a recorded zero in summary and breakdown c
   render(page());
   await screen.findByTestId("omp-native-stats-summary");
   expect(screen.getByTestId("omp-native-stats-cost").textContent).toBe("未定价");
-  const row = within(screen.getByTestId("omp-native-stats-byModel-row"));
-  expect(row.getByTestId("omp-native-stats-breakdown-metrics").textContent).toBe(
-    "2 次请求 · 246 词元 · 未定价",
-  );
-  expect(row.getByText("有 2 次请求缺少公开等价价格，其费用未计入总额。")).toBeTruthy();
+  const row = within(screen.getByTestId("omp-native-stats-byProvider-row"));
+  expect(row.getByTestId("omp-native-stats-breakdown-cost").textContent).toBe("未定价");
+  expect(row.getByTestId("omp-native-stats-breakdown-unpriced").textContent).toContain("2");
   cost = 1.25;
   unpricedRequests = 1;
   fireEvent.click(screen.getByTestId("omp-native-stats-refresh"));
   await waitFor(() =>
     expect(screen.getByTestId("omp-native-stats-cost").textContent).toBe("US$1.25"),
   );
-  expect(row.getByText("有 1 次请求缺少公开等价价格，其费用未计入总额。")).toBeTruthy();
+  expect(row.getByTestId("omp-native-stats-breakdown-unpriced").textContent).toContain("1");
   cost = 0;
   fireEvent.click(screen.getByTestId("omp-native-stats-refresh"));
   await waitFor(() =>
     expect(screen.getByTestId("omp-native-stats-cost").textContent).toBe("US$0.00"),
   );
   for (const group of ["byModel", "byProvider", "byAgentType"]) {
+    fireEvent.click(screen.getByTestId(`omp-native-stats-tab-${group}`));
     const breakdown = within(screen.getByTestId(`omp-native-stats-${group}-row`));
-    expect(breakdown.getByTestId("omp-native-stats-breakdown-metrics").textContent).toBe(
-      "2 次请求 · 246 词元 · US$0.00",
-    );
-    expect(breakdown.getByText("有 1 次请求缺少公开等价价格，其费用未计入总额。")).toBeTruthy();
+    expect(breakdown.getByTestId("omp-native-stats-breakdown-cost").textContent).toBe("US$0.00");
+    expect(breakdown.getByTestId("omp-native-stats-breakdown-unpriced").textContent).toContain("1");
   }
   unpricedRequests = 0;
   fireEvent.click(screen.getByTestId("omp-native-stats-refresh"));
-  await waitFor(() => expect(row.queryByText(/缺少公开等价价格/)).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByTestId("omp-native-stats-breakdown-unpriced")).toBeNull(),
+  );
   expect(screen.getByTestId("omp-native-stats-cost").textContent).toBe("US$0.00");
 });
 
@@ -288,6 +320,7 @@ it("distinguishes missing and corrupt sources from indexed zero use in Chinese",
   fireEvent.click(screen.getByText("重试"));
   await screen.findByText("此时间范围内暂无已索引请求");
   expect(screen.getByTestId("omp-native-stats-requests").textContent).toBe("0");
+  fireEvent.click(screen.getByTestId("omp-native-stats-details-toggle"));
   expect(screen.getByText("原生索引中暂无请求")).toBeTruthy();
 });
 

@@ -18,6 +18,12 @@ The Usage view reads OMP's native `stats.db` for the resolved host/profile, acro
 
 Ranges are 1 hour, 24 hours, 7 days, 30 days, 90 days, and all indexed time. Counts, failures, input/output/cache tokens, native total tokens, and API-equivalent USD costs include provider, model, and agent-type breakdowns.
 
+The overview uses four compact cards (requests with failures, total tokens, API-equivalent cost, and indexed transcripts), followed by the four token categories. Large headline counts are abbreviated in the interface language and headline costs use two decimal places, preserving recorded sub-cent amounts; hover, keyboard focus, or a touch tap reveals the full recorded value. The provider/model/agent selector shows one aligned breakdown at a time with exact counts and costs; narrow layouts stack the columns without hiding metrics. **Statistics & index details** is collapsed by default and contains the measurement notes and both full index timestamps. The local-monitor shortcut and separate plan-usage cards follow the overview.
+
+**Cache hit rate** is token-weighted: `cacheRead / (uncachedInput + cacheRead + cacheWrite)`. It excludes output and provider orchestration tokens, and shows `—` when there are no input tokens rather than inventing a 0% rate. The token panel displays uncached input, output, cache read, cache write, and cache hit rate as peer columns, with labels above values; narrow layouts wrap the columns. Hover/focus or tap the rate to see its formula.
+
+Cache-write counts preserve the native index; they are not inferred from cache hits or misses. In [OMP v18.11.3's Responses usage accounting](https://github.com/can1357/oh-my-pi/blob/v18.11.3/packages/ai/src/providers/openai-shared.ts#L494-L509), absent write counters default to zero, and DeepSeek cache misses remain uncached input rather than cache writes. A zero write count therefore does not mean caching is disabled. The cache-write label has a compact explanation; selecting **All time** can reveal historical write counts even when the current range contains none.
+
 Interpret these values carefully:
 
 - Native total tokens are authoritative. Provider orchestration tokens can make them differ from the four displayed conversation-token buckets.

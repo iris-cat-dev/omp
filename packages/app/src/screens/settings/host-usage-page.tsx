@@ -79,8 +79,8 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <OmpQuotaServerContext.Provider value={serverId}>
-      <DesktopLocalMonitorSection serverId={serverId} />
       <OmpStatsSettingsSection serverId={serverId} />
+      <DesktopLocalMonitorSection serverId={serverId} />
       <ProviderUsageSettingsSection
         view={usageView}
         onRefresh={handleRefresh}

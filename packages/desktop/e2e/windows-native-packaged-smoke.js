@@ -1367,6 +1367,7 @@ async function smokeUsage({
         "output",
         "cacheRead",
         "cacheWrite",
+        "cacheHitRate",
         "cost",
       ];
       const groups = ["byModel", "byProvider", "byAgentType"];
@@ -1390,8 +1391,18 @@ async function smokeUsage({
                 label: row
                   .querySelector('[data-testid="omp-native-stats-breakdown-label"]')
                   ?.textContent?.trim(),
-                metrics: row
-                  .querySelector('[data-testid="omp-native-stats-breakdown-metrics"]')
+                provider:
+                  row
+                    .querySelector('[data-testid="omp-native-stats-breakdown-provider"]')
+                    ?.textContent?.trim() ?? null,
+                requests: row
+                  .querySelector('[data-testid="omp-native-stats-breakdown-requests"]')
+                  ?.textContent?.trim(),
+                tokens: row
+                  .querySelector('[data-testid="omp-native-stats-breakdown-tokens"]')
+                  ?.textContent?.trim(),
+                cost: row
+                  .querySelector('[data-testid="omp-native-stats-breakdown-cost"]')
                   ?.textContent?.trim(),
               }),
             ),
@@ -1403,6 +1414,10 @@ async function smokeUsage({
         fetchedAt: document
           .querySelector('[data-testid="omp-native-stats-fetchedAt"]')
           ?.textContent?.trim(),
+        detailsExpanded:
+          document
+            .querySelector('[data-testid="omp-native-stats-details-toggle"]')
+            ?.getAttribute("aria-expanded") === "true",
         busy: !refresh || refresh.getAttribute("aria-disabled") === "true",
       };
     });
@@ -1425,10 +1440,16 @@ async function smokeUsage({
         minimumFractionDigits: 2,
         maximumFractionDigits: 4,
       });
-      const cost = (row) =>
+      const headlineCurrency = new Intl.NumberFormat("zh-CN", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const cost = (row, formatter = currency) =>
         row.unpricedRequests > 0 && row.unpricedRequests === row.totalRequests
           ? "未定价"
-          : currency.format(row.totalCostUsd);
+          : formatter.format(row.totalCostUsd);
       const fields = {
         requests: "totalRequests",
         failed: "failedRequests",
@@ -1440,6 +1461,18 @@ async function smokeUsage({
         cacheWrite: "totalCacheWriteTokens",
       };
       const agentNames = { main: "主代理", subagent: "子代理", advisor: "顾问代理" };
+      const promptTokens =
+        expected.overall.totalInputTokens +
+        expected.overall.totalCacheReadTokens +
+        expected.overall.totalCacheWriteTokens;
+      const cacheHitRate =
+        promptTokens > 0
+          ? new Intl.NumberFormat("zh-CN", {
+              style: "percent",
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+            }).format(expected.overall.totalCacheReadTokens / promptTokens)
+          : "—";
       return {
         values: {
           ...Object.fromEntries(
@@ -1448,18 +1481,27 @@ async function smokeUsage({
               number.format(expected.overall[field]),
             ]),
           ),
-          cost: cost(expected.overall),
+          cacheHitRate,
+          cost: cost(
+            expected.overall,
+            expected.overall.totalCostUsd > 0 && expected.overall.totalCostUsd < 0.01
+              ? currency
+              : headlineCurrency,
+          ),
         },
         groups: Object.fromEntries(
           ["byModel", "byProvider", "byAgentType"].map((key) => [
             key,
             expected[key].map((row) => {
               let label = agentNames[row.agentType];
-              if (key === "byModel") label = `${row.provider} / ${row.model}`;
+              if (key === "byModel") label = row.model;
               else if (key === "byProvider") label = row.provider;
               return {
                 label,
-                metrics: `${number.format(row.totalRequests)} 次请求 · ${number.format(row.totalTokens)} 词元 · ${cost(row)}`,
+                provider: key === "byModel" ? row.provider : null,
+                requests: number.format(row.totalRequests),
+                tokens: number.format(row.totalTokens),
+                cost: cost(row),
               };
             }),
           ]),
@@ -1471,20 +1513,46 @@ async function smokeUsage({
     const formatted = await expectedUi(expected);
     let snapshot;
     await until(
-      `${range} Chinese Usage totals/breakdowns from the real native fixture`,
+      `${range} Usage totals from the real native fixture`,
       async () => {
         snapshot = await inspect();
         report.usage.lastDom = snapshot;
         return (
           !snapshot.busy &&
           snapshot.summary &&
-          JSON.stringify(snapshot.values) === JSON.stringify(formatted.values) &&
-          JSON.stringify(snapshot.groups) === JSON.stringify(formatted.groups) &&
-          snapshot.indexedThrough === formatted.indexedThrough
+          JSON.stringify(snapshot.values) === JSON.stringify(formatted.values)
         );
       },
       STATS_COMMAND_TIMEOUT_MS,
     );
+    const groups = {};
+    for (const key of ["byProvider", "byModel", "byAgentType"]) {
+      if (expected[key].length === 0) {
+        groups[key] = [];
+        continue;
+      }
+      await click(`omp-native-stats-tab-${key}`);
+      await until(`${range} ${key} breakdown`, async () => {
+        snapshot = await inspect();
+        return JSON.stringify(snapshot.groups[key]) === JSON.stringify(formatted.groups[key]);
+      });
+      groups[key] = snapshot.groups[key];
+    }
+    if (!snapshot.detailsExpanded) await click("omp-native-stats-details-toggle");
+    await until(`${range} index timestamps`, async () => {
+      snapshot = await inspect();
+      return snapshot.indexedThrough === formatted.indexedThrough && Boolean(snapshot.fetchedAt);
+    });
+    snapshot.groups = groups;
+    await click("omp-native-stats-details-toggle");
+    if (expected.byProvider.length > 0) {
+      await click("omp-native-stats-tab-byProvider");
+      await until("Provider breakdown restored", async () => {
+        const current = await inspect();
+        return current.groups.byProvider.length === expected.byProvider.length;
+      });
+    }
+    report.usage.lastDom = snapshot;
     return snapshot;
   };
   report.usage.indexBeforePage = { exists: fs.existsSync(fixture.statsPath) };
