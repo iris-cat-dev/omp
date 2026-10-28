@@ -947,11 +947,12 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       operations: {
-        ensureLoaded: async (agentId) => {
+        ensureLoaded: async (agentId, modelId) => {
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
             logger: this.sessionLogger,
+            modelId,
           });
         },
         setMode: async (agentId, modeId) =>

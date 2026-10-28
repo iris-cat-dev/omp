@@ -14,6 +14,7 @@ import {
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
   options: { broadcastTimeline: boolean };
+  modelId?: string | null;
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -33,6 +34,8 @@ export interface EnsureAgentLoadedDeps {
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
+  /** Explicit model selection used when restoring an unloaded conversation. */
+  modelId?: string | null;
   logger: Logger;
 }
 
@@ -59,6 +62,25 @@ export async function ensureUnarchivedAgentLoaded(
   return agent;
 }
 
+async function awaitPendingInitialization(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps,
+  pending: PendingAgentInitialization,
+): Promise<ManagedAgent> {
+  pending.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+  try {
+    return await pending.promise;
+  } catch (error) {
+    if (deps.modelId === undefined || deps.modelId === pending.modelId) throw error;
+    // A history request may already be restoring the removed model. Its failed
+    // launch must not discard a subsequent explicit model selection.
+    if (pendingAgentInitializations.get(agentId) === pending) {
+      pendingAgentInitializations.delete(agentId);
+    }
+    return ensureAgentLoaded(agentId, deps);
+  }
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
@@ -67,8 +89,7 @@ export async function ensureAgentLoaded(
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    return awaitPendingInitialization(agentId, deps, inflight);
   }
 
   const existing = deps.agentManager.getAgent(agentId);
@@ -83,8 +104,7 @@ export async function ensureAgentLoaded(
 
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    return awaitPendingInitialization(agentId, deps, laterInflight);
   }
 
   const pendingOptions = {
@@ -107,7 +127,10 @@ export async function ensureAgentLoaded(
     if (handle) {
       snapshot = await deps.agentManager.resumeAgentFromPersistence(
         handle,
-        buildConfigOverrides(record),
+        {
+          ...buildConfigOverrides(record),
+          ...(deps.modelId !== undefined ? { model: deps.modelId ?? undefined } : {}),
+        },
         agentId,
         extractTimestamps(record),
         record.archivedAt ? { purpose: "history" } : undefined,
@@ -120,6 +143,7 @@ export async function ensureAgentLoaded(
       if (!config) {
         throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
       }
+      if (deps.modelId !== undefined) config.model = deps.modelId ?? undefined;
       snapshot = await deps.agentManager.createAgent(config, agentId, {
         labels: record.labels,
         workspaceId: record.workspaceId,
@@ -134,7 +158,11 @@ export async function ensureAgentLoaded(
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
-  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
+  const pending: PendingAgentInitialization = {
+    promise: initPromise,
+    options: pendingOptions,
+    modelId: deps.modelId,
+  };
   pendingAgentInitializations.set(agentId, pending);
 
   try {

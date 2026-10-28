@@ -20,12 +20,12 @@ export interface AgentConfigSessionHost {
 
 /**
  * The per-agent config mutations this subsystem drives. The shell adapts these
- * onto the AgentManager and loads a closed agent before mutation (mode still
- * routes through setAgentModeCommand); tests wire an in-memory fake. Mode and
- * thinking yield a provider notice; model and feature do not.
+ * onto the AgentManager and loads a closed agent with any explicitly selected
+ * model before mutation (mode still routes through setAgentModeCommand). Mode
+ * and thinking yield a provider notice; model and feature do not.
  */
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string): Promise<void>;
+  ensureLoaded(agentId: string, modelId?: string | null): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
@@ -45,6 +45,7 @@ export interface AgentConfigSessionOptions {
 
 interface ConfigChange {
   agentId: string;
+  modelId?: string | null;
   requestId: string;
   logLabel: string;
   logFields: Record<string, unknown>;
@@ -92,6 +93,7 @@ export class AgentConfigSession {
     const { agentId, modelId, requestId } = msg;
     return this.applyConfigChange({
       agentId,
+      modelId,
       requestId,
       logLabel: "set_agent_model_request",
       logFields: { agentId, modelId, requestId },
@@ -180,6 +182,7 @@ export class AgentConfigSession {
     const { agentId, config, requestId } = msg;
     return this.applyConfigChange({
       agentId,
+      modelId: config.modelId,
       requestId,
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
@@ -240,7 +243,7 @@ export class AgentConfigSession {
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId);
+      await this.operations.ensureLoaded(agentId, change.modelId);
       const notice = await run();
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });
