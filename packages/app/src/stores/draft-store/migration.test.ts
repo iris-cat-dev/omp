@@ -116,6 +116,48 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("restores a persisted feedback card with nested images alongside existing draft content", async () => {
+    const backing = createMemoryStorage();
+    const metadata = (id: string) => ({
+      id,
+      mimeType: "image/png",
+      storageType: "desktop-file" as const,
+      storageKey: `/attachments/${id}.png`,
+      createdAt: 1,
+    });
+    const card: UserComposerAttachment = {
+      kind: "visual_feedback",
+      id: "feedback",
+      text: "  Supplied body\n  ",
+      feedback: "  Requested changes\n修改要求  ",
+      annotations: [
+        { id: "note", kind: "point", x: 1200.5, y: 500.25, text: "  Keep this note\n  " },
+      ],
+      image: { metadata: metadata("original"), width: 2560, height: 1440 },
+      preview: { metadata: metadata("preview"), width: 1280, height: 720 },
+    };
+    const state = {
+      drafts: {
+        "agent:server:agent": activeDraft("Existing unsent prompt", 1, [
+          githubIssueAttachment(101),
+          { kind: "image", metadata: metadata("ordinary") },
+          card,
+        ]),
+      },
+      createModalDraft: activeDraft("New workspace prompt", 2, [card]),
+    };
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
+    await storage.setItem("paseo-drafts", { state, version: 5 });
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 3,
+    });
+
+    expect(migrated).toEqual(state);
+    expect(backing.values.get("paseo-drafts")).not.toContain("base64");
+  });
+
   it("keeps a supported legacy draft for migration", async () => {
     const backing = createMemoryStorage();
     const legacyState = {

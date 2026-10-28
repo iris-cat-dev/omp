@@ -10,6 +10,11 @@ import {
   releaseAttachmentPreviewUrl,
   resolveAttachmentPreviewUrl,
 } from "./service";
+import { prepareVisualFeedbackAttachment } from "@/visual-feedback/submission";
+import { collectRetainedAttachmentIds } from "./gc-retention";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import { CanonicalDraftInputSchema } from "@/stores/draft-store/state";
+import { withRetainedComposerImages } from "@/composer/actions";
 
 function createAttachment(input: Partial<AttachmentMetadata> = {}): AttachmentMetadata {
   return {
@@ -60,6 +65,107 @@ function createRecordingStore(): AttachmentStore & {
 describe("attachment service", () => {
   afterEach(() => {
     __setAttachmentStoreForTests(null);
+  });
+
+  it("prepares one draft-safe feedback card with both associated images", async () => {
+    const store = createRecordingStore();
+    const saved: AttachmentMetadata[] = [];
+    const save = store.save;
+    store.save = async (input) => {
+      if (saved.length > 0) {
+        expect(collectRetainedAttachmentIds()).toContain(saved[0]!.id);
+      }
+      const attachment = await save({ ...input, id: `feedback-image-${saved.length + 1}` });
+      saved.push(attachment);
+      return attachment;
+    };
+    __setAttachmentStoreForTests(store);
+    const submission = {
+      text: "  Supplied body\n  ",
+      feedback: "  Requested changes\n修改要求  ",
+      annotations: [
+        { id: "note", kind: "point" as const, x: 1800.5, y: 900, text: "  Entire note\n  " },
+      ],
+      image: { data: "b3JpZ2luYWw=", mimeType: "image/png" as const, width: 2560, height: 1440 },
+      preview: { data: "cHJldmlldw==", mimeType: "image/jpeg" as const, width: 1280, height: 720 },
+    };
+    const card = await prepareVisualFeedbackAttachment(submission);
+    const draft = CanonicalDraftInputSchema.parse(
+      JSON.parse(JSON.stringify({ text: "Existing composer body", attachments: [card] })),
+    );
+    expect(draft.text).toBe("Existing composer body");
+    expect(draft.attachments).toEqual([card]);
+    expect(card).toMatchObject({
+      kind: "visual_feedback",
+      text: submission.text,
+      feedback: submission.feedback,
+      annotations: submission.annotations,
+      image: { metadata: saved[0], width: 2560, height: 1440 },
+      preview: { metadata: saved[1], width: 1280, height: 720 },
+    });
+    expect(JSON.stringify(draft)).not.toContain(submission.image.data);
+    expect(JSON.stringify(draft)).not.toContain(submission.preview.data);
+    for (const metadata of saved) {
+      expect(collectRetainedAttachmentIds()).not.toContain(metadata.id);
+    }
+    const wire = splitComposerAttachmentsForSubmit(draft.attachments);
+    expect(wire.images).toEqual(saved);
+  });
+
+  it("cleans up an original image if saving the feedback preview fails", async () => {
+    const store = createRecordingStore();
+    const original = createAttachment({ id: "partial-original" });
+    const failure = new Error("Preview storage unavailable");
+    const deleted: string[] = [];
+    let calls = 0;
+    store.save = async () => {
+      calls += 1;
+      if (calls === 1) return original;
+      throw failure;
+    };
+    store.delete = async ({ attachment }) => {
+      deleted.push(attachment.id);
+    };
+    __setAttachmentStoreForTests(store);
+
+    await expect(
+      prepareVisualFeedbackAttachment({
+        text: "",
+        feedback: "Keep this feedback",
+        annotations: [],
+        image: { data: "AAEC", mimeType: "image/png", width: 400, height: 300 },
+        preview: { data: "AwQF", mimeType: "image/png", width: 400, height: 300 },
+      }),
+    ).rejects.toBe(failure);
+    expect(deleted).toEqual([original.id]);
+    expect(collectRetainedAttachmentIds()).not.toContain(original.id);
+  });
+
+  it("keeps both feedback images through in-flight garbage collection and releases them afterwards", async () => {
+    const store = createRecordingStore();
+    const original = createAttachment({ id: "feedback-original" });
+    const preview = createAttachment({ id: "feedback-preview" });
+    const collections: string[][] = [];
+    store.garbageCollect = async ({ referencedIds }) => {
+      collections.push([...referencedIds]);
+    };
+    __setAttachmentStoreForTests(store);
+    const card = {
+      kind: "visual_feedback" as const,
+      id: "feedback-in-flight",
+      text: "",
+      feedback: "Keep both images",
+      annotations: [],
+      image: { metadata: original, width: 2560, height: 1440 },
+      preview: { metadata: preview, width: 1280, height: 720 },
+    };
+
+    await withRetainedComposerImages([card], async () => {
+      await garbageCollectAttachments({ referencedIds: new Set() });
+    });
+    expect(collections).toEqual([[original.id, preview.id]]);
+    await garbageCollectAttachments({ referencedIds: new Set() });
+    expect(collections).toEqual([[original.id, preview.id], []]);
   });
 
   it.each(["Review this screenshot", ""])(

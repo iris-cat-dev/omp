@@ -76,6 +76,7 @@ export const ListChecks = StubIcon;
 export const Maximize = StubIcon;
 export const Maximize2 = StubIcon;
 export const MessageSquare = StubIcon;
+export const MessageSquareCode = StubIcon;
 export const MessageSquarePlus = StubIcon;
 export const Mic = StubIcon;
 export const MicOff = StubIcon;

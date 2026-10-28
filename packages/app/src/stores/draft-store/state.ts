@@ -5,6 +5,11 @@ import {
 } from "@/attachments/types";
 import { normalizeDirectoryPath } from "@/attachments/directory";
 import { z } from "zod";
+import {
+  VisualFeedbackSubmissionSchema,
+  VISUAL_FEEDBACK_MAX_IMAGE_PIXELS,
+} from "@omp-desktop/protocol/visual-feedback";
+import { getComposerAttachmentImages } from "@/attachments/composer-images";
 
 export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
@@ -76,6 +81,13 @@ const ChangeRequestItemSchema = z.strictObject({
   kind: z.literal("change_request"),
   ...ForgeItemFields,
 });
+const VisualFeedbackAttachmentImageSchema = z
+  .strictObject({
+    metadata: AttachmentMetadataSchema,
+    width: z.number().int().positive().max(32768),
+    height: z.number().int().positive().max(32768),
+  })
+  .refine((image) => image.width * image.height <= VISUAL_FEEDBACK_MAX_IMAGE_PIXELS);
 export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z.discriminatedUnion(
   "kind",
   [
@@ -101,6 +113,15 @@ export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z
       kind: z.literal("quoted_content"),
       id: z.string().min(1),
       text: z.string().min(1),
+    }),
+    z.strictObject({
+      kind: z.literal("visual_feedback"),
+      id: z.string().min(1),
+      text: VisualFeedbackSubmissionSchema.shape.text,
+      feedback: VisualFeedbackSubmissionSchema.shape.feedback,
+      annotations: VisualFeedbackSubmissionSchema.shape.annotations,
+      image: VisualFeedbackAttachmentImageSchema.optional(),
+      preview: VisualFeedbackAttachmentImageSchema.optional(),
     }),
     z.strictObject({ kind: z.literal("forge_issue"), item: IssueItemSchema }),
     z.strictObject({ kind: z.literal("forge_change_request"), item: ChangeRequestItemSchema }),
@@ -166,6 +187,33 @@ export function normalizeComposerAttachment(
       metadata: normalizeAttachmentMetadata(attachment.metadata),
     };
   }
+  if (attachment.kind === "visual_feedback") {
+    return {
+      kind: "visual_feedback",
+      id: attachment.id,
+      text: attachment.text,
+      feedback: attachment.feedback,
+      annotations: attachment.annotations,
+      ...(attachment.image
+        ? {
+            image: {
+              metadata: normalizeAttachmentMetadata(attachment.image.metadata),
+              width: attachment.image.width,
+              height: attachment.image.height,
+            },
+          }
+        : {}),
+      ...(attachment.preview
+        ? {
+            preview: {
+              metadata: normalizeAttachmentMetadata(attachment.preview.metadata),
+              width: attachment.preview.width,
+              height: attachment.preview.height,
+            },
+          }
+        : {}),
+    };
+  }
   if (attachment.kind === "directory") {
     return {
       kind: "directory",
@@ -222,8 +270,8 @@ export function collectReferencedAttachmentIdsFromState(state: DraftStoreState):
       continue;
     }
     for (const attachment of draftRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+      for (const image of getComposerAttachmentImages(attachment)) {
+        referencedIds.add(image.id);
       }
     }
   }
@@ -231,8 +279,8 @@ export function collectReferencedAttachmentIdsFromState(state: DraftStoreState):
   const modalRecord = state.createModalDraft;
   if (modalRecord?.lifecycle === "active" && isCanonicalDraftInput(modalRecord.input)) {
     for (const attachment of modalRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+      for (const image of getComposerAttachmentImages(attachment)) {
+        referencedIds.add(image.id);
       }
     }
   }

@@ -46,6 +46,51 @@ export function splitComposerAttachmentsForSubmit(
       continue;
     }
 
+    if (attachment.kind === "visual_feedback") {
+      const originalImageNumber = attachment.image
+        ? images.push(attachment.image.metadata)
+        : undefined;
+      const previewImageNumber = attachment.preview
+        ? images.push(attachment.preview.metadata)
+        : undefined;
+      agentAttachments.push({
+        type: "text",
+        mimeType: "text/plain",
+        title: "Screenshot annotation",
+        text: JSON.stringify(
+          {
+            schemaVersion: "omp-visual-feedback-1",
+            coordinateSpace: "original-image-pixels",
+            text: attachment.text,
+            feedback: attachment.feedback,
+            image: attachment.image
+              ? {
+                  width: attachment.image.width,
+                  height: attachment.image.height,
+                  attachment: "original",
+                  imageNumber: originalImageNumber,
+                }
+              : null,
+            preview: attachment.preview
+              ? {
+                  width: attachment.preview.width,
+                  height: attachment.preview.height,
+                  attachment: "annotated",
+                  imageNumber: previewImageNumber,
+                }
+              : null,
+            annotations: attachment.annotations.map((annotation, index) => ({
+              number: index + 1,
+              ...annotation,
+            })),
+          },
+          null,
+          2,
+        ),
+      });
+      continue;
+    }
+
     if (attachment.kind === "file") {
       agentAttachments.push(attachment.attachment);
       continue;

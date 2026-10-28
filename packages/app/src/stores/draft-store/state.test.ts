@@ -1,5 +1,57 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords, toDraftInputIfReady } from "./state";
+import {
+  applyClearDraftRecord,
+  collectReferencedAttachmentIdsFromState,
+  DraftStoreStateSchema,
+  normalizeComposerAttachment,
+  pruneFinalizedDraftRecords,
+  toDraftInputIfReady,
+  UserComposerAttachmentSchema,
+  type DraftRecord,
+  type DraftStoreState,
+} from "./state";
+import type { VisualFeedbackComposerAttachment } from "@/attachments/types";
+
+function feedbackAttachment(id: string): VisualFeedbackComposerAttachment {
+  const metadata = (role: string) => ({
+    id: `${id}-${role}`,
+    mimeType: "image/png",
+    storageType: "desktop-file" as const,
+    storageKey: `/attachments/${id}-${role}.png`,
+    createdAt: 1,
+  });
+  return {
+    kind: "visual_feedback",
+    id,
+    text: "  Message body\nwith whitespace  ",
+    feedback: "  修改要求\nDo not trim.  ",
+    annotations: [
+      { id: "point", kind: "point", x: 1800.5, y: 900, text: "  Point note\n保留  " },
+      { id: "rectangle", kind: "rectangle", x: 20, y: 30, width: 50, height: 40, text: "" },
+      { id: "arrow", kind: "arrow", x: 10, y: 20, x2: 90, y2: 80, text: "Arrow note" },
+      {
+        id: "pen",
+        kind: "pen",
+        points: [
+          { x: 1, y: 2 },
+          { x: 20.5, y: 30.5 },
+        ],
+        text: "Freehand note",
+      },
+    ],
+    image: { metadata: metadata("original"), width: 2560, height: 1440 },
+    preview: { metadata: metadata("preview"), width: 1280, height: 720 },
+  };
+}
+
+function feedbackDraft(id: string): DraftRecord {
+  return {
+    input: { text: "Keep existing composer text", attachments: [feedbackAttachment(id)] },
+    lifecycle: "active",
+    updatedAt: 1,
+    version: 1,
+  };
+}
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
@@ -68,9 +120,97 @@ describe("draft-store lifecycle", () => {
       version: 2,
     });
   });
+
+  it("keeps nested image references in active drafts and the create modal only", () => {
+    const state: DraftStoreState = {
+      drafts: {
+        active: feedbackDraft("active"),
+        sent: { ...feedbackDraft("sent"), lifecycle: "sent" },
+        abandoned: { ...feedbackDraft("abandoned"), lifecycle: "abandoned" },
+      },
+      createModalDraft: feedbackDraft("modal"),
+    };
+    expect([...collectReferencedAttachmentIdsFromState(state)]).toEqual([
+      "active-original",
+      "active-preview",
+      "modal-original",
+      "modal-preview",
+    ]);
+
+    state.drafts.active = applyClearDraftRecord({
+      record: state.drafts.active!,
+      lifecycle: "sent",
+      nowMs: 2,
+    })!;
+    state.createModalDraft = null;
+    expect([...collectReferencedAttachmentIdsFromState(state)]).toEqual([]);
+  });
 });
 
 describe("draft-store normalization", () => {
+  it("roundtrips feedback body, all note shapes and both image references without inline bytes", () => {
+    const state: DraftStoreState = {
+      drafts: { active: feedbackDraft("active") },
+      createModalDraft: feedbackDraft("modal"),
+    };
+    const saved = JSON.stringify(state);
+    const restored = DraftStoreStateSchema.parse(JSON.parse(saved));
+    expect(restored).toEqual(state);
+    expect(toDraftInputIfReady(restored.drafts.active)).toEqual(state.drafts.active!.input);
+    expect(toDraftInputIfReady(restored.createModalDraft)).toEqual(state.createModalDraft!.input);
+    expect(saved).not.toContain("base64");
+    expect(saved).not.toContain("data:");
+    expect(saved).not.toContain('"data"');
+  });
+
+  it("normalizes nested image metadata without dropping feedback or physical coordinates", () => {
+    const attachment = feedbackAttachment("normalized");
+    const image = attachment.image!;
+    const preview = attachment.preview!;
+    expect(
+      normalizeComposerAttachment({
+        ...attachment,
+        image: { ...image, metadata: { ...image.metadata, previewUri: "blob:stale" } },
+        preview: { ...preview, metadata: { ...preview.metadata, previewUri: "blob:stale" } },
+      } as VisualFeedbackComposerAttachment),
+    ).toEqual(attachment);
+  });
+
+  it("rejects invalid or inline-byte nested feedback image data in persisted drafts", () => {
+    const attachment = feedbackAttachment("invalid");
+    const image = attachment.image!;
+    const preview = attachment.preview!;
+    const invalidImages = [
+      { ...image, width: 0 },
+      { ...image, height: -1 },
+      { ...image, width: 2560.5 },
+      { ...image, width: 32768, height: 32768 },
+      { ...image, metadata: { ...image.metadata, createdAt: "yesterday" } },
+      { ...image, data: "base64-image-data" },
+    ];
+    for (const invalid of invalidImages) {
+      expect(
+        UserComposerAttachmentSchema.safeParse({ ...attachment, image: invalid }).success,
+      ).toBe(false);
+      expect(
+        UserComposerAttachmentSchema.safeParse({ ...attachment, preview: invalid }).success,
+      ).toBe(false);
+    }
+    expect(
+      UserComposerAttachmentSchema.safeParse({
+        ...attachment,
+        preview: { ...preview, metadata: { ...preview.metadata, data: "base64-image-data" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps text-only and preview-only feedback valid", () => {
+    const { image: _image, preview, ...textOnly } = feedbackAttachment("optional");
+    expect(UserComposerAttachmentSchema.parse(textOnly)).toEqual(textOnly);
+    const previewOnly = { ...textOnly, preview };
+    expect(UserComposerAttachmentSchema.parse(previewOnly)).toEqual(previewOnly);
+  });
+
   it("preserves uploaded file attachments when hydrating a draft", () => {
     const attachment = {
       kind: "file" as const,

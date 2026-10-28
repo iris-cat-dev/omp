@@ -5,6 +5,7 @@ import type {
   ComposerAttachment,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
+  VisualFeedbackComposerAttachment,
 } from "@/attachments/types";
 import {
   appendSubmittedUserMessage,
@@ -77,6 +78,18 @@ const prItem: ForgeSearchItem = {
 
 function imageWithId(id: string): AttachmentMetadata {
   return { ...imageMetadata, id, storageKey: id, fileName: `${id}.png` };
+}
+
+function feedbackWithId(id: string): VisualFeedbackComposerAttachment {
+  return {
+    kind: "visual_feedback",
+    id,
+    text: "  Body\npreserved  ",
+    feedback: "  Requested changes  ",
+    annotations: [{ id: "note", kind: "point", x: 1600, y: 900, text: "  Complete note  " }],
+    image: { metadata: imageWithId(`${id}-original`), width: 2560, height: 1440 },
+    preview: { metadata: imageWithId(`${id}-preview`), width: 1280, height: 720 },
+  };
 }
 
 function reviewWorkspaceAttachment(
@@ -421,6 +434,28 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("withRetainedComposerImages", () => {
+  it.each([false, true])(
+    "retains both feedback images until an asynchronous send finishes (failure: %s)",
+    async (fail) => {
+      const attachment = feedbackWithId(`feedback-in-flight-${fail}`);
+      const ids = [attachment.image!.metadata.id, attachment.preview!.metadata.id];
+      const failure = new Error("encoding failed");
+      const sending = withRetainedComposerImages([attachment], async () => {
+        for (const id of ids) expect(collectRetainedAttachmentIds()).toContain(id);
+        await Promise.resolve();
+        for (const id of ids) expect(collectRetainedAttachmentIds()).toContain(id);
+        if (fail) throw failure;
+        return "sent";
+      });
+      if (fail) {
+        await expect(sending).rejects.toBe(failure);
+      } else {
+        await expect(sending).resolves.toBe("sent");
+      }
+      for (const id of ids) expect(collectRetainedAttachmentIds()).not.toContain(id);
+    },
+  );
+
   it("retains image files while the cleared draft waits for asynchronous encoding", async () => {
     const image = imageWithId("img-in-flight");
 
@@ -742,6 +777,27 @@ describe("dispatchComposerAgentMessage", () => {
 });
 
 describe("queueComposerMessage", () => {
+  it("queues a feedback-only message and restores its complete card for editing", () => {
+    const queue = createFakeQueue();
+    const card = feedbackWithId("queued-feedback");
+    const result = queueComposerMessage({
+      agentId: "agent",
+      text: "",
+      attachments: [card],
+      queue,
+    });
+    expect(result.queued?.attachments).toEqual([card]);
+    expect(queue.read("agent")[0]?.attachments).toEqual([card]);
+
+    const restored = editQueuedComposerMessage({
+      agentId: "agent",
+      messageId: result.queued!.id,
+      queue,
+    });
+    expect(restored).toEqual({ text: "", attachments: [card] });
+    expect(queue.read("agent")).toEqual([]);
+  });
+
   it("queues a trimmed message under the agent id and returns the new entry", () => {
     const queue = createFakeQueue();
     const result = queueComposerMessage({
@@ -1024,6 +1080,40 @@ describe("sendQueuedComposerMessageNow", () => {
 });
 
 describe("removeComposerAttachmentAtIndex", () => {
+  it("removes a feedback card and deletes both image files without changing other content", () => {
+    const card = feedbackWithId("remove-feedback");
+    const ordinary = { kind: "image" as const, metadata: imageWithId("keep-image") };
+    const quote = { kind: "quoted_content" as const, id: "keep-quote", text: "Keep this" };
+    const persister = createFakePersister();
+    const next = removeComposerAttachmentAtIndex({
+      attachments: [ordinary, card, quote],
+      index: 1,
+      deleteAttachments: persister.deleteAttachments,
+    });
+
+    expect(next).toEqual([ordinary, quote]);
+    expect(persister.deletedBatches).toEqual([[card.image!.metadata, card.preview!.metadata]]);
+  });
+
+  it("removes feedback without images without scheduling storage deletion", () => {
+    const card: VisualFeedbackComposerAttachment = {
+      kind: "visual_feedback",
+      id: "text-only",
+      text: "",
+      feedback: "Keep feedback",
+      annotations: [],
+    };
+    const persister = createFakePersister();
+    expect(
+      removeComposerAttachmentAtIndex({
+        attachments: [card],
+        index: 0,
+        deleteAttachments: persister.deleteAttachments,
+      }),
+    ).toEqual([]);
+    expect(persister.deletedBatches).toEqual([]);
+  });
+
   it("removes an image attachment and asks the persister to delete the underlying metadata", () => {
     const image = imageWithId("img-remove");
     const persister = createFakePersister();

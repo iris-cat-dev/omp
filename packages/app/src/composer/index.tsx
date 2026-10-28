@@ -119,6 +119,7 @@ import type {
   WorkspaceFileComposerAttachment,
   QuotedContentComposerAttachment,
   WorkspaceComposerAttachment,
+  VisualFeedbackComposerAttachment,
 } from "@/attachments/types";
 import {
   appendDirectoryAttachment,
@@ -157,7 +158,11 @@ import {
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
 import { useManualVisualFeedbackStore } from "@/visual-feedback/manual-store";
-import { prepareVisualFeedbackMessage } from "@/visual-feedback/submission";
+import { prepareVisualFeedbackAttachment } from "@/visual-feedback/submission";
+import {
+  VisualFeedbackAttachmentPill,
+  VisualFeedbackAttachmentPreview,
+} from "@/visual-feedback/attachment-card";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -387,6 +392,18 @@ interface RenderComposerAttachmentPillArgs {
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
   const { attachment, index, disabled, onOpen, onRemove, labels } = args;
+  if (attachment.kind === "visual_feedback") {
+    return (
+      <VisualFeedbackAttachmentPill
+        key={attachment.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onOpen={onOpen}
+        onRemove={onRemove}
+      />
+    );
+  }
   if (attachment.kind === "image") {
     return (
       <ImageAttachmentPill
@@ -1149,6 +1166,8 @@ function ComposerContentImpl({
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
+  const [visualFeedbackPreview, setVisualFeedbackPreview] =
+    useState<VisualFeedbackComposerAttachment | null>(null);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
   const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
@@ -1725,6 +1744,10 @@ function ComposerContentImpl({
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
+      if (attachment.kind === "visual_feedback") {
+        setVisualFeedbackPreview(attachment);
+        return;
+      }
       openComposerAttachment({
         attachment,
         setLightboxMetadata,
@@ -1971,20 +1994,15 @@ function ComposerContentImpl({
         agentId,
         title: t("visualFeedback.title"),
         instructions: "",
-        text: userInput,
+        text: "",
       },
       onSubmit: async (submission) => {
-        const message = await prepareVisualFeedbackMessage(submission);
-        const result = await sendMessageWithContent(message.text, [
-          ...selectedAttachments,
-          ...message.attachments,
-        ]);
-        if (result === "failed" || result === "noop")
-          throw new Error(t("visualFeedback.submitError"));
+        const attachment = await prepareVisualFeedbackAttachment(submission);
+        addFiles([attachment]);
         focusInput();
       },
     });
-  }, [agentId, focusInput, selectedAttachments, sendMessageWithContent, serverId, t, userInput]);
+  }, [addFiles, agentId, focusInput, serverId, t]);
 
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
     const items: AttachmentMenuItem[] = [
@@ -2144,6 +2162,9 @@ function ComposerContentImpl({
   const handleLightboxClose = useCallback(() => {
     setLightboxMetadata(null);
   }, []);
+  const handleVisualFeedbackPreviewClose = useCallback(() => {
+    setVisualFeedbackPreview(null);
+  }, []);
 
   const handleGithubPickerOpenChange = useCallback(
     (open: boolean) => {
@@ -2253,6 +2274,10 @@ function ComposerContentImpl({
       />
       <Animated.View style={composerContainerStyle}>
         <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+        <VisualFeedbackAttachmentPreview
+          attachment={visualFeedbackPreview}
+          onClose={handleVisualFeedbackPreviewClose}
+        />
         {/* Input area */}
         <FileDropZone
           style={inputAreaContainerStyle}

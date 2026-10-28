@@ -19,6 +19,7 @@ import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker
 import { i18n } from "@/i18n/i18next";
 import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
 import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
+import { getComposerAttachmentImages } from "@/attachments/composer-images";
 
 export interface QueuedComposerMessage {
   id: string;
@@ -146,8 +147,9 @@ export function removeComposerAttachmentAtIndex<T extends ComposerAttachment>(in
   deleteAttachments: AttachmentPersister["deleteAttachments"];
 }): T[] {
   const removed = input.attachments[input.index];
-  if (removed?.kind === "image") {
-    void input.deleteAttachments([removed.metadata]);
+  const images = removed ? getComposerAttachmentImages(removed) : [];
+  if (images.length > 0) {
+    void input.deleteAttachments(images);
   }
   return input.attachments.filter((_, i) => i !== input.index);
 }
@@ -176,8 +178,8 @@ export async function withRetainedComposerImages<T>(
 ): Promise<T> {
   const releases: Array<() => void> = [];
   for (const attachment of attachments) {
-    if (attachment.kind === "image") {
-      releases.push(retainAttachmentForGarbageCollection(attachment.metadata.id));
+    for (const image of getComposerAttachmentImages(attachment)) {
+      releases.push(retainAttachmentForGarbageCollection(image.id));
     }
   }
 
@@ -390,7 +392,8 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
     input.attachment.kind === "file" ||
     input.attachment.kind === "directory" ||
     input.attachment.kind === "workspace_file" ||
-    input.attachment.kind === "quoted_content"
+    input.attachment.kind === "quoted_content" ||
+    input.attachment.kind === "visual_feedback"
   ) {
     return;
   }

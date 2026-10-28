@@ -14,6 +14,7 @@ import {
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
+import { getComposerAttachmentImages } from "@/attachments/composer-images";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
@@ -201,8 +202,8 @@ function collectQueuedMessageAttachmentIds(
   for (const queue of session.queuedMessages.values()) {
     for (const queuedMessage of queue) {
       for (const attachment of queuedMessage.attachments) {
-        if (attachment.kind === "image") {
-          referencedIds.add(attachment.metadata.id);
+        for (const image of getComposerAttachmentImages(attachment)) {
+          referencedIds.add(image.id);
         }
       }
     }

@@ -695,16 +695,18 @@ function EditorSession({
   function renderSidebar() {
     return (
       <aside className="vf-sidebar">
-        <label className="vf-field">
-          <span>{label("text")}</span>
-          <textarea
-            value={text}
-            maxLength={200000}
-            disabled={pending}
-            rows={request.text ? 6 : 3}
-            onChange={changeText}
-          />
-        </label>
+        {request.text.trim().length > 0 && (
+          <label className="vf-field">
+            <span>{label("text")}</span>
+            <textarea
+              value={text}
+              maxLength={200000}
+              disabled={pending}
+              rows={6}
+              onChange={changeText}
+            />
+          </label>
+        )}
         <label className="vf-field">
           <span>{label("feedback")}</span>
           <textarea

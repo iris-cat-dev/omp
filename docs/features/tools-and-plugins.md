@@ -28,9 +28,11 @@ The external-link browser preference is separate from assistant browser relay/CD
 
 ## Screenshot annotation and text feedback
 
-Choose **+ → Screenshot annotation** (**截图批注**) in the conversation composer to open the visual feedback editor. Import, paste, or drop a PNG, JPEG, or WebP image, take a screenshot, or edit text without an image. The existing composer text becomes editable in the window. **Submit feedback** sends the edited text, overall feedback, numbered annotations, original image, and annotated preview through the conversation's normal send/queue path.
+Choose **+ → Screenshot annotation** (**截图批注**) in the conversation composer to open the visual feedback editor. Import, paste, or drop a PNG, JPEG, or WebP image, take a screenshot, or submit text without an image. **Requested changes** (**修改要求**) is always shown. **Message body** (**消息正文**) appears only when an AI request supplies non-whitespace text; once shown, it remains editable for the session even if you clear it.
 
-AI can open the same editor with the Desktop host tool `request_visual_feedback`:
+For the manually opened editor, **Submit feedback** adds one pending **Screenshot annotation** attachment card to the composer. It does not send or queue a message, insert JSON into the input, or change the existing message text and attachments. Open the card to review its requested changes, numbered notes, and annotated image; open the image for a zoomable preview, or remove the card like any other attachment. Only the composer's explicit send/queue action submits its body, requested changes, annotations, original image, and annotated preview.
+
+AI can open the same editor with the Desktop host tool `request_visual_feedback`. In this tool-request flow, **Submit feedback** replies directly to the waiting tool request rather than creating a manual composer attachment:
 
 OMP receives this tool through its native host-tool catalog; this feature does not start a separate MCP service. When enabled, the existing shared MCP endpoint exposes the same tool for MCP integrations. The **+** menu opens the editor directly and does not require MCP.
 
@@ -45,7 +47,7 @@ OMP receives this tool through its native host-tool catalog; this feature does n
 
 All fields are optional; relative image paths resolve against the calling agent's workspace. The tool requires an agent-scoped session and the optional Desktop host-tool capability. Requests appear globally, even when another conversation is selected, and wait for an explicit submission or cancellation. Pending requests remain available after reconnect. Closing the window, aborting the tool, daemon shutdown, or the 30-minute timeout returns cancellation without draft text or images.
 
-The editor supports points, rectangles, arrows, freehand strokes, editable numbered notes, annotation movement, rectangle resizing, undo/redo, fit, and zoom. Replacing or removing an image clears incompatible annotations and history after confirmation. Failed submissions preserve edits in the open editor; editor drafts are not persisted across a renderer reload.
+The editor supports points, rectangles, arrows, freehand strokes, editable numbered notes, annotation movement, rectangle resizing, undo/redo, fit, and zoom. Replacing or removing an image clears incompatible annotations and history after confirmation. Failed submissions preserve edits in the open editor; in-progress editor drafts are not persisted across a renderer reload. Completed manual feedback cards are saved with the composer draft, including their body, requested changes, notes, and local references to both images.
 
 Annotations use the submitted original image's pixel coordinates, with a top-left origin, independent of display scaling or zoom. AI receives coordinate metadata and separate original/annotated image content, not base64 embedded in feedback text. The preview may be scaled to a 4096-pixel longest edge; coordinates always refer to the original. Each image is limited to 8 MiB, 32 × 1024 × 1024 pixels, and 32768 pixels per side.
 

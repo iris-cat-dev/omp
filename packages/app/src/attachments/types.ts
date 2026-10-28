@@ -3,6 +3,7 @@ import type {
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@omp-desktop/protocol/messages";
+import type { VisualFeedbackAnnotation } from "@omp-desktop/protocol/visual-feedback";
 
 export type AttachmentStorageType =
   | "web-indexeddb"
@@ -118,12 +119,29 @@ export interface QuotedContentComposerAttachment {
   text: string;
 }
 
+export interface VisualFeedbackAttachmentImage {
+  metadata: AttachmentMetadata;
+  width: number;
+  height: number;
+}
+
+export interface VisualFeedbackComposerAttachment {
+  kind: "visual_feedback";
+  id: string;
+  text: string;
+  feedback: string;
+  annotations: VisualFeedbackAnnotation[];
+  image?: VisualFeedbackAttachmentImage;
+  preview?: VisualFeedbackAttachmentImage;
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | DirectoryComposerAttachment
   | WorkspaceFileComposerAttachment
   | QuotedContentComposerAttachment
+  | VisualFeedbackComposerAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }
   // COMPAT(githubAttachmentKinds): added in v0.1.106, remove after 2026-12-28 once daemon floor >= v0.1.106
