@@ -58,21 +58,16 @@ For local installer builds, pass `--publish never` to avoid uploading release ar
 
 ## GitHub Actions release packaging
 
-The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64, both bundled-OMP and no-OMP variants**, by default. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
+The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64, both bundled-OMP and no-OMP variants**, by default. It runs on **Release publication** (`release.published`, including pre-releases) or through **Actions → Package release → Run workflow**. Saving a draft or pushing a tag alone does not start packaging.
 
 - The root and desktop package versions must match. A tag build also requires the exact tag `<packages/desktop/package.json version>` without a `v` prefix; the workflow does not bump versions.
 - Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64`, `OMP-Desktop-No-OMP-Setup-<version>-x64`, or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. GitHub downloads each artifact as an outer ZIP containing the original installers, package ZIPs, and blockmaps when generated, not unpacked apps or builder diagnostics. Bundled-OMP builds also include update YAML metadata. Publish the files inside this outer ZIP, not the Actions wrapper itself; installer names and update metadata references are unchanged.
 - The no-OMP job runs `npm run build:windows:no-omp` and skips the OMP download. Its installer and ZIP filenames contain `No-OMP`, so both variants can coexist in the release. Its update YAML is deliberately excluded: both Windows variants generate the same channel metadata filename, and the public auto-update feed must continue pointing to the standard bundled-OMP build. This does not create a separate no-OMP update channel.
-- Once all selected platforms succeed, a tag build uploads the assets to a **draft GitHub Release**. Reruns replace same-named assets only in a draft, preserve its notes, and refuse to modify an already published release. A failed upload leaves the release drafted; rerun after resolving the failure.
-- A manual run on a branch only creates Actions artifacts. A manual run with a tag selected also creates or updates its release draft.
-- Review the draft, add release notes, and perform the native packaged-application checks before publishing. Building installers does not verify native application behavior.
+- Once all selected platforms succeed, a publication-triggered build uploads the generated assets to that **published GitHub Release**, preserving its notes and unrelated attachments. Installer payloads upload before update YAML metadata. An existing complete set of generated filenames is left unchanged; a partially overlapping set fails before upload rather than mixing builds or replacing public assets.
+- A manual run on a branch only creates Actions artifacts. A manual run with a tag selected creates or updates its release draft, replacing same-named draft assets only; it refuses to modify an already published release.
+- Review the notes and perform native packaged-application checks before publishing; building installers does not verify native behavior. Publication-triggered packaging leaves the release publicly visible while builds run. If installers must be available at publication, run a manual build and attach its complete payloads and matching metadata to the draft first. Failed or interrupted public uploads need review before retrying; public assets are never automatically replaced.
 
-For example, after setting matching package versions to `0.5.3` and committing the changes:
-
-```bash
-git tag 0.5.3
-git push origin 0.5.3
-```
+For example, after committing matching package versions and the workflow for `0.5.3`, open **Releases → Draft a new release**, choose tag `0.5.3` and a target commit containing the workflow, and save the release notes. **Publish release** starts the automatic packaging run; saving the draft does not. Follow the run under **Actions → Package release** until all selected builds and the asset upload finish.
 
 The workflow uses the repository's `GITHUB_TOKEN`; no personal access token is required. Repository or organization policy must permit the release job's `contents: write` permission. Windows artifacts are unsigned, so Windows may display SmartScreen warnings.
 
