@@ -96,6 +96,51 @@ function toolCall(options?: {
 }
 
 describe("AgentStreamCoalescer", () => {
+  test("retains native usage even when the message_end chunk contains no text", () => {
+    const { coalescer, flushes } = createHarness();
+    const nativeUsage = { scope: "turn" as const, outputTokens: 1_000 };
+    coalescer.handle("agent", assistant("answer", { provider: "omp", messageId: "request" }));
+    coalescer.handle(
+      "agent",
+      timeline(
+        {
+          type: "assistant_message",
+          text: "",
+          messageId: "request",
+          nativeUsage,
+        },
+        { provider: "omp" },
+      ),
+    );
+    coalescer.flushFor("agent");
+    expect(flushes).toEqual([
+      {
+        agentId: "agent",
+        provider: "omp",
+        item: { type: "assistant_message", text: "answer", messageId: "request", nativeUsage },
+      },
+    ]);
+    coalescer.handle(
+      "agent",
+      timeline(
+        {
+          type: "assistant_message",
+          text: "",
+          messageId: "request",
+          nativeUsage,
+        },
+        { provider: "omp" },
+      ),
+    );
+    coalescer.flushAndDiscard("agent");
+    expect(flushes[1]?.item).toEqual({
+      type: "assistant_message",
+      text: "",
+      messageId: "request",
+      nativeUsage,
+    });
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
   });

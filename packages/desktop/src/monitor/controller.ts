@@ -23,6 +23,7 @@ import {
   type OrbNeighbour,
 } from "./window-geometry.js";
 import {
+  configureMonitorBoard,
   configureMonitorPreferences,
   DEFAULT_MONITOR_PREFERENCES,
   GLOBAL_MONITOR_KEYS,
@@ -48,6 +49,8 @@ import type {
   OmpMonitorSurface,
   OmpMonitorViewState,
 } from "./view-types.js";
+import { DEFAULT_BOARD_PREFERENCES, MAX_MONITOR_BOARDS } from "./board-types.js";
+import type { OmpMonitorBoardRecord, OmpMonitorBoardSummary } from "./board-types.js";
 
 const MONITOR_URL = "omp-desktop://monitor/local-monitor";
 const NO_TRANSFERABLES: [] = [];
@@ -76,11 +79,19 @@ interface OrbSession {
   pointer: { x: number; y: number } | null;
   drag: { cursor: { x: number; y: number }; bounds: Rectangle } | null;
 }
+interface BoardSession {
+  record: OmpMonitorBoardRecord;
+  window: BrowserWindow;
+  orb: OrbSession;
+  ignored: boolean;
+  unresponsive: boolean;
+}
 interface MonitorView {
   window: BrowserWindow;
   surface: OmpMonitorSurface;
   orb: OrbSession;
   exporting: boolean;
+  board: OmpMonitorBoardRecord | null;
 }
 
 function preventNavigation(event: ElectronEvent): void {
@@ -101,6 +112,7 @@ export class OmpMonitorController {
   private readonly orbs = new Map<string, OrbSession>();
   private readonly windows = new Map<number, MonitorView>();
   private readonly panels = new Map<PanelSurface, MonitorView>();
+  private readonly boards = new Map<string, BoardSession>();
   private readonly handlers: string[] = [];
   private worker: Worker | null = null;
   private input: MonitorWindowInput | null = null;
@@ -111,6 +123,7 @@ export class OmpMonitorController {
   private loading: Promise<void> | null = null;
   private loaded = false;
   private savedOrbs: MonitorOrbRecord[] = [];
+  private savedBoards: OmpMonitorBoardRecord[] = [];
   private preferenceError = false;
   private invalidPreferences = false;
   private preferenceWrites: Promise<void> = Promise.resolve();
@@ -155,6 +168,7 @@ export class OmpMonitorController {
         typeof value === "string" && value.length <= 64 ? this.orbs.get(value) : undefined;
       if (view.surface !== "settings" || !target) throw new Error("Invalid orb selection");
       view.orb = target;
+      view.board = null;
       target.interaction = ++this.interactionSequence;
       this.sendStates();
     });
@@ -165,6 +179,20 @@ export class OmpMonitorController {
     });
     handle("scope", (view, value) => this.setScope(view.orb, value));
     handle("new-window", (view) => this.addOrb(view.orb));
+    handle("new-board", (view) => this.addBoard(view.orb));
+    handle("configure-board", (view, value) => this.configureBoard(view, value));
+    handle("remove-board", (view, value) => this.removeBoard(view, value));
+    handle("select-board", (view, value) => {
+      const board =
+        typeof value === "string"
+          ? this.savedBoards.find((record) => record.id === value)
+          : undefined;
+      const orb = board ? this.orbs.get(board.orbId) : undefined;
+      if (view.surface !== "settings" || !board || !orb) throw new Error("Invalid board selection");
+      view.board = board;
+      view.orb = orb;
+      this.sendState(view);
+    });
     handle("menu", (view) => this.showMenu(view));
     handle("drag-start", (view) => this.beginDrag(view));
     handle("drag-end", (view) => this.endDrag(view));
@@ -190,7 +218,12 @@ export class OmpMonitorController {
       this.startWorker();
       this.post({ type: "pricing.refresh" });
     });
-    handle("close", (view) => view.window.close());
+    handle("close", (view) => {
+      if (view.surface === "board" && view.board)
+        return this.configureBoard(view, { id: view.board.id, patch: { visible: false } });
+      view.window.close();
+      return undefined;
+    });
     handle("close-all", () => this.closeAll());
     ipcMain.on("paseo:monitor:interactive", this.onInteractive);
     screen.on("display-added", this.onDisplaysChanged);
@@ -229,6 +262,7 @@ export class OmpMonitorController {
     if (!this.orbs.size) {
       if (!this.savedOrbs.length) this.savedOrbs.push(this.newRecord());
       for (const record of this.savedOrbs) await this.createOrb(record);
+      for (const record of this.savedBoards) if (record.visible) await this.createBoard(record);
       await this.persist();
     }
     const orb = this.orbs.values().next().value as OrbSession | undefined;
@@ -244,6 +278,7 @@ export class OmpMonitorController {
   private async readPreferences(): Promise<void> {
     const document = await readMonitorPreferences(this.preferencesFile);
     this.savedOrbs = document.orbs;
+    this.savedBoards = document.boards;
     this.invalidPreferences = document.invalid;
     this.preferenceError = document.invalid;
     this.loaded = true;
@@ -342,7 +377,7 @@ export class OmpMonitorController {
     };
     this.orbs.set(record.id, orb);
     this.summaries = null;
-    const view: MonitorView = { window, surface: "orb", orb, exporting: false };
+    const view: MonitorView = { window, surface: "orb", orb, exporting: false, board: null };
     this.attachView(view);
     this.startWorker();
     this.postScopes();
@@ -351,6 +386,238 @@ export class OmpMonitorController {
     this.rememberPosition(orb);
     this.updateVisibility();
     this.sendStates();
+  }
+
+  private boardSummary(record: OmpMonitorBoardRecord): OmpMonitorBoardSummary {
+    return {
+      id: record.id,
+      orbId: record.orbId,
+      visible: record.visible,
+      style: record.style,
+      size: record.size,
+      showPerformance: record.showPerformance,
+      showThinking: record.showThinking,
+      showCost: record.showCost,
+      pinned: record.pinned,
+      clickThrough: record.clickThrough,
+    };
+  }
+
+  private boardBounds(record: OmpMonitorBoardRecord, point?: { x: number; y: number }): Rectangle {
+    const side = { small: 280, medium: 340, large: 420 }[record.size] + 80;
+    const orb = this.orbs.get(record.orbId);
+    const anchor =
+      point ??
+      record.positions[monitorArrangement(this.displays())] ??
+      (orb && !orb.window.isDestroyed() ? orb.window.getBounds() : this.displays()[0]!.workArea);
+    return clampMonitorPanel(
+      { x: anchor.x, y: anchor.y, width: side, height: side },
+      this.displays(),
+    );
+  }
+
+  private async addBoard(orb: OrbSession): Promise<void> {
+    if (this.disposed || this.savedBoards.length >= MAX_MONITOR_BOARDS)
+      throw new Error("Monitor board limit reached");
+    const record: OmpMonitorBoardRecord = {
+      ...DEFAULT_BOARD_PREFERENCES,
+      id: randomUUID(),
+      orbId: orb.record.id,
+      visible: true,
+      positions: Object.create(null),
+    };
+    this.savedBoards.push(record);
+    try {
+      await this.createBoard(record);
+    } catch (error) {
+      this.savedBoards = this.savedBoards.filter((candidate) => candidate !== record);
+      await this.persist();
+      throw error;
+    }
+    this.sendStates();
+    await this.persist();
+  }
+
+  private async createBoard(record: OmpMonitorBoardRecord): Promise<void> {
+    const orb = this.orbs.get(record.orbId);
+    if (this.disposed || !orb || orb.window.isDestroyed() || this.boards.has(record.id)) return;
+    const window = new BrowserWindow({
+      ...this.boardBounds(record),
+      show: false,
+      transparent: true,
+      frame: false,
+      backgroundColor: "#00000000",
+      hasShadow: false,
+      skipTaskbar: true,
+      focusable: false,
+      alwaysOnTop: record.pinned,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      webPreferences: this.webPreferences(),
+    });
+    try {
+      (this.input ??= createMonitorWindowInput()).setIgnored(window, true);
+    } catch (error) {
+      window.destroy();
+      throw error;
+    }
+    const board: BoardSession = { record, window, orb, ignored: true, unresponsive: false };
+    this.boards.set(record.id, board);
+    const view: MonitorView = { window, surface: "board", orb, board: record, exporting: false };
+    this.attachView(view);
+    window.on("moved", () => {
+      if (window.isDestroyed()) return;
+      const current = window.getBounds(),
+        next = this.boardBounds(record, current);
+      if (current.x !== next.x || current.y !== next.y) window.setBounds(next);
+      this.rememberBoardPosition(board);
+      void this.persist();
+    });
+    window.webContents.on("render-process-gone", () => {
+      if (!window.isDestroyed()) window.destroy();
+    });
+    window.on("unresponsive", () => {
+      board.unresponsive = true;
+      this.setBoardInput(board, true);
+    });
+    window.on("responsive", () => {
+      board.unresponsive = false;
+    });
+    await this.loadView(view);
+    if (!window.isDestroyed() && record.visible) window.showInactive();
+    this.rememberBoardPosition(board);
+    this.startWorker();
+    this.updateVisibility();
+    this.sendStates();
+  }
+
+  private async configureBoard(view: MonitorView, value: unknown): Promise<void> {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("Invalid board configuration");
+    const { id, patch } = value as Record<string, unknown>;
+    const record =
+      typeof id === "string"
+        ? this.savedBoards.find((candidate) => candidate.id === id)
+        : undefined;
+    if (
+      !record ||
+      (view.surface !== "settings" && view.surface !== "board") ||
+      !patch ||
+      typeof patch !== "object" ||
+      Array.isArray(patch) ||
+      Object.keys(patch).length > 9
+    )
+      throw new Error("Invalid board configuration");
+    if (view.surface === "board" && view.board !== record)
+      throw new Error("A board can configure only itself");
+    const targetOrb = this.updateBoardPreferences(record, patch as Record<string, unknown>);
+    let board = this.boards.get(record.id);
+    if (!board && record.visible) {
+      await this.createBoard(record);
+      board = this.boards.get(record.id);
+    }
+    if (board && !board.window.isDestroyed()) {
+      this.updateBoardWindow(board, record, targetOrb);
+    }
+    if (view.board === record) view.orb = targetOrb;
+    this.sendStates();
+    this.updateVisibility();
+    await this.persist();
+  }
+
+  private updateBoardPreferences(
+    record: OmpMonitorBoardRecord,
+    source: Record<string, unknown>,
+  ): OrbSession {
+    if (Object.hasOwn(source, "visible") && typeof source.visible !== "boolean")
+      throw new Error("Invalid board visibility");
+    let orbId = record.orbId;
+    if (Object.hasOwn(source, "orbId")) {
+      if (typeof source.orbId !== "string") throw new Error("Unknown board scope");
+      orbId = source.orbId;
+    }
+    const targetOrb = this.orbs.get(orbId);
+    if (!targetOrb) throw new Error("Unknown board scope");
+    const preferencePatch: Record<string, unknown> = Object.create(null);
+    for (const [key, setting] of Object.entries(source))
+      if (key !== "visible" && key !== "orbId") preferencePatch[key] = setting;
+    const next = configureMonitorBoard(preferencePatch, record);
+    Object.assign(record, next);
+    record.orbId = targetOrb.record.id;
+    if (Object.hasOwn(source, "visible")) record.visible = source.visible as boolean;
+    return targetOrb;
+  }
+
+  private updateBoardWindow(
+    board: BoardSession,
+    record: OmpMonitorBoardRecord,
+    orb: OrbSession,
+  ): void {
+    board.orb = orb;
+    const view = this.windows.get(board.window.webContents.id);
+    if (view) view.orb = orb;
+    const bounds = board.window.getBounds();
+    board.window.setBounds(this.boardBounds(record, bounds));
+    board.window.setAlwaysOnTop(record.pinned);
+    this.setBoardInput(board, true);
+    if (record.visible) board.window.showInactive();
+    else board.window.hide();
+    this.rememberBoardPosition(board);
+  }
+
+  private async removeBoard(view: MonitorView, value: unknown): Promise<void> {
+    const record =
+      typeof value === "string"
+        ? this.savedBoards.find((candidate) => candidate.id === value)
+        : undefined;
+    if (!record || (view.surface !== "settings" && view.board !== record))
+      throw new Error("Invalid board removal");
+    const zh = this.viewState(view).language === "zh";
+    const answer = await dialog.showMessageBox(view.window, {
+      type: "question",
+      title: zh ? "移除看板" : "Remove board",
+      message: zh ? "移除此看板？" : "Remove this board?",
+      detail: zh
+        ? "不会删除 OMP 会话或用量历史。"
+        : "OMP sessions and usage history will not be deleted.",
+      buttons: zh ? ["取消", "移除"] : ["Cancel", "Remove"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (answer.response !== 1 || this.disposed || !this.savedBoards.includes(record)) return;
+    this.savedBoards = this.savedBoards.filter((candidate) => candidate !== record);
+    for (const candidate of this.windows.values())
+      if (candidate.board === record && candidate.surface !== "board") candidate.board = null;
+    const board = this.boards.get(record.id);
+    if (board && !board.window.isDestroyed()) board.window.destroy();
+    this.boards.delete(record.id);
+    this.sendStates();
+    this.updateVisibility();
+    await this.persist();
+  }
+
+  private setBoardInput(board: BoardSession, ignored: boolean): void {
+    if (board.window.isDestroyed() || board.ignored === ignored) return;
+    try {
+      (this.input ??= createMonitorWindowInput()).setIgnored(board.window, ignored);
+      board.ignored = ignored;
+    } catch (error) {
+      console.error("Local monitor board native input failed; closing the affected board", error);
+      board.window.destroy();
+    }
+  }
+
+  private rememberBoardPosition(board: BoardSession): void {
+    if (board.window.isDestroyed()) return;
+    const key = monitorArrangement(this.displays()),
+      bounds = board.window.getBounds();
+    delete board.record.positions[key];
+    board.record.positions[key] = { x: bounds.x, y: bounds.y };
+    const keys = Object.keys(board.record.positions);
+    if (keys.length > 16) delete board.record.positions[keys[0]!];
   }
 
   private webPreferences(): Electron.WebPreferences {
@@ -368,6 +635,7 @@ export class OmpMonitorController {
     const existing = this.panels.get(surface);
     if (existing && !existing.window.isDestroyed()) {
       existing.orb = orb;
+      existing.board = null;
       if (existing.window.isMinimized()) existing.window.restore();
       this.sendState(existing);
       existing.window.show();
@@ -408,7 +676,7 @@ export class OmpMonitorController {
       fullscreenable: false,
       webPreferences: this.webPreferences(),
     });
-    const view: MonitorView = { window, surface, orb, exporting: false };
+    const view: MonitorView = { window, surface, orb, exporting: false, board: null };
     this.panels.set(surface, view);
     this.attachView(view);
     await this.loadView(view);
@@ -465,15 +733,29 @@ export class OmpMonitorController {
 
   private closed(view: MonitorView): void {
     this.windows.delete(view.window.webContents.id);
-    if (view.surface !== "orb") {
+    if (view.surface === "board") {
+      const record = view.board;
+      if (record) {
+        this.boards.delete(record.id);
+        if (!this.closingAll && !this.disposed && this.savedBoards.includes(record)) {
+          record.visible = false;
+          void this.persist();
+        }
+      }
+    } else if (view.surface !== "orb") {
       if (this.panels.get(view.surface) === view) this.panels.delete(view.surface);
     } else {
       this.orbs.delete(view.orb.record.id);
       this.summaries = null;
       for (const panel of this.panels.values())
         if (panel.orb === view.orb && !panel.window.isDestroyed()) panel.window.destroy();
+      for (const board of this.boards.values())
+        if (board.orb === view.orb && !board.window.isDestroyed()) board.window.destroy();
       if (!this.closingAll && !this.disposed) {
         this.savedOrbs = this.savedOrbs.filter((record) => record.id !== view.orb.record.id);
+        this.savedBoards = this.savedBoards.filter((record) => record.orbId !== view.orb.record.id);
+        for (const candidate of this.windows.values())
+          if (candidate.board?.orbId === view.orb.record.id) candidate.board = null;
         void this.persist();
       }
     }
@@ -713,6 +995,7 @@ export class OmpMonitorController {
           (!view.orb.record.preferences.clickThrough || view.orb.drag)
         )
           needsPointer = true;
+        if (view.surface === "board" && view.board && !view.board.clickThrough) needsPointer = true;
       }
     this.post({ type: "visibility", visible });
     if (needsPointer && !this.pointerTimer) this.pointerTimer = setInterval(this.pointerTick, 50);
@@ -740,6 +1023,23 @@ export class OmpMonitorController {
       if (orb.pointer?.x === point.x && orb.pointer.y === point.y) continue;
       orb.pointer = point;
       orb.window.webContents.send("paseo:monitor:pointer", point);
+    }
+    for (const board of this.boards.values()) {
+      if (board.window.isDestroyed() || !board.window.isVisible()) continue;
+      const bounds = board.window.getBounds();
+      const side = { small: 280, medium: 340, large: 420 }[board.record.size];
+      const x = cursor.x - bounds.x - 40,
+        y = cursor.y - bounds.y - 40;
+      const radius = { glass: 26, timing: 20, neon: 22 }[board.record.style];
+      const cornerX = Math.max(radius - x, 0, x - side + radius);
+      const cornerY = Math.max(radius - y, 0, y - side + radius);
+      const inside =
+        x >= 0 &&
+        y >= 0 &&
+        x <= side &&
+        y <= side &&
+        cornerX * cornerX + cornerY * cornerY <= radius * radius;
+      this.setBoardInput(board, board.record.clickThrough || board.unresponsive || !inside);
     }
   };
 
@@ -861,6 +1161,12 @@ export class OmpMonitorController {
       orb.pointer = null;
     }
     for (const panel of this.panels.values()) this.clampView(panel);
+    for (const board of this.boards.values()) {
+      if (board.window.isDestroyed()) continue;
+      const point = board.record.positions[key] ?? board.window.getBounds();
+      board.window.setBounds(this.boardBounds(board.record, point));
+      this.rememberBoardPosition(board);
+    }
     this.sendStates();
     void this.persist();
   };
@@ -929,6 +1235,8 @@ export class OmpMonitorController {
       windowCount: this.orbs.size,
       orbs: this.orbSummaries(),
       maxWindows: MAX_MONITOR_ORBS,
+      board: view.board ? this.boardSummary(view.board) : null,
+      boards: this.savedBoards.map((record) => this.boardSummary(record)),
     };
   }
   private sendState(view: MonitorView): void {
@@ -945,8 +1253,12 @@ export class OmpMonitorController {
       ...record,
       positions: { ...record.positions },
     }));
+    const boards = this.savedBoards.map((record) => ({
+      ...record,
+      positions: { ...record.positions },
+    }));
     const operation = this.preferenceWrites.then(() =>
-      writeMonitorPreferences(this.preferencesFile, records, this.invalidPreferences),
+      writeMonitorPreferences(this.preferencesFile, records, this.invalidPreferences, boards),
     );
     this.preferenceWrites = operation.then(
       () => this.preferenceSaved(),
@@ -964,7 +1276,80 @@ export class OmpMonitorController {
     this.sendStates();
   }
 
+  private showBoardMenu(view: MonitorView): void {
+    const record = view.board;
+    if (!record) return;
+    const zh = this.viewState(view).language === "zh";
+    const choose = (patch: unknown) => {
+      void this.configureBoard(view, { id: record.id, patch });
+    };
+    const template: MenuItemConstructorOptions[] = [
+      {
+        label: view.orb.record.scope.project ?? view.orb.record.scope.profile ?? "OMP",
+        enabled: false,
+      },
+      {
+        label: zh ? "样式" : "Style",
+        submenu: (["glass", "timing", "neon"] as const).map((style, index) => ({
+          label: (zh ? ["玻璃", "计时塔", "霓虹"] : ["Glass", "Timing Tower", "Neon"])[index],
+          type: "radio" as const,
+          checked: record.style === style,
+          click: () => choose({ style }),
+        })),
+      },
+      {
+        label: zh ? "大小" : "Size",
+        submenu: (["small", "medium", "large"] as const).map((size, index) => ({
+          label: (zh ? ["小", "中", "大"] : ["Small", "Medium", "Large"])[index],
+          type: "radio" as const,
+          checked: record.size === size,
+          click: () => choose({ size }),
+        })),
+      },
+      ...(["showPerformance", "showThinking", "showCost", "pinned", "clickThrough"] as const).map(
+        (key, index) => ({
+          label: (zh
+            ? ["性能", "思考速度", "每秒费用", "置顶", "鼠标穿透"]
+            : [
+                "Performance",
+                "Thinking rate",
+                "Cost per second",
+                "Always on top",
+                "Click-through",
+              ])[index],
+          type: "checkbox" as const,
+          checked: record[key],
+          click: () => choose({ [key]: !record[key] }),
+        }),
+      ),
+      { type: "separator" },
+      {
+        label: zh ? "设置" : "Settings",
+        click: async () => {
+          await this.openPanel(view.orb, "settings");
+          const settings = this.panels.get("settings");
+          if (settings) {
+            settings.board = record;
+            this.sendState(settings);
+          }
+        },
+      },
+      { label: zh ? "隐藏看板" : "Hide board", click: () => choose({ visible: false }) },
+      {
+        label: zh ? "移除看板…" : "Remove board…",
+        click: () => {
+          void this.removeBoard(view, record.id);
+        },
+      },
+    ];
+    Menu.buildFromTemplate(template).popup({ window: view.window });
+  }
+
   private showMenu(view: MonitorView): void {
+    if (view.surface === "board") {
+      this.showBoardMenu(view);
+      return;
+    }
     const orb = view.orb,
       p = orb.record.preferences;
     const zh = this.viewState(view).language === "zh";
@@ -1112,6 +1497,7 @@ export class OmpMonitorController {
   private closeAll(): void {
     this.closingAll = true;
     for (const orb of this.orbs.values()) if (!orb.window.isDestroyed()) this.rememberPosition(orb);
+    for (const board of this.boards.values()) this.rememberBoardPosition(board);
     void this.persist();
     for (const view of this.windows.values()) if (!view.window.isDestroyed()) view.window.destroy();
     this.closingAll = false;
@@ -1136,6 +1522,7 @@ export class OmpMonitorController {
     this.windows.clear();
     this.orbs.clear();
     this.panels.clear();
+    this.boards.clear();
     return this.preferenceWrites;
   }
 }

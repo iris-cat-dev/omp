@@ -1,6 +1,7 @@
 import type {
   AgentProvider,
   AgentTimelineItem,
+  AgentUsage,
   ToolCallDetail,
 } from "@omp-desktop/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@omp-desktop/protocol/messages";
@@ -772,6 +773,7 @@ export interface AssistantMessageItem {
   timestamp: Date;
   presentation?: "plan";
   customMessage?: { customType: string; details?: unknown };
+  nativeUsage?: AgentUsage;
   blockGroupId?: string;
   blockIndex?: number;
 }
@@ -1002,6 +1004,46 @@ function isMatchingAssistantStream(
   return messageId === undefined || item.messageId === messageId;
 }
 
+function appendCustomAssistantMessage(
+  state: StreamItem[],
+  customMessage: NonNullable<AssistantMessageItem["customMessage"]>,
+  text: string,
+  timestamp: Date,
+  messageId?: string,
+  reservedItemIds?: ReadonlySet<string>,
+  timelineCursor?: TimelinePosition,
+  turnId?: string,
+): StreamItem[] {
+  const item: AssistantMessageItem = {
+    kind: "assistant_message",
+    id: createAssistantItemId(state, messageId, text, timestamp, reservedItemIds),
+    ...(messageId ? { messageId } : {}),
+    ...(timelineCursor ? { timelineCursor } : {}),
+    ...(turnId ? { turnId } : {}),
+    customMessage,
+    text,
+    timestamp,
+  };
+  return [...state, item];
+}
+
+function applyAssistantNativeUsage(
+  state: StreamItem[],
+  nativeUsage: AgentUsage,
+  messageId?: string,
+  presentation?: "plan",
+): StreamItem[] {
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    const item = state[index];
+    if (item.kind === "user_message") break;
+    if (!isMatchingAssistantStream(item, messageId, presentation)) continue;
+    const updated = [...state];
+    updated[index] = { ...item, nativeUsage };
+    return updated;
+  }
+  return state;
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
@@ -1013,25 +1055,27 @@ function appendAssistantMessage(
   timelineCursor?: TimelinePosition,
   turnId?: string,
   customMessage?: AssistantMessageItem["customMessage"],
+  nativeUsage?: AgentUsage,
 ): StreamItem[] {
   if (customMessage) {
     // A custom record is one complete original message, not an assistant stream delta.
     // In particular, a late background result must not extend the latest model response.
-    const item: AssistantMessageItem = {
-      kind: "assistant_message",
-      id: createAssistantItemId(state, messageId, text, timestamp, reservedItemIds),
-      ...(messageId ? { messageId } : {}),
-      ...(timelineCursor ? { timelineCursor } : {}),
-      ...(turnId ? { turnId } : {}),
+    return appendCustomAssistantMessage(
+      state,
       customMessage,
       text,
       timestamp,
-    };
-    return [...state, item];
+      messageId,
+      reservedItemIds,
+      timelineCursor,
+      turnId,
+    );
   }
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
-    return state;
+    return nativeUsage
+      ? applyAssistantNativeUsage(state, nativeUsage, messageId, presentation)
+      : state;
   }
 
   const last = state[state.length - 1];
@@ -1042,6 +1086,7 @@ function appendAssistantMessage(
       text: `${last.text}${chunk}`,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
+      ...(nativeUsage ? { nativeUsage } : {}),
     };
     return [...state.slice(0, -1), updated];
   }
@@ -1059,6 +1104,7 @@ function appendAssistantMessage(
       text: `${secondLast.text}${chunk}`,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
+      ...(nativeUsage ? { nativeUsage } : {}),
     };
     return [...state.slice(0, -2), updated, last];
   }
@@ -1078,6 +1124,7 @@ function appendAssistantMessage(
     ...(turnId ? { turnId } : {}),
     text: chunk,
     timestamp,
+    ...(nativeUsage ? { nativeUsage } : {}),
   };
   return [...state, item];
 }
@@ -1606,6 +1653,8 @@ function reduceTimelineEvent(
           reservedItemIds,
           timelineCursor,
           event.turnId,
+          undefined,
+          item.nativeUsage,
         ),
       );
     case "reasoning":

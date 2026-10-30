@@ -6499,6 +6499,52 @@ test("applies live autonomous events and preserves usage omitted from completion
   expect(lifecycleUpdates).toContain("idle");
 });
 
+test("native own-turn usage cannot overwrite the session quota/context counters", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-usage-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class NativeUsageClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new NativeUsageClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000126",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const sessionUsage = {
+    scope: "session" as const,
+    inputTokens: 30_000,
+    outputTokens: 9_000,
+    cachedInputTokens: 20_000,
+    contextWindowMaxTokens: 200_000,
+    contextWindowUsedTokens: 150_000,
+  };
+  capturedSession!.pushEvent({ type: "turn_started", provider: "codex", turnId: "native-turn" });
+  capturedSession!.pushEvent({ type: "usage_updated", provider: "codex", usage: sessionUsage });
+  await vi.waitFor(() => expect(manager.getAgent(snapshot.id)?.lastUsage).toEqual(sessionUsage));
+  capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    turnId: "native-turn",
+    usage: { scope: "turn", inputTokens: 100, outputTokens: 1_000 },
+  });
+  capturedSession!.pushEvent({
+    type: "turn_completed",
+    provider: "codex",
+    turnId: "native-turn",
+    usage: { scope: "turn", inputTokens: 100, outputTokens: 1_000 },
+  });
+  await vi.waitFor(() => expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle"));
+  expect(manager.getAgent(snapshot.id)?.lastUsage).toEqual(sessionUsage);
+});
+
 test("ignores stale autonomous terminals without lowering the active turn lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-autonomous-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

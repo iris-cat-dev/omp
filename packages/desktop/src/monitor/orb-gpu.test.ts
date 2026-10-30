@@ -6,6 +6,8 @@ import { MONITOR_UI_MARKUP } from "./ui-markup.js";
 import type { OmpMonitorViewState } from "./view-types.js";
 import { MONITOR_VISUALS_SCRIPT } from "./visuals.js";
 import { DEFAULT_MONITOR_PREFERENCES } from "./window-preferences.js";
+import { MONITOR_PERF_MARKUP } from "./performance-ui.js";
+import { MONITOR_BOARD_MARKUP } from "./board-ui.js";
 
 interface Visual {
   update(frame: Record<string, unknown>): void;
@@ -105,6 +107,9 @@ class GpuDriver {
   readonly shaders: object[] = [];
   readonly deletedPrograms: object[] = [];
   readonly deletedTextures: object[] = [];
+  readonly textures: object[] = [];
+  readonly textureUploads: Array<{ unit: number; pixels: unknown }> = [];
+  private textureUnit = 0;
   readonly operations: string[] = [];
   readonly draws: Array<Record<string, number>> = [];
   private readonly uniforms: Record<string, number> = {};
@@ -147,6 +152,7 @@ class GpuDriver {
     TEXTURE0: 33984,
     TEXTURE1: 33985,
     TEXTURE2: 33986,
+    TEXTURE3: 33987,
     RGBA: 6408,
     UNSIGNED_BYTE: 5121,
     UNPACK_FLIP_Y_WEBGL: 37440,
@@ -194,20 +200,32 @@ class GpuDriver {
     uniform1f: (name: string, value: number) => {
       this.uniforms[name] = value;
     },
-    uniform1i: noOp,
+    uniform1i: (name: string, value: number) => {
+      this.uniforms[name] = value;
+    },
     uniform2f: noOp,
     uniform3fv: noOp,
     uniform4f: noOp,
-    uniform4fv: noOp,
+    uniform4fv: (name: string, values: ArrayLike<number>) => {
+      for (let index = 0; index < 4; index++) this.uniforms[name + index] = values[index]!;
+    },
     drawArrays: () => {
       this.draws.push({ ...this.uniforms });
     },
-    createTexture: () => ({}),
+    createTexture: () => {
+      const texture = {};
+      this.textures.push(texture);
+      return texture;
+    },
     bindTexture: noOp,
     texParameteri: noOp,
     pixelStorei: noOp,
-    activeTexture: noOp,
-    texImage2D: noOp,
+    activeTexture: (unit: number) => {
+      this.textureUnit = unit;
+    },
+    texImage2D: (...args: unknown[]) => {
+      this.textureUploads.push({ unit: this.textureUnit, pixels: args.at(-1) });
+    },
     deleteTexture: (texture: object) => {
       this.deletedTextures.push(texture);
       this.operations.push("delete-texture");
@@ -245,6 +263,8 @@ function settingsState(): OmpMonitorViewState {
         clickThrough: false,
       },
     ],
+    board: null,
+    boards: [],
   };
 }
 
@@ -264,10 +284,15 @@ class TestPage {
   constructor(ready: Promise<OmpMonitorViewState> = Promise.resolve(settingsState())) {
     document.body.append(this.iframe);
     this.realm = this.iframe.contentWindow as Window & typeof globalThis;
-    this.realm.document.body.innerHTML = MONITOR_UI_MARKUP;
+    this.realm.document.body.innerHTML =
+      MONITOR_UI_MARKUP + MONITOR_PERF_MARKUP + MONITOR_BOARD_MARKUP;
     Object.defineProperty(this.realm.document, "hidden", {
       configurable: true,
       get: () => this.hidden,
+    });
+    Object.defineProperty(this.realm.HTMLElement.prototype, "animate", {
+      configurable: true,
+      value: () => ({ cancel: noOp, addEventListener: noOp }),
     });
     Object.defineProperty(this.realm, "matchMedia", {
       configurable: true,
@@ -343,6 +368,7 @@ class TestPage {
       "clearTimeout",
       "monitorAttribution",
       "monitorLicense",
+      "AbortController",
       code,
     )(
       this.realm.document,
@@ -356,6 +382,7 @@ class TestPage {
       this.clock.clearTimer,
       "",
       "",
+      this.realm.AbortController,
     ) as { visuals: Visuals; startMonitor(): void };
     this.visuals = runtime.visuals;
     this.startMonitor = runtime.startMonitor;
@@ -696,5 +723,114 @@ describe("settings first-preview scheduling", () => {
     page.clock.runTimers();
     expect(page.drivers).toHaveLength(0);
     expect(page.clock.size).toBe(0);
+  });
+});
+
+describe("performance readout GPU consumer", () => {
+  it("keeps the output odometer, cached masks, four-texture lifetime and shared context independent of performance changes", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    const reading = {
+      visible: true,
+      key: "winner:12840:provisional",
+      stackOffset: 4,
+      needleLegend: false,
+      contrast: false,
+      glyphs: [
+        {
+          text: "12.8k",
+          role: 0,
+          weight: 600,
+          size: 12,
+          x: -20,
+          y: 31,
+          alpha: 1,
+          provisional: true,
+        },
+        {
+          text: "Perf",
+          role: 1,
+          weight: 500,
+          size: 9,
+          x: -36,
+          y: 31,
+          alpha: 1,
+          provisional: false,
+        },
+      ],
+    };
+    const frame = { ...orbFrame("liquid", 148), effects: "soft", reduceMotion: false };
+    visual.update(frame);
+    page.clock.frame();
+    const driver = page.drivers[0]!;
+    page.clock.now += 100;
+    visual.update({ ...frame, value: 30, formattedValue: "30" });
+    page.clock.frame();
+    const firstRoll = driver.draws.at(-1)!["uReadoutRoll2"]!;
+    const previousOutputUploads = driver.textureUploads.filter(
+      (upload) => upload.unit === driver.gl.TEXTURE1,
+    ).length;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    page.clock.now += 40;
+    page.clock.frame();
+    const afterPerformance = driver.draws.at(-1)!;
+    expect(afterPerformance.uPerfReadoutOn).toBe(1);
+    expect(afterPerformance.uPerfReadout).toBe(3);
+    expect(afterPerformance["uReadoutRoll2"]).toBeGreaterThan(firstRoll);
+    expect(afterPerformance["uReadoutRoll2"]).toBeLessThan(1);
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE1),
+    ).toHaveLength(previousOutputUploads);
+    expect(driver.textures).toHaveLength(4);
+    const maskUploads = driver.textureUploads.filter(
+      (upload) => upload.unit === driver.gl.TEXTURE3,
+    ).length;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    page.clock.now += 40;
+    page.clock.frame();
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE3),
+    ).toHaveLength(maskUploads);
+    const rollBeforeHide = driver.draws.at(-1)!["uReadoutRoll2"]!;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: null }));
+    page.clock.now += 20;
+    page.clock.frame();
+    expect(driver.draws.at(-1)!.uPerfReadoutOn).toBe(0);
+    expect(driver.draws.at(-1)!["uReadoutRoll2"]).toBeGreaterThan(rollBeforeHide);
+    expect(driver.draws.at(-1)!["uReadoutRoll2"]).toBeLessThan(1);
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE1),
+    ).toHaveLength(previousOutputUploads);
+    host.dispatchEvent(
+      new page.realm.CustomEvent("perf-readout-change", {
+        detail: {
+          ...reading,
+          key: "winner:1540:resting",
+          glyphs: [{ ...reading.glyphs[0]!, text: "1,540" }],
+        },
+      }),
+    );
+    page.clock.now += 40;
+    page.clock.frame();
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE3),
+    ).toHaveLength(maskUploads + 1);
+    expect(driver.programs).toHaveLength(2);
+    expect(page.drivers).toHaveLength(1);
+    visual.update({ ...frame, value: 30, formattedValue: "30", size: 196, perfReadout: reading });
+    page.clock.now += 40;
+    page.clock.frame();
+    const resizedMask = driver.textureUploads.findLast(
+      (upload) => upload.unit === driver.gl.TEXTURE3,
+    )!;
+    expect(resizedMask.pixels).toMatchObject({ width: 196, height: 196 });
+    expect(driver.programs).toHaveLength(2);
+    visual.setVisible(false);
+    expect(driver.deletedTextures).toEqual(driver.textures);
+    expect(driver.deletedPrograms).toHaveLength(0);
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    expect(page.drivers).toHaveLength(1);
+    visual.destroy();
+    expect(driver.deletedTextures).toEqual(driver.textures);
   });
 });

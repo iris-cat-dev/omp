@@ -498,7 +498,38 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
   })
   .catchall(z.boolean());
 
+const AgentNativeOutputRequestSchema = z.object({
+  startMs: z.number().int().min(-8_640_000_000_000_000).max(8_640_000_000_000_000),
+  endMs: z.number().int().min(-8_640_000_000_000_000).max(8_640_000_000_000_000),
+  outputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+});
+
 const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
+  scope: z.enum(["session", "turn"]).optional(),
+  nativeMetrics: z
+    .object({
+      generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      phase: z.enum(["generating", "tools", "idle"]),
+      inFlightStartMs: z
+        .number()
+        .int()
+        .min(-8_640_000_000_000_000)
+        .max(8_640_000_000_000_000)
+        .nullable(),
+      lastActivityMs: z.number().int().min(-8_640_000_000_000_000).max(8_640_000_000_000_000),
+      latestEndMs: z
+        .number()
+        .int()
+        .min(-8_640_000_000_000_000)
+        .max(8_640_000_000_000_000)
+        .nullable(),
+      measuredOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      measuredDurationMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      recentRequests: z.array(AgentNativeOutputRequestSchema).max(2_048),
+      agentReferences: z.array(AgentNativeOutputRequestSchema).max(3),
+      modelReferences: z.array(AgentNativeOutputRequestSchema).max(10),
+    })
+    .optional(),
   inputTokens: z.number().optional(),
   cachedInputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
@@ -823,6 +854,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     presentation: z.literal("plan").optional(),
+    nativeUsage: AgentUsageSchema.optional(),
     customMessage: z
       .object({
         customType: z.string(),

@@ -3,9 +3,9 @@
 export const BUNDLED_PRICING_METADATA = {
   priceTable: {
     url: "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json",
-    sha256: "033728b1d33d59f3f508ed187a43bfed4d463a08e7819c6da7a966ec34173d12",
-    updated: "2026-10-24",
-    version: 2,
+    sha256: "94718e2919050dd83248583ff2b37e678f6f22c377fc662eeb130573eb1296ce",
+    updated: "2026-10-28",
+    version: 3,
   },
   currencies: {
     url: "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/currencies.json",
@@ -19,8 +19,8 @@ export const BUNDLED_PRICE_TABLE: unknown = {
   _comment:
     "API list prices for API-equivalent costs (METRICS 9). USD per million tokens. Edit by hand: raise version by one, set updated and each changed entry's checked date, add tests for new id forms, run python3 spec/tools/prices.py. Apps sync this file from main daily (spec/NETWORK.md).",
   schema: 1,
-  version: 2,
-  updated: "2026-10-24",
+  version: 3,
+  updated: "2026-10-28",
   currency: "USD",
   unit: "perMillionTokens",
   providers: {
@@ -67,6 +67,10 @@ export const BUNDLED_PRICE_TABLE: unknown = {
     tencent: {
       name: "Tencent Cloud (Hunyuan)",
       url: "https://www.tencentcloud.com/document/product/1300/78937",
+    },
+    xiaomi: {
+      name: "Xiaomi MiMo",
+      url: "https://mimo.mi.com/docs/price/pay-as-you-go",
     },
     opencode: {
       name: "OpenCode Zen",
@@ -646,6 +650,21 @@ export const BUNDLED_PRICE_TABLE: unknown = {
       },
       source: "https://developers.openai.com/api/docs/pricing",
       checked: "2026-10-22",
+    },
+    {
+      id: "gpt-6.1-terra",
+      provider: "openai",
+      name: "GPT-6.1 Terra",
+      status: "current",
+      prices: { input: 1, cachedInput: 0.05, cacheWrite: 1.25, output: 5 },
+      tiers: [{ above: 272000, input: 2, cachedInput: 0.1, cacheWrite: 2.5, output: 7.5 }],
+      fast: {
+        prices: { input: 2, cachedInput: 0.1, cacheWrite: 2.5, output: 10 },
+        tiers: [{ above: 272000, input: 4, cachedInput: 0.2, cacheWrite: 5, output: 15 }],
+      },
+      source: "https://developers.openai.com/api/docs/pricing",
+      checked: "2026-10-28",
+      note: "Cache writes (30-minute lifetime) cost 1.25x input; 12-hour writes (2.5x) are not separated in logs and are priced as 30-minute writes.",
     },
     {
       id: "gpt-6-sol",
@@ -4048,6 +4067,36 @@ export const BUNDLED_PRICE_TABLE: unknown = {
       note: "Tencent Cloud TokenHub list price; API id hy3.",
     },
     {
+      id: "mimo-v2.6-pro",
+      provider: "xiaomi",
+      name: "MiMo-V2.6-Pro",
+      status: "current",
+      prices: { input: 0.435, cachedInput: 0.0036, cacheWrite: 0, output: 0.87 },
+      source: "https://mimo.mi.com/docs/price/pay-as-you-go",
+      checked: "2026-10-28",
+      note: "Overseas pay-as-you-go prices in USD (mainland China bills ¥3 / ¥0.025 / ¥6 in CNY); cache writes are free for a limited time with no end date published; Batch API at half price is not modeled.",
+    },
+    {
+      id: "mimo-v2.6-flash",
+      provider: "xiaomi",
+      name: "MiMo-V2.6-Flash",
+      status: "current",
+      prices: { input: 0.14, cachedInput: 0.0028, cacheWrite: 0, output: 0.28 },
+      source: "https://mimo.mi.com/docs/price/pay-as-you-go",
+      checked: "2026-10-28",
+      note: "Overseas pay-as-you-go prices in USD (mainland China bills ¥1 / ¥0.02 / ¥2 in CNY); cache writes are free for a limited time with no end date published; Batch API at half price is not modeled.",
+    },
+    {
+      id: "mimo-v2.6-pro-ultraspeed",
+      provider: "xiaomi",
+      name: "MiMo-V2.6-Pro-UltraSpeed",
+      status: "current",
+      prices: { input: 4.35, cachedInput: 0.036, cacheWrite: 0, output: 8.7 },
+      source: "https://mimo.mi.com/docs/price/pay-as-you-go",
+      checked: "2026-10-28",
+      note: "Overseas pay-as-you-go prices in USD (mainland China bills ¥30 / ¥0.25 / ¥60 in CNY); cache writes are free for a limited time with no end date published; Batch API at half price is not modeled.",
+    },
+    {
       id: "big-pickle",
       provider: "opencode",
       name: "Big Pickle (OpenCode Zen)",
@@ -4175,6 +4224,10 @@ export const BUNDLED_PRICE_TABLE: unknown = {
       model: "gpt-6.1-sol",
       expect: "gpt-6.1-sol",
     },
+    { model: "gpt-6.1-terra", expect: "gpt-6.1-terra" },
+    { model: "openai/gpt-6.1-terra", expect: "gpt-6.1-terra" },
+    { model: "gpt-6.1-terra-fast", expect: "gpt-6.1-terra fast" },
+    { model: "gpt-5.6-terra", expect: "gpt-5.6-terra" },
     {
       model: "claude-fable-5",
       expect: "claude-fable-5",
@@ -4475,6 +4528,12 @@ export const BUNDLED_PRICE_TABLE: unknown = {
       model: "gemini 4 argon",
       expect: "gemini-4-argon",
     },
+    { model: "mimo-v2.6-pro", provider: "custom", expect: "mimo-v2.6-pro" },
+    { model: "MiMo-V2.6-Pro", expect: "mimo-v2.6-pro" },
+    { model: "xiaomi/mimo-v2.6-pro", expect: "mimo-v2.6-pro" },
+    { model: "mimo-v2.6-flash", expect: "mimo-v2.6-flash" },
+    { model: "mimo-v2.6-pro-ultraspeed", expect: "mimo-v2.6-pro-ultraspeed" },
+    { model: "mimo-v2.5-pro", expect: "unknown" },
   ],
 };
 

@@ -2,7 +2,11 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BUNDLED_CURRENCY_TABLE, BUNDLED_PRICE_TABLE } from "./pricing-assets.js";
+import {
+  BUNDLED_CURRENCY_TABLE,
+  BUNDLED_PRICE_TABLE,
+  BUNDLED_PRICING_METADATA,
+} from "./pricing-assets.js";
 import { OmpPriceCatalog, type OmpMonitorCostInput } from "./pricing.js";
 import {
   DAY_MS,
@@ -21,7 +25,7 @@ import {
   validateCurrencies,
 } from "./pricing-rates.js";
 
-const NOW = Date.parse("2026-10-24T12:00:00Z");
+const NOW = Date.parse(`${BUNDLED_PRICING_METADATA.priceTable.updated}T12:00:00Z`);
 const PRICE_URL =
   "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json";
 const MIRROR_URL = "https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json";

@@ -11,6 +11,8 @@ import { emptyUsage, hashId, object, OmpNumericParser, safeLabel } from "./parse
 import type { NumericResponse, NumericSink } from "./parser.js";
 import { getBundledPricingState } from "./pricing.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
+import { OmpPerformanceMonitor } from "./performance-monitor.js";
+import type { OmpPerformanceSource } from "./performance-reader-file.js";
 import {
   coverageStatus,
   filterOptions,
@@ -54,6 +56,7 @@ const RESPONSE_FIELDS: ReadonlyArray<keyof NumericResponse> = [
   "model",
   "provider",
   "serviceTier",
+  "speedMode",
   "endMs",
   "startMs",
   "ttftMs",
@@ -74,11 +77,29 @@ function sameCompletionFacts(left: NumericResponse, right: NumericResponse): boo
   );
 }
 
+function sameResponseFacts(left: NumericResponse, right: NumericResponse): boolean {
+  for (const field of RESPONSE_FIELDS) {
+    if (field === "speedMode") {
+      if (
+        left.speedMode?.value !== right.speedMode?.value ||
+        left.speedMode?.provider !== right.speedMode?.provider ||
+        left.speedMode?.evidence !== right.speedMode?.evidence
+      ) {
+        return false;
+      }
+    } else if (left[field] !== right[field]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface OmpLocalMonitorOptions {
   roots?: OmpMonitorRoot[];
   now?: () => number;
   estimateCost?: (usage: OmpMonitorCostInput) => number | null;
   getPricing?: () => OmpMonitorPricing;
+  performanceCacheDir?: string;
 }
 
 /** Read-only OMP session collector. No transcript text survives a complete line's numeric extraction. */
@@ -87,6 +108,7 @@ export class OmpLocalMonitor {
   private readonly clock: () => number;
   private readonly getPricing: () => OmpMonitorPricing;
   private readonly history: OmpMonitorHistory;
+  private readonly performance: OmpPerformanceMonitor;
   private readonly files = new Map<string, FileState>();
   private readonly candidates = new Map<string, Map<string, Candidate>>();
   private readonly canonical = new Map<string, Candidate>();
@@ -115,6 +137,7 @@ export class OmpLocalMonitor {
     this.clock = options.now ?? Date.now;
     this.getPricing = options.getPricing ?? getBundledPricingState;
     this.history = new OmpMonitorHistory(options.estimateCost);
+    this.performance = new OmpPerformanceMonitor({ cacheDir: options.performanceCacheDir });
     this.currentNow = this.readNow();
     this.cutoff = calendarDays(this.currentNow)[0]!.start;
     this.retainedCutoff = this.cutoff;
@@ -137,6 +160,7 @@ export class OmpLocalMonitor {
     this.insertionOrder.clear();
     this.snapshots.clear();
     this.history.clear();
+    this.performance.dispose();
     this.pendingBytes = 0;
     this.pendingTools = 0;
     this.roots = [];
@@ -155,7 +179,9 @@ export class OmpLocalMonitor {
     const priceVersion = `${pricing.prices.version}:${pricing.prices.fetchedAt ?? ""}:${Math.floor(now / 60_000)}`;
     const files = scopeFiles(this.files.values(), selected);
     const facts = scopeResponses(this.canonical.values(), files.ids, now);
-    const activity = projectActivity(files, facts, now);
+    const activity = projectActivity(files, facts, now, (input) =>
+      this.history.quoteCost(input, priceVersion),
+    );
     const live = liveMetrics(facts.responses, activity.estimates, now);
     const history = this.history.getDays(
       selected,
@@ -196,9 +222,16 @@ export class OmpLocalMonitor {
         measuredTps: live.measuredTps,
         estimatedTps: live.estimatedTps,
         estimatedShare: live.estimatedShare,
+        measuredThinkingTps: live.measuredThinkingTps,
+        estimatedThinkingTps: live.estimatedThinkingTps,
       },
       today: currentDayUsage(history.days),
       days: history.days,
+      performance: this.performance.getSnapshot(
+        files.ids,
+        now,
+        new Set(activity.agents.map((agent) => agent.id)),
+      ),
       agents: activity.agents,
       series: live.series,
       coverage,
@@ -226,6 +259,20 @@ export class OmpLocalMonitor {
       file.parser.discardStaleTools(this.currentNow);
       this.syncToolCount(file);
     }
+    const performanceSources: OmpPerformanceSource[] = [];
+    for (const file of this.files.values()) {
+      const source: OmpPerformanceSource = {
+        id: file.id,
+        path: file.path,
+        phase: this.currentNow - file.parser.lastActivityAt > STALE_MS ? "idle" : file.parser.phase,
+      };
+      if (file.identity) source.identity = file.identity;
+      performanceSources.push(source);
+    }
+    await this.performance.poll(performanceSources, this.currentNow, {
+      revision: this.numericRevision,
+      owner: (key) => this.canonical.get(key)?.file.id,
+    });
     this.snapshots.clear();
     return this.getSnapshot();
   }
@@ -747,18 +794,9 @@ export class OmpLocalMonitor {
     response.feedbackEligible = sameCompletion
       ? existing.response.feedbackEligible
       : file.ingestFeedback;
-    if (existing) {
-      let unchanged = true;
-      for (const field of RESPONSE_FIELDS) {
-        if (existing.response[field] !== response[field]) {
-          unchanged = false;
-          break;
-        }
-      }
-      if (unchanged) {
-        existing.position = file.ingestPosition;
-        return false;
-      }
+    if (existing && sameResponseFacts(existing.response, response)) {
+      existing.position = file.ingestPosition;
+      return false;
     }
     if (!existing && this.insertionOrder.size >= MONITOR_LIMITS.records) {
       const oldest = this.insertionOrder.values().next().value;

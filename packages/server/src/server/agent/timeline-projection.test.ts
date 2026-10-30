@@ -8,6 +8,30 @@ import {
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
+  test("keeps native request timing through a projected empty completion chunk", () => {
+    const nativeUsage = { scope: "turn" as const, outputTokens: 1_000 };
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-10-30T10:00:00.000Z",
+        item: { type: "assistant_message", text: "answer", messageId: "request" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-10-30T10:00:10.000Z",
+        item: { type: "assistant_message", text: "", messageId: "request", nativeUsage },
+      },
+    ];
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "answer",
+      messageId: "request",
+      nativeUsage,
+    });
+  });
+
   test("preserves complete native custom records between model chunks without merging or stripping metadata", () => {
     const customMessage = { customType: "omp-bridge-chatpro", details: { deliveryId: "delivery" } };
     const text = `\n${"原文🙂\n".repeat(40_000)}\n`;

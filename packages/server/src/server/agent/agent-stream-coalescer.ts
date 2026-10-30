@@ -104,7 +104,11 @@ export class AgentStreamCoalescer {
       return false;
     }
 
-    if (isTextTimelineItem(event.item) && event.item.text === "") {
+    if (
+      isTextTimelineItem(event.item) &&
+      event.item.text === "" &&
+      !(event.item.type === "assistant_message" && event.item.nativeUsage)
+    ) {
       return true;
     }
 
@@ -260,6 +264,13 @@ export class AgentStreamCoalescer {
         previous.turnId === entry.turnId
       ) {
         previous.text += entry.text;
+        if (
+          previous.item.type === "assistant_message" &&
+          entry.item.type === "assistant_message" &&
+          entry.item.nativeUsage
+        ) {
+          previous.item = { ...previous.item, nativeUsage: entry.item.nativeUsage };
+        }
         continue;
       }
 

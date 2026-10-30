@@ -1,6 +1,7 @@
 import type { OmpMonitorScope, OmpMonitorSnapshot } from "./types.js";
+import type { OmpMonitorBoardSummary } from "./board-types.js";
 
-export type OmpMonitorSurface = "orb" | "dashboard" | "history" | "settings";
+export type OmpMonitorSurface = "orb" | "dashboard" | "history" | "settings" | "board";
 export type OmpMonitorOrbStyle = "led" | "needle" | "liquid" | "reactor" | "minimal";
 export type OmpMonitorEffects = "off" | "soft" | "standard" | "max";
 export type OmpMonitorTitleTheme =
@@ -27,6 +28,8 @@ export interface OmpMonitorPreferences {
   clickThrough: boolean;
   fadeWhenIdle: boolean;
   nameMode: "auto" | "always" | "never";
+  showPerformance: boolean;
+  showThinking: boolean;
 }
 
 export type OmpMonitorConfigure = Partial<OmpMonitorPreferences>;
@@ -51,6 +54,8 @@ export interface OmpMonitorViewState {
   windowCount: number;
   orbs: OmpMonitorOrbSummary[];
   maxWindows: number;
+  board: OmpMonitorBoardSummary | null;
+  boards: OmpMonitorBoardSummary[];
 }
 
 export type OmpMonitorExportResult = "saved" | "cancelled" | "unavailable" | "failed";
