@@ -7,7 +7,7 @@ export interface OmpUsagePollScheduler {
 
 interface OmpUsagePollerOptions {
   readStats(): Promise<OmpSessionStats>;
-  onUsage(usage: AgentUsage, turnId?: string): void;
+  onUsage(usage: AgentUsage): void;
   onPollError(error: unknown): void;
   scheduler?: OmpUsagePollScheduler;
 }
@@ -41,6 +41,7 @@ function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
   }
 
   return {
+    scope: "session",
     inputTokens,
     cachedInputTokens,
     outputTokens,
@@ -87,7 +88,7 @@ export class OmpUsagePoller {
     this.invalidatePendingWork();
   }
 
-  async completeTurn(turnId?: string): Promise<void> {
+  async completeTurn(): Promise<void> {
     if (this.closed) {
       return;
     }
@@ -102,7 +103,7 @@ export class OmpUsagePoller {
     if (this.closed || this.generation !== completionGeneration) {
       return;
     }
-    this.publishUsage(usage, turnId);
+    this.publishUsage(usage);
   }
 
   async refresh(): Promise<void> {
@@ -177,10 +178,10 @@ export class OmpUsagePoller {
     return usage;
   }
 
-  private publishUsage(usage: AgentUsage | undefined, turnId?: string): void {
+  private publishUsage(usage: AgentUsage | undefined): void {
     const changedUsage = this.takeChangedUsage(usage);
     if (changedUsage) {
-      this.options.onUsage(changedUsage, turnId);
+      this.options.onUsage(changedUsage);
     }
   }
 }

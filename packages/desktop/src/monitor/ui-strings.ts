@@ -49,8 +49,10 @@ export const MONITOR_UI_STRINGS = {
     idle: "Idle",
     collapseAgents: "Show fewer agents",
     moreAgents: "more agents",
+    board: "Ranking board",
+    addBoard: "New ranking board",
     agentNote:
-      "Agent values are recent measured request references, not shares of live throughput. Missing TTFT is unknown, not zero.",
+      "Each agent shows its own live measured and estimated throughput in the same three-second window. Missing TTFT is unknown, not zero.",
     emptyAgents: "No agents are working.",
     emptySources: "No output recorded today.",
     emptyHistory: "No available logs for this range.",
@@ -239,7 +241,7 @@ export const MONITOR_UI_STRINGS = {
     timingExplanation:
       "Speed = output tokens ÷ measured request time, from request start to completion, including first-token wait. Concurrent calls add together. In-flight output is estimated from recent measured references and corrected when the response completes; measured and estimated throughput stay distinct. No token stream is intercepted.",
     privacyExplanation:
-      "This view keeps numeric usage, timing and safe labels only. Prompts, message bodies, credentials and raw session paths are never retained or displayed. Processing is local.",
+      "Usage and task scoring are processed locally. Task scoring temporarily analyses prompts, tool calls and results in memory. Only numeric usage, timing, task features and safe labels are saved; prompts, message bodies, credentials and raw session paths are never saved or displayed.",
     adaptation: "Original Agent Speed design, integrated into OMP Desktop.",
     license: "Open-source license",
     unknown: "Unknown",
@@ -301,8 +303,9 @@ export const MONITOR_UI_STRINGS = {
     idle: "空闲",
     collapseAgents: "收起代理",
     moreAgents: "个代理",
-    agentNote:
-      "代理数值是近期实测请求的参考均速，不是实时合计吞吐中的占比。缺失 TTFT 表示未知，不是零。",
+    board: "排行看板",
+    addBoard: "新建排行看板",
+    agentNote: "各代理显示自身最近 3 秒内的实测与估算吞吐。缺失 TTFT 表示未知，不是零。",
     emptyAgents: "目前没有代理在工作。",
     emptySources: "今天尚无已记录的输出。",
     emptyHistory: "所选日期没有可用日志。",
@@ -485,7 +488,7 @@ export const MONITOR_UI_STRINGS = {
     timingExplanation:
       "速度 = 输出 token ÷ 实测请求耗时（从发起到完成，包含首 token 等待）。并发请求吞吐相加。在途输出根据近期实测参考均速估算，完成后由实测值校正，实测与估算始终区分，不拦截 token 流。",
     privacyExplanation:
-      "仅保留数值用量、计时与安全标签，不保留或显示提示词、消息正文、凭据和原始会话路径。处理仅在本机进行。",
+      "用量与任务评分均在本机处理。任务评分会在内存中临时分析提示词、工具调用和结果；仅保存数值用量、计时、任务特征与安全标签，不保存或显示提示词、消息正文、凭据和原始会话路径。",
     adaptation: "保留 Agent Speed 原版设计，集成于 OMP Desktop。",
     license: "开源许可",
     unknown: "未知",

@@ -6,6 +6,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 
 - [Completion and failures](#completion-and-failures)
 - [Context compaction](#context-compaction)
+- [Turn usage and speed](#turn-usage-and-speed)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
 - [Queued messages](#queued-messages)
@@ -30,6 +31,16 @@ Provider-request failures after the Agent runtime starts appear as sanitized sys
 `/compact` shows a progress marker and explains that compaction may take a few minutes. New messages submitted during compaction wait for it to finish; they do not need to be resent. Desktop does not apply the short 30-second control-plane deadline to prompt admission, because OMP may still be compacting or preparing that input. Runtime exit and genuine submission errors remain failures.
 
 Native manual-compaction progress updates the marker even before a model turn starts. The completion event or successful RPC result clears the loading state without duplicate markers. The waiting explanation disappears when compaction finishes.
+
+## Turn usage and speed
+
+The chat `tok/s` uses Agent Speed's request-based calculation, not differences between session-wide token counters. Completed turns use this agent's valid measured output divided by its summed native request time, including first-token wait and excluding time between requests spent running tools. Requests shorter than 500 ms use the original 500 ms floor; invalid or over-15-minute intervals do not contribute measured speed. Failed, aborted and untimed requests can retain their actual usage without inventing a speed from **Worked for**.
+
+During generation, the last three seconds combine completed-request facts with an estimate from recent native references. Completion replaces the in-flight estimate rather than adding it twice; tools, cancellation and compaction stop that estimate. Copied history is not claimed as this file's own speed reference. Historical assistant messages retain safe per-turn facts for footer restoration, including Plan messages.
+
+After reconnecting, the completed assistant's replayed facts take precedence over a retained in-flight footer sample, so a missed final live event does not leave stale totals or speed.
+
+Native session aggregates remain separate for Usage, context and quota displays. A second 1,000-output-token, ten-second turn therefore remains **100 tok/s**, not 200 tok/s from cumulative session output. Existing chat styling and number formatting are unchanged; no approximation symbol is added.
 
 ## Workflow and approval modes
 

@@ -1,6 +1,6 @@
 /** Distributed with the upstream visual ports, measurement rules and public price assets. */
 export const AGENT_SPEED_ATTRIBUTION =
-  "OMP local monitoring adapts Agent Speed v1.4.1 (https://github.com/zoefix/agent-speed, a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c): its original orb/dashboard design, shaders, vector vehicles, OMP measurement rules, title ladders and public model pricing. Native window management, collection and Desktop integration are OMP Desktop implementations. Simplex noise is by Ashima Arts and Stefan Gustavson.";
+  "OMP local monitoring adapts Agent Speed v1.5.0 (https://github.com/zoefix/agent-speed, 29dffc4e6fbe1da435071e40781b1571dd45ac22): its original orb/dashboard and three board designs, shaders, vector vehicles, OMP measurement rules, task score v2 and prediction models, task history, mode badges, title ladders and v3 public model pricing. Native window management, collection and Desktop integration are OMP Desktop implementations. Simplex noise is by Ashima Arts and Stefan Gustavson.";
 
 export const AGENT_SPEED_LICENSE = `MIT License
 

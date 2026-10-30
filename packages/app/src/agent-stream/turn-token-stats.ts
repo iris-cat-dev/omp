@@ -24,18 +24,39 @@ export function formatTokenCount(count: number): string {
   return String(rounded);
 }
 
+function measuredTurnRate(usage: AgentUsage | null | undefined): number | null {
+  const native = usage?.nativeMetrics;
+  const outputTokens = usage?.outputTokens;
+  if (
+    !native ||
+    !Number.isSafeInteger(native.measuredDurationMs) ||
+    native.measuredDurationMs < 500 ||
+    !Number.isSafeInteger(native.measuredOutputTokens) ||
+    native.measuredOutputTokens < 0 ||
+    typeof outputTokens !== "number" ||
+    !Number.isFinite(outputTokens) ||
+    outputTokens < 0 ||
+    native.measuredOutputTokens > outputTokens
+  ) {
+    return null;
+  }
+  const rate = native.measuredOutputTokens / (native.measuredDurationMs / 1_000);
+  return Number.isFinite(rate) ? rate : null;
+}
+
 /**
- * Derives the completed-turn token display from the usage reported by
- * `turn_completed` (surfaced via the agent's per-turn usage map). The total
- * counts input + output tokens as reported by the provider; the average speed
- * divides output tokens by the turn duration ("Worked for"), which includes
- * tool-call time, so it reads as a per-turn average rather than a pure
- * generation rate.
+ * Keep provider token/cache semantics unchanged. Speed is the valid own native
+ * requests' Σoutput / Σduration, not the whole turn's "Worked for" duration.
+ * Untimed, failed and interrupted requests can count in totals, never in speed.
+ * Completed replay metadata is authoritative over retained in-flight samples.
  */
 export function deriveTurnTokenStats(
-  usage: AgentUsage | null | undefined,
-  durationMs: number | undefined,
+  recordedUsage: AgentUsage | null | undefined,
+  replayedUsage?: AgentUsage | null,
 ): TurnTokenStats | null {
+  const usage =
+    replayedUsage?.scope === "session" ? recordedUsage : (replayedUsage ?? recordedUsage);
+  if (usage?.scope === "session") return null;
   const inputTokens = usage?.inputTokens;
   const outputTokens = usage?.outputTokens;
   const hasInput =
@@ -47,9 +68,5 @@ export function deriveTurnTokenStats(
   }
   const totalTokens =
     (hasInput ? (inputTokens as number) : 0) + (hasOutput ? (outputTokens as number) : 0);
-  let avgTokensPerSecond: number | null = null;
-  if (hasOutput && typeof durationMs === "number" && durationMs > 0) {
-    avgTokensPerSecond = ((outputTokens as number) * 1_000) / durationMs;
-  }
-  return { totalTokens, avgTokensPerSecond };
+  return { totalTokens, avgTokensPerSecond: measuredTurnRate(usage) };
 }

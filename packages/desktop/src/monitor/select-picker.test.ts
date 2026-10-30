@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MONITOR_SELECT_PICKER_SCRIPT } from "./select-picker";
 
 interface Picker {
-  install(): void;
+  install(root?: ParentNode): void;
   close(restoreFocus?: boolean): boolean;
 }
 let frame: HTMLIFrameElement;
@@ -195,5 +195,53 @@ describe("in-window monitor select picker", () => {
     expect(key(appearance, "Tab").defaultPrevented).toBe(false);
     expect(appearance.value).toBe("system");
     expect(popup().hidden).toBe(true);
+  });
+
+  it("reinstalls idempotently without closing an open picker or dispatching duplicate changes", () => {
+    let changes = 0;
+    appearance.addEventListener("change", () => changes++);
+    picker.install();
+    picker.install(realm.document.body);
+    open(appearance);
+    picker.install();
+    expect(popup().hidden).toBe(false);
+    expect(appearance.getAttribute("aria-expanded")).toBe("true");
+    mouse(option("light"), "click");
+    expect(appearance.value).toBe("light");
+    expect(changes).toBe(1);
+    expect(popup().hidden).toBe(true);
+  });
+
+  it("installs a dynamically mounted section without intercepting an unrelated new select", () => {
+    const section = realm.document.createElement("section");
+    const select = realm.document.createElement("select");
+    select.id = "dynamic-model";
+    select.append(new realm.Option("Model A", "a"), new realm.Option("Model B", "b"));
+    section.append(select);
+    const unrelated = realm.document.createElement("select");
+    unrelated.append(new realm.Option("Unrelated", "other"));
+    realm.document.body.append(section, unrelated);
+    picker.install(section);
+    picker.install(section);
+    expect(mouse(unrelated, "mousedown").defaultPrevented).toBe(false);
+    let changes = 0;
+    select.addEventListener("change", () => changes++);
+    open(select);
+    mouse(option("b"), "click");
+    expect(select.value).toBe("b");
+    expect(changes).toBe(1);
+  });
+
+  it("closes a disconnected owner and installs its replacement before another native open gesture", () => {
+    open(appearance);
+    const replacement = appearance.cloneNode(true) as HTMLSelectElement;
+    appearance.replaceWith(replacement);
+    picker.install(realm.document.body);
+    expect(popup().hidden).toBe(true);
+    expect(appearance.getAttribute("aria-expanded")).toBe("false");
+    open(replacement);
+    mouse(option("dark"), "click");
+    expect(replacement.value).toBe("dark");
+    expect(appearance.value).toBe("system");
   });
 });

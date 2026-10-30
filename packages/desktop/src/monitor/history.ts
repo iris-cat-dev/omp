@@ -56,7 +56,7 @@ function addPeakIntervals(
 
 /** Cached current-catalog projections of retained numeric facts, never a persistent ledger. */
 export class OmpMonitorHistory {
-  private readonly quotes = new WeakMap<NumericResponse, CachedQuote>();
+  private readonly quotes = new WeakMap<OmpMonitorCostInput, CachedQuote>();
   private readonly histories = new Map<string, CachedHistory>();
 
   constructor(private readonly estimateCost?: (usage: OmpMonitorCostInput) => number | null) {}
@@ -112,7 +112,8 @@ export class OmpMonitorHistory {
     this.histories.clear();
   }
 
-  private quoteCost(response: NumericResponse, version: string): number | null {
+  /** Share retained-response identity and catalog-version quotes with the live projection. */
+  quoteCost(response: OmpMonitorCostInput, version: string): number | null {
     const cached = this.quotes.get(response);
     if (cached?.version === version) return cached.cost;
     const value = this.estimateCost?.(response) ?? null;

@@ -4722,8 +4722,7 @@ export class AgentManager {
         this.onStreamThreadStarted(agent);
         return undefined;
       case "usage_updated":
-        agent.lastUsage = event.usage;
-        this.emitState(agent);
+        this.onStreamUsageUpdated(agent, event);
         return undefined;
       case "features_changed":
         flags.shouldDispatchEvent = false;
@@ -4827,6 +4826,15 @@ export class AgentManager {
     void this.refreshRuntimeInfo(agent);
   }
 
+  private onStreamUsageUpdated(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "usage_updated" }>,
+  ): void {
+    if (event.usage.scope === "turn") return;
+    agent.lastUsage = event.usage;
+    this.emitState(agent);
+  }
+
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -4891,7 +4899,7 @@ export class AgentManager {
       "agent.manager.turn.completed",
     );
     if (terminalDisposition === "stale") return;
-    if (event.usage) {
+    if (event.usage && event.usage.scope !== "turn") {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
     // If no usage on turn_completed, keep lastUsage as-is so context window

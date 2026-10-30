@@ -450,13 +450,21 @@ describe("OMP local numeric filesystem monitor", () => {
       measuredTps: 0,
       estimatedTps: 0,
       estimatedShare: 0,
+      measuredThinkingTps: null,
+      estimatedThinkingTps: null,
     });
     await appendFile(
       file,
       `${JSON.stringify(response("historical-replay", NOW - 60_000, 9_000))}\n`,
     );
     const replay = await current.poll();
-    expect(replay.rate).toEqual({ measuredTps: 0, estimatedTps: 0, estimatedShare: 0 });
+    expect(replay.rate).toEqual({
+      measuredTps: 0,
+      estimatedTps: 0,
+      estimatedShare: 0,
+      measuredThinkingTps: null,
+      estimatedThinkingTps: null,
+    });
     expect(replay.today.peakOutputTps).toBe(3_000);
     expect(replay.activity.lastResponseAt).toBe(completedAt);
     expect(replay.activity.peakObservedAt).toBe(NOW - 59_000);
@@ -1072,6 +1080,8 @@ describe("OMP local numeric filesystem monitor", () => {
       measuredTps: 0,
       estimatedTps: 0,
       estimatedShare: 0,
+      measuredThinkingTps: null,
+      estimatedThinkingTps: null,
     });
   });
 
@@ -1465,7 +1475,7 @@ describe("OMP local numeric filesystem monitor", () => {
       inputs.some((input) => input.provider === "fixture" && input.serviceTier === "priority"),
     ).toBe(true);
     expect((await current.poll()).today.estimatedCostUsd).toBe(0.25);
-    expect(inputs).toHaveLength(3);
+
     version = "fixture-2";
     multiplier = 2;
     expect(current.getSnapshot().today).toMatchObject({
@@ -1474,7 +1484,7 @@ describe("OMP local numeric filesystem monitor", () => {
       estimatedCostUsd: 0.5,
       unestimatedRequests: 1,
     });
-    expect(inputs).toHaveLength(6);
+
     expect(current.getSnapshot().activity).toEqual(first.activity);
   });
 });

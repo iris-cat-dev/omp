@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import type { OmpMonitorPhase, OmpMonitorUsage } from "./types.js";
+import type { OmpMonitorPhase, OmpMonitorSpeedMode, OmpMonitorUsage } from "./types.js";
 
 export const TOKEN_LIMIT = 1_000_000_000_000;
 export const MAX_DURATION_MS = 15 * 60_000;
 export const MAX_TOOL_CALLS = 512;
+const MAX_MODE_BRANCHES = 65_536;
 const MAX_STAMP = Number.MAX_SAFE_INTEGER;
 const COMPLETION_STOP_KEYS: Record<string, true> = {
   stop: true,
@@ -15,6 +16,16 @@ const COMPLETION_STOP_KEYS: Record<string, true> = {
   pause_turn: true,
 };
 type JsonObject = Record<string, unknown>;
+type SelectedTiers = ReadonlyMap<string, OmpMonitorSpeedMode>;
+interface ModeBranch {
+  at: number;
+  position: number;
+  parentId: string | null;
+  /** Unresolved ancestors stay uncached while the disjoint history cursor catches up. */
+  resolved: SelectedTiers | null;
+}
+const OMP_MODE_FAMILIES = ["openai", "anthropic", "google"] as const;
+const EMPTY_TIERS: SelectedTiers = new Map();
 
 export interface NumericResponse extends OmpMonitorUsage {
   key: string;
@@ -22,6 +33,7 @@ export interface NumericResponse extends OmpMonitorUsage {
   model: string | null;
   provider: string | null;
   serviceTier: string | null;
+  speedMode: OmpMonitorSpeedMode | null;
   endMs: number;
   startMs: number | null;
   ttftMs: number | null;
@@ -111,8 +123,65 @@ function measuredDuration(
 }
 
 function serviceTier(message: JsonObject): string | null {
-  if (typeof message.serviceTier !== "string") return null;
-  return safeLabel(message.serviceTier, "") || null;
+  return modeIdentifier(message.serviceTier, 64);
+}
+
+function modeIdentifier(value: unknown, limit: number): string | null {
+  return typeof value === "string" &&
+    value.length <= limit &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+    ? value
+    : null;
+}
+
+function providerFamily(value: unknown): string | null {
+  const provider = modeIdentifier(value, 32);
+  return provider === "openai-codex" ? "openai" : provider;
+}
+
+/** Agent Speed EXECUTION-MODES / OmpTier (MIT); unknown providers never gain OpenAI aliases. */
+function tierFact(
+  raw: unknown,
+  provider: string | null,
+  evidence: OmpMonitorSpeedMode["evidence"],
+): OmpMonitorSpeedMode | null {
+  const tier = modeIdentifier(raw, 64);
+  if (!tier) return null;
+  let value = tier.toLowerCase();
+  if (provider === "openai") {
+    if (value === "default") value = "standard";
+    else if (value === "priority") value = "fast";
+  }
+  if (provider === "anthropic" && tier === "priority") value = "fast";
+  if (tier === "none") value = "standard";
+  return { value, evidence, provider };
+}
+
+function resolvedTier(fact: OmpMonitorSpeedMode | null | undefined): OmpMonitorSpeedMode | null {
+  if (!fact) return null;
+  switch (fact.value) {
+    case "auto":
+    case "inherit":
+    case "inherited":
+    case "unknown":
+    case "none":
+      return null;
+    default:
+      return fact;
+  }
+}
+
+function recordedTier(message: JsonObject): OmpMonitorSpeedMode | null {
+  if (Array.isArray(message.disabledFeatures) && message.disabledFeatures.includes("priority"))
+    return null;
+  return tierFact(message.serviceTier, providerFamily(message.provider), "recorded");
+}
+
+function nativeReasoning(usage: JsonObject, output: number): number | null {
+  const value = usage.reasoningTokens;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(output, token(value))
+    : null;
 }
 
 /** Strict zoned ISO timestamp; Date.parse alone accepts invalid dates and zone-less local time. */
@@ -163,6 +232,9 @@ export function emptyUsage(): OmpMonitorUsage {
     failedRequests: 0,
     inputTokens: 0,
     outputTokens: 0,
+    reasoningTokens: 0,
+    reasoningKnownRequests: 0,
+    reasoningKnownOutputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     totalTokens: 0,
@@ -183,6 +255,7 @@ export class OmpNumericParser {
   project = "";
   projectId = "";
   model: string | null = null;
+  provider: string | null = null;
   ttftMs: number | null = null;
   phase: OmpMonitorPhase = "idle";
   inFlightStartMs: number | null = null;
@@ -199,11 +272,25 @@ export class OmpNumericParser {
   private responseToolOverflow = false;
   private readonly pendingToolCalls = new Set<string>();
   private toolOverflow = false;
+  private readonly modeBranches = new Map<string, ModeBranch>();
+  private currentModeBranch: ModeBranch | null = null;
+  private currentRecordedTier: OmpMonitorSpeedMode | null = null;
+  private modeAt = -Infinity;
+  private modePosition = -Infinity;
 
   constructor(private readonly agentId: string) {}
 
   get retainedToolCount(): number {
     return this.pendingToolCalls.size + this.completedToolCalls.size;
+  }
+
+  get speedMode(): OmpMonitorSpeedMode | null {
+    return resolvedTier(
+      this.currentRecordedTier ??
+        (this.provider && this.currentModeBranch
+          ? this.resolveTiers(this.currentModeBranch)?.get(this.provider)
+          : null),
+    );
   }
 
   startTailMerge(): void {
@@ -238,12 +325,26 @@ export class OmpNumericParser {
       sink.limit();
       return;
     }
+    this.applyRecord(entry, ts, sink, historyOnly, position, assistant);
+  }
+
+  private applyRecord(
+    entry: JsonObject,
+    ts: number,
+    sink: NumericSink,
+    historyOnly: boolean,
+    position: number,
+    assistant: boolean,
+  ): void {
+    const branch = this.rememberModeBranch(entry, ts, position, sink);
+    if (!assistant && entry.type !== "model_usage")
+      this.selectModeBranch(branch, ts, position, null);
     if (this.applySessionExit(entry, ts, position)) return;
     if (entry.type === "model_usage") {
-      this.assistant(entry, entry, ts, true, sink);
+      this.assistant(entry, entry, ts, true, sink, branch);
       return;
     }
-    if (entry.type === "message") this.applyMessage(entry, ts, sink, historyOnly, position);
+    if (entry.type === "message") this.applyMessage(entry, ts, sink, branch, historyOnly, position);
   }
 
   private applySessionExit(entry: JsonObject, ts: number, position: number): boolean {
@@ -285,10 +386,99 @@ export class OmpNumericParser {
     this.project = `${name} [${this.projectId.slice(0, 12)}]`;
   }
 
+  private rememberModeBranch(
+    entry: JsonObject,
+    at: number,
+    position: number,
+    sink: NumericSink,
+  ): ModeBranch {
+    const id = hashId(entry.id as string);
+    const previous = this.modeBranches.get(id);
+    if (previous && (position > 0 ? position < previous.position : at < previous.at))
+      return previous;
+    const parentId =
+      typeof entry.parentId === "string" && entry.parentId.length <= 4_096
+        ? hashId(entry.parentId)
+        : null;
+    let selected: SelectedTiers | null = null;
+    if (entry.type === "service_tier_change" && Object.hasOwn(entry, "serviceTier")) {
+      const values = object(entry.serviceTier);
+      const facts = new Map<string, OmpMonitorSpeedMode>();
+      // Only these provider-family map keys have verified native OMP semantics.
+      for (const family of OMP_MODE_FAMILIES) {
+        const fact = tierFact(values?.[family], family, "selected");
+        if (fact) facts.set(family, fact);
+      }
+      selected = facts;
+    }
+    const inherited = parentId ? this.modeBranches.get(parentId) : undefined;
+    const resolved = selected ?? (parentId === null ? EMPTY_TIERS : (inherited?.resolved ?? null));
+    let unresolvedParent: ModeBranch["parentId"] = null;
+    if (!resolved) unresolvedParent = inherited ? inherited.parentId : parentId;
+    const branch: ModeBranch = {
+      at,
+      position,
+      // Identical unresolved contexts collapse in O(1), even while the prefix is missing.
+      parentId: unresolvedParent,
+      resolved,
+    };
+    if (!this.modeBranches.has(id) && this.modeBranches.size >= MAX_MODE_BRANCHES) {
+      this.modeBranches.clear();
+      sink.limit();
+    }
+    this.modeBranches.set(id, branch);
+    return branch;
+  }
+
+  private resolveTiers(branch: ModeBranch): SelectedTiers | null {
+    if (branch.resolved) return branch.resolved;
+    if (!branch.parentId || !this.modeBranches.has(branch.parentId)) return null;
+    let current: ModeBranch | undefined = branch;
+    const pending: ModeBranch[] = [];
+    const visited = new Set<ModeBranch>();
+    while (current && !visited.has(current)) {
+      if (current.resolved) {
+        for (const node of pending) node.resolved = current.resolved;
+        return current.resolved;
+      }
+      visited.add(current);
+      pending.push(current);
+      const parent: string | null = current.parentId;
+      const inherited: ModeBranch | undefined = parent ? this.modeBranches.get(parent) : undefined;
+      if (parent && !inherited) {
+        for (const node of pending) node.parentId = parent;
+        return null;
+      }
+      current = inherited;
+    }
+    return null;
+  }
+
+  private selectModeBranch(
+    branch: ModeBranch,
+    at: number,
+    position: number,
+    recorded: OmpMonitorSpeedMode | null,
+  ): void {
+    if (position > 0 ? position < this.modePosition : at < this.modeAt) return;
+    if (position > 0) this.modePosition = position;
+    this.modeAt = at;
+    this.currentModeBranch = branch;
+    this.currentRecordedTier = recorded;
+  }
+
+  private responseMode(branch: ModeBranch, message: JsonObject): OmpMonitorSpeedMode | null {
+    const family = providerFamily(message.provider);
+    return resolvedTier(
+      recordedTier(message) ?? (family ? this.resolveTiers(branch)?.get(family) : null),
+    );
+  }
+
   private applyMessage(
     entry: JsonObject,
     ts: number,
     sink: NumericSink,
+    branch: ModeBranch,
     historyOnly: boolean,
     position: number,
   ): void {
@@ -303,7 +493,7 @@ export class OmpNumericParser {
         }
         break;
       case "assistant":
-        this.assistant(entry, message, ts, false, sink, historyOnly, position);
+        this.assistant(entry, message, ts, false, sink, branch, historyOnly, position);
         break;
       case "toolResult":
         this.applyToolResult(message, ts, position, sink);
@@ -369,6 +559,7 @@ export class OmpNumericParser {
     ts: number,
     sideCall: boolean,
     sink: NumericSink,
+    branch: ModeBranch,
     historyOnly = false,
     position = 0,
   ): void {
@@ -384,13 +575,14 @@ export class OmpNumericParser {
     const key = hashId(`omp:${entry.id as string}:${sideCall ? ts : (start ?? ts)}`);
     if (sink.otherOwner(key)) {
       // Keep only numeric duplicate candidates, so deleting the original can reveal an available copy.
-      this.emit(message, usage, key, start, ts, sideCall, sink);
+      this.emit(message, usage, key, start, ts, sideCall, sink, branch);
       return;
     }
-    const end = this.emit(message, usage, key, start, ts, sideCall, sink);
+    const end = this.emit(message, usage, key, start, ts, sideCall, sink, branch);
     if (sideCall || !this.responseChanged) return;
     if (!historyOnly) this.lastActivityAt = Math.max(this.lastActivityAt, ts);
     if (!this.acceptsState(ts, position)) return;
+    this.selectModeBranch(branch, ts, position, recordedTier(message));
     this.beginState(ts, position);
     this.applyAssistantPhase(message, usage, ts, end, sink, position);
   }
@@ -409,6 +601,7 @@ export class OmpNumericParser {
       0;
     if (hasUsage) {
       this.model = modelLabel(message.model as string);
+      this.provider = providerFamily(message.provider);
       this.ttftMs = readTtft(message);
     }
     if (reason === "error" || reason === "aborted") {
@@ -491,12 +684,14 @@ export class OmpNumericParser {
     ts: number,
     sideCall: boolean,
     sink: NumericSink,
+    branch: ModeBranch,
   ): number {
     this.responseChanged = true;
     this.responseToolCalls.length = 0;
     this.responseToolOverflow = false;
     const reason = readStopReason(message);
-    if (!sideCall && reason !== "error" && reason !== "aborted") this.readToolCalls(message, sink);
+    const failed = !sideCall && (reason === "error" || reason === "aborted");
+    if (!sideCall && !failed) this.readToolCalls(message, sink);
     const duration = sideCall ? null : milliseconds(message.duration, false);
     const completedAt = milliseconds(message.completedAt, true);
     const end =
@@ -505,10 +700,11 @@ export class OmpNumericParser {
         : (completedAt ?? ts);
     const inputTokens = token(usage.input);
     const outputTokens = token(usage.output);
+    const reasoningTokens = nativeReasoning(usage, outputTokens);
     const cacheReadTokens = token(usage.cacheRead);
     const cacheWriteTokens = token(usage.cacheWrite);
-    if (!(inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens)) return end;
-    const failed = !sideCall && (reason === "error" || reason === "aborted");
+    const countedTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+    if (countedTokens === 0) return end;
     // Missing/invalid native duration is unknown, not a guessed user-to-response interval.
     const normalizedDuration = measuredDuration(start, duration, sideCall, failed);
     const measured = normalizedDuration > 0;
@@ -520,6 +716,7 @@ export class OmpNumericParser {
       endMs: end,
       provider: modelLabel(message.provider as string),
       serviceTier: serviceTier(message),
+      speedMode: this.responseMode(branch, message),
       startMs: measured ? end - normalizedDuration : null,
       ttftMs: sideCall ? null : readTtft(message),
       sideCall,
@@ -528,12 +725,12 @@ export class OmpNumericParser {
       failedRequests: failed ? 1 : 0,
       inputTokens,
       outputTokens,
+      reasoningTokens: reasoningTokens ?? 0,
+      reasoningKnownRequests: reasoningTokens === null ? 0 : 1,
+      reasoningKnownOutputTokens: reasoningTokens === null ? 0 : outputTokens,
       cacheReadTokens,
       cacheWriteTokens,
-      totalTokens: totalTokens(
-        usage,
-        inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
-      ),
+      totalTokens: totalTokens(usage, countedTokens),
       costUsd: cost ?? 0,
       unpricedRequests: cost === null ? 1 : 0,
       estimatedCostUsd: 0,

@@ -4,6 +4,7 @@ import { mapOmpCustomAssistantMessage, shouldDisplayOmpCustomMessage } from "./c
 import { CHATPRO_CUSTOM_TYPE } from "./chatpro.js";
 import { ChatProDetailsSchema } from "@omp-desktop/protocol/messages";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
+import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -88,14 +89,21 @@ export class OmpHistoryMapper {
   private userIndex = 0;
   private assistantIndex = 0;
   private readonly customDeliveries = new Map<string, Set<string>>();
+  private readonly nativeUsage = new OmpNativeUsageTracker(false);
+  private nativeTurnId = "history:0";
 
   constructor(
     private readonly provider: string,
     private readonly userEntries: readonly OmpCapturedUserMessageEntry[] = [],
     private readonly hooks: OmpHistoryMapperHooks = {},
-  ) {}
+  ) {
+    this.nativeUsage.startTurn(this.nativeTurnId, 0);
+  }
 
-  mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
+  mapMessages(
+    messages: readonly OmpAgentMessage[],
+    options?: { countNativeUsage?: boolean },
+  ): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
 
     for (const message of messages) {
@@ -109,7 +117,7 @@ export class OmpHistoryMapper {
           events.push(...this.mapCustomMessage(message));
           break;
         case "assistant":
-          events.push(...this.mapAssistantMessage(message));
+          events.push(...this.mapAssistantMessage(message, options?.countNativeUsage !== false));
           break;
         case "toolResult": {
           const event = this.mapToolResultMessage(message);
@@ -131,6 +139,8 @@ export class OmpHistoryMapper {
     const text = getOmpWorkflowDisplayText(getUserMessageText(message.content));
     const images = getUserMessageImages(message.content);
     this.userIndex += 1;
+    this.nativeTurnId = `history:${this.userIndex}`;
+    this.nativeUsage.startTurn(this.nativeTurnId, 0);
     if (!text && !images) {
       return [];
     }
@@ -186,8 +196,18 @@ export class OmpHistoryMapper {
 
   private mapAssistantMessage(
     message: Extract<OmpAgentMessage, { role: "assistant" }>,
+    countNativeUsage: boolean,
   ): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
+    if (countNativeUsage) this.nativeUsage.recordAssistant(message, 0);
+    const usage = countNativeUsage
+      ? this.nativeUsage.getUsage(this.nativeTurnId, 0, false)
+      : undefined;
+    const nativeUsage =
+      usage &&
+      (usage.inputTokens ?? 0) + (usage.cachedInputTokens ?? 0) + (usage.outputTokens ?? 0) > 0
+        ? usage
+        : undefined;
     this.assistantIndex += 1;
     const messageId =
       message.responseId || `${this.provider}-history-assistant-${this.assistantIndex}`;
@@ -196,7 +216,12 @@ export class OmpHistoryMapper {
         events.push({
           type: "timeline",
           provider: this.provider,
-          item: { type: "assistant_message", text: content.text, messageId },
+          item: {
+            type: "assistant_message",
+            text: content.text,
+            messageId,
+            ...(nativeUsage ? { nativeUsage } : {}),
+          },
         });
         continue;
       }

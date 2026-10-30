@@ -202,6 +202,7 @@ function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolea
     return (
       existing.messageId === incoming.messageId &&
       existing.text === incoming.text &&
+      existing.nativeUsage === incoming.nativeUsage &&
       existing.timestamp.getTime() === incoming.timestamp.getTime()
     );
   }
@@ -815,6 +816,7 @@ function replaceLiveAssistantWithProjectedText(params: {
     ...current,
     text: event.item.text,
     ...(event.item.presentation ? { presentation: event.item.presentation } : {}),
+    ...(event.item.nativeUsage ? { nativeUsage: event.item.nativeUsage } : {}),
     timestamp,
     timelineCursor,
   };
@@ -868,6 +870,9 @@ function reconcileOverlappingProjectedAssistant(params: {
     id: blockGroupId ?? match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     ...(presentation ? { presentation } : {}),
+    ...((unit.event.item.nativeUsage ?? match.current.nativeUsage)
+      ? { nativeUsage: unit.event.item.nativeUsage ?? match.current.nativeUsage }
+      : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },

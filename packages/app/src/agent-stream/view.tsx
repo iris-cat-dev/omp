@@ -80,7 +80,7 @@ import {
   type AssistantTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
-import { useOutputTokenSpeed } from "./token-output-speed";
+import { useNativeOutputTokenSpeed } from "./token-output-speed";
 import { deriveTurnTokenStats, type TurnTokenStats } from "./turn-token-stats";
 import { toGitPathspec } from "./turn-file-changes";
 import { resolveBottomOverlayTailInset } from "./bottom-overlay-inset";
@@ -390,10 +390,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
-    const outputTokens = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.agents?.get(agentId)?.lastUsage?.outputTokens ?? null,
-    );
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const agentTurnUsageMap = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTurnUsage?.get(agentId) ?? null,
@@ -565,10 +561,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isActive,
     );
     const isTurnActive = effectiveTurnPresentation.isActive;
-    const outputTokenSpeed = useOutputTokenSpeed(
-      context.provider,
-      isTurnActive ? "running" : "idle",
-      outputTokens,
+    const outputTokenSpeed = useTurnOutputTokenSpeed(
+      resolvedServerId,
+      agentId,
+      effectiveTurnPresentation,
+      isActive,
+      agentTurnUsageMap,
     );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
@@ -1075,10 +1073,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
 
-    // Completed-turn token stats for the bottom footer: prefer the usage
-    // captured from this turn's turn_completed event; fall back to the agent's
-    // last reported usage so the footer still works on timeline replays where
-    // the live event was missed.
+    // Footer usage is tied to this turn or its own replayed native metadata,
+    // never the session's aggregate lastUsage.
     const bottomTurnTokenStats = useMemo(
       () =>
         isTurnActive || !bottomTurnFooterHost
@@ -1804,23 +1800,34 @@ async function restoreDeletedFile(input: {
   }
 }
 
-// Completed-turn footer token stats for one footer host: resolve the host
-// slice's own turnId and use ONLY the usage recorded from that turn's
-// turn_completed event. A global last-usage fallback would paint every
-// historical footer with the newest turn's numbers, so when a turn's usage
-// was never recorded (app closed during the turn, pre-feature history) the
-// footer simply shows no token stats. Extracted to keep AgentStreamView's
-// complexity bounded.
+// Replayed assistant metadata is cumulative for its own prompt slice. It lets a
+// restored footer retain native timing without borrowing another turn's usage.
 function resolveTurnTokenStatsForHost(input: {
   host: TurnFooterHost;
   usageMap: Map<string, AgentUsage> | null;
 }) {
   const turnId = resolveHostTurnId(input.host);
-  if (turnId === null) {
-    return null;
-  }
-  const recorded = input.usageMap?.get(turnId) ?? null;
-  return recorded ? deriveTurnTokenStats(recorded, input.host.timing?.durationMs) : null;
+  const recorded = turnId === null ? null : input.usageMap?.get(turnId);
+  const replayed = input.host.items[input.host.startIndex];
+  return deriveTurnTokenStats(
+    recorded,
+    replayed?.kind === "assistant_message" ? replayed.nativeUsage : null,
+  );
+}
+
+function useTurnOutputTokenSpeed(
+  serverId: string,
+  agentId: string,
+  presentation: TurnPresentation,
+  active: boolean,
+  usageMap: Map<string, AgentUsage> | null,
+) {
+  const metrics = presentation.turnId ? usageMap?.get(presentation.turnId)?.nativeMetrics : null;
+  return useNativeOutputTokenSpeed(
+    `${serverId}:${agentId}:${presentation.turnId ?? ""}`,
+    active && presentation.isActive && !presentation.isCancelling,
+    metrics,
+  );
 }
 
 // The footer host anchors on the turn's final assistant message, which newer

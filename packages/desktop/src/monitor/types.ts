@@ -1,3 +1,5 @@
+import type { OmpMonitorTasks } from "./task-types.js";
+
 export type OmpMonitorPhase = "generating" | "tools" | "idle";
 export type OmpMonitorAgentKind = "main" | "subagent" | "advisor";
 
@@ -7,6 +9,11 @@ export interface OmpMonitorUsage {
   failedRequests: number;
   inputTokens: number;
   outputTokens: number;
+  /** Known reasoning subset of output, never additional output or billable tokens. */
+  reasoningTokens: number;
+  /** Native reasoning coverage; an explicit zero is known, absence is not. */
+  reasoningKnownRequests: number;
+  reasoningKnownOutputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   totalTokens: number;
@@ -20,6 +27,12 @@ export interface OmpMonitorUsage {
   peakOutputTps: number;
 }
 
+export interface OmpMonitorSpeedMode {
+  value: string;
+  evidence: "selected" | "recorded";
+  provider: string | null;
+}
+
 export interface OmpMonitorAgent {
   id: string;
   parentId: string | null;
@@ -31,6 +44,12 @@ export interface OmpMonitorAgent {
   phase: OmpMonitorPhase;
   lastActivityAt: number;
   outputTps: number | null;
+  /** Own-agent output in the shared three-second live window, not recent request speed. */
+  liveMeasuredTps: number;
+  liveEstimatedTps: number;
+  thinkingTps: number | null;
+  liveCostUsdPerSecond: number | null;
+  speedMode: OmpMonitorSpeedMode | null;
   ttftMs: number | null;
 }
 
@@ -115,9 +134,12 @@ export interface OmpMonitorSnapshot {
     measuredTps: number;
     estimatedTps: number;
     estimatedShare: number;
+    measuredThinkingTps: number | null;
+    estimatedThinkingTps: number | null;
   };
   today: OmpMonitorUsage;
   days: OmpMonitorDay[];
+  tasks: OmpMonitorTasks;
   agents: OmpMonitorAgent[];
   series: OmpMonitorPoint[];
   coverage: OmpMonitorCoverage;

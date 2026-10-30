@@ -6,6 +6,8 @@ import { MONITOR_UI_MARKUP } from "./ui-markup.js";
 import type { OmpMonitorViewState } from "./view-types.js";
 import { MONITOR_VISUALS_SCRIPT } from "./visuals.js";
 import { DEFAULT_MONITOR_PREFERENCES } from "./window-preferences.js";
+import { MONITOR_TASK_MARKUP } from "./task-ui.js";
+import { MONITOR_BOARD_MARKUP } from "./board-ui.js";
 
 interface Visual {
   update(frame: Record<string, unknown>): void;
@@ -245,6 +247,8 @@ function settingsState(): OmpMonitorViewState {
         clickThrough: false,
       },
     ],
+    board: null,
+    boards: [],
   };
 }
 
@@ -264,7 +268,8 @@ class TestPage {
   constructor(ready: Promise<OmpMonitorViewState> = Promise.resolve(settingsState())) {
     document.body.append(this.iframe);
     this.realm = this.iframe.contentWindow as Window & typeof globalThis;
-    this.realm.document.body.innerHTML = MONITOR_UI_MARKUP;
+    this.realm.document.body.innerHTML =
+      MONITOR_UI_MARKUP + MONITOR_TASK_MARKUP + MONITOR_BOARD_MARKUP;
     Object.defineProperty(this.realm.document, "hidden", {
       configurable: true,
       get: () => this.hidden,
@@ -343,6 +348,7 @@ class TestPage {
       "clearTimeout",
       "monitorAttribution",
       "monitorLicense",
+      "AbortController",
       code,
     )(
       this.realm.document,
@@ -356,6 +362,7 @@ class TestPage {
       this.clock.clearTimer,
       "",
       "",
+      this.realm.AbortController,
     ) as { visuals: Visuals; startMonitor(): void };
     this.visuals = runtime.visuals;
     this.startMonitor = runtime.startMonitor;

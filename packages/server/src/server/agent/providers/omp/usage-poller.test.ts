@@ -64,6 +64,7 @@ describe("OMP usage poller", () => {
 
     expect(updates).toEqual([
       {
+        scope: "session",
         inputTokens: 100,
         cachedInputTokens: 10,
         outputTokens: 20,
@@ -72,6 +73,7 @@ describe("OMP usage poller", () => {
         contextWindowUsedTokens: 130,
       },
       {
+        scope: "session",
         inputTokens: 100,
         cachedInputTokens: 10,
         outputTokens: 20,
@@ -89,7 +91,8 @@ describe("OMP usage poller", () => {
     const scheduler = new ManualPollScheduler();
     const inFlightStats = deferred<OmpSessionStats>();
     const finalStats = { contextUsage: { contextWindow: 200_000, tokens: 150 } };
-    const finalUsage = {
+    const finalUsage: AgentUsage = {
+      scope: "session",
       inputTokens: 0,
       cachedInputTokens: 0,
       outputTokens: 0,
@@ -97,7 +100,7 @@ describe("OMP usage poller", () => {
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 150,
     };
-    const updates: Array<{ usage: AgentUsage; turnId?: string }> = [];
+    const updates: AgentUsage[] = [];
     let readCount = 0;
     const poller = new OmpUsagePoller({
       scheduler,
@@ -105,7 +108,7 @@ describe("OMP usage poller", () => {
         readCount += 1;
         return readCount === 1 ? inFlightStats.promise : finalStats;
       },
-      onUsage: (usage, turnId) => updates.push({ usage, turnId }),
+      onUsage: (usage) => updates.push(usage),
       onPollError: (error) => {
         throw error;
       },
@@ -113,15 +116,15 @@ describe("OMP usage poller", () => {
 
     poller.startTurn();
     scheduler.poll();
-    await expect(poller.completeTurn("turn-1")).resolves.toBeUndefined();
+    await expect(poller.completeTurn()).resolves.toBeUndefined();
     inFlightStats.resolve({
       contextUsage: { contextWindow: 200_000, tokens: 130 },
     });
     await waitForImmediate();
 
-    expect(updates).toEqual([{ usage: finalUsage, turnId: "turn-1" }]);
+    expect(updates).toEqual([finalUsage]);
     await expect(poller.completeTurn()).resolves.toBeUndefined();
-    expect(updates).toEqual([{ usage: finalUsage, turnId: "turn-1" }]);
+    expect(updates).toEqual([finalUsage]);
   });
 
   test("drops a final refresh when a newer turn starts", async () => {

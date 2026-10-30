@@ -4,6 +4,7 @@ export const MONITOR_SELECT_PICKER_SCRIPT = String.raw`
 const monitorSelectPicker = (() => {
   let popup = null, owner = null, rows = [], active = -1, search = '', searchAt = 0;
   const popupId = 'monitor-select-picker';
+  const installed = new WeakSet();
   const enabled = option => !option.disabled && !(option.parentElement.tagName === 'OPTGROUP' && option.parentElement.disabled);
   const label = option => option.label || option.textContent;
   function changed(select, index) {
@@ -136,8 +137,12 @@ const monitorSelectPicker = (() => {
     event.preventDefault(); event.stopPropagation();
     if (opened) activate(index); else changed(select, index);
   }
-  function install() {
-    for (const select of document.querySelectorAll('select')) {
+  // Reuse this picker for dynamically mounted sections without rebinding existing selects.
+  function install(root = document) {
+    if (owner && !owner.isConnected) close();
+    for (const select of root.querySelectorAll('select')) {
+      if (installed.has(select)) continue;
+      installed.add(select);
       select.setAttribute('aria-haspopup', 'listbox'); select.setAttribute('aria-controls', popupId); select.setAttribute('aria-expanded', 'false');
       select.addEventListener('mousedown', event => {
         if (event.button !== 0) return;
