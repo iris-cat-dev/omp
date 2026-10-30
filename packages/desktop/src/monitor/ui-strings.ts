@@ -241,7 +241,7 @@ export const MONITOR_UI_STRINGS = {
     timingExplanation:
       "Speed = output tokens ÷ measured request time, from request start to completion, including first-token wait. Concurrent calls add together. In-flight output is estimated from recent measured references and corrected when the response completes; measured and estimated throughput stay distinct. No token stream is intercepted.",
     privacyExplanation:
-      "Usage and task scoring are processed locally. Task scoring temporarily analyses prompts, tool calls and results in memory. Only numeric usage, timing, task features and safe labels are saved; prompts, message bodies, credentials and raw session paths are never saved or displayed.",
+      "Usage and performance scoring are processed locally from response timing, token counts and numeric tool-call outcomes. Only numeric usage, timing, per-day/model performance sums and safe labels are saved; prompts, message bodies, tool arguments, credentials and raw session paths are never saved or displayed. No performance statistics are reported.",
     adaptation: "Original Agent Speed design, integrated into OMP Desktop.",
     license: "Open-source license",
     unknown: "Unknown",
@@ -488,7 +488,7 @@ export const MONITOR_UI_STRINGS = {
     timingExplanation:
       "速度 = 输出 token ÷ 实测请求耗时（从发起到完成，包含首 token 等待）。并发请求吞吐相加。在途输出根据近期实测参考均速估算，完成后由实测值校正，实测与估算始终区分，不拦截 token 流。",
     privacyExplanation:
-      "用量与任务评分均在本机处理。任务评分会在内存中临时分析提示词、工具调用和结果；仅保存数值用量、计时、任务特征与安全标签，不保存或显示提示词、消息正文、凭据和原始会话路径。",
+      "用量与性能评分均在本机依据响应计时、token 数和工具调用的数值结果处理。仅保存数值用量、计时、按日与模型汇总的性能数据及安全标签；不保存或显示提示词、消息正文、工具参数、凭据和原始会话路径。性能统计不会上报。",
     adaptation: "保留 Agent Speed 原版设计，集成于 OMP Desktop。",
     license: "开源许可",
     unknown: "未知",

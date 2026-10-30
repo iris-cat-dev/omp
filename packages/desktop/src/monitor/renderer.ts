@@ -1,5 +1,5 @@
 import { MONITOR_UI_STRINGS } from "./ui-strings.js";
-import { MONITOR_TASK_SCRIPT } from "./task-ui.js";
+import { MONITOR_PERF_SCRIPT } from "./performance-ui.js";
 import { MONITOR_BOARD_SCRIPT } from "./board-ui.js";
 
 // Executed only inside MONITOR_HTML's nonce-authorized static script.
@@ -27,7 +27,7 @@ let titleTracker = { level: 0, candidate: 0, pending: null, pendingSince: 0, bel
 let activityBaseline = null, pendingActivity = { responsePulse: false, newPeak: false };
 let ladderOptions = null, currencyOptions = null;
 let previewInitialization = null, previewsReady = false, rendererDestroyed = false;
-${MONITOR_TASK_SCRIPT}
+${MONITOR_PERF_SCRIPT}
 ${MONITOR_BOARD_SCRIPT}
 function node(id) { return document.getElementById(id); }
 function t(key) { return monitorStrings[language][key] || monitorStrings.en[key] || key; }
@@ -295,7 +295,7 @@ function ensureArt(id, embedded, thumbnail, sharedGpu) {
 }
 function updateArt(id, embedded, frame, visible, thumbnail = false, sharedGpu = false) {
   if (!visible && !artInstances.has(id)) return;
-  frame.taskReadout = taskOrbReadoutFrame(id);
+  frame.perfReadout = perfOrbReadoutFrame(id);
   const entry = ensureArt(id, embedded, thumbnail, sharedGpu); entry.instance.setVisible(visible); entry.visible = visible; if (visible) entry.instance.update(frame);
 }
 function renderArt() {
@@ -324,9 +324,9 @@ function renderArt() {
   text('speed-value', liveReadout(value)); text('speed-title', title.label);
   node('hero').style.setProperty('--heat', agentSpeedVisuals.color(value === null ? 0 : agentSpeedVisuals.heat(value, preferences.redline), appearance));
   text('hero-context', facts ? t('generating') + ' ' + number(active) + ' · ' + t('tools') + ' ' + number(tools) : view.workerError ? t('stale') : t('status_' + currentStatus()));
-  const heroTaskDescription = taskOrbReadoutFrame('hero-art').description || '', orbTaskDescription = taskOrbReadoutFrame('orb-art').description || '';
-  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ', ' + t('estimated') : '')) + ', ' + title.label + (heroTaskDescription ? ', ' + heroTaskDescription : ''));
-  const orb = node('orb-surface'); orb.dataset.clickThrough = String(preferences.clickThrough); orb.dataset.hovered = String(base.hovered); orb.setAttribute('aria-label', base.hoverLabel + ', ' + title.label + (orbTaskDescription ? ', ' + orbTaskDescription : '')); orb.title = base.hoverLabel;
+  const heroPerfDescription = perfOrbReadoutFrame('hero-art').description || '', orbPerfDescription = perfOrbReadoutFrame('orb-art').description || '';
+  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ', ' + t('estimated') : '')) + ', ' + title.label + (heroPerfDescription ? ', ' + heroPerfDescription : ''));
+  const orb = node('orb-surface'); orb.dataset.clickThrough = String(preferences.clickThrough); orb.dataset.hovered = String(base.hovered); orb.setAttribute('aria-label', base.hoverLabel + ', ' + title.label + (orbPerfDescription ? ', ' + orbPerfDescription : '')); orb.title = base.hoverLabel;
   text('orb-name', orbName()); const plate = node('orb-nameplate'); plate.hidden = preferences.size < 80 || preferences.nameMode === 'never' || (preferences.nameMode === 'auto' && view.windowCount < 2 && !view.scope.profile && !view.scope.project);
   const font = Math.max(9, Math.min(12, Math.round(preferences.size * .066 * 2) / 2)), height = Math.round(1.78 * font), gap = Math.max(4, Math.min(7, Math.round(.034 * preferences.size))), dot = Math.max(5, .6 * font);
   if (view.nameplateMaxWidth < height + dot + .42 * font) plate.hidden = true;
@@ -454,6 +454,7 @@ function showLivePoint(index, clientX = null) {
   const width = node('rate-chart').getBoundingClientRect().width; tooltip.style.left = Math.min(width - tooltip.offsetWidth, Math.max(0, clientX === null ? x : clientX)) + 'px'; tooltip.style.top = '-38px';
 }
 function renderAgents(agents) {
+  const focused = document.activeElement instanceof Element ? document.activeElement.closest('.agent-row[data-perf-agent-id]') : null, focusedId = focused ? focused.dataset.perfAgentId : null;
   const byId = new Map(agents.map(agent => [agent.id, agent])), children = new Map(), roots = [], visited = new Set(), ordered = [];
   const phaseOrder = { generating: 0, tools: 1, idle: 2 };
   const compare = (left, right) => phaseOrder[left.phase] - phaseOrder[right.phase] || (right.liveMeasuredTps + right.liveEstimatedTps) - (left.liveMeasuredTps + left.liveEstimatedTps) || right.lastActivityAt - left.lastActivityAt || left.id.localeCompare(right.id);
@@ -483,9 +484,10 @@ function renderAgents(agents) {
       rate.replaceChildren(hourglass);
     }
     row.title = (agent.name || agent.id) + '\n' + t('profile') + ': ' + agent.profile + '\n' + t('project') + ': ' + (agent.project || '—') + '\n' + t('average') + ': ' + number(agent.outputTps, 1) + ' tok/s · TTFT: ' + (finite(agent.ttftMs) === null ? t('unknown') : number(agent.ttftMs / 1000, 2) + ' s') + '\n' + timestamp(agent.lastActivityAt) + '\n' + t('agentNote');
-    row.append(copy, phase); const mode = createModeCell(agent), score = createTaskScoreCell(agent); if (mode) row.append(mode); if (score) row.append(score); row.append(rate); fragment.append(row);
+    row.append(copy, phase); const mode = createModeCell(agent), score = createPerfScoreCell(agent); if (mode) row.append(mode); if (score) row.append(score); row.append(rate); if (score) perfUpdateScoreCell(score, agent); fragment.append(row);
   }
   node('agent-rows').replaceChildren(fragment); text('agent-count', agents.length ? number(agents.length) : ''); node('agents-empty').hidden = agents.length > 0; node('agent-note').hidden = agents.length === 0;
+  if (focusedId) { const replacement = Array.from(node('agent-rows').querySelectorAll('.agent-row[data-perf-agent-id]')).find(row => row.dataset.perfAgentId === focusedId); if (replacement) replacement.focus({ preventScroll: true }); }
   const toggle = node('agents-toggle'); toggle.hidden = ordered.length <= 6; toggle.setAttribute('aria-expanded', String(agentsExpanded)); toggle.textContent = agentsExpanded ? t('collapseAgents') + ' ⌃' : '+' + number(ordered.length - 6) + ' ' + t('moreAgents') + ' ⌄';
 }
 function renderResources(resources) {
@@ -571,7 +573,7 @@ function renderHistory(snapshot) {
   const pricing = view.snapshot ? view.snapshot.pricing : null;
   text('history-rate-note', !pricing || pricing.currency === 'USD' ? '' : pricing.currency + ' · ' + (finite(pricing.exchangeRate) === null ? t('rateUnavailable') : dateLabel(pricing.rates.updatedAt) + ' · ' + t('feed_' + pricing.rates.status)));
   renderHistoryChart(days, dates); renderHistoryRows(present);
-  renderTaskUI(snapshot);
+  renderPerfUI(snapshot);
 }
 function historyBarValue(day) { return historyMetric === 'output' ? finite(day.outputTokens) : costValue(day, historyMetric); }
 function renderHistoryChart(days, dates) {
@@ -705,11 +707,11 @@ function renderView() {
   document.body.dataset.surface = view.surface; document.body.dataset.appearance = appearance; document.body.dataset.effects = view.preferences.effects; document.body.dataset.hidden = String(document.hidden); document.documentElement.style.setProperty('--orb-size', view.preferences.size + 'px');
   for (const surface of ['orb', 'dashboard', 'history', 'settings', 'board']) node(surface + '-surface').hidden = view.surface !== surface;
   renderStatus();
-  if (document.hidden) { renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts()); renderArt(); return; }
+  if (document.hidden) { renderPerfUI(snapshotFacts()); renderBoardUI(snapshotFacts()); renderArt(); return; }
   if (view.surface === 'dashboard') { renderToday(snapshotFacts()); renderChart(liveFacts()); renderAgents(snapshotFacts() ? snapshotFacts().agents : []); }
   else if (view.surface === 'history') { for (const [id, kind] of [['history-profile', 'profile'], ['history-project', 'project']]) fillScope(id, view.scopes[kind === 'profile' ? 'profiles' : 'projects'], view.scope[kind], kind === 'profile' ? 'allProfiles' : 'allProjects'); renderHistory(snapshotFacts()); }
   else if (view.surface === 'settings') renderSettingsContent();
-  if (view.surface !== 'history') renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts());
+  if (view.surface !== 'history') renderPerfUI(snapshotFacts()); renderBoardUI(snapshotFacts());
   renderArt();
 }
 function receiveState(next) {
@@ -801,7 +803,7 @@ function bindControls() {
   for (const id of ['source-omp', 'open-history']) node(id).addEventListener('click', () => action(() => bridge.openSurface('history')));
   node('open-settings').addEventListener('click', () => action(() => bridge.openSurface('settings'))); node('close-all').addEventListener('click', () => action(() => bridge.closeAll()));
   node('new-window').addEventListener('click', () => action(() => bridge.newWindow())); node('orb-menu').addEventListener('click', () => action(() => bridge.showMenu()));
-  for (const [id, surface] of [['orb-art', 'orb'], ['hero-art', 'dashboard']]) node(id).addEventListener('task-readout-change', () => {
+  for (const [id, surface] of [['orb-art', 'orb'], ['hero-art', 'dashboard']]) node(id).addEventListener('perf-readout-change', () => {
     if (!rendererDestroyed && !document.hidden && view && view.surface === surface) renderArt();
   });
   for (const id of ['orb-visible', 'settings-orb-visible']) node(id).addEventListener('change', event => action(() => bridge.setOrbVisible(event.target.checked)));
@@ -859,15 +861,15 @@ function startMonitor() {
   applyLanguage(); text('about-attribution', monitorAttribution); text('about-license', monitorLicense); setSettingsPage('general');
   if (!bridge) { toast(t('bridgeError')); return; }
   bindControls(); unsubscribe = bridge.onState(receiveState);
-  bindTaskUI(); bindBoardUI();
+  bindPerfUI(); bindBoardUI();
   unsubscribePointer = bridge.onPointer(pointer => { lastPointer = pointer; syncInteraction(); });
   unsubscribeDrag = bridge.onDragCancelled(() => cancelLocalDrag());
   bridge.ready().then(receiveState).catch(() => { if (!rendererDestroyed) toast(t('bridgeError')); });
   document.addEventListener('visibilitychange', () => { if (rendererDestroyed) return; document.body.dataset.hidden = String(document.hidden); if (document.hidden) { cancelPreviewInitialization(); cancelLocalDrag(false); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; for (const entry of artInstances.values()) entry.instance.setVisible(false); } else renderView(); });
   systemAppearance.addEventListener('change', renderView); reducedMotion.addEventListener('change', renderView); window.addEventListener('blur', finishDrag);
   window.addEventListener('resize', () => { closePopover(); renderView(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts()); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { renderPerfUI(snapshotFacts()); renderBoardUI(snapshotFacts()); } });
   window.addEventListener('pagehide', () => { if (rendererDestroyed) return; rendererDestroyed = true; cancelPreviewInitialization(); cancelLocalDrag(false); if (unsubscribe) unsubscribe(); if (unsubscribePointer) unsubscribePointer(); if (unsubscribeDrag) unsubscribeDrag(); clearTimeout(toastTimer); clearTimeout(selectedDayTimer); clearTimeout(peakBadgeTimer); clearTimeout(titleDeadlineTimer); for (const entry of artInstances.values()) entry.instance.destroy(); agentSpeedVisuals.disposeSharedGpu(); artInstances.clear(); orbRows.clear(); systemAppearance.removeEventListener('change', renderView); reducedMotion.removeEventListener('change', renderView); });
-  window.addEventListener('pagehide', () => { destroyTaskUI(); destroyBoardUI(); });
+  window.addEventListener('pagehide', () => { destroyPerfUI(); destroyBoardUI(); });
 }
 `;

@@ -1,7 +1,7 @@
 // GPU hosting for the Agent Speed v1.4.1 shader port (zoefix, MIT; a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c).
 // Settings previews share one window-lifetime WebGL2 owner; their visible canvases retain real shader snapshots, not substitute art.
 export const ORB_GPU_SCRIPT = String.raw`
-const GPU_UNIFORMS=['uRes','uS','uLogicalS','uThumbnail','uReduced','uTime','uH','uO','uDark','uNew','uLevel','uFlash','uPeak','uSweep','uTier','uComet','uFlow','uPhase','uPhase2','uWarp','uCorona','uWaves','uTicks','uFx','uMoving','uEmbedded','uIdleSweep','uSurface','uPhases','uRipples','uReadout','uReadoutOld','uDecorative','uReadoutOn','uReadoutRoll','uReadoutValue','uReadoutUnit','uReadoutTitle','uReadoutBelowTitle','uTaskReadout','uTaskReadoutOn','uTaskReadoutContrast','uLiquidColors','uLiquidInk','uMeniscus','uWaveColors'];
+const GPU_UNIFORMS=['uRes','uS','uLogicalS','uThumbnail','uReduced','uTime','uH','uO','uDark','uNew','uLevel','uFlash','uPeak','uSweep','uTier','uComet','uFlow','uPhase','uPhase2','uWarp','uCorona','uWaves','uTicks','uFx','uMoving','uEmbedded','uIdleSweep','uSurface','uPhases','uRipples','uReadout','uReadoutOld','uDecorative','uReadoutOn','uReadoutRoll','uReadoutValue','uReadoutUnit','uReadoutTitle','uReadoutBelowTitle','uPerfReadout','uPerfReadoutOn','uPerfReadoutContrast','uLiquidColors','uLiquidInk','uMeniscus','uWaveColors'];
 function orbGl(canvas){
   const gl=canvas.getContext('webgl2',{alpha:true,premultipliedAlpha:true,antialias:false,preserveDrawingBuffer:false,powerPreference:'low-power'});
   if(!gl)throw new Error('WebGL 2 is unavailable');return gl;

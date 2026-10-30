@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MONITOR_BOARD_MODEL_SCRIPT } from "./board-model.js";
+import { MONITOR_BOARD_MARKUP } from "./board-ui.js";
+import { MONITOR_BOARD_RENDERER_SCRIPT } from "./board-renderer.js";
+import { MONITOR_PERF_SCRIPT } from "./performance-ui.js";
+import { DEFAULT_BOARD_PREFERENCES } from "./board-types.js";
 
 interface RankGroup {
   id: string;
@@ -23,17 +28,20 @@ interface Agent {
   liveCostUsdPerSecond: number | null;
   outputTps?: number;
 }
-interface Task {
+interface PerformanceValue {
   form: "none" | "live" | "resting";
-  result: { shown: number | null; state: string } | null;
+  score: number | null;
+  shown: number | null;
+  provisional: boolean;
+  n: number;
 }
 interface Score {
   agent: Agent | null;
   value: number | null;
   form: string;
-  state: string;
   count: number;
-  proof: boolean;
+  provisional: boolean;
+  n: number;
 }
 interface Aggregate {
   live: number;
@@ -57,10 +65,10 @@ interface BoardModel {
   };
   groups(
     agents: Agent[],
-    tasks: Record<string, Task> | null,
+    values: Record<string, PerformanceValue> | null,
   ): Array<Aggregate & { id: string; root: Agent; members: Agent[]; subs: Agent[] }>;
-  aggregate(agents: Agent[], tasks: Record<string, Task> | null): Aggregate;
-  score(agents: Agent[], tasks: Record<string, Task> | null): Score;
+  aggregate(agents: Agent[], values: Record<string, PerformanceValue> | null): Aggregate;
+  score(agents: Agent[], values: Record<string, PerformanceValue> | null): Score;
   formatSpeed(value: number | null): string;
   rateNumber(value: number | null, digits: number): string;
   amountNumber(value: number | null, digits: number): string;
@@ -712,8 +720,12 @@ function agent(id: string, patch: Partial<Agent> = {}): Agent {
     ...patch,
   };
 }
-function task(shown: number | null, form: Task["form"] = "live", state = "passing"): Task {
-  return { form, result: { shown, state } };
+function perf(
+  shown: number | null,
+  form: PerformanceValue["form"] = "live",
+  n = 10,
+): PerformanceValue {
+  return { form, score: shown, shown, provisional: shown !== null && n < 10, n };
 }
 describe("Agent Speed original board ranking", () => {
   for (const fixture of originalCases)
@@ -855,52 +867,61 @@ describe("board facts from own OMP agent windows", () => {
     ).toMatchObject({ cost: 0, costPartial: false });
     expect(model.aggregate([], null).cost).toBe(0);
   });
-  it("selects the highest live score before any resting score, not a token-weighted average", () => {
+  it("selects the highest live performance before any resting score, without capping or token weighting", () => {
     const agents = [
       agent("resting", { phase: "idle", liveMeasuredTps: 500 }),
       agent("live", { phase: "tools" }),
       agent("second", { liveMeasuredTps: 1 }),
     ];
     const score = model.score(agents, {
-      resting: task(99, "resting"),
-      live: task(20, "live", "pending"),
-      second: task(10),
+      resting: perf(99999, "resting"),
+      live: perf(12840, "live", 3),
+      second: perf(4000),
     });
     expect(score).toMatchObject({
-      value: 20,
+      value: 12840,
       form: "live",
       count: 2,
-      proof: true,
-      state: "pending",
+      provisional: true,
+      n: 3,
     });
     expect(score.agent!.id).toBe("live");
   });
-  it("uses the latest activity then smallest id for equal supplier scores, including a true zero", () => {
+  it("uses the latest native line activity then smallest ordinal id for equal scores, including a real zero", () => {
     const agents = [
       agent("z", { lastActivityAt: 200 }),
       agent("b", { lastActivityAt: 300 }),
       agent("a", { lastActivityAt: 300 }),
     ];
-    const scores = { z: task(0), b: task(0), a: task(0) },
+    const scores = { z: perf(0), b: perf(0), a: perf(0) },
       score = model.score(agents, scores);
     expect(score.value).toBe(0);
     expect(score.agent!.id).toBe("a");
     expect(score.count).toBe(3);
     expect(
       model.score(agents, {
-        z: task(90, "resting"),
-        b: task(null),
-        a: { form: "none", result: null },
+        z: perf(1540, "resting"),
+        b: perf(null),
+        a: perf(null, "none", 0),
       }),
-    ).toMatchObject({ value: 90, form: "resting", count: 1 });
+    ).toMatchObject({ value: 1540, form: "resting", count: 1 });
   });
-  it("propagates the supplying member’s proof state to the group", () => {
+  it("propagates the supplying member’s provisional request count to the whole group", () => {
     const [group] = model.groups([agent("root"), agent("sub", { parentId: "root" })], {
-      root: task(40),
-      sub: task(70, "live", "unverified"),
+      root: perf(1000),
+      sub: perf(1540, "live", 9),
     });
-    expect(group!.score).toMatchObject({ value: 70, proof: true, state: "unverified" });
+    expect(group!.score).toMatchObject({ value: 1540, provisional: true, n: 9, count: 2 });
     expect(group!.score.agent!.id).toBe("sub");
+  });
+  it("keeps uncapped resting values and excludes absent display facts from the set count", () => {
+    const agents = [agent("wide"), agent("missing")];
+    expect(
+      model.score(agents, {
+        wide: perf(1284000, "resting"),
+        missing: perf(null),
+      }),
+    ).toMatchObject({ value: 1284000, form: "resting", count: 1, provisional: false });
   });
   it("preserves original speed and live money magnitude transitions without an approximation prefix", () => {
     expect([null, 0, 0.03, 9.99, 999.5, 999500].map((value) => model.formatSpeed(value))).toEqual([
@@ -919,5 +940,164 @@ describe("board facts from own OMP agent windows", () => {
     expect(
       [null, 0, 0.000088, 0.0996, 12.345, 1000].map((value) => model.amountNumber(value, 2)),
     ).toEqual(["–", "0.00", "0.000088", "0.10", "12.35", "1,000.00"]);
+  });
+});
+
+interface BoardConsumer {
+  paint(score: Score, instant?: boolean): void;
+  row(agents: Agent[], values: Record<string, PerformanceValue>): HTMLElement;
+  words(score: Score): string;
+  panel: HTMLElement;
+}
+function boardConsumer(style: "glass" | "timing" | "neon") {
+  document.body.innerHTML = MONITOR_BOARD_MARKUP;
+  vi.stubGlobal("matchMedia", (media: string) => ({ media, matches: false }));
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  let now = 0;
+  let serial = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  const code = `
+    let language='en',appearance='dark';
+    const view={surface:'board',preferences:{effects:'standard'},board:${JSON.stringify({ ...DEFAULT_BOARD_PREFERENCES, style, id: "board", orbId: "orb" })},orbs:[],snapshot:null};
+    const node=id=>document.getElementById(id),snapshotFacts=()=>view.snapshot;
+    const finite=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
+    const timestamp=value=>String(value),number=(value,digits)=>value.toFixed(digits);
+    const agentSpeedVisuals={heat:()=>0,color:()=>''};
+    const boardEffects={create:()=>({setVisible(){},destroy(){}})};
+    ${MONITOR_PERF_SCRIPT}
+    ${MONITOR_BOARD_MODEL_SCRIPT}
+    ${MONITOR_BOARD_RENDERER_SCRIPT}
+    boardCreatePanel(null);
+    return {
+      panel:boardState.panel,
+      paint:boardPaintScore,
+      words:boardScoreWords,
+      row(agents,values){
+        view.snapshot={agents,performance:{current:values,records:[],baselines:[],scanning:false,limited:false}};
+        boardState.latest=view.snapshot;
+        const group=boardModel.groups(agents,values)[0],record=boardCreateRow('group',group.id);
+        boardPaintRow(record,{kind:'group',group},boardModel.aggregate(agents,values),1,null);
+        return record.row;
+      }
+    };
+  `;
+  const consumer = new Function(
+    "document",
+    "window",
+    "performance",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    "AbortController",
+    code,
+  )(
+    document,
+    window,
+    { now: () => now },
+    (callback: FrameRequestCallback) => {
+      const id = ++serial;
+      frames.set(id, callback);
+      return id;
+    },
+    (id: number) => frames.delete(id),
+    window.AbortController,
+  ) as BoardConsumer;
+  return {
+    consumer,
+    advance(ms: number) {
+      now += ms;
+      const pending = Array.from(frames.values());
+      frames.clear();
+      for (const callback of pending) callback(now);
+    },
+    pending: () => frames.size,
+  };
+}
+afterEach(() => {
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+describe("board performance renderer consumer boundaries", () => {
+  it.each([
+    ["glass", "12.8k"],
+    ["timing", "12,840"],
+    ["neon", "12,840"],
+  ] as const)(
+    "formats the uncapped %s hero and carries the supplier and provisional sample count",
+    (style, text) => {
+      const { consumer } = boardConsumer(style);
+      const value = model.score([agent("winner"), agent("resting")], {
+        winner: perf(12840, "live", 7),
+        resting: perf(99999, "resting"),
+      });
+      consumer.paint(value, true);
+      expect(
+        consumer.panel.querySelector('[data-board-metric="performance"] .mn')!.textContent,
+      ).toBe(text);
+      const anchor = consumer.panel.querySelector<HTMLElement>("[data-perf-agent-id]")!;
+      expect(anchor.dataset.perfAgentId).toBe("winner");
+      expect(anchor.dataset.perfSetCount).toBe("1");
+      expect(consumer.words(value)).toContain("12,840");
+      expect(consumer.words(value)).toContain("7 timed requests");
+      expect(
+        consumer.panel.querySelector(".board-perf-value")!.classList.contains("board-provisional"),
+      ).toBe(true);
+    },
+  );
+  it("uses the reference log scale for glass, not a 0–100 gauge", () => {
+    const { consumer } = boardConsumer("glass");
+    consumer.paint(model.score([agent("a")], { a: perf(1000) }), true);
+    expect(consumer.panel.querySelector(".arc")!.getAttribute("stroke-dashoffset")).toBe("50");
+    consumer.paint(model.score([agent("a")], { a: perf(4000) }), true);
+    expect(consumer.panel.querySelector(".arc")!.getAttribute("stroke-dashoffset")).toBe("0");
+    consumer.paint(model.score([agent("a")], { a: perf(1284000, "resting", 9) }), true);
+    expect(consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("1.28M");
+    expect(consumer.panel.querySelector(".gauge")!.classList.contains("board-resting")).toBe(true);
+    expect(consumer.panel.querySelector(".arc")!.getAttribute("stroke-dasharray")).toBe("0 6");
+  });
+  it("lights six neon segments at 1000 and keeps the number rising after all twelve are lit", () => {
+    const { consumer } = boardConsumer("neon");
+    consumer.paint(model.score([agent("a")], { a: perf(1000) }), true);
+    expect(consumer.panel.querySelectorAll(".segs .on")).toHaveLength(6);
+    consumer.paint(model.score([agent("a")], { a: perf(12840) }), true);
+    expect(consumer.panel.querySelectorAll(".segs .on")).toHaveLength(12);
+    expect(consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("12,840");
+  });
+  it("counts calmly in both directions and retargets from the number currently on screen", () => {
+    const page = boardConsumer("timing");
+    page.consumer.paint(model.score([agent("a")], { a: perf(1000) }), true);
+    page.consumer.paint(model.score([agent("a")], { a: perf(2000) }));
+    expect(page.pending()).toBe(1);
+    page.advance(325);
+    expect(page.consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("1,875");
+    page.consumer.paint(model.score([agent("a")], { a: perf(1000) }));
+    page.advance(700);
+    expect(page.consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("1,000");
+    expect(page.pending()).toBe(0);
+  });
+  it("uses the real score-cell consumer for group rows and names the child supplying the performance", () => {
+    const { consumer } = boardConsumer("glass");
+    const row = consumer.row([agent("root"), agent("child", { parentId: "root" })], {
+      root: perf(1000),
+      child: perf(12840, "live", 8),
+    });
+    expect(row.dataset.perfAgentId).toBe("child");
+    expect(row.dataset.perfSetCount).toBe("2");
+    expect(row.querySelector(".perf-score-value")!.textContent).toBe("12.8k");
+    expect(row.querySelector(".perf-score-value")!.classList.contains("perf-pm")).toBe(true);
+    expect(row.querySelector<HTMLElement>(".perf-score-cell")!.dataset.perfCardHost).toBe("board");
+    expect(row.tabIndex).toBe(0);
+  });
+  it("keeps a real zero distinct from no score and removes a departed supplier anchor", () => {
+    const { consumer } = boardConsumer("neon");
+    consumer.paint(model.score([agent("zero")], { zero: perf(0) }), true);
+    expect(consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("0");
+    expect(
+      consumer.panel.querySelector<HTMLElement>("[data-perf-agent-id]")!.dataset.perfAgentId,
+    ).toBe("zero");
+    consumer.paint(model.score([], null), true);
+    expect(consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("–");
+    expect(consumer.panel.querySelector("[data-perf-agent-id]")).toBeNull();
+    expect(consumer.panel.querySelectorAll(".segs .on")).toHaveLength(0);
   });
 });

@@ -126,7 +126,7 @@ class OmpMonitorWorker {
     this.monitor = new OmpLocalMonitor({
       roots: workerRoots(data),
       ...(typeof data?.cacheDir === "string" && data.cacheDir.length <= 4096
-        ? { taskCacheDir: data.cacheDir }
+        ? { performanceCacheDir: data.cacheDir }
         : {}),
       ...(catalog
         ? {

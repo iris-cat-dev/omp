@@ -1,27 +1,27 @@
-// Agent Speed v1.5.0, MIT, 29dffc4e6fbe1da435071e40781b1571dd45ac22.
-// Ranking: spec/tools/board_ranking.py. Scores: METRICS 6.9, highest live before resting.
+// Agent Speed v1.6.0, MIT, ca460d7f899e7adc73391ea706b729f1fc481fde.
+// Ranking: spec/tools/board_ranking.py. Performance: METRICS 6.9, highest live before resting.
 // A static browser module, also exercised by behavioral fixtures without a DOM or provider.
+import { highestPerformanceValue } from "./performance.js";
+
 export const MONITOR_BOARD_MODEL_SCRIPT = String.raw`
 const boardModel = (() => {
+  const highest = ${highestPerformanceValue.toString()};
+  const emptyValues = Object.create(null);
   function numeric(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
   function rate(agent) { return (numeric(agent.liveMeasuredTps) || 0) + (numeric(agent.liveEstimatedTps) || 0); }
   function activity(agent) { return numeric(agent.lastActivityAt) || 0; }
-  function score(agents, tasks) {
-    let best = null, form = 'none', count = 0;
+  function score(agents, values) {
+    const highestValue = highest(agents, values || emptyValues), supplier = agents.find(agent => agent.id === highestValue.agent) || null;
+    if (highestValue.shown === null) return { agent: null, value: null, form: 'none', count: 0, provisional: false, n: 0 };
+    let count = 0;
     for (const agent of agents) {
-      const status = tasks && tasks[agent.id], shown = status && status.result && numeric(status.result.shown);
-      if (!status || shown === null || shown === undefined || !['live', 'resting'].includes(status.form)) continue;
-      if (status.form === 'live' && form !== 'live') { best = null; count = 0; form = 'live'; }
-      if (form === 'live' && status.form !== 'live') continue;
-      if (form === 'none') form = status.form;
-      count++;
-      if (!best || shown > best.value || shown === best.value && (activity(agent) > activity(best.agent) || activity(agent) === activity(best.agent) && agent.id < best.agent.id)) {
-        best = { agent, value: Math.min(100, shown), form: status.form, state: status.result.state };
-      }
+      const value = values && values[agent.id];
+      if (value && numeric(value.shown) !== null && value.form === highestValue.form) count++;
     }
-    return best ? { ...best, count, proof: best.state === 'unverified' || best.state === 'pending' } : { agent: null, value: null, form: 'none', state: 'none', count: 0, proof: false };
+    const evaluation = supplier && values[supplier.id];
+    return { agent: supplier, value: highestValue.shown, form: highestValue.form, count, provisional: !!(evaluation && evaluation.provisional), n: evaluation ? evaluation.n : 0 };
   }
-  function aggregate(agents, tasks) {
+  function aggregate(agents, values) {
     let live = 0, estimated = 0, thinking = 0, thinkingKnown = false, cost = 0, priced = 0, unknown = 0, generating = 0, tools = 0, lastActiveMs = 0;
     for (const agent of agents) {
       const own = rate(agent); live += own; estimated += numeric(agent.liveEstimatedTps) || 0;
@@ -35,9 +35,9 @@ const boardModel = (() => {
     return { live, estimated, thinking: live > 0 && thinkingKnown ? thinking : null,
       cost: live > 0 && priced === 0 && unknown > 0 ? null : cost,
       costPartial: cost > 0 && unknown > 0 && (priced + unknown === 0 || priced / (priced + unknown) < .995),
-      generating, tools, lastActiveMs, score: score(agents, tasks) };
+      generating, tools, lastActiveMs, score: score(agents, values) };
   }
-  function groups(agents, tasks) {
+  function groups(agents, values) {
     const byId = new Map(agents.map(agent => [agent.id, agent])), roots = new Map(), grouped = new Map();
     function rootFor(agent) {
       if (roots.has(agent.id)) return roots.get(agent.id);
@@ -60,7 +60,7 @@ const boardModel = (() => {
     for (const [id, members] of grouped) {
       const root = byId.get(id), subs = members.filter(agent => agent.id !== id);
       subs.sort((a, b) => rate(b) - rate(a) || activity(b) - activity(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      result.push({ id, root, members, subs, ...aggregate(members, tasks) });
+      result.push({ id, root, members, subs, ...aggregate(members, values) });
     }
     return result;
   }

@@ -11,8 +11,8 @@ import { emptyUsage, hashId, object, OmpNumericParser, safeLabel } from "./parse
 import type { NumericResponse, NumericSink } from "./parser.js";
 import { getBundledPricingState } from "./pricing.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
-import { OmpTaskMonitor } from "./task-monitor.js";
-import type { OmpTaskSource } from "./task-reader-file.js";
+import { OmpPerformanceMonitor } from "./performance-monitor.js";
+import type { OmpPerformanceSource } from "./performance-reader-file.js";
 import {
   coverageStatus,
   filterOptions,
@@ -99,7 +99,7 @@ export interface OmpLocalMonitorOptions {
   now?: () => number;
   estimateCost?: (usage: OmpMonitorCostInput) => number | null;
   getPricing?: () => OmpMonitorPricing;
-  taskCacheDir?: string;
+  performanceCacheDir?: string;
 }
 
 /** Read-only OMP session collector. No transcript text survives a complete line's numeric extraction. */
@@ -108,7 +108,7 @@ export class OmpLocalMonitor {
   private readonly clock: () => number;
   private readonly getPricing: () => OmpMonitorPricing;
   private readonly history: OmpMonitorHistory;
-  private readonly tasks: OmpTaskMonitor;
+  private readonly performance: OmpPerformanceMonitor;
   private readonly files = new Map<string, FileState>();
   private readonly candidates = new Map<string, Map<string, Candidate>>();
   private readonly canonical = new Map<string, Candidate>();
@@ -137,7 +137,7 @@ export class OmpLocalMonitor {
     this.clock = options.now ?? Date.now;
     this.getPricing = options.getPricing ?? getBundledPricingState;
     this.history = new OmpMonitorHistory(options.estimateCost);
-    this.tasks = new OmpTaskMonitor({ cacheDir: options.taskCacheDir });
+    this.performance = new OmpPerformanceMonitor({ cacheDir: options.performanceCacheDir });
     this.currentNow = this.readNow();
     this.cutoff = calendarDays(this.currentNow)[0]!.start;
     this.retainedCutoff = this.cutoff;
@@ -160,7 +160,7 @@ export class OmpLocalMonitor {
     this.insertionOrder.clear();
     this.snapshots.clear();
     this.history.clear();
-    this.tasks.dispose();
+    this.performance.dispose();
     this.pendingBytes = 0;
     this.pendingTools = 0;
     this.roots = [];
@@ -227,7 +227,7 @@ export class OmpLocalMonitor {
       },
       today: currentDayUsage(history.days),
       days: history.days,
-      tasks: this.tasks.getSnapshot(
+      performance: this.performance.getSnapshot(
         files.ids,
         now,
         new Set(activity.agents.map((agent) => agent.id)),
@@ -259,17 +259,20 @@ export class OmpLocalMonitor {
       file.parser.discardStaleTools(this.currentNow);
       this.syncToolCount(file);
     }
-    const taskSources: OmpTaskSource[] = [];
+    const performanceSources: OmpPerformanceSource[] = [];
     for (const file of this.files.values()) {
-      const source: OmpTaskSource = {
+      const source: OmpPerformanceSource = {
         id: file.id,
         path: file.path,
         phase: this.currentNow - file.parser.lastActivityAt > STALE_MS ? "idle" : file.parser.phase,
       };
       if (file.identity) source.identity = file.identity;
-      taskSources.push(source);
+      performanceSources.push(source);
     }
-    await this.tasks.poll(taskSources, this.currentNow);
+    await this.performance.poll(performanceSources, this.currentNow, {
+      revision: this.numericRevision,
+      owner: (key) => this.canonical.get(key)?.file.id,
+    });
     this.snapshots.clear();
     return this.getSnapshot();
   }

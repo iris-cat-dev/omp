@@ -28,7 +28,7 @@ export interface OmpMonitorPreferences {
   clickThrough: boolean;
   fadeWhenIdle: boolean;
   nameMode: "auto" | "always" | "never";
-  showTaskScore: boolean;
+  showPerformance: boolean;
   showThinking: boolean;
 }
 

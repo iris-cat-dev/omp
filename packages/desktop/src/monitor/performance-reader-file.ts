@@ -1,21 +1,22 @@
-// Ordered, read-only, no-follow OMP JSONL reader. No directory discovery or source path from log content.
+// Ordered, read-only OMP JSONL stream. Complete-prefix revision proofs; no path from transcript content.
 import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { setImmediate as yieldTaskRead } from "node:timers/promises";
-import { OmpTaskLineReader, TASK_READER_LIMITS } from "./task-reader.js";
+import { setImmediate as yieldRead } from "node:timers/promises";
+import { OmpPerformanceLineReader, PERFORMANCE_READER_LIMITS } from "./performance-reader.js";
 
-export interface OmpTaskSource {
+export interface OmpPerformanceSource {
   id: string;
   path: string;
   phase: "generating" | "tools" | "idle";
   identity?: string;
 }
-export const TASK_FILE_LIMITS = { chunkBytes: 65_536, maxChunks: 16_384 };
-export interface TaskReadBudget {
+export const PERFORMANCE_FILE_LIMITS = { chunkBytes: 65_536, maxChunks: 16_384 };
+export interface PerformanceReadBudget {
   bytes: number;
+  lines: number;
   deadline: number;
   alive: () => boolean;
 }
@@ -25,17 +26,18 @@ interface ChunkProof {
   hash: string;
 }
 const decoder = new TextDecoder("utf-8", { fatal: true });
-export function taskFileIdentity(stat: Pick<Stats, "dev" | "ino" | "birthtimeMs">): string {
+export function performanceFileIdentity(stat: Pick<Stats, "dev" | "ino" | "birthtimeMs">): string {
   return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 }
 function samePath(a: string, b: string): boolean {
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
-const proof = (buffer: Buffer): string =>
-  createHash("sha256").update(buffer).digest("hex").slice(0, 16);
-export class OmpOrderedTaskFile {
-  stream: OmpTaskLineReader;
-  source: OmpTaskSource;
+function proof(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex").slice(0, 16);
+}
+export class OmpOrderedPerformanceFile {
+  stream: OmpPerformanceLineReader;
+  source: OmpPerformanceSource;
   identity: string | null = null;
   generation = 0;
   scanning = true;
@@ -48,6 +50,7 @@ export class OmpOrderedTaskFile {
   private offset = 0;
   private readonly lineParts: Buffer[] = [];
   private pendingLength = 0;
+  private deferred: Buffer | null = null;
   private droppingLine = false;
   private readonly proofs: ChunkProof[] = [];
   private verifyAt = 0;
@@ -58,11 +61,11 @@ export class OmpOrderedTaskFile {
   private initialized = false;
   private disposed = false;
   constructor(
-    source: OmpTaskSource,
+    source: OmpPerformanceSource,
     private floorMs: number,
   ) {
     this.source = { ...source };
-    this.stream = new OmpTaskLineReader(floorMs);
+    this.stream = new OmpPerformanceLineReader(floorMs);
   }
   get retainedBytes(): number {
     return (
@@ -71,6 +74,7 @@ export class OmpOrderedTaskFile {
       this.source.id.length * 2 +
       this.stream.retainedBytes +
       this.pendingLength +
+      (this.deferred?.byteLength ?? 0) +
       this.lineParts.length * 24 +
       this.proofs.length * 64
     );
@@ -85,6 +89,7 @@ export class OmpOrderedTaskFile {
       !this.verifying &&
       this.offset === this.size &&
       this.pendingLength === 0 &&
+      this.deferred === null &&
       !this.droppingLine
     );
   }
@@ -97,9 +102,10 @@ export class OmpOrderedTaskFile {
   private reset(): void {
     this.generation++;
     this.stream.clear();
-    this.stream = new OmpTaskLineReader(this.floorMs);
+    this.stream = new OmpPerformanceLineReader(this.floorMs);
     this.offset = 0;
     this.lineParts.length = this.pendingLength = 0;
+    this.deferred = null;
     this.droppingLine = false;
     this.proofs.length = 0;
     this.verifyAt = 0;
@@ -107,14 +113,8 @@ export class OmpOrderedTaskFile {
     this.scanning = true;
     this.initialized = false;
   }
-  async poll(budget: TaskReadBudget): Promise<void> {
-    if (
-      this.disposed ||
-      !budget.alive() ||
-      budget.bytes <= 0 ||
-      performance.now() >= budget.deadline
-    )
-      return;
+  async poll(budget: PerformanceReadBudget): Promise<void> {
+    if (!this.canRead(budget)) return;
     let handle: FileHandle | null = null;
     try {
       const identity = await this.inspectSource(budget);
@@ -122,8 +122,7 @@ export class OmpOrderedTaskFile {
       handle = await open(this.source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const opened = await handle.stat(),
         checked = await lstat(this.source.path);
-      if (this.disposed || !budget.alive()) return;
-      if (!this.acceptOpened(opened, checked, identity)) return;
+      if (this.disposed || !budget.alive() || !this.acceptOpened(opened, checked, identity)) return;
       this.prepareScan(opened);
       if (!(await this.verifyPrefix(handle, budget))) return;
       if (!(await this.scanChunks(handle, budget))) return;
@@ -132,27 +131,23 @@ export class OmpOrderedTaskFile {
       if (this.disposed || !budget.alive()) return;
       this.finishScan(after, named, identity);
     } catch {
-      // Deletion/read errors invalidate facts immediately. Retry only the same parent-discovered path on a later poll.
       this.reset();
-      this.unavailable = true;
-      this.limited = true;
+      this.unavailable = this.limited = true;
       this.scanning = false;
     } finally {
       await handle?.close().catch(() => {});
     }
   }
-  private async inspectSource(budget: TaskReadBudget): Promise<string | null> {
+  private async inspectSource(budget: PerformanceReadBudget): Promise<string | null> {
     if (
       !path.isAbsolute(this.source.path) ||
       path.extname(this.source.path).toLowerCase() !== ".jsonl"
     ) {
-      this.rejected = this.limited = true;
-      this.scanning = false;
+      this.reject();
       return null;
     }
     const before = await lstat(this.source.path);
     if (this.disposed || !budget.alive()) return null;
-    // realpath equality rejects linked ancestors as well as the leaf. fstat/path checks close replacement races.
     if (
       !before.isFile() ||
       before.isSymbolicLink() ||
@@ -161,15 +156,12 @@ export class OmpOrderedTaskFile {
       this.reject();
       return null;
     }
-    const identity = taskFileIdentity(before);
+    const identity = performanceFileIdentity(before);
     if (this.source.identity && identity !== this.source.identity) {
       this.reject();
       return null;
     }
-    if (this.identity !== null && identity !== this.identity) {
-      this.reset();
-      this.identity = identity;
-    }
+    if (this.identity !== null && identity !== this.identity) this.reset();
     this.identity = identity;
     return identity;
   }
@@ -178,8 +170,8 @@ export class OmpOrderedTaskFile {
       !opened.isFile() ||
       checked.isSymbolicLink() ||
       !checked.isFile() ||
-      taskFileIdentity(opened) !== identity ||
-      taskFileIdentity(checked) !== identity
+      performanceFileIdentity(opened) !== identity ||
+      performanceFileIdentity(checked) !== identity
     ) {
       this.reject();
       return false;
@@ -201,8 +193,7 @@ export class OmpOrderedTaskFile {
       opened.mtimeMs !== this.targetMtime ||
       opened.ctimeMs !== this.targetCtime
     ) {
-      // Verify the complete already-read prefix, not just head/tail anchors: a middle rewrite plus append cannot
-      // reuse old events. The verification itself is chunk-budgeted and never eats the numeric reader's 8 MiB.
+      // A middle rewrite plus append invalidates the complete prefix, not just head/tail anchors.
       if (this.offset > 0) {
         this.verifying = true;
         this.verifyAt = 0;
@@ -214,7 +205,7 @@ export class OmpOrderedTaskFile {
     }
     this.initialized = true;
   }
-  private async verifyPrefix(handle: FileHandle, budget: TaskReadBudget): Promise<boolean> {
+  private async verifyPrefix(handle: FileHandle, budget: PerformanceReadBudget): Promise<boolean> {
     while (this.verifying && this.verifyAt < this.proofs.length && this.canRead(budget)) {
       const prior = this.proofs[this.verifyAt];
       if (prior.length > budget.bytes) break;
@@ -228,6 +219,7 @@ export class OmpOrderedTaskFile {
         break;
       }
       this.verifyAt++;
+      await yieldRead();
     }
     if (this.verifying && this.verifyAt === this.proofs.length) {
       this.verifying = false;
@@ -235,19 +227,20 @@ export class OmpOrderedTaskFile {
     }
     return true;
   }
-  private async scanChunks(handle: FileHandle, budget: TaskReadBudget): Promise<boolean> {
-    while (
-      !this.verifying &&
-      this.offset < this.targetSize &&
-      !this.stream.saturated &&
-      this.canRead(budget)
-    ) {
-      if (this.proofs.length >= TASK_FILE_LIMITS.maxChunks) {
+  private async scanChunks(handle: FileHandle, budget: PerformanceReadBudget): Promise<boolean> {
+    if (this.verifying) return true;
+    if (this.deferred !== null) {
+      const chunk = this.deferred;
+      this.deferred = null;
+      this.consume(chunk, budget);
+    }
+    while (this.offset < this.targetSize && !this.stream.saturated && this.canRead(budget)) {
+      if (this.proofs.length >= PERFORMANCE_FILE_LIMITS.maxChunks) {
         this.limited = true;
         break;
       }
       const length = Math.min(
-          TASK_FILE_LIMITS.chunkBytes,
+          PERFORMANCE_FILE_LIMITS.chunkBytes,
           budget.bytes,
           this.targetSize - this.offset,
         ),
@@ -262,9 +255,8 @@ export class OmpOrderedTaskFile {
       const chunk = buffer.subarray(0, read.bytesRead);
       this.proofs.push({ offset: this.offset, length: read.bytesRead, hash: proof(chunk) });
       this.offset += read.bytesRead;
-      this.consume(chunk);
-      // Let numeric ticks and dispose messages run between chunks, including CPU-heavy JSON lines.
-      await yieldTaskRead();
+      this.consume(chunk, budget);
+      await yieldRead();
     }
     return true;
   }
@@ -272,15 +264,12 @@ export class OmpOrderedTaskFile {
     if (
       !named.isFile() ||
       named.isSymbolicLink() ||
-      taskFileIdentity(after) !== identity ||
-      taskFileIdentity(named) !== identity
+      performanceFileIdentity(after) !== identity ||
+      performanceFileIdentity(named) !== identity
     ) {
       this.reject();
       return;
     }
-    this.updateRevision(after);
-  }
-  private updateRevision(after: Stats): void {
     if (
       after.size < this.offset ||
       (after.size === this.targetSize &&
@@ -297,42 +286,39 @@ export class OmpOrderedTaskFile {
       this.targetMtime !== after.mtimeMs ||
       this.targetCtime !== after.ctimeMs ||
       this.pendingLength > 0 ||
+      this.deferred !== null ||
       this.droppingLine;
-    if (this.stream.saturated || this.proofs.length >= TASK_FILE_LIMITS.maxChunks) {
+    if (this.stream.saturated || this.proofs.length >= PERFORMANCE_FILE_LIMITS.maxChunks) {
       this.limited = true;
       this.scanning = false;
     }
   }
-  private canRead(budget: TaskReadBudget): boolean {
+  private canRead(budget: PerformanceReadBudget): boolean {
     return (
-      !this.disposed && budget.alive() && budget.bytes > 0 && performance.now() < budget.deadline
+      !this.disposed &&
+      budget.alive() &&
+      budget.bytes > 0 &&
+      budget.lines > 0 &&
+      performance.now() < budget.deadline
     );
   }
-  private consume(chunk: Buffer): void {
+  private consume(chunk: Buffer, budget: PerformanceReadBudget): void {
     let start = 0;
     for (let end = chunk.indexOf(10); end >= 0; end = chunk.indexOf(10, start)) {
-      if (!this.droppingLine) {
-        const length = this.pendingLength + end - start;
-        if (length <= TASK_READER_LIMITS.maxLineBytes) {
-          const final = chunk.subarray(start, end),
-            line = this.lineParts.length
-              ? Buffer.concat([...this.lineParts, final], length)
-              : final;
-          try {
-            this.stream.read(decoder.decode(line));
-          } catch {
-            this.stream.markGap();
-          }
-        } else this.stream.markGap();
+      if (budget.lines <= 0 || performance.now() >= budget.deadline) {
+        this.deferred = chunk.subarray(start);
+        return;
       }
+      if (!this.droppingLine) this.consumeLine(chunk.subarray(start, end));
       this.lineParts.length = this.pendingLength = 0;
       this.droppingLine = false;
+      budget.lines--;
       start = end + 1;
     }
     if (start < chunk.length && !this.droppingLine) {
       const rest = chunk.subarray(start),
         length = this.pendingLength + rest.length;
-      if (length > TASK_READER_LIMITS.maxLineBytes || this.lineParts.length >= 16_384) {
+      if (length > PERFORMANCE_READER_LIMITS.maxLineBytes || this.lineParts.length >= 16_384) {
         this.lineParts.length = this.pendingLength = 0;
         this.droppingLine = true;
         this.stream.markGap();
@@ -341,7 +327,20 @@ export class OmpOrderedTaskFile {
         this.pendingLength = length;
       }
     }
-    // No EOF flush: an incomplete JSONL tail is not a fact until its newline arrives.
+    // No EOF flush: a JSON object without its JSONL newline is not a fact.
+  }
+  private consumeLine(final: Buffer): void {
+    const length = this.pendingLength + final.length;
+    if (length > PERFORMANCE_READER_LIMITS.maxLineBytes) {
+      this.stream.markGap();
+      return;
+    }
+    const line = this.lineParts.length ? Buffer.concat([...this.lineParts, final], length) : final;
+    try {
+      this.stream.read(decoder.decode(line));
+    } catch {
+      this.stream.markGap();
+    }
   }
   private reject(): void {
     this.reset();
@@ -352,6 +351,7 @@ export class OmpOrderedTaskFile {
     this.disposed = true;
     this.stream.clear();
     this.lineParts.length = this.pendingLength = 0;
+    this.deferred = null;
     this.proofs.length = 0;
   }
 }

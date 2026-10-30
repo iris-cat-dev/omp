@@ -1,4 +1,4 @@
-import type { OmpMonitorTasks } from "./task-types.js";
+import type { OmpMonitorPerformance } from "./performance-types.js";
 
 export type OmpMonitorPhase = "generating" | "tools" | "idle";
 export type OmpMonitorAgentKind = "main" | "subagent" | "advisor";
@@ -139,7 +139,7 @@ export interface OmpMonitorSnapshot {
   };
   today: OmpMonitorUsage;
   days: OmpMonitorDay[];
-  tasks: OmpMonitorTasks;
+  performance: OmpMonitorPerformance;
   agents: OmpMonitorAgent[];
   series: OmpMonitorPoint[];
   coverage: OmpMonitorCoverage;

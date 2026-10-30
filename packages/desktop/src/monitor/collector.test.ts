@@ -1487,6 +1487,90 @@ describe("OMP local numeric filesystem monitor", () => {
 
     expect(current.getSnapshot().activity).toEqual(first.activity);
   });
+
+  it("derives v1.6 performance from the canonical native requests without changing billing, TTFT, reasoning or scopes", async () => {
+    const defaultRoot = await directory(),
+      workRoot = await directory(),
+      shared = Array.from({ length: 3 }, (_, index) =>
+        response(`shared-${index}`, NOW - 30_000 + index * 3000, 50, {
+          usage: {
+            input: 10,
+            output: 50,
+            reasoningTokens: 20,
+            cacheRead: 30,
+            cacheWrite: 40,
+            cost: { total: 1 },
+          },
+        }),
+      );
+    await session(defaultRoot, "main.jsonl", [
+      header(),
+      ...shared,
+      {
+        type: "model_usage",
+        id: "side-only",
+        timestamp: new Date(NOW - 1000).toISOString(),
+        model: "side-model",
+        provider: "fixture",
+        api: "fixture",
+        usage: { input: 1, output: 2, cost: { total: 0.5 } },
+      },
+    ]);
+    await session(workRoot, "copy.jsonl", [header(), ...shared]);
+    await session(workRoot, "own.jsonl", [
+      header(NOW - 60_000, "C:\\controlled\\project-beta"),
+      ...Array.from({ length: 3 }, (_, index) =>
+        response(`own-${index}`, NOW - 20_000 + index * 3000, 100),
+      ),
+    ]);
+    const current = new OmpLocalMonitor({
+      roots: [
+        { path: defaultRoot, label: "default" },
+        { path: workRoot, label: "work" },
+      ],
+      now: () => NOW,
+    });
+    monitors.push(current);
+    let snapshot = await current.poll();
+    for (let poll = 0; poll < 128 && snapshot.performance.scanning; poll++)
+      snapshot = await current.poll();
+    expect(snapshot.today).toMatchObject({
+      requests: 7,
+      costUsd: 6.5,
+      outputTokens: 452,
+      reasoningTokens: 60,
+    });
+    expect(snapshot.performance.records.reduce((sum, row) => sum + row.n, 0)).toBe(6);
+    expect(
+      Object.values(snapshot.performance.current).reduce((sum, value) => sum + value.n, 0),
+    ).toBe(6);
+    expect(
+      snapshot.agents
+        .filter((agent) => agent.model === "model-a")
+        .every((agent) => agent.ttftMs === 50),
+    ).toBe(true);
+    expect(snapshot.performance.records.filter((row) => row.cacheCached > 0)).toEqual([
+      expect.objectContaining({
+        n: 3,
+        cacheInput: 240,
+        cacheCached: 90,
+        reasonN: 3,
+        reasonOutput: 60,
+      }),
+    ]);
+    const project = snapshot.scopes.projects.find((label) => label.startsWith("project-beta ["));
+    expect(project).toBeDefined();
+    const scoped = current.getSnapshot({ profile: "work", project: project! });
+    expect(scoped.today.requests).toBe(3);
+    expect(scoped.performance.records.reduce((sum, row) => sum + row.n, 0)).toBe(3);
+    expect(
+      scoped.performance.records.every((row) => /^[a-f0-9]{32}$/.test(row.agentId ?? "")),
+    ).toBe(true);
+    expect(snapshot).not.toHaveProperty("tasks");
+    expect(JSON.stringify(snapshot.performance)).not.toMatch(
+      /PRIVATE|controlled|project-beta|model_usage|command|arguments/,
+    );
+  });
 });
 
 describe("actual OMP root conventions", () => {

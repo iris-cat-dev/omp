@@ -395,7 +395,7 @@ export class OmpMonitorController {
       visible: record.visible,
       style: record.style,
       size: record.size,
-      showTaskScore: record.showTaskScore,
+      showPerformance: record.showPerformance,
       showThinking: record.showThinking,
       showCost: record.showCost,
       pinned: record.pinned,
@@ -1306,11 +1306,17 @@ export class OmpMonitorController {
           click: () => choose({ size }),
         })),
       },
-      ...(["showTaskScore", "showThinking", "showCost", "pinned", "clickThrough"] as const).map(
+      ...(["showPerformance", "showThinking", "showCost", "pinned", "clickThrough"] as const).map(
         (key, index) => ({
           label: (zh
-            ? ["智力", "思考速度", "每秒费用", "置顶", "鼠标穿透"]
-            : ["IQ", "Thinking rate", "Cost per second", "Always on top", "Click-through"])[index],
+            ? ["性能", "思考速度", "每秒费用", "置顶", "鼠标穿透"]
+            : [
+                "Performance",
+                "Thinking rate",
+                "Cost per second",
+                "Always on top",
+                "Click-through",
+              ])[index],
           type: "checkbox" as const,
           checked: record[key],
           click: () => choose({ [key]: !record[key] }),

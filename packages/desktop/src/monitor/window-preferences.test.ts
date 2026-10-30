@@ -98,7 +98,7 @@ describe("native orb preferences", () => {
     const file = await fixture();
     const preferences = Object.fromEntries(
       Object.entries(orb().preferences).filter(
-        ([key]) => key !== "showTaskScore" && key !== "showThinking",
+        ([key]) => key !== "showPerformance" && key !== "showThinking",
       ),
     );
     await writeFile(
@@ -111,6 +111,60 @@ describe("native orb preferences", () => {
       boards: [],
       invalid: false,
     });
+  });
+
+  it("reads legacy score switches without rewriting the evidence file and saves only performance keys", async () => {
+    const file = await fixture();
+    const preferences = Object.fromEntries(
+      Object.entries(orb().preferences).filter(([key]) => key !== "showPerformance"),
+    );
+    const legacyBoard = Object.fromEntries(
+      Object.entries(board()).filter(([key]) => key !== "showPerformance"),
+    );
+    const source = JSON.stringify({
+      version: 2,
+      orbs: [{ ...orb(), preferences: { ...preferences, showTaskScore: true } }],
+      boards: [{ ...legacyBoard, showTaskScore: false }],
+    });
+    await writeFile(file, source, "utf8");
+    const restored = await readMonitorPreferences(file);
+    expect(restored.invalid).toBe(false);
+    expect(restored.orbs[0]!.preferences.showPerformance).toBe(true);
+    expect(restored.boards[0]!.showPerformance).toBe(false);
+    expect(restored.orbs[0]!.preferences).not.toHaveProperty("showTaskScore");
+    expect(restored.boards[0]).not.toHaveProperty("showTaskScore");
+    expect(await readFile(file, "utf8")).toBe(source);
+    await writeMonitorPreferences(file, restored.orbs, false, restored.boards);
+    const saved = await readFile(file, "utf8");
+    expect(saved).toContain('"showPerformance"');
+    expect(saved).not.toContain('"showTaskScore"');
+  });
+
+  it("honors a saved performance key over the retired switch and rejects the retired key in live edits", async () => {
+    const file = await fixture();
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 2,
+        orbs: [
+          {
+            ...orb(),
+            preferences: { ...orb().preferences, showPerformance: false, showTaskScore: true },
+          },
+        ],
+        boards: [{ ...board(), showPerformance: true, showTaskScore: false }],
+      }),
+      "utf8",
+    );
+    const restored = await readMonitorPreferences(file);
+    expect(restored.orbs[0]!.preferences.showPerformance).toBe(false);
+    expect(restored.boards[0]!.showPerformance).toBe(true);
+    expect(() =>
+      configureMonitorPreferences({ showTaskScore: true }, { ...DEFAULT_MONITOR_PREFERENCES }),
+    ).toThrow();
+    expect(() =>
+      configureMonitorBoard({ showTaskScore: false }, DEFAULT_BOARD_PREFERENCES),
+    ).toThrow();
   });
 
   it("restores four independent boards but rejects excess, duplicate and orphaned boards", async () => {
@@ -131,11 +185,11 @@ describe("native orb preferences", () => {
   it("validates board edits without changing unrelated orb preferences", () => {
     const current = { ...DEFAULT_BOARD_PREFERENCES };
     expect(
-      configureMonitorBoard({ style: "neon", showTaskScore: false, clickThrough: true }, current),
+      configureMonitorBoard({ style: "neon", showPerformance: false, clickThrough: true }, current),
     ).toEqual({
       ...current,
       style: "neon",
-      showTaskScore: false,
+      showPerformance: false,
       clickThrough: true,
     });
     expect(current).toEqual(DEFAULT_BOARD_PREFERENCES);
