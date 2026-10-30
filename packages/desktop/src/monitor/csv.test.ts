@@ -63,7 +63,7 @@ function snapshot(): OmpMonitorSnapshot {
     activity: { lastResponseAt: null, peakAt: null, peakObservedAt: null },
     today: usage,
     days: [{ ...usage, date: "2026-10-24" }],
-    tasks: { current: {}, records: [], scanning: false, limited: false },
+    performance: { current: {}, records: [], baselines: [], scanning: false, limited: false },
     agents: [
       {
         id: "safe-id",

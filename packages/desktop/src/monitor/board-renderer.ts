@@ -1,4 +1,4 @@
-// Agent Speed v1.5.0 board-metrics.js layout B / DESIGN 2c, MIT.
+// Agent Speed v1.6.0 board-metrics.js layout B / DESIGN 2c, MIT.
 // Only OMP's safe, scope-filtered snapshot enters this renderer; no simulation or external source adapters.
 export const MONITOR_BOARD_RENDERER_SCRIPT = String.raw`
 const boardState = {
@@ -6,8 +6,8 @@ const boardState = {
   rows:new Map(), settingsRows:new Map(), pending:new Set(), animations:new Set(), scoreRaf:0, scoreValue:null,
   expanded:null, expandedAt:0, expansionTimer:0, showAll:false, zeroSince:null, thinkShown:true, thinkTimer:0,
   tooltipTimer:0, previousLive:null, previousPeak:null, lastAnnouncement:0, latest:null, liveKnown:false,
-  subMeasure:null, wideAt:0, subWidth:0, reduced:false, contrast:false, titleTimer:0,
-  title:{level:0,candidate:0,pending:null,pendingSince:0,belowFirstSince:null}, scoreShown:null, scoreProof:false, lastAriaAt:0, previousPeakSequence:null
+  subMeasure:null, wideAt:0, subWidth:0, perfMeasure:null, perfWidth:0, perfWideAt:0, reduced:false, contrast:false, titleTimer:0,
+  title:{level:0,candidate:0,pending:null,pendingSince:0,belowFirstSince:null}, scoreShown:null, scoreProvisional:false, lastAriaAt:0, previousPeakSequence:null
 };
 const boardSizes = {small:{key:'S',side:280,groups:4,subs:[0,0,0,0]},medium:{key:'M',side:340,groups:6,subs:[2,1,1]},large:{key:'L',side:420,groups:8,subs:[3,3,3,2,2]}};
 const boardContrastMedia=window.matchMedia('(forced-colors: active), (prefers-contrast: more)');
@@ -31,8 +31,8 @@ function boardTrackedTitle(value){
   return agentSpeedVisuals.themes[preferences.titleTheme][language][tracker.level];
 }
 const boardWords = {
-  en:{title:'Leaderboard boards',add:'Add board',empty:'No boards. Add one to rank this orb’s local OMP agents.',style:'Style',size:'Size',scope:'Use orb’s scope',readouts:'Board readouts',iq:'IQ',thinking:'TH',cost:'Cost',hint:'Independent readouts. IQ is the highest task score, not an average. Thinking folds away after three seconds at zero.',window:'Window',pin:'Always on top',clickThrough:'Click through',visible:'Show',remove:'Remove',confirm:'Confirm removal',limit:'Up to four boards',glass:'Flowing Glass',timing:'Timing Tower',neon:'Neon Cockpit',today:'Today',peak:'Peak',generating:'Generating',tools:'Tools',gap:'Gap',leader:'LEAD',moreGroups:'more agents',moreSubs:'sub-agents',sub:'sub-agents',noAgents:'No local OMP agents in this scope',scanning:'Scanning local logs',partial:'Limited coverage',taskScan:'Scanning task scores',taskLimited:'Task-score coverage limited',unavailable:'Statistics unavailable',estimate:'Estimated',newPeak:'NEW PEAK',newLeader:'NEW LEADER',idle:'Idle',unverified:'unverified',pending:'waiting for re-check',resting:'idle score',top:'highest of',unknown:'Not recorded',profile:'Profile',project:'Project',speed:'Speed',group:'Group',share:'Sub-agent share',mode:'Speed mode',recorded:'recorded',selected:'selected',settings:'Board settings',dashboard:'Usage',hide:'Hide board',allScopes:'All local OMP',failed:'Could not save board settings',expand:'Expand sub-agents',collapse:'Collapse sub-agents',scroll:'Scroll for more',allShown:'Back to top groups',proof:'Unproven task score',none:'No task score',currencyUnavailable:'Currency conversion unavailable'},
-  zh:{title:'排行看板',add:'新增看板',empty:'还没有看板。新增后可查看此悬浮球范围内的本地 OMP 主子代理排行。',style:'样式',size:'尺寸',scope:'使用悬浮球的范围',readouts:'看板显示',iq:'智力',thinking:'思考',cost:'费用',hint:'三个指标独立开关。智力显示最高任务分，不取平均；思考为零持续三秒后收起。',window:'窗口',pin:'置顶',clickThrough:'鼠标穿透',visible:'显示',remove:'删除',confirm:'确认删除',limit:'最多四个看板',glass:'流光玻璃',timing:'计时塔',neon:'霓虹座舱',today:'今日',peak:'峰值',generating:'生成中',tools:'工具',gap:'间隔',leader:'领先',moreGroups:'个 agent',moreSubs:'个子 agent',sub:'个子 agent',noAgents:'此范围内暂无本地 OMP agent',scanning:'正在扫描本地日志',partial:'覆盖有限',taskScan:'任务评分扫描中',taskLimited:'任务评分覆盖有限',unavailable:'统计暂不可用',estimate:'估算',newPeak:'新峰值',newLeader:'新的领先者',idle:'待机',unverified:'未经验证',pending:'等待重新检查',resting:'空闲保留分',top:'最高分，参与评分 agent 数',unknown:'未记录',profile:'配置',project:'项目',speed:'速度',group:'组速',share:'子代理占比',mode:'速度模式',recorded:'日志记录',selected:'已选择',settings:'看板设置',dashboard:'使用情况',hide:'隐藏看板',allScopes:'全部本地 OMP',failed:'看板设置保存失败',expand:'展开子代理',collapse:'收起子代理',scroll:'滚动查看更多',allShown:'返回前列分组',proof:'待证任务评分',none:'暂无任务评分',currencyUnavailable:'汇率暂不可用'}
+  en:{title:'Leaderboard boards',add:'Add board',empty:'No boards. Add one to rank this orb’s local OMP agents.',style:'Style',size:'Size',scope:'Use orb’s scope',readouts:'Board readouts',performance:'Perf',thinking:'TH',cost:'Cost',hint:'Independent readouts. Performance is the highest agent score, live before resting, not an average. Thinking folds away after three seconds at zero.',window:'Window',pin:'Always on top',clickThrough:'Click through',visible:'Show',remove:'Remove',confirm:'Confirm removal',limit:'Up to four boards',glass:'Flowing Glass',timing:'Timing Tower',neon:'Neon Cockpit',today:'Today',peak:'Peak',generating:'Generating',tools:'Tools',gap:'Gap',leader:'LEAD',moreGroups:'more agents',moreSubs:'sub-agents',sub:'sub-agents',noAgents:'No local OMP agents in this scope',scanning:'Scanning local logs',partial:'Limited coverage',perfScan:'Scanning performance scores',perfLimited:'Performance-score coverage limited',unavailable:'Statistics unavailable',estimate:'Estimated',newPeak:'NEW PEAK',newLeader:'NEW LEADER',idle:'Idle',provisional:'provisional',samples:'timed requests',resting:'idle score',top:'highest of',unknown:'Not recorded',profile:'Profile',project:'Project',speed:'Speed',group:'Group',share:'Sub-agent share',mode:'Speed mode',recorded:'recorded',selected:'selected',settings:'Board settings',dashboard:'Usage',hide:'Hide board',allScopes:'All local OMP',failed:'Could not save board settings',expand:'Expand sub-agents',collapse:'Collapse sub-agents',scroll:'Scroll for more',allShown:'Back to top groups',none:'No performance score',currencyUnavailable:'Currency conversion unavailable'},
+  zh:{title:'排行看板',add:'新增看板',empty:'还没有看板。新增后可查看此悬浮球范围内的本地 OMP 主子代理排行。',style:'样式',size:'尺寸',scope:'使用悬浮球的范围',readouts:'看板显示',performance:'性能',thinking:'思考',cost:'费用',hint:'三个指标独立开关。性能显示最高代理分，优先活动代理而非空闲，不取平均；思考为零持续三秒后收起。',window:'窗口',pin:'置顶',clickThrough:'鼠标穿透',visible:'显示',remove:'删除',confirm:'确认删除',limit:'最多四个看板',glass:'流光玻璃',timing:'计时塔',neon:'霓虹座舱',today:'今日',peak:'峰值',generating:'生成中',tools:'工具',gap:'间隔',leader:'领先',moreGroups:'个 agent',moreSubs:'个子 agent',sub:'个子 agent',noAgents:'此范围内暂无本地 OMP agent',scanning:'正在扫描本地日志',partial:'覆盖有限',perfScan:'性能评分扫描中',perfLimited:'性能评分覆盖有限',unavailable:'统计暂不可用',estimate:'估算',newPeak:'新峰值',newLeader:'新的领先者',idle:'待机',provisional:'暂定',samples:'次计时请求',resting:'空闲保留分',top:'最高分，参与评分 agent 数',unknown:'未记录',profile:'配置',project:'项目',speed:'速度',group:'组速',share:'子代理占比',mode:'速度模式',recorded:'日志记录',selected:'已选择',settings:'看板设置',dashboard:'使用情况',hide:'隐藏看板',allScopes:'全部本地 OMP',failed:'看板设置保存失败',expand:'展开子代理',collapse:'收起子代理',scroll:'滚动查看更多',allShown:'返回前列分组',none:'暂无性能评分',currencyUnavailable:'汇率暂不可用'}
 };
 function boardWord(key) { return boardWords[language === 'zh' ? 'zh' : 'en'][key] || key; }
 function boardElement(tag, cls, value) { const element=document.createElement(tag);if(cls)element.className=cls;if(value!==undefined)element.textContent=String(value);return element; }
@@ -65,12 +65,13 @@ function boardRoll(element,value,up,instant=false) {
 }
 function boardScoreWords(score) {
   if(!score||score.value===null)return boardWord('none');
-  return boardWord('iq')+' '+Math.round(score.value)+(score.form==='resting'?', '+boardWord('resting'):'')+(score.proof?', '+boardWord(score.state):'')+(score.count>1?', '+boardWord('top')+' '+score.count:'');
+  const spoken=Math.round(score.value).toLocaleString('en-US');
+  return boardWord('performance')+' '+spoken+(score.provisional?', '+boardWord('provisional')+' ('+score.n+' '+boardWord('samples')+')':'')+(score.form==='resting'?', '+boardWord('resting'):'')+(score.count>1?', '+boardWord('top')+' '+score.count:'');
 }
-function boardAttachTask(element,score,fallback,facts) {
+function boardAttachPerf(element,score,fallback,facts) {
   const supplying=score&&score.agent||fallback;
-  if(boardSelected().showTaskScore&&supplying){element.dataset.taskAgentId=supplying.id;element.dataset.taskTopN=String(score&&score.count||0);element.dataset.taskCardHost='board';element.boardTaskFacts=facts;}
-  else{delete element.dataset.taskAgentId;delete element.dataset.taskTopN;delete element.dataset.taskCardHost;element.boardTaskFacts=[];}
+  if(boardSelected().showPerformance&&supplying){element.dataset.perfAgentId=supplying.id;element.dataset.perfSetCount=String(score&&score.count||0);element.dataset.perfCardHost='board';element.boardPerfFacts=facts;}
+  else{delete element.dataset.perfAgentId;delete element.dataset.perfSetCount;delete element.dataset.perfCardHost;element.boardPerfFacts=[];}
 }
 function boardCurrency(snapshot) {
   const currency=snapshot&&snapshot.pricing?snapshot.pricing.currency:'USD',definition=boardCurrencies[currency],rawRate=snapshot&&snapshot.pricing?snapshot.pricing.exchangeRate:null;
@@ -89,7 +90,7 @@ function boardConfigure(id,patch) { return boardRequest(id,()=>bridge.configureB
 function boardRenderSettings() {
   const root=node('board-settings');if(!root||!view)return;
   const boards=view.boards||[],selected=boardSelected();
-  for(const [id,key]of [['board-settings-title','title'],['board-add','add'],['board-style-label','style'],['board-size-label','size'],['board-scope-label','scope'],['board-readouts-label','readouts'],['board-iq-label','iq'],['board-thinking-label','thinking'],['board-cost-label','cost'],['board-readouts-hint','hint'],['board-window-label','window'],['board-pin-label','pin'],['board-clickthrough-label','clickThrough'],['board-settings-empty','empty']])boardSetText(node(id),boardWord(key));
+  for(const [id,key]of [['board-settings-title','title'],['board-add','add'],['board-style-label','style'],['board-size-label','size'],['board-scope-label','scope'],['board-readouts-label','readouts'],['board-performance-label','performance'],['board-thinking-label','thinking'],['board-cost-label','cost'],['board-readouts-hint','hint'],['board-window-label','window'],['board-pin-label','pin'],['board-clickthrough-label','clickThrough'],['board-settings-empty','empty']])boardSetText(node(id),boardWord(key));
   boardSetText(node('board-settings-count'),boards.length+' / 4');node('board-add').disabled=boards.length>=4||boardState.pending.has('add');node('board-add').title=boards.length>=4?boardWord('limit'):boardWord('add');
   const footerAdd=node('new-board');if(footerAdd){footerAdd.disabled=boards.length>=4||boardState.pending.has('add');footerAdd.title=boards.length>=4?boardWord('limit'):boardWord('add');footerAdd.setAttribute('aria-label',boardWord('add'));}
   node('board-settings-empty').hidden=boards.length>0;node('board-settings-list').hidden=boards.length===0;node('board-settings-list').setAttribute('aria-label',boardWord('title'));
@@ -105,8 +106,8 @@ function boardRenderSettings() {
       const remove=boardElement('button','board-settings-remove');remove.type='button';remove.dataset.boardRemove=board.id;row.append(preview,copy,visible,remove);boardState.settingsRows.set(board.id,row);
     }
     const chosen=!!selected&&selected.id===board.id;row.setAttribute('aria-selected',String(chosen));row.tabIndex=chosen||!selected&&index===0?0:-1;row.setAttribute('aria-busy',String(boardState.pending.has(board.id)));
-    row.children[0].dataset.style=board.style;row.children[0].dataset.iq=String(board.showTaskScore);row.children[0].dataset.thinking=String(board.showThinking);row.children[0].dataset.cost=String(board.showCost);
-    row.children[0].dataset.metrics=[board.showTaskScore?boardWord('iq'):null,board.showThinking?boardWord('thinking'):null,board.showCost?boardWord('cost'):null].filter(Boolean).join('\n');
+    row.children[0].dataset.style=board.style;row.children[0].dataset.performance=String(board.showPerformance);row.children[0].dataset.thinking=String(board.showThinking);row.children[0].dataset.cost=String(board.showCost);
+    row.children[0].dataset.metrics=[board.showPerformance?boardWord('performance'):null,board.showThinking?boardWord('thinking'):null,board.showCost?boardWord('cost'):null].filter(Boolean).join('\n');
     boardSetText(row.children[1].firstElementChild,boardWord(board.style)+' · '+boardSizes[board.size].key);boardSetText(row.children[1].lastElementChild,boardScopeLabel(board.orbId));
     const toggle=row.querySelector('input');toggle.checked=board.visible;toggle.disabled=boardState.pending.has(board.id);toggle.setAttribute('aria-label',boardWord('visible')+' · '+boardWord(board.style));boardSetText(toggle.nextElementSibling,boardWord('visible'));
     const remove=row.lastElementChild;boardSetText(remove,boardWord('remove'));remove.disabled=boardState.pending.has(board.id);remove.setAttribute('aria-label',remove.textContent+' · '+boardWord(board.style));
@@ -114,7 +115,7 @@ function boardRenderSettings() {
   }
   const editor=node('board-settings-editor');editor.hidden=!selected;if(!selected)return;
   for(const option of node('board-style').options)boardSetText(option,boardWord(option.value));
-  for(const key of ['style','size','showTaskScore','showThinking','showCost','pinned','clickThrough']) {
+  for(const key of ['style','size','showPerformance','showThinking','showCost','pinned','clickThrough']) {
     const control=node('board-'+key);control.disabled=boardState.pending.has(selected.id);
     if(control.type==='checkbox')control.checked=selected[key];else control.value=selected[key];
   }
@@ -127,6 +128,8 @@ function boardRenderSettings() {
 function boardMetric(key,main=false) {
   const cell=boardElement('div','m'+(main?' main':''));cell.dataset.boardMetric=key;
   const label=boardElement('span','ml',boardWord(key)),value=boardElement('span','mv'),ge=boardElement('span','ge','≥'),number=boardElement('span','mn'),unit=boardElement('span','mu');
+  if(key==='performance')number.classList.add('board-perf-value');
+  if(boardSelected().style==='timing')label.textContent=label.textContent.toUpperCase();
   if(boardSelected().style==='neon')number.setAttribute('data-ghost','');value.append(ge,number,unit);cell.append(label,value);
   return {cell,label,value,ge,number,unit};
 }
@@ -147,9 +150,9 @@ function boardArcPath(fraction) {
 }
 function boardCreatePanel(snapshot) {
   boardDisposePanel();const config=boardSelected(),size=boardSizes[config.size],style=config.style;
-  const panel=boardElement('section','board-panel '+style+' rows2'+(config.showTaskScore?' cap-on':''));panel.dataset.size=size.key;panel.dataset.theme=appearance;panel.setAttribute('role','list');panel.tabIndex=0;
+  const panel=boardElement('section','board-panel '+style+' rows2'+(config.showPerformance?' cap-on':''));panel.dataset.size=size.key;panel.dataset.theme=appearance;panel.setAttribute('role','list');panel.tabIndex=0;
   boardState.panel=panel;boardState.ui={metrics:{},currency:boardCurrency(snapshot)};const ui=boardState.ui;
-  const anyMetric=config.showTaskScore||config.showThinking||config.showCost;if(anyMetric)panel.classList.add('optB');
+  const anyMetric=config.showPerformance||config.showThinking||config.showCost;if(anyMetric)panel.classList.add('optB');
   const ambient=boardElement('div','board-ambient');panel.append(ambient);
   if(style==='glass'){const aurora=boardElement('div','aurora');aurora.append(boardElement('i'),boardElement('i'));ambient.append(aurora);}
   if(style==='timing'){const rail=boardElement('div','rail');rail.append(boardElement('i'));ambient.append(rail);}
@@ -163,16 +166,16 @@ function boardCreatePanel(snapshot) {
   if(style==='neon')hero.append(history.node);else if(!anyMetric)right.append(history.node);
   if(anyMetric) {
     const gauge=boardElement('div',style==='timing'?'dbox':'gauge');ui.gauge=gauge;
-    if(config.showTaskScore){
-      const iq=boardMetric('iq',true);ui.metrics.iq=iq;const hit=style==='timing'?iq.cell:boardElement('div',style==='glass'?'dial board-iq-hit':'board-iq-hit');ui.iqHit=hit;hit.tabIndex=0;
+    if(config.showPerformance){
+      const perf=boardMetric('performance',true);ui.metrics.performance=perf;const hit=style==='timing'?perf.cell:boardElement('div',style==='glass'?'dial board-perf-hit':'board-perf-hit');ui.perfHit=hit;hit.tabIndex=0;
       if(style==='glass') {
         const svg=boardSvg('svg',{viewBox:'0 0 66 66','aria-hidden':'true'}),defs=boardSvg('defs'),gradient=boardSvg('linearGradient',{id:'board-pearl',x1:0,y1:1,x2:1,y2:0});
         for(const [offset,color]of [[0,'var(--pearl-c)'],[.5,'var(--pearl-a)'],[1,'var(--pearl-b)']])gradient.append(boardSvg('stop',{offset,'stop-color':color}));defs.append(gradient);
         const track=boardSvg('path',{class:'trk',d:boardArcPath(1)}),arc=boardSvg('path',{class:'arc',d:boardArcPath(1),pathLength:100,'stroke-dasharray':'100 100','stroke-dashoffset':100,style:'stroke:url(#board-pearl)'}),tip=boardSvg('circle',{class:'tip',r:2.3,cx:(33+29*Math.cos(150*Math.PI/180)),cy:(33+29*Math.sin(150*Math.PI/180)),style:'transform-origin:33px 33px;transform-box:view-box'});
-        svg.append(defs,track,arc,tip);hit.append(svg,iq.cell);ui.arc=arc;ui.tip=tip;gauge.append(hit);
+        svg.append(defs,track,arc,tip);hit.append(svg,perf.cell);ui.arc=arc;ui.tip=tip;gauge.append(hit);
       }else if(style==='neon'){
-        hit.append(iq.cell);const segments=boardElement('div','segs');for(let i=0;i<12;i++)segments.append(boardElement('i'));hit.append(segments);ui.segments=segments;gauge.append(hit);
-      }else gauge.append(iq.cell);
+        hit.append(perf.cell);const segments=boardElement('div','segs');for(let i=0;i<12;i++)segments.append(boardElement('i'));hit.append(segments);ui.segments=segments;gauge.append(hit);
+      }else gauge.append(perf.cell);
     }
     const subs=style==='timing'?gauge:boardElement('div','subs');ui.subs=subs;
     if(config.showThinking){ui.metrics.thinking=boardMetric('thinking');subs.append(ui.metrics.thinking.cell);}
@@ -181,7 +184,7 @@ function boardCreatePanel(snapshot) {
     if(style!=='neon'){const strip=boardElement('div','strip');strip.append(history.node);panel.append(strip);}
   }
   const viewport=boardElement('div','board'),rows=boardElement('div','board-rows');ui.viewport=viewport;ui.rows=rows;
-  if(config.showTaskScore){const columns=boardElement('div','cols');columns.append(boardElement('i','ln'));if(style==='timing')columns.append(boardElement('span','g',boardWord('gap')));columns.append(boardElement('span','',boardWord('iq')),boardElement('span','',style==='timing'?'TOK/S':'tok/s'));rows.append(columns);ui.columns=columns;}
+  if(config.showPerformance){const columns=boardElement('div','cols');columns.append(boardElement('i','ln'));if(style==='timing')columns.append(boardElement('span','g',boardWord('gap')));columns.append(boardElement('span','',boardWord('performance')),boardElement('span','',style==='timing'?'TOK/S':'tok/s'));rows.append(columns);ui.columns=columns;}
   ui.empty=boardElement('div','board-empty');rows.append(ui.empty);viewport.append(rows);panel.append(viewport);
   const footer=boardElement('footer','foot'),today=boardElement('span'),todayValue=boardElement('b'),cost=boardElement('span'),peak=boardElement('span','peak'),peakValue=boardElement('b');
   today.append(document.createTextNode((style==='timing'?boardWord('today').toUpperCase():boardWord('today'))+' '),todayValue,document.createTextNode(style==='timing'?' TOK':' tok'));
@@ -196,9 +199,13 @@ function boardCreatePanel(snapshot) {
 function boardMeasureMetrics() {
   const ui=boardState.ui;if(!ui||!ui.gauge)return;
   function width(host,cls,text){const probe=boardElement('span',cls+' probe',text);host.append(probe);const bounds=probe.getBoundingClientRect(),style=getComputedStyle(probe),value=bounds.width+parseFloat(style.marginLeft||'0')+parseFloat(style.marginRight||'0');probe.remove();return Math.ceil(value);}
+  if(boardSelected().showPerformance){
+    const probe=boardElement('div','item group probe'),row=boardElement('div','row'),value=boardElement('span','performance'),cell=boardElement('span','perf-score-cell','8,888');value.append(cell);row.append(value);probe.append(row);boardState.panel.append(probe);
+    const measured=Math.ceil(cell.getBoundingClientRect().width);probe.remove();boardState.perfMeasure=measured;boardState.perfWidth=measured;boardState.perfWideAt=0;boardState.panel.style.setProperty('--perfw',measured+'px');
+  }
   const config=boardSelected(),keys=[config.showThinking?'thinking':null,config.showCost?'cost':null].filter(Boolean),unit=ui.currency.symbol+'/s';
   if(config.style==='timing') {
-    const labels=[config.showTaskScore?'iq':null,...keys].filter(Boolean);ui.gauge.style.setProperty('--tabw',Math.max(0,...labels.map(key=>width(ui.gauge,'ml',boardWord(key))))+'px');
+    const labels=[config.showPerformance?'performance':null,...keys].filter(Boolean);ui.gauge.style.setProperty('--tabw',Math.max(0,...labels.map(key=>width(ui.gauge,'ml',boardWord(key))))+'px');
   }else if(ui.subs&&keys.length) {
     boardState.subMeasure=width(ui.subs,'mn','0.00088');boardState.subWidth=boardState.subMeasure;
     ui.subs.style.setProperty('--subnum',boardState.subWidth+'px');ui.subs.style.setProperty('--sublabel',Math.max(...keys.map(key=>width(ui.subs,'ml',boardWord(key))))+'px');
@@ -222,13 +229,13 @@ function boardCreateRow(kind,key) {
   }else row.append(boardElement('span'),boardElement('span'));
   const name=boardElement('span','name');if(kind==='more')name.append(boardElement('span','label'));else name.append(boardElement('b'),boardElement('small'));
   const capsule=boardElement('span','cap none');row.append(name,capsule);let gap=null;if(timing){gap=boardElement('span','gap');row.append(gap);}
-  const iq=boardElement('span','iq');iq.append(boardElement('span'));const value=boardElement('span','speed');row.append(iq,value);const chip=boardElement('span','chip');if(kind!=='more')row.append(chip);
+  const perf=boardElement('span','performance'),value=boardElement('span','speed');row.append(perf,value);const chip=boardElement('span','chip');if(kind!=='more')row.append(chip);
   row.tabIndex=kind==='group'||kind==='more'?0:-1;item.append(row);boardState.ui.rows.append(item);
-  return {item,row,rank,badge,name,capsule,gap,iq,value,chip,y:null,live:null,phase:null,modeKey:null,entry:null};
+  return {item,row,rank,badge,name,capsule,gap,perf,value,chip,y:null,live:null,phase:null,modeKey:null,entry:null};
 }
 function boardPaintRow(record,entry,total,rank,ahead) {
   const config=boardSelected(),group=entry.group,agent=entry.agent||group.root,isGroup=entry.kind==='group',live=isGroup?group.live:boardModel.rate(agent),shownLive=boardState.liveKnown?live:null;
-  const score=isGroup?group.score:boardModel.score([agent],boardState.latest.tasks&&boardState.latest.tasks.current),heat=agentSpeedVisuals.heat(live,view.preferences.redline),color=agentSpeedVisuals.color(Math.max(.12,heat),appearance);
+  const score=isGroup?group.score:boardModel.score([agent],boardState.latest.performance&&boardState.latest.performance.current),heat=agentSpeedVisuals.heat(live,view.preferences.redline),color=agentSpeedVisuals.color(Math.max(.12,heat),appearance);
   record.entry=entry;record.item.dataset.boardGroup=group.id;record.row.style.setProperty('--src',getComputedStyle(document.body).getPropertyValue('--source').trim()||'#84cc16');
   record.row.style.setProperty('--share',String(total.live>0?Math.min(1,live/total.live):0));record.row.style.setProperty('--rowheat',color);record.row.classList.toggle('gen',boardState.liveKnown&&(isGroup?group.generating>0:agent.phase==='generating'));
   if(config.style!=='timing') {
@@ -241,9 +248,12 @@ function boardPaintRow(record,entry,total,rank,ahead) {
   if(record.live!==null&&shownLive!==null&&record.live>0&&Math.abs(live/record.live-1)>.05&&!boardState.reduced) {
     record.value.classList.remove('board-number-flash','board-number-dim');boardAnimate(record.value,live>record.live?[{filter:'brightness(1.8)'},{filter:'brightness(1)'}]:[{opacity:.55},{opacity:1}],{duration:live>record.live?800:500,easing:'ease-out'});
   }
-  record.live=shownLive;boardSetText(record.iq.firstElementChild,score.value===null?'–':Math.round(score.value));record.iq.classList.toggle('grade',score.form!=='live');record.iq.firstElementChild.classList.toggle('board-proof',score.proof);
-  if(record.scoreValue!==undefined&&record.scoreValue!==null&&score.value!==null&&score.value<record.scoreValue)boardAnimate(record.iq.firstElementChild,[{opacity:0},{opacity:1}],{duration:200,easing:'ease-out'});
-  record.scoreValue=score.value;
+  record.live=shownLive;record.perf.classList.toggle('quiet',score.form!=='live');
+  const perfKey=JSON.stringify([score.agent&&score.agent.id,score.value,score.form,score.provisional,score.n,language,boardState.contrast]);
+  if(config.showPerformance&&record.perfKey!==perfKey){
+    const cell=createPerfScoreCell(score.agent||agent,'board');record.perf.replaceChildren(cell);record.perfKey=perfKey;
+  }
+  record.row.tabIndex=config.showPerformance||isGroup?0:-1;
   const modeKey=JSON.stringify(agent.speedMode);if(record.modeKey!==modeKey){record.modeKey=modeKey;const capsule=boardCapsule(agent);record.capsule.replaceWith(capsule);record.capsule=capsule;}
   if(isGroup) {
     const previous=Number(record.rank.firstElementChild.textContent);if(previous!==rank){boardSetText(record.rank.firstElementChild,rank);if(previous)boardAnimate(record.rank.firstElementChild,[{transform:'translateY('+(rank<previous?100:-100)+'%)'},{transform:'translateY(0)'}],{duration:350,easing:'cubic-bezier(.2,.8,.2,1)'});}
@@ -254,13 +264,14 @@ function boardPaintRow(record,entry,total,rank,ahead) {
   if(isGroup&&group.subs.length){const own=boardModel.rate(group.root);facts.push(group.subs.length+' '+boardWord('sub'),boardWord('share')+': '+(group.live>0?number((group.live-own)/group.live*100,1)+'%':'–'));}
   if(agent.speedMode)facts.push(boardWord('mode')+': '+agent.speedMode.value+' · '+boardWord(agent.speedMode.evidence));
   const estimated=isGroup?group.estimated:agent.liveEstimatedTps;if(boardState.liveKnown&&estimated>0)facts.push(boardWord('estimate')+': '+boardModel.formatSpeed(estimated)+' tok/s');
-  boardAttachTask(record.row,score,agent,facts);record.row.boardTooltipFacts=facts;
-  record.row.setAttribute('aria-label',(isGroup?(language==='zh'?'第 '+rank+' 名，':'Rank '+rank+', '):'')+label+', '+boardModel.formatSpeed(shownLive)+' tok/s'+(config.showTaskScore?', '+boardScoreWords(score):'')+(isGroup&&group.subs.length?', '+group.subs.length+' '+boardWord('sub')+', '+boardWord(boardState.expanded===group.id?'collapse':'expand'):''));
+  boardAttachPerf(record.row,score,agent,facts);record.row.boardTooltipFacts=facts;
+  if(record.perf.firstElementChild)boardAttachPerf(record.perf.firstElementChild,score,agent,facts);
+  record.row.setAttribute('aria-label',(isGroup?(language==='zh'?'第 '+rank+' 名，':'Rank '+rank+', '):'')+label+', '+boardModel.formatSpeed(shownLive)+' tok/s'+(config.showPerformance?', '+boardScoreWords(score):'')+(isGroup&&group.subs.length?', '+group.subs.length+' '+boardWord('sub')+', '+boardWord(boardState.expanded===group.id?'collapse':'expand'):''));
 }
 function boardPlan(groups) {
   const config=boardSelected(),size=boardSizes[config.size],timing=config.style==='timing',style=getComputedStyle(boardState.panel);
   const rowHeight=parseFloat(style.getPropertyValue('--row'))+(size.key==='S'?(timing?0:2):8),subHeight=parseFloat(style.getPropertyValue('--sub')),moreHeight=timing?19:20;
-  const top=config.showTaskScore?(timing?16:14):timing?0:6,room=Math.max(0,boardState.ui.viewport.clientHeight-top);
+  const top=config.showPerformance?(timing?16:14):timing?0:6,room=Math.max(0,boardState.ui.viewport.clientHeight-top);
   let visible=groups.slice(0,size.groups);if(boardState.showAll)visible=groups;
   else while(visible.length&&visible.length*rowHeight+(groups.length>visible.length?moreHeight:0)>room)visible=visible.slice(0,-1);
   let free=Math.max(0,room-visible.length*rowHeight-(groups.length>visible.length?moreHeight:0));
@@ -297,30 +308,43 @@ function boardSetThinking(show,instant=false) {
   if(!instant&&!boardState.reduced){const height=gauge.getBoundingClientRect().height,top=gauge.getBoundingClientRect().top;boardAnimate(gauge,[{height:oldHeight+'px',transform:'translateY('+(oldTop-top)+'px)'},{height:height+'px',transform:'none'}],{duration:300,easing:'cubic-bezier(.33,0,.67,1)'});below.forEach((element,index)=>{const delta=before[index]-element.getBoundingClientRect().top;if(Math.abs(delta)>.01)boardAnimate(element,[{transform:'translateY('+delta+'px)'},{transform:'none'}],{duration:300,easing:'cubic-bezier(.33,0,.67,1)'});});if(show)parts.forEach(part=>boardAnimate(part,[{opacity:0},{opacity:1}],{duration:250,easing:'ease-out'}));}
 }
 function boardPaintScore(score,instant=false) {
-  const ui=boardState.ui,metric=ui.metrics.iq;if(!metric)return;
-  metric.cell.classList.toggle('none',score.value===null);metric.cell.classList.toggle('resting',score.form==='resting');metric.number.classList.toggle('board-proof',score.proof);
-  ui.gauge.classList.toggle('board-resting',score.form==='resting');ui.gauge.classList.toggle('board-proof-shape',score.proof);
-  boardAttachTask(ui.iqHit,score,null,[score.agent?score.agent.project||score.agent.name:'',boardScoreWords(score)].filter(Boolean));ui.iqHit.setAttribute('aria-label',boardScoreWords(score));
-  boardState.scoreProof=score.proof;
+  const ui=boardState.ui,metric=ui.metrics.performance;if(!metric)return;
+  const previous=boardState.scoreShown,target=score.value,crossfade=!instant&&target!==previous&&(boardState.reduced||previous===null||target===null);
+  let outgoing=null;
+  if(crossfade){const rect=metric.number.getBoundingClientRect(),style=getComputedStyle(metric.number);outgoing=metric.number.cloneNode(true);outgoing.classList.add('board-score-outgoing');outgoing.style.cssText+=';position:fixed;left:'+rect.left+'px;top:'+rect.top+'px;width:'+rect.width+'px;font:'+style.font+';letter-spacing:'+style.letterSpacing+';line-height:'+style.lineHeight+';color:'+style.color+';text-shadow:'+style.textShadow+';pointer-events:none';boardState.panel.append(outgoing);}
+  metric.cell.classList.toggle('none',score.value===null);metric.cell.classList.toggle('resting',score.form==='resting');metric.number.classList.toggle('board-provisional',score.provisional);
+  ui.gauge.classList.toggle('board-resting',score.form==='resting');ui.gauge.classList.toggle('board-provisional-shape',score.provisional);
+  boardAttachPerf(ui.perfHit,score,null,[score.agent?score.agent.project||score.agent.name:'',boardScoreWords(score)].filter(Boolean));ui.perfHit.setAttribute('aria-label',boardScoreWords(score));
+  boardState.scoreProvisional=score.provisional;
   if(boardState.scoreRaf&&boardState.scoreValue===score.value)return;
   if(boardState.scoreRaf){cancelAnimationFrame(boardState.scoreRaf);boardState.scoreRaf=0;}
-  const previous=boardState.scoreShown,target=score.value;boardState.scoreValue=target;
+  boardState.scoreValue=target;
   const draw=value=>{
-    boardState.scoreShown=value;const shown=value===null?'–':String(Math.round(value));boardSetText(metric.number,shown);if(metric.number.hasAttribute('data-ghost')){const ghost=shown.replace(/[0-9]/g,'8');if(metric.number.getAttribute('data-ghost')!==ghost)metric.number.setAttribute('data-ghost',ghost);}const fraction=value===null?0:Math.max(0,Math.min(1,value/100));
-    if(ui.arc){if(boardState.scoreProof){ui.arc.removeAttribute('pathLength');ui.arc.setAttribute('d',fraction>0?boardArcPath(fraction):'');ui.arc.setAttribute('stroke-dasharray','0 6');ui.arc.setAttribute('stroke-dashoffset','0');}else{ui.arc.setAttribute('pathLength','100');ui.arc.setAttribute('d',boardArcPath(1));ui.arc.setAttribute('stroke-dasharray','100 100');ui.arc.setAttribute('stroke-dashoffset',String(100-fraction*100));}ui.arc.style.opacity=fraction>0?'1':'0';ui.tip.style.transform='rotate('+(fraction*240)+'deg)';ui.tip.style.opacity=value===null?'0':'1';}
+    boardState.scoreShown=value;const shown=perfNumber(value,boardSelected().style==='glass');boardSetText(metric.number,shown);
+    if(metric.number.hasAttribute('data-ghost')){const ghost=shown.replace(/[0-9]/g,'8');if(metric.number.getAttribute('data-ghost')!==ghost)metric.number.setAttribute('data-ghost',ghost);}
+    const fraction=value===null||value<=0?0:Math.max(0,Math.min(1,Math.log2(value/250)/4));
+    if(ui.arc){
+      if(boardState.scoreProvisional){ui.arc.removeAttribute('pathLength');ui.arc.setAttribute('d',fraction>0?boardArcPath(fraction):'');ui.arc.setAttribute('stroke-dasharray','0 6');ui.arc.setAttribute('stroke-dashoffset','0');}
+      else{ui.arc.setAttribute('pathLength','100');ui.arc.setAttribute('d',boardArcPath(1));ui.arc.setAttribute('stroke-dasharray','100 100');ui.arc.setAttribute('stroke-dashoffset',String(100-fraction*100));}
+      ui.arc.style.opacity=value===null?'0':'';ui.tip.style.transform='rotate('+(fraction*240)+'deg)';ui.tip.style.opacity=value===null?'0':'';
+    }
     if(ui.segments){const lit=value===null?0:Math.round(fraction*12);for(let i=0;i<12;i++)ui.segments.children[i].classList.toggle('on',i<lit);}
   };
-  if(!instant&&!boardState.reduced&&previous!==null&&target!==null&&target-previous>=3) {
-    const started=performance.now(),duration=Math.min(.8,.3+.012*(target-previous))*1000;
+  const delta=previous!==null&&target!==null?Math.abs(target-previous):0,counts=delta>=3&&delta>=.01*Math.max(Math.abs(previous||0),1);
+  if(!instant&&!boardState.reduced&&previous!==null&&target!==null&&counts) {
+    const started=performance.now(),duration=(previous<=0||target<=0?.7:Math.max(.3,Math.min(.7,.3+.35*Math.abs(Math.log2(target/previous)))))*1000;
     const frame=now=>{if(document.hidden||boardState.destroyed){boardState.scoreRaf=0;return;}const fraction=Math.max(0,Math.min(1,(now-started)/duration));draw(Math.round(previous+(target-previous)*(1-Math.pow(1-fraction,3))));boardState.scoreRaf=fraction<1?requestAnimationFrame(frame):0;};boardState.scoreRaf=requestAnimationFrame(frame);
-  }else{draw(target);if(previous!==null&&target!==previous&&!instant)boardAnimate(metric.number,[{opacity:0},{opacity:1}],{duration:boardState.reduced?150:200,easing:'ease-out'});}
+  }else{
+    draw(target);
+    if(crossfade){boardAnimate(metric.number,[{opacity:0},{opacity:1}],{duration:150,easing:'ease-out'});const fade=boardAnimate(outgoing,[{opacity:1},{opacity:0}],{duration:150,easing:'ease-out'});if(fade)fade.addEventListener('finish',()=>outgoing.remove(),{once:true});else outgoing.remove();}
+  }
 }
 function boardPaintMetrics(total,instant) {
   const ui=boardState.ui,config=boardSelected();boardPaintScore(total.score,instant);
   if(ui.metrics.thinking){const metric=ui.metrics.thinking,value=boardState.liveKnown?total.thinking:null;boardRoll(metric.number,boardModel.formatSpeed(value),value!==null&&value>=(metric.previous||0),instant);metric.previous=value;boardSetText(metric.unit,config.style==='timing'?'TOK/S':'tok/s');metric.cell.classList.toggle('none',value===null);metric.cell.classList.toggle('zero',value===0);}
   if(ui.metrics.cost){const metric=ui.metrics.cost,cost=boardState.liveKnown?boardCost(total,ui.currency):{text:'–',unit:ui.currency.symbol+'/s',partial:false};boardRoll(metric.number,cost.text,total.cost!==null&&total.cost>=(metric.previous||0),instant);metric.previous=total.cost;boardSetText(metric.unit,config.style==='timing'?cost.unit.toUpperCase():cost.unit);metric.cell.classList.toggle('partial',cost.partial);metric.cell.classList.toggle('unknown',cost.text==='–');metric.cell.classList.toggle('zero',cost.text==='0');}
   clearTimeout(boardState.thinkTimer);boardState.thinkTimer=0;
-  if(config.showThinking&&(config.showTaskScore||config.showCost)&&boardState.liveKnown&&total.thinking!==null) {
+  if(config.showThinking&&(config.showPerformance||config.showCost)&&boardState.liveKnown&&total.thinking!==null) {
     if(Number(boardModel.formatSpeed(total.thinking))===0){if(boardState.zeroSince===null)boardState.zeroSince=performance.now();const remaining=3000-(performance.now()-boardState.zeroSince);if(remaining<=0)boardSetThinking(false,instant);else if(boardState.thinkShown)boardState.thinkTimer=setTimeout(()=>{boardState.thinkTimer=0;if(!document.hidden&&boardState.latest)renderBoardUI(boardState.latest);},remaining+1);}
     else{boardState.zeroSince=null;boardSetThinking(true,instant);}
   }else boardState.zeroSince=null;
@@ -375,10 +399,19 @@ function boardRenderRows(groups,total,events,instant) {
   }
   boardState.ui.empty.hidden=groups.length>0;boardSetText(boardState.ui.empty,boardWord(boardState.latest?'noAgents':'scanning'));
   let capsuleWidth=0;for(const record of boardState.rows.values())if(record.entry.kind!=='more'&&!record.capsule.classList.contains('none'))capsuleWidth=Math.max(capsuleWidth,record.capsule.scrollWidth);boardState.panel.style.setProperty('--capw',Math.ceil(capsuleWidth)+'px');
+  if(boardSelected().showPerformance&&boardState.perfMeasure!==null){
+    let need=boardState.perfMeasure;
+    for(const record of boardState.rows.values())if(!record.leaving&&record.perf.firstElementChild)need=Math.max(need,Math.ceil(record.perf.firstElementChild.scrollWidth));
+    const now=performance.now();
+    if(need>boardState.perfWidth){boardState.perfWidth=need;boardState.perfWideAt=now;}
+    else if(need>boardState.perfMeasure)boardState.perfWideAt=now;
+    else if(now-boardState.perfWideAt>=6000)boardState.perfWidth=boardState.perfMeasure;
+    boardState.panel.style.setProperty('--perfw',boardState.perfWidth+'px');
+  }
   if(!instant)for(const event of events)boardAccent(event);
 }
 function boardCloseTooltip(){clearTimeout(boardState.tooltipTimer);boardState.tooltipTimer=0;const tooltip=node('board-tooltip');if(tooltip)tooltip.hidden=true;}
-function boardShowTooltip(row){boardCloseTooltip();if(boardSelected().showTaskScore||!row.boardTooltipFacts)return;boardState.tooltipTimer=setTimeout(()=>{boardState.tooltipTimer=0;if(document.hidden)return;const tooltip=node('board-tooltip');boardSetText(tooltip,row.boardTooltipFacts.join('\n'));tooltip.hidden=false;const bounds=row.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(window.innerWidth-tip.width-8,bounds.left))+'px';tooltip.style.top=Math.max(8,Math.min(window.innerHeight-tip.height-8,bounds.bottom+6))+'px';},350);}
+function boardShowTooltip(row){boardCloseTooltip();if(boardSelected().showPerformance||!row.boardTooltipFacts)return;boardState.tooltipTimer=setTimeout(()=>{boardState.tooltipTimer=0;if(document.hidden)return;const tooltip=node('board-tooltip');boardSetText(tooltip,row.boardTooltipFacts.join('\n'));tooltip.hidden=false;const bounds=row.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(window.innerWidth-tip.width-8,bounds.left))+'px';tooltip.style.top=Math.max(8,Math.min(window.innerHeight-tip.height-8,bounds.bottom+6))+'px';},350);}
 function boardTouchExpansion(){
   boardState.expandedAt=performance.now();clearTimeout(boardState.expansionTimer);boardState.expansionTimer=0;
   if((boardState.expanded||boardState.showAll)&&!document.hidden)boardState.expansionTimer=setTimeout(()=>{boardState.expansionTimer=0;boardState.expanded=null;boardState.showAll=false;if(!document.hidden&&boardState.latest)renderBoardUI(boardState.latest);},60000);
@@ -392,10 +425,10 @@ function boardPause(){
   for(const animation of boardState.animations)animation.cancel();boardState.animations.clear();if(boardState.effects)boardState.effects.setVisible(false);
   if(boardState.panel)for(const outgoing of boardState.panel.querySelectorAll('.ch.out'))outgoing.remove();
   for(const [key,record]of boardState.rows)if(record.leaving){record.item.remove();boardState.rows.delete(key);}
-  if(boardState.panel)for(const clone of boardState.panel.querySelectorAll('.board-fold-clone'))clone.remove();node('board-surface').dataset.paused='true';
+  if(boardState.panel)for(const clone of boardState.panel.querySelectorAll('.board-fold-clone,.board-score-outgoing'))clone.remove();node('board-surface').dataset.paused='true';
 }
 function boardDisposePanel(){
-  boardPause();if(boardState.effects)boardState.effects.destroy();boardState.effects=null;if(boardState.panel){if(typeof taskHideCard==='function')taskHideCard();boardState.panel.remove();}boardState.panel=null;boardState.ui=null;boardState.rows.clear();
+  boardPause();if(boardState.effects)boardState.effects.destroy();boardState.effects=null;if(boardState.panel){if(typeof perfHideCard==='function')perfHideCard();boardState.panel.remove();}boardState.panel=null;boardState.ui=null;boardState.rows.clear();
 }
 function bindBoardUI(){
   if(boardState.bound||boardState.destroyed)return;boardState.bound=true;boardState.abort=new AbortController();
@@ -406,10 +439,10 @@ function bindBoardUI(){
   const list=node('board-settings-list');boardListen(list,'click',event=>{const remove=event.target.closest('[data-board-remove]');if(remove){const id=remove.dataset.boardRemove;void boardRequest(id,()=>bridge.removeBoard(id));return;}if(event.target.closest('label,input'))return;const row=event.target.closest('[data-board-id]');if(row)void boardRequest('select',()=>bridge.selectBoard(row.dataset.boardId));});
   boardListen(list,'change',event=>{const input=event.target.closest('[data-board-visible]');if(input){const desired=input.checked;boardRenderSettings();void boardConfigure(input.dataset.boardVisible,{visible:desired});}});
   boardListen(list,'keydown',event=>{const row=event.target.closest('[data-board-id]');if(!row||event.target!==row)return;const rows=[...list.querySelectorAll('[data-board-id]')],index=rows.indexOf(row);if(['ArrowUp','ArrowDown','Home','End'].includes(event.key)){event.preventDefault();const target=event.key==='Home'?rows[0]:event.key==='End'?rows[rows.length-1]:rows[(index+(event.key==='ArrowDown'?1:rows.length-1))%rows.length];target.focus();}else if(event.key==='Enter'||event.key===' '){event.preventDefault();void boardRequest('select',()=>bridge.selectBoard(row.dataset.boardId));}});
-  for(const key of ['style','size','showTaskScore','showThinking','showCost','pinned','clickThrough'])boardListen(node('board-'+key),'change',event=>{const selected=boardSelected();if(!selected)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;boardRenderSettings();void boardConfigure(selected.id,{[key]:value});});
+  for(const key of ['style','size','showPerformance','showThinking','showCost','pinned','clickThrough'])boardListen(node('board-'+key),'change',event=>{const selected=boardSelected();if(!selected)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;boardRenderSettings();void boardConfigure(selected.id,{[key]:value});});
   boardListen(node('board-scope'),'change',event=>{const selected=boardSelected();if(!selected)return;const orbId=event.target.value;boardRenderSettings();void boardConfigure(selected.id,{orbId});});
   const surface=node('board-surface');boardListen(surface,'click',event=>{const row=event.target.closest('.item.group .row,.item.more .row');if(row)boardActivateRow(row);});
-  boardListen(surface,'keydown',event=>{if(event.key==='Enter'){const row=event.target.closest('.item.group .row,.item.more .row');if(row){event.preventDefault();boardActivateRow(row);}}else if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10'){event.preventDefault();boardCloseTooltip();void action(()=>bridge.showMenu());}else if(event.key==='Escape'){boardCloseTooltip();if(boardState.expanded||boardState.showAll){boardState.expanded=null;boardState.showAll=false;if(boardState.latest)renderBoardUI(boardState.latest);}}else if(['ArrowDown','ArrowUp','Home','End','PageDown','PageUp'].includes(event.key)&&!event.defaultPrevented&&!document.querySelector('[data-task-card-open=true]')){
+  boardListen(surface,'keydown',event=>{if(event.key==='Enter'){const row=event.target.closest('.item.group .row,.item.more .row');if(row){event.preventDefault();boardActivateRow(row);}}else if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10'){event.preventDefault();boardCloseTooltip();void action(()=>bridge.showMenu());}else if(event.key==='Escape'){boardCloseTooltip();if(boardState.expanded||boardState.showAll){boardState.expanded=null;boardState.showAll=false;if(boardState.latest)renderBoardUI(boardState.latest);}}else if(['ArrowDown','ArrowUp','Home','End','PageDown','PageUp'].includes(event.key)&&!event.defaultPrevented&&!document.querySelector('[data-perf-card-open=true]')){
     const rows=[...surface.querySelectorAll('.item.group .row,.item.sub .row,.item.more .row')],index=rows.indexOf(event.target),next=event.key==='Home'?0:event.key==='End'?rows.length-1:Math.max(0,Math.min(rows.length-1,index+(event.key==='ArrowUp'?-1:event.key==='PageUp'?-5:event.key==='PageDown'?5:1)));if(rows[next]){event.preventDefault();rows[next].focus({preventScroll:true});rows[next].scrollIntoView({block:'nearest'});}}
   });
   boardListen(surface,'contextmenu',event=>{event.preventDefault();boardCloseTooltip();void action(()=>bridge.showMenu());});
@@ -425,15 +458,15 @@ function bindBoardUI(){
 }
 function renderBoardUI(snapshot){
   if(boardState.destroyed||!view)return;boardRenderSettings();const surface=node('board-surface'),config=boardSelected(),isBoard=view.surface==='board';surface.hidden=!isBoard;
-  if(!isBoard||!config||!config.visible||document.hidden){boardPause();if(boardState.panel&&typeof taskHideCard==='function')taskHideCard();return;}
+  if(!isBoard||!config||!config.visible||document.hidden){boardPause();if(boardState.panel&&typeof perfHideCard==='function')perfHideCard();return;}
   const reduce=reducedMotion.matches;if(reduce&&!boardState.reduced)boardPause();
   boardState.latest=snapshot||null;boardState.liveKnown=!!snapshot&&!!liveFacts();boardState.reduced=reduce;boardState.contrast=boardContrastMedia.matches;
   const scope=boardScopeKey(snapshot);if(scope!==boardState.scopeKey){boardDisposePanel();boardState.scopeKey=scope;boardState.ranking.reset();boardState.expanded=null;boardState.showAll=false;boardState.previousLive=null;boardState.previousPeak=null;boardState.scoreValue=null;boardState.scoreShown=null;boardState.zeroSince=null;boardState.thinkShown=true;boardState.title={level:0,candidate:0,pending:null,pendingSince:0,belowFirstSince:null};boardCloseTooltip();}
-  const key=JSON.stringify([config.id,config.style,config.size,config.showTaskScore,config.showThinking,config.showCost,language,snapshot&&snapshot.pricing.currency]);const fresh=key!==boardState.key||!boardState.panel;
+  const key=JSON.stringify([config.id,config.style,config.size,config.showPerformance,config.showThinking,config.showCost,language,snapshot&&snapshot.pricing.currency]);const fresh=key!==boardState.key||!boardState.panel;
   if(fresh){boardState.key=key;boardCreatePanel(snapshot);}const panel=boardState.panel,ui=boardState.ui,size=boardSizes[config.size];
   surface.style.setProperty('--board-side',size.side+'px');surface.dataset.clickThrough=String(config.clickThrough);surface.dataset.effects=view.preferences.effects;surface.dataset.paused='false';surface.classList.toggle('board-motion-reduced',boardState.reduced);panel.dataset.theme=appearance;ui.currency=boardCurrency(snapshot);
   if((boardState.expanded||boardState.showAll)&&performance.now()-boardState.expandedAt>=60000){boardState.expanded=null;boardState.showAll=false;}
-  const agents=snapshot?snapshot.agents:[],tasks=snapshot&&snapshot.tasks?snapshot.tasks.current:null,total=boardModel.aggregate(agents,tasks),grouped=boardModel.groups(agents,tasks),ranked=boardState.ranking.tick(grouped,scope,snapshot?Math.floor(snapshot.updatedAt/500):0);
+  const agents=snapshot?snapshot.agents:[],values=snapshot&&snapshot.performance?snapshot.performance.current:null,total=boardModel.aggregate(agents,values),grouped=boardModel.groups(agents,values),ranked=boardState.ranking.tick(grouped,scope,snapshot?Math.floor(snapshot.updatedAt/500):0);
   const live=boardState.liveKnown?total.live:null,heat=agentSpeedVisuals.heat(live||0,view.preferences.redline),color=agentSpeedVisuals.color(Math.max(config.style==='timing'?.1:.06,heat),appearance),softColor=agentSpeedVisuals.color(heat,appearance);
   const active=boardState.liveKnown&&(total.generating>0||total.live>=.05);surface.dataset.idle=String(!active);panel.dataset.redline=String(heat>.85);
   panel.style.setProperty('--heat',color);panel.style.setProperty('--heat-2',agentSpeedVisuals.color(Math.min(1,heat+.18),appearance));panel.style.setProperty('--heat-soft','color-mix(in srgb,'+softColor+' 55%,transparent)');panel.style.setProperty('--heat-amount',String(heat));panel.style.setProperty('--maxc',agentSpeedVisuals.color(.82,appearance));panel.style.setProperty('--topa',agentSpeedVisuals.color(.72,appearance));panel.style.setProperty('--topb',agentSpeedVisuals.color(1,appearance));panel.style.setProperty('--breath',(3.2-2.2*heat).toFixed(2)+'s');
@@ -445,7 +478,7 @@ function renderBoardUI(snapshot){
   const usage=snapshot&&snapshot.today,knownCost=usage&&!(usage.requests>0&&usage.unpricedRequests>=usage.requests)&&ui.currency.rate!==null;
   const amount=knownCost?boardModel.amountNumber(usage.costUsd*ui.currency.rate,ui.currency.digits):'–';
   boardSetText(ui.todayCost,knownCost?(usage.unpricedRequests>0?'≥':'')+ui.currency.symbol+(/[A-Za-z]$/.test(ui.currency.symbol)?'\u00a0':'')+amount:'–');
-  const coverage=[];if(!boardState.liveKnown)coverage.push(boardWord(snapshot&&snapshot.status==='scanning'?'scanning':'unavailable'));if(snapshot&&(snapshot.coverage.limited||snapshot.status==='partial'))coverage.push(boardWord('partial'));if(config.showTaskScore&&snapshot&&snapshot.tasks){if(snapshot.tasks.scanning)coverage.push(boardWord('taskScan'));if(snapshot.tasks.limited)coverage.push(boardWord('taskLimited'));}boardSetText(ui.coverage,coverage.join(' · '));ui.coverage.hidden=coverage.length===0;
+  const coverage=[];if(!boardState.liveKnown)coverage.push(boardWord(snapshot&&snapshot.status==='scanning'?'scanning':'unavailable'));if(snapshot&&(snapshot.coverage.limited||snapshot.status==='partial'))coverage.push(boardWord('partial'));if(config.showPerformance&&snapshot&&snapshot.performance){if(snapshot.performance.scanning)coverage.push(boardWord('perfScan'));if(snapshot.performance.limited)coverage.push(boardWord('perfLimited'));}boardSetText(ui.coverage,coverage.join(' · '));ui.coverage.hidden=coverage.length===0;
   boardDrawHistory(snapshot,total,color,heat);boardPaintMetrics(total,fresh);boardRenderRows(ranked.groups,total,ranked.events,fresh);
   if(!fresh&&live!==null&&boardState.previousLive!==null&&live>boardState.previousLive*1.08+20&&!boardState.reduced&&view.preferences.effects!=='off') {
     boardAnimate(ui.number,[{scale:1},{scale:1.06},{scale:1}],{duration:400,easing:'cubic-bezier(.2,.8,.2,1)'});const bounds=ui.number.getBoundingClientRect(),root=panel.getBoundingClientRect(),x=bounds.left-root.left+bounds.width/2,y=bounds.top-root.top+bounds.height/2;boardState.effects.burst(x,y,22,150,.9,[color,'#FFF7D6'],-40);if(config.style==='neon')boardState.effects.lightning(x-30,y,x+30,y,color);
@@ -454,9 +487,9 @@ function renderBoardUI(snapshot){
     ui.peakBadge.classList.remove('board-pop');void ui.peakBadge.offsetWidth;ui.peakBadge.classList.add('board-pop');const bounds=ui.number.getBoundingClientRect(),root=panel.getBoundingClientRect();boardState.effects.wave(bounds.left-root.left+bounds.width/2,bounds.top-root.top+bounds.height/2,'#FACC15',.65,1.1);boardAnimate(ui.number,[{filter:'brightness(1.8)',color:'#FFE58A'},{filter:'brightness(1)',color:'var(--ink)'}],{duration:800,easing:'ease-out'});
   }
   boardState.previousLive=live;boardState.previousPeak=peak;boardState.previousPeakSequence=peakSequence;
-  if(fresh||performance.now()-boardState.lastAriaAt>=1000){const cost=boardCost(total,ui.currency);panel.setAttribute('aria-label',boardWord('title')+', '+boardScopeLabel(config.orbId)+': '+boardModel.formatSpeed(live)+' tok/s, '+ui.title.textContent+(config.showTaskScore?', '+boardScoreWords(total.score):'')+(config.showThinking&&boardState.thinkShown?', '+boardWord('thinking')+' '+boardModel.formatSpeed(boardState.liveKnown?total.thinking:null)+' tok/s':'')+(config.showCost?', '+boardWord('cost')+' '+(boardState.liveKnown?(cost.partial?'≥':'')+cost.text+' '+cost.unit:'–'):'')+(coverage.length?', '+coverage.join(', '):''));boardState.lastAriaAt=performance.now();}
+  if(fresh||performance.now()-boardState.lastAriaAt>=1000){const cost=boardCost(total,ui.currency);panel.setAttribute('aria-label',boardWord('title')+', '+boardScopeLabel(config.orbId)+': '+boardModel.formatSpeed(live)+' tok/s, '+ui.title.textContent+(config.showPerformance?', '+boardScoreWords(total.score):'')+(config.showThinking&&boardState.thinkShown?', '+boardWord('thinking')+' '+boardModel.formatSpeed(boardState.liveKnown?total.thinking:null)+' tok/s':'')+(config.showCost?', '+boardWord('cost')+' '+(boardState.liveKnown?(cost.partial?'≥':'')+cost.text+' '+cost.unit:'–'):'')+(coverage.length?', '+coverage.join(', '):''));boardState.lastAriaAt=performance.now();}
 }
 function destroyBoardUI(){
-  if(boardState.destroyed)return;boardState.destroyed=true;boardDisposePanel();if(boardState.abort)boardState.abort.abort();boardState.abort=null;boardState.settingsRows.clear();boardState.pending.clear();boardState.latest=null;boardState.ranking.reset();boardCloseTooltip();if(typeof taskHideCard==='function')taskHideCard();
+  if(boardState.destroyed)return;boardState.destroyed=true;boardDisposePanel();if(boardState.abort)boardState.abort.abort();boardState.abort=null;boardState.settingsRows.clear();boardState.pending.clear();boardState.latest=null;boardState.ranking.reset();boardCloseTooltip();if(typeof perfHideCard==='function')perfHideCard();
 }
 `;

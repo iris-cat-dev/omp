@@ -10,8 +10,8 @@ uniform float uS,uLogicalS,uThumbnail,uH,uO,uDark,uFx,uMoving,uReduced,uTime,uPe
 uniform vec4 uPhases,uRipples[4],uWaves[4],uWaveColors[4],uLiquidColors[9];
 uniform vec2 uMeniscus;
 uniform vec3 uLiquidInk;
-uniform sampler2D uReadout,uReadoutOld,uDecorative,uTaskReadout;
-uniform float uReadoutOn,uTaskReadoutOn,uTaskReadoutContrast;
+uniform sampler2D uReadout,uReadoutOld,uDecorative,uPerfReadout;
+uniform float uReadoutOn,uPerfReadoutOn,uPerfReadoutContrast;
 uniform vec4 uReadoutRoll,uReadoutValue,uReadoutUnit,uReadoutTitle,uReadoutBelowTitle;
 const float TAU=6.283185307179586;
 const vec3 HOT=vec3(1.,.96862745,.83921569);
@@ -134,14 +134,14 @@ void main(){
     vec4 titleColor=below>.5?uReadoutBelowTitle:uReadoutTitle;
     over(valueColor.rgb,valueColor.a*valueMask);over(unitColor.rgb,unitColor.a*masks.g);over(titleColor.rgb,titleColor.a*masks.b);
   }
-  // Task score/thinking use the identical surface split, with no output roll, heat color or glow.
-  if(uTaskReadoutOn>.5&&abs(p.x)<.5&&abs(p.y)<.5){
-    vec4 masks=texture(uTaskReadout,p+vec2(.5));float below=step(waveY(p.x,false),p.y);
+  // Performance/thinking use the identical surface split, with no output roll, heat color or glow.
+  if(uPerfReadoutOn>.5&&abs(p.x)<.5&&abs(p.y)<.5){
+    vec4 masks=texture(uPerfReadout,p+vec2(.5));float below=step(waveY(p.x,false),p.y);
     if(dark&&below>.5)over(vec3(0.),masks.a*.55);
     vec3 ink=vec3(11./255.,13./255.,18./255.);
     vec3 number=dark?vec3(1.):ink,secondary=dark?vec3(1.):below>.5?ink:vec3(0.);
     float numberAlpha=below>.5?(dark?.94:.88):(dark?.78:.76),secondaryAlpha=below>.5?(dark?.72:.62):.50;
-    if(uTaskReadoutContrast>.5){numberAlpha=max(numberAlpha,.92);secondaryAlpha=max(secondaryAlpha,.70);}
+    if(uPerfReadoutContrast>.5){numberAlpha=max(numberAlpha,.92);secondaryAlpha=max(secondaryAlpha,.70);}
     over(number,numberAlpha*masks.r);over(secondary,secondaryAlpha*masks.g);
   }
   acc*=smoothstep(.74,.73,r);

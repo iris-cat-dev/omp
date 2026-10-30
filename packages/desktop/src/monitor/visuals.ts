@@ -116,7 +116,7 @@ function create(host,options){
     node.style.fontSize=actual+'px';node.style.letterSpacing=track+'px';return actual;
   }
   function layout(){
-    const L=READOUTS[st.style],S=st.S,task=frame.taskReadout,shift=task?task.stackOffset:0,legend=st.style==='needle'&&task&&task.needleLegend;
+    const L=READOUTS[st.style],S=st.S,perf=frame.perfReadout,shift=perf?perf.stackOffset:0,legend=st.style==='needle'&&perf&&perf.needleLegend;
     const size=fitText(number,frame.formattedValue,L.value*S,L.max*S,700,-.5,0);
     number.style.top=(.5*S+L.baseline*S+shift-.80*size)+'px';
     unit.textContent=frame.unit;unit.style.display=L.unit>0?'block':'none';const unitSize=Math.max(7,(legend ? .046 : L.unit)*S),unitY=legend?-.254*S:L.unitY*S+shift;unit.style.fontSize=unitSize+'px';unit.style.top=(.5*S+unitY-.80*unitSize)+'px';unit.style.opacity=legend?'.75':'';
@@ -352,14 +352,14 @@ function create(host,options){
   function lost(event){event.preventDefault();contextLost=true;nativeGpu=null;programs=buffer=null;liquidText.reset(null);stop(true);if(hero)hero.pause();if(sharedPaint)sharedPaint.clearRect(0,0,glCanvas.width,glCanvas.height);gpuError=gpuError||'WebGL context lost';host.dataset.renderError=gpuError;showError(true);}
   function restored(){contextLost=false;programs=buffer=null;nativeGpu=null;gpuError=null;delete host.dataset.renderError;if(frame){snap();dirty=true;schedule();}}
   function windowResize(){if(frame&&visible&&!document.hidden){st.readoutAnimate=false;resize();layout();dirty=true;schedule();}}
-  // Task-only event frames update cached masks/layout without recreating an instrument or replaying feedback.
-  function taskReadoutChange(event){if(destroyed||!frame)return;frame.taskReadout=event.detail;if(visible&&!document.hidden){layout();dirty=true;schedule();}}
+  // Performance-only event frames update cached masks/layout without recreating an instrument or replaying feedback.
+  function perfReadoutChange(event){if(destroyed||!frame)return;frame.perfReadout=event.detail;if(visible&&!document.hidden){layout();dirty=true;schedule();}}
   document.addEventListener('visibilitychange',visibility);window.addEventListener('resize',windowResize);if(!sharedGpu){glCanvas.addEventListener('webglcontextlost',lost);glCanvas.addEventListener('webglcontextrestored',restored);}
-  host.addEventListener('task-readout-change',taskReadoutChange);
+  host.addEventListener('perf-readout-change',perfReadoutChange);
   function destroy(){
     if(destroyed)return;destroyed=true;stop(true);
     document.removeEventListener('visibilitychange',visibility);window.removeEventListener('resize',windowResize);if(!sharedGpu){glCanvas.removeEventListener('webglcontextlost',lost);glCanvas.removeEventListener('webglcontextrestored',restored);}
-    host.removeEventListener('task-readout-change',taskReadoutChange);
+    host.removeEventListener('perf-readout-change',perfReadoutChange);
     if(sharedGpu)releaseThumbnail();else{liquidText.reset(contextLost?null:gl);disposeGpuResources(nativeGpu);loseOrbGl(gl);nativeGpu=null;}
     for(const node of [glCanvas,paintCanvas,fxCanvas,transitionCanvas,readout,pill,errorLabel])if(node)node.remove();
     host.classList.remove('as-orb-art');delete host.dataset.renderError;

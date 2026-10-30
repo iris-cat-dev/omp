@@ -4,7 +4,7 @@ export type OmpMonitorBoardSize = "small" | "medium" | "large";
 export interface OmpMonitorBoardPreferences {
   style: OmpMonitorBoardStyle;
   size: OmpMonitorBoardSize;
-  showTaskScore: boolean;
+  showPerformance: boolean;
   showThinking: boolean;
   showCost: boolean;
   pinned: boolean;
@@ -22,7 +22,7 @@ export const MAX_MONITOR_BOARDS = 4;
 export const DEFAULT_BOARD_PREFERENCES: Readonly<OmpMonitorBoardPreferences> = Object.freeze({
   style: "glass",
   size: "medium",
-  showTaskScore: true,
+  showPerformance: true,
   showThinking: true,
   showCost: true,
   pinned: true,

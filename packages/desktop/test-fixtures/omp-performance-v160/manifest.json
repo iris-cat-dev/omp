@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/zoefix/agent-speed",
+  "version": "1.6.0",
+  "tagObject": "f9f6150c2196e3ab565beaffe76c83e50eff013d",
+  "commit": "ca460d7f899e7adc73391ea706b729f1fc481fde",
+  "license": "MIT; Copyright (c) 2026 zoefix; complete original notice in LICENSE",
+  "fixtures": [
+    {
+      "file": "main.jsonl",
+      "original": "spec/fixtures/omp/agent/sessions/-projects-pulsar/2026-10-20T10-50-00-000Z_01a158ee-afc0-7bc4-874c-000278dde6c4.jsonl",
+      "bytes": 12522,
+      "sha256": "99a982da3b6f17bedf732e5103e8a7630b76ed1eeeed301ae18a95486809cbee"
+    },
+    {
+      "file": "ScanCallSites.jsonl",
+      "original": "spec/fixtures/omp/agent/sessions/-projects-pulsar/2026-10-20T10-50-00-000Z_01a158ee-afc0-7bc4-874c-000278dde6c4/ScanCallSites.jsonl",
+      "bytes": 5006,
+      "sha256": "1cbcdcfb7f7d9e0b08d8eeac45b9b860b3563d248d3c42b218359cd7403921f1"
+    }
+  ],
+  "licenseSha256": "83de342c5fd532d3b25359a82cd62c6e18beb52c108353e54923c68dbe9592dd",
+  "safety": "Fictional upstream data copied byte-for-byte. Read-only numeric parsing only; tool text is never executed. The original child fixture is ScanCallSites, not Reviewer."
+}

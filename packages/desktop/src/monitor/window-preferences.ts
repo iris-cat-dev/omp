@@ -23,7 +23,7 @@ export const DEFAULT_MONITOR_PREFERENCES: Readonly<OmpMonitorPreferences> = Obje
   clickThrough: false,
   fadeWhenIdle: false,
   nameMode: "auto",
-  showTaskScore: false,
+  showPerformance: false,
   showThinking: true,
 });
 const CHOICES: Record<string, Readonly<Record<string, true>>> = {
@@ -53,7 +53,7 @@ const BOOLEANS: Readonly<Record<string, true>> = {
   pinned: true,
   clickThrough: true,
   fadeWhenIdle: true,
-  showTaskScore: true,
+  showPerformance: true,
   showThinking: true,
 };
 export const GLOBAL_MONITOR_KEYS = ["appearance", "effects", "language", "redline"] as const;
@@ -125,7 +125,7 @@ export function configureMonitorBoard(
         throw new Error("Invalid monitor board size");
       result.size = value;
     } else if (
-      key === "showTaskScore" ||
+      key === "showPerformance" ||
       key === "showThinking" ||
       key === "showCost" ||
       key === "pinned" ||
@@ -165,6 +165,15 @@ function readPositions(value: unknown): Record<string, MonitorPosition> {
   }
   return positions;
 }
+/** Read legacy files without accepting the retired key in live configuration or writing it back. */
+function migratePerformancePreference(value: unknown): unknown {
+  const source = object(value);
+  if (!source || !Object.hasOwn(source, "showTaskScore")) return value;
+  const { showTaskScore: legacy, ...preferences } = source;
+  if (!Object.hasOwn(preferences, "showPerformance")) preferences.showPerformance = legacy;
+  return preferences;
+}
+
 function readOrb(value: unknown): MonitorOrbRecord {
   const entry = object(value);
   const scope = object(entry?.scope);
@@ -181,7 +190,9 @@ function readOrb(value: unknown): MonitorOrbRecord {
   return {
     id: entry.id,
     scope: { profile: scope.profile, project: scope.project },
-    preferences: configureMonitorPreferences(entry.preferences, { ...DEFAULT_MONITOR_PREFERENCES }),
+    preferences: configureMonitorPreferences(migratePerformancePreference(entry.preferences), {
+      ...DEFAULT_MONITOR_PREFERENCES,
+    }),
     visible: entry.visible,
     positions: readPositions(entry.positions),
   };
@@ -201,7 +212,9 @@ function readBoard(value: unknown, orbIds: ReadonlySet<string>): OmpMonitorBoard
     {
       style: entry.style,
       size: entry.size,
-      showTaskScore: entry.showTaskScore,
+      showPerformance: Object.hasOwn(entry, "showPerformance")
+        ? entry.showPerformance
+        : entry.showTaskScore,
       showThinking: entry.showThinking,
       showCost: entry.showCost,
       pinned: entry.pinned,
