@@ -1,4 +1,6 @@
 import { MONITOR_UI_STRINGS } from "./ui-strings.js";
+import { MONITOR_TASK_SCRIPT } from "./task-ui.js";
+import { MONITOR_BOARD_SCRIPT } from "./board-ui.js";
 
 // Executed only inside MONITOR_HTML's nonce-authorized static script.
 // Agent Speed's original Windows surface geometry and interactions are adapted under MIT.
@@ -25,6 +27,8 @@ let titleTracker = { level: 0, candidate: 0, pending: null, pendingSince: 0, bel
 let activityBaseline = null, pendingActivity = { responsePulse: false, newPeak: false };
 let ladderOptions = null, currencyOptions = null;
 let previewInitialization = null, previewsReady = false, rendererDestroyed = false;
+${MONITOR_TASK_SCRIPT}
+${MONITOR_BOARD_SCRIPT}
 function node(id) { return document.getElementById(id); }
 function t(key) { return monitorStrings[language][key] || monitorStrings.en[key] || key; }
 function text(id, value) { const element = node(id), next = String(value); if (element.textContent !== next) element.textContent = next; }
@@ -37,9 +41,23 @@ function compact(value) {
   if (n >= 1000) return number(n / 1000, n < 10000 ? 2 : 1) + 'k';
   return number(n, n > 0 && n < 10 ? 1 : 0);
 }
+function speedNumber(value) {
+  const n = finite(value); if (n === null) return '—';
+  if (n <= 0) return '0';
+  if (n < 10) return Math.round(n * 10) / 10 >= 10 ? '10' : number(n, 1);
+  if (n < 1000) return Math.round(n) >= 1000 ? '1.00k' : number(Math.round(n));
+  const units = [[1000, 'k'], [1000000, 'M'], [1000000000, 'B']];
+  for (let i = 0; i < units.length; i++) {
+    const scaled = n / units[i][0];
+    if (Math.round(scaled * 100) / 100 < 10) return number(scaled, 2) + units[i][1];
+    if (Math.round(scaled * 10) / 10 < 100) return number(scaled, 1) + units[i][1];
+    if (Math.round(scaled) < 1000 || i === units.length - 1) return number(Math.round(scaled)) + units[i][1];
+  }
+  return number(Math.round(n));
+}
 function speed(value, unit = false) {
   const n = finite(value); if (n === null || n < .05) return '–';
-  return compact(n) + (unit ? ' tok/s' : '');
+  return speedNumber(n) + (unit ? ' tok/s' : '');
 }
 function percent(value) { const n = finite(value); return n === null ? '—' : number(Math.min(1, n) * 100, 1) + '%'; }
 function timestamp(value, full = false) {
@@ -88,7 +106,7 @@ function liveFacts() { const snapshot = snapshotFacts(); return snapshot && !vie
 function currentStatus() { return view && view.workerError ? 'error' : !view || view.refreshing ? 'scanning' : view.snapshot ? view.snapshot.status : 'scanning'; }
 function liveValue() { const snapshot = liveFacts(); return snapshot ? snapshot.rate.measuredTps + snapshot.rate.estimatedTps : null; }
 function liveEstimated() { const snapshot = liveFacts(); return !!snapshot && snapshot.rate.estimatedTps > 0; }
-function liveReadout(value, unit = false) { return value === null ? '—' : (liveEstimated() ? '≈' : '') + (value < .05 ? '0' : compact(value)) + (unit ? ' tok/s' : ''); }
+function liveReadout(value, unit = false) { return value === null ? '—' : speedNumber(value) + (unit ? ' tok/s' : ''); }
 function orbName() { return !view ? 'OMP' : view.scope.project || (view.scope.profile ? 'OMP · ' + view.scope.profile : 'OMP'); }
 function applyLanguage() {
   document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -277,6 +295,7 @@ function ensureArt(id, embedded, thumbnail, sharedGpu) {
 }
 function updateArt(id, embedded, frame, visible, thumbnail = false, sharedGpu = false) {
   if (!visible && !artInstances.has(id)) return;
+  frame.taskReadout = taskOrbReadoutFrame(id);
   const entry = ensureArt(id, embedded, thumbnail, sharedGpu); entry.instance.setVisible(visible); entry.visible = visible; if (visible) entry.instance.update(frame);
 }
 function renderArt() {
@@ -304,9 +323,10 @@ function renderArt() {
   pendingActivity = { responsePulse: false, newPeak: false };
   text('speed-value', liveReadout(value)); text('speed-title', title.label);
   node('hero').style.setProperty('--heat', agentSpeedVisuals.color(value === null ? 0 : agentSpeedVisuals.heat(value, preferences.redline), appearance));
-  text('hero-context', facts ? (liveEstimated() ? t('estimated') + ' · ' : '') + t('generating') + ' ' + number(active) + ' · ' + t('tools') + ' ' + number(tools) : view.workerError ? t('stale') : t('status_' + currentStatus()));
-  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ', ' + t('estimated') : '')) + ', ' + title.label);
-  const orb = node('orb-surface'); orb.dataset.clickThrough = String(preferences.clickThrough); orb.dataset.hovered = String(base.hovered); orb.setAttribute('aria-label', base.hoverLabel + ', ' + title.label); orb.title = base.hoverLabel;
+  text('hero-context', facts ? t('generating') + ' ' + number(active) + ' · ' + t('tools') + ' ' + number(tools) : view.workerError ? t('stale') : t('status_' + currentStatus()));
+  const heroTaskDescription = taskOrbReadoutFrame('hero-art').description || '', orbTaskDescription = taskOrbReadoutFrame('orb-art').description || '';
+  node('hero').setAttribute('aria-label', t('liveChart') + ': ' + (value === null ? t('unknown') : liveReadout(value, true) + (liveEstimated() ? ', ' + t('estimated') : '')) + ', ' + title.label + (heroTaskDescription ? ', ' + heroTaskDescription : ''));
+  const orb = node('orb-surface'); orb.dataset.clickThrough = String(preferences.clickThrough); orb.dataset.hovered = String(base.hovered); orb.setAttribute('aria-label', base.hoverLabel + ', ' + title.label + (orbTaskDescription ? ', ' + orbTaskDescription : '')); orb.title = base.hoverLabel;
   text('orb-name', orbName()); const plate = node('orb-nameplate'); plate.hidden = preferences.size < 80 || preferences.nameMode === 'never' || (preferences.nameMode === 'auto' && view.windowCount < 2 && !view.scope.profile && !view.scope.project);
   const font = Math.max(9, Math.min(12, Math.round(preferences.size * .066 * 2) / 2)), height = Math.round(1.78 * font), gap = Math.max(4, Math.min(7, Math.round(.034 * preferences.size))), dot = Math.max(5, .6 * font);
   if (view.nameplateMaxWidth < height + dot + .42 * font) plate.hidden = true;
@@ -436,7 +456,7 @@ function showLivePoint(index, clientX = null) {
 function renderAgents(agents) {
   const byId = new Map(agents.map(agent => [agent.id, agent])), children = new Map(), roots = [], visited = new Set(), ordered = [];
   const phaseOrder = { generating: 0, tools: 1, idle: 2 };
-  const compare = (left, right) => phaseOrder[left.phase] - phaseOrder[right.phase] || (right.outputTps || 0) - (left.outputTps || 0) || right.lastActivityAt - left.lastActivityAt || left.id.localeCompare(right.id);
+  const compare = (left, right) => phaseOrder[left.phase] - phaseOrder[right.phase] || (right.liveMeasuredTps + right.liveEstimatedTps) - (left.liveMeasuredTps + left.liveEstimatedTps) || right.lastActivityAt - left.lastActivityAt || left.id.localeCompare(right.id);
   for (const agent of agents) {
     if (agent.parentId && agent.parentId !== agent.id && byId.has(agent.parentId)) { const list = children.get(agent.parentId) || []; list.push(agent); children.set(agent.parentId, list); }
     else roots.push(agent);
@@ -454,16 +474,16 @@ function renderAgents(agents) {
     else if (agent.phase === 'tools') { phase.classList.add('symbol'); phase.textContent = '\uE90F'; }
     else phase.classList.add('phase-idle');
     const rate = document.createElement('span'); rate.className = 'agent-speed';
-    const reference = agent.phase === 'generating' ? finite(agent.outputTps) : null;
-    rate.dataset.muted = String(reference === null || reference < .05); rate.dataset.phase = agent.phase; rate.textContent = reference !== null && reference >= .05 ? '≈' + speed(reference) : '–'; rate.setAttribute('aria-label', reference !== null && reference >= .05 ? t('average') + ': ' + number(reference, 1) + ' tok/s' : t(agent.phase));
-    if (agent.phase === 'tools') {
+    const reference = finite(agent.liveMeasuredTps + agent.liveEstimatedTps);
+    rate.dataset.muted = String(reference === null || reference < .05); rate.dataset.phase = agent.phase; rate.textContent = reference !== null && reference >= .05 ? speed(reference) : '–'; rate.setAttribute('aria-label', reference !== null && reference >= .05 ? t('live') + ': ' + number(reference, 1) + ' tok/s' : t(agent.phase));
+    if (agent.phase === 'tools' && (reference === null || reference < .05)) {
       // Original Windows Dashboard/LiveValue.cs: 11 DIP outlined hourglass and settled sand.
       const hourglass = svgElement('svg', { viewBox: '0 0 11 11', width: 11, height: 11, class: 'agent-hourglass', 'aria-hidden': true });
       hourglass.append(svgElement('path', { d: 'M1.6,0.7 L9.4,0.7 M1.6,10.3 L9.4,10.3 M2.6,0.7 C2.6,3.6 5.5,4.3 5.5,5.5 C5.5,6.7 2.6,7.4 2.6,10.3 M8.4,0.7 C8.4,3.6 5.5,4.3 5.5,5.5 C5.5,6.7 8.4,7.4 8.4,10.3', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.1, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }), svgElement('path', { d: 'M3.7,9.7 L7.3,9.7 L5.5,7.7 Z', fill: 'currentColor', opacity: .75 }));
       rate.replaceChildren(hourglass);
     }
     row.title = (agent.name || agent.id) + '\n' + t('profile') + ': ' + agent.profile + '\n' + t('project') + ': ' + (agent.project || '—') + '\n' + t('average') + ': ' + number(agent.outputTps, 1) + ' tok/s · TTFT: ' + (finite(agent.ttftMs) === null ? t('unknown') : number(agent.ttftMs / 1000, 2) + ' s') + '\n' + timestamp(agent.lastActivityAt) + '\n' + t('agentNote');
-    row.append(copy, phase, rate); fragment.append(row);
+    row.append(copy, phase); const mode = createModeCell(agent), score = createTaskScoreCell(agent); if (mode) row.append(mode); if (score) row.append(score); row.append(rate); fragment.append(row);
   }
   node('agent-rows').replaceChildren(fragment); text('agent-count', agents.length ? number(agents.length) : ''); node('agents-empty').hidden = agents.length > 0; node('agent-note').hidden = agents.length === 0;
   const toggle = node('agents-toggle'); toggle.hidden = ordered.length <= 6; toggle.setAttribute('aria-expanded', String(agentsExpanded)); toggle.textContent = agentsExpanded ? t('collapseAgents') + ' ⌃' : '+' + number(ordered.length - 6) + ' ' + t('moreAgents') + ' ⌄';
@@ -551,6 +571,7 @@ function renderHistory(snapshot) {
   const pricing = view.snapshot ? view.snapshot.pricing : null;
   text('history-rate-note', !pricing || pricing.currency === 'USD' ? '' : pricing.currency + ' · ' + (finite(pricing.exchangeRate) === null ? t('rateUnavailable') : dateLabel(pricing.rates.updatedAt) + ' · ' + t('feed_' + pricing.rates.status)));
   renderHistoryChart(days, dates); renderHistoryRows(present);
+  renderTaskUI(snapshot);
 }
 function historyBarValue(day) { return historyMetric === 'output' ? finite(day.outputTokens) : costValue(day, historyMetric); }
 function renderHistoryChart(days, dates) {
@@ -664,7 +685,7 @@ function setSettingsPage(page, focus = false) {
   for (const button of document.querySelectorAll('.settings-nav [role=tab]')) { const selected = button.dataset.page === page; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; }
   text('settings-title', t(page === 'data' ? 'localData' : page)); node('settings-scroller').scrollTop = 0;
   if (focus) node('nav-' + page).focus();
-  if (view) { renderSettingsContent(); renderArt(); }
+  if (view) renderView();
 }
 function closePopover(restoreFocus = false) {
   for (const element of document.querySelectorAll('.popover')) element.hidden = true;
@@ -682,12 +703,13 @@ function renderView() {
   if (!view || rendererDestroyed) return;
   appearance = view.preferences.appearance === 'system' ? systemAppearance.matches ? 'dark' : 'light' : view.preferences.appearance;
   document.body.dataset.surface = view.surface; document.body.dataset.appearance = appearance; document.body.dataset.effects = view.preferences.effects; document.body.dataset.hidden = String(document.hidden); document.documentElement.style.setProperty('--orb-size', view.preferences.size + 'px');
-  for (const surface of ['orb', 'dashboard', 'history', 'settings']) node(surface + '-surface').hidden = view.surface !== surface;
+  for (const surface of ['orb', 'dashboard', 'history', 'settings', 'board']) node(surface + '-surface').hidden = view.surface !== surface;
   renderStatus();
-  if (document.hidden) { renderArt(); return; }
+  if (document.hidden) { renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts()); renderArt(); return; }
   if (view.surface === 'dashboard') { renderToday(snapshotFacts()); renderChart(liveFacts()); renderAgents(snapshotFacts() ? snapshotFacts().agents : []); }
   else if (view.surface === 'history') { for (const [id, kind] of [['history-profile', 'profile'], ['history-project', 'project']]) fillScope(id, view.scopes[kind === 'profile' ? 'profiles' : 'projects'], view.scope[kind], kind === 'profile' ? 'allProfiles' : 'allProjects'); renderHistory(snapshotFacts()); }
   else if (view.surface === 'settings') renderSettingsContent();
+  if (view.surface !== 'history') renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts());
   renderArt();
 }
 function receiveState(next) {
@@ -779,6 +801,9 @@ function bindControls() {
   for (const id of ['source-omp', 'open-history']) node(id).addEventListener('click', () => action(() => bridge.openSurface('history')));
   node('open-settings').addEventListener('click', () => action(() => bridge.openSurface('settings'))); node('close-all').addEventListener('click', () => action(() => bridge.closeAll()));
   node('new-window').addEventListener('click', () => action(() => bridge.newWindow())); node('orb-menu').addEventListener('click', () => action(() => bridge.showMenu()));
+  for (const [id, surface] of [['orb-art', 'orb'], ['hero-art', 'dashboard']]) node(id).addEventListener('task-readout-change', () => {
+    if (!rendererDestroyed && !document.hidden && view && view.surface === surface) renderArt();
+  });
   for (const id of ['orb-visible', 'settings-orb-visible']) node(id).addEventListener('change', event => action(() => bridge.setOrbVisible(event.target.checked)));
   node('export').addEventListener('click', () => action(async () => { const result = await bridge.exportCsv(selectedDates()); if (result !== 'cancelled') toast(t(result === 'saved' ? 'exportSaved' : result === 'unavailable' ? 'exportUnavailable' : 'exportFailed')); }));
   for (const input of document.querySelectorAll('[data-preference]')) input.addEventListener(input.type === 'range' ? 'input' : 'change', event => {
@@ -834,12 +859,15 @@ function startMonitor() {
   applyLanguage(); text('about-attribution', monitorAttribution); text('about-license', monitorLicense); setSettingsPage('general');
   if (!bridge) { toast(t('bridgeError')); return; }
   bindControls(); unsubscribe = bridge.onState(receiveState);
+  bindTaskUI(); bindBoardUI();
   unsubscribePointer = bridge.onPointer(pointer => { lastPointer = pointer; syncInteraction(); });
   unsubscribeDrag = bridge.onDragCancelled(() => cancelLocalDrag());
   bridge.ready().then(receiveState).catch(() => { if (!rendererDestroyed) toast(t('bridgeError')); });
   document.addEventListener('visibilitychange', () => { if (rendererDestroyed) return; document.body.dataset.hidden = String(document.hidden); if (document.hidden) { cancelPreviewInitialization(); cancelLocalDrag(false); clearTimeout(titleDeadlineTimer); titleDeadlineTimer = null; orbIdleSince = null; pendingActivity = { responsePulse: false, newPeak: false }; for (const entry of artInstances.values()) entry.instance.setVisible(false); } else renderView(); });
   systemAppearance.addEventListener('change', renderView); reducedMotion.addEventListener('change', renderView); window.addEventListener('blur', finishDrag);
   window.addEventListener('resize', () => { closePopover(); renderView(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { renderTaskUI(snapshotFacts()); renderBoardUI(snapshotFacts()); } });
   window.addEventListener('pagehide', () => { if (rendererDestroyed) return; rendererDestroyed = true; cancelPreviewInitialization(); cancelLocalDrag(false); if (unsubscribe) unsubscribe(); if (unsubscribePointer) unsubscribePointer(); if (unsubscribeDrag) unsubscribeDrag(); clearTimeout(toastTimer); clearTimeout(selectedDayTimer); clearTimeout(peakBadgeTimer); clearTimeout(titleDeadlineTimer); for (const entry of artInstances.values()) entry.instance.destroy(); agentSpeedVisuals.disposeSharedGpu(); artInstances.clear(); orbRows.clear(); systemAppearance.removeEventListener('change', renderView); reducedMotion.removeEventListener('change', renderView); });
+  window.addEventListener('pagehide', () => { destroyTaskUI(); destroyBoardUI(); });
 }
 `;

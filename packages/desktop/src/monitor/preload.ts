@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OmpMonitorScope } from "./types.js";
+import type { OmpMonitorBoardPreferences } from "./board-types.js";
 import type {
   OmpMonitorConfigure,
   OmpMonitorExportRange,
@@ -12,7 +13,7 @@ import type {
 contextBridge.exposeInMainWorld("ompMonitor", {
   ready: (): Promise<OmpMonitorViewState> => ipcRenderer.invoke("paseo:monitor:ready"),
   refresh: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:refresh"),
-  openSurface: (surface: Exclude<OmpMonitorSurface, "orb">): Promise<void> =>
+  openSurface: (surface: Exclude<OmpMonitorSurface, "orb" | "board">): Promise<void> =>
     ipcRenderer.invoke("paseo:monitor:surface", surface),
   configure: (patch: OmpMonitorConfigure): Promise<void> =>
     ipcRenderer.invoke("paseo:monitor:configure", patch),
@@ -23,6 +24,13 @@ contextBridge.exposeInMainWorld("ompMonitor", {
   setScope: (scope: OmpMonitorScope): Promise<void> =>
     ipcRenderer.invoke("paseo:monitor:scope", scope),
   newWindow: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:new-window"),
+  newBoard: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:new-board"),
+  configureBoard: (
+    id: string,
+    patch: Partial<OmpMonitorBoardPreferences> & { visible?: boolean; orbId?: string },
+  ): Promise<void> => ipcRenderer.invoke("paseo:monitor:configure-board", { id, patch }),
+  removeBoard: (id: string): Promise<void> => ipcRenderer.invoke("paseo:monitor:remove-board", id),
+  selectBoard: (id: string): Promise<void> => ipcRenderer.invoke("paseo:monitor:select-board", id),
   beginDrag: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:drag-start"),
   endDrag: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:drag-end"),
   showMenu: (): Promise<void> => ipcRenderer.invoke("paseo:monitor:menu"),

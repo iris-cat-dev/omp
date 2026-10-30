@@ -31,6 +31,8 @@ export interface EstimateInterval {
   start: number;
   end: number;
   speed: number;
+  /** Same speed-reference set as output; null/absent means the native split is unknown. */
+  thinkingSpeed?: number | null;
 }
 
 /** A sparse per-second distribution avoids duration-sized arrays for each response. */
@@ -135,6 +137,8 @@ export interface LiveMetrics {
   measuredTps: number;
   estimatedTps: number;
   estimatedShare: number;
+  measuredThinkingTps: number | null;
+  estimatedThinkingTps: number | null;
   series: OmpMonitorPoint[];
 }
 
@@ -149,16 +153,19 @@ export function liveMetrics(
   const seriesStart = firstSecond * 1_000;
   let measuredTokens = 0;
   let estimatedTokens = 0;
+  let measuredThinkingTokens: number | null = null;
+  let estimatedThinkingTokens: number | null = null;
   for (const response of responses) {
-    if (response.startMs === null || response.measuredDurationMs <= 0) continue;
+    if (response.sideCall || response.startMs === null || response.measuredDurationMs <= 0)
+      continue;
     const speed = (response.outputTokens * 1_000) / response.measuredDurationMs;
-    measuredTokens +=
-      (speed *
-        Math.max(
-          0,
-          Math.min(now, response.endMs) - Math.max(now - LIVE_WINDOW_MS, response.startMs),
-        )) /
-      1_000;
+    const overlap = liveOverlapMs(response.startMs, response.endMs, now);
+    measuredTokens += (speed * overlap) / 1_000;
+    if (overlap > 0 && response.reasoningKnownRequests > 0)
+      measuredThinkingTokens =
+        (measuredThinkingTokens ?? 0) +
+        (Math.min(response.reasoningTokens, response.outputTokens) * overlap) /
+          response.measuredDurationMs;
     addInterval(
       measured,
       Math.max(seriesStart, response.startMs),
@@ -167,10 +174,11 @@ export function liveMetrics(
     );
   }
   for (const estimate of estimates) {
-    estimatedTokens +=
-      (estimate.speed *
-        Math.max(0, Math.min(now, estimate.end) - Math.max(now - LIVE_WINDOW_MS, estimate.start))) /
-      1_000;
+    const overlap = liveOverlapMs(estimate.start, estimate.end, now);
+    estimatedTokens += (estimate.speed * overlap) / 1_000;
+    if (overlap > 0 && typeof estimate.thinkingSpeed === "number")
+      estimatedThinkingTokens =
+        (estimatedThinkingTokens ?? 0) + (estimate.thinkingSpeed * overlap) / 1_000;
     addInterval(
       estimated,
       Math.max(seriesStart, estimate.start),
@@ -204,6 +212,19 @@ export function liveMetrics(
     measuredTps: Math.min(Number.MAX_SAFE_INTEGER, measuredTokens / (LIVE_WINDOW_MS / 1_000)),
     estimatedTps: Math.min(Number.MAX_SAFE_INTEGER, estimatedTokens / (LIVE_WINDOW_MS / 1_000)),
     estimatedShare: total > 0 ? estimatedTokens / total : 0,
+    measuredThinkingTps:
+      measuredThinkingTokens === null
+        ? null
+        : Math.min(Number.MAX_SAFE_INTEGER, measuredThinkingTokens / (LIVE_WINDOW_MS / 1_000)),
+    estimatedThinkingTps:
+      estimatedThinkingTokens === null
+        ? null
+        : Math.min(Number.MAX_SAFE_INTEGER, estimatedThinkingTokens / (LIVE_WINDOW_MS / 1_000)),
     series,
   };
+}
+
+/** Identical clipping for aggregate, agent, thinking and current-catalog cost contributions. */
+export function liveOverlapMs(start: number, end: number, now: number): number {
+  return Math.max(0, Math.min(now, end) - Math.max(now - LIVE_WINDOW_MS, start));
 }

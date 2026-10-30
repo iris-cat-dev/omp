@@ -454,7 +454,7 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
-type UsageNumericField = Exclude<keyof AgentUsage, never>;
+type UsageNumericField = Exclude<keyof AgentUsage, "scope" | "nativeMetrics">;
 
 function assignFiniteNumber(
   source: { [key: string]: JsonValue },
@@ -475,6 +475,8 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
     return undefined;
   }
   const result: AgentUsage = {};
+  if (sanitized.scope === "turn") return undefined;
+  if (sanitized.scope === "session") result.scope = "session";
   const fields: UsageNumericField[] = [
     "inputTokens",
     "cachedInputTokens",

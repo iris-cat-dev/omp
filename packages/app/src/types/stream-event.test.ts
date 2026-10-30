@@ -58,6 +58,49 @@ const reasoningChunk = (text: string): AgentStreamEventPayload => ({
 });
 
 describe("applyStreamEvent", () => {
+  it("attaches native message_end usage without changing text or adding an empty row", () => {
+    const nativeUsage = { scope: "turn" as const, outputTokens: 1_000 };
+    const initial = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: assistantChunk("answer", "request"),
+      timestamp: baseTimestamp,
+    });
+    const result = applyStreamEvent({
+      tail: initial.tail,
+      head: initial.head,
+      timestamp: new Date(10_000),
+      event: {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", text: "", messageId: "request", nativeUsage },
+      },
+    });
+    expect([...result.tail, ...result.head]).toHaveLength(1);
+    expect([...result.tail, ...result.head][0]).toMatchObject({
+      kind: "assistant_message",
+      text: "answer",
+      messageId: "request",
+      nativeUsage,
+    });
+  });
+
+  it("retains native footer facts in canonical history text", () => {
+    const nativeUsage = { scope: "turn" as const, outputTokens: 1_000 };
+    const result = applyStreamEvent({
+      tail: [],
+      head: [],
+      timestamp: baseTimestamp,
+      source: "canonical",
+      event: {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", text: "restored", messageId: "request", nativeUsage },
+      },
+    });
+    expect([...result.tail, ...result.head][0]).toMatchObject({ text: "restored", nativeUsage });
+  });
+
   it("buffers reasoning chunks in head", () => {
     const result = applyStreamEvent({
       tail: [],

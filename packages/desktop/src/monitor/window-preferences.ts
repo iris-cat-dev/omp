@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { object, safeLabel } from "./parser.js";
 import type { OmpMonitorScope } from "./types.js";
 import type { OmpMonitorPreferences } from "./view-types.js";
+import { DEFAULT_BOARD_PREFERENCES, MAX_MONITOR_BOARDS } from "./board-types.js";
+import type { OmpMonitorBoardPreferences, OmpMonitorBoardRecord } from "./board-types.js";
 
 export const MAX_MONITOR_ORBS = 8;
 const MAX_PREFERENCES_BYTES = 128 * 1024;
@@ -21,6 +23,8 @@ export const DEFAULT_MONITOR_PREFERENCES: Readonly<OmpMonitorPreferences> = Obje
   clickThrough: false,
   fadeWhenIdle: false,
   nameMode: "auto",
+  showTaskScore: false,
+  showThinking: true,
 });
 const CHOICES: Record<string, Readonly<Record<string, true>>> = {
   appearance: { system: true, dark: true, light: true },
@@ -49,6 +53,8 @@ const BOOLEANS: Readonly<Record<string, true>> = {
   pinned: true,
   clickThrough: true,
   fadeWhenIdle: true,
+  showTaskScore: true,
+  showThinking: true,
 };
 export const GLOBAL_MONITOR_KEYS = ["appearance", "effects", "language", "redline"] as const;
 
@@ -65,6 +71,7 @@ export interface MonitorOrbRecord {
 }
 export interface MonitorPreferencesDocument {
   orbs: MonitorOrbRecord[];
+  boards: OmpMonitorBoardRecord[];
   invalid: boolean;
 }
 
@@ -74,7 +81,7 @@ export function configureMonitorPreferences(
   current: OmpMonitorPreferences,
 ): OmpMonitorPreferences {
   const source = object(patch);
-  if (!source || Object.keys(source).length > 14) throw new Error("Invalid monitor preferences");
+  if (!source || Object.keys(source).length > 16) throw new Error("Invalid monitor preferences");
   const result = { ...current };
   const output = result as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(source)) {
@@ -97,6 +104,39 @@ export function configureMonitorPreferences(
   }
   result.size = Math.max(result.style === "minimal" ? 64 : 96, Math.round(result.size));
   result.redline = Math.round(result.redline / 50) * 50;
+  return result;
+}
+
+export function configureMonitorBoard(
+  patch: unknown,
+  current: OmpMonitorBoardPreferences,
+): OmpMonitorBoardPreferences {
+  const source = object(patch);
+  if (!source || Object.keys(source).length > 7)
+    throw new Error("Invalid monitor board preferences");
+  const result = { ...current };
+  for (const [key, value] of Object.entries(source)) {
+    if (key === "style") {
+      if (value !== "glass" && value !== "timing" && value !== "neon")
+        throw new Error("Invalid monitor board style");
+      result.style = value;
+    } else if (key === "size") {
+      if (value !== "small" && value !== "medium" && value !== "large")
+        throw new Error("Invalid monitor board size");
+      result.size = value;
+    } else if (
+      key === "showTaskScore" ||
+      key === "showThinking" ||
+      key === "showCost" ||
+      key === "pinned" ||
+      key === "clickThrough"
+    ) {
+      if (typeof value !== "boolean") throw new Error("Invalid monitor board preference");
+      result[key] = value;
+    } else {
+      throw new Error("Unknown monitor board preference");
+    }
+  }
   return result;
 }
 
@@ -146,11 +186,43 @@ function readOrb(value: unknown): MonitorOrbRecord {
     positions: readPositions(entry.positions),
   };
 }
-function readDocument(documentValue: unknown): MonitorOrbRecord[] {
+function readBoard(value: unknown, orbIds: ReadonlySet<string>): OmpMonitorBoardRecord {
+  const entry = object(value);
+  if (
+    !entry ||
+    typeof entry.id !== "string" ||
+    !/^[a-zA-Z0-9-]{1,64}$/.test(entry.id) ||
+    typeof entry.orbId !== "string" ||
+    !orbIds.has(entry.orbId) ||
+    typeof entry.visible !== "boolean"
+  )
+    throw new Error("Invalid monitor board");
+  const preferences = configureMonitorBoard(
+    {
+      style: entry.style,
+      size: entry.size,
+      showTaskScore: entry.showTaskScore,
+      showThinking: entry.showThinking,
+      showCost: entry.showCost,
+      pinned: entry.pinned,
+      clickThrough: entry.clickThrough,
+    },
+    DEFAULT_BOARD_PREFERENCES,
+  );
+  return {
+    ...preferences,
+    id: entry.id,
+    orbId: entry.orbId,
+    visible: entry.visible,
+    positions: readPositions(entry.positions),
+  };
+}
+
+function readDocument(documentValue: unknown): Pick<MonitorPreferencesDocument, "orbs" | "boards"> {
   const document = object(documentValue);
   if (
     !document ||
-    document.version !== 1 ||
+    (document.version !== 1 && document.version !== 2) ||
     !Array.isArray(document.orbs) ||
     document.orbs.length > MAX_MONITOR_ORBS
   )
@@ -167,7 +239,19 @@ function readDocument(documentValue: unknown): MonitorOrbRecord[] {
     for (const orb of records)
       for (const key of GLOBAL_MONITOR_KEYS)
         Object.assign(orb.preferences, { [key]: records[0]!.preferences[key] });
-  return records;
+  const boards: OmpMonitorBoardRecord[] = [];
+  if (document.version === 2) {
+    if (!Array.isArray(document.boards) || document.boards.length > MAX_MONITOR_BOARDS)
+      throw new Error("Invalid monitor boards");
+    const boardIds = new Set<string>();
+    for (const value of document.boards) {
+      const board = readBoard(value, ids);
+      if (boardIds.has(board.id)) throw new Error("Repeated monitor board identity");
+      boardIds.add(board.id);
+      boards.push(board);
+    }
+  }
+  return { orbs: records, boards };
 }
 
 export async function readMonitorPreferences(file: string): Promise<MonitorPreferencesDocument> {
@@ -189,13 +273,17 @@ export async function readMonitorPreferences(file: string): Promise<MonitorPrefe
     }
     if (size > MAX_PREFERENCES_BYTES) throw new Error("Oversized monitor preferences");
     return {
-      orbs: readDocument(
+      ...readDocument(
         JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size))),
       ),
       invalid: false,
     };
   } catch (error) {
-    return { orbs: [], invalid: !(object(error)?.code === "ENOENT") };
+    return {
+      orbs: [],
+      boards: [],
+      invalid: (error as NodeJS.ErrnoException | null)?.code !== "ENOENT",
+    };
   } finally {
     await handle?.close();
   }
@@ -205,8 +293,9 @@ export async function writeMonitorPreferences(
   file: string,
   records: readonly MonitorOrbRecord[],
   preserveInvalid: boolean,
+  boards: readonly OmpMonitorBoardRecord[],
 ): Promise<void> {
-  const content = JSON.stringify({ version: 1, orbs: records });
+  const content = JSON.stringify({ version: 2, orbs: records, boards });
   if (Buffer.byteLength(content, "utf8") > MAX_PREFERENCES_BYTES)
     throw new Error("Monitor preferences limit reached");
   const temporary = `${file}.${randomUUID()}.tmp`;

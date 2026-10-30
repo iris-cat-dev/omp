@@ -125,6 +125,9 @@ class OmpMonitorWorker {
     this.catalog = catalog;
     this.monitor = new OmpLocalMonitor({
       roots: workerRoots(data),
+      ...(typeof data?.cacheDir === "string" && data.cacheDir.length <= 4096
+        ? { taskCacheDir: data.cacheDir }
+        : {}),
       ...(catalog
         ? {
             estimateCost: (usage: OmpMonitorCostInput) => catalog.estimateCost(usage),

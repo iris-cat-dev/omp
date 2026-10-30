@@ -46,6 +46,7 @@ const mock = vi.hoisted(() => ({
   userData: "",
   now: Date.UTC(2026, 9, 24, 12),
   save: vi.fn(),
+  confirm: vi.fn(),
   menu: [] as Array<Record<string, unknown>>,
   inputError: null as "startup" | "set" | null,
 }));
@@ -163,7 +164,7 @@ vi.mock("electron", async () => {
         mock.listeners.set(channel, listener),
       removeListener: (channel: string) => mock.listeners.delete(channel),
     },
-    dialog: { showSaveDialog: mock.save },
+    dialog: { showSaveDialog: mock.save, showMessageBox: mock.confirm },
     Menu: {
       buildFromTemplate: (template: Array<Record<string, unknown>>) => {
         mock.menu = template;
@@ -189,6 +190,7 @@ beforeEach(async () => {
   mock.now = Date.UTC(2026, 9, 24, 12);
   mock.userData = await mkdtemp(path.join(tmpdir(), "omp-monitor-controller-"));
   mock.save.mockReset().mockResolvedValue({ canceled: true });
+  mock.confirm.mockReset().mockResolvedValue({ response: 0 });
   mock.menu = [];
   mock.inputError = null;
   vi.spyOn(Date, "now").mockImplementation(() => mock.now);
@@ -230,6 +232,9 @@ function snapshot(scope: OmpMonitorScope = { profile: null, project: null }): Om
     failedRequests: 0,
     inputTokens: 100,
     outputTokens: 40,
+    reasoningTokens: 0,
+    reasoningKnownRequests: 0,
+    reasoningKnownOutputTokens: 0,
     cacheReadTokens: 10,
     cacheWriteTokens: 0,
     totalTokens: 150,
@@ -272,10 +277,17 @@ function snapshot(scope: OmpMonitorScope = { profile: null, project: null }): Om
       attribution: null,
     },
     status: "ready",
-    rate: { measuredTps: 40, estimatedTps: 0, estimatedShare: 0 },
+    rate: {
+      measuredTps: 40,
+      estimatedTps: 0,
+      estimatedShare: 0,
+      measuredThinkingTps: null,
+      estimatedThinkingTps: null,
+    },
     activity: { lastResponseAt: null, peakAt: null, peakObservedAt: null },
     today: usage,
     days: [{ ...usage, date: "2026-10-24" }],
+    tasks: { current: {}, records: [], scanning: false, limited: false },
     agents: [],
     series: [],
     coverage: {
@@ -770,11 +782,75 @@ describe("original-design native OMP monitor", () => {
     const orbs = surfaces("orb");
     for (const orb of orbs) {
       const data = snapshot();
-      data.rate = { measuredTps: 3000, estimatedTps: 0, estimatedShare: 0 };
+      data.rate = {
+        measuredTps: 3000,
+        estimatedTps: 0,
+        estimatedShare: 0,
+        measuredThinkingTps: null,
+        estimatedThinkingTps: null,
+      };
       publish(orb, data);
     }
     expect(orbs.map((orb) => state(orb).maxFps)).toEqual([30, 30, 30, 60]);
     interact(first, true);
     expect(orbs.map((orb) => state(orb).maxFps)).toEqual([60, 30, 30, 30]);
+  });
+
+  it("bounds independent boards and authorizes only their own edits and confirmed removal", async () => {
+    const instance = controller();
+    await instance.open();
+    const dashboard = surfaces("dashboard")[0]!;
+    publish(surfaces("orb")[0]!, snapshot());
+    for (let index = 0; index < 4; index++) await invoke("new-board", dashboard);
+    await expect(invoke("new-board", dashboard)).rejects.toThrow("limit");
+    const [first, second] = surfaces("board");
+    const id = state(first!).board!.id;
+    await expect(
+      invoke("configure-board", second!, { id, patch: { style: "neon" } }),
+    ).rejects.toThrow();
+    await invoke("configure-board", first!, { id, patch: { style: "neon", size: "large" } });
+    expect(first!.getBounds()).toMatchObject({ width: 500, height: 500 });
+    expect(state(first!).board).toMatchObject({ id, style: "neon", size: "large" });
+    expect(state(second!).board).toMatchObject({ style: "glass", size: "medium" });
+    await invoke("scope", dashboard, { profile: null, project: "A" });
+    expect(state(first!).scope).toEqual({ profile: null, project: "A" });
+    await invoke("remove-board", first!, id);
+    expect(state(dashboard).boards).toHaveLength(4);
+    mock.confirm.mockResolvedValueOnce({ response: 1 });
+    await invoke("remove-board", first!, id);
+    expect(first!.destroyed).toBe(true);
+    expect(second!.destroyed).toBe(false);
+    expect(state(dashboard).boards).toHaveLength(3);
+  });
+
+  it("never lets the board's transparent margin or rounded corner trap pointer input", async () => {
+    const instance = controller();
+    await instance.open();
+    await invoke("new-board", surfaces("dashboard")[0]!);
+    const board = surfaces("board")[0]!,
+      bounds = board.getBounds(),
+      id = state(board).board!.id;
+    const point = (x: number, y: number) => {
+      mock.cursor = { x: bounds.x + x, y: bounds.y + y };
+      vi.advanceTimersByTime(100);
+    };
+    point(210, 210);
+    expect(board.ignored).toBe(false);
+    point(10, 10);
+    expect(board.ignored).toBe(true);
+    point(41, 41);
+    expect(board.ignored).toBe(true);
+    point(80, 80);
+    expect(board.ignored).toBe(false);
+    board.emit("unresponsive");
+    expect(board.ignored).toBe(true);
+    point(210, 210);
+    expect(board.ignored).toBe(true);
+    board.emit("responsive");
+    vi.advanceTimersByTime(100);
+    expect(board.ignored).toBe(false);
+    await invoke("configure-board", board, { id, patch: { clickThrough: true } });
+    point(210, 210);
+    expect(board.ignored).toBe(true);
   });
 });

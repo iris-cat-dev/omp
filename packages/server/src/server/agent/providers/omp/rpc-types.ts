@@ -37,12 +37,14 @@ export const OmpAssistantContentSchema = z.discriminatedUnion("type", [
 const OmpUserMessageSchema = z
   .object({
     role: z.literal("user"),
+    timestamp: z.number().optional(),
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
 const OmpDeveloperMessageSchema = z
   .object({
     role: z.literal("developer"),
+    timestamp: z.number().optional(),
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
@@ -52,12 +54,29 @@ const OmpCustomMessageSchema = z
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
+const OmpAssistantUsageSchema = z
+  .object({
+    input: z.number().optional(),
+    output: z.number().optional(),
+    cacheRead: z.number().optional(),
+    cacheWrite: z.number().optional(),
+    cost: z.object({ total: z.number().optional() }).passthrough().optional(),
+  })
+  .passthrough();
+
 const OmpAssistantMessageSchema = z
   .object({
     role: z.literal("assistant"),
     content: z.array(OmpAssistantContentSchema),
     provider: z.string().optional(),
     model: z.string().optional(),
+    api: z.string().optional(),
+    entryId: z.string().optional(),
+    timestamp: z.number().nullable().optional(),
+    duration: z.number().nullable().optional(),
+    completedAt: z.number().nullable().optional(),
+    usage: OmpAssistantUsageSchema.optional(),
+    stopDetails: z.object({ type: z.string().optional() }).passthrough().optional(),
     responseId: z.string().optional(),
     responseModel: z.string().optional(),
     errorMessage: z.string().nullable().optional(),
@@ -71,6 +90,7 @@ const OmpToolResultMessageSchema = z
     toolCallId: z.string(),
     toolName: z.string(),
     content: z.unknown(),
+    timestamp: z.number().optional(),
     isError: z.boolean().optional(),
     details: z.unknown().optional(),
   })

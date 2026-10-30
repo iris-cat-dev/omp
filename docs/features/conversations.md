@@ -5,6 +5,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 ## Contents
 
 - [Completion and failures](#completion-and-failures)
+- [Turn usage and speed](#turn-usage-and-speed)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
 - [Queued messages](#queued-messages)
@@ -21,6 +22,16 @@ Desktop completes a turn automatically after OMP finishes its model turn and rep
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.
 
 Provider-request failures after the Agent runtime starts appear as sanitized system errors, including the HTTP status and safe proxy error code when available, never proxy credentials. The existing Agent and provider session remain retryable; a transient network or proxy failure does not require a new conversation.
+
+## Turn usage and speed
+
+The chat `tok/s` uses Agent Speed's request-based calculation, not differences between session-wide token counters. Completed turns use this agent's valid measured output divided by its summed native request time, including first-token wait and excluding time between requests spent running tools. Requests shorter than 500 ms use the original 500 ms floor; invalid or over-15-minute intervals do not contribute measured speed. Failed, aborted and untimed requests can retain their actual usage without inventing a speed from **Worked for**.
+
+During generation, the last three seconds combine completed-request facts with an estimate from recent native references. Completion replaces the in-flight estimate rather than adding it twice; tools, cancellation and compaction stop that estimate. Copied history is not claimed as this file's own speed reference. Historical assistant messages retain safe per-turn facts for footer restoration, including Plan messages.
+
+After reconnecting, the completed assistant's replayed facts take precedence over a retained in-flight footer sample, so a missed final live event does not leave stale totals or speed.
+
+Native session aggregates remain separate for Usage, context and quota displays. A second 1,000-output-token, ten-second turn therefore remains **100 tok/s**, not 200 tok/s from cumulative session output. Existing chat styling and number formatting are unchanged; no approximation symbol is added.
 
 ## Workflow and approval modes
 

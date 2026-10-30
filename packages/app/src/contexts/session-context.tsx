@@ -492,8 +492,23 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     if (!isConnected) {
       flushAgentLastActivity();
       setInitializingAgents(serverId, new Map());
+      const usageByAgent = useSessionStore.getState().sessions[serverId]?.agentTurnUsage;
+      for (const [agentId, turns] of usageByAgent ?? []) {
+        for (const [turnId, usage] of turns) {
+          if (usage.nativeMetrics?.phase !== "generating") continue;
+          recordAgentTurnUsage(serverId, agentId, turnId, {
+            ...usage,
+            nativeMetrics: {
+              ...usage.nativeMetrics,
+              phase: "idle",
+              inFlightStartMs: null,
+              recentRequests: [],
+            },
+          });
+        }
+      }
     }
-  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
+  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents, recordAgentTurnUsage]);
 
   useEffect(
     () =>
@@ -716,13 +731,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const { agentId, event, timestamp, seq, epoch } = message.payload;
       const parsedTimestamp = new Date(timestamp);
       const streamEvent = event;
-      if (event.type === "turn_completed" && event.usage && event.turnId) {
+      if (
+        event.type === "turn_completed" &&
+        event.usage &&
+        event.usage.scope !== "session" &&
+        event.turnId
+      ) {
         recordAgentTurnUsage(serverId, agentId, event.turnId, event.usage);
       }
-      // OMP providers report usage via a separate usage_updated event that
-      // arrives right after turn_completed; turn_completed itself carries no
-      // usage there. Both must feed the per-turn usage map for footer stats.
-      if (event.type === "usage_updated" && event.turnId) {
+      // Explicit session counters belong only to quota/context displays.
+      if (event.type === "usage_updated" && event.usage.scope !== "session" && event.turnId) {
         recordAgentTurnUsage(serverId, agentId, event.turnId, event.usage);
       }
       const turnLiveness = deriveAgentStreamTurnLiveness([
