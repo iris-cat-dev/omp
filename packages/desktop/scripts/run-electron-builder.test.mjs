@@ -30,16 +30,28 @@ const {
 const { Arch } = require("builder-util");
 const { Platform } = require("app-builder-lib/out/core");
 
-const scriptPath = fileURLToPath(new URL("./run-electron-builder.mjs", import.meta.url));
+const scriptPath = fileURLToPath(
+  new URL("./run-electron-builder.mjs", import.meta.url),
+);
 
 test("absolute symlinked CLI paths still validate builds and emit private output metadata", () => {
   const fixture = createPackagingFixture();
   try {
     const link = path.join(fixture.directory, "linked-scripts");
-    symlinkSync(path.dirname(scriptPath), link, process.platform === "win32" ? "junction" : "dir");
+    symlinkSync(
+      path.dirname(scriptPath),
+      link,
+      process.platform === "win32" ? "junction" : "dir",
+    );
     const build = spawnSync(
       process.execPath,
-      [path.join(link, "run-electron-builder.mjs"), "--mac", "--arm64", "--publish", "never"],
+      [
+        path.join(link, "run-electron-builder.mjs"),
+        "--mac",
+        "--arm64",
+        "--publish",
+        "never",
+      ],
       {
         cwd: fixture.directory,
         encoding: "utf8",
@@ -49,10 +61,16 @@ test("absolute symlinked CLI paths still validate builds and emit private output
     );
     expect(build.error).toBeUndefined();
     expect(build.status).toBe(1);
-    expect(build.stderr).toContain("Cannot package darwin-arm64 with the win32-x64 runtime");
+    expect(build.stderr).toContain(
+      "Cannot package darwin-arm64 with the win32-x64 runtime",
+    );
     const output = spawnSync(
       process.execPath,
-      [path.join(link, "windows-build-output.mjs"), "1.2.3", "--with-bundled-plugins"],
+      [
+        path.join(link, "windows-build-output.mjs"),
+        "1.2.3",
+        "--with-bundled-plugins",
+      ],
       { cwd: fixture.directory, encoding: "utf8", timeout: 20_000 },
     );
     expect(output.error).toBeUndefined();
@@ -92,18 +110,28 @@ describe("packaging runtime compatibility", () => {
   ])(
     "rejects $target with a $runtime.platform-$runtime.arch runtime",
     ({ runtime, args, target }) => {
-      const runtimeDist = mkdtempSync(path.join(os.tmpdir(), "omp-runtime-target-"));
+      const runtimeDist = mkdtempSync(
+        path.join(os.tmpdir(), "omp-runtime-target-"),
+      );
       try {
         writeFileSync(
           path.join(runtimeDist, "version.json"),
-          JSON.stringify({ ...runtime, runtimeVersion: "0.1.17", electronApiVersion: "41.2.0" }),
+          JSON.stringify({
+            ...runtime,
+            runtimeVersion: "0.1.17",
+            electronApiVersion: "41.2.0",
+          }),
         );
-        const result = spawnSync(process.execPath, [scriptPath, ...args, "--publish", "never"], {
-          cwd: path.resolve(path.dirname(scriptPath), ".."),
-          encoding: "utf8",
-          env: { ...process.env, MINI_ELECTRON_DIST_PATH: runtimeDist },
-          timeout: 20_000,
-        });
+        const result = spawnSync(
+          process.execPath,
+          [scriptPath, ...args, "--publish", "never"],
+          {
+            cwd: path.resolve(path.dirname(scriptPath), ".."),
+            encoding: "utf8",
+            env: { ...process.env, MINI_ELECTRON_DIST_PATH: runtimeDist },
+            timeout: 20_000,
+          },
+        );
         expect(result.error).toBeUndefined();
         expect(result.status).toBe(1);
         expect(result.stderr).toContain(target);
@@ -121,27 +149,34 @@ describe("packaging runtime compatibility", () => {
       overrides: { installerProtocol: 2 },
       message: "executable metadata",
     },
-    { name: "executable inventory", overrides: { files: {} }, message: "executable metadata" },
+    {
+      name: "executable inventory",
+      overrides: { files: {} },
+      message: "executable metadata",
+    },
     {
       name: "runtime version",
       overrides: { runtimeVersion: undefined },
       message: "runtime metadata",
     },
-  ])("rejects incompatible or missing $name on a newer runtime", async ({ overrides, message }) => {
-    const fixture = createPackagingFixture("darwin");
-    try {
-      await expect(
-        createQualifiedPackager(
-          fixture.runtimeDist,
-          { ...fixture.runtime, ...overrides },
-          fixture.args,
-          fixture.directory,
-        ),
-      ).rejects.toThrow(message);
-    } finally {
-      fixture.dispose();
-    }
-  });
+  ])(
+    "rejects incompatible or missing $name on a newer runtime",
+    async ({ overrides, message }) => {
+      const fixture = createPackagingFixture("darwin");
+      try {
+        await expect(
+          createQualifiedPackager(
+            fixture.runtimeDist,
+            { ...fixture.runtime, ...overrides },
+            fixture.args,
+            fixture.directory,
+          ),
+        ).rejects.toThrow(message);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
 });
 
 function createPackagingFixture(
@@ -149,9 +184,14 @@ function createPackagingFixture(
   runtimeVersion = platform === "win32" ? "0.1.18" : "0.1.17",
 ) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "omp-build-options-"));
-  const executable = platform === "win32" ? "electron.exe" : "Electron.app/Contents/MacOS/Electron";
+  const executable =
+    platform === "win32"
+      ? "electron.exe"
+      : "Electron.app/Contents/MacOS/Electron";
   const runtimeDist = path.join(directory, "runtime");
-  mkdirSync(path.dirname(path.join(runtimeDist, executable)), { recursive: true });
+  mkdirSync(path.dirname(path.join(runtimeDist, executable)), {
+    recursive: true,
+  });
   const executableBytes = Buffer.from("mini-electron packaging unit fixture");
   writeFileSync(path.join(runtimeDist, executable), executableBytes);
   const runtime = {
@@ -160,9 +200,14 @@ function createPackagingFixture(
     runtimeVersion,
     electronApiVersion: "41.2.0",
     installerProtocol: 1,
-    files: { [executable]: createHash("sha256").update(executableBytes).digest("hex") },
+    files: {
+      [executable]: createHash("sha256").update(executableBytes).digest("hex"),
+    },
   };
-  writeFileSync(path.join(runtimeDist, "version.json"), JSON.stringify(runtime));
+  writeFileSync(
+    path.join(runtimeDist, "version.json"),
+    JSON.stringify(runtime),
+  );
   writeFileSync(
     path.join(directory, "package.json"),
     JSON.stringify({
@@ -188,7 +233,10 @@ function createPackagingFixture(
     ].join("\n"),
   );
   mkdirSync(path.join(directory, "host"));
-  writeFileSync(path.join(directory, "host/omp.exe"), "qualified OMP host bytes");
+  writeFileSync(
+    path.join(directory, "host/omp.exe"),
+    "qualified OMP host bytes",
+  );
   mkdirSync(path.join(directory, "assets"));
   writeFileSync(path.join(directory, "assets/icon.png"), "icon fixture");
   return {
@@ -204,59 +252,67 @@ test.each([
   { requested: "generic", staged: undefined },
   { requested: "generic", staged: "generic" },
   { requested: "desktop", staged: "desktop" },
-])("copies a matching $requested SDK outside ASAR (metadata: $staged)", ({ requested, staged }) => {
-  const fixture = createPackagingFixture("darwin");
-  try {
-    const source = path.join(fixture.directory, "sdk-source");
-    mkdirSync(source);
-    const stage = path.join(fixture.directory, "sdk-dist");
-    const packageRoot = "node_modules/@oh-my-pi/pi-coding-agent";
-    const payload = [
-      [
-        "manifest.json",
-        JSON.stringify({
-          schemaVersion: 1,
-          packageName: "@oh-my-pi/pi-coding-agent",
-          packageRoot,
-          platform: fixture.runtime.platform,
-          arch: fixture.runtime.arch,
-          buildTarget: staged,
-        }),
-      ],
-      ["source.json", JSON.stringify({ packageRoot: realpathSync(source) })],
-      ["omp-sdk.tgz", "owned SDK archive"],
-      [
-        `${packageRoot}/package.json`,
-        JSON.stringify({
-          name: "@oh-my-pi/pi-coding-agent",
-          version: "1.0.0",
-          ompNodeSdk: staged ? { target: staged } : undefined,
-        }),
-      ],
-      ...["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"].map((file) => [
-        `${packageRoot}/dist/node/${file}`,
-        "owned SDK artifact",
-      ]),
-      [
-        `${packageRoot}/node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs`,
-        "owned runtime artifact",
-      ],
-      [
-        `${packageRoot}/node_modules/@oh-my-pi/pi-natives/native/pi_natives.darwin-arm64.node`,
-        "owned native artifact",
-      ],
-    ];
-    for (const [relative, content] of payload) {
-      const file = path.join(stage, relative);
-      mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, content);
-    }
-    const child = spawnSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `
+])(
+  "copies a matching $requested SDK outside ASAR (metadata: $staged)",
+  ({ requested, staged }) => {
+    const fixture = createPackagingFixture("darwin");
+    try {
+      const source = path.join(fixture.directory, "sdk-source");
+      mkdirSync(source);
+      const stage = path.join(fixture.directory, "sdk-dist");
+      const packageRoot = "node_modules/@oh-my-pi/pi-coding-agent";
+      const payload = [
+        [
+          "manifest.json",
+          JSON.stringify({
+            schemaVersion: 1,
+            packageName: "@oh-my-pi/pi-coding-agent",
+            packageRoot,
+            platform: fixture.runtime.platform,
+            arch: fixture.runtime.arch,
+            buildTarget: staged,
+          }),
+        ],
+        ["source.json", JSON.stringify({ packageRoot: realpathSync(source) })],
+        ["omp-sdk.tgz", "owned SDK archive"],
+        [
+          `${packageRoot}/package.json`,
+          JSON.stringify({
+            name: "@oh-my-pi/pi-coding-agent",
+            version: "1.0.0",
+            ompNodeSdk: staged ? { target: staged } : undefined,
+          }),
+        ],
+        ...[
+          "sdk.mjs",
+          "rpc.mjs",
+          "host.mjs",
+          "plugins.mjs",
+          "modules.json",
+        ].map((file) => [
+          `${packageRoot}/dist/node/${file}`,
+          "owned SDK artifact",
+        ]),
+        [
+          `${packageRoot}/node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs`,
+          "owned runtime artifact",
+        ],
+        [
+          `${packageRoot}/node_modules/@oh-my-pi/pi-natives/native/pi_natives.darwin-arm64.node`,
+          "owned native artifact",
+        ],
+      ];
+      for (const [relative, content] of payload) {
+        const file = path.join(stage, relative);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, content);
+      }
+      const child = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
       import assert from "node:assert/strict";
       import fs from "node:fs";
       import path from "node:path";
@@ -280,21 +336,34 @@ test.each([
       }
       assert.equal(fs.existsSync(path.join(destination, "omp-sdk/source.json")), false);
       assert.equal(fs.existsSync(path.join(destination, "omp-sdk/omp-sdk.tgz")), false);
+      fs.rmSync(path.join(root, "sdk-dist", ${JSON.stringify(packageRoot)}, "dist/node/plugins.mjs"));
+      await assert.rejects(
+        createQualifiedPackager(
+          ${JSON.stringify(fixture.runtimeDist)}, ${JSON.stringify(fixture.runtime)},
+          ${JSON.stringify(fixture.args)}, root,
+        ),
+        /Optional SDK payload is incomplete: dist\\/node\\/plugins\\.mjs/,
+      );
     `,
-      ],
-      {
-        cwd: fixture.directory,
-        encoding: "utf8",
-        env: { ...process.env, OMP_DESKTOP_SDK_SOURCE: source, OMP_DESKTOP_SDK_TARGET: requested },
-        timeout: 20_000,
-      },
-    );
-    expect(child.error).toBeUndefined();
-    expect(child.status, child.stderr).toBe(0);
-  } finally {
-    fixture.dispose();
-  }
-});
+        ],
+        {
+          cwd: fixture.directory,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            OMP_DESKTOP_SDK_SOURCE: source,
+            OMP_DESKTOP_SDK_TARGET: requested,
+          },
+          timeout: 20_000,
+        },
+      );
+      expect(child.error).toBeUndefined();
+      expect(child.status, child.stderr).toBe(0);
+    } finally {
+      fixture.dispose();
+    }
+  },
+);
 
 test.each([
   { requested: "desktop", staged: undefined },
@@ -325,7 +394,10 @@ test.each([
           buildTarget: staged,
         }),
       );
-      const packageRoot = path.join(stage, "node_modules/@oh-my-pi/pi-coding-agent");
+      const packageRoot = path.join(
+        stage,
+        "node_modules/@oh-my-pi/pi-coding-agent",
+      );
       mkdirSync(path.join(packageRoot, "dist/node"), { recursive: true });
       writeFileSync(
         path.join(packageRoot, "package.json"),
@@ -334,8 +406,17 @@ test.each([
           ompNodeSdk: installed ? { target: installed } : undefined,
         }),
       );
-      for (const file of ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"])
-        writeFileSync(path.join(packageRoot, "dist/node", file), "owned SDK artifact");
+      for (const file of [
+        "sdk.mjs",
+        "rpc.mjs",
+        "host.mjs",
+        "plugins.mjs",
+        "modules.json",
+      ])
+        writeFileSync(
+          path.join(packageRoot, "dist/node", file),
+          "owned SDK artifact",
+        );
       vi.stubEnv("OMP_DESKTOP_SDK_SOURCE", source);
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", requested);
       await expect(
@@ -353,7 +434,10 @@ test.each([
   },
 );
 
-function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "generic" } = {}) {
+function createSdkFixture(
+  buildTarget = "desktop",
+  { native = buildTarget === "generic" } = {},
+) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "omp-sdk-stage-"));
   const source = path.join(directory, "source");
   const sdkName = "@oh-my-pi/pi-coding-agent";
@@ -370,8 +454,11 @@ function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "g
     [`${artifact}/sdk.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
     [`${artifact}/rpc.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
     [`${artifact}/host.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
+    [`${artifact}/plugins.mjs`]:
+      'export { marker } from "./chunks/shared.mjs";',
     [`${artifact}/chunks/shared.mjs`]: `export const marker = ${JSON.stringify(buildTarget)};`,
-    [`${artifact}/modules/root.mjs`]: 'export { marker } from "../chunks/shared.mjs";',
+    [`${artifact}/modules/root.mjs`]:
+      'export { marker } from "../chunks/shared.mjs";',
     [`${artifact}/modules.json`]: JSON.stringify({
       version: 1,
       buildTarget,
@@ -397,11 +484,17 @@ function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "g
       ],
       dependencies: [],
     },
-    "sdk-optional-capability": { files: ["package.json", "index.js"], dependencies: [] },
+    "sdk-optional-capability": {
+      files: ["package.json", "index.js"],
+      dependencies: [],
+    },
   };
   if (native) {
     packages["@oh-my-pi/pi-natives"] = {
-      files: ["package.json", `native/pi_natives.${process.platform}-${process.arch}.node`],
+      files: [
+        "package.json",
+        `native/pi_natives.${process.platform}-${process.arch}.node`,
+      ],
       dependencies: [],
     };
   }
@@ -441,7 +534,9 @@ describe("SDK artifact target staging", () => {
       const fixture = createSdkFixture("generic");
       try {
         // Desktop artifacts must not leak into the generic package.
-        mkdirSync(path.join(fixture.source, "dist/node-desktop"), { recursive: true });
+        mkdirSync(path.join(fixture.source, "dist/node-desktop"), {
+          recursive: true,
+        });
         writeFileSync(
           path.join(fixture.source, "dist/node-desktop/desktop-only.mjs"),
           "desktop artifact",
@@ -453,19 +548,32 @@ describe("SDK artifact target staging", () => {
           readFileSync(path.join(result.directory, "package.json"), "utf8"),
         );
         const runtime = JSON.parse(
-          readFileSync(path.join(result.directory, "dist/node/runtime-dependencies.json"), "utf8"),
+          readFileSync(
+            path.join(result.directory, "dist/node/runtime-dependencies.json"),
+            "utf8",
+          ),
         );
         expect(manifest.ompNodeSdk.profile).toBe(profile);
         expect(manifest.ompNodeSdk.target).toBe("generic");
         expect(runtime.buildTarget).toBe("generic");
         expect(manifest.bin).toBeUndefined();
         expect(manifest.files).toContain("dist/node/sdk.mjs");
-        expect(manifest.files.some((relative) => relative.startsWith("dist/node-desktop/"))).toBe(
-          false,
+        expect(manifest.files).toContain("dist/node/plugins.mjs");
+        expect(runtime.packages["@oh-my-pi/pi-coding-agent"].files).toContain(
+          "dist/node/plugins.mjs",
         );
-        expect(existsSync(path.join(result.directory, "dist/node-desktop"))).toBe(false);
         expect(
-          existsSync(path.join(result.directory, "node_modules/sdk-optional-capability")),
+          manifest.files.some((relative) =>
+            relative.startsWith("dist/node-desktop/"),
+          ),
+        ).toBe(false);
+        expect(
+          existsSync(path.join(result.directory, "dist/node-desktop")),
+        ).toBe(false);
+        expect(
+          existsSync(
+            path.join(result.directory, "node_modules/sdk-optional-capability"),
+          ),
         ).toBe(profile === "full");
         expect(manifest.dependencies["@oh-my-pi/pi-natives"]).toBe("1.0.0");
         expect(
@@ -476,30 +584,48 @@ describe("SDK artifact target staging", () => {
             ),
           ),
         ).toBe(true);
-        expect(existsSync(path.join(result.directory, "node_modules/missing-optional-peer"))).toBe(
-          false,
-        );
-        expect(readFileSync(path.join(result.directory, "data/resource.txt"), "utf8")).toBe(
-          "owned SDK resource",
-        );
+        expect(
+          existsSync(
+            path.join(result.directory, "node_modules/missing-optional-peer"),
+          ),
+        ).toBe(false);
+        expect(
+          readFileSync(
+            path.join(result.directory, "data/resource.txt"),
+            "utf8",
+          ),
+        ).toBe("owned SDK resource");
         rmSync(fixture.source, { recursive: true, force: true });
         const unpacked = path.join(fixture.directory, "unpacked");
         mkdirSync(unpacked);
-        const extracted = spawnSync("tar", ["-xzf", result.archive, "-C", unpacked], {
-          encoding: "utf8",
-        });
+        const extracted = spawnSync(
+          "tar",
+          ["-xzf", result.archive, "-C", unpacked],
+          {
+            encoding: "utf8",
+          },
+        );
         expect(extracted.error).toBeUndefined();
         expect(extracted.status, extracted.stderr).toBe(0);
         const packageRoot = path.join(unpacked, "package");
-        for (const relative of runtime.packages["@oh-my-pi/pi-coding-agent"].files) {
+        for (const relative of runtime.packages["@oh-my-pi/pi-coding-agent"]
+          .files) {
           expect(existsSync(path.join(packageRoot, relative))).toBe(true);
         }
         expect(
           existsSync(
-            path.join(packageRoot, "node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs"),
+            path.join(
+              packageRoot,
+              "node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs",
+            ),
           ),
         ).toBe(true);
-        expect(existsSync(path.join(packageRoot, "dist/node-desktop"))).toBe(false);
+        expect(existsSync(path.join(packageRoot, "dist/node-desktop"))).toBe(
+          false,
+        );
+        expect(
+          existsSync(path.join(packageRoot, "dist/node/plugins.mjs")),
+        ).toBe(true);
         expect(
           existsSync(
             path.join(
@@ -508,6 +634,24 @@ describe("SDK artifact target staging", () => {
             ),
           ),
         ).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
+      }
+    },
+  );
+
+  test.each(["generic", "desktop"])(
+    "rejects a %s SDK without its plugin management artifact",
+    async (buildTarget) => {
+      const fixture = createSdkFixture(buildTarget);
+      try {
+        rmSync(path.join(fixture.source, fixture.artifact, "plugins.mjs"));
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", buildTarget);
+        await expect(
+          stageOmpSdk(fixture.source, fixture.output),
+        ).rejects.toThrow("plugins.mjs");
+        expect(existsSync(fixture.output)).toBe(false);
       } finally {
         vi.unstubAllEnvs();
         fixture.dispose();
@@ -527,7 +671,9 @@ describe("SDK artifact target staging", () => {
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", undefined);
       vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
       const result = await stageOmpSdk(fixture.source, fixture.output);
-      expect(existsSync(path.join(result.directory, "dist/node/sdk.mjs"))).toBe(true);
+      expect(existsSync(path.join(result.directory, "dist/node/sdk.mjs"))).toBe(
+        true,
+      );
     } finally {
       vi.unstubAllEnvs();
       fixture.dispose();
@@ -536,9 +682,17 @@ describe("SDK artifact target staging", () => {
 
   test.each([
     { artifactTarget: "desktop", file: "modules.json", target: "generic" },
-    { artifactTarget: "desktop", file: "runtime-dependencies.json", target: "generic" },
+    {
+      artifactTarget: "desktop",
+      file: "runtime-dependencies.json",
+      target: "generic",
+    },
     { artifactTarget: "generic", file: "modules.json", target: "desktop" },
-    { artifactTarget: "generic", file: "runtime-dependencies.json", target: "desktop" },
+    {
+      artifactTarget: "generic",
+      file: "runtime-dependencies.json",
+      target: "desktop",
+    },
   ])(
     "rejects $artifactTarget $file metadata target $target",
     async ({ artifactTarget, file, target }) => {
@@ -550,9 +704,9 @@ describe("SDK artifact target staging", () => {
         writeFileSync(metadataFile, JSON.stringify(metadata));
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", artifactTarget);
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
-          "SDK build target mismatch",
-        );
+        await expect(
+          stageOmpSdk(fixture.source, fixture.output),
+        ).rejects.toThrow("SDK build target mismatch");
       } finally {
         vi.unstubAllEnvs();
         fixture.dispose();
@@ -579,9 +733,15 @@ describe("SDK artifact target staging", () => {
     async (fallback) => {
       const fixture = createSdkFixture("desktop", { native: true });
       try {
-        const natives = path.join(fixture.source, "node_modules/@oh-my-pi/pi-natives");
+        const natives = path.join(
+          fixture.source,
+          "node_modules/@oh-my-pi/pi-natives",
+        );
         if (fallback === "missing") {
-          rmSync(path.join(natives, "native"), { recursive: true, force: true });
+          rmSync(path.join(natives, "native"), {
+            recursive: true,
+            force: true,
+          });
         }
         if (fallback === "full platform package") {
           const leafName = `@oh-my-pi/pi-natives-${process.platform}-${process.arch}`;
@@ -589,12 +749,25 @@ describe("SDK artifact target staging", () => {
           mkdirSync(leaf, { recursive: true });
           writeFileSync(
             path.join(leaf, "package.json"),
-            JSON.stringify({ name: leafName, version: "1.0.0", main: "pi_natives.node" }),
+            JSON.stringify({
+              name: leafName,
+              version: "1.0.0",
+              main: "pi_natives.node",
+            }),
           );
-          writeFileSync(path.join(leaf, "pi_natives.node"), "invalid full-native fixture");
-          const metadataFile = path.join(fixture.source, fixture.artifact, "runtime-dependencies.json");
+          writeFileSync(
+            path.join(leaf, "pi_natives.node"),
+            "invalid full-native fixture",
+          );
+          const metadataFile = path.join(
+            fixture.source,
+            fixture.artifact,
+            "runtime-dependencies.json",
+          );
           const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
-          metadata.packages["@oh-my-pi/pi-natives"].optionalDependencies = [leafName];
+          metadata.packages["@oh-my-pi/pi-natives"].optionalDependencies = [
+            leafName,
+          ];
           metadata.packages[leafName] = {
             files: ["package.json", "pi_natives.node"],
             dependencies: [],
@@ -611,9 +784,9 @@ describe("SDK artifact target staging", () => {
         }
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
-          "Desktop SDK has no isolated addon",
-        );
+        await expect(
+          stageOmpSdk(fixture.source, fixture.output),
+        ).rejects.toThrow("Desktop SDK has no isolated addon");
         expect(existsSync(fixture.output)).toBe(false);
       } finally {
         vi.unstubAllEnvs();
@@ -633,49 +806,60 @@ describe("SDK artifact target staging", () => {
     { name: "wrong architecture", overrides: { arch: "wrong-arch" } },
     { name: "wrong filename", overrides: { filename: "other.node" } },
     { name: "stale binary hash", overrides: { sha256: "0".repeat(64) } },
-  ])("rejects desktop native metadata with $name", async ({ sidecar, overrides }) => {
-    const fixture = createSdkFixture("desktop", { native: true });
-    try {
-      const filename = `pi_natives.${process.platform}-${process.arch}.node`;
-      const directory = path.join(
-        fixture.source,
-        "node_modules/@oh-my-pi/pi-natives/native/desktop",
-      );
-      mkdirSync(directory, { recursive: true });
-      // These bytes are deliberately not loadable: every case must reject metadata first.
-      const bytes = Buffer.from("invalid isolated addon for rejection-only fixture");
-      const addon = path.join(directory, filename);
-      writeFileSync(addon, bytes);
-      if (sidecar !== "missing") {
-        writeFileSync(
-          `${addon}.json`,
-          sidecar === "malformed"
-            ? "{"
-            : JSON.stringify({
-                schemaVersion: 1,
-                buildTarget: "desktop",
-                profile: "release",
-                version: "1.0.0",
-                platform: process.platform,
-                arch: process.arch,
-                filename,
-                sha256: createHash("sha256").update(bytes).digest("hex"),
-                capabilities: { smollm: false, liveVoice: false, wasmGrammars: false },
-                ...overrides,
-              }),
+  ])(
+    "rejects desktop native metadata with $name",
+    async ({ sidecar, overrides }) => {
+      const fixture = createSdkFixture("desktop", { native: true });
+      try {
+        const filename = `pi_natives.${process.platform}-${process.arch}.node`;
+        const directory = path.join(
+          fixture.source,
+          "node_modules/@oh-my-pi/pi-natives/native/desktop",
         );
+        mkdirSync(directory, { recursive: true });
+        // These bytes are deliberately not loadable: every case must reject metadata first.
+        const bytes = Buffer.from(
+          "invalid isolated addon for rejection-only fixture",
+        );
+        const addon = path.join(directory, filename);
+        writeFileSync(addon, bytes);
+        if (sidecar !== "missing") {
+          writeFileSync(
+            `${addon}.json`,
+            sidecar === "malformed"
+              ? "{"
+              : JSON.stringify({
+                  schemaVersion: 1,
+                  buildTarget: "desktop",
+                  profile: "release",
+                  version: "1.0.0",
+                  platform: process.platform,
+                  arch: process.arch,
+                  filename,
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                  capabilities: {
+                    smollm: false,
+                    liveVoice: false,
+                    wasmGrammars: false,
+                  },
+                  ...overrides,
+                }),
+          );
+        }
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
+        vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+        await expect(
+          stageOmpSdk(fixture.source, fixture.output),
+        ).rejects.toThrow(
+          "Desktop native addon metadata is stale or incompatible",
+        );
+        expect(existsSync(fixture.output)).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
       }
-      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
-      vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-      await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
-        "Desktop native addon metadata is stale or incompatible",
-      );
-      expect(existsSync(fixture.output)).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-      fixture.dispose();
-    }
-  });
+    },
+  );
 });
 
 describe("public and private packaging boundaries", () => {
@@ -689,10 +873,16 @@ describe("public and private packaging boundaries", () => {
         fixture.directory,
       );
       expect(result.config.directories.output).toBe("release");
-      expect(result.config.win.artifactName).toBe("OMP-Desktop-Setup-${version}-${arch}.${ext}");
+      expect(result.config.win.artifactName).toBe(
+        "OMP-Desktop-Setup-${version}-${arch}.${ext}",
+      );
       expect(result.config.win.signAndEditExecutable).toBe(true);
-      expect(result.config.extraMetadata?.ompDesktopDistribution).toBeUndefined();
-      expect(result.config.win.extraResources.map((resource) => resource.to)).toEqual(["icon.png"]);
+      expect(
+        result.config.extraMetadata?.ompDesktopDistribution,
+      ).toBeUndefined();
+      expect(
+        result.config.win.extraResources.map((resource) => resource.to),
+      ).toEqual(["icon.png"]);
       expect(result.config.electronDist).toBe(fixture.runtimeDist);
       expect(result.config.electronVersion).toBe("41.2.0");
     } finally {
@@ -722,7 +912,10 @@ describe("public and private packaging boundaries", () => {
       const fixture = createPackagingFixture();
       try {
         stagePrivateFixture(fixture.directory);
-        const host = path.join(fixture.directory, source.replace("${arch}", "x64"));
+        const host = path.join(
+          fixture.directory,
+          source.replace("${arch}", "x64"),
+        );
         mkdirSync(path.dirname(host), { recursive: true });
         writeFileSync(host, "stock OMP replacement");
         writeFileSync(
@@ -735,7 +928,12 @@ describe("public and private packaging boundaries", () => {
           createQualifiedPackager(
             fixture.runtimeDist,
             fixture.runtime,
-            [...fixture.args, "--config", "private.json", "--with-bundled-plugins"],
+            [
+              ...fixture.args,
+              "--config",
+              "private.json",
+              "--with-bundled-plugins",
+            ],
             fixture.directory,
           ),
         ).rejects.toThrow(`Private plugin OMP host SHA-256 mismatch: ${host}`);
@@ -747,22 +945,28 @@ describe("public and private packaging boundaries", () => {
 
   test.each([
     { args: ["--publish", "always"], message: "cannot publish" },
-    { args: ["--config.win.extraResources="], message: "qualified bundled OMP host" },
-  ])("private builds reject unsafe configuration $args", async ({ args, message }) => {
-    const fixture = createPackagingFixture();
-    try {
-      await expect(
-        createQualifiedPackager(
-          fixture.runtimeDist,
-          fixture.runtime,
-          [...fixture.args, "--with-bundled-plugins", ...args],
-          fixture.directory,
-        ),
-      ).rejects.toThrow(message);
-    } finally {
-      fixture.dispose();
-    }
-  });
+    {
+      args: ["--config.win.extraResources="],
+      message: "qualified bundled OMP host",
+    },
+  ])(
+    "private builds reject unsafe configuration $args",
+    async ({ args, message }) => {
+      const fixture = createPackagingFixture();
+      try {
+        await expect(
+          createQualifiedPackager(
+            fixture.runtimeDist,
+            fixture.runtime,
+            [...fixture.args, "--with-bundled-plugins", ...args],
+            fixture.directory,
+          ),
+        ).rejects.toThrow(message);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
 
   test("macOS retains explicit stable local signing options", async () => {
     const fixture = createPackagingFixture("darwin");
@@ -837,13 +1041,20 @@ test.each([
     const fixture = createPackagingFixture(platform, runtimeVersion);
     try {
       mkdirSync(path.join(fixture.directory, "public-resources"));
-      writeFileSync(path.join(fixture.directory, "public-resources/value.txt"), "public resource");
+      writeFileSync(
+        path.join(fixture.directory, "public-resources/value.txt"),
+        "public resource",
+      );
       writeFileSync(
         path.join(fixture.directory, "electron-builder.yml"),
         JSON.stringify({
           directories: { output: "release" },
-          extraResources: [{ from: "public-resources", to: "public-resources" }],
-          win: { extraResources: [{ from: "host/omp.exe", to: "bin/omp.exe" }] },
+          extraResources: [
+            { from: "public-resources", to: "public-resources" },
+          ],
+          win: {
+            extraResources: [{ from: "host/omp.exe", to: "bin/omp.exe" }],
+          },
         }),
       );
       const child = spawnSync(
@@ -910,14 +1121,21 @@ test("an alternative no-OMP config does not regain resources from the default co
     );
     await packager.validateConfig();
     const destination = path.join(fixture.directory, "out/resources");
-    const matchers = getFileMatchers(packager.config, "extraResources", destination, {
-      defaultSrc: fixture.directory,
-      globalOutDir: path.join(fixture.directory, "out"),
-      macroExpander: (value) => value,
-      customBuildOptions: packager.config.win,
-    });
+    const matchers = getFileMatchers(
+      packager.config,
+      "extraResources",
+      destination,
+      {
+        defaultSrc: fixture.directory,
+        globalOutDir: path.join(fixture.directory, "out"),
+        macroExpander: (value) => value,
+        customBuildOptions: packager.config.win,
+      },
+    );
     await copyFiles(matchers, null, false);
-    expect(readFileSync(path.join(destination, "icon.png"), "utf8")).toBe("icon fixture");
+    expect(readFileSync(path.join(destination, "icon.png"), "utf8")).toBe(
+      "icon fixture",
+    );
     expect(existsSync(path.join(destination, "bin/omp.exe"))).toBe(false);
   } finally {
     fixture.dispose();
@@ -925,8 +1143,13 @@ test("an alternative no-OMP config does not regain resources from the default co
 });
 
 function stagePrivateFixture(directory) {
-  mkdirSync(path.join(directory, "bundled-omp-plugins/helper"), { recursive: true });
-  writeFileSync(path.join(directory, "bundled-omp-plugins/manifest.json"), '{"fixture":true}');
+  mkdirSync(path.join(directory, "bundled-omp-plugins/helper"), {
+    recursive: true,
+  });
+  writeFileSync(
+    path.join(directory, "bundled-omp-plugins/manifest.json"),
+    '{"fixture":true}',
+  );
   writeFileSync(
     path.join(directory, "bundled-omp-plugins/helper/helper.exe"),
     "qualified private helper bytes",
@@ -998,8 +1221,14 @@ describe("qualified Windows resource bytes", () => {
         await result.validateConfig();
         const appOutDir = path.join(fixture.directory, "out/win-unpacked");
         mkdirSync(appOutDir, { recursive: true });
-        writeFileSync(path.join(appOutDir, "OMP Desktop.exe"), "Desktop PE fixture");
-        writeFileSync(path.join(appOutDir, "public-root.exe"), "ordinary root executable");
+        writeFileSync(
+          path.join(appOutDir, "OMP Desktop.exe"),
+          "Desktop PE fixture",
+        );
+        writeFileSync(
+          path.join(appOutDir, "public-root.exe"),
+          "ordinary root executable",
+        );
         // Use the installed WinPackager methods with an owned, credential-free
         // signing boundary. No build, PE tool download, or certificate is needed.
         const packager = Object.create(WinPackager.prototype);
@@ -1017,7 +1246,10 @@ describe("qualified Windows resource bytes", () => {
         const edited = [];
         packager.signIf = async (file) => {
           signed.push(path.relative(appOutDir, file).replaceAll("\\", "/"));
-          writeFileSync(file, Buffer.concat([readFileSync(file), Buffer.from(" signed")]));
+          writeFileSync(
+            file,
+            Buffer.concat([readFileSync(file), Buffer.from(" signed")]),
+          );
           return true;
         };
         packager.signAndEditResources = async (file) => {
@@ -1036,19 +1268,34 @@ describe("qualified Windows resource bytes", () => {
           context.arch,
           result.config.win,
         );
-        const matchers = packager.getExtraFileMatchers(true, appOutDir, options);
-        await copyFiles(matchers, packager.createTransformerForExtraFiles(context), false);
+        const matchers = packager.getExtraFileMatchers(
+          true,
+          appOutDir,
+          options,
+        );
+        await copyFiles(
+          matchers,
+          packager.createTransformerForExtraFiles(context),
+          false,
+        );
         await result.config.afterPack(context);
         await packager.signApp(context, false);
-        expect(readFileSync(path.join(appOutDir, "resources/bin/omp.exe"))).toEqual(
-          readFileSync(path.join(fixture.directory, "host/omp.exe")),
-        );
-        expect(readFileSync(path.join(appOutDir, "resources/original-hook-ran"), "utf8")).toBe(
-          "yes",
-        );
+        expect(
+          readFileSync(path.join(appOutDir, "resources/bin/omp.exe")),
+        ).toEqual(readFileSync(path.join(fixture.directory, "host/omp.exe")));
+        expect(
+          readFileSync(
+            path.join(appOutDir, "resources/original-hook-ran"),
+            "utf8",
+          ),
+        ).toBe("yes");
         expect(edited).toEqual(["OMP Desktop.exe"]);
         expect(signed.sort()).toEqual(
-          ["OMP Desktop.exe", "public-root.exe", "resources/third-party/public-tool.exe"].sort(),
+          [
+            "OMP Desktop.exe",
+            "public-root.exe",
+            "resources/third-party/public-tool.exe",
+          ].sort(),
         );
         const appDestination = path.join(appOutDir, "resources/app");
         const appMatchers = getMainFileMatchers(
@@ -1064,17 +1311,38 @@ describe("qualified Windows resource bytes", () => {
         const hostSource = path.join(fixture.directory, "host/omp.exe");
         expect(appFilter(hostSource, statSync(hostSource))).toBe(false);
         await copyFiles(appMatchers, null, false);
-        expect(existsSync(path.join(appDestination, "host/omp.exe"))).toBe(false);
-        writeFileSync(path.join(appOutDir, "resources/bin/omp.exe"), "changed packaged host");
-        expect(readFileSync(hostSource, "utf8")).toBe("qualified OMP host bytes");
+        expect(existsSync(path.join(appDestination, "host/omp.exe"))).toBe(
+          false,
+        );
+        writeFileSync(
+          path.join(appOutDir, "resources/bin/omp.exe"),
+          "changed packaged host",
+        );
+        expect(readFileSync(hostSource, "utf8")).toBe(
+          "qualified OMP host bytes",
+        );
         if (withPayloadResources) {
-          for (const file of ["manifest.json", "helper/helper.exe", "helper/LICENSE"]) {
+          for (const file of [
+            "manifest.json",
+            "helper/helper.exe",
+            "helper/LICENSE",
+          ]) {
             expect(
-              readFileSync(path.join(appOutDir, "resources/bundled-omp-plugins", file)),
-            ).toEqual(readFileSync(path.join(fixture.directory, "bundled-omp-plugins", file)));
+              readFileSync(
+                path.join(appOutDir, "resources/bundled-omp-plugins", file),
+              ),
+            ).toEqual(
+              readFileSync(
+                path.join(fixture.directory, "bundled-omp-plugins", file),
+              ),
+            );
           }
-          expect(readFileSync(path.join(appOutDir, "resources/manager.json"))).toEqual(
-            readFileSync(path.join(fixture.directory, "bundled-omp-manager.json")),
+          expect(
+            readFileSync(path.join(appOutDir, "resources/manager.json")),
+          ).toEqual(
+            readFileSync(
+              path.join(fixture.directory, "bundled-omp-manager.json"),
+            ),
           );
           const helperSource = path.join(
             fixture.directory,
@@ -1082,7 +1350,12 @@ describe("qualified Windows resource bytes", () => {
           );
           expect(appFilter(helperSource, statSync(helperSource))).toBe(false);
           expect(
-            existsSync(path.join(appDestination, "bundled-omp-plugins/helper/helper.exe")),
+            existsSync(
+              path.join(
+                appDestination,
+                "bundled-omp-plugins/helper/helper.exe",
+              ),
+            ),
           ).toBe(false);
         }
       } finally {
@@ -1108,7 +1381,9 @@ describe("prepackaged distribution boundary", () => {
           ],
           fixture.directory,
         ),
-      ).rejects.toThrow("--prepackaged bypasses qualified private runtime/resource staging");
+      ).rejects.toThrow(
+        "--prepackaged bypasses qualified private runtime/resource staging",
+      );
     } finally {
       fixture.dispose();
     }
@@ -1125,7 +1400,13 @@ describe("Windows wrapper metadata boundary", () => {
         const output = windowsBuildOutput(version, args);
         const selection = spawnSync(
           process.execPath,
-          [fileURLToPath(new URL("./windows-build-output.mjs", import.meta.url)), version, ...args],
+          [
+            fileURLToPath(
+              new URL("./windows-build-output.mjs", import.meta.url),
+            ),
+            version,
+            ...args,
+          ],
           { encoding: "utf8" },
         );
         expect(selection.error).toBeUndefined();
@@ -1136,36 +1417,66 @@ describe("Windows wrapper metadata boundary", () => {
           output.legacyInstaller,
         ]);
         const publicOutput = windowsBuildOutput(version, fixture.args);
-        expect(output.legacyInstaller).toBe(`OMP-Desktop-Plugins-Setup-${version}.exe`);
-        expect(output.metadataFilename).toBe(version.includes("-") ? "beta.yml" : "latest.yml");
-        const privateDirectory = path.join(fixture.directory, output.releaseDirectory);
-        const publicDirectory = path.join(fixture.directory, publicOutput.releaseDirectory);
+        expect(output.legacyInstaller).toBe(
+          `OMP-Desktop-Plugins-Setup-${version}.exe`,
+        );
+        expect(output.metadataFilename).toBe(
+          version.includes("-") ? "beta.yml" : "latest.yml",
+        );
+        const privateDirectory = path.join(
+          fixture.directory,
+          output.releaseDirectory,
+        );
+        const publicDirectory = path.join(
+          fixture.directory,
+          publicOutput.releaseDirectory,
+        );
         mkdirSync(privateDirectory, { recursive: true });
         mkdirSync(publicDirectory, { recursive: true });
-        const publicMetadata = path.join(publicDirectory, publicOutput.metadataFilename);
-        const publicContents = "unrelated public metadata must remain byte-identical\n";
+        const publicMetadata = path.join(
+          publicDirectory,
+          publicOutput.metadataFilename,
+        );
+        const publicContents =
+          "unrelated public metadata must remain byte-identical\n";
         writeFileSync(publicMetadata, publicContents);
-        writeFileSync(path.join(publicDirectory, publicOutput.legacyInstaller), "public installer");
+        writeFileSync(
+          path.join(publicDirectory, publicOutput.legacyInstaller),
+          "public installer",
+        );
         const privateUrl = `OMP-Desktop-Plugins-Setup-${version}-x64.exe`;
         const snapshot = path.join(fixture.directory, "snapshot.yml");
         writeFileSync(
           snapshot,
           `version: ${version}\nfiles:\n  - url: ${privateUrl}\n    sha512: private-checksum\npath: ${privateUrl}\nsha512: private-checksum\n`,
         );
-        const destination = path.join(privateDirectory, output.metadataFilename);
-        const mergeScript = fileURLToPath(
-          new URL("../../../scripts/packaging/merge-windows-update-metadata.mjs", import.meta.url),
+        const destination = path.join(
+          privateDirectory,
+          output.metadataFilename,
         );
-        const merged = spawnSync(process.execPath, [mergeScript, destination, snapshot], {
-          encoding: "utf8",
-        });
+        const mergeScript = fileURLToPath(
+          new URL(
+            "../../../scripts/packaging/merge-windows-update-metadata.mjs",
+            import.meta.url,
+          ),
+        );
+        const merged = spawnSync(
+          process.execPath,
+          [mergeScript, destination, snapshot],
+          {
+            encoding: "utf8",
+          },
+        );
         expect(merged.error).toBeUndefined();
         expect(merged.status).toBe(0);
         expect(readFileSync(destination, "utf8")).toContain(privateUrl);
         expect(readFileSync(publicMetadata, "utf8")).toBe(publicContents);
-        expect(readFileSync(path.join(publicDirectory, publicOutput.legacyInstaller), "utf8")).toBe(
-          "public installer",
-        );
+        expect(
+          readFileSync(
+            path.join(publicDirectory, publicOutput.legacyInstaller),
+            "utf8",
+          ),
+        ).toBe("public installer");
       } finally {
         fixture.dispose();
       }

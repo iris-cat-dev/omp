@@ -31,7 +31,9 @@ export async function resolveOmpSdkInstallation(
   if (!root) {
     try {
       root = path.dirname(
-        createRequire(import.meta.url).resolve("@oh-my-pi/pi-coding-agent/package.json"),
+        createRequire(import.meta.url).resolve(
+          "@oh-my-pi/pi-coding-agent/package.json",
+        ),
       );
     } catch (error) {
       if (
@@ -46,11 +48,18 @@ export async function resolveOmpSdkInstallation(
       );
     }
   }
-  if (!path.isAbsolute(root)) throw new Error("OMP SDK package root must be absolute");
+  if (!path.isAbsolute(root))
+    throw new Error("OMP SDK package root must be absolute");
   const manifest = sdkMetadata.parse(
     JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8")),
   );
-  const required = ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"];
+  const required = [
+    "sdk.mjs",
+    "rpc.mjs",
+    "host.mjs",
+    "plugins.mjs",
+    "modules.json",
+  ];
   await Promise.all(
     required.map(async (file) => {
       const filename = path.join(root, "dist", "node", file);

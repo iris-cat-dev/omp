@@ -59,7 +59,8 @@ class ControlledStatsProcess extends EventEmitter {
 function controlledRefresh() {
   const child = new ControlledStatsProcess();
   controlledChildren.push(child);
-  const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+  const { promise: started, resolve: markStarted } =
+    Promise.withResolvers<void>();
   vi.mocked(spawnProcess).mockImplementationOnce(() => {
     markStarted();
     return child as unknown as ChildProcess;
@@ -75,7 +76,9 @@ async function fixtureHome(): Promise<string> {
 }
 
 async function index(home: string, profile?: string): Promise<FixtureDatabase> {
-  const root = profile ? join(home, ".omp", "profiles", profile) : join(home, ".omp");
+  const root = profile
+    ? join(home, ".omp", "profiles", profile)
+    : join(home, ".omp");
   await mkdir(root, { recursive: true });
   const database = new DatabaseSync(join(root, "stats.db"));
   // These are the native numeric reader's required columns, not a mocked RPC result.
@@ -91,10 +94,12 @@ async function index(home: string, profile?: string): Promise<FixtureDatabase> {
 
 function addRequest(database: FixtureDatabase, total = 100): void {
   database
-    .prepare(`INSERT INTO messages VALUES (
+    .prepare(
+      `INSERT INTO messages VALUES (
       '/private/session.jsonl', 'fixture-provider', 'fixture-model', 'main', ?, 'stop',
       10, 20, 30, 40, ?, 1.25, 0
-    )`)
+    )`,
+    )
     .run(Date.now(), total);
 }
 
@@ -106,7 +111,10 @@ function client(
     logger: createTestLogger(),
     runtime: new FakeOmp(),
     runtimeSettings: {
-      command: options.command ?? { mode: "replace", argv: [join(home, "omp.exe")] },
+      command: options.command ?? {
+        mode: "replace",
+        argv: [join(home, "omp.exe")],
+      },
       env: { HOME: home, USERPROFILE: home, ...options.env },
     },
   });
@@ -138,7 +146,10 @@ afterEach(async () => {
     realChildren
       .splice(0)
       .map((child) =>
-        treeKill.terminateWithTreeKill(child, { gracefulTimeoutMs: 100, forceTimeoutMs: 1_000 }),
+        treeKill.terminateWithTreeKill(child, {
+          gracefulTimeoutMs: 100,
+          forceTimeoutMs: 1_000,
+        }),
       ),
   );
   for (const pid of descendantPids.splice(0)) {
@@ -150,7 +161,9 @@ afterEach(async () => {
   }
   vi.unstubAllEnvs();
   await Promise.all(
-    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -166,7 +179,13 @@ describe("OmpAgentClient native stats refresh", () => {
       join(sdkRoot, "package.json"),
       JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.2.3" }),
     );
-    for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"]) {
+    for (const entry of [
+      "sdk.mjs",
+      "rpc.mjs",
+      "host.mjs",
+      "plugins.mjs",
+      "modules.json",
+    ]) {
       await writeFile(join(sdkRoot, "dist", "node", entry), "");
     }
     const agent = new OmpAgentClient({
@@ -192,8 +211,14 @@ describe("OmpAgentClient native stats refresh", () => {
     const database = await index(home, "work");
     addRequest(database, 100);
     const agent = client(home, {
-      command: { mode: "replace", argv: [join(home, "omp.exe"), "--profile", "work"] },
-      env: { OMP_PROFILE: "other", OMP_STATS_FIXTURE_SECRET: "private-launch-secret" },
+      command: {
+        mode: "replace",
+        argv: [join(home, "omp.exe"), "--profile", "work"],
+      },
+      env: {
+        OMP_PROFILE: "other",
+        OMP_STATS_FIXTURE_SECRET: "private-launch-secret",
+      },
     });
     const first = controlledRefresh();
     let settled = false;
@@ -243,7 +268,13 @@ describe("OmpAgentClient native stats refresh", () => {
     expect(spawnProcess).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["nonzero", "signal", "spawn-error", "spawn-throw", "verification"] as const)(
+  it.each([
+    "nonzero",
+    "signal",
+    "spawn-error",
+    "spawn-throw",
+    "verification",
+  ] as const)(
     "never reports the old index as refreshed after %s failure, and permits a retry",
     async (failure) => {
       const home = await fixtureHome();
@@ -252,7 +283,9 @@ describe("OmpAgentClient native stats refresh", () => {
       database.close();
       const agent = client(home);
       if (failure === "verification") {
-        vi.mocked(assertBundledOmpHost).mockRejectedValueOnce(new Error(`${home}/private host`));
+        vi.mocked(assertBundledOmpHost).mockRejectedValueOnce(
+          new Error(`${home}/private host`),
+        );
       } else if (failure === "spawn-throw") {
         vi.mocked(spawnProcess).mockImplementationOnce(() => {
           throw new Error(`${home}/private executable ENOENT`);
@@ -271,19 +304,27 @@ describe("OmpAgentClient native stats refresh", () => {
           );
         }
         const result = await pending;
-        expect(result).toMatchObject({ status: "error", reason: "index_refresh_failed" });
+        expect(result).toMatchObject({
+          status: "error",
+          reason: "index_refresh_failed",
+        });
         expect(JSON.stringify(result)).not.toContain(home);
       }
       if (failure === "verification" || failure === "spawn-throw") {
         const result = await agent.getOmpStats("all");
-        expect(result).toMatchObject({ status: "error", reason: "index_refresh_failed" });
+        expect(result).toMatchObject({
+          status: "error",
+          reason: "index_refresh_failed",
+        });
         expect(JSON.stringify(result)).not.toContain(home);
       }
       if (failure === "verification") {
         expect(spawnProcess).not.toHaveBeenCalled();
       } else {
         expect(spawnProcess).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(spawnProcess).mock.calls[0]![0]).toBe(join(home, "omp.exe"));
+        expect(vi.mocked(spawnProcess).mock.calls[0]![0]).toBe(
+          join(home, "omp.exe"),
+        );
       }
       const retry = controlledRefresh();
       const pendingRetry = agent.getOmpStats("all");
@@ -305,8 +346,14 @@ describe("OmpAgentClient native stats refresh", () => {
     await shared.started;
     // This failure avoids SQL workers, while still testing per-range metadata.
     shared.child.exit(1);
-    expect(await first).toMatchObject({ range: "all", reason: "index_refresh_failed" });
-    expect(await second).toMatchObject({ range: "24h", reason: "index_refresh_failed" });
+    expect(await first).toMatchObject({
+      range: "all",
+      reason: "index_refresh_failed",
+    });
+    expect(await second).toMatchObject({
+      range: "24h",
+      reason: "index_refresh_failed",
+    });
     expect(spawnProcess).toHaveBeenCalledTimes(1);
 
     const retry = controlledRefresh();
@@ -317,7 +364,12 @@ describe("OmpAgentClient native stats refresh", () => {
     expect(spawnProcess).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["profile", "executable", "environment", "session-directory"] as const)(
+  it.each([
+    "profile",
+    "executable",
+    "environment",
+    "session-directory",
+  ] as const)(
     "does not merge concurrent refreshes with different %s",
     async (difference) => {
       const home = await fixtureHome();
@@ -326,11 +378,15 @@ describe("OmpAgentClient native stats refresh", () => {
       if (difference === "profile") env.OMP_PROFILE = "work";
       else if (difference === "session-directory")
         env.PI_CODING_AGENT_DIR = join(home, "other-agent");
-      else if (difference === "environment") env.OMP_STATS_FIXTURE_VARIANT = "other";
+      else if (difference === "environment")
+        env.OMP_STATS_FIXTURE_VARIANT = "other";
       const secondAgent = client(home, {
         ...(difference === "executable"
           ? {
-              command: { mode: "replace" as const, argv: [join(home, "other-runtime", "omp.exe")] },
+              command: {
+                mode: "replace" as const,
+                argv: [join(home, "other-runtime", "omp.exe")],
+              },
             }
           : {}),
         env,
@@ -352,8 +408,10 @@ describe("OmpAgentClient native stats refresh", () => {
     const home = await fixtureHome();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const refresh = controlledRefresh();
-    const { promise: cleanupStarted, resolve: markCleanupStarted } = Promise.withResolvers<void>();
-    const { promise: cleanupReleased, resolve: releaseCleanup } = Promise.withResolvers<void>();
+    const { promise: cleanupStarted, resolve: markCleanupStarted } =
+      Promise.withResolvers<void>();
+    const { promise: cleanupReleased, resolve: releaseCleanup } =
+      Promise.withResolvers<void>();
     const terminator = vi
       .spyOn(treeKill, "terminateWithTreeKill")
       .mockImplementationOnce(async () => {
@@ -379,8 +437,14 @@ describe("OmpAgentClient native stats refresh", () => {
     const concurrent = agent.getOmpStats("24h");
     await vi.advanceTimersByTimeAsync(0);
     releaseCleanup();
-    expect(await first).toMatchObject({ status: "error", reason: "index_refresh_timeout" });
-    expect(await concurrent).toMatchObject({ status: "error", reason: "index_refresh_timeout" });
+    expect(await first).toMatchObject({
+      status: "error",
+      reason: "index_refresh_timeout",
+    });
+    expect(await concurrent).toMatchObject({
+      status: "error",
+      reason: "index_refresh_timeout",
+    });
     expect(spawnProcess).toHaveBeenCalledTimes(1);
 
     const retry = controlledRefresh();
@@ -395,12 +459,17 @@ describe("OmpAgentClient native stats refresh", () => {
     const home = await fixtureHome();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const refresh = controlledRefresh();
-    vi.spyOn(treeKill, "terminateWithTreeKill").mockResolvedValueOnce("kill-timeout");
+    vi.spyOn(treeKill, "terminateWithTreeKill").mockResolvedValueOnce(
+      "kill-timeout",
+    );
     const agent = client(home);
     const pending = agent.getOmpStats("all");
     await refresh.started;
     await vi.advanceTimersByTimeAsync(42_000);
-    expect(await pending).toMatchObject({ status: "error", reason: "index_refresh_timeout" });
+    expect(await pending).toMatchObject({
+      status: "error",
+      reason: "index_refresh_timeout",
+    });
     expect(await agent.getOmpStats("24h")).toMatchObject({
       status: "error",
       reason: "index_refresh_timeout",
@@ -420,7 +489,8 @@ describe("OmpAgentClient native stats refresh", () => {
   it("never starts a late process after host verification exceeded the refresh deadline", async () => {
     const home = await fixtureHome();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const { promise: verified, resolve: finishVerification } = Promise.withResolvers<void>();
+    const { promise: verified, resolve: finishVerification } =
+      Promise.withResolvers<void>();
     vi.mocked(assertBundledOmpHost).mockReturnValueOnce(verified);
     const pending = client(home).getOmpStats("all");
     await vi.advanceTimersByTimeAsync(40_000);
@@ -436,7 +506,8 @@ describe("OmpAgentClient native stats refresh", () => {
       const home = await fixtureHome();
       let owner!: ChildProcess;
       let ready!: Promise<unknown[]>;
-      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: started, resolve: markStarted } =
+        Promise.withResolvers<void>();
       const terminator = vi.spyOn(treeKill, "terminateWithTreeKill");
       vi.mocked(spawnProcess).mockImplementationOnce(() => {
         owner = spawn(
@@ -514,7 +585,9 @@ describe("OmpAgentClient native stats refresh", () => {
   it("refuses an invalid profile scope before host verification or spawning", async () => {
     const home = await fixtureHome();
     expect(
-      await client(home, { env: { OMP_PROFILE: "../other" } }).getOmpStats("all"),
+      await client(home, { env: { OMP_PROFILE: "../other" } }).getOmpStats(
+        "all",
+      ),
     ).toMatchObject({
       status: "unavailable",
       reason: "scope_unavailable",

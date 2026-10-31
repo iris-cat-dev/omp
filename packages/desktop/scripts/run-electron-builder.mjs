@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, realpathSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { BUNDLED_OMP_HOST, sha256RegularFile } from "../../server/src/server/bundled-omp-host.ts";
+import {
+  BUNDLED_OMP_HOST,
+  sha256RegularFile,
+} from "../../server/src/server/bundled-omp-host.ts";
 
 const require = createRequire(import.meta.url);
 const {
@@ -14,12 +22,20 @@ const {
   normalizeOptions,
 } = require("electron-builder/out/builder");
 const { AppInfo, Packager, build } = require("app-builder-lib");
-const { validateConfiguration } = require("app-builder-lib/out/util/config/config");
+const {
+  validateConfiguration,
+} = require("app-builder-lib/out/util/config/config");
 const { expandMacro } = require("app-builder-lib/out/util/macroExpander");
-const { copyFiles, getFileMatchers } = require("app-builder-lib/out/fileMatcher");
+const {
+  copyFiles,
+  getFileMatchers,
+} = require("app-builder-lib/out/fileMatcher");
 const { resolveFunction } = require("app-builder-lib/out/util/resolve");
 const { Arch, copyFile, statOrNull } = require("builder-util");
-const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const desktopRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 // Native releases advance independently of the npm installer. Qualify the
 // distribution's target and protocol, not a frozen runtime release number.
 const runtimeExecutables = {
@@ -31,21 +47,30 @@ function configureOptionalSdk(config, projectDir, runtime) {
   const source = process.env.OMP_DESKTOP_SDK_SOURCE;
   if (!source) return;
   if (!path.isAbsolute(source)) {
-    throw new Error("OMP_DESKTOP_SDK_SOURCE must be an absolute SDK package root.");
+    throw new Error(
+      "OMP_DESKTOP_SDK_SOURCE must be an absolute SDK package root.",
+    );
   }
   const buildTarget = process.env.OMP_DESKTOP_SDK_TARGET ?? "generic";
   if (buildTarget !== "generic" && buildTarget !== "desktop") {
-    throw new Error(`Unsupported OMP_DESKTOP_SDK_TARGET: ${buildTarget}. Use generic or desktop.`);
+    throw new Error(
+      `Unsupported OMP_DESKTOP_SDK_TARGET: ${buildTarget}. Use generic or desktop.`,
+    );
   }
   const stage = path.join(projectDir, "sdk-dist");
   const manifestFile = path.join(stage, "manifest.json");
-  if (!existsSync(manifestFile) || !existsSync(path.join(stage, "source.json"))) {
+  if (
+    !existsSync(manifestFile) ||
+    !existsSync(path.join(stage, "source.json"))
+  ) {
     throw new Error(
       "Optional SDK payload is missing. Run build:remote-backend with OMP_DESKTOP_SDK_SOURCE first.",
     );
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
-  const stagedSource = JSON.parse(readFileSync(path.join(stage, "source.json"), "utf8"));
+  const stagedSource = JSON.parse(
+    readFileSync(path.join(stage, "source.json"), "utf8"),
+  );
   if (
     manifest.schemaVersion !== 1 ||
     manifest.packageName !== "@oh-my-pi/pi-coding-agent" ||
@@ -64,6 +89,7 @@ function configureOptionalSdk(config, projectDir, runtime) {
     "dist/node/sdk.mjs",
     "dist/node/rpc.mjs",
     "dist/node/host.mjs",
+    "dist/node/plugins.mjs",
     "dist/node/modules.json",
   ]) {
     if (!existsSync(path.join(stage, manifest.packageRoot, file))) {
@@ -73,7 +99,10 @@ function configureOptionalSdk(config, projectDir, runtime) {
     }
   }
   const installed = JSON.parse(
-    readFileSync(path.join(stage, manifest.packageRoot, "package.json"), "utf8"),
+    readFileSync(
+      path.join(stage, manifest.packageRoot, "package.json"),
+      "utf8",
+    ),
   );
   if ((installed.ompNodeSdk?.target ?? "generic") !== buildTarget) {
     throw new Error(
@@ -85,7 +114,11 @@ function configureOptionalSdk(config, projectDir, runtime) {
   config.extraResources = [
     ...(config.extraResources ?? []),
     // electron-builder deliberately filters a matcher's root node_modules directory.
-    { from: path.join(stage, "node_modules"), to: "omp-sdk/node_modules", filter: ["**/*"] },
+    {
+      from: path.join(stage, "node_modules"),
+      to: "omp-sdk/node_modules",
+      filter: ["**/*"],
+    },
     { from: manifestFile, to: "omp-sdk/manifest.json" },
   ];
 }
@@ -130,7 +163,9 @@ function deferQualifiedWindowsResources(config, projectDir, privateHostSource) {
     const relative = path
       .relative(appDir, path.resolve(projectDir, from ?? "."))
       .replaceAll("\\", "/");
-    return relative.startsWith("../") || path.isAbsolute(relative) ? [] : [`!${relative}{,/**/*}`];
+    return relative.startsWith("../") || path.isAbsolute(relative)
+      ? []
+      : [`!${relative}{,/**/*}`];
   });
   // getConfig has already normalized files into FileSets. Exclusions belong in
   // the same root matcher as its inclusions, not in a second independent matcher.
@@ -152,7 +187,11 @@ function deferQualifiedWindowsResources(config, projectDir, privateHostSource) {
       { extraResources: sealedResources },
       "extraResources",
       context.packager.getResourcesDir(context.appOutDir),
-      context.packager.createGetFileMatchersOptions(context.outDir, context.arch, {}),
+      context.packager.createGetFileMatchersOptions(
+        context.outDir,
+        context.arch,
+        {},
+      ),
     );
     await Promise.all(
       (matchers ?? []).map(async (matcher) => {
@@ -165,7 +204,11 @@ function deferQualifiedWindowsResources(config, projectDir, privateHostSource) {
         }
       }),
     );
-    const host = path.join(context.packager.getResourcesDir(context.appOutDir), "bin", "omp.exe");
+    const host = path.join(
+      context.packager.getResourcesDir(context.appOutDir),
+      "bin",
+      "omp.exe",
+    );
     if (privateHostSource) await verifyPrivateHost(host);
     await runHook(originalAfterPack, "afterPack", context, projectDir);
     if (privateHostSource) await verifyPrivateHost(host);
@@ -175,7 +218,11 @@ function deferQualifiedWindowsResources(config, projectDir, privateHostSource) {
     config.afterSign = async (context) => {
       await runHook(originalAfterSign, "afterSign", context, projectDir);
       await verifyPrivateHost(
-        path.join(context.packager.getResourcesDir(context.appOutDir), "bin", "omp.exe"),
+        path.join(
+          context.packager.getResourcesDir(context.appOutDir),
+          "bin",
+          "omp.exe",
+        ),
       );
     };
   }
@@ -184,7 +231,10 @@ function deferQualifiedWindowsResources(config, projectDir, privateHostSource) {
 async function qualifyRuntime(runtimeDist, runtime, normalized) {
   for (const [platform, arches] of normalized.targets) {
     for (const arch of arches.keys()) {
-      if (platform.nodeName !== runtime.platform || Arch[arch] !== runtime.arch) {
+      if (
+        platform.nodeName !== runtime.platform ||
+        Arch[arch] !== runtime.arch
+      ) {
         throw new Error(
           `Cannot package ${platform.nodeName}-${Arch[arch]} with the ` +
             `${runtime.platform}-${runtime.arch} runtime at ${runtimeDist}. ` +
@@ -197,32 +247,46 @@ async function qualifyRuntime(runtimeDist, runtime, normalized) {
   const target = `${runtime.platform}-${runtime.arch}`;
   const executable = runtimeExecutables[target];
   if (!executable) {
-    throw new Error(`Unsupported mini-electron target ${target} at ${runtimeDist}.`);
+    throw new Error(
+      `Unsupported mini-electron target ${target} at ${runtimeDist}.`,
+    );
   }
   const expectedHash = runtime.files?.[executable];
-  if (runtime.installerProtocol !== 1 || !/^[a-f0-9]{64}$/.test(expectedHash ?? "")) {
+  if (
+    runtime.installerProtocol !== 1 ||
+    !/^[a-f0-9]{64}$/.test(expectedHash ?? "")
+  ) {
     throw new Error(
       `Missing genuine mini-electron executable metadata at ${runtimeDist}/version.json`,
     );
   }
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path.join(runtimeDist, executable)))
+  for await (const chunk of createReadStream(
+    path.join(runtimeDist, executable),
+  ))
     hash.update(chunk);
   if (hash.digest("hex") !== expectedHash) {
-    throw new Error(`mini-electron executable SHA256 mismatch at ${runtimeDist}/${executable}`);
+    throw new Error(
+      `mini-electron executable SHA256 mismatch at ${runtimeDist}/${executable}`,
+    );
   }
   return target;
 }
 
 async function configurePrivateDistribution(packager, target) {
   const { config, projectDir, options: normalized } = packager;
-  if (target !== "win32-x64") throw new Error("Bundled private plugins require Windows x64.");
+  if (target !== "win32-x64")
+    throw new Error("Bundled private plugins require Windows x64.");
   if (normalized.publish && normalized.publish !== "never") {
-    throw new Error("The private plugin distribution cannot publish to the public update channel.");
+    throw new Error(
+      "The private plugin distribution cannot publish to the public update channel.",
+    );
   }
   const resources = config.win?.extraResources ?? [];
   const hosts = Array.isArray(resources)
-    ? [...(config.extraResources ?? []), ...resources].filter((item) => item.to === "bin/omp.exe")
+    ? [...(config.extraResources ?? []), ...resources].filter(
+        (item) => item.to === "bin/omp.exe",
+      )
     : [];
   if (
     process.env.OMP_DESKTOP_BUNDLE_OMP === "0" ||
@@ -230,27 +294,39 @@ async function configurePrivateDistribution(packager, target) {
     hosts.length !== 1 ||
     typeof hosts[0].from !== "string"
   ) {
-    throw new Error("The private plugin distribution requires its qualified bundled OMP host.");
+    throw new Error(
+      "The private plugin distribution requires its qualified bundled OMP host.",
+    );
   }
-  for (const file of ["bundled-omp-plugins/manifest.json", "bundled-omp-manager.json"]) {
+  for (const file of [
+    "bundled-omp-plugins/manifest.json",
+    "bundled-omp-manager.json",
+  ]) {
     if (!existsSync(path.join(projectDir, file))) {
       throw new Error(
         `Private plugin payload is missing: ${file}. Run stage:bundled-plugins first.`,
       );
     }
   }
-  const hostSource = expandMacro(hosts[0].from, "x64", new AppInfo(packager, null, config.win), {
-    os: "win",
-  });
+  const hostSource = expandMacro(
+    hosts[0].from,
+    "x64",
+    new AppInfo(packager, null, config.win),
+    {
+      os: "win",
+    },
+  );
   const privateHostSource = path.resolve(projectDir, hostSource);
   await verifyPrivateHost(privateHostSource);
   config.extraMetadata = {
     ...config.extraMetadata,
     ompDesktopDistribution: "private-three-plugins",
   };
-  packager.metadata.ompDesktopDistribution = config.extraMetadata.ompDesktopDistribution;
+  packager.metadata.ompDesktopDistribution =
+    config.extraMetadata.ompDesktopDistribution;
   config.directories.output = "release-plugins";
-  config.win.artifactName = "OMP-Desktop-Plugins-Setup-${version}-${arch}.${ext}";
+  config.win.artifactName =
+    "OMP-Desktop-Plugins-Setup-${version}-${arch}.${ext}";
   config.win.extraResources = [
     ...resources,
     { from: "bundled-omp-plugins", to: "bundled-omp-plugins" },
@@ -296,11 +372,17 @@ export async function createQualifiedPackager(
     typeof runtime.runtimeVersion !== "string" ||
     !runtime.runtimeVersion
   ) {
-    throw new Error(`Invalid mini-electron runtime metadata at ${runtimeDist}/version.json`);
+    throw new Error(
+      `Invalid mini-electron runtime metadata at ${runtimeDist}/version.json`,
+    );
   }
 
   // Match the installed runtime even when Node is running under Rosetta.
-  if (!["x64", "arm64", "ia32", "armv7l", "universal"].some((arch) => options[arch])) {
+  if (
+    !["x64", "arm64", "ia32", "armv7l", "universal"].some(
+      (arch) => options[arch],
+    )
+  ) {
     options[runtime.arch] = true;
   }
   const normalized = normalizeOptions(options);
@@ -321,8 +403,13 @@ export async function createQualifiedPackager(
       config.electronDist = runtimeDist;
       config.electronVersion = runtime.electronApiVersion;
       configureOptionalSdk(config, projectDir, runtime);
-      if (runtime.platform === "win32" && config.win?.signAndEditExecutable === false) {
-        throw new Error("Windows packaging requires real executable resource editing and signing.");
+      if (
+        runtime.platform === "win32" &&
+        config.win?.signAndEditExecutable === false
+      ) {
+        throw new Error(
+          "Windows packaging requires real executable resource editing and signing.",
+        );
       }
       const privateHostSource = withPlugins
         ? await configurePrivateDistribution(qualifiedPackager, target)
@@ -337,7 +424,9 @@ export async function createQualifiedPackager(
 }
 
 async function main() {
-  const packageRoot = path.dirname(require.resolve("@iriscat/mini-electron/package.json"));
+  const packageRoot = path.dirname(
+    require.resolve("@iriscat/mini-electron/package.json"),
+  );
   const runtimeDist = path.resolve(
     process.env.MINI_ELECTRON_DIST_PATH || path.join(packageRoot, "dist"),
   );
@@ -346,8 +435,14 @@ async function main() {
       `mini-electron runtime is missing at ${runtimeDist}; reinstall without MINI_ELECTRON_SKIP_BINARY_DOWNLOAD`,
     );
   }
-  const runtime = JSON.parse(readFileSync(path.join(runtimeDist, "version.json"), "utf8"));
-  const packager = await createQualifiedPackager(runtimeDist, runtime, process.argv.slice(2));
+  const runtime = JSON.parse(
+    readFileSync(path.join(runtimeDist, "version.json"), "utf8"),
+  );
+  const packager = await createQualifiedPackager(
+    runtimeDist,
+    runtime,
+    process.argv.slice(2),
+  );
   console.log(
     `Packaging with mini-electron ${runtime.runtimeVersion} ${runtime.platform}-${runtime.arch}: ${runtimeDist}`,
   );

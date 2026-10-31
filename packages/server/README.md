@@ -81,6 +81,22 @@ PASEO_LISTEN=127.0.0.1:6767  # Listen address (host:port or /path/to/socket)
 PASEO_HOME=~/.paseo-blue PASEO_LISTEN=127.0.0.1:7777 npm run dev
 ```
 
+## OMP SDK plugin management
+
+With `agents.providers.omp.ompBackend: "sdk"`, the existing plugin settings
+requests run through a dedicated Node SDK child using `dist/node/plugins.mjs`.
+The selected `ompSdkPath`, provider environment, proxy settings, cwd and scope
+apply to management as well as sessions. No OMP executable is resolved, and an
+invalid SDK fails instead of falling back to CLI. The `cli` backend retains the
+existing command path.
+
+Stage the complete SDK, including `plugins.mjs`. Local plugin linking, listing,
+enable/disable and read-only diagnostics do not require Bun or npm. Network
+package installation still requires a package manager; embedded Node is not an
+npm installation. Management uses OMP's existing stores. Selecting the SDK
+backend does not provision or enable plugins; explicit install/link/enable
+commands retain their existing CLI behavior.
+
 ## Tech Stack
 
 - **Server**: Express, TypeScript, ws (WebSocket)

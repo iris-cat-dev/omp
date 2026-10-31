@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createProviderEnv } from "../../provider-launch-config.js";
@@ -13,8 +11,15 @@ import {
   resolveOmpImageSettingsExtensionPath,
   startOmpRpcSession,
 } from "./cli-runtime.js";
-import { prepareOmpImageSettingsLaunch, OMP_IMAGE_SETTINGS_TOKEN_ENV } from "./image-settings.js";
-import { resolveOmpSdkInstallation, type OmpSdkInstallation } from "./sdk-installation.js";
+import {
+  prepareOmpImageSettingsLaunch,
+  OMP_IMAGE_SETTINGS_TOKEN_ENV,
+} from "./image-settings.js";
+import {
+  resolveOmpSdkInstallation,
+  type OmpSdkInstallation,
+} from "./sdk-installation.js";
+import { resolveOmpSdkHostCommand } from "./sdk-host-command.js";
 import {
   OMP_SDK_ROOT_ENV,
   OMP_SDK_LAUNCH_ENV,
@@ -36,20 +41,6 @@ export interface OmpSdkRuntimeOptions {
   disabledBuiltInTools?: readonly string[];
 }
 
-async function sdkHostCommand(): Promise<[string, ...string[]]> {
-  const candidates = [
-    new URL("./sdk-host.js", import.meta.url),
-    new URL("../../../../../dist/server/server/agent/providers/omp/sdk-host.js", import.meta.url),
-  ];
-  for (const candidate of candidates) {
-    const compiled = fileURLToPath(candidate).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
-    if (existsSync(compiled)) return [process.execPath, compiled];
-  }
-  throw new Error(
-    "The Desktop Node SDK host is missing. Build the server package before selecting the SDK backend.",
-  );
-}
-
 /** SDK state stays in a Node child while all Desktop RPC/event contracts remain shared. */
 export class OmpSdkRuntime implements OmpRuntime {
   constructor(readonly options: OmpSdkRuntimeOptions) {}
@@ -67,8 +58,11 @@ export class OmpSdkRuntime implements OmpRuntime {
       runtimeSettings: this.options.runtimeSettings,
       overlays: [input.env],
     });
-    const installation = await resolveOmpSdkInstallation(this.options.runtimeSettings, env);
-    const [command, ...args] = await sdkHostCommand();
+    const installation = await resolveOmpSdkInstallation(
+      this.options.runtimeSettings,
+      env,
+    );
+    const [command, ...args] = await resolveOmpSdkHostCommand();
     await execCommand(command, [...args, "--stop-daemon", input.name], {
       cwd: input.cwd,
       env: {
@@ -83,7 +77,8 @@ export class OmpSdkRuntime implements OmpRuntime {
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     input.signal?.throwIfAborted();
     const major = Number(process.versions.node.split(".")[0]);
-    if (major < 24) throw new Error("OMP SDK backend requires Node.js 24 or newer");
+    if (major < 24)
+      throw new Error("OMP SDK backend requires Node.js 24 or newer");
     const runtimeSettings = this.options.runtimeSettings;
     const configuredCommand = runtimeSettings?.command;
     const defaultBinary = process.env.OMP_COMMAND?.trim() || "omp";
@@ -107,7 +102,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       );
     }
     const installation = await resolveOmpSdkInstallation(runtimeSettings, env);
-    const command = await sdkHostCommand();
+    const command = await resolveOmpSdkHostCommand();
     const launch: OmpRuntimeLaunch = {
       cwd: input.cwd,
       argv: [...command],
@@ -117,7 +112,11 @@ export class OmpSdkRuntime implements OmpRuntime {
       session: input.session,
       noSession: input.noSession,
       systemPrompt: input.systemPrompt,
-      env: { ...env, ELECTRON_RUN_AS_NODE: "1", [OMP_SDK_ROOT_ENV]: installation.root },
+      env: {
+        ...env,
+        ELECTRON_RUN_AS_NODE: "1",
+        [OMP_SDK_ROOT_ENV]: installation.root,
+      },
     };
     const { bridge, enabled } = await prepareOmpLocalModelsLaunch(
       launch,
@@ -125,9 +124,13 @@ export class OmpSdkRuntime implements OmpRuntime {
       this.options.localModelBridge,
     );
     const extensions: string[] = [];
-    if (launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
+    if (launch.protocolMode === "rpc-ui")
+      extensions.push(resolveOmpBackgroundJobsExtensionPath());
     const imageLaunch = input.getImageGenerationConfig
-      ? await prepareOmpImageSettingsLaunch(command, input.cwd, { ...process.env, ...launch.env })
+      ? await prepareOmpImageSettingsLaunch(command, input.cwd, {
+          ...process.env,
+          ...launch.env,
+        })
       : undefined;
     try {
       if (imageLaunch) extensions.push(resolveOmpImageSettingsExtensionPath());
@@ -157,7 +160,9 @@ export class OmpSdkRuntime implements OmpRuntime {
       launch.argv = [...command];
       launch.env = {
         ...launch.env,
-        ...(imageLaunch ? { [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token } : {}),
+        ...(imageLaunch
+          ? { [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token }
+          : {}),
         [OMP_SDK_LAUNCH_ENV]: JSON.stringify(payload),
       };
       return await startOmpRpcSession({
