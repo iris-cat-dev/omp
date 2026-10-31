@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import type * as NodeOs from "node:os";
@@ -155,6 +155,38 @@ afterEach(async () => {
 });
 
 describe("OmpAgentClient native stats refresh", () => {
+  it("reads the existing SDK index with a Node worker and never refreshes through the CLI", async () => {
+    const home = await fixtureHome();
+    const database = await index(home, "work");
+    addRequest(database, 123);
+    database.close();
+    const sdkRoot = join(home, "sdk");
+    await mkdir(join(sdkRoot, "dist", "node"), { recursive: true });
+    await writeFile(
+      join(sdkRoot, "package.json"),
+      JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.2.3" }),
+    );
+    for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"]) {
+      await writeFile(join(sdkRoot, "dist", "node", entry), "");
+    }
+    const agent = new OmpAgentClient({
+      logger: createTestLogger(),
+      runtimeSettings: {
+        ompBackend: "sdk",
+        ompSdkPath: sdkRoot,
+        env: { HOME: home, USERPROFILE: home, OMP_PROFILE: "work", PATH: "" },
+      },
+    });
+
+    expect(await agent.getOmpStats("all")).toMatchObject({
+      status: "available",
+      scope: { profile: "work" },
+      overall: { totalRequests: 1, totalTokens: 123 },
+    });
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(assertBundledOmpHost).not.toHaveBeenCalled();
+  });
+
   it("awaits native indexing before reading the real numeric index on every request", async () => {
     const home = await fixtureHome();
     const database = await index(home, "work");

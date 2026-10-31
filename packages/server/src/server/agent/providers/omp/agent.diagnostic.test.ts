@@ -90,6 +90,59 @@ describe("OMP diagnostics", () => {
     expect(diagnostic).not.toContain("auth.json");
     expect(diagnostic).not.toContain(".pi/agent");
   });
+
+  test("reports the actual SDK package without resolving or executing an OMP CLI", async () => {
+    const dir = await makeTempDir();
+    const sdkRoot = path.join(dir, "sdk-package");
+    await mkdir(path.join(sdkRoot, "dist", "node"), { recursive: true });
+    await writeFile(
+      path.join(sdkRoot, "package.json"),
+      JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.2.3" }),
+    );
+    for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"]) {
+      await writeFile(path.join(sdkRoot, "dist", "node", entry), "");
+    }
+    const client = new OmpAgentClient({
+      logger: createTestLogger(),
+      runtimeSettings: {
+        ompBackend: "sdk",
+        ompSdkPath: sdkRoot,
+        env: { PATH: "", PI_CODING_AGENT_DIR: path.join(dir, "agent") },
+      },
+    });
+
+    await expect(client.isAvailable()).resolves.toBe(true);
+    const { diagnostic } = await client.getDiagnostic();
+    expect(diagnostic).toContain("Backend: Node SDK");
+    expect(diagnostic).toContain(`SDK package: ${sdkRoot}`);
+    expect(diagnostic).toContain("Version: 19.2.3");
+    expect(diagnostic).toContain(`Node runtime: ${process.versions.node}`);
+    expect(diagnostic).not.toContain("Bun");
+    expect(diagnostic).not.toContain("Configured command:");
+    await expect(client.getOmpInstallationStatus({ checkForUpdates: true })).resolves.toMatchObject(
+      {
+        installed: true,
+        supported: true,
+        source: "sdk",
+        version: "19.2.3",
+        installPath: sdkRoot,
+      },
+    );
+    await expect(client.installOmp()).rejects.toThrow("not managed by the CLI installer");
+    await expect(client.cancelOmpInstall()).rejects.toThrow("No CLI installation is managed");
+  });
+
+  test("does not report an unavailable SDK package as an available CLI installation", async () => {
+    const dir = await makeTempDir();
+    const client = new OmpAgentClient({
+      logger: createTestLogger(),
+      runtimeSettings: { ompBackend: "sdk", ompSdkPath: path.join(dir, "missing-sdk") },
+    });
+
+    await expect(client.isAvailable()).resolves.toBe(false);
+    await expect(client.getOmpInstallationStatus()).rejects.toThrow();
+    expect((await client.getDiagnostic()).diagnostic).toContain("missing-sdk");
+  });
 });
 
 async function makeTempDir(): Promise<string> {

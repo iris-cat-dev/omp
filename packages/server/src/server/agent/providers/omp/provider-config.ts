@@ -365,6 +365,8 @@ export function mergeOmpRuntimeSettings(
   if (!base && !override) return undefined;
   return {
     command: override?.command ?? base?.command,
+    ompBackend: override?.ompBackend ?? base?.ompBackend,
+    ompSdkPath: override?.ompSdkPath ?? base?.ompSdkPath,
     env: base?.env || override?.env ? { ...base?.env, ...override?.env } : undefined,
     disallowedTools:
       base?.disallowedTools || override?.disallowedTools

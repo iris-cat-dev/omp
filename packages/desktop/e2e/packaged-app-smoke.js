@@ -171,7 +171,7 @@ function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
   };
 }
 
-function configureIsolatedDaemonHome(home, listen) {
+function configureIsolatedDaemonHome(home, listen, backend = "cli") {
   fs.writeFileSync(
     path.join(home, "config.json"),
     `${JSON.stringify(
@@ -182,6 +182,7 @@ function configureIsolatedDaemonHome(home, listen) {
           relay: { enabled: false },
           mcp: { enabled: false, injectIntoAgents: false },
         },
+        ...(backend === "sdk" ? { agents: { providers: { omp: { ompBackend: "sdk" } } } } : {}),
       },
       null,
       2,
@@ -720,6 +721,138 @@ try {
   return { binaryPath, version: version.stdout.trim(), diagnostic: diagnostic.stdout };
 }
 
+async function smokePackagedSdkRuntime({ appPath, env, executableName }) {
+  const binaryPath = getBundledOmpPath(appPath);
+  if (fs.existsSync(binaryPath)) throw new Error(`SDK-only package contains OMP: ${binaryPath}`);
+  const resources = path.dirname(path.dirname(binaryPath));
+  const sdkRoot = path.join(resources, "omp-sdk", "node_modules", "@oh-my-pi", "pi-coding-agent");
+  const sdkPackage = JSON.parse(fs.readFileSync(path.join(sdkRoot, "package.json"), "utf8"));
+  if (sdkPackage.bin || fs.existsSync(path.join(sdkRoot, "dist", "omp"))) {
+    throw new Error("SDK payload contains a standalone OMP CLI or advertises its executable");
+  }
+  const runtimePath = path.join(
+    resources,
+    "app",
+    "node_modules",
+    "@omp-desktop",
+    "server",
+    "dist",
+    "server",
+    "server",
+    "agent",
+    "providers",
+    "omp",
+    "sdk-runtime.js",
+  );
+  // An in-checkout App can accidentally resolve missing packages from the
+  // workspace node_modules. Exercise the installed layout outside that tree.
+  const isolated = createTempDir("omp-desktop-sdk-install-");
+  let probe;
+  try {
+    const isolatedApp = path.join(isolated, path.basename(appPath));
+    await fs.promises.cp(appPath, isolatedApp, { recursive: true, verbatimSymlinks: true });
+    const isolatedResources = path.dirname(path.dirname(getBundledOmpPath(isolatedApp)));
+    const isolatedRuntime = path.join(isolatedResources, path.relative(resources, runtimePath));
+    const isolatedSdk = path.join(isolatedResources, path.relative(resources, sdkRoot));
+    const probeEnv = { ...env, ELECTRON_RUN_AS_NODE: "1", OMP_DESKTOP_SDK_ROOT: isolatedSdk };
+    delete probeEnv.NODE_PATH;
+    delete probeEnv.NODE_OPTIONS;
+    probe = spawnSync(
+      getExecutablePath(isolatedApp, executableName),
+      [
+        "-e",
+        `
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const assert = require("node:assert/strict");
+const { OmpSdkRuntime } = require(${JSON.stringify(isolatedRuntime)});
+const { createRequire } = require("node:module");
+const pino = createRequire(${JSON.stringify(isolatedRuntime)})("pino");
+const runtime = new OmpSdkRuntime({
+  logger: pino({ level: "silent" }),
+  runtimeSettings: { ompBackend: "sdk" },
+});
+const sessions = [];
+const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sdk-packaged-"));
+const extension = path.join(cwd, "sdk-install-probe.ts");
+fs.writeFileSync(extension, \`
+import * as fs from "node:fs/promises";
+import * as assert from "node:assert/strict";
+import * as path from "node:path";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { nativeCapabilities } from "@oh-my-pi/pi-natives";
+enum Value { Base = 6 }
+export default function(api: ExtensionAPI) {
+  api.on("session_start", async (_event, ctx) => {
+    assert.deepEqual(nativeCapabilities(), ${JSON.stringify(
+      sdkPackage.ompNodeSdk?.target === "desktop"
+        ? { smollm: false, liveVoice: false, wasmGrammars: false }
+        : { smollm: true, liveVoice: true, wasmGrammars: true },
+    )});
+    await fs.writeFile(path.join(ctx.cwd, "sdk-typescript-result.txt"), String(Value.Base * 7));
+  });
+}
+\`);
+(async () => {
+  try {
+    for (let index = 0; index < 3; index++) {
+      const session = await runtime.startSession({
+        cwd, noSession: true, protocolMode: "rpc-ui",
+        extraArgs: ["--no-lsp", "--no-context-files", "--extension", extension],
+        getImageGenerationConfig: () => null,
+      });
+      sessions.push(session);
+      const state = await session.getState();
+      assert.equal(state.isStreaming, false);
+      assert.deepEqual(await session.listBackgroundJobs(), []);
+      assert.ok(state.dumpTools.some(tool => tool.name === "write"));
+    }
+    assert.equal(fs.readFileSync(path.join(cwd, "sdk-typescript-result.txt"), "utf8"), "42");
+    const states = await Promise.all(sessions.map(session => session.getState()));
+    assert.equal(new Set(states.map(state => state.sessionId)).size, sessions.length);
+    assert.equal(typeof globalThis.Bun, "undefined");
+    console.log("native-sdk-runtime-ready");
+  } finally {
+    await Promise.all(sessions.map(session => session.close()));
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: probeEnv,
+        cwd: isolated,
+        timeout: SMOKE_TIMEOUT_MS,
+      },
+    );
+  } finally {
+    await fs.promises.rm(isolated, { recursive: true, force: true });
+  }
+  if (probe.error || probe.status !== 0 || !probe.stdout.includes("native-sdk-runtime-ready")) {
+    throw new Error(`Packaged SDK runtime failed: ${probe.error || probe.stderr || probe.stdout}`);
+  }
+  const diagnostic = await runCliShimCommand({
+    appPath,
+    env,
+    args: ["provider", "diagnostic", "omp"],
+    label: "Packaged SDK provider diagnostic",
+    timeoutMs: 180_000 + SMOKE_TIMEOUT_MS,
+  });
+  if (!diagnostic.stdout.includes("Backend: Node SDK") || !diagnostic.stdout.includes(sdkRoot)) {
+    throw new Error(`Daemon did not select the packaged SDK: ${diagnostic.stdout}`);
+  }
+  await runCliShimJsonCommand({
+    appPath,
+    env,
+    args: ["provider", "models", "omp"],
+    label: "Packaged SDK provider models",
+  });
+  console.log("Packaged desktop smoke: SDK runtime and native tools loaded without OMP or Bun");
+  return { sdkRoot, version: sdkPackage.version };
+}
+
 async function smokeCliShim({ appPath, env }) {
   console.log("Packaged desktop smoke: running bundled CLI shim daemon status");
   const result = await runCliShimCommand({
@@ -1043,18 +1176,22 @@ async function smokePetCreationHelper({ page, appPath, env }) {
   return { installed: true, daemonPid: after.pid, selectedId: settingsAfter.pet.selectedId };
 }
 
-async function smokePackagedDesktopApp({ appPath, executableName }) {
+async function smokePackagedDesktopApp({ appPath, executableName, backend = "cli" }) {
+  if (backend !== "cli" && backend !== "sdk")
+    throw new Error(`Unsupported smoke backend: ${backend}`);
+  const smokeOmpRuntime = backend === "sdk" ? smokePackagedSdkRuntime : smokeBundledOmpRuntime;
   if (process.platform === "win32") {
     const { smokeWindowsPackagedApp } = require("./windows-native-packaged-smoke");
     return smokeWindowsPackagedApp({
       appPath,
       executableName: executableName ?? EXECUTABLE_NAME,
       reserveLocalTcpPort,
-      configureIsolatedDaemonHome,
+      configureIsolatedDaemonHome: (home, listen) =>
+        configureIsolatedDaemonHome(home, listen, backend),
       runColdCli: smokeColdCliDaemonStart,
       runCliChecks: async ({ appPath: stagedAppPath, env, createTerminal }) => ({
         status: await smokeCliShim({ appPath: stagedAppPath, env }),
-        omp: await smokeBundledOmpRuntime({ appPath: stagedAppPath, env }),
+        omp: await smokeOmpRuntime({ appPath: stagedAppPath, env }),
         terminal: await smokeCliTerminal({ appPath: stagedAppPath, env, createTerminal }),
       }),
       runPetCreation: smokePetCreationHelper,
@@ -1077,7 +1214,7 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
     throw new Error("Failed to reserve distinct TCP ports for the daemon and CDP");
   }
   const listen = `127.0.0.1:${daemonPort}`;
-  configureIsolatedDaemonHome(daemonHome, listen);
+  configureIsolatedDaemonHome(daemonHome, listen, backend);
   const env = createIsolatedDesktopEnv({
     home: daemonHome,
     listen,
@@ -1158,7 +1295,7 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
     }
     console.log("Packaged desktop smoke: second instance preserved the primary daemon");
     await smokeCliShim({ appPath, env });
-    await smokeBundledOmpRuntime({ appPath, env, executableName });
+    await smokeOmpRuntime({ appPath, env, executableName });
     await smokeCliTerminal({ appPath, env });
     await smokePetCreationHelper({ page, appPath, env });
     await stopDaemonForCleanup();
@@ -1194,19 +1331,22 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
 
 module.exports = {
   smokePackagedDesktopApp,
+  smokePackagedSdkRuntime,
 };
 
 if (require.main === module) {
   const appIndex = process.argv.indexOf("--app");
   const appPath = appIndex >= 0 ? process.argv[appIndex + 1] : null;
+  const backendIndex = process.argv.indexOf("--backend");
+  const backend = backendIndex >= 0 ? process.argv[backendIndex + 1] : "cli";
   if (!appPath) {
     process.stderr.write(
-      "Usage: node packages/desktop/e2e/packaged-app-smoke.js --app <packaged-app-directory>\n",
+      "Usage: node packages/desktop/e2e/packaged-app-smoke.js --app <packaged-app-directory> [--backend cli|sdk]\n",
     );
     process.exit(2);
   }
 
-  smokePackagedDesktopApp({ appPath }).catch((error) => {
+  smokePackagedDesktopApp({ appPath, backend }).catch((error) => {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     process.stderr.write(`${message}\n`);
     process.exit(1);

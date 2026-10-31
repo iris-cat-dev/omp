@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
+import { mergeRuntimeSettings, toRuntimeSettings } from "./agent/provider-launch-config.js";
 
 const roots: string[] = [];
 
@@ -37,6 +38,85 @@ describe("server config", () => {
     const config = loadConfig(paseoHome, { env: {} });
 
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
+  });
+
+  test("loads SDK backend selection from persisted provider overrides", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-omp-sdk-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        agents: {
+          providers: { omp: { ompBackend: "sdk", ompSdkPath: "/opt/omp-sdk" } },
+        },
+      }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+    expect(config.agentProviderSettings?.omp).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(toRuntimeSettings(config.providerOverrides?.omp)).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(
+      mergeRuntimeSettings(
+        config.agentProviderSettings?.omp,
+        toRuntimeSettings({ ...config.providerOverrides?.omp, ompBackend: "cli" }),
+      ),
+    ).toMatchObject({
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+  });
+
+  test("loads SDK-only and path-only overrides without requiring command or env", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-omp-sdk-only-"));
+    roots.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ agents: { providers: { omp: { ompBackend: "sdk" } } } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).agentProviderSettings?.omp?.ompBackend).toBe("sdk");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({ agents: { providers: { omp: { ompSdkPath: "/opt/omp-sdk" } } } }),
+    );
+    const config = loadConfig(paseoHome, { env: {} });
+    expect(config.agentProviderSettings?.omp?.ompSdkPath).toBe("/opt/omp-sdk");
+    expect(config.agentProviderSettings?.omp?.ompBackend).toBeUndefined();
+  });
+
+  test("keeps existing CLI configuration unchanged and rejects invalid SDK paths", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-omp-cli-"));
+    roots.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        agents: { providers: { omp: { command: ["/opt/omp"], env: { CUSTOM: "value" } } } },
+      }),
+    );
+    const config = loadConfig(paseoHome, { env: {} });
+    expect(config.agentProviderSettings?.omp).toEqual({
+      command: { mode: "replace", argv: ["/opt/omp"] },
+      env: { CUSTOM: "value" },
+    });
+    expect(config.providerOverrides?.omp?.ompBackend).toBeUndefined();
+
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        agents: { providers: { omp: { ompBackend: "sdk", ompSdkPath: "./omp-sdk" } } },
+      }),
+    );
+    expect(() => loadConfig(paseoHome, { env: {} })).toThrow(
+      "ompSdkPath must be an absolute SDK package root.",
+    );
   });
 
   test("records mutable and startup launch overrides by persisted leaf", async () => {

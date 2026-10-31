@@ -21,6 +21,7 @@ files:
   - dist/**/*
   - assets/pets/**/*
   - "!**/*.map"
+  - "!sdk-dist{,/**/*}"
   - "!**/*.d.{ts,cts,mts}"
   - "!**/node_modules/zod/src/**"
   - "!**/node_modules/openai/src/**"

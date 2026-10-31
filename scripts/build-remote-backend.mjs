@@ -1,12 +1,23 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { stageOmpSdk } from "./stage-omp-sdk.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(rootDir, "packages", "desktop", "remote-backend-dist");
 const packageDir = path.join(outputDir, "packages");
+const sdkSource = process.env.OMP_DESKTOP_SDK_SOURCE;
+const includeRemoteSdk = process.env.OMP_DESKTOP_REMOTE_SDK === "1";
+if (includeRemoteSdk && !sdkSource) {
+  throw new Error("OMP_DESKTOP_REMOTE_SDK=1 requires OMP_DESKTOP_SDK_SOURCE.");
+}
+const sdk = sdkSource
+  ? await stageOmpSdk(sdkSource, path.join(rootDir, "packages", "desktop", "sdk-dist"))
+  : undefined;
+// Local SDK resources do not duplicate their tarball in the remote deployment payload.
+const remoteSdk = includeRemoteSdk ? sdk : undefined;
 const toolVersions = await readFile(path.join(rootDir, ".tool-versions"), "utf8");
 const nodeVersion = /^nodejs\s+(\S+)$/mu.exec(toolVersions)?.[1];
 if (!nodeVersion) throw new Error("The pinned Node.js version is missing from .tool-versions");
@@ -82,6 +93,9 @@ async function calculateBundleHash() {
     );
   }
   await collectSourceFiles(path.join(rootDir, "skills"), "skills", files);
+  if (remoteSdk) {
+    files.push({ absolutePath: remoteSdk.archive, relativePath: "optional-sdk/omp-sdk.tgz" });
+  }
   const hash = createHash("sha256");
   for (const file of files.sort((left, right) =>
     left.relativePath.localeCompare(right.relativePath),
@@ -117,6 +131,10 @@ for (const [packageName, directoryName] of workspacePackages) {
   await rename(path.join(packageDir, generated[0]), path.join(packageDir, archiveName));
   dependencies[packageName] = `file:packages/${archiveName}`;
 }
+if (remoteSdk) {
+  await cp(remoteSdk.archive, path.join(packageDir, "omp-sdk.tgz"));
+  dependencies[remoteSdk.packageName] = "file:packages/omp-sdk.tgz";
+}
 
 const deploymentPackage = {
   name: "omp-desktop-remote-backend",
@@ -148,9 +166,14 @@ await writeFile(
     {
       schemaVersion: 1,
       backendVersion: rootPackage.version,
-      nodeVersion,
+      nodeVersion: remoteSdk ? remoteSdk.minimumNodeVersion : nodeVersion,
       bundleHash,
-      supportedTargets: ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"],
+      supportedTargets: remoteSdk
+        ? [`${remoteSdk.platform}-${remoteSdk.arch}`]
+        : ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"],
+      ...(remoteSdk
+        ? { sdk: { packageName: remoteSdk.packageName, version: remoteSdk.version } }
+        : {}),
       files: hashes,
     },
     null,

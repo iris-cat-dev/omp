@@ -23,7 +23,7 @@ import type {
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
-import { refreshAndReadOmpStats } from "./stats.js";
+import { readOmpStats, refreshAndReadOmpStats } from "./stats.js";
 import {
   LOCAL_MODEL_PROVIDER,
   LOCAL_MODEL_UNAVAILABLE_STATUS,
@@ -135,6 +135,7 @@ import {
   installOmp,
 } from "./installer.js";
 import { OmpCliRuntime, OmpReadyTimeoutError } from "./cli-runtime.js";
+import { OmpSdkRuntime } from "./sdk-runtime.js";
 import {
   inspectOmpSessionHistoryAvailability,
   listOmpImportableSessions,
@@ -1720,6 +1721,9 @@ function createRuntime(
   disabledBuiltInTools: readonly string[] | undefined,
   localModelBridge?: LocalModelBridge,
 ): OmpRuntime {
+  if (runtimeSettings?.ompBackend === "sdk") {
+    return new OmpSdkRuntime({ logger, runtimeSettings, disabledBuiltInTools, localModelBridge });
+  }
   return new OmpCliRuntime({
     logger,
     runtimeSettings,
@@ -4477,7 +4481,6 @@ export class OmpAgentClient implements AgentClient {
   private readonly loginFlows = new Map<string, OmpProviderLoginFlow>();
 
   constructor(options: OmpAgentClientOptions) {
-    ensureManagedOmpOnPath();
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
       options.providerParams,
     );
@@ -4518,6 +4521,9 @@ export class OmpAgentClient implements AgentClient {
         runtimeProviderParams.disabledBuiltInTools,
         options.localModelBridge,
       );
+    if (!(this.runtime instanceof OmpSdkRuntime)) {
+      ensureManagedOmpOnPath();
+    }
     this.sessionCredentialReader = options.sessionCredentialReader;
     this.oauthAccountsOverride = options.oauthAccounts;
   }
@@ -4705,6 +4711,43 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
+  private createBackgroundDaemons(
+    cwd: string,
+    launchEnv?: Record<string, string>,
+  ): OmpBackgroundDaemons {
+    const runtime = this.runtime;
+    const env = { ...this.runtimeSettings?.env, ...launchEnv };
+    if (runtime instanceof OmpSdkRuntime) {
+      return new OmpBackgroundDaemons({
+        cwd,
+        env,
+        stopDaemon: async (name) => {
+          const shellEnv = this.desktopConfigDir
+            ? await prepareOmpAgentShellEnv({
+                config: this.providerParams.agentShell,
+                configDir: this.desktopConfigDir,
+                env,
+              })
+            : env;
+          await runtime.stopDaemon({ cwd, name, env: shellEnv });
+        },
+      });
+    }
+    return new OmpBackgroundDaemons({
+      cwd,
+      env,
+      command:
+        this.runtimeSettings?.command?.mode === "replace"
+          ? this.runtimeSettings.command.argv
+          : [
+              DEFAULT_OMP_BINARY,
+              ...(this.runtimeSettings?.command?.mode === "append"
+                ? (this.runtimeSettings.command.args ?? [])
+                : []),
+            ],
+    });
+  }
+
   private async startConversationRuntimeSession(
     input: OmpStartSessionInput,
   ): Promise<OmpRuntimeSession> {
@@ -4775,19 +4818,7 @@ export class OmpAgentClient implements AgentClient {
           automaticCredentialScheduler: this.automaticCredentialScheduler,
           usagePollScheduler: this.usagePollScheduler,
           paseoTools: launchContext?.paseoTools,
-          backgroundDaemons: new OmpBackgroundDaemons({
-            cwd: config.cwd,
-            env: { ...process.env, ...this.runtimeSettings?.env, ...launchEnv },
-            command:
-              this.runtimeSettings?.command?.mode === "replace"
-                ? this.runtimeSettings.command.argv
-                : [
-                    DEFAULT_OMP_BINARY,
-                    ...(this.runtimeSettings?.command?.mode === "append"
-                      ? (this.runtimeSettings.command.args ?? [])
-                      : []),
-                  ],
-          }),
+          backgroundDaemons: this.createBackgroundDaemons(config.cwd, launchEnv),
           blobDir: join(
             dirname(
               resolveOmpDiagnosticPaths({
@@ -4868,19 +4899,7 @@ export class OmpAgentClient implements AgentClient {
           automaticCredentialScheduler: this.automaticCredentialScheduler,
           usagePollScheduler: this.usagePollScheduler,
           paseoTools: launchContext?.paseoTools,
-          backgroundDaemons: new OmpBackgroundDaemons({
-            cwd: resumeConfig.config.cwd,
-            env: { ...process.env, ...this.runtimeSettings?.env, ...launchEnv },
-            command:
-              this.runtimeSettings?.command?.mode === "replace"
-                ? this.runtimeSettings.command.argv
-                : [
-                    DEFAULT_OMP_BINARY,
-                    ...(this.runtimeSettings?.command?.mode === "append"
-                      ? (this.runtimeSettings.command.args ?? [])
-                      : []),
-                  ],
-          }),
+          backgroundDaemons: this.createBackgroundDaemons(resumeConfig.config.cwd, launchEnv),
           blobDir: join(
             dirname(
               resolveOmpDiagnosticPaths({
@@ -5055,6 +5074,10 @@ export class OmpAgentClient implements AgentClient {
 
   async isAvailable(): Promise<boolean> {
     try {
+      if (this.runtime instanceof OmpSdkRuntime) {
+        await this.runtime.getInstallation();
+        return true;
+      }
       const launch = await this.resolveOmpLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
       return availability.available;
@@ -5064,6 +5087,15 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async getOmpStats(range: OmpStatsRange): Promise<OmpStatsResult> {
+    if (this.runtime instanceof OmpSdkRuntime) {
+      await this.runtime.getInstallation();
+      // Read the existing native index without invoking the CLI to refresh it.
+      return readOmpStats({
+        range,
+        env: { ...process.env, ...this.runtimeSettings?.env },
+        cwd: homedir(),
+      });
+    }
     return refreshAndReadOmpStats({
       range,
       env: { ...process.env, ...this.runtimeSettings?.env },
@@ -5133,6 +5165,7 @@ export class OmpAgentClient implements AgentClient {
       runtimeSession = await this.startOmpRuntimeSession({
         cwd: homedir(),
         protocolMode: "rpc-ui",
+        ...(this.runtime instanceof OmpSdkRuntime ? { noSession: true } : {}),
         modeId: launchMode.modeId,
         extraArgs: launchMode.extraArgs,
       });
@@ -5542,14 +5575,38 @@ export class OmpAgentClient implements AgentClient {
   async getOmpInstallationStatus(options?: {
     checkForUpdates?: boolean;
   }): Promise<OmpInstallationStatus> {
+    if (this.runtime instanceof OmpSdkRuntime) {
+      const installation = await this.runtime.getInstallation();
+      return {
+        platform: process.platform,
+        arch: process.arch,
+        supported: true,
+        installed: true,
+        source: "sdk",
+        version: installation.version,
+        installPath: installation.root,
+        message:
+          "Using the Node SDK package. Manage SDK installation and updates with your package manager or desktop distribution; CLI binary updates do not apply.",
+      };
+    }
     return await getOmpInstallationStatus({ ...options, fetch: this.proxyFetch });
   }
 
   async installOmp(options?: { defer?: boolean }): Promise<OmpInstallationStatus> {
+    if (this.runtime instanceof OmpSdkRuntime) {
+      throw new Error(
+        "OMP SDK installation and updates are not managed by the CLI installer. Install a built @oh-my-pi/pi-coding-agent Node SDK package and set agents.providers.omp.ompSdkPath, or update the desktop distribution.",
+      );
+    }
     return await installOmp({ ...options, fetch: this.proxyFetch });
   }
 
   async cancelOmpInstall(): Promise<OmpInstallationStatus> {
+    if (this.runtime instanceof OmpSdkRuntime) {
+      throw new Error(
+        "No CLI installation is managed by the OMP SDK backend. Cancel the SDK package operation in your package manager or desktop updater.",
+      );
+    }
     return await cancelOmpInstall();
   }
 
@@ -5713,6 +5770,34 @@ export class OmpAgentClient implements AgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
+      if (this.runtime instanceof OmpSdkRuntime) {
+        const installation = await this.runtime.getInstallation();
+        const paths = resolveOmpDiagnosticPaths({
+          ...process.env,
+          ...this.runtimeSettings?.env,
+        });
+        return {
+          diagnostic: formatProviderDiagnostic("Oh My Pi (OMP)", [
+            { label: "Backend", value: "Node SDK" },
+            { label: "SDK package", value: installation.root },
+            { label: "Version", value: installation.version },
+            { label: "SDK entry", value: installation.sdkEntry },
+            { label: "RPC entry", value: installation.rpcEntry },
+            { label: "Node runtime", value: `${process.versions.node} (${process.execPath})` },
+            { label: "Active profile", value: paths.profile },
+            { label: "Config root", value: paths.configRoot },
+            { label: "Agent directory", value: paths.agentDir },
+            {
+              label: "Agent database",
+              value: `${paths.agentDb} (${existsSync(paths.agentDb) ? "found" : "not found"})`,
+            },
+            { label: "XDG data root", value: paths.xdgDataRoot },
+            { label: "XDG state root", value: paths.xdgStateRoot },
+            { label: "XDG cache root", value: paths.xdgCacheRoot },
+            { label: "Statistics", value: "Existing native index (no CLI refresh)" },
+          ]),
+        };
+      }
       const launch = await this.resolveOmpLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
       const binaryRows = await buildBinaryDiagnosticRows(launch, availability, {

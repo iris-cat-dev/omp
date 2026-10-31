@@ -221,7 +221,13 @@ function extractAgentProviderSettings(
 
   const runtimeSettings = Object.entries(providerOverrides).flatMap(([providerId, provider]) => {
     const parsedProviderId = AgentProviderSchema.safeParse(providerId);
-    if (!parsedProviderId.success || (!provider.command && !provider.env)) {
+    if (
+      !parsedProviderId.success ||
+      (!provider.command &&
+        !provider.env &&
+        provider.ompBackend === undefined &&
+        provider.ompSdkPath === undefined)
+    ) {
       return [];
     }
 
@@ -236,6 +242,8 @@ function extractAgentProviderSettings(
               }
             : undefined,
           env: provider.env,
+          ompBackend: provider.ompBackend,
+          ompSdkPath: provider.ompSdkPath,
         },
       ] as const,
     ];

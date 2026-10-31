@@ -232,6 +232,7 @@ export class OmpBackgroundDaemons {
   private readonly cwd: string;
   private readonly command: string[];
   private readonly env: NodeJS.ProcessEnv;
+  private readonly stopDaemon?: (name: string) => Promise<void>;
   private readonly sockets = new Set<net.Socket>();
   private readonly known = new Map<string, Daemon>();
   private readonly positions = new Map<string, Position>();
@@ -241,12 +242,18 @@ export class OmpBackgroundDaemons {
   private disposed = false;
   private nextCursor = 1;
 
-  constructor(options: { cwd: string; env?: NodeJS.ProcessEnv; command?: string[] }) {
+  constructor(options: {
+    cwd: string;
+    env?: NodeJS.ProcessEnv;
+    command?: string[];
+    stopDaemon?: (name: string) => Promise<void>;
+  }) {
     this.cwd = path.resolve(options.cwd);
     this.env = { ...process.env, ...options.env };
     // Profile flags override the inherited environment, just as in OMP's bootstrap.
     const command = options.command ?? [this.env.OMP_COMMAND ?? "omp"];
     this.command = command;
+    this.stopDaemon = options.stopDaemon;
     for (let i = 1; i < command.length; i++) {
       const arg = command[i]!;
       if (arg === "--profile") {
@@ -300,19 +307,32 @@ export class OmpBackgroundDaemons {
     if (!this.known.has(processId)) await this.list();
     const entry = this.known.get(processId);
     if (!entry) throw new Error("Unknown OMP background process");
-    const [executable, ...baseArgs] = this.command;
-    if (!executable) throw new Error("OMP command is unavailable");
-    await execFileAsync(
-      executable,
-      [...baseArgs, "ps", "stop", String(entry.snapshot.name), "--dir", this.cwd, "--timeout", "2"],
-      {
-        env: this.env,
-        timeout: 10_000,
-        killSignal: "SIGKILL",
-        maxBuffer: 64 * 1024,
-        windowsHide: true,
-      },
-    );
+    if (this.stopDaemon) {
+      await this.stopDaemon(String(entry.snapshot.name));
+    } else {
+      const [executable, ...baseArgs] = this.command;
+      if (!executable) throw new Error("OMP command is unavailable");
+      await execFileAsync(
+        executable,
+        [
+          ...baseArgs,
+          "ps",
+          "stop",
+          String(entry.snapshot.name),
+          "--dir",
+          this.cwd,
+          "--timeout",
+          "2",
+        ],
+        {
+          env: this.env,
+          timeout: 10_000,
+          killSignal: "SIGKILL",
+          maxBuffer: 64 * 1024,
+          windowsHide: true,
+        },
+      );
+    }
     await this.list();
     return true;
   }

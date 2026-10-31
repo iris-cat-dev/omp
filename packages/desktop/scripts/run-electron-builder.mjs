@@ -27,6 +27,69 @@ const runtimeExecutables = {
   "darwin-arm64": "Electron.app/Contents/MacOS/Electron",
 };
 
+function configureOptionalSdk(config, projectDir, runtime) {
+  const source = process.env.OMP_DESKTOP_SDK_SOURCE;
+  if (!source) return;
+  if (!path.isAbsolute(source)) {
+    throw new Error("OMP_DESKTOP_SDK_SOURCE must be an absolute SDK package root.");
+  }
+  const buildTarget = process.env.OMP_DESKTOP_SDK_TARGET ?? "generic";
+  if (buildTarget !== "generic" && buildTarget !== "desktop") {
+    throw new Error(`Unsupported OMP_DESKTOP_SDK_TARGET: ${buildTarget}. Use generic or desktop.`);
+  }
+  const stage = path.join(projectDir, "sdk-dist");
+  const manifestFile = path.join(stage, "manifest.json");
+  if (!existsSync(manifestFile) || !existsSync(path.join(stage, "source.json"))) {
+    throw new Error(
+      "Optional SDK payload is missing. Run build:remote-backend with OMP_DESKTOP_SDK_SOURCE first.",
+    );
+  }
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  const stagedSource = JSON.parse(readFileSync(path.join(stage, "source.json"), "utf8"));
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.packageName !== "@oh-my-pi/pi-coding-agent" ||
+    manifest.packageRoot !== "node_modules/@oh-my-pi/pi-coding-agent" ||
+    manifest.platform !== runtime.platform ||
+    manifest.arch !== runtime.arch ||
+    (manifest.buildTarget ?? "generic") !== buildTarget ||
+    stagedSource.packageRoot !== realpathSync(source)
+  ) {
+    throw new Error(
+      `Optional SDK payload does not match ${runtime.platform}-${runtime.arch}, OMP_DESKTOP_SDK_SOURCE and OMP_DESKTOP_SDK_TARGET=${buildTarget}. Rebuild the remote backend on that target; native addons are not rebuilt.`,
+    );
+  }
+  for (const file of [
+    "package.json",
+    "dist/node/sdk.mjs",
+    "dist/node/rpc.mjs",
+    "dist/node/host.mjs",
+    "dist/node/modules.json",
+  ]) {
+    if (!existsSync(path.join(stage, manifest.packageRoot, file))) {
+      throw new Error(
+        `Optional SDK payload is incomplete: ${file}. Run build:remote-backend again.`,
+      );
+    }
+  }
+  const installed = JSON.parse(
+    readFileSync(path.join(stage, manifest.packageRoot, "package.json"), "utf8"),
+  );
+  if ((installed.ompNodeSdk?.target ?? "generic") !== buildTarget) {
+    throw new Error(
+      `Optional SDK package does not match OMP_DESKTOP_SDK_TARGET=${buildTarget}. Run build:remote-backend again.`,
+    );
+  }
+  // extraResources stays outside ASAR even when a custom config enables it.
+  // Never include the SDK, its tarball, or source-path metadata by default.
+  config.extraResources = [
+    ...(config.extraResources ?? []),
+    // electron-builder deliberately filters a matcher's root node_modules directory.
+    { from: path.join(stage, "node_modules"), to: "omp-sdk/node_modules", filter: ["**/*"] },
+    { from: manifestFile, to: "omp-sdk/manifest.json" },
+  ];
+}
+
 async function verifyPrivateHost(file) {
   if ((await sha256RegularFile(file)) !== BUNDLED_OMP_HOST.sha256) {
     throw new Error(`Private plugin OMP host SHA-256 mismatch: ${file}`);
@@ -257,6 +320,7 @@ export async function createQualifiedPackager(
       const { config } = qualifiedPackager;
       config.electronDist = runtimeDist;
       config.electronVersion = runtime.electronApiVersion;
+      configureOptionalSdk(config, projectDir, runtime);
       if (runtime.platform === "win32" && config.win?.signAndEditExecutable === false) {
         throw new Error("Windows packaging requires real executable resource editing and signing.");
       }

@@ -22,10 +22,25 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+const OmpBackendSchema = z
+  .enum(["cli", "sdk"])
+  .describe("OMP-only runtime backend. When omitted, the CLI backend is used.");
+const OmpSdkPathSchema = z
+  .string()
+  .regex(
+    /^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/,
+    "ompSdkPath must be an absolute SDK package root.",
+  )
+  .describe(
+    "OMP-only absolute SDK package root containing package.json, dist/node/sdk.mjs, and dist/node/rpc.mjs.",
+  );
+
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  ompBackend: OmpBackendSchema.optional(),
+  ompSdkPath: OmpSdkPathSchema.optional(),
 });
 
 export interface OmpProxyConfig {
@@ -75,6 +90,8 @@ export const ProviderOverrideSchema = z.object({
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  ompBackend: OmpBackendSchema.optional(),
+  ompSdkPath: OmpSdkPathSchema.optional(),
   enabled: z.boolean().optional(),
   order: z.number().optional(),
 });

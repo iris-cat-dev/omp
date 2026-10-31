@@ -6,6 +6,7 @@ import {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
   OmpProviderParamsSchema,
+  assertOmpBuiltinToolNames,
   validateOmpBuiltinToolConfigSync,
 } from "./agent/providers/omp/provider-config.js";
 import { ensureManagedOmpOnPath } from "./agent/providers/omp/installer.js";
@@ -642,13 +643,19 @@ export class DaemonConfigStore {
         next.providers.omp?.params?.disabledBuiltInTools,
       );
       if (disabled) {
-        ensureManagedOmpOnPath(process.platform, this.env);
         const provider = ProviderOverrideSchema.strip().parse(next.providers.omp);
-        validateOmpBuiltinToolConfigSync(
-          disabled,
-          provider.command ?? [this.env.OMP_COMMAND?.trim() || "omp"],
-          { ...this.env, ...provider.env },
-        );
+        if (provider.ompBackend === "sdk") {
+          // The SDK validates its installed registry before starting a session.
+          // Saving a policy must not inspect or install an unrelated CLI binary.
+          assertOmpBuiltinToolNames(disabled);
+        } else {
+          ensureManagedOmpOnPath(process.platform, this.env);
+          validateOmpBuiltinToolConfigSync(
+            disabled,
+            provider.command ?? [this.env.OMP_COMMAND?.trim() || "omp"],
+            { ...this.env, ...provider.env },
+          );
+        }
       }
     }
 

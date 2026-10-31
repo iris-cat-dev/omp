@@ -1,5 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("node:child_process");
+const { createRequire } = require("node:module");
+const { createHash } = require("node:crypto");
 
 const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
@@ -200,6 +203,209 @@ function assertOmpExtensions(resourcesDir) {
   }
 }
 
+function deduplicateSdkSharp(resourcesDir, platform, arch) {
+  const resources = fs.realpathSync(resourcesDir);
+  const sdk = path.join(resources, "omp-sdk");
+  const sdkMetadata = path.join(
+    sdk,
+    "node_modules",
+    "@oh-my-pi",
+    "pi-coding-agent",
+    "package.json",
+  );
+  if (!fs.existsSync(sdkMetadata)) return;
+  const desktop = path.join(resources, "app");
+  const inside = (parent, file) => {
+    const relative = path.relative(parent, file);
+    return (
+      relative === "" ||
+      (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+    );
+  };
+  const confined = (owner, file) => {
+    const real = fs.realpathSync(file);
+    if (!inside(resources, real) || !inside(owner, real)) {
+      throw new Error(`Sharp dependency escapes its packaged runtime: ${file} → ${real}`);
+    }
+    return real;
+  };
+  confined(resources, sdk);
+  confined(resources, desktop);
+
+  function resolvePackage(from, name, owner, subpath = "") {
+    const load = createRequire(from);
+    const entry = confined(owner, load.resolve(`${name}${subpath}`));
+    let root = path.dirname(entry);
+    while (inside(owner, root)) {
+      const metadata = path.join(root, "package.json");
+      if (fs.existsSync(metadata)) {
+        const data = JSON.parse(fs.readFileSync(confined(owner, metadata), "utf8"));
+        if (data.name === name) return { root, metadata, data, entry };
+      }
+      root = path.dirname(root);
+    }
+    throw new Error(`Cannot locate packaged Sharp dependency ${name} from ${from}`);
+  }
+
+  const sdkSharp = resolvePackage(sdkMetadata, "sharp", sdk);
+  const desktopSharp = resolvePackage(path.join(desktop, "package.json"), "sharp", desktop);
+  const compared = new Set();
+  function matchPackages(left, right) {
+    const key = `${left.root}\0${right.root}`;
+    if (compared.has(key)) return;
+    compared.add(key);
+    if (
+      !left.data.version ||
+      left.data.name !== right.data.name ||
+      left.data.version !== right.data.version
+    ) {
+      throw new Error(
+        `Cannot share Sharp dependency ${left.data.name}: SDK ${left.data.version}, Desktop ${right.data.version}`,
+      );
+    }
+    const names = new Set([
+      ...Object.keys(left.data.dependencies || {}),
+      ...Object.keys(right.data.dependencies || {}),
+    ]);
+    for (const name of names) {
+      // SDK staging pins ranges to installed versions; compare the resolved
+      // closure below, not equivalent range spellings in source manifests.
+      if (
+        !Object.hasOwn(left.data.dependencies || {}, name) ||
+        !Object.hasOwn(right.data.dependencies || {}, name)
+      ) {
+        throw new Error(`Sharp dependency closure differs for ${left.data.name}: ${name}`);
+      }
+      matchPackages(
+        resolvePackage(left.metadata, name, sdk),
+        resolvePackage(right.metadata, name, desktop),
+      );
+    }
+  }
+  matchPackages(sdkSharp, desktopSharp);
+
+  const target = `${platform}-${arch}`;
+  const nativeName = `@img/sharp-${target}`;
+  const libvipsName = `@img/sharp-libvips-${target}`;
+  const replacements = [[sdkSharp, desktopSharp]];
+  for (const name of [nativeName, libvipsName]) {
+    const sdkVersion = sdkSharp.data.optionalDependencies?.[name];
+    const desktopVersion = desktopSharp.data.optionalDependencies?.[name];
+    // Windows packages carry libvips alongside the addon instead of a separate package.
+    if (name === libvipsName && !sdkVersion && !desktopVersion && platform === "win32") continue;
+    if (!sdkVersion || sdkVersion !== desktopVersion) {
+      throw new Error(`Sharp native target declarations do not match for ${name}`);
+    }
+    const left = resolvePackage(sdkSharp.metadata, name, sdk, "/package");
+    const right = resolvePackage(desktopSharp.metadata, name, desktop, "/package");
+    matchPackages(left, right);
+    for (const pkg of [left, right]) {
+      if (
+        pkg.data.version !== sdkVersion ||
+        !pkg.data.os?.includes(platform) ||
+        !pkg.data.cpu?.includes(arch)
+      ) {
+        throw new Error(`Sharp package does not match ${target}: ${pkg.metadata}`);
+      }
+    }
+    replacements.push([left, right]);
+  }
+  const sdkNative = replacements[1][0];
+  const desktopNative = replacements[1][1];
+  if (
+    sdkNative.data.optionalDependencies?.[libvipsName] !==
+      desktopNative.data.optionalDependencies?.[libvipsName] ||
+    (replacements[2] &&
+      sdkNative.data.optionalDependencies?.[libvipsName] !== replacements[2][0].data.version)
+  ) {
+    throw new Error(`Sharp addon/libvips closure does not match ${target}`);
+  }
+
+  function nativeFiles(pkg, owner) {
+    const files = new Map();
+    function visit(directory) {
+      for (const name of fs.readdirSync(directory)) {
+        const file = path.join(directory, name);
+        confined(owner, file);
+        if (fs.statSync(file).isDirectory()) {
+          if (name !== "node_modules") visit(file);
+        } else if (/\.(node|dylib|dll|so)(\.\d+)*$/.test(name)) {
+          files.set(
+            path.relative(pkg.root, file),
+            createHash("sha256").update(fs.readFileSync(file)).digest("hex"),
+          );
+        }
+      }
+    }
+    visit(pkg.root);
+    return files;
+  }
+  // Validate the actual target payload before deleting any release-copy directory.
+  for (const [left, right] of replacements) {
+    const sdkFiles = nativeFiles(left, sdk);
+    const desktopFiles = nativeFiles(right, desktop);
+    if (
+      (left !== sdkSharp && sdkFiles.size === 0) ||
+      (left === sdkNative && ![...sdkFiles.keys()].some((file) => file.endsWith(".node"))) ||
+      sdkFiles.size !== desktopFiles.size ||
+      [...sdkFiles].some(([file, digest]) => desktopFiles.get(file) !== digest)
+    ) {
+      throw new Error(`Sharp native payloads do not match for ${left.data.name}`);
+    }
+  }
+  for (const [left, right] of replacements) {
+    // Nested native packages disappear with their Sharp parent; never traverse the new link to edit Desktop.
+    if (replacements.some(([parent]) => parent !== left && inside(parent.root, left.root)))
+      continue;
+    // Only unlink the App's copied directories: staging/tarballs and their hardlinks stay untouched.
+    rmSafe(left.root);
+    fs.symlinkSync(path.relative(path.dirname(left.root), right.root), left.root, "dir");
+  }
+  console.log(
+    `Shared packaged Sharp ${desktopSharp.data.version} runtime for ${target} via App-relative links.`,
+  );
+}
+exports.deduplicateSdkSharp = deduplicateSdkSharp;
+
+function stripCoreSdkAddon(resourcesDir, platform, arch) {
+  if (platform !== "darwin") return;
+  const metadata = path.join(
+    resourcesDir,
+    "omp-sdk",
+    "node_modules",
+    "@oh-my-pi",
+    "pi-coding-agent",
+    "package.json",
+  );
+  if (!fs.existsSync(metadata)) return;
+  if (JSON.parse(fs.readFileSync(metadata, "utf8")).ompNodeSdk?.profile !== "core") return;
+  const load = createRequire(metadata);
+  const addon = path.join(
+    path.dirname(load.resolve("@oh-my-pi/pi-natives")),
+    `pi_natives.${platform}-${arch}.node`,
+  );
+  const relative = path.relative(resourcesDir, addon);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to strip a native addon outside the packaged app: ${addon}`);
+  }
+  const before = fs.statSync(addon).size;
+  const temporary = `${addon}.strip-${process.pid}`;
+  try {
+    // Break any packager hardlink before modifying the app's release copy.
+    fs.copyFileSync(addon, temporary, fs.constants.COPYFILE_EXCL);
+    const stripped = spawnSync("/usr/bin/strip", ["-x", temporary], { encoding: "utf8" });
+    if (stripped.error || stripped.status !== 0) {
+      throw (
+        stripped.error || new Error(`Could not strip core SDK native symbols: ${stripped.stderr}`)
+      );
+    }
+    fs.renameSync(temporary, addon);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+  console.log(`Core SDK native addon: ${fmtMB(before)} → ${fmtMB(fs.statSync(addon).size)}`);
+}
+
 function dirSizeSync(dir) {
   let total = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
@@ -228,6 +434,8 @@ exports.default = async function afterPack(context) {
   prepareBundledOmp(resourcesDir, platform, arch);
   assertOmpExtensions(resourcesDir);
   pruneNativeModules(context.appOutDir, platform, arch);
+  stripCoreSdkAddon(resourcesDir, platform, arch);
+  deduplicateSdkSharp(resourcesDir, platform, arch);
   assertNativeKeyringBinding(resourcesDir, platform, arch);
   assertNativeKoffiBinding(resourcesDir, platform, arch);
 

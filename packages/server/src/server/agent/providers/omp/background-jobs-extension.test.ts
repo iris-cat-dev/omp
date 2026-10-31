@@ -34,10 +34,9 @@ async function createHarness() {
   const manager: AsyncJobManager = {
     register(type, label, _run, options: AsyncJobRegisterOptions & { foreground?: boolean } = {}) {
       const id = `bg_${++sequence}`;
-      let finish!: () => void;
-      const promise = new Promise<void>((resolve) => {
-        finish = resolve;
-      });
+      const completion = Promise.withResolvers<void>();
+      const finish = completion.resolve;
+      const promise = completion.promise;
       jobs.set(id, {
         id,
         type,
@@ -92,27 +91,19 @@ async function createHarness() {
       else shutdown = handler as () => void;
     },
   });
-  let fetchRequest!: (request: Request) => Response | Promise<Response>;
-  vi.stubGlobal("Bun", {
-    serve(options: { fetch: typeof fetchRequest }) {
-      fetchRequest = options.fetch;
-      return { port: 12345, stop() {} };
-    },
-  });
+  let port = 0;
   let token = "";
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    token = JSON.parse(String(chunk)).token;
+    const ready = JSON.parse(String(chunk)) as { token: string; port: number };
+    token = ready.token;
+    port = ready.port;
     return true;
   });
-  const request = (path: string, method = "GET") =>
-    Promise.resolve(
-      fetchRequest(
-        new Request(`http://127.0.0.1:12345${path}`, {
-          method,
-          headers: { authorization: `Bearer ${token}` },
-        }),
-      ),
-    );
+  const request = (path: string, method = "GET", authorization = `Bearer ${token}`) =>
+    fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: authorization ? { authorization } : {},
+    });
   const list = async (): Promise<BackgroundProcess[]> =>
     (await (await request("/list")).json()).processes;
   const output = async (id: string, cursor?: number): Promise<BackgroundProcessOutput> => {
@@ -136,6 +127,11 @@ async function createHarness() {
 }
 
 describe("OMP background job bridge", () => {
+  test("rejects missing or incorrect credentials over the real Node HTTP bridge", async () => {
+    const h = await createHarness();
+    expect((await h.request("/list", "GET", "")).status).toBe(401);
+    expect((await h.request("/list", "GET", "Bearer wrong")).status).toBe(401);
+  });
   test("lists all session-owned job types without exposing or stopping a child agent's jobs", async () => {
     const h = await createHarness();
     h.add("bash", "shell build");

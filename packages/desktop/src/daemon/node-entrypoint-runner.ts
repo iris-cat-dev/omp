@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { readPackagedDesktopDistribution } from "../packaged-distribution.js";
 import { pathToFileURL } from "node:url";
@@ -12,7 +13,19 @@ export async function main(): Promise<void> {
   }
 
   if (process.env.ELECTRON_RUN_AS_NODE === "1" && process.env.PASEO_DESKTOP_MANAGED === "1") {
-    const distribution = readPackagedDesktopDistribution(path.join(__dirname, "..", ".."));
+    const appRoot = path.join(__dirname, "..", "..");
+    const distribution = readPackagedDesktopDistribution(appRoot);
+    const sdkResources = path.join(path.dirname(appRoot), "omp-sdk");
+    if (existsSync(path.join(sdkResources, "manifest.json"))) {
+      process.env.OMP_DESKTOP_SDK_ROOT = path.resolve(
+        sdkResources,
+        "node_modules",
+        "@oh-my-pi",
+        "pi-coding-agent",
+      );
+    } else {
+      delete process.env.OMP_DESKTOP_SDK_ROOT;
+    }
     process.env.PASEO_DESKTOP_DISTRIBUTION_IDENTITY = distribution.identity;
     if (distribution.bundledPluginsPath) {
       process.env.OMP_DESKTOP_BUNDLED_PLUGINS = distribution.bundledPluginsPath;

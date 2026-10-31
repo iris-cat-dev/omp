@@ -154,11 +154,21 @@ export async function resolveProviderCommandPrefix(
 export function toRuntimeSettings(
   override?: ProviderOverride,
 ): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) return undefined;
+  if (
+    !override?.command &&
+    !override?.env &&
+    !override?.disallowedTools &&
+    override?.ompBackend === undefined &&
+    override?.ompSdkPath === undefined
+  ) {
+    return undefined;
+  }
   return {
     command: override.command ? { mode: "replace", argv: override.command } : undefined,
     env: override.env,
     disallowedTools: override.disallowedTools,
+    ompBackend: override.ompBackend,
+    ompSdkPath: override.ompSdkPath,
   };
 }
 
@@ -169,6 +179,8 @@ export function mergeRuntimeSettings(
   if (!base && !override) return undefined;
   return {
     command: override?.command ?? base?.command,
+    ompBackend: override?.ompBackend ?? base?.ompBackend,
+    ompSdkPath: override?.ompSdkPath ?? base?.ompSdkPath,
     env: base?.env || override?.env ? { ...base?.env, ...override?.env } : undefined,
     disallowedTools:
       base?.disallowedTools || override?.disallowedTools
@@ -216,6 +228,12 @@ export function migrateProviderSettings(
     }
     if (parsedOld.data.env) {
       nextEntry.env = parsedOld.data.env;
+    }
+    if (parsedOld.data.ompBackend !== undefined) {
+      nextEntry.ompBackend = parsedOld.data.ompBackend;
+    }
+    if (parsedOld.data.ompSdkPath !== undefined) {
+      nextEntry.ompSdkPath = parsedOld.data.ompSdkPath;
     }
     if (!builtinProviderIdSet.has(providerId) && nextEntry.extends === undefined) {
       delete nextEntry.extends;

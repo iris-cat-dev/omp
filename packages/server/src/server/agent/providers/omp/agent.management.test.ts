@@ -16,6 +16,7 @@ import {
   OmpAgentClient,
 } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
+import { OmpSdkRuntime } from "./sdk-runtime.js";
 import { CODEX_USAGE_ENDPOINT } from "./codex-account-quota.js";
 import { CODEX_RESET_CREDITS_ENDPOINT } from "./codex-reset-credits.js";
 import { CLAUDE_USAGE_ENDPOINT } from "./claude-oauth-api.js";
@@ -52,6 +53,39 @@ async function createClient(options: { quotaFetch?: typeof fetch; quotaNow?: () 
 }
 
 describe("OMP provider management", () => {
+  test("uses SDK session APIs for standalone model and login-provider management", async () => {
+    const agentDir = await mkdtemp(path.join(tmpdir(), "omp-desktop-sdk-management-"));
+    tempDirs.push(agentDir);
+    const fake = new FakeOmp();
+    fake.queueModels([{ provider: "openai", id: "gpt-sdk", name: "SDK Model" }]);
+    fake.queueLoginProviders([
+      { id: "openai", name: "OpenAI", available: true, authenticated: false },
+    ]);
+    const runtime = new OmpSdkRuntime({ logger: createTestLogger() });
+    const start = vi
+      .spyOn(runtime, "startSession")
+      .mockImplementation((input) => fake.startSession(input));
+    const client = new OmpAgentClient({
+      logger: createTestLogger(),
+      runtime,
+      runtimeSettings: {
+        ompBackend: "sdk",
+        env: { PATH: "", PI_CODING_AGENT_DIR: agentDir },
+      },
+    });
+
+    const management = await client.getOmpProviderManagement();
+    expect(management.runtimeError).toBeUndefined();
+    expect(management.providerModels).toMatchObject([
+      { id: "openai", models: [{ id: "gpt-sdk", name: "SDK Model" }] },
+    ]);
+    expect(management.loginProviders).toMatchObject([{ id: "openai", authenticated: false }]);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ noSession: true }));
+    await expect(readFile(path.join(agentDir, "models.yml"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   test("reads native models and subscription state", async () => {
     const { agentDir, client, runtime } = await createClient();
     runtime.queueModels([

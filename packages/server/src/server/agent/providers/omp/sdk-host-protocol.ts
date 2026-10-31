@@ -1,0 +1,21 @@
+import { z } from "zod";
+
+export const OMP_SDK_ROOT_ENV = "OMP_DESKTOP_SDK_ROOT";
+export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
+
+export const OmpSdkHostLaunchSchema = z
+  .object({
+    cwd: z.string().min(1),
+    protocolMode: z.enum(["rpc", "rpc-ui"]).optional(),
+    model: z.string().optional(),
+    thinkingOptionId: z.string().optional(),
+    session: z.string().optional(),
+    noSession: z.boolean().optional(),
+    extraArgs: z.array(z.string()).optional(),
+    extensions: z.array(z.string()).optional(),
+    disallowedTools: z.array(z.string()).optional(),
+    configFiles: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export type OmpSdkHostLaunch = z.infer<typeof OmpSdkHostLaunchSchema>;

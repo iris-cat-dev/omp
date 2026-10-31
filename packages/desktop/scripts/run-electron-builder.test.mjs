@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -14,9 +15,10 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createQualifiedPackager } from "./run-electron-builder.mjs";
 import { windowsBuildOutput } from "./windows-build-output.mjs";
+import { stageOmpSdk } from "../../../scripts/stage-omp-sdk.mjs";
 
 const require = createRequire(import.meta.url);
 const { WinPackager } = require("app-builder-lib/out/winPackager");
@@ -197,6 +199,484 @@ function createPackagingFixture(
     dispose: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
+
+test.each([
+  { requested: "generic", staged: undefined },
+  { requested: "generic", staged: "generic" },
+  { requested: "desktop", staged: "desktop" },
+])("copies a matching $requested SDK outside ASAR (metadata: $staged)", ({ requested, staged }) => {
+  const fixture = createPackagingFixture("darwin");
+  try {
+    const source = path.join(fixture.directory, "sdk-source");
+    mkdirSync(source);
+    const stage = path.join(fixture.directory, "sdk-dist");
+    const packageRoot = "node_modules/@oh-my-pi/pi-coding-agent";
+    const payload = [
+      [
+        "manifest.json",
+        JSON.stringify({
+          schemaVersion: 1,
+          packageName: "@oh-my-pi/pi-coding-agent",
+          packageRoot,
+          platform: fixture.runtime.platform,
+          arch: fixture.runtime.arch,
+          buildTarget: staged,
+        }),
+      ],
+      ["source.json", JSON.stringify({ packageRoot: realpathSync(source) })],
+      ["omp-sdk.tgz", "owned SDK archive"],
+      [
+        `${packageRoot}/package.json`,
+        JSON.stringify({
+          name: "@oh-my-pi/pi-coding-agent",
+          version: "1.0.0",
+          ompNodeSdk: staged ? { target: staged } : undefined,
+        }),
+      ],
+      ...["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"].map((file) => [
+        `${packageRoot}/dist/node/${file}`,
+        "owned SDK artifact",
+      ]),
+      [
+        `${packageRoot}/node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs`,
+        "owned runtime artifact",
+      ],
+      [
+        `${packageRoot}/node_modules/@oh-my-pi/pi-natives/native/pi_natives.darwin-arm64.node`,
+        "owned native artifact",
+      ],
+    ];
+    for (const [relative, content] of payload) {
+      const file = path.join(stage, relative);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, content);
+    }
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import assert from "node:assert/strict";
+      import fs from "node:fs";
+      import path from "node:path";
+      import { createRequire } from "node:module";
+      import { createQualifiedPackager } from ${JSON.stringify(new URL("./run-electron-builder.mjs", import.meta.url).href)};
+      const require = createRequire(${JSON.stringify(import.meta.url)});
+      const { copyFiles, getFileMatchers } = require("app-builder-lib/out/fileMatcher");
+      const root = ${JSON.stringify(fixture.directory)};
+      const packager = await createQualifiedPackager(
+        ${JSON.stringify(fixture.runtimeDist)}, ${JSON.stringify(fixture.runtime)},
+        ${JSON.stringify(fixture.args)}, root,
+      );
+      const destination = path.join(root, "out/resources");
+      fs.mkdirSync(destination, { recursive: true });
+      await copyFiles(getFileMatchers(packager.config, "extraResources", destination, {
+        defaultSrc: root, globalOutDir: path.join(root, "out"),
+        macroExpander: value => value, customBuildOptions: packager.config.mac ?? {},
+      }), null, false);
+      for (const [relative, content] of ${JSON.stringify(payload.filter(([relative]) => relative !== "source.json" && relative !== "omp-sdk.tgz"))}) {
+        assert.equal(fs.readFileSync(path.join(destination, "omp-sdk", relative), "utf8"), content);
+      }
+      assert.equal(fs.existsSync(path.join(destination, "omp-sdk/source.json")), false);
+      assert.equal(fs.existsSync(path.join(destination, "omp-sdk/omp-sdk.tgz")), false);
+    `,
+      ],
+      {
+        cwd: fixture.directory,
+        encoding: "utf8",
+        env: { ...process.env, OMP_DESKTOP_SDK_SOURCE: source, OMP_DESKTOP_SDK_TARGET: requested },
+        timeout: 20_000,
+      },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test.each([
+  { requested: "desktop", staged: undefined },
+  { requested: "generic", staged: "desktop" },
+  { requested: "unknown", staged: "generic" },
+  { requested: "desktop", staged: "desktop", installed: "generic" },
+])(
+  "rejects stale SDK target $staged/$installed when requesting $requested",
+  async ({ requested, staged, installed }) => {
+    const fixture = createPackagingFixture("darwin");
+    try {
+      const source = path.join(fixture.directory, "sdk-source");
+      const stage = path.join(fixture.directory, "sdk-dist");
+      mkdirSync(source);
+      mkdirSync(stage);
+      writeFileSync(
+        path.join(stage, "source.json"),
+        JSON.stringify({ packageRoot: realpathSync(source) }),
+      );
+      writeFileSync(
+        path.join(stage, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          packageName: "@oh-my-pi/pi-coding-agent",
+          packageRoot: "node_modules/@oh-my-pi/pi-coding-agent",
+          platform: fixture.runtime.platform,
+          arch: fixture.runtime.arch,
+          buildTarget: staged,
+        }),
+      );
+      const packageRoot = path.join(stage, "node_modules/@oh-my-pi/pi-coding-agent");
+      mkdirSync(path.join(packageRoot, "dist/node"), { recursive: true });
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: "@oh-my-pi/pi-coding-agent",
+          ompNodeSdk: installed ? { target: installed } : undefined,
+        }),
+      );
+      for (const file of ["sdk.mjs", "rpc.mjs", "host.mjs", "modules.json"])
+        writeFileSync(path.join(packageRoot, "dist/node", file), "owned SDK artifact");
+      vi.stubEnv("OMP_DESKTOP_SDK_SOURCE", source);
+      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", requested);
+      await expect(
+        createQualifiedPackager(
+          fixture.runtimeDist,
+          fixture.runtime,
+          fixture.args,
+          fixture.directory,
+        ),
+      ).rejects.toThrow("OMP_DESKTOP_SDK_TARGET");
+    } finally {
+      vi.unstubAllEnvs();
+      fixture.dispose();
+    }
+  },
+);
+
+function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "generic" } = {}) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "omp-sdk-stage-"));
+  const source = path.join(directory, "source");
+  const sdkName = "@oh-my-pi/pi-coding-agent";
+  const artifact = `dist/${buildTarget === "desktop" ? "node-desktop" : "node"}`;
+  const files = {
+    "package.json": JSON.stringify({
+      name: sdkName,
+      version: "1.0.0",
+      type: "module",
+      bin: { omp: "./dist/cli.js" },
+      exports: { ".": "./dist/node/sdk.mjs" },
+    }),
+    "data/resource.txt": "owned SDK resource",
+    [`${artifact}/sdk.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
+    [`${artifact}/rpc.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
+    [`${artifact}/host.mjs`]: 'export { marker } from "./chunks/shared.mjs";',
+    [`${artifact}/chunks/shared.mjs`]: `export const marker = ${JSON.stringify(buildTarget)};`,
+    [`${artifact}/modules/root.mjs`]: 'export { marker } from "../chunks/shared.mjs";',
+    [`${artifact}/modules.json`]: JSON.stringify({
+      version: 1,
+      buildTarget,
+      modules: { [sdkName]: "./modules/root.mjs" },
+    }),
+  };
+  const packages = {
+    [sdkName]: {
+      files: [...Object.keys(files), `${artifact}/runtime-dependencies.json`],
+      dependencies: [
+        "@oh-my-pi/pi-utils",
+        ...(native ? ["@oh-my-pi/pi-natives"] : []),
+        "sdk-optional-capability",
+      ],
+      optionalDependencies: ["missing-optional-peer"],
+    },
+    "@oh-my-pi/pi-utils": {
+      files: [
+        "package.json",
+        ...["runtime.mjs", "runtime-image.mjs", "sqlite-driver.mjs"].map(
+          (name) => `dist/node/${name}`,
+        ),
+      ],
+      dependencies: [],
+    },
+    "sdk-optional-capability": { files: ["package.json", "index.js"], dependencies: [] },
+  };
+  if (native) {
+    packages["@oh-my-pi/pi-natives"] = {
+      files: ["package.json", `native/pi_natives.${process.platform}-${process.arch}.node`],
+      dependencies: [],
+    };
+  }
+  files[`${artifact}/runtime-dependencies.json`] = JSON.stringify({
+    version: 1,
+    buildTarget,
+    optionalCapabilities: { fixture: ["sdk-optional-capability"] },
+    packages,
+  });
+  for (const [name, scope] of Object.entries(packages)) {
+    if (name === sdkName) continue;
+    for (const relative of scope.files) {
+      files[`node_modules/${name}/${relative}`] =
+        relative === "package.json"
+          ? JSON.stringify({ name, version: "1.0.0", main: "index.js" })
+          : "owned dependency resource";
+    }
+  }
+  for (const [relative, content] of Object.entries(files)) {
+    const file = path.join(source, relative);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, content);
+  }
+  return {
+    directory,
+    source,
+    artifact,
+    output: path.join(directory, "stage"),
+    dispose: () => rmSync(directory, { recursive: true, force: true }),
+  };
+}
+
+describe("SDK artifact target staging", () => {
+  test.each(["full", "core"])(
+    "packs the generic %s package and tar without its source",
+    async (profile) => {
+      const fixture = createSdkFixture("generic");
+      try {
+        // Desktop artifacts must not leak into the generic package.
+        mkdirSync(path.join(fixture.source, "dist/node-desktop"), { recursive: true });
+        writeFileSync(
+          path.join(fixture.source, "dist/node-desktop/desktop-only.mjs"),
+          "desktop artifact",
+        );
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "generic");
+        vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", profile);
+        const result = await stageOmpSdk(fixture.source, fixture.output);
+        const manifest = JSON.parse(
+          readFileSync(path.join(result.directory, "package.json"), "utf8"),
+        );
+        const runtime = JSON.parse(
+          readFileSync(path.join(result.directory, "dist/node/runtime-dependencies.json"), "utf8"),
+        );
+        expect(manifest.ompNodeSdk.profile).toBe(profile);
+        expect(manifest.ompNodeSdk.target).toBe("generic");
+        expect(runtime.buildTarget).toBe("generic");
+        expect(manifest.bin).toBeUndefined();
+        expect(manifest.files).toContain("dist/node/sdk.mjs");
+        expect(manifest.files.some((relative) => relative.startsWith("dist/node-desktop/"))).toBe(
+          false,
+        );
+        expect(existsSync(path.join(result.directory, "dist/node-desktop"))).toBe(false);
+        expect(
+          existsSync(path.join(result.directory, "node_modules/sdk-optional-capability")),
+        ).toBe(profile === "full");
+        expect(manifest.dependencies["@oh-my-pi/pi-natives"]).toBe("1.0.0");
+        expect(
+          existsSync(
+            path.join(
+              result.directory,
+              `node_modules/@oh-my-pi/pi-natives/native/pi_natives.${process.platform}-${process.arch}.node`,
+            ),
+          ),
+        ).toBe(true);
+        expect(existsSync(path.join(result.directory, "node_modules/missing-optional-peer"))).toBe(
+          false,
+        );
+        expect(readFileSync(path.join(result.directory, "data/resource.txt"), "utf8")).toBe(
+          "owned SDK resource",
+        );
+        rmSync(fixture.source, { recursive: true, force: true });
+        const unpacked = path.join(fixture.directory, "unpacked");
+        mkdirSync(unpacked);
+        const extracted = spawnSync("tar", ["-xzf", result.archive, "-C", unpacked], {
+          encoding: "utf8",
+        });
+        expect(extracted.error).toBeUndefined();
+        expect(extracted.status, extracted.stderr).toBe(0);
+        const packageRoot = path.join(unpacked, "package");
+        for (const relative of runtime.packages["@oh-my-pi/pi-coding-agent"].files) {
+          expect(existsSync(path.join(packageRoot, relative))).toBe(true);
+        }
+        expect(
+          existsSync(
+            path.join(packageRoot, "node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs"),
+          ),
+        ).toBe(true);
+        expect(existsSync(path.join(packageRoot, "dist/node-desktop"))).toBe(false);
+        expect(
+          existsSync(
+            path.join(
+              packageRoot,
+              `node_modules/@oh-my-pi/pi-natives/native/pi_natives.${process.platform}-${process.arch}.node`,
+            ),
+          ),
+        ).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
+      }
+    },
+  );
+
+  test("accepts legacy generic artifact metadata with the default target", async () => {
+    const fixture = createSdkFixture("generic");
+    try {
+      for (const name of ["modules.json", "runtime-dependencies.json"]) {
+        const file = path.join(fixture.source, fixture.artifact, name);
+        const metadata = JSON.parse(readFileSync(file, "utf8"));
+        delete metadata.buildTarget;
+        writeFileSync(file, JSON.stringify(metadata));
+      }
+      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", undefined);
+      vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+      const result = await stageOmpSdk(fixture.source, fixture.output);
+      expect(existsSync(path.join(result.directory, "dist/node/sdk.mjs"))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      fixture.dispose();
+    }
+  });
+
+  test.each([
+    { artifactTarget: "desktop", file: "modules.json", target: "generic" },
+    { artifactTarget: "desktop", file: "runtime-dependencies.json", target: "generic" },
+    { artifactTarget: "generic", file: "modules.json", target: "desktop" },
+    { artifactTarget: "generic", file: "runtime-dependencies.json", target: "desktop" },
+  ])(
+    "rejects $artifactTarget $file metadata target $target",
+    async ({ artifactTarget, file, target }) => {
+      const fixture = createSdkFixture(artifactTarget);
+      try {
+        const metadataFile = path.join(fixture.source, fixture.artifact, file);
+        const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
+        metadata.buildTarget = target;
+        writeFileSync(metadataFile, JSON.stringify(metadata));
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", artifactTarget);
+        vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+          "SDK build target mismatch",
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
+      }
+    },
+  );
+
+  test("never falls back to a generic artifact when desktop output is absent", async () => {
+    const fixture = createSdkFixture("generic");
+    try {
+      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
+      await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+        "dist/node-desktop",
+      );
+      expect(existsSync(fixture.output)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      fixture.dispose();
+    }
+  });
+
+  test.each(["missing", "full local addon", "full platform package"])(
+    "rejects desktop native staging with %s instead of an isolated addon",
+    async (fallback) => {
+      const fixture = createSdkFixture("desktop", { native: true });
+      try {
+        const natives = path.join(fixture.source, "node_modules/@oh-my-pi/pi-natives");
+        if (fallback === "missing") {
+          rmSync(path.join(natives, "native"), { recursive: true, force: true });
+        }
+        if (fallback === "full platform package") {
+          const leafName = `@oh-my-pi/pi-natives-${process.platform}-${process.arch}`;
+          const leaf = path.join(fixture.source, "node_modules", leafName);
+          mkdirSync(leaf, { recursive: true });
+          writeFileSync(
+            path.join(leaf, "package.json"),
+            JSON.stringify({ name: leafName, version: "1.0.0", main: "pi_natives.node" }),
+          );
+          writeFileSync(path.join(leaf, "pi_natives.node"), "invalid full-native fixture");
+          const metadataFile = path.join(fixture.source, fixture.artifact, "runtime-dependencies.json");
+          const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
+          metadata.packages["@oh-my-pi/pi-natives"].optionalDependencies = [leafName];
+          metadata.packages[leafName] = {
+            files: ["package.json", "pi_natives.node"],
+            dependencies: [],
+          };
+          writeFileSync(metadataFile, JSON.stringify(metadata));
+          writeFileSync(
+            path.join(natives, "package.json"),
+            JSON.stringify({
+              name: "@oh-my-pi/pi-natives",
+              version: "1.0.0",
+              optionalDependencies: { [leafName]: "1.0.0" },
+            }),
+          );
+        }
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
+        vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+          "Desktop SDK has no isolated addon",
+        );
+        expect(existsSync(fixture.output)).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
+      }
+    },
+  );
+
+  test.each([
+    { name: "missing sidecar", sidecar: "missing" },
+    { name: "malformed sidecar", sidecar: "malformed" },
+    { name: "schema version", overrides: { schemaVersion: 0 } },
+    { name: "generic build target", overrides: { buildTarget: "generic" } },
+    { name: "debug profile", overrides: { profile: "debug" } },
+    { name: "stale package version", overrides: { version: "0.9.0" } },
+    { name: "wrong platform", overrides: { platform: "wrong-platform" } },
+    { name: "wrong architecture", overrides: { arch: "wrong-arch" } },
+    { name: "wrong filename", overrides: { filename: "other.node" } },
+    { name: "stale binary hash", overrides: { sha256: "0".repeat(64) } },
+  ])("rejects desktop native metadata with $name", async ({ sidecar, overrides }) => {
+    const fixture = createSdkFixture("desktop", { native: true });
+    try {
+      const filename = `pi_natives.${process.platform}-${process.arch}.node`;
+      const directory = path.join(
+        fixture.source,
+        "node_modules/@oh-my-pi/pi-natives/native/desktop",
+      );
+      mkdirSync(directory, { recursive: true });
+      // These bytes are deliberately not loadable: every case must reject metadata first.
+      const bytes = Buffer.from("invalid isolated addon for rejection-only fixture");
+      const addon = path.join(directory, filename);
+      writeFileSync(addon, bytes);
+      if (sidecar !== "missing") {
+        writeFileSync(
+          `${addon}.json`,
+          sidecar === "malformed"
+            ? "{"
+            : JSON.stringify({
+                schemaVersion: 1,
+                buildTarget: "desktop",
+                profile: "release",
+                version: "1.0.0",
+                platform: process.platform,
+                arch: process.arch,
+                filename,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+                capabilities: { smollm: false, liveVoice: false, wasmGrammars: false },
+                ...overrides,
+              }),
+        );
+      }
+      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
+      vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+      await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+        "Desktop native addon metadata is stale or incompatible",
+      );
+      expect(existsSync(fixture.output)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      fixture.dispose();
+    }
+  });
+});
 
 describe("public and private packaging boundaries", () => {
   test("standard public builds require no vendor payload and retain executable editing", async () => {

@@ -243,6 +243,35 @@ describe("OMP passive daemon inspection", () => {
     expect(requests).toHaveLength(2);
   });
 
+  test("uses the SDK stop controller instead of a CLI command", async () => {
+    await broker((request, socket) => {
+      socket.end(
+        `${JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: { op: "list", daemons: [snapshot] },
+        })}\n`,
+      );
+    });
+    const stopped: string[] = [];
+    adapter.dispose();
+    adapter = new OmpBackgroundDaemons({
+      cwd: root,
+      env,
+      command: ["must-not-be-executed"],
+      stopDaemon: async (name) => {
+        stopped.push(name);
+        snapshot.state = "exited";
+      },
+    });
+
+    await expect(adapter.stop("daemon-id")).resolves.toBe(true);
+    expect(stopped).toEqual(["web"]);
+    expect((await adapter.list())[0]?.status).toBe("exited");
+    await expect(adapter.stop("unknown-id")).rejects.toThrow("Unknown OMP background process");
+    expect(stopped).toEqual(["web"]);
+  });
+
   test("rejects arbitrary paths, unknown IDs, replacement IDs, and symlinked logs", async () => {
     await adapter.list();
     await expect(adapter.output("../../scope.json")).rejects.toThrow(

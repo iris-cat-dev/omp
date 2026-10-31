@@ -16,7 +16,6 @@ import {
   JsonlRpcProcess,
   JSONL_RPC_NO_TIMEOUT,
   supportsJsonlRpcProtocolV2,
-  type JsonlRpcLaunch,
 } from "../jsonl-rpc-process.js";
 import {
   buildOmpLaunch,
@@ -224,55 +223,16 @@ export class OmpCliRuntime implements OmpRuntime {
     }
   }
 
-  private async prepareLocalModelsLaunch(
-    launch: OmpRuntimeLaunch,
-    input: OmpStartSessionInput,
-  ): Promise<{ bridge: LocalModelBridge | undefined; enabled: boolean }> {
-    const bridge = input.localModelGateway ? undefined : this.options.localModelBridge;
-    const enabled = bridge?.isEnabled() === true;
-    if (enabled) {
-      const configuration = await bridge!.getLaunchConfig();
-      if (!configuration)
-        throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
-      const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
-        ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
-        : input.model;
-      const selected = requested
-        ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
-        : configuration.models[0];
-      if (!selected) throw new Error("Select an available model from this Desktop.");
-      const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
-      // The final CLI selector wins over persisted defaults and resumed remote models.
-      launch.argv.push("--model", reference);
-      launch.model = reference;
-      const compiled = fileURLToPath(new URL("./local-models-extension.js", import.meta.url));
-      const source = fileURLToPath(new URL("./local-models-extension.ts", import.meta.url));
-      launch.argv.push(
-        "--extension",
-        (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked"),
-      );
-      launch.env = {
-        ...launch.env,
-        OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
-          baseUrl: configuration.baseUrl,
-          token: configuration.token,
-        }),
-      };
-    } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
-      throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
-    }
-    return { bridge, enabled };
-  }
-
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     const launch = buildOmpLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    const { bridge, enabled: localModelsEnabled } = await this.prepareLocalModelsLaunch(
+    const { bridge, enabled: localModelsEnabled } = await prepareOmpLocalModelsLaunch(
       launch,
       input,
+      this.options.localModelBridge,
     );
     const effectiveCommand = resolveOmpRuntimeCommand(this.command, this.options.runtimeSettings);
     const providerEnv = createProviderEnv({ overlays: [launch.env] });
@@ -305,58 +265,122 @@ export class OmpCliRuntime implements OmpRuntime {
       }
       if (imageLaunch) launch.argv.push("--extension", resolveOmpImageSettingsExtensionPath());
       const imageToolAllowed = imageToolAllowedByArguments(launch.argv);
-      const [command, ...args] = launch.argv;
-      await hostVerifier(command, providerEnv);
-      const processLaunch: JsonlRpcLaunch = {
-        command,
-        args,
-        cwd: launch.cwd,
-        env: launch.env,
-      };
-      const spawn = this.spawnProcess;
-      const processOptions = {
-        launch: processLaunch,
+      return await startOmpRpcSession({
+        launch,
         logger: this.options.logger,
-        diagnosticName: "OMP RPC",
-        ...(spawn ? { spawn: () => spawn(launch) } : {}),
-      };
-      const process = new JsonlRpcProcess(processOptions);
-      const runtimeSession = new OmpCliRuntimeSession(
-        process,
-        this.commandsRpcName,
-        input.getImageGenerationConfig,
-        imageLaunch?.token,
+        commandsRpcName: this.commandsRpcName,
+        spawnProcess: this.spawnProcess,
+        signal: input.signal,
+        getImageGenerationConfig: input.getImageGenerationConfig,
+        imageSettingsToken: imageLaunch?.token,
         imageToolAllowed,
-        bridge,
+        localModelBridge: bridge,
         localModelsEnabled,
-      );
-      if (imageLaunch)
-        process.onExit(() => {
-          void imageLaunch.cleanup().catch((error: unknown) => {
-            this.options.logger.warn(
-              { error },
-              "Could not remove private OMP image settings overlay",
-            );
-          });
-        });
-      const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
-      input.signal?.addEventListener("abort", handleAbort, { once: true });
-      try {
-        await negotiateOmpProtocolV2(process, this.options.logger);
-        input.signal?.throwIfAborted();
-        await runtimeSession.refreshImageSettings();
-        return runtimeSession;
-      } catch (error) {
-        const startupError = error instanceof Error ? error : new Error(String(error));
-        await process.close(startupError);
-        throw startupError;
-      } finally {
-        input.signal?.removeEventListener("abort", handleAbort);
-      }
+        cleanup: imageLaunch?.cleanup,
+      });
     } catch (error) {
       await imageLaunch?.cleanup();
       throw error;
     }
+  }
+}
+export async function prepareOmpLocalModelsLaunch(
+  launch: OmpRuntimeLaunch,
+  input: OmpStartSessionInput,
+  configuredBridge?: LocalModelBridge,
+): Promise<{ bridge: LocalModelBridge | undefined; enabled: boolean }> {
+  const bridge = input.localModelGateway ? undefined : configuredBridge;
+  const enabled = bridge?.isEnabled() === true;
+  if (enabled) {
+    const configuration = await bridge!.getLaunchConfig();
+    if (!configuration)
+      throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+    const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
+      ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
+      : input.model;
+    const selected = requested
+      ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
+      : configuration.models[0];
+    if (!selected) throw new Error("Select an available model from this Desktop.");
+    const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
+    // The final CLI selector wins over persisted defaults and resumed remote models.
+    launch.argv.push("--model", reference);
+    launch.model = reference;
+    const compiled = fileURLToPath(new URL("./local-models-extension.js", import.meta.url));
+    const source = fileURLToPath(new URL("./local-models-extension.ts", import.meta.url));
+    launch.argv.push(
+      "--extension",
+      (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked"),
+    );
+    launch.env = {
+      ...launch.env,
+      OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
+        baseUrl: configuration.baseUrl,
+        token: configuration.token,
+      }),
+    };
+  } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
+    throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+  }
+  return { bridge, enabled };
+}
+
+export interface OmpRpcSessionOptions {
+  launch: OmpRuntimeLaunch;
+  logger: Logger;
+  commandsRpcName?: "get_available_commands";
+  spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  signal?: AbortSignal;
+  getImageGenerationConfig?: OmpImageSettingsGetter;
+  imageSettingsToken?: string;
+  imageToolAllowed?: boolean;
+  localModelBridge?: LocalModelBridge;
+  localModelsEnabled?: boolean;
+  cleanup?: () => Promise<void>;
+}
+
+/** Shared transport, validation and UI protocol for CLI and isolated Node SDK hosts. */
+export async function startOmpRpcSession(
+  options: OmpRpcSessionOptions,
+): Promise<OmpRuntimeSession> {
+  options.signal?.throwIfAborted();
+  const { launch, logger, spawnProcess } = options;
+  const [command, ...args] = launch.argv;
+  const process = new JsonlRpcProcess({
+    launch: { command, args, cwd: launch.cwd, env: launch.env },
+    logger,
+    diagnosticName: "OMP RPC",
+    ...(spawnProcess ? { spawn: () => spawnProcess(launch) } : {}),
+  });
+  const session = new OmpCliRuntimeSession(
+    process,
+    options.commandsRpcName ?? DEFAULT_COMMANDS_RPC_NAME,
+    options.getImageGenerationConfig,
+    options.imageSettingsToken,
+    options.imageToolAllowed ?? true,
+    options.localModelBridge,
+    options.localModelsEnabled ?? false,
+  );
+  if (options.cleanup) {
+    process.onExit(() => {
+      void options.cleanup!().catch((error: unknown) => {
+        logger.warn({ error }, "Could not remove private OMP session overlay");
+      });
+    });
+  }
+  const abort = () => void process.close(options.signal?.reason).catch(() => undefined);
+  options.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await negotiateOmpProtocolV2(process, logger);
+    options.signal?.throwIfAborted();
+    await session.refreshImageSettings();
+    return session;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    await process.close(failure);
+    throw failure;
+  } finally {
+    options.signal?.removeEventListener("abort", abort);
   }
 }
 

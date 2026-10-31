@@ -7,9 +7,11 @@ import {
   checkProviderLaunchAvailable,
   createProviderEnv,
   migrateProviderSettings,
+  mergeRuntimeSettings,
   ProviderOverrideSchema,
   resolveProviderLaunch,
   resolveProviderCommandPrefix,
+  toRuntimeSettings,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 
@@ -264,6 +266,69 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe("true");
+  });
+});
+
+describe("OMP backend runtime settings", () => {
+  test("converts persisted SDK selection without a custom CLI command", () => {
+    const override = ProviderOverrideSchema.parse({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(toRuntimeSettings(override)).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(toRuntimeSettings({ ompSdkPath: "/opt/omp-sdk" })?.ompSdkPath).toBe("/opt/omp-sdk");
+    expect(toRuntimeSettings({ label: "OMP" })).toBeUndefined();
+  });
+
+  test("preserves the SDK path while an explicit CLI override wins", () => {
+    const base: ProviderRuntimeSettings = {
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+      env: { KEEP: "base", CHANGE: "base" },
+      disallowedTools: ["bash"],
+    };
+    expect(
+      mergeRuntimeSettings(
+        base,
+        toRuntimeSettings({
+          ompBackend: "cli",
+          env: { CHANGE: "override" },
+          disallowedTools: ["write"],
+        }),
+      ),
+    ).toMatchObject({
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+      env: { KEEP: "base", CHANGE: "override" },
+      disallowedTools: ["bash", "write"],
+    });
+    expect(mergeRuntimeSettings(base, { ompSdkPath: "/other/omp" })).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/other/omp",
+    });
+    expect(mergeRuntimeSettings(undefined, undefined)).toBeUndefined();
+  });
+
+  test("keeps SDK settings when migrating a legacy replacement command", () => {
+    expect(
+      migrateProviderSettings(
+        {
+          omp: {
+            command: { mode: "replace", argv: ["/opt/omp"] },
+            ompBackend: "cli",
+            ompSdkPath: "/opt/omp-sdk",
+          },
+        },
+        ["omp"],
+      ).omp,
+    ).toMatchObject({
+      command: ["/opt/omp"],
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+    });
   });
 });
 

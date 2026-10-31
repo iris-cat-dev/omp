@@ -12,6 +12,7 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
+import { ProviderRuntimeSettingsSchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { OmpStatsGetRequestMessageSchema, OmpStatsGetResponseMessageSchema } from "./omp-stats.js";
@@ -118,6 +119,8 @@ const MutableDaemonProviderConfigSchema = z
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
     env: z.record(z.string(), z.string()).optional(),
     params: z.record(z.string(), z.unknown()).optional(),
+    ompBackend: ProviderRuntimeSettingsSchema.shape.ompBackend,
+    ompSdkPath: ProviderRuntimeSettingsSchema.shape.ompSdkPath,
   })
   .passthrough();
 
@@ -6777,7 +6780,7 @@ export const OmpInstallationStatusSchema = z.object({
   arch: z.string(),
   supported: z.boolean(),
   installed: z.boolean(),
-  source: z.enum(["bundled", "managed", "configured", "path"]).optional(),
+  source: z.enum(["bundled", "managed", "configured", "path", "sdk"]).optional(),
   version: z.string().optional(),
   latestVersion: z.string().optional(),
   updateAvailable: z.boolean().optional(),

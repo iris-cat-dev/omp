@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -391,6 +391,48 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("saves SDK tool policies without inspecting a CLI executable", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-sdk-tools-"));
+    tempDirs.push(paseoHome);
+    const marker = path.join(paseoHome, "cli-invoked");
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      providers: {
+        omp: {
+          command: [
+            process.execPath,
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "invoked"); process.exit(1)`,
+          ],
+        },
+      },
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    store.patch({
+      providers: {
+        omp: {
+          ompBackend: "sdk",
+          ompSdkPath: path.join(paseoHome, "not-installed-yet"),
+        },
+      },
+    });
+
+    store.patch({ providers: { omp: { params: { disabledBuiltInTools: ["write"] } } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp).toMatchObject({
+      ompBackend: "sdk",
+      params: { disabledBuiltInTools: ["write"] },
+    });
+    expect(existsSync(marker)).toBe(false);
+    expect(() =>
+      store.patch({ providers: { omp: { params: { disabledBuiltInTools: ["unknown-tool"] } } } }),
+    ).toThrow("Unknown OMP built-in tools: unknown-tool");
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -434,6 +476,59 @@ describe("DaemonConfigStore", () => {
       },
     ]);
     expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("persists SDK backend settings and explicit CLI overrides through daemon patches", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-sdk-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ providers: { omp: { ompBackend: "sdk", ompSdkPath: "/opt/omp-sdk" } } });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.providers?.omp).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(reloadableConfig(persisted).providers.omp).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(
+      applyMutableProviderConfigToOverrides(
+        { omp: { ompBackend: "sdk", ompSdkPath: "/opt/base-sdk" } },
+        store.get().providers,
+      )?.omp,
+    ).toMatchObject({ ompBackend: "sdk", ompSdkPath: "/opt/omp-sdk" });
+
+    store.patch({ providers: { omp: { ompBackend: "cli" } } });
+    const updated = loadPersistedConfig(paseoHome);
+    expect(updated.agents?.providers?.omp).toMatchObject({
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+    expect(
+      applyMutableProviderConfigToOverrides(
+        { omp: { ompBackend: "sdk" } },
+        reloadableConfig(updated).providers,
+      )?.omp,
+    ).toMatchObject({ ompBackend: "cli", ompSdkPath: "/opt/omp-sdk" });
+
+    expect(() => store.patch({ providers: { omp: { ompSdkPath: "./invalid-sdk" } } })).toThrow(
+      "ompSdkPath must be an absolute SDK package root.",
+    );
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp).toMatchObject({
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+    });
   });
 
   test("patch round-trips OMP provider account notes through daemon config", () => {
