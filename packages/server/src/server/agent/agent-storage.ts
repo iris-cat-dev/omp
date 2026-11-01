@@ -75,6 +75,8 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  /** Provider user-message ID to sending agent, independent of prompt text and native history. */
+  promptSources: z.record(z.string(), z.string().min(1)).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -280,7 +282,27 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.promptSources) {
+        record.promptSources = existing.promptSources;
+      }
       return record;
+    });
+  }
+
+  async getPromptSources(agentId: string): Promise<Readonly<Record<string, string>> | undefined> {
+    await this.load();
+    await this.waitForPendingWrite(agentId);
+    return this.cache.get(agentId)?.promptSources;
+  }
+
+  async setPromptSource(agentId: string, messageId: string, sourceAgentId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return {
+        ...existing,
+        promptSources: { ...existing.promptSources, [messageId]: sourceAgentId },
+      };
     });
   }
 

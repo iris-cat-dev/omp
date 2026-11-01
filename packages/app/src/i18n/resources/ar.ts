@@ -444,6 +444,8 @@ export const ar: TranslationResources = {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
+      expandMessage: "عرض الرسالة كاملة",
+      collapseMessage: "عرض أقل",
       forkInNewWorkspace: "تفريع في مساحة عمل جديدة",
       forkUnavailable: "حدّث المضيف لاستخدام هذا.",
       forkFailed: "فشل تفريع المحادثة",

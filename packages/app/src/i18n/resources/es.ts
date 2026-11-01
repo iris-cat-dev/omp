@@ -448,6 +448,8 @@ export const es: TranslationResources = {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
+      expandMessage: "Mostrar mensaje completo",
+      collapseMessage: "Mostrar menos",
       forkInNewWorkspace: "Bifurcar en un espacio de trabajo nuevo",
       forkUnavailable: "Actualiza el host para usar esto.",
       forkFailed: "No se pudo bifurcar el chat",

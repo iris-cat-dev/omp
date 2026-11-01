@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 
 import type {
   AgentPermissionRequest,
   AgentPromptInput,
   AgentRunOptions,
+  AgentTimelineItem,
 } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
@@ -206,6 +208,18 @@ export function isSystemInjectedEnvelope(text: string): boolean {
   return SYSTEM_ENVELOPE_PATTERN.test(text);
 }
 
+export function restorePromptSource(
+  item: AgentTimelineItem,
+  promptSources: Readonly<Record<string, string>> | undefined,
+): AgentTimelineItem {
+  if (item.type !== "user_message" || item.sourceAgentId || !item.messageId) return item;
+  const sourceAgentId =
+    promptSources && Object.hasOwn(promptSources, item.messageId)
+      ? promptSources[item.messageId]
+      : undefined;
+  return sourceAgentId ? { ...item, sourceAgentId } : item;
+}
+
 export interface SendPromptToAgentParams {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -213,6 +227,7 @@ export interface SendPromptToAgentParams {
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
   messageId?: string;
+  sourceAgentId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
   /**
    * Defaults true. Set false for prompts whose delivery must not cancel the
@@ -313,8 +328,16 @@ export async function sendPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
-  const runOptions = params.messageId
-    ? { ...params.runOptions, clientMessageId: params.messageId }
+  const sourceAgentId =
+    params.sourceAgentId && params.sourceAgentId !== params.agentId
+      ? params.sourceAgentId
+      : undefined;
+  const clientMessageId =
+    params.messageId ||
+    params.runOptions?.clientMessageId ||
+    (sourceAgentId ? randomUUID() : undefined);
+  const runOptions = clientMessageId
+    ? { ...params.runOptions, clientMessageId, ...(sourceAgentId ? { sourceAgentId } : {}) }
     : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {

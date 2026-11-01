@@ -106,6 +106,7 @@ import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import { parseSkillInvocationMessage } from "./skill-invocation-message";
 import { SkillInvocationMessageView } from "./skill-invocation-message-view";
+import { CollapsibleUserMessageText } from "./collapsible-user-message-text";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -519,9 +520,7 @@ export const UserMessage = memo(function UserMessage({
     textContent = skillInvocation ? (
       <SkillInvocationMessageView message={message} invocation={skillInvocation} />
     ) : (
-      <Text selectable style={userMessageStylesheet.text}>
-        {message}
-      </Text>
+      <CollapsibleUserMessageText message={message} style={userMessageStylesheet.text} />
     );
   }
 

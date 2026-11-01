@@ -231,6 +231,8 @@ export interface AgentRunOptions {
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+  /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
+  sourceAgentId?: string;
 }
 
 export type AgentInterruptReason = "user" | "replacement" | "reload" | "rewind";
@@ -432,6 +434,7 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;

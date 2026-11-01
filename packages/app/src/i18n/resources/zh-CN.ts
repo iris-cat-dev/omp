@@ -469,6 +469,8 @@ export const zhCN: TranslationResources = {
       copyCode: "复制代码",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
+      expandMessage: "展开完整消息",
+      collapseMessage: "收起",
       forkInNewWorkspace: "分叉到新工作区",
       forkUnavailable: "请更新主机以使用此功能。",
       forkFailed: "分叉聊天失败",

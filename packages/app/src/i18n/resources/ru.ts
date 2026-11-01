@@ -456,6 +456,8 @@ export const ru: TranslationResources = {
       copyCode: "Скопировать код",
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",
+      expandMessage: "Показать сообщение полностью",
+      collapseMessage: "Свернуть",
       forkInNewWorkspace: "Создать форк в новом рабочем пространстве",
       forkUnavailable: "Обновите хост, чтобы использовать эту функцию.",
       forkFailed: "Не удалось создать форк чата",

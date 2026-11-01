@@ -447,6 +447,8 @@ export const fr: TranslationResources = {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
+      expandMessage: "Afficher le message complet",
+      collapseMessage: "Afficher moins",
       forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
       forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
       forkFailed: "Impossible de dupliquer le chat",

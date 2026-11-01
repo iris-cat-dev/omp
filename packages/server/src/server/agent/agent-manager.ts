@@ -80,7 +80,7 @@ import {
   type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { isSystemInjectedEnvelope, restorePromptSource } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -720,6 +720,7 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
+  private readonly pendingPromptSources = new Map<string, Map<string, string>>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly startingForegroundRunTokens = new Set<string>();
@@ -2416,7 +2417,9 @@ export class AgentManager {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+        sourceAgentId: options.sourceAgentId,
+      });
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2612,6 +2615,7 @@ export class AgentManager {
         this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
           messageId: options.clientMessageId,
           turnId,
+          sourceAgentId: options.sourceAgentId,
           ...(workingStartedAt ? { workingStartedAt: workingStartedAt.toISOString() } : {}),
           providerMessageId:
             stagedSubmittedPromptEcho?.item.type === "user_message"
@@ -2782,13 +2786,7 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(
-          agent,
-          prompt,
-          options?.clientMessageId,
-          expectedTurnId,
-          admission,
-        );
+        await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId, admission);
       }
       return admission;
     });
@@ -2818,13 +2816,7 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(
-              agent,
-              prompt,
-              options?.clientMessageId,
-              expectedTurnId,
-              admission,
-            );
+            await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId, admission);
           }
           return admission;
         })
@@ -2938,16 +2930,27 @@ export class AgentManager {
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
+    options: AgentRunOptions | undefined,
     expectedTurnId: string,
     admission: Extract<SteerResult, { status: "accepted" }>,
   ): Promise<void> {
-    if (!clientMessageId || admission.userMessageEcho === "provider") {
+    const clientMessageId = options?.clientMessageId;
+    if (!clientMessageId) return;
+    if (admission.userMessageEcho === "provider") {
+      if (options?.sourceAgentId) {
+        let sources = this.pendingPromptSources.get(agent.id);
+        if (!sources) {
+          sources = new Map();
+          this.pendingPromptSources.set(agent.id, sources);
+        }
+        sources.set(clientMessageId, options.sourceAgentId);
+      }
       return;
     }
     this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
       messageId: clientMessageId,
       turnId: expectedTurnId,
+      sourceAgentId: options?.sourceAgentId,
       ...(agent.activeTurnStartedAt
         ? { workingStartedAt: agent.activeTurnStartedAt.toISOString() }
         : {}),
@@ -3964,6 +3967,7 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.pendingPromptSources.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -4205,14 +4209,32 @@ export class AgentManager {
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
+  private async getPromptSources(agentId: string): Promise<Record<string, string>> {
+    const sources: Record<string, string> = Object.assign(
+      Object.create(null),
+      await this.registry?.getPromptSources(agentId),
+    );
+    for (const row of this.timelineStore.getRows(agentId)) {
+      if (row.item.type !== "user_message" || !row.item.sourceAgentId) continue;
+      const messageId = row.providerMessageId ?? row.item.messageId;
+      if (messageId) sources[messageId] = row.item.sourceAgentId;
+    }
+    return sources;
+  }
+
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    const promptSources = await this.getPromptSources(agent.id);
     for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
+      const limitedEvent = limitAgentStreamEventContent(rawEvent);
+      const event =
+        limitedEvent.type === "timeline"
+          ? { ...limitedEvent, item: restorePromptSource(limitedEvent.item, promptSources) }
+          : limitedEvent;
       if (event.type === "timeline") {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
@@ -4268,10 +4290,15 @@ export class AgentManager {
       row: AgentTimelineRow;
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
+    const promptSources = await this.getPromptSources(agent.id);
     agent.historyPrimed = false;
     try {
       for await (const rawEvent of agent.session.streamHistory()) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const limitedEvent = limitAgentStreamEventContent(rawEvent);
+        const event =
+          limitedEvent.type === "timeline"
+            ? { ...limitedEvent, item: restorePromptSource(limitedEvent.item, promptSources) }
+            : limitedEvent;
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
           const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
@@ -4877,6 +4904,7 @@ export class AgentManager {
       providerMessageId?: string;
       turnId?: string;
       workingStartedAt?: string;
+      sourceAgentId?: string;
     },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
@@ -4899,8 +4927,12 @@ export class AgentManager {
       clientMessageId,
       ...(options?.workingStartedAt ? { workingStartedAt: options.workingStartedAt } : {}),
       ...(options?.messageId ? { messageId: options.messageId } : {}),
+      ...(options?.sourceAgentId ? { sourceAgentId: options.sourceAgentId } : {}),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
+    if (options?.providerMessageId && options.sourceAgentId) {
+      this.persistPromptSource(agent.id, options.providerMessageId, options.sourceAgentId);
+    }
   }
 
   private reconcileSubmittedPromptEcho(
@@ -4911,6 +4943,11 @@ export class AgentManager {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
+    const hadSubmittedPrompt = existing !== null;
+    const sources = this.pendingPromptSources.get(agent.id);
+    const sourceAgentId = item.sourceAgentId ?? sources?.get(clientMessageId);
+    sources?.delete(clientMessageId);
+    if (sources?.size === 0) this.pendingPromptSources.delete(agent.id);
     if (!existing) {
       const prompt: AgentPromptInput = item.images?.length
         ? [
@@ -4922,6 +4959,7 @@ export class AgentManager {
         messageId: clientMessageId,
         ...(messageId ? { providerMessageId: messageId } : {}),
         ...(turnId ? { turnId } : {}),
+        ...(sourceAgentId ? { sourceAgentId } : {}),
       });
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
@@ -4933,8 +4971,19 @@ export class AgentManager {
         messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      if (hadSubmittedPrompt && existing.item.sourceAgentId) {
+        this.persistPromptSource(agent.id, messageId, existing.item.sourceAgentId);
+      }
     }
     return existing;
+  }
+
+  private persistPromptSource(agentId: string, messageId: string, sourceAgentId: string): void {
+    if (!this.registry) return;
+    const task = this.registry.setPromptSource(agentId, messageId, sourceAgentId).catch((err) => {
+      this.logger.error({ err, agentId, messageId }, "Failed to persist prompt source");
+    });
+    this.trackBackgroundTask(task);
   }
 
   private async appendSystemErrorTimelineMessage(

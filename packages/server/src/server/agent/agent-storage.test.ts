@@ -8,6 +8,10 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import { restorePromptSource } from "./agent-prompt.js";
+import { streamOmpHistory } from "./providers/omp/history.js";
+import { buildTimelinePromptIndex } from "./timeline-prompt-index.js";
+import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import type {
   AgentPermissionRequest,
   AgentProvider,
@@ -146,6 +150,73 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("restores agent prompt sources by native ID after storage and native history reload", async () => {
+    const agent = createManagedAgent({ id: "receiving-agent", provider: "omp" });
+    await storage.applySnapshot(agent);
+    // Snapshot writes must not erase sources recorded by a later provider acknowledgement.
+    const sourceWrite = storage.setPromptSource(agent.id, "native-agent-prompt", "sending-agent");
+    const snapshotWrite = storage.applySnapshot(agent);
+    await Promise.all([sourceWrite, snapshotWrite]);
+    await storage.flush();
+
+    const reopened = new AgentStorage(storagePath, logger);
+    const promptSources = await reopened.getPromptSources(agent.id);
+    expect(promptSources).toEqual({ "native-agent-prompt": "sending-agent" });
+    const sessionFile = path.join(tmpDir, "native-session.jsonl");
+    const timestamp = "2026-11-01T00:00:00.000Z";
+    const entries = [
+      { type: "session", id: "native-session", cwd: agent.cwd, version: 3, timestamp },
+      {
+        type: "message",
+        id: "native-user-prompt",
+        parentId: null,
+        timestamp,
+        message: { role: "user", content: [{ type: "text", text: "Identical prompt text" }] },
+      },
+      {
+        type: "message",
+        id: "native-agent-prompt",
+        parentId: "native-user-prompt",
+        timestamp,
+        message: { role: "user", content: [{ type: "text", text: "Identical prompt text" }] },
+      },
+    ];
+    await fs.writeFile(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n"));
+    const original = await fs.readFile(sessionFile, "utf8");
+    const rows: AgentTimelineRow[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      if (event.type !== "timeline") continue;
+      rows.push({
+        seq: rows.length + 1,
+        timestamp: event.timestamp ?? timestamp,
+        item: restorePromptSource(event.item, promptSources),
+      });
+    }
+
+    expect(rows.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "Identical prompt text", messageId: "native-user-prompt" },
+      {
+        type: "user_message",
+        text: "Identical prompt text",
+        messageId: "native-agent-prompt",
+        sourceAgentId: "sending-agent",
+      },
+    ]);
+    expect(buildTimelinePromptIndex("restored-epoch", rows)).toEqual({
+      epoch: "restored-epoch",
+      prompts: [{ seq: 1, timestamp, preview: "Identical prompt text" }],
+    });
+    expect(await fs.readFile(sessionFile, "utf8")).toBe(original);
+    expect(
+      restorePromptSource(
+        { type: "user_message", text: "Legacy prompt", messageId: "constructor" },
+        promptSources,
+      ),
+    ).toEqual({ type: "user_message", text: "Legacy prompt", messageId: "constructor" });
+    await reopened.remove(agent.id);
+    expect(await reopened.getPromptSources(agent.id)).toBeUndefined();
   });
 
   test("applySnapshot persists configs and snapshot metadata", async () => {

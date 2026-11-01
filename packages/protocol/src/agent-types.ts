@@ -365,6 +365,8 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
+      sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;

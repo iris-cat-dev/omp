@@ -28,6 +28,55 @@ describe("shared messages stream parsing", () => {
     expect(parsed.payload.event).toMatchObject({ item });
   });
 
+  it("preserves structured agent prompt provenance through live and restored wire parsing", () => {
+    const item = {
+      type: "user_message",
+      text: "same text as a direct user prompt",
+      messageId: "native-message",
+      clientMessageId: "submitted-message",
+      sourceAgentId: "sending-agent",
+    };
+    const event = { type: "timeline", provider: "omp", item };
+    expect(
+      AgentStreamMessageSchema.parse({
+        type: "agent_stream",
+        payload: { agentId: "receiving-agent", timestamp: "2026-11-01T00:00:00.000Z", event },
+      }).payload.event,
+    ).toMatchObject({ item });
+    const parsed = FetchAgentTimelineResponseMessageSchema.parse({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "restored-prompts",
+        agentId: "receiving-agent",
+        agent: null,
+        direction: "tail",
+        projection: "canonical",
+        epoch: "restored-epoch",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 3, maxSeq: 3, nextSeq: 4 },
+        startCursor: { epoch: "restored-epoch", seq: 3 },
+        endCursor: { epoch: "restored-epoch", seq: 3 },
+        hasOlder: false,
+        hasNewer: false,
+        entries: [
+          {
+            provider: "omp",
+            item,
+            timestamp: "2026-11-01T00:00:00.000Z",
+            seqStart: 3,
+            seqEnd: 3,
+            sourceSeqRanges: [{ startSeq: 3, endSeq: 3 }],
+            collapsed: [],
+          },
+        ],
+        error: null,
+      },
+    });
+    expect(parsed.payload.entries[0]?.item).toEqual(item);
+  });
+
   it("keeps the selected model id on a model change timeline notice", () => {
     const item = { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" };
     const message = {

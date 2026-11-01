@@ -45,6 +45,7 @@ export function asAgentStorage(stub: {
   return createStub<SessionOptions["agentStorage"]>({
     listByProviderSession: async () => [],
     listByWorkspace: async () => [],
+    getPromptSources: async () => undefined,
     ...stub,
   });
 }

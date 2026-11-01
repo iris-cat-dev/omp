@@ -470,6 +470,8 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
+      expandMessage: "Show full message",
+      collapseMessage: "Show less",
       forkInNewWorkspace: "Fork in a new workspace",
       forkUnavailable: "Update the host to use this.",
       forkFailed: "Failed to fork chat",

@@ -447,6 +447,8 @@ export const ja: TranslationResources = {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
+      expandMessage: "メッセージ全体を表示",
+      collapseMessage: "折りたたむ",
       forkInNewWorkspace: "新しいワークスペースにフォーク",
       forkUnavailable: "これを使用するにはホストを更新してください。",
       forkFailed: "チャットのフォークに失敗しました",

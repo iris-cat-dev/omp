@@ -445,6 +445,8 @@ export const ko: TranslationResources = {
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
       copyMessage: "메시지 복사",
+      expandMessage: "전체 메시지 보기",
+      collapseMessage: "접기",
       forkInNewWorkspace: "새 워크스페이스로 분기",
       forkUnavailable: "이를 사용하려면 호스트를 업데이트하세요.",
       forkFailed: "채팅을 분기하지 못했습니다.",

@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
 import type { SkillInvocationMessage } from "./skill-invocation-message";
+import { CollapsibleUserMessageText } from "./collapsible-user-message-text";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -57,11 +58,7 @@ export const SkillInvocationMessageView = memo(function SkillInvocationMessageVi
       </Text>
     );
   } else if (invocation.userArguments) {
-    content = (
-      <Text selectable style={styles.text}>
-        {invocation.userArguments}
-      </Text>
-    );
+    content = <CollapsibleUserMessageText message={invocation.userArguments} style={styles.text} />;
   }
 
   return (

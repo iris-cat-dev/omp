@@ -48,6 +48,7 @@ import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-lo
 import { subscribeBundledOmpInitialization } from "./bundled-omp-initialization.js";
 import {
   isSystemInjectedEnvelope,
+  restorePromptSource,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
@@ -4663,6 +4664,7 @@ export class Session {
       epoch: `persisted-omp:${agentId}:${record.updatedAt}`,
       timestamp: record.updatedAt,
     });
+    const promptSources = await this.agentStorage.getPromptSources(agentId);
     for await (const event of streamOmpHistory({
       sessionFile: nativeHandle,
       provider: record.provider,
@@ -4674,7 +4676,8 @@ export class Session {
         continue;
       }
       const turnId = getAgentStreamEventTurnId(event);
-      timeline.append(agentId, limitAgentTimelineItemContent(event.item), {
+      const item = restorePromptSource(event.item, promptSources);
+      timeline.append(agentId, limitAgentTimelineItemContent(item), {
         ...(event.timestamp ? { timestamp: event.timestamp } : {}),
         ...(turnId ? { turnId } : {}),
       });

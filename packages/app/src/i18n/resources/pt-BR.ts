@@ -447,6 +447,8 @@ export const ptBR: TranslationResources = {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
+      expandMessage: "Mostrar mensagem completa",
+      collapseMessage: "Mostrar menos",
       forkInNewWorkspace: "Bifurcar em um novo workspace",
       forkUnavailable: "Atualize o host para usar isto.",
       forkFailed: "Falha ao bifurcar o chat",

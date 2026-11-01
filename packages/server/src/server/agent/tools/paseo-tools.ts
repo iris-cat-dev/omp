@@ -2102,6 +2102,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentStorage,
         agentId,
         prompt,
+        sourceAgentId: callerAgentId,
         sessionMode,
         activeTurnBehavior: "steer",
         replaceOnSteerUnavailable: false,

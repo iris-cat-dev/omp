@@ -4,12 +4,17 @@ Read assistant output, inspect/save images, open workspace links safely, and con
 
 ## Contents
 
+- [Long input messages](#long-input-messages)
 - [Images and previews](#images-and-previews)
 - [Links and local files](#links-and-local-files)
 - [External browser selection](#external-browser-selection)
 - [Math](#math)
 - [Thinking and tool calls](#thinking-and-tool-calls)
 - [Turn statistics](#turn-statistics)
+
+## Long input messages
+
+Sent input text taller than six rendered lines starts collapsed. Choose **Expand full message** to read it and **Collapse** to fold it again. Wrapping follows the available width; short text has no disclosure control. Copy and rewind retain the complete original message, and image/file attachments remain outside the collapsed text. Long skill arguments follow the same rule; expanding the skill still shows its full instructions.
 
 ## Images and previews
 
