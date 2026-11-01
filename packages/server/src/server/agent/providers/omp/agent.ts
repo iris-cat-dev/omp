@@ -46,7 +46,6 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
-  type AgentProviderNotice,
   type AgentPersistenceHandle,
   type AgentPromptInput,
   type AgentProvider,
@@ -92,10 +91,12 @@ import {
 } from "../diagnostic-utils.js";
 import {
   formatOmpVersionSupport,
+  mapOmpApprovalMode,
   mergeOmpRuntimeSettings,
   readOmpImportMode,
   resolveOmpDiagnosticPaths,
   resolveOmpLaunchMode,
+  resolveOmpApprovalMode,
   resolveOmpProviderParams,
   OMP_MODES,
   type OmpModelRoleParams,
@@ -1788,7 +1789,6 @@ export class OmpAgentSession implements AgentSession {
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
   private currentModeId: string | null;
-  private readonly launchModeId: string | null;
   private activeWorkflowMode: OmpWorkflowMode | null;
   private workflowModePending: OmpWorkflowSelection | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
@@ -1840,8 +1840,9 @@ export class OmpAgentSession implements AgentSession {
     const configuredWorkflowMode = normalizeOmpWorkflowSelection(
       options.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID],
     );
-    this.currentModeId = configuredModeId;
-    this.launchModeId = configuredModeId;
+    this.currentModeId = this.state.approvalMode
+      ? mapOmpApprovalMode(this.state.approvalMode)
+      : configuredModeId;
     this.fastModeSupported = typeof options.initialState.fastModeEnabled === "boolean";
     const configuredFastMode = optionalBoolean(
       options.config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
@@ -2302,28 +2303,11 @@ export class OmpAgentSession implements AgentSession {
     return this.currentModeId;
   }
 
-  async setMode(modeId: string): Promise<void | AgentProviderNotice> {
-    if (!OMP_MODES.some((mode) => mode.id === modeId)) {
-      throw new Error(`Invalid OMP approval mode '${modeId}'`);
-    }
-    if (this.currentModeId === modeId) {
-      return;
-    }
-    // Native approval flags cannot change on a live OMP process. Full access
-    // approves its requests in the adapter; restoring the launch mode stops it.
-    if (modeId !== "full" && modeId !== this.launchModeId) {
-      return {
-        type: "warning",
-        message: "Start a new OMP session to change approval mode",
-      };
-    }
-    this.currentModeId = modeId;
-    this.config.modeId = modeId;
-    if (modeId === "full") {
-      for (const request of this.pendingExtensionUiRequests.values()) {
-        this.autoApproveToolPermission(request);
-      }
-    }
+  async setMode(modeId: string): Promise<void> {
+    const approvalMode = await this.runtimeSession.setApprovalMode(resolveOmpApprovalMode(modeId));
+    this.state = { ...this.state, approvalMode };
+    this.currentModeId = mapOmpApprovalMode(approvalMode);
+    this.config.modeId = this.currentModeId;
   }
 
   // eslint-disable-next-line complexity
@@ -2618,14 +2602,6 @@ export class OmpAgentSession implements AgentSession {
     }
     this.pendingExtensionUiRequests.delete(request.id);
     this.emitPermissionResolution(request.id, response);
-  }
-
-  private autoApproveToolPermission(request: AgentPermissionRequest): boolean {
-    if (this.currentModeId !== "full" || request.kind !== "tool") {
-      return false;
-    }
-    this.respondToExtensionUiPermission(request, { behavior: "allow" });
-    return true;
   }
 
   private emitPermissionResolution(requestId: string, resolution: AgentPermissionResponse): void {
@@ -3344,6 +3320,17 @@ export class OmpAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    if (event.method === "cancel") {
+      const targetId = optionalString(event.targetId);
+      if (targetId && this.pendingExtensionUiRequests.delete(targetId)) {
+        this.emitPermissionResolution(targetId, {
+          behavior: "deny",
+          message: "Permission request withdrawn by OMP",
+        });
+      }
+      return;
+    }
+
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       const level = event.notifyType ?? "info";
@@ -3383,10 +3370,6 @@ export class OmpAgentSession implements AgentSession {
         allowFreeform: this.activeAskUserDialog?.allowFreeform,
       });
     if (!request) {
-      return;
-    }
-
-    if (this.autoApproveToolPermission(request)) {
       return;
     }
 
@@ -4485,6 +4468,10 @@ export class OmpAgentSession implements AgentSession {
       ...state,
       activeCredential: state.activeCredential ?? this.state.activeCredential,
     };
+    if (state.approvalMode) {
+      this.currentModeId = mapOmpApprovalMode(state.approvalMode);
+      this.config.modeId = this.currentModeId;
+    }
     if (
       this.fastModeSupported &&
       typeof this.state.fastModeEnabled === "boolean" &&

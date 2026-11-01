@@ -48,6 +48,8 @@ import {
   OmpAbortAndRestoreQueueResultSchema,
   type OmpAbortAndRestoreQueueResult,
   OmpBranchMessagesResultSchema,
+  OmpApprovalModeSchema,
+  type OmpApprovalMode,
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
   OmpFastModeResultSchema,
@@ -667,6 +669,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   async getState(): Promise<OmpSessionState> {
     return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+  }
+
+  async setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode> {
+    const result = await this.request({ type: "set_approval_mode", mode });
+    return z.object({ mode: OmpApprovalModeSchema }).parse(result).mode;
   }
 
   async listBackgroundJobs(): Promise<BackgroundProcess[]> {

@@ -4,6 +4,7 @@ import type {
 } from "@omp-desktop/protocol/background-processes";
 import type {
   OmpAbortAndRestoreQueueResult,
+  OmpApprovalMode,
   OmpAgentMessage,
   OmpFastModeResult,
   OmpModel,
@@ -65,6 +66,7 @@ export interface OmpRuntimeSession {
   abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult>;
   cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;
+  setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode>;
   listBackgroundJobs?(): Promise<BackgroundProcess[]>;
   getBackgroundJobOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;
   stopBackgroundJob?(processId: string): Promise<boolean>;

@@ -32,13 +32,11 @@ The conversation remains active until continuation succeeds or is stopped. **Sto
 
 ### Approval changes during a session
 
-Select **Full access** in a running conversation to automatically approve pending and subsequent OMP tool requests. The daemon sends native approval responses without restarting the conversation or changing immutable launch-time approval flags. Automatic approval does not require an open client. Questions and plan confirmations still need an explicit answer.
+**Always ask**, **Write approval**, and **Full access** can be changed in either direction while an OMP turn is running, including sessions launched with Full access. Desktop uses OMP's native `set_approval_mode` command; it does not restart the session, interrupt the turn, or synthesize approval responses. Desktop updates its runtime mode only after OMP accepts the update. A failed update leaves the current mode unchanged.
 
-For native prompts that also offer **Approve \<tool\> for this session**, automatic
-approval selects the default **Approve** action for that request only. It does not
-grant a persistent per-tool exemption that would bypass approvals after switching back.
+OMP withdraws pending tool approvals and re-evaluates the waiting calls under the new mode. Desktop removes the withdrawn requests: newly allowed calls continue, while calls that still require approval receive a fresh request. Answers to withdrawn requests are rejected. Questions and plan confirmations still need an explicit answer.
 
-Switching back to the mode used when the current OMP process launched stops automatic approval and restores native behavior. Other approval-mode changes require a new session. A process launched with Full access cannot gain native prompts by switching to **Always ask** or **Write approval**.
+Explicit per-tool `prompt` and `deny` policies remain effective with Full access. Switching modes does not grant a persistent per-tool approval exemption.
 
 ## Steering and stopping
 

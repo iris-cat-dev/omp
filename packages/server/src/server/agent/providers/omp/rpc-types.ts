@@ -10,6 +10,8 @@ export const OmpThinkingLevelSchema = z.enum([
   "max",
 ]);
 
+export const OmpApprovalModeSchema = z.enum(["always-ask", "always-ask-cached", "write", "yolo"]);
+
 export const OmpImageContentSchema = z
   .object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })
   .passthrough();
@@ -146,6 +148,7 @@ export const OmpSessionStateSchema = z
   .object({
     model: OmpModelSchema.nullable().optional(),
     thinkingLevel: OmpThinkingLevelSchema.optional(),
+    approvalMode: OmpApprovalModeSchema.optional(),
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
     autoCompactionEnabled: z.boolean().optional(),
@@ -483,6 +486,7 @@ const OmpExtensionUiRequestSchema = z
     type: z.literal("extension_ui_request"),
     id: z.string(),
     method: z.string(),
+    targetId: z.string().optional(),
     title: z.string().optional(),
     message: z.string().optional(),
     notifyType: z.enum(["info", "warning", "error"]).optional(),
@@ -565,6 +569,11 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("abort_and_restore_queue") }),
   z.object({ ...OmpCommandBase, type: z.literal("cancel_subagent"), subagentId: z.string() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("set_approval_mode"),
+    mode: OmpApprovalModeSchema,
+  }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
@@ -646,6 +655,7 @@ export const OmpBranchMessagesResultSchema = z
   .passthrough();
 
 export type OmpThinkingLevel = z.infer<typeof OmpThinkingLevelSchema>;
+export type OmpApprovalMode = z.infer<typeof OmpApprovalModeSchema>;
 export type OmpImageContent = z.infer<typeof OmpImageContentSchema>;
 export type OmpTextContent = z.infer<typeof OmpTextContentSchema>;
 export type OmpThinkingContent = z.infer<typeof OmpThinkingContentSchema>;

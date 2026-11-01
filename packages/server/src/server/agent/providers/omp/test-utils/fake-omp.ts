@@ -6,6 +6,7 @@ import type {
 } from "../runtime.js";
 import type {
   OmpAbortAndRestoreQueueResult,
+  OmpApprovalMode,
   OmpRpcHostToolDefinition,
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
@@ -20,6 +21,7 @@ import type {
   OmpThinkingLevel,
 } from "../rpc-types.js";
 import { buildOmpLaunch } from "../runtime.js";
+import { resolveOmpApprovalMode } from "../provider-config.js";
 
 type FakeOmpSubagentSubscriptionLevel = "off" | "progress" | "events";
 type FakeOmpSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
@@ -199,6 +201,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   emitCompactStart = true;
   emitCompactEnd = true;
   getStateError: Error | null = null;
+  setApprovalModeError: Error | null = null;
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: Array<{ entryId: string; text: string }> = [];
@@ -223,6 +226,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.state = {
       model: null,
       thinkingLevel: "medium",
+      approvalMode: resolveOmpApprovalMode(launch.modeId ?? "ask"),
       isStreaming: false,
       isCompacting: false,
       autoCompactionEnabled: true,
@@ -380,6 +384,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     await new Promise<void>((resolve) => {
       this.releaseLogin = resolve;
     });
+  }
+
+  async setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode> {
+    if (this.setApprovalModeError) throw this.setApprovalModeError;
+    this.state = { ...this.state, approvalMode: mode };
+    return mode;
   }
 
   async setModel(provider: string, modelId: string): Promise<OmpModel> {

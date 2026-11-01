@@ -13,6 +13,7 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { OmpApprovalMode } from "./rpc-types.js";
 
 const OMP_SESSION_DIR = "~/.omp/agent/sessions";
 const DEFAULT_OMP_MODE_ID = "ask";
@@ -61,28 +62,44 @@ export interface OmpModelRoleParams {
   planModel?: string;
 }
 
+export function resolveOmpApprovalMode(modeId: string): OmpApprovalMode {
+  switch (modeId) {
+    case "full":
+      return "yolo";
+    case "write":
+      return "write";
+    case "ask":
+      return "always-ask";
+    default:
+      throw new Error(`Unsupported OMP mode '${modeId}'`);
+  }
+}
+
+export function mapOmpApprovalMode(mode: OmpApprovalMode): string {
+  switch (mode) {
+    case "yolo":
+      return "full";
+    case "write":
+      return "write";
+    case "always-ask":
+    case "always-ask-cached":
+      return "ask";
+  }
+}
+
 export function resolveOmpLaunchMode(
   modeId: string | undefined,
   modelRoleParams: OmpModelRoleParams = {},
 ): { modeId: string; extraArgs: string[] } {
-  const modelRoleArgs = resolveOmpModelRoleArgs(modelRoleParams);
   const resolvedModeId = modeId ?? DEFAULT_OMP_MODE_ID;
-  switch (resolvedModeId) {
-    case "full":
-      return { modeId: "full", extraArgs: ["--approval-mode", "yolo", ...modelRoleArgs] };
-    case "write":
-      return {
-        modeId: "write",
-        extraArgs: ["--approval-mode", "write", ...modelRoleArgs],
-      };
-    case "ask":
-      return {
-        modeId: "ask",
-        extraArgs: ["--approval-mode", "always-ask", ...modelRoleArgs],
-      };
-    default:
-      throw new Error(`Unsupported OMP mode '${resolvedModeId}'`);
-  }
+  return {
+    modeId: resolvedModeId,
+    extraArgs: [
+      "--approval-mode",
+      resolveOmpApprovalMode(resolvedModeId),
+      ...resolveOmpModelRoleArgs(modelRoleParams),
+    ],
+  };
 }
 
 /**

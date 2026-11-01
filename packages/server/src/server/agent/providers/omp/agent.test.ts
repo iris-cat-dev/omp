@@ -862,12 +862,16 @@ describe("OMP agent client and session", () => {
     await omp.interrupt();
 
     expect(runtime.abortAndRestoreQueueRequested).toBe(true);
-    expect(omp.timeline().filter((item) => item.type === "user_message" && item.text === "继续"))
-      .toEqual([expect.objectContaining({ clientMessageId: "queued-client" })]);
+    expect(
+      omp.timeline().filter((item) => item.type === "user_message" && item.text === "继续"),
+    ).toEqual([expect.objectContaining({ clientMessageId: "queued-client" })]);
     await omp.runPrompt("continue after Stop", "visible answer");
-    expect(omp.timeline()).toContainEqual(expect.objectContaining({
-      type: "assistant_message", text: "visible answer",
-    }));
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "visible answer",
+      }),
+    );
   });
 
   test("retains repeated original steering on a truncated Stop receipt without duplicating consumed input", async () => {
@@ -881,17 +885,19 @@ describe("OMP agent client and session", () => {
     await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-one" });
     await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-two" });
     runtime.restoredQueue = {
-      steering: [{ text: "继续" }], followUp: [], truncated: true, imagesDropped: true,
+      steering: [{ text: "继续" }],
+      followUp: [],
+      truncated: true,
+      imagesDropped: true,
     };
 
     await omp.interrupt();
 
-    expect(omp.timeline().filter((item) => item.type === "user_message"))
-      .toEqual([
-        expect.objectContaining({ text: "consumed", clientMessageId: "consumed-client" }),
-        expect.objectContaining({ text: "继续", clientMessageId: "queued-one" }),
-        expect.objectContaining({ text: "继续", clientMessageId: "queued-two" }),
-      ]);
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({ text: "consumed", clientMessageId: "consumed-client" }),
+      expect.objectContaining({ text: "继续", clientMessageId: "queued-one" }),
+      expect.objectContaining({ text: "继续", clientMessageId: "queued-two" }),
+    ]);
   });
 
   test.each(["replacement", "reload", "rewind"] as const)(
@@ -912,9 +918,12 @@ describe("OMP agent client and session", () => {
     await omp.requireStartTurn("keep working");
     const runtime = omp.runtime();
     runtime.beginTurn();
-    runtime.onAbort = () => runtime.finishTurnWithEmptyAgentEnd({
-      role: "assistant", content: [], stopReason: "length",
-    });
+    runtime.onAbort = () =>
+      runtime.finishTurnWithEmptyAgentEnd({
+        role: "assistant",
+        content: [],
+        stopReason: "length",
+      });
 
     await omp.interrupt();
 
@@ -2528,7 +2537,27 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("switching to full access resolves pending tools and approves new tools without prompting", async () => {
+  test("all approval modes can change during a turn without replacing or interrupting it", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    await omp.requireStartTurn("continue working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.state = { ...runtime.state, isStreaming: true };
+    const sessionId = runtime.state.sessionId;
+
+    for (const modeId of ["ask", "write", "full"]) {
+      await omp.setMode(modeId);
+      expect(await omp.runtimeInfo()).toMatchObject({ modeId, sessionId });
+      expect(runtime.state.isStreaming).toBe(true);
+    }
+    expect(omp.wasAborted()).toBe(false);
+    expect(runtime.closed).toBe(false);
+    runtime.finishTurn();
+    await omp.close();
+  });
+
+  test("native cancellation withdraws obsolete approvals without answering questions or bypassing explicit prompts", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" });
     omp.emitExtensionUiRequest({
@@ -2538,130 +2567,53 @@ describe("OMP agent client and session", () => {
       title: "Which deployment region?",
       options: ["Production", "Staging"],
     });
-    omp.requestToolApproval({
-      id: "pending-bash",
-      tool: "bash",
-      detail: "echo approved",
-    });
+    omp.requestToolApproval({ id: "pending-bash", tool: "bash", detail: "echo approved" });
 
     await omp.setMode("full");
-    expect((await omp.runtimeInfo()).modeId).toBe("full");
-    expect(omp.pendingPermissions()).toEqual([
-      expect.objectContaining({ id: "business-question", kind: "question" }),
-    ]);
-
-    omp.requestToolApproval({ id: "new-edit", tool: "edit", detail: "fixture.txt" });
     omp.emitExtensionUiRequest({
       type: "extension_ui_request",
-      id: "new-write",
-      method: "select",
-      title: "Allow tool: write\nPath: created.txt\nContent:\nhello",
-      options: ["Approve", "Deny"],
+      id: "cancel-message",
+      method: "cancel",
+      targetId: "pending-bash",
     });
-    await omp.setMode("full");
+    omp.requestToolApproval({ id: "explicit-edit", tool: "edit", detail: "fixture.txt" });
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: "business-question", kind: "question" }),
+      expect.objectContaining({ id: "explicit-edit", kind: "tool" }),
+    ]);
+    expect(omp.extensionUiResponses()).toEqual([]);
 
+    await expect(omp.respondToPermission("pending-bash", { behavior: "allow" })).rejects.toThrow(
+      "No pending permission request",
+    );
+    await omp.respondToPermission("explicit-edit", { behavior: "deny" });
     expect(omp.pendingPermissions()).toEqual([
       expect.objectContaining({ id: "business-question", kind: "question" }),
     ]);
-    expect(omp.permissionEvents()).toEqual([
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "explicit-edit", response: { value: "Deny" } },
+    ]);
+    expect(omp.permissionEvents().filter((event) => event.type === "permission_resolved")).toEqual([
       expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "business-question" }),
-      }),
-      expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "pending-bash" }),
-      }),
-      expect.objectContaining({
-        type: "permission_resolved",
         requestId: "pending-bash",
-        resolution: { behavior: "allow" },
+        resolution: { behavior: "deny", message: "Permission request withdrawn by OMP" },
       }),
-      expect.objectContaining({
-        type: "permission_resolved",
-        requestId: "new-edit",
-        resolution: { behavior: "allow" },
-      }),
-      expect.objectContaining({
-        type: "permission_resolved",
-        requestId: "new-write",
-        resolution: { behavior: "allow" },
-      }),
+      expect.objectContaining({ requestId: "explicit-edit", resolution: { behavior: "deny" } }),
     ]);
   });
 
-  test.each([
-    ["bash", "Command: echo approved"],
-    ["edit", "File: fixture.txt"],
-    ["write", "Path: created.txt\nContent:\nhello"],
-  ])(
-    "full access chooses one-time approval for %s with a session-grant option",
-    async (tool, detail) => {
-      const omp = new OmpHarness();
-      await omp.start({ modeId: "ask" });
-      omp.emitExtensionUiRequest({
-        type: "extension_ui_request",
-        id: "business-question",
-        method: "select",
-        title: "Which deployment region?",
-        options: ["Production", "Staging"],
-      });
-      const request = {
-        type: "extension_ui_request" as const,
-        method: "select" as const,
-        title: `Allow tool: ${tool}\n${detail}`,
-        options: ["Approve", `Approve ${tool} for this session`, "Deny"],
-      };
-      omp.emitExtensionUiRequest({ ...request, id: "pending-tool" });
-
-      await omp.setMode("full");
-      omp.emitExtensionUiRequest({ ...request, id: "subsequent-tool" });
-
-      expect(omp.pendingPermissions()).toEqual([
-        expect.objectContaining({ id: "business-question", kind: "question" }),
-      ]);
-      expect(omp.extensionUiResponses()).toEqual([
-        { id: "pending-tool", response: { value: "Approve" } },
-        { id: "subsequent-tool", response: { value: "Approve" } },
-      ]);
-      expect(
-        omp.permissionEvents().filter((event) => event.type === "permission_requested"),
-      ).toEqual([
-        expect.objectContaining({ request: expect.objectContaining({ id: "business-question" }) }),
-        expect.objectContaining({
-          request: expect.objectContaining({ id: "pending-tool", kind: "tool" }),
-        }),
-      ]);
-    },
-  );
-
-  test("restoring the launch mode stops automatic approvals without claiming a stricter native mode", async () => {
+  test("a failed native permission change leaves the current mode and approvals unchanged", async () => {
     const omp = new OmpHarness();
-    await omp.start({ modeId: "write" });
-    await omp.setMode("full");
-    await omp.setMode("write");
-    const notice = await omp.setMode("ask");
-    expect(notice?.type).toBe("warning");
-    expect((await omp.runtimeInfo()).modeId).toBe("write");
+    await omp.start({ modeId: "ask" });
+    omp.requestToolApproval({ id: "pending-bash", tool: "bash", detail: "echo approved" });
+    omp.runtime().setApprovalModeError = new Error("native permission change failed");
 
-    omp.requestToolApproval({ id: "manual-edit", tool: "edit", detail: "fixture.txt" });
+    await expect(omp.setMode("full")).rejects.toThrow("native permission change failed");
+    expect((await omp.runtimeInfo()).modeId).toBe("ask");
     expect(omp.pendingPermissions()).toEqual([
-      expect.objectContaining({ id: "manual-edit", kind: "tool" }),
+      expect.objectContaining({ id: "pending-bash", kind: "tool" }),
     ]);
-    expect(omp.permissionEvents()).toEqual([
-      expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "manual-edit" }),
-      }),
-    ]);
-  });
-
-  test("a session launched with full access cannot pretend to enable native approvals", async () => {
-    const omp = new OmpHarness();
-    await omp.start({ modeId: "full" });
-    const notice = await omp.setMode("ask");
-    expect(notice?.type).toBe("warning");
-    expect((await omp.runtimeInfo()).modeId).toBe("full");
+    expect(omp.extensionUiResponses()).toEqual([]);
   });
 
   test("folds OMP ask custom input into the Other option", async () => {
