@@ -1512,6 +1512,7 @@ export class PaseoWebSocketServer {
         ompClaudeLimitResets: true,
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
         ompSubagentSettings: true,
+        ompCodexResetSettings: true,
         // COMPAT(ompMemoryManagement): added 2026-09-12, remove gate after 2027-03-12.
         ompMemoryManagement: true,
         // COMPAT(ompBuiltinToolSettings): added 2026-09-24; older daemons do not honor this policy.

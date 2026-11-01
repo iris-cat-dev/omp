@@ -60,6 +60,19 @@ they are not automatically submitted again. Replacement and other non-user
 interruptions retain ordinary abort semantics. Length continuations are not
 scheduled while interruption is active.
 
+Stop waits for the selected agent and its managed descendants to finish cleanup,
+even when the selected root is idle. This includes accepted host-tool calls,
+background jobs, retained shell subprocesses, and idle JS/Python eval kernels and
+their subprocess groups. Admissions and autonomous continuations are fenced
+during cleanup; independent roots are not stopped. A timeout or unconfirmed
+shutdown returns a failure instead of claiming that live execution is idle.
+
+The conversation remains usable after Stop. A new prompt reopens admission and
+recreates eval kernels lazily; variables, timers, and other retained eval effects
+from before Stop are discarded. Explicit SDK clients requesting the same eval
+namespace for multiple owners receive a strict-Stop error rather than terminating
+another owner's kernel. Ordinary SDK aborts do not dispose retained eval kernels.
+
 Backend code updates require a daemon restart: refreshing one agent cannot
 replace provider classes already loaded by the daemon. Refreshing an agent from
 persistence does close only that agent's runtime and rehydrate its original

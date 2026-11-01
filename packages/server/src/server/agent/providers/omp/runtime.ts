@@ -62,7 +62,7 @@ export interface OmpRuntimeSession {
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
-  /** Withdraw queued input before aborting, preventing native post-abort queue drain. */
+  /** Withdraw queued input, stop owned execution, and wait for settlement without closing the session. */
   abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult>;
   cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;

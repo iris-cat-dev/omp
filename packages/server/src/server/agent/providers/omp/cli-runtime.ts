@@ -490,6 +490,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   private appliedImageSettings: string | undefined;
   private imageUpdates = Promise.resolve();
   private readonly localModelGatewayEndpoint = Promise.withResolvers<number | Error>();
+  private inputGeneration = 0;
 
   constructor(
     private readonly process: JsonlRpcProcess,
@@ -616,7 +617,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<OmpPromptAck> {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     await this.refreshImageSettings();
+    this.assertInputGeneration(generation);
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
@@ -649,8 +652,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult> {
+    this.inputGeneration++;
     return OmpAbortAndRestoreQueueResultSchema.parse(
-      await this.request({ type: "abort_and_restore_queue" }),
+      await this.request({ type: "abort_and_restore_queue" }, JSONL_RPC_NO_TIMEOUT),
     );
   }
 
@@ -832,7 +836,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     await this.refreshImageSettings();
+    this.assertInputGeneration(generation);
     await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
   }
 
@@ -841,15 +847,22 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     if (!this.getImageGenerationConfig || !this.imageToken) {
       this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
       return;
     }
     void this.refreshImageSettings()
-      .then(() =>
-        this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) }),
-      )
+      .then(() => {
+        if (generation !== this.inputGeneration) return undefined;
+        return this.process.send({
+          type: "follow_up",
+          message,
+          ...(images?.length ? { images } : {}),
+        });
+      })
       .catch((error: unknown) => {
+        if (generation !== this.inputGeneration) return;
         // A queued turn must not continue using stale credentials or silently
         // drop a failed settings update. Process exit is an observable provider error.
         void this.process.close(
@@ -882,6 +895,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+  }
+
+  private assertInputGeneration(generation: number): void {
+    if (generation !== this.inputGeneration) throw new Error("OMP input canceled by user Stop");
   }
 
   private emit(event: OmpRuntimeEvent): void {

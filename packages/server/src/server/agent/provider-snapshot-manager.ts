@@ -584,6 +584,26 @@ export class ProviderSnapshotManager {
     return await client.updateOmpSubagentSettingsEnabled(enabled);
   }
 
+  async getOmpCodexResetSettings() {
+    const definition = this.providerRegistry.omp;
+    if (!definition) throw new Error("OMP provider is not configured");
+    const client = this.ensureClient("omp", definition);
+    if (!client.getOmpCodexResetSettings) {
+      throw new Error("OMP reset-card configuration is unavailable");
+    }
+    return await client.getOmpCodexResetSettings();
+  }
+
+  async updateOmpCodexResetSettings(enabled: boolean) {
+    const definition = this.providerRegistry.omp;
+    if (!definition) throw new Error("OMP provider is not configured");
+    const client = this.ensureClient("omp", definition);
+    if (!client.updateOmpCodexResetSettings) {
+      throw new Error("OMP reset-card configuration is read-only");
+    }
+    return await client.updateOmpCodexResetSettings(enabled);
+  }
+
   async getOmpMemorySettings() {
     const definition = this.providerRegistry.omp;
     if (!definition) throw new Error("OMP provider is not configured");

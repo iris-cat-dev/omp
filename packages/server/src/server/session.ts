@@ -2649,6 +2649,10 @@ export class Session {
         return this.providerCatalogSession.handleOmpMemorySettingsGetRequest(msg);
       case "omp.memory.settings.update.request":
         return this.providerCatalogSession.handleOmpMemorySettingsUpdateRequest(msg);
+      case "omp.codex.reset_settings.get.request":
+        return this.providerCatalogSession.handleOmpCodexResetSettingsGetRequest(msg);
+      case "omp.codex.reset_settings.update.request":
+        return this.providerCatalogSession.handleOmpCodexResetSettingsUpdateRequest(msg);
       default:
         return undefined;
     }

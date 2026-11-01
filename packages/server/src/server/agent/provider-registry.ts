@@ -365,6 +365,8 @@ function bindOmpClientMethods(inner: AgentClient): Partial<AgentClient> {
     getOmpSubagentSettings: inner.getOmpSubagentSettings?.bind(inner),
     updateOmpSubagentModel: inner.updateOmpSubagentModel?.bind(inner),
     updateOmpSubagentSettingsEnabled: inner.updateOmpSubagentSettingsEnabled?.bind(inner),
+    getOmpCodexResetSettings: inner.getOmpCodexResetSettings?.bind(inner),
+    updateOmpCodexResetSettings: inner.updateOmpCodexResetSettings?.bind(inner),
     getOmpMemorySettings: inner.getOmpMemorySettings?.bind(inner),
     updateOmpMemorySettings: inner.updateOmpMemorySettings?.bind(inner),
     updateOmpModelContextWindowOverrides: inner.updateOmpModelContextWindowOverrides?.bind(inner),

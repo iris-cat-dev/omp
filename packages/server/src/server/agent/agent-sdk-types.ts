@@ -16,6 +16,7 @@ import type {
   OmpCodexResetCreditConsumeResult,
   OmpClaudeLimitResetConsumeResult,
   OmpSubagentSettings,
+  OmpCodexResetSettings,
   OmpMemorySettings,
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
@@ -877,6 +878,8 @@ export interface AgentClient {
     options?: { fastMode?: boolean | null },
   ): Promise<OmpSubagentSettings>;
   updateOmpSubagentSettingsEnabled?(enabled: boolean): Promise<OmpSubagentSettings>;
+  getOmpCodexResetSettings?(): Promise<OmpCodexResetSettings>;
+  updateOmpCodexResetSettings?(enabled: boolean): Promise<OmpCodexResetSettings>;
   getOmpMemorySettings?(): Promise<OmpMemorySettings>;
   updateOmpMemorySettings?(
     expectedRevision: string,

@@ -141,6 +141,14 @@ Each account lists banked cards, server-reported available count, status, and ti
 
 The daemon rechecks with OpenAI before consumption and preserves the redemption request ID so duplicate submissions do not intentionally spend another card. A confirmed server result refreshes both cards and quota. Errors and already-redeemed/nothing-to-reset outcomes are not reported as successful resets. Older daemons cannot consume cards.
 
+**Automatically use reset cards** controls the native `codexResets.autoRedeem` policy for all Codex accounts in the selected host profile. The switch writes `yes` or `no` to that profile's global OMP configuration, not an account or Desktop preference. Existing native project, overlay, and runtime overrides retain their precedence over the global value.
+
+- **Enabled (`yes`)**: eligible automatic redemptions do not require confirmation.
+- **Disabled (`no`)**: no automatic spending, including expiring cards; manual **Use reset card** remains available.
+- **Not configured (`unset`)**: retains native consent behavior. Without a prompt UI, cards expiring within five minutes may still be spent; explicitly turn the switch off to disable that path too.
+
+Saving or loading errors remain visible; the switch does not report success before the host acknowledges persistence. Older hosts show the control disabled. Running Node SDK sessions watch configuration changes and recheck the policy after pending consent and immediately before automatic redemption. Disabling cannot recall a redemption already sent to OpenAI.
+
 ### Account metadata
 
 Desktop retains the reported plan name, quotas, reset countdowns, credits, and reset cards, but does not display or query subscription expiry or remaining subscription duration. The current official sign-in does not provide a reliable subscription-date API; the dedicated token-claim parser and account lookup have been removed ([#73](https://github.com/iris-cat-dev/omp/issues/73)).

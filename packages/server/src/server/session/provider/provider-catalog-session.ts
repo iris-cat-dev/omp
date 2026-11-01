@@ -704,6 +704,54 @@ export class ProviderCatalogSession {
     }
   }
 
+  async handleOmpCodexResetSettingsGetRequest(
+    msg: Extract<SessionInboundMessage, { type: "omp.codex.reset_settings.get.request" }>,
+  ): Promise<void> {
+    try {
+      const settings = await this.providerSnapshotManager.getOmpCodexResetSettings();
+      this.host.emit({
+        type: "omp.codex.reset_settings.get.response",
+        payload: { ...settings, requestId: msg.requestId },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error({ err }, "Failed to load OMP reset-card settings");
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: `Failed to load OMP reset-card settings: ${err.message}`,
+          code: "omp_codex_reset_settings_failed",
+        },
+      });
+    }
+  }
+
+  async handleOmpCodexResetSettingsUpdateRequest(
+    msg: Extract<SessionInboundMessage, { type: "omp.codex.reset_settings.update.request" }>,
+  ): Promise<void> {
+    try {
+      const settings = await this.providerSnapshotManager.updateOmpCodexResetSettings(msg.enabled);
+      this.host.emit({
+        type: "omp.codex.reset_settings.update.response",
+        payload: { ...settings, requestId: msg.requestId },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error({ err }, "Failed to update OMP reset-card settings");
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: `Failed to update OMP reset-card settings: ${err.message}`,
+          code: "omp_codex_reset_settings_update_failed",
+        },
+      });
+    }
+  }
+
   async handleOmpMemorySettingsGetRequest(
     msg: Extract<SessionInboundMessage, { type: "omp.memory.settings.get.request" }>,
   ): Promise<void> {

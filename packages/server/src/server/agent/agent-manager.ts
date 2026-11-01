@@ -77,6 +77,7 @@ import {
   AgentRunState,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -128,6 +129,13 @@ export class AgentRunCancellationError extends Error {
       `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
     );
     this.name = "AgentRunCancellationError";
+  }
+}
+
+class AgentRunAdmissionCancelledError extends Error {
+  constructor(agentId: string) {
+    super(`Agent ${agentId} stopped before work could be admitted`);
+    this.name = "AgentRunAdmissionCancelledError";
   }
 }
 
@@ -714,6 +722,9 @@ export class AgentManager {
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
+  private readonly startingForegroundRunTokens = new Set<string>();
+  private readonly stoppingAgentIds = new Map<string, number>();
+  private readonly stopEpochs = new Map<string, number>();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
@@ -1199,7 +1210,22 @@ export class AgentManager {
     if (!parent.session?.cancelProviderSubagent) {
       throw new Error("Stopping native OMP subagents requires OMP v18.4.9 or newer");
     }
-    const cancelled = await parent.session.cancelProviderSubagent(subagentId);
+    let cancelled = false;
+    const cancellation = await this.waitWithTimeout({
+      operation: (async () => {
+        cancelled = await parent.session!.cancelProviderSubagent!(subagentId);
+      })(),
+      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      onLateError: (error) => {
+        this.logger.warn(
+          { err: error, parentAgentId, subagentId },
+          "Native child stop failed after timeout",
+        );
+      },
+    });
+    if (cancellation === "timed_out") {
+      throw new Error(`Subagent ${subagentId} cancellation was not acknowledged`);
+    }
     if (cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
       const update = this.providerSubagents.apply(parentAgentId, child.provider, {
         type: "upsert",
@@ -1208,7 +1234,10 @@ export class AgentManager {
       });
       this.dispatch({ type: "provider_subagent", event: update });
     }
-    // A false response means OMP already finished the child; its lifecycle event owns the status.
+    await this.drainSessionEvents(parentAgentId);
+    if (!cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
+      throw new Error(`Subagent ${subagentId} is still running after cancellation`);
+    }
   }
 
   fetchProviderSubagentTimeline(
@@ -1227,13 +1256,14 @@ export class AgentManager {
     return false;
   }
 
-  createAgent(
+  async createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
+    const admission = this.captureRunAdmission(getParentAgentIdFromLabels(options.labels));
     return this.trackAgentRegistrationOperation(
-      this.createAgentWithWorkspaceRootGuard(config, agentId, options),
+      this.createAgentWithWorkspaceRootGuard(config, agentId, options, admission),
       options.workspaceId,
     );
   }
@@ -1242,11 +1272,12 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
+    admission: ReadonlyMap<string, number>,
   ): Promise<ManagedAgent> {
     if (agentId && (this.agents.has(agentId) || (await this.registry?.get(agentId)))) {
       // Loading or replacing a persisted legacy root must not be mistaken for
       // creating another root in an already-invalid workspace.
-      return this.createAgentInternal(config, agentId, options);
+      return this.createAgentInternal(config, agentId, options, admission);
     }
 
     const workspaceId = options.workspaceId;
@@ -1255,7 +1286,7 @@ export class AgentManager {
       !workspaceId ||
       !(await this.isWorkspaceRootCreate(workspaceId, options.labels))
     ) {
-      return this.createAgentInternal(config, agentId, options);
+      return this.createAgentInternal(config, agentId, options, admission);
     }
 
     return this.serializeWorkspaceRootCreate(workspaceId, async () => {
@@ -1263,7 +1294,7 @@ export class AgentManager {
       if (existingAgentIds.length > 0) {
         throw new WorkspaceRootConflictError(workspaceId, existingAgentIds);
       }
-      return this.createAgentInternal(config, agentId, options);
+      return this.createAgentInternal(config, agentId, options, admission);
     });
   }
 
@@ -1343,8 +1374,10 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
+    admission: ReadonlyMap<string, number>,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    this.assertRunAdmission(admission, getParentAgentIdFromLabels(options.labels));
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
@@ -1372,6 +1405,7 @@ export class AgentManager {
       workspaceId: options.workspaceId,
       owner: options.owner,
       historyPrimed: true,
+      admission,
     });
   }
 
@@ -1385,7 +1419,7 @@ export class AgentManager {
 
   // Reconstruct an agent from provider persistence. Callers should explicitly
   // hydrate timeline history after resume.
-  resumeAgentFromPersistence(
+  async resumeAgentFromPersistence(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
@@ -1399,8 +1433,16 @@ export class AgentManager {
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
+    const admission = this.captureRunAdmission(getParentAgentIdFromLabels(options?.labels));
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.resumeAgentFromPersistenceInternal(
+        handle,
+        overrides,
+        agentId,
+        options,
+        resumeOptions,
+        admission,
+      ),
       options?.workspaceId,
     );
   }
@@ -1418,6 +1460,7 @@ export class AgentManager {
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
+    admission?: ReadonlyMap<string, number>,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(
@@ -1454,29 +1497,34 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
+      admission,
     });
   }
 
-  importProviderSession(input: {
+  async importProviderSession(input: {
     provider: AgentProvider;
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
+    const admission = this.captureRunAdmission(getParentAgentIdFromLabels(input.labels));
     return this.trackAgentRegistrationOperation(
-      this.importProviderSessionInternal(input),
+      this.importProviderSessionInternal(input, admission),
       input.workspaceId,
     );
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  private async importProviderSessionInternal(
+    input: {
+      provider: AgentProvider;
+      providerHandleId: string;
+      cwd: string;
+      workspaceId: string;
+      labels?: Record<string, string>;
+    },
+    admission: ReadonlyMap<string, number>,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
@@ -1520,6 +1568,7 @@ export class AgentManager {
         historyPrimed: true,
         initialTitle,
         publishWhenReady: true,
+        admission,
       });
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -2258,6 +2307,43 @@ export class AgentManager {
     await this.writeStoredMetadata(agentId, updates);
   }
 
+  private captureRunAdmission(agentId: string | null): ReadonlyMap<string, number> {
+    const epochs = new Map<string, number>();
+    while (agentId && !epochs.has(agentId)) {
+      if (this.stoppingAgentIds.has(agentId)) {
+        throw new Error(`Agent ${agentId} is stopping`);
+      }
+      epochs.set(agentId, this.stopEpochs.get(agentId) ?? 0);
+      agentId = getParentAgentIdFromLabels(this.agents.get(agentId)?.labels);
+    }
+    return epochs;
+  }
+
+  private assertRunAdmission(
+    epochs: ReadonlyMap<string, number> | undefined,
+    ownerId?: string | null,
+  ): void {
+    if (!epochs) return;
+    for (const [agentId, epoch] of epochs) {
+      if (ownerId && !this.isAgentInRunTree(ownerId, agentId)) continue;
+      if (this.stoppingAgentIds.has(agentId) || (this.stopEpochs.get(agentId) ?? 0) !== epoch) {
+        throw new AgentRunAdmissionCancelledError(agentId);
+      }
+    }
+  }
+
+  private isAgentInRunTree(agentId: string, rootAgentId: string): boolean {
+    const visited = new Set<string>();
+    while (!visited.has(agentId)) {
+      if (agentId === rootAgentId) return true;
+      visited.add(agentId);
+      const parentId = getParentAgentIdFromLabels(this.agents.get(agentId)?.labels);
+      if (!parentId) return false;
+      agentId = parentId;
+    }
+    return false;
+  }
+
   private async runLifecycleMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
     // Parent cascade classifies a child inside the same lane used by open-tab
     // label writes, so a received ownership update cannot be overtaken.
@@ -2324,6 +2410,7 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
+    this.captureRunAdmission(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
@@ -2399,15 +2486,31 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
+    admission: ReadonlyMap<string, number>;
   }): Promise<string> {
-    const { agent, agentId, pendingRun, prompt, options } = params;
+    const { agent, agentId, pendingRun, prompt, options, admission } = params;
     try {
-      const result = await agent.session.startTurn(prompt, options);
+      this.assertRunAdmission(admission, agentId);
+      this.captureRunAdmission(agentId);
+      if (pendingRun.settled) {
+        throw new Error(`Agent ${agentId} run was canceled before its turn started`);
+      }
+      this.startingForegroundRunTokens.add(pendingRun.token);
+      let result: { turnId: string };
+      try {
+        result = await agent.session.startTurn(prompt, options);
+      } finally {
+        this.startingForegroundRunTokens.delete(pendingRun.token);
+      }
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
       return result.turnId;
     } catch (error) {
+      if (error instanceof AgentRunAdmissionCancelledError) {
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        throw error;
+      }
       if (pendingRun.settled) {
         throw error;
       }
@@ -2431,6 +2534,7 @@ export class AgentManager {
     workingStartedAt?: Date,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    const admission = this.captureRunAdmission(agentId);
     this.logger.trace(
       {
         agentId,
@@ -2475,6 +2579,7 @@ export class AgentManager {
         pendingRun,
         prompt,
         options,
+        admission,
       });
 
       if (isReplacement) {
@@ -2630,6 +2735,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
+    const admission = this.captureRunAdmission(agentId);
     if (
       snapshot.lifecycle !== "running" &&
       !snapshot.activeForegroundTurnId &&
@@ -2646,6 +2752,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
+      this.assertRunAdmission(admission, agentId);
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agentId);
@@ -2762,8 +2869,10 @@ export class AgentManager {
     expectedTurnId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
+    const admission = this.captureRunAdmission(agent.id);
     return this.runForegroundMutation(agent.id, async () => {
       await this.drainSessionEvents(agent.id);
+      this.assertRunAdmission(admission, agent.id);
       this.agentStreamCoalescer.flushFor(agent.id);
       this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
       const barrier: SteerEventBarrier = { events: [] };
@@ -2806,6 +2915,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
+    const admission = this.captureRunAdmission(agent.id);
     const workingStartedAt = agent.activeTurnStartedAt ?? undefined;
     agent.pendingReplacement = true;
     agent.lifecycle = "running";
@@ -2814,6 +2924,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agent.id, "replace");
+      this.assertRunAdmission(admission, agent.id);
       return this.streamAgent(agent.id, prompt, options, workingStartedAt);
     } catch (error) {
       const latest = this.agents.get(agent.id);
@@ -2993,94 +3104,123 @@ export class AgentManager {
     agentId: string,
     reason: AgentInterruptReason = "user",
   ): Promise<AgentRunCancellationResult> {
-    return this.cancelAgentRunTree(agentId, new Set(), reason);
+    this.requireSessionAgent(agentId);
+    if (reason === "user") {
+      this.stoppingAgentIds.set(agentId, (this.stoppingAgentIds.get(agentId) ?? 0) + 1);
+      this.stopEpochs.set(agentId, (this.stopEpochs.get(agentId) ?? 0) + 1);
+    }
+    try {
+      return await this.cancelAgentRunTree(agentId, reason);
+    } finally {
+      if (reason === "user") {
+        const remaining = (this.stoppingAgentIds.get(agentId) ?? 1) - 1;
+        if (remaining > 0) this.stoppingAgentIds.set(agentId, remaining);
+        else this.stoppingAgentIds.delete(agentId);
+      }
+    }
   }
 
   private async cancelAgentRunTree(
-    agentId: string,
-    visitedAgentIds: Set<string>,
+    rootAgentId: string,
     reason: AgentInterruptReason,
   ): Promise<AgentRunCancellationResult> {
-    if (visitedAgentIds.has(agentId)) {
-      return { status: "not_running" };
-    }
-    visitedAgentIds.add(agentId);
+    const attemptedAgents = new Map<string, { session: AgentSession; token: string | null }>();
+    const attemptedNativeChildren = new Map<AgentSession, Set<string>>();
+    const outcomes: PromiseSettledResult<AgentRunCancellationResult>[] = [];
 
-    const childIds = Array.from(this.agents.values())
-      .filter((agent) => getParentAgentIdFromLabels(agent.labels) === agentId)
-      .map((agent) => agent.id);
-    const managedChildIds = new Set(childIds);
-    const nativeChildIds = new Set(
-      this.providerSubagents
-        .list(agentId)
-        .filter((subagent) => subagent.status === "running")
-        .map((subagent) => subagent.id),
-    );
-    const childCancellations = await Promise.allSettled<AgentRunCancellationResult>([
-      ...[...nativeChildIds].map(async (subagentId) => {
-        await this.cancelProviderSubagent(agentId, subagentId);
-        return { status: "settled" } as const;
-      }),
-      ...childIds.map((childId) =>
-        this.runLifecycleMutation(childId, async () => {
-          const child = this.agents.get(childId);
-          if (!child || getParentAgentIdFromLabels(child.labels) !== agentId) {
-            return { status: "not_running" } as const;
-          }
-          return this.cancelAgentRunTree(childId, visitedAgentIds, reason);
-        }),
-      ),
-    ]);
-    // Stop native children before interrupting their parent's turn; an abort alone
-    // does not cancel OMP subagents. Still interrupt the root when a child refuses.
-    const ownCancellation = await this.runForegroundMutation(agentId, () =>
-      this.cancelAgentRunNow(agentId, reason),
-    ).then(
-      (value) => ({ status: "fulfilled", value }) as const,
-      (error: unknown) => ({ status: "rejected", reason: error }) as const,
-    );
-    // Catch descendants created while the first cancellation sweep was settling.
-    await this.drainSessionEvents(agentId);
-    const lateChildCancellations = await Promise.allSettled<AgentRunCancellationResult>([
-      ...this.providerSubagents
-        .list(agentId)
-        .filter((subagent) => subagent.status === "running" && !nativeChildIds.has(subagent.id))
-        .map(async (subagent) => {
-          await this.cancelProviderSubagent(agentId, subagent.id);
-          return { status: "settled" } as const;
-        }),
-      ...Array.from(this.agents.values())
-        .filter(
-          (child) =>
-            getParentAgentIdFromLabels(child.labels) === agentId && !managedChildIds.has(child.id),
-        )
-        .map((child) =>
-          this.runLifecycleMutation(child.id, async () => {
-            const current = this.agents.get(child.id);
-            if (!current || getParentAgentIdFromLabels(current.labels) !== agentId) {
-              return { status: "not_running" } as const;
+    // Ownership classification and cancellation admission share the label lane.
+    // Release it before awaiting cleanup: an interrupted tool may itself need
+    // setLabels/detach, and overlapping parent/child Stops must not deadlock.
+    while (true) {
+      const candidates = Array.from(this.agents.values()).filter((agent) => {
+        if (!agent.session || !this.isAgentInRunTree(agent.id, rootAgentId)) return false;
+        const attempted = attemptedAgents.get(agent.id);
+        const run = this.runs.getRun(agent.id);
+        return (
+          !attempted ||
+          attempted.session !== agent.session ||
+          (run !== null && attempted.token !== run.token) ||
+          this.providerSubagents
+            .list(agent.id)
+            .some(
+              (child) =>
+                child.status === "running" &&
+                !attemptedNativeChildren.get(agent.session!)?.has(child.id),
+            )
+        );
+      });
+      if (candidates.length === 0) break;
+
+      const batches = await Promise.allSettled(
+        candidates.map((snapshot) => {
+          const expectedParentId = getParentAgentIdFromLabels(snapshot.labels);
+          return this.runLifecycleMutation(snapshot.id, async () => {
+            const agent = this.agents.get(snapshot.id);
+            if (
+              !agent?.session ||
+              getParentAgentIdFromLabels(agent.labels) !== expectedParentId ||
+              !this.isAgentInRunTree(agent.id, rootAgentId)
+            ) {
+              return { completion: Promise.resolve([]) };
             }
-            return this.cancelAgentRunTree(child.id, visitedAgentIds, reason);
-          }),
-        ),
-    ]);
-    const failure = [...childCancellations, ...lateChildCancellations, ownCancellation].find(
-      (result) => result.status === "rejected",
-    );
+            await this.drainSessionEvents(agent.id);
+            const run =
+              this.runs.getRun(agent.id) ??
+              (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agent.id, null) : null);
+            const attempted = attemptedAgents.get(agent.id);
+            const cancelOwn =
+              !attempted ||
+              attempted.session !== agent.session ||
+              (run !== null && attempted.token !== run.token);
+            attemptedAgents.set(agent.id, { session: agent.session, token: run?.token ?? null });
+            let nativeIds = attemptedNativeChildren.get(agent.session);
+            if (!nativeIds) {
+              nativeIds = new Set();
+              attemptedNativeChildren.set(agent.session, nativeIds);
+            }
+            const nativeChildren = this.providerSubagents
+              .list(agent.id)
+              .filter((child) => child.status === "running" && !nativeIds.has(child.id));
+            for (const child of nativeChildren) nativeIds.add(child.id);
+            // Interrupt the parent concurrently, so it cannot keep admitting work
+            // while child cancellation waits for its execution to wind down.
+            const expectedSession = agent.session;
+            const operations: Promise<AgentRunCancellationResult>[] = [
+              ...(cancelOwn
+                ? [
+                    this.runForegroundMutation(agent.id, () => {
+                      if (this.agents.get(agent.id)?.session !== expectedSession) {
+                        return Promise.resolve({ status: "not_running" } as const);
+                      }
+                      return this.cancelAgentRunNow(agent.id, reason);
+                    }),
+                  ]
+                : []),
+              ...nativeChildren.map(async (child) => {
+                await this.cancelProviderSubagent(agent.id, child.id);
+                return { status: "settled" } as const;
+              }),
+            ];
+            return { completion: Promise.allSettled(operations) };
+          });
+        }),
+      );
+      for (const batch of batches) {
+        if (batch.status === "rejected") outcomes.push(batch);
+        else outcomes.push(...(await batch.value.completion));
+      }
+      // A cancellation may itself publish another child or an autonomous turn.
+      // Drain every visited owner and repeat until no new work is left to attempt.
+      await Promise.all(Array.from(attemptedAgents.keys(), (id) => this.drainSessionEvents(id)));
+    }
+
+    const failure = outcomes.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
-    const cancellations = [...childCancellations, ...lateChildCancellations]
-      .filter(
-        (result): result is PromiseFulfilledResult<AgentRunCancellationResult> =>
-          result.status === "fulfilled",
-      )
-      .map((result) => result.value);
-    if (ownCancellation.status === "fulfilled") cancellations.push(ownCancellation.value);
-    if (cancellations.some((cancellation) => cancellation.status === "refused")) {
-      return { status: "refused" };
-    }
-    if (cancellations.some((cancellation) => cancellation.status === "settled")) {
-      return { status: "settled" };
-    }
+    const cancellations = outcomes.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    if (cancellations.some((result) => result.status === "refused")) return { status: "refused" };
+    if (cancellations.some((result) => result.status === "settled")) return { status: "settled" };
     return { status: "not_running" };
   }
 
@@ -3092,60 +3232,30 @@ export class AgentManager {
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
-    if (!run) {
-      return { status: "not_running" };
+    if (!run && reason !== "user") return { status: "not_running" };
+    if (
+      run?.kind === "foreground" &&
+      !run.started &&
+      !this.startingForegroundRunTokens.has(run.token)
+    ) {
+      // This iterator has never invoked the provider. Withdraw it locally;
+      // its later first next() must not start execution after Stop returns.
+      this.runs.settleForegroundRun(agentId, run.token);
     }
 
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId, reason);
-    if (interruptAcknowledged) {
-      await this.stopAllBackgroundProcesses(agentId).catch((error: unknown) => {
-        this.logger.warn({ err: error, agentId }, "Failed to stop agent background processes");
-      });
+    // Idle sessions can still own detached-from-turn tools and background jobs.
+    // Attempt these even if interrupt failed, and propagate failures to the caller.
+    const stoppedBackgroundProcesses = await this.stopBackgroundProcessesForCancellation(agent);
+    if (stoppedBackgroundProcesses === null) return { status: "refused" };
+    await this.drainSessionEvents(agentId);
+    if (reason === "user" && !interruptAcknowledged) return { status: "refused" };
+    if (!run) {
+      if (!interruptAcknowledged) return { status: "refused" };
+      return { status: stoppedBackgroundProcesses > 0 ? "settled" : "not_running" };
     }
-    const settlement = await this.waitWithTimeout({
-      operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
-    });
-
-    if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
-    }
-
-    if (settlement === "timed_out" && run.turnId) {
-      this.logger.warn(
-        { agentId, turnId: run.turnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason,
-        turnId: run.turnId,
-      });
-      await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
-      );
-      this.runs.settleForegroundRun(agentId, run.token);
-      if (!agent.pendingReplacement) {
-        agent.lifecycle = "idle";
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason,
-      });
+    if (!(await this.waitForCancelledRun(agent, run, interruptAcknowledged))) {
+      return { status: "refused" };
     }
 
     if (agent.pendingPermissions.size > 0) {
@@ -3154,6 +3264,51 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private async waitForCancelledRun(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+    interruptAcknowledged: boolean,
+  ): Promise<boolean> {
+    const settlement = await this.waitWithTimeout({
+      operation: run.settledPromise,
+      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+    });
+    await this.drainSessionEvents(agent.id);
+    if (
+      (settlement === "timed_out" && !run.settled) ||
+      (run.turnId !== null && agent.activeForegroundTurnId === run.turnId) ||
+      (run.kind === "autonomous" &&
+        agent.lifecycle === "running" &&
+        agent.activeTurnId === run.turnId)
+    ) {
+      this.logger.warn(
+        { agentId: agent.id, turnId: run.turnId, kind: run.kind, interruptAcknowledged },
+        "cancelAgentRun: execution did not settle after interrupt",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  private async stopBackgroundProcessesForCancellation(
+    agent: ActiveManagedAgent,
+  ): Promise<number | null> {
+    let stopped = 0;
+    const settlement = await this.waitWithTimeout({
+      operation: (async () => {
+        stopped = (await agent.session.stopAllBackgroundProcesses?.()) ?? 0;
+      })(),
+      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      onLateError: (error) => {
+        this.logger.warn(
+          { err: error, agentId: agent.id },
+          "Background stop failed after cancellation timeout",
+        );
+      },
+    });
+    return settlement === "completed" ? stopped : null;
   }
 
   private async cancelAgentRunBefore(
@@ -3558,6 +3713,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      admission?: ReadonlyMap<string, number>;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3585,32 +3741,39 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
+      this.assertRunAdmission(options?.admission, getParentAgentIdFromLabels(options?.labels));
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       await this.refreshRuntimeInfo(managed, { emit: false });
-      this.assertAgentRegistrationActive(managed);
+      this.assertAgentRegistrationActive(managed, options?.admission);
       await this.persistSnapshot(managed, {
         initialTitle: config.title?.trim() || options?.initialTitle || null,
       });
-      this.assertAgentRegistrationActive(managed);
+      this.assertAgentRegistrationActive(managed, options?.admission);
       if (!options?.publishWhenReady) {
         this.emitState(managed, { persist: false });
       }
 
       await this.refreshSessionState(managed, { emit: false });
-      this.assertAgentRegistrationActive(managed);
+      this.assertAgentRegistrationActive(managed, options?.admission);
       managed.lifecycle = "idle";
       this.touchUpdatedAt(managed);
       await this.persistSnapshot(managed);
-      this.assertAgentRegistrationActive(managed);
+      this.assertAgentRegistrationActive(managed, options?.admission);
       this.emitState(managed, { persist: false });
       this.subscribeToSession(managed);
+      this.assertRunAdmission(options?.admission, getParentAgentIdFromLabels(managed.labels));
       return { ...managed };
     } catch (error) {
       if (!registered) {
         await this.closeUnregisteredSession(session);
+      } else if (
+        error instanceof AgentRunAdmissionCancelledError &&
+        this.agents.get(agentId)?.session === session
+      ) {
+        await this.closeAgent(agentId);
       }
       throw error;
     }
@@ -3622,10 +3785,14 @@ export class AgentManager {
     }
   }
 
-  private assertAgentRegistrationActive(agent: ActiveManagedAgent): void {
+  private assertAgentRegistrationActive(
+    agent: ActiveManagedAgent,
+    admission?: ReadonlyMap<string, number>,
+  ): void {
     if (!this.acceptingAgentRegistrations || this.agents.get(agent.id) !== agent) {
       throw new AgentManagerShuttingDownError();
     }
+    if (admission) this.assertRunAdmission(admission, getParentAgentIdFromLabels(agent.labels));
   }
 
   private async closeUnregisteredSession(session: AgentSession): Promise<void> {

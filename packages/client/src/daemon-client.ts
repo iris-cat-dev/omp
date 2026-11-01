@@ -103,6 +103,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   OmpProviderManagementGetResponseMessage,
+  OmpCodexResetSettingsGetResponseMessage,
+  OmpCodexResetSettingsUpdateResponseMessage,
   OmpCodexResetCreditConsumeResult,
   OmpClaudeLimitResetConsumeResult,
   OmpProviderManagementSaveResponseMessage,
@@ -525,6 +527,8 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type OmpProviderManagementGetPayload = OmpProviderManagementGetResponseMessage["payload"];
+type OmpCodexResetSettingsGetPayload = OmpCodexResetSettingsGetResponseMessage["payload"];
+type OmpCodexResetSettingsUpdatePayload = OmpCodexResetSettingsUpdateResponseMessage["payload"];
 type OmpProviderManagementSavePayload = OmpProviderManagementSaveResponseMessage["payload"];
 type OmpSubagentSettingsGetPayload = OmpSubagentSettingsGetResponseMessage["payload"];
 type OmpSubagentSettingsUpdatePayload = OmpSubagentSettingsUpdateResponseMessage["payload"];
@@ -5019,6 +5023,29 @@ export class DaemonClient {
       message: { type: "omp.provider.management.get.request" },
       responseType: "omp.provider.management.get.response",
       timeout: 180000,
+    });
+  }
+
+  async getOmpCodexResetSettings(options?: {
+    requestId?: string;
+  }): Promise<OmpCodexResetSettingsGetPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "omp.codex.reset_settings.get.request" },
+      responseType: "omp.codex.reset_settings.get.response",
+      timeout: 30_000,
+    });
+  }
+
+  async updateOmpCodexResetSettings(
+    enabled: boolean,
+    options?: { requestId?: string },
+  ): Promise<OmpCodexResetSettingsUpdatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "omp.codex.reset_settings.update.request", enabled },
+      responseType: "omp.codex.reset_settings.update.response",
+      timeout: 30_000,
     });
   }
 

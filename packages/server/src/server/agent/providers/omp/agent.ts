@@ -19,6 +19,7 @@ import type {
   OmpCodexResetCreditConsumeResult,
   OmpClaudeLimitResetConsumeResult,
   OmpSubagentSettings,
+  OmpCodexResetSettings,
   OmpMemorySettings,
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
@@ -128,6 +129,10 @@ import {
   readOmpMemorySettings,
   updateOmpMemorySettings as updateMemorySettings,
 } from "./memory-settings.js";
+import {
+  readOmpCodexResetSettings,
+  updateOmpCodexResetSettings,
+} from "./codex-reset-settings.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import {
   cancelOmpInstall,
@@ -145,6 +150,7 @@ import {
 } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import type {
+  OmpAbortAndRestoreQueueResult,
   OmpAgentSessionEvent,
   OmpAgentMessage,
   OmpImageContent,
@@ -169,6 +175,7 @@ import {
   clearOmpHostToolState,
   handleOmpHostToolRuntimeEvent,
   setOmpHostTools,
+  waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
@@ -2175,11 +2182,7 @@ export class OmpAgentSession implements AgentSession {
         if (this.activeTurnId !== turnId) {
           return;
         }
-        const interruptReason =
-          this.activeInterrupt?.turnId === turnId ? this.activeInterrupt.reason : null;
-        if (interruptReason) {
-          this.activeInterrupt = null;
-        }
+        if (this.activeInterrupt?.turnId === turnId) return;
         this.cancelModelErrorContinuation();
         this.usagePoller.stopTurn();
         this.stopAutomaticCredentialResolution();
@@ -2195,7 +2198,7 @@ export class OmpAgentSession implements AgentSession {
             type: "turn_canceled",
             provider: this.provider,
             turnId,
-            reason: interruptReason ?? toDiagnosticErrorMessage(error),
+            reason: toDiagnosticErrorMessage(error),
           });
           return;
         }
@@ -2711,55 +2714,19 @@ export class OmpAgentSession implements AgentSession {
         reason,
         turnId: admission.turnId,
       });
-      return;
+      if (reason !== "user") return;
     }
     const turnId = this.activeTurnId;
     const pendingContinuation = this.pendingModelErrorContinuation;
     this.cancelModelErrorContinuation();
     const interrupt = { turnId, reason };
     this.activeInterrupt = interrupt;
+    this.stopAutomaticCredentialResolution();
     try {
       if (reason === "user") {
         const restored = await this.runtimeSession.abortAndRestoreQueue();
-        const queued = [...restored.steering, ...restored.followUp];
-        if (restored.truncated) {
-          const unmatched = [...restored.steering];
-          for (const pending of this.pendingSteeredUserMessages) {
-            const index = unmatched.findIndex((message) => message.text === pending.text);
-            if (index >= 0) {
-              unmatched.splice(index, 1);
-            } else {
-              queued.push({ text: pending.text, images: pending.images });
-            }
-          }
-        }
-        for (const message of queued) {
-          const pending = this.pendingSteeredUserMessages.find(
-            (submitted) => submitted.text === message.text,
-          );
-          // The original Desktop submission retains attachments even if RPC had
-          // to omit them. Reuse the canonical echo path and consume its client ID.
-          this.handleMessageEnd(
-            {
-              type: "message_end",
-              message: {
-                role: "user",
-                content: [
-                  { type: "text", text: message.text },
-                  ...(pending?.images ?? message.images ?? []),
-                ],
-              },
-            },
-            turnId ?? undefined,
-            true,
-          );
-        }
-        if (restored.truncated || restored.imagesDropped) {
-          this.logger.warn(
-            { truncated: restored.truncated, imagesDropped: restored.imagesDropped },
-            "OMP stopped queue exceeded the RPC response limit; Desktop retained original pending steering input",
-          );
-        }
+        await waitForOmpHostToolsIdle(this.runtimeSession);
+        this.echoWithdrawnQueue(restored, turnId);
       } else {
         await this.runtimeSession.abort();
       }
@@ -2796,6 +2763,44 @@ export class OmpAgentSession implements AgentSession {
     }
     if (this.activeInterrupt === interrupt) {
       this.activeInterrupt = null;
+    }
+  }
+
+  private echoWithdrawnQueue(restored: OmpAbortAndRestoreQueueResult, turnId: string | null): void {
+    const queued = [...restored.steering, ...restored.followUp];
+    if (restored.truncated) {
+      const unmatched = [...restored.steering];
+      for (const pending of this.pendingSteeredUserMessages) {
+        const index = unmatched.findIndex((message) => message.text === pending.text);
+        if (index >= 0) unmatched.splice(index, 1);
+        else queued.push({ text: pending.text, images: pending.images });
+      }
+    }
+    for (const message of queued) {
+      const pending = this.pendingSteeredUserMessages.find(
+        (submitted) => submitted.text === message.text,
+      );
+      // Preserve original attachments and client IDs, without replaying the input.
+      this.handleMessageEnd(
+        {
+          type: "message_end",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: message.text },
+              ...(pending?.images ?? message.images ?? []),
+            ],
+          },
+        },
+        turnId ?? undefined,
+        true,
+      );
+    }
+    if (restored.truncated || restored.imagesDropped) {
+      this.logger.warn(
+        { truncated: restored.truncated, imagesDropped: restored.imagesDropped },
+        "OMP stopped queue exceeded the RPC response limit; Desktop retained original pending steering input",
+      );
     }
   }
 
@@ -3637,6 +3642,7 @@ export class OmpAgentSession implements AgentSession {
     return (
       generation === this.automaticCredentialGeneration &&
       !this.closed &&
+      !this.activeInterrupt &&
       this.activeTurnId !== null &&
       Boolean(this.automaticCredentialResolver) &&
       accountFeature?.value === OMP_OAUTH_ACCOUNT_AUTOMATIC_VALUE &&
@@ -4178,7 +4184,7 @@ export class OmpAgentSession implements AgentSession {
   private handleMessageEnd(
     event: Extract<OmpAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
-    withdrawnFromQueue = false,
+    withdrawnFromQueue?: boolean,
   ): void {
     if (event.message.role === "assistant") {
       this.observeClaudeMessage(event.message);
@@ -4371,6 +4377,7 @@ export class OmpAgentSession implements AgentSession {
     generation?: number,
   ): void {
     if (!this.ownsActiveTurn(turnId, generation)) return;
+    if (this.activeInterrupt?.turnId === turnId) return;
     const streamedPlanText = this.activePlanText.trim();
     const streamedPlan: OmpPlanDraft | null = streamedPlanText
       ? {
@@ -4382,13 +4389,6 @@ export class OmpAgentSession implements AgentSession {
       (message): message is Extract<OmpAgentMessage, { role: "assistant" }> =>
         message.role === "assistant",
     );
-    const interruptReason =
-      this.activeInterrupt && (this.activeInterrupt.turnId ?? undefined) === turnId
-        ? this.activeInterrupt.reason
-        : null;
-    if (interruptReason) {
-      this.activeInterrupt = null;
-    }
     this.terminalizeActiveRuntimeToolCalls();
     this.stopAutomaticCredentialResolution();
     this.cancelModelErrorContinuation();
@@ -4407,7 +4407,7 @@ export class OmpAgentSession implements AgentSession {
         type: "turn_canceled",
         provider: this.provider,
         turnId,
-        reason: interruptReason ?? "provider_aborted",
+        reason: "provider_aborted",
       });
       return;
     }
@@ -5436,6 +5436,14 @@ export class OmpAgentClient implements AgentClient {
       ...process.env,
       ...this.runtimeSettings?.env,
     });
+  }
+
+  async getOmpCodexResetSettings(): Promise<OmpCodexResetSettings> {
+    return readOmpCodexResetSettings({ ...process.env, ...this.runtimeSettings?.env });
+  }
+
+  async updateOmpCodexResetSettings(enabled: boolean): Promise<OmpCodexResetSettings> {
+    return updateOmpCodexResetSettings(enabled, { ...process.env, ...this.runtimeSettings?.env });
   }
 
   async getOmpMemorySettings(): Promise<OmpMemorySettings> {

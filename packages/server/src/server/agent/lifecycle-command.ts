@@ -93,7 +93,7 @@ export async function cancelAgentRunCommand(
   if (result.cancellation.status === "refused") {
     dependencies.logger.warn(
       { agentId },
-      "cancelAgentRunCommand: reported running but no active run was cancelled",
+      "cancelAgentRunCommand: owned execution did not acknowledge cancellation",
     );
     throw new AgentRunCancellationError(agentId, "stop");
   }

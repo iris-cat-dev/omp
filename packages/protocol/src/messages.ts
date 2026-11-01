@@ -1791,6 +1791,17 @@ export const OmpProviderManagementGetRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const OmpCodexResetSettingsGetRequestMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.get.request"),
+  requestId: z.string(),
+});
+
+export const OmpCodexResetSettingsUpdateRequestMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.update.request"),
+  enabled: z.boolean(),
+  requestId: z.string(),
+});
+
 export const OmpCodexResetCreditConsumeRequestMessageSchema = z.object({
   type: z.literal("omp.codex.reset_credit.consume.request"),
   credentialId: z.number().int().positive(),
@@ -3684,6 +3695,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   OmpProviderManagementGetRequestMessageSchema,
+  OmpCodexResetSettingsGetRequestMessageSchema,
+  OmpCodexResetSettingsUpdateRequestMessageSchema,
   OmpCodexResetCreditConsumeRequestMessageSchema,
   OmpClaudeLimitResetConsumeRequestMessageSchema,
   OmpProviderManagementSaveRequestMessageSchema,
@@ -3926,6 +3939,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: z.boolean().optional(),
         ompCodexResetCredits: z.boolean().optional(),
+        // COMPAT(ompCodexResetSettings): added 2026-11-01, remove gate after 2027-05-01.
+        ompCodexResetSettings: z.boolean().optional(),
         ompClaudeLimitResets: z.boolean().optional(),
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
         ompSubagentSettings: z.boolean().optional(),
@@ -6799,6 +6814,21 @@ export const OmpProviderManagementGetResponseMessageSchema = z.object({
   payload: OmpProviderManagementSchema.extend({ requestId: z.string() }),
 });
 
+export const OmpCodexResetSettingsSchema = z.object({
+  configPath: z.string(),
+  autoRedeem: z.enum(["unset", "yes", "no"]),
+});
+
+export const OmpCodexResetSettingsGetResponseMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.get.response"),
+  payload: OmpCodexResetSettingsSchema.extend({ requestId: z.string() }),
+});
+
+export const OmpCodexResetSettingsUpdateResponseMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.update.response"),
+  payload: OmpCodexResetSettingsSchema.extend({ requestId: z.string() }),
+});
+
 export const OmpCodexResetCreditConsumeResponseMessageSchema = z.object({
   type: z.literal("omp.codex.reset_credit.consume.response"),
   payload: OmpCodexResetCreditConsumeResultSchema.extend({ requestId: z.string() }),
@@ -7710,6 +7740,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   OmpProviderManagementGetResponseMessageSchema,
+  OmpCodexResetSettingsGetResponseMessageSchema,
+  OmpCodexResetSettingsUpdateResponseMessageSchema,
   OmpCodexResetCreditConsumeResponseMessageSchema,
   OmpClaudeLimitResetConsumeResponseMessageSchema,
   OmpProviderManagementSaveResponseMessageSchema,
@@ -7933,6 +7965,19 @@ export type OmpClaudeLimitResetConsumeRequestMessage = z.infer<
 >;
 export type OmpClaudeLimitResetConsumeResponseMessage = z.infer<
   typeof OmpClaudeLimitResetConsumeResponseMessageSchema
+>;
+export type OmpCodexResetSettings = z.infer<typeof OmpCodexResetSettingsSchema>;
+export type OmpCodexResetSettingsGetRequestMessage = z.infer<
+  typeof OmpCodexResetSettingsGetRequestMessageSchema
+>;
+export type OmpCodexResetSettingsUpdateRequestMessage = z.infer<
+  typeof OmpCodexResetSettingsUpdateRequestMessageSchema
+>;
+export type OmpCodexResetSettingsGetResponseMessage = z.infer<
+  typeof OmpCodexResetSettingsGetResponseMessageSchema
+>;
+export type OmpCodexResetSettingsUpdateResponseMessage = z.infer<
+  typeof OmpCodexResetSettingsUpdateResponseMessageSchema
 >;
 export type OmpCodexResetCreditConsumeResult = z.infer<
   typeof OmpCodexResetCreditConsumeResultSchema

@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -2753,7 +2754,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
   }
 });
 
-test("cancelAgentRun succeeds when the foreground turn finishes before the provider rejects the interrupt", async () => {
+test("user Stop reports refusal when native cleanup fails after foreground completion", async () => {
   let fixture!: ControlledInterruptFixture;
   fixture = await createControlledInterruptFixture({
     name: "interrupt-after-completion",
@@ -2775,7 +2776,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
     await fixture.startForegroundRun();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "settled",
+      status: "refused",
     });
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
@@ -2786,7 +2787,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
   }
 });
 
-test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
+test("user Stop reports refusal when completion is queued before native cleanup fails", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-queued-completion",
     agentId: "00000000-0000-4000-8000-000000000306",
@@ -2805,7 +2806,7 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
     await fixture.startForegroundRun();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "settled",
+      status: "refused",
     });
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
@@ -2815,6 +2816,502 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
     await fixture.cleanup();
   }
 });
+
+test.each(["foreground", "autonomous"] as const)(
+  "user Stop refuses an acknowledged interrupt while %s execution remains live",
+  async (kind) => {
+    const fixture = await createControlledInterruptFixture({
+      name: `acknowledged-live-${kind}`,
+      agentId: randomUUID(),
+      turnId: "still-live-turn",
+      interrupt: async () => {},
+    });
+    const events: AgentStreamEvent[] = [];
+    const liveOutput = deferred<void>();
+    fixture.manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream") {
+          events.push(event.event);
+          if (
+            event.event.type === "timeline" &&
+            event.event.item.type === "assistant_message" &&
+            event.event.item.text === "execution still running"
+          )
+            liveOutput.resolve();
+        }
+      },
+      { agentId: fixture.agentId, replayState: false },
+    );
+    try {
+      if (kind === "foreground") await fixture.startForegroundRun();
+      else {
+        const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+        fixture.session.pushEvent({
+          type: "turn_started",
+          provider: "codex",
+          turnId: "still-live-turn",
+        });
+        await running;
+      }
+      vi.useFakeTimers();
+      const cancellation = fixture.manager.cancelAgentRun(fixture.agentId);
+      await vi.runAllTimersAsync();
+      await expect(cancellation).resolves.toEqual({ status: "refused" });
+      vi.useRealTimers();
+      expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+      expect(events.some((event) => event.type === "turn_canceled")).toBe(false);
+      fixture.session.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        turnId: "still-live-turn",
+        item: { type: "assistant_message", text: "execution still running" },
+      });
+      await liveOutput.promise;
+      await fixture.manager.flush();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ text: "execution still running" }),
+        }),
+      );
+      fixture.session.pushEvent({
+        type: "turn_completed",
+        provider: "codex",
+        turnId: "still-live-turn",
+      });
+      await fixture.manager.flush();
+    } finally {
+      vi.useRealTimers();
+      await fixture.cleanup();
+    }
+  },
+);
+
+test("idle tree Stop attempts real owned background processes and surfaces stop failures", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-process-stop-"));
+  class BackgroundSession extends TestAgentSession {
+    readonly process = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    readonly exited = once(this.process, "exit").then(() => undefined);
+    stopError: Error | null = null;
+    async stopAllBackgroundProcesses(): Promise<number> {
+      if (this.stopError) throw this.stopError;
+      this.process.kill("SIGTERM");
+      await this.exited;
+      return 1;
+    }
+  }
+  const sessions: BackgroundSession[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          const session = new BackgroundSession(config);
+          sessions.push(session);
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      workspaceId: undefined,
+    });
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    sessions[0]!.stopError = new Error("owned process stop failed");
+    await expect(manager.cancelAgentRun(root.id)).rejects.toThrow("owned process stop failed");
+    expect(sessions[0]!.process.signalCode).toBeNull();
+    expect(sessions[1]!.process.signalCode).toBe("SIGTERM");
+    expect(sessions[2]!.process.signalCode).toBeNull();
+    sessions[0]!.stopError = null;
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
+    expect(sessions[0]!.process.signalCode).toBe("SIGTERM");
+    expect(sessions[2]!.process.signalCode).toBeNull();
+    await expect(manager.runAgent(root.id, "continue original session")).resolves.toMatchObject({
+      canceled: false,
+    });
+  } finally {
+    for (const session of sessions) session.process.kill("SIGTERM");
+    await Promise.all(sessions.map((session) => session.exited));
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("tree Stop drains native descendants admitted during successive cancellation sweeps", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-native-stop-"));
+  class LateNativeSession extends TestAgentSession {
+    readonly executing = new Set(["native-a"]);
+    async cancelProviderSubagent(id: string): Promise<boolean> {
+      this.executing.delete(id);
+      const next = id === "native-a" ? "native-b" : id === "native-b" ? "native-c" : null;
+      if (next) {
+        this.executing.add(next);
+        this.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "upsert",
+            id: next,
+            status: "running",
+          },
+        });
+      }
+      return true;
+    }
+  }
+  const session = new LateNativeSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "native-a",
+        status: "running",
+      },
+    });
+    await manager.flush();
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
+    expect(session.executing.size).toBe(0);
+    expect(manager.listProviderSubagents(root.id).map((child) => child.status)).toEqual([
+      "canceled",
+      "canceled",
+      "canceled",
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("native cancellation false rejects live children but accepts queued natural completion", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-false-stop-"));
+  class RefusingNativeSession extends TestAgentSession {
+    completeDuringCancel = false;
+    async cancelProviderSubagent(id: string): Promise<boolean> {
+      if (this.completeDuringCancel)
+        this.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "upsert",
+            id,
+            status: "completed",
+          },
+        });
+      return false;
+    }
+  }
+  const session = new RefusingNativeSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "upsert",
+        id: "native-a",
+        status: "running",
+      },
+    });
+    await manager.flush();
+    await expect(manager.cancelAgentRun(root.id)).rejects.toThrow(
+      "still running after cancellation",
+    );
+    expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("running");
+    session.completeDuringCancel = true;
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("completed");
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop withdraws an unconsumed foreground iterator without letting its late next start work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-lazy-stop-"));
+  const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const pending = manager.streamAgent(root.id, "not yet consumed");
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.hasInFlightRun(root.id)).toBe(false);
+    await expect(pending.next()).rejects.toThrow("stopped before work could be admitted");
+    expect(session.startCount).toBe(0);
+    const nextRun = manager.runAgent(root.id, "deliberate continuation");
+    await manager.waitForAgentRunStart(root.id);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await expect(nextRun).resolves.toMatchObject({ canceled: false });
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a descendant registration begun before Stop cannot publish runnable work after it completes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-registration-stop-"));
+  const childCreateEntered = deferred<void>();
+  const releaseChildCreate = deferred<void>();
+  let closeCount = 0;
+  let creates = 0;
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          if (++creates === 2) {
+            childCreateEntered.resolve();
+            await releaseChildCreate.promise;
+            return new (class extends TestAgentSession {
+              override async close(): Promise<void> {
+                closeCount += 1;
+              }
+            })(config);
+          }
+          return new TestAgentSession(config);
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const childCreate = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      workspaceId: undefined,
+    });
+    await childCreateEntered.promise;
+    await manager.cancelAgentRun(root.id);
+    releaseChildCreate.resolve();
+    await expect(childCreate).rejects.toThrow("stopped before work could be admitted");
+    expect(closeCount).toBe(1);
+    expect(manager.listAgents().map((agent) => agent.id)).toEqual([root.id]);
+    await expect(manager.runAgent(root.id, "new user prompt")).resolves.toMatchObject({
+      canceled: false,
+    });
+  } finally {
+    releaseChildCreate.resolve();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop repeats already visited owners when background cleanup admits autonomous execution", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-autonomous-stop-"));
+  const childStopped = deferred<void>();
+  class RestartingSession extends TestAgentSession {
+    active: string | null = null;
+    onBackgroundStop: (() => Promise<void>) | null = null;
+    startOwnedTurn(id: string): void {
+      this.active = id;
+      this.pushEvent({ type: "turn_started", provider: "codex", turnId: id });
+    }
+    override async interrupt(): Promise<void> {
+      if (!this.active) return;
+      const turnId = this.active;
+      this.active = null;
+      this.pushEvent({ type: "turn_canceled", provider: "codex", turnId });
+    }
+    async stopAllBackgroundProcesses(): Promise<number> {
+      const callback = this.onBackgroundStop;
+      this.onBackgroundStop = null;
+      if (callback) await callback();
+      return 0;
+    }
+  }
+  const sessions: RestartingSession[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          const session = new RestartingSession(config);
+          sessions.push(session);
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      workspaceId: undefined,
+    });
+    sessions[1]!.onBackgroundStop = async () => {
+      childStopped.resolve();
+    };
+    sessions[0]!.onBackgroundStop = async () => {
+      await childStopped.promise;
+      sessions[1]!.startOwnedTurn("late-child-turn");
+      sessions[0]!.startOwnedTurn("late-root-turn");
+    };
+    sessions[0]!.startOwnedTurn("original-root-turn");
+    await manager.flush();
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
+    expect(sessions.map((session) => session.active)).toEqual([null, null]);
+    expect(manager.getAgent(root.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("detach admitted before parent Stop excludes a live child and overlapping Stops do not deadlock", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stop-ownership-"));
+  const sessions: SteeringTestSession[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          const session = new SteeringTestSession(config);
+          sessions.push(session);
+          return session;
+        }
+      })(),
+    },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      workspaceId: undefined,
+    });
+    const rootRun = manager.runAgent(root.id, "root");
+    const childRun = manager.runAgent(child.id, "child");
+    await Promise.all([
+      manager.waitForAgentRunStart(root.id),
+      manager.waitForAgentRunStart(child.id),
+    ]);
+    const detaching = manager.detachAgent(child.id);
+    await manager.cancelAgentRun(root.id);
+    await detaching;
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("running");
+    expect(sessions[1]!.interruptCount).toBe(0);
+    await manager.setLabels(child.id, { [PARENT_AGENT_ID_LABEL]: root.id });
+    await Promise.all([manager.cancelAgentRun(child.id), manager.cancelAgentRun(root.id)]);
+    await Promise.all([rootRun, childRun]);
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["background", "native"] as const)(
+  "idle Stop refuses a hanging owned %s cancellation without clearing live state",
+  async (kind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hanging-owned-stop-"));
+    const release = deferred<void>();
+    class HangingOwnedSession extends TestAgentSession {
+      async stopAllBackgroundProcesses(): Promise<number> {
+        if (kind === "background") await release.promise;
+        return 0;
+      }
+      async cancelProviderSubagent(): Promise<boolean> {
+        await release.promise;
+        return true;
+      }
+    }
+    const session = new HangingOwnedSession({ provider: "codex", cwd: workdir });
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(): Promise<AgentSession> {
+            return session;
+          }
+        })(),
+      },
+      logger,
+    });
+    try {
+      const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      if (kind === "native") {
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "upsert",
+            id: "hanging-native",
+            status: "running",
+          },
+        });
+        await manager.flush();
+      }
+      vi.useFakeTimers();
+      const cancellation = manager.cancelAgentRun(root.id);
+      const result =
+        kind === "native"
+          ? expect(cancellation).rejects.toThrow("cancellation was not acknowledged")
+          : expect(cancellation).resolves.toEqual({ status: "refused" });
+      await vi.runAllTimersAsync();
+      await result;
+      if (kind === "native")
+        expect(manager.getProviderSubagent(root.id, "hanging-native")?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+      release.resolve();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("cancelAgentRun cancels running managed descendants but not detached agents", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-descendants-"));
@@ -2938,24 +3435,17 @@ test("stopping an idle root attempts native and managed descendants despite a na
     });
     await manager.flush();
     client.sessions[0]!.spawnDuringCancel = async () => {
-      const lateChild = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
-        workspaceId: undefined,
-      });
-      drains.push(
-        (async () => {
-          for await (const _event of manager.streamAgent(lateChild.id, "late child")) {
-            // Drain the late descendant through cancellation.
-          }
-        })(),
-      );
-      await manager.waitForAgentRunStart(lateChild.id);
+      await expect(
+        manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+          labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+          workspaceId: undefined,
+        }),
+      ).rejects.toThrow("is stopping");
     };
     client.sessions[0]!.cancelError = new Error("OMP v18.4.9 required");
     await expect(manager.cancelAgentRun(root.id)).rejects.toThrow("OMP v18.4.9 required");
     expect(client.sessions[0]!.canceledSubagents).toEqual(["native-a", "native-b"]);
     expect(client.sessions[1]!.interruptCount).toBe(1);
-    expect(client.sessions[3]!.interruptCount).toBe(1);
     expect(client.sessions[2]!.interruptCount).toBe(0);
     expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("running");
     client.sessions[0]!.cancelError = null;
@@ -7741,7 +8231,7 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
   );
 });
 
-test("acknowledged cancellation settles a pending run before it has a turn id", async () => {
+test("acknowledged cancellation refuses a startTurn still executing without a turn id", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-pending-start-"));
   const startEntered = deferred<void>();
   let rejectStart!: (error: Error) => void;
@@ -7768,6 +8258,7 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
     clients: { codex: new PendingStartClient() },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
     idFactory: () => "00000000-0000-4000-8000-000000000132",
   });
 
@@ -7782,13 +8273,13 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
     expect(manager.hasInFlightRun(agent.id)).toBe(true);
 
-    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
-    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
 
     rejectStart(new Error("released canceled start"));
     await expect(firstRun).rejects.toThrow("released canceled start");
-    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
   } finally {
     rejectStart(new Error("test cleanup"));
     if (manager.getAgent("00000000-0000-4000-8000-000000000132")) {
@@ -10332,93 +10823,50 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
   }
 });
 
-test("replaceAgentRun succeeds when foreground turn terminal event is never delivered", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-fg-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const allowSecondRunToEnd = deferred<void>();
-
-  // Session where the first foreground turn never emits a terminal event
-  // (simulates the claude-agent pendingInterruptAbort suppression bug),
-  // and interrupt() does not produce events either.
-  class StaleForegroundSession extends TestAgentSession {
-    override async startTurn(): Promise<{ turnId: string }> {
-      this.interrupted = false;
-      const turnId = `turn-${++this.turnIdCounter}`;
-      const turnNum = this.turnIdCounter;
-
-      setTimeout(async () => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        if (turnNum === 1) {
-          // First turn: emit turn_started but NEVER emit a terminal event.
-          // This simulates the provider suppressing the result.
-        } else {
-          // Subsequent turns: complete normally
-          await allowSecondRunToEnd.promise;
-          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-        }
-      }, 0);
-      return { turnId };
-    }
-
+test("replacement refuses an acknowledged interrupt until real foreground execution settles", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unsettled-replacement-"));
+  class UnsettledSession extends SteeringTestSession {
     override async interrupt(): Promise<void> {
-      this.interrupted = true;
-      // No events produced — the terminal event was suppressed
+      this.interruptCount += 1;
     }
   }
-
-  class StaleForegroundClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new StaleForegroundSession(config);
-    }
-  }
-
+  const session = new UnsettledSession({ provider: "codex", cwd: workdir });
   const manager = new AgentManager({
-    clients: { codex: new StaleForegroundClient() },
-    registry: storage,
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
     logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000500",
+    rescueTimeouts: { interruptSessionMs: 10 },
   });
-
-  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    workspaceId: undefined,
-  });
-
-  // Start first foreground run — it will hang (no terminal event)
-  const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
-  const firstRunDrain = (async () => {
-    for await (const _event of firstRun) {
-      // Draining — will hang until force-cleaned
-    }
-  })();
-
-  await manager.waitForAgentRunStart(snapshot.id);
-
-  const beforeReplace = manager.getAgent(snapshot.id);
-  expect(beforeReplace?.lifecycle).toBe("running");
-  expect(beforeReplace?.activeForegroundTurnId).toBe("turn-1");
-
-  // Replace the hung run. cancelAgentRun will time out after 2s because
-  // no terminal event arrives. After the fix, it should force-clear the
-  // stale foreground state so streamAgent can proceed.
-  const secondRun = await manager.replaceAgentRun(snapshot.id, "replacement prompt");
-  const collectedEvents: AgentStreamEvent[] = [];
-  const secondRunDrain = (async () => {
-    for await (const event of secondRun) {
-      collectedEvents.push(event);
-    }
-  })();
-
-  await manager.waitForAgentRunStart(snapshot.id);
-  allowSecondRunToEnd.resolve();
-
-  await secondRunDrain;
-  await firstRunDrain;
-
-  expect(collectedEvents.some((e) => e.type === "turn_completed")).toBe(true);
-  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
-  expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();
-}, 10_000);
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = manager.runAgent(agent.id, "original");
+    await manager.waitForAgentRunStart(agent.id);
+    await expect(manager.replaceAgentRun(agent.id, "replacement")).rejects.toThrow(
+      "active run cancellation was not acknowledged",
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "active-turn-1",
+    });
+    expect(session.startPrompts).toEqual(["original"]);
+    session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
+    await firstRun;
+    const nextRun = manager.runAgent(agent.id, "next deliberate prompt");
+    await manager.waitForAgentRunStart(agent.id);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-2" });
+    await expect(nextRun).resolves.toMatchObject({ canceled: false });
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 class RecordingPersistedAgentsClient implements AgentClient {
   readonly capabilities = TEST_CAPABILITIES;

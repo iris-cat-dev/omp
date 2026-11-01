@@ -1,11 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { useFetchQuery } from "@/data/query";
+import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -287,6 +290,94 @@ function OmpCodexResetCreditCard({
   );
 }
 
+function OmpCodexAutoResetSetting({ serverId }: { serverId: string | null }) {
+  const { t } = useTranslation();
+  const client = useHostRuntimeClient(serverId ?? "");
+  const queryClient = useQueryClient();
+  const supported = useSessionStore(
+    (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.ompCodexResetSettings === true,
+  );
+  const queryKey = ["ompCodexResetSettings", serverId] as const;
+  const mutationKey = ["ompCodexResetSettingsUpdate", serverId] as const;
+  const query = useFetchQuery({
+    queryKey,
+    dataShape: "value",
+    queryFn: () => {
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+      return client.getOmpCodexResetSettings();
+    },
+    enabled: Boolean(client && serverId && supported),
+    staleTimeMs: 0,
+    refetchInterval: 300_000,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const mutation = useMutation({
+    mutationKey,
+    mutationFn: async (enabled: boolean) => {
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      return client.updateOmpCodexResetSettings(enabled);
+    },
+    onSuccess: (settings) => queryClient.setQueryData(queryKey, settings),
+    retry: false,
+  });
+  const saving = useIsMutating({ mutationKey, exact: true }) > 0;
+  const handleChange = useCallback((enabled: boolean) => mutation.mutate(enabled), [mutation.mutate]);
+  const handleRetry = useCallback(() => void query.refetch(), [query.refetch]);
+  const mode = query.data?.autoRedeem;
+  const error = mutation.error ?? query.error;
+  return (
+    <View style={styles.card} testID="omp-codex-auto-reset-setting">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.providers.omp.codexQuota.autoReset")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("settings.providers.omp.codexQuota.autoResetHint")}
+          </Text>
+        </View>
+        <Switch
+          value={mode !== undefined && mode !== "no"}
+          onValueChange={handleChange}
+          disabled={!client || !supported || mode === undefined || saving}
+          accessibilityLabel={t("settings.providers.omp.codexQuota.autoReset")}
+          testID="omp-codex-auto-reset-switch"
+        />
+      </View>
+      <Text style={styles.muted}>
+        {t(
+          !supported
+            ? "settings.providers.omp.codexQuota.autoResetUnsupported"
+            : saving
+              ? "settings.providers.omp.codexQuota.autoResetSaving"
+              : mode === undefined
+                ? "settings.providers.omp.codexQuota.autoResetLoading"
+                : mode === "unset"
+                  ? "settings.providers.omp.codexQuota.autoResetUnset"
+                  : mode === "yes"
+                    ? "settings.providers.omp.codexQuota.autoResetEnabled"
+                    : "settings.providers.omp.codexQuota.autoResetDisabled",
+        )}
+      </Text>
+      {error ? (
+        <>
+          <Text accessibilityRole="alert" style={styles.muted}>
+            {t("settings.providers.omp.codexQuota.autoResetFailed", { error: error.message })}
+          </Text>
+          {query.error ? (
+            <Button size="sm" variant="secondary" onPress={handleRetry} disabled={saving}>
+              {t("common.actions.retry")}
+            </Button>
+          ) : null}
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function OmpCodexResetCreditsDetails({
   account,
   accountLabel,
@@ -312,6 +403,7 @@ function OmpCodexResetCreditsDetails({
   return (
     <>
       <Text style={styles.title}>{t("settings.providers.omp.codexQuota.cards")}</Text>
+      <OmpCodexAutoResetSetting serverId={serverId} />
       <Text style={styles.muted}>{formatCreditsSummary(credits, t)}</Text>
       {credits?.error ? <Text style={styles.muted}>{credits.error}</Text> : null}
       {credits?.status === "available" && credits.credits.length === 0 ? (
