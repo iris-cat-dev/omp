@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appendFile,
   mkdir,
   mkdtemp,
   open,
+  readFile,
   realpath,
   rename,
   rm,
@@ -15,6 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { OmpLocalMonitor } from "./collector.js";
+import { OmpMonitorHistory } from "./history.js";
+import { calendarDay } from "./math.js";
 import { MONITOR_LIMITS } from "./state.js";
 import { resolveOmpMonitorRoots } from "./roots.js";
 import { getBundledPricingState } from "./pricing.js";
@@ -176,7 +179,7 @@ describe("OMP local numeric filesystem monitor", () => {
       measuredOutputTokens: 40,
       measuredDurationMs: 2_000,
     });
-    expect(snapshot.activity).toEqual({
+    expect(snapshot.activity).toMatchObject({
       lastResponseAt: NOW - 3_000,
       peakAt: NOW - 3_000,
       peakObservedAt: NOW - 3_000,
@@ -189,6 +192,172 @@ describe("OMP local numeric filesystem monitor", () => {
     });
     expect(snapshot.days).toHaveLength(30);
     expect(JSON.stringify(snapshot)).not.toMatch(/PRIVATE|private-session|private\\|main\.jsonl/);
+  });
+
+  it("projects native v1.6.1 effort and family speed from the original branch fixture without changing accounting", async () => {
+    const root = await directory();
+    const bytes = await readFile(
+      new URL("../../test-fixtures/omp-execution-modes-v161/branch.jsonl", import.meta.url),
+    );
+    const bucket = path.join(root, "bucket");
+    await mkdir(bucket);
+    await writeFile(path.join(bucket, "branch.jsonl"), bytes);
+    const snapshot = await monitor(root, () => Date.parse("2026-10-20T11:31:03.000Z")).poll();
+    expect(snapshot.today).toMatchObject({
+      requests: 6,
+      failedRequests: 0,
+      inputTokens: 640,
+      outputTokens: 355,
+      totalTokens: 995,
+      measuredOutputTokens: 350,
+      measuredDurationMs: 7_400,
+    });
+    expect(snapshot.agents).toHaveLength(1);
+    expect(snapshot.agents[0]).toMatchObject({
+      model: "claude-opus-5-5",
+      phase: "idle",
+      effortMode: { value: "high", evidence: "selected", provider: null },
+      speedMode: { value: "standard", evidence: "selected", provider: "anthropic" },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /b4a700|requestControls|thinkingLevel|\/Users\/dev|One\.|Five\./,
+    );
+  });
+
+  it("exposes actual total-rate and peak provenance without changing billed totals or output peaks", async () => {
+    const root = await directory();
+    await session(root, "total.jsonl", [
+      header(),
+      response("output-winner", NOW - 12_000, 300),
+      response("total-winner", NOW - 2_000, 30, {
+        usage: { input: 3_000, output: 30, totalTokens: 999_999, cost: { total: 0 } },
+      }),
+    ]);
+    const snapshot = await monitor(root).poll();
+    expect(snapshot.rate.measuredTps).toBe(10);
+    expect(snapshot.rate.measuredTotalTps).toBe(1_010);
+    expect(snapshot.rate.estimatedTotalTps).toBe(0);
+    expect(snapshot.today).toMatchObject({
+      totalTokens: 1_000_309,
+      peakOutputTps: 100,
+      peakTotalTps: 1_010,
+    });
+    expect(snapshot.activity).toEqual({
+      lastResponseAt: NOW - 1_000,
+      peakAt: NOW - 11_000,
+      peakObservedAt: NOW - 11_000,
+      totalPeakAt: NOW - 1_000,
+      totalPeakObservedAt: NOW - 1_000,
+    });
+    expect(snapshot.agents[0]!.liveMeasuredTotalTps).toBe(1_010);
+    expect(snapshot.breakdowns.models.reduce((sum, row) => sum + row.requests, 0)).toBe(2);
+    expect(
+      snapshot.breakdowns.modes
+        .filter((row) => row.kind === "effort")
+        .reduce((sum, row) => sum + row.requests, 0),
+    ).toBe(2);
+  });
+
+  it("replaces mode-only response facts without counting a completion again or rewinding live tools", async () => {
+    const root = await directory();
+    let now = NOW;
+    const history = vi.spyOn(OmpMonitorHistory.prototype, "getDays");
+    try {
+      const selectedTier = {
+        type: "service_tier_change",
+        id: "tier",
+        timestamp: new Date(NOW - 4_000).toISOString(),
+        serviceTier: { openai: "priority" },
+      };
+      const selectedEffort = {
+        type: "thinking_level_change",
+        id: "effort",
+        parentId: "tier",
+        timestamp: new Date(NOW - 3_000).toISOString(),
+        thinkingLevel: "high",
+      };
+      const captured = {
+        ...response("request", NOW - 2_000, 300, {
+          provider: "openai",
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "running-tool" }],
+        }),
+        parentId: "effort",
+      };
+      const file = await session(root, "modes.jsonl", [
+        header(),
+        selectedTier,
+        selectedEffort,
+        captured,
+      ]);
+      const current = monitor(root, () => now);
+      const initial = await current.poll();
+      expect(initial.agents[0]).toMatchObject({
+        phase: "tools",
+        effortMode: { value: "high", evidence: "selected", provider: null },
+        speedMode: { value: "fast", evidence: "selected", provider: "openai" },
+      });
+      now += 500;
+      await appendFile(
+        file,
+        `${JSON.stringify(
+          event("tool-result", now, {
+            role: "toolResult",
+            toolCallId: "running-tool",
+          }),
+        )}\n`,
+      );
+      const running = await current.poll();
+      expect(running.agents[0]!.phase).toBe("generating");
+      const resultAt = now;
+      now += 500;
+      const corrected = {
+        ...captured,
+        timestamp: new Date(now).toISOString(),
+        message: {
+          ...captured.message,
+          serviceTier: "default",
+          requestControls: { effort: { tail: "max" } },
+        },
+      };
+      await appendFile(file, `${JSON.stringify(corrected)}\n`);
+      const replaced = await current.poll();
+      expect(replaced.today).toEqual(initial.today);
+      expect(replaced.activity).toEqual(initial.activity);
+      expect(replaced.agents[0]).toMatchObject({
+        phase: "generating",
+        lastActivityAt: resultAt,
+        effortMode: { value: "max", evidence: "recorded", provider: null },
+        speedMode: { value: "standard", evidence: "recorded", provider: "openai" },
+      });
+      expect(replaced.breakdowns.modes.filter((row) => row.kind === "effort")).toEqual([
+        expect.objectContaining({
+          value: "max",
+          evidence: "recorded",
+          requests: 1,
+          outputTokens: 300,
+        }),
+      ]);
+      const recorded = history.mock.lastCall!;
+      expect(recorded[1]).toHaveLength(1);
+      expect(recorded[1][0]).toMatchObject({
+        effortMode: { value: "max", evidence: "recorded", provider: null },
+        speedMode: { value: "standard", evidence: "recorded", provider: "openai" },
+      });
+      const revision = recorded[3];
+      now += 500;
+      await appendFile(file, `${JSON.stringify(corrected)}\n`);
+      const unchanged = await current.poll();
+      expect(history.mock.lastCall![3]).toBe(revision);
+      expect(unchanged.today).toEqual(initial.today);
+      expect(unchanged.agents[0]).toMatchObject({
+        phase: "generating",
+        lastActivityAt: resultAt,
+        effortMode: { value: "max", evidence: "recorded", provider: null },
+      });
+    } finally {
+      history.mockRestore();
+    }
   });
 
   it("links main, child, advisor and nested child without exposing transcript identities", async () => {
@@ -228,7 +397,7 @@ describe("OMP local numeric filesystem monitor", () => {
     const current = monitor(root);
     const initial = await current.poll();
     expect(initial.today).toMatchObject({ requests: 2, outputTokens: 30 });
-    expect(initial.activity).toEqual({
+    expect(initial.activity).toMatchObject({
       lastResponseAt: NOW - 1_000,
       peakAt: NOW - 1_000,
       peakObservedAt: NOW - 1_000,
@@ -247,7 +416,7 @@ describe("OMP local numeric filesystem monitor", () => {
       requests: 1,
       outputTokens: 10,
     });
-    expect(remainingCopy.activity).toEqual({
+    expect(remainingCopy.activity).toMatchObject({
       lastResponseAt: NOW - 3_000,
       peakAt: NOW - 3_000,
       peakObservedAt: NOW - 3_000,
@@ -289,7 +458,7 @@ describe("OMP local numeric filesystem monitor", () => {
     const generating = await current.poll();
     expect(generating.rate.measuredTps).toBe(0);
     expect(generating.rate.estimatedTps).toBeCloseTo(200 / 3);
-    expect(generating.activity).toEqual({
+    expect(generating.activity).toMatchObject({
       lastResponseAt: NOW - 19_000,
       peakAt: NOW - 19_000,
       peakObservedAt: NOW - 19_000,
@@ -312,7 +481,7 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(tools.agents[0]!.phase).toBe("tools");
     expect(tools.rate.estimatedTps).toBe(0);
     expect(tools.rate.measuredTps).toBeCloseTo(50);
-    expect(tools.activity).toEqual({
+    expect(tools.activity).toMatchObject({
       lastResponseAt: NOW + 1_000,
       peakAt: NOW + 1_000,
       peakObservedAt: NOW + 1_000,
@@ -449,6 +618,8 @@ describe("OMP local numeric filesystem monitor", () => {
     expect((await current.poll()).rate).toEqual({
       measuredTps: 0,
       estimatedTps: 0,
+      measuredTotalTps: 0,
+      estimatedTotalTps: 0,
       estimatedShare: 0,
       measuredThinkingTps: null,
       estimatedThinkingTps: null,
@@ -461,6 +632,8 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(replay.rate).toEqual({
       measuredTps: 0,
       estimatedTps: 0,
+      measuredTotalTps: 0,
+      estimatedTotalTps: 0,
       estimatedShare: 0,
       measuredThinkingTps: null,
       estimatedThinkingTps: null,
@@ -487,14 +660,14 @@ describe("OMP local numeric filesystem monitor", () => {
       (snapshot.today.measuredOutputTokens * 1_000) / snapshot.today.measuredDurationMs,
     ).toBeCloseTo(75);
     expect(snapshot.today.peakOutputTps).toBeCloseTo(150);
-    expect(snapshot.activity).toEqual({
+    expect(snapshot.activity).toMatchObject({
       lastResponseAt: NOW,
       peakAt: NOW,
       peakObservedAt: NOW,
     });
   });
 
-  it("reports successful unknown-timing completions without counting failures, side calls or input-only usage as response events", async () => {
+  it("keeps output-response feedback separate from valid input-only total peaks", async () => {
     const root = await directory();
     const file = await session(root, "main.jsonl", [
       header(),
@@ -506,10 +679,12 @@ describe("OMP local numeric filesystem monitor", () => {
     const current = monitor(root);
     const completed = await current.poll();
     expect(completed.today.peakOutputTps).toBe(0);
-    expect(completed.activity).toEqual({
+    expect(completed.activity).toMatchObject({
       lastResponseAt: NOW - 9_000,
       peakAt: null,
       peakObservedAt: null,
+      totalPeakAt: null,
+      totalPeakObservedAt: null,
     });
     await appendFile(
       file,
@@ -525,19 +700,38 @@ describe("OMP local numeric filesystem monitor", () => {
           api: "fixture-api",
           usage: { input: 1, output: 1_000 },
         },
-        response("input-only", NOW - 1_000, 0),
       ]
         .map((record) => JSON.stringify(record))
         .join("\n") + "\n",
     );
     const excluded = await current.poll();
     expect(excluded.today).toMatchObject({
-      requests: 5,
+      requests: 4,
       failedRequests: 2,
       measuredOutputTokens: 0,
       peakOutputTps: 0,
+      peakTotalTps: 0,
     });
     expect(excluded.activity).toEqual(completed.activity);
+
+    // Native TodayLedger measures input-only intervals for total throughput, not output feedback.
+    await appendFile(file, `${JSON.stringify(response("input-only", NOW - 1_000, 0))}\n`);
+    const inputOnly = await current.poll();
+    expect(inputOnly.today).toMatchObject({
+      requests: 5,
+      failedRequests: 2,
+      measuredOutputTokens: 0,
+      measuredDurationMs: 1_000,
+      peakOutputTps: 0,
+    });
+    expect(inputOnly.today.peakTotalTps).toBeCloseTo(10 / 3);
+    expect(inputOnly.rate.measuredTps).toBe(0);
+    expect(inputOnly.rate.measuredTotalTps).toBeCloseTo(10 / 3);
+    expect(inputOnly.activity).toEqual({
+      ...completed.activity,
+      totalPeakAt: NOW,
+      totalPeakObservedAt: NOW,
+    });
   });
 
   it("preserves actual old completion times when a backfill raises the peak, then identifies a fresh measured completion", async () => {
@@ -556,7 +750,7 @@ describe("OMP local numeric filesystem monitor", () => {
     );
     const backfill = await current.poll();
     expect(backfill.today.peakOutputTps).toBe(200);
-    expect(backfill.activity).toEqual({
+    expect(backfill.activity).toMatchObject({
       lastResponseAt: NOW - 57_000,
       peakAt: NOW - 60 * 60_000 + 3_000,
       peakObservedAt: NOW - 60 * 60_000 + 3_000,
@@ -568,7 +762,7 @@ describe("OMP local numeric filesystem monitor", () => {
     );
     const fresh = await current.poll();
     expect(fresh.today.peakOutputTps).toBe(300);
-    expect(fresh.activity).toEqual({
+    expect(fresh.activity).toMatchObject({
       lastResponseAt: now,
       peakAt: now,
       peakObservedAt: now,
@@ -587,7 +781,7 @@ describe("OMP local numeric filesystem monitor", () => {
     const current = monitor(root);
     const before = await current.poll();
     expect(before.today.peakOutputTps).toBe(200);
-    expect(before.activity).toEqual({
+    expect(before.activity).toMatchObject({
       lastResponseAt: NOW - 4_000,
       peakAt: NOW - 107_000,
       peakObservedAt: NOW - 107_000,
@@ -598,7 +792,7 @@ describe("OMP local numeric filesystem monitor", () => {
     );
     const completed = await current.poll();
     expect(completed.today.peakOutputTps).toBe(300);
-    expect(completed.activity).toEqual({
+    expect(completed.activity).toMatchObject({
       lastResponseAt: NOW,
       peakAt: NOW - 107_000,
       peakObservedAt: NOW,
@@ -614,7 +808,7 @@ describe("OMP local numeric filesystem monitor", () => {
     ]);
     const snapshot = await monitor(root).poll();
     expect(snapshot.today.peakOutputTps).toBe(100);
-    expect(snapshot.activity).toEqual({
+    expect(snapshot.activity).toMatchObject({
       lastResponseAt: NOW,
       peakAt: NOW - 117_000,
       peakObservedAt: NOW - 90_000,
@@ -629,7 +823,7 @@ describe("OMP local numeric filesystem monitor", () => {
     ]);
     const snapshot = await monitor(root).poll();
     expect(snapshot.today.peakOutputTps).toBeCloseTo(275 / 3);
-    expect(snapshot.activity).toEqual({
+    expect(snapshot.activity).toMatchObject({
       lastResponseAt: NOW - 250,
       peakAt: NOW - 1_000,
       peakObservedAt: NOW - 250,
@@ -728,18 +922,20 @@ describe("OMP local numeric filesystem monitor", () => {
     const secondSnapshot = current.getSnapshot(secondScope);
     expect(all.activity).toEqual(secondSnapshot.activity);
     expect(firstSnapshot.today.peakOutputTps).toBe(100);
-    expect(firstSnapshot.activity).toEqual({
+    expect(firstSnapshot.activity).toMatchObject({
       lastResponseAt: NOW - 30_000,
       peakAt: NOW - 30_000,
       peakObservedAt: NOW - 30_000,
     });
     expect(secondSnapshot.today.peakOutputTps).toBe(200);
-    expect(secondSnapshot.activity).toEqual({
+    expect(secondSnapshot.activity).toMatchObject({
       lastResponseAt: NOW - 10_000,
       peakAt: NOW - 10_000,
       peakObservedAt: NOW - 10_000,
     });
-    expect(current.getSnapshot({ profile: "default", project: secondProject }).activity).toEqual({
+    expect(
+      current.getSnapshot({ profile: "default", project: secondProject }).activity,
+    ).toMatchObject({
       lastResponseAt: null,
       peakAt: null,
       peakObservedAt: null,
@@ -757,7 +953,7 @@ describe("OMP local numeric filesystem monitor", () => {
     });
     expect(current.getSnapshot(secondScope).activity).toEqual(secondSnapshot.activity);
     expect(current.getSnapshot(secondScope).today.peakOutputTps).toBe(200);
-    expect(current.getSnapshot().activity).toEqual({
+    expect(current.getSnapshot().activity).toMatchObject({
       lastResponseAt: now,
       peakAt: now,
       peakObservedAt: now,
@@ -841,6 +1037,22 @@ describe("OMP local numeric filesystem monitor", () => {
       today: { requests: 1, outputTokens: 150 },
       rate: { measuredTps: 50 },
     });
+    const firstBreakdowns = current.getSnapshot({
+      profile: null,
+      project: firstProject,
+    }).breakdowns;
+    const secondBreakdowns = current.getSnapshot({
+      profile: null,
+      project: secondProject,
+    }).breakdowns;
+    expect(firstBreakdowns.models.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(300);
+    expect(secondBreakdowns.models.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(150);
+    expect(firstBreakdowns.modes.filter((row) => row.kind === "effort")).toEqual([
+      expect.objectContaining({ value: null, evidence: null, requests: 1, outputTokens: 300 }),
+    ]);
+    expect(secondBreakdowns.modes.filter((row) => row.kind === "speed")).toEqual([
+      expect.objectContaining({ value: null, evidence: null, requests: 1, outputTokens: 150 }),
+    ]);
     expect((await current.poll()).scopes.projects).toEqual(all.scopes.projects);
     expect(JSON.stringify(all)).not.toContain(firstCwd);
     expect(JSON.stringify(all)).not.toContain(secondCwd);
@@ -1044,7 +1256,7 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(first.rate.estimatedTps).toBe(0);
     expect(first.today).toMatchObject({ requests: 2, outputTokens: 9_300, peakOutputTps: 3_000 });
     expect(first.agents[0]).toMatchObject({ phase: "tools", lastActivityAt: NOW });
-    expect(first.activity).toEqual({
+    expect(first.activity).toMatchObject({
       lastResponseAt: null,
       peakAt: NOW - 59_000,
       peakObservedAt: null,
@@ -1079,6 +1291,8 @@ describe("OMP local numeric filesystem monitor", () => {
     expect((await current.poll()).rate).toEqual({
       measuredTps: 0,
       estimatedTps: 0,
+      measuredTotalTps: 0,
+      estimatedTotalTps: 0,
       estimatedShare: 0,
       measuredThinkingTps: null,
       estimatedThinkingTps: null,
@@ -1315,7 +1529,7 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(completed.days.at(-2)!.peakOutputTps).toBeCloseTo(400 / 3);
     expect(completed.today).toMatchObject({ requests: 1, measuredDurationMs: 3_000 });
     expect(completed.today.peakOutputTps).toBeCloseTo(200 / 3);
-    expect(completed.activity).toEqual({
+    expect(completed.activity).toMatchObject({
       lastResponseAt: midnight + 1_000,
       peakAt: midnight + 1_000,
       peakObservedAt: midnight + 1_000,
@@ -1324,7 +1538,7 @@ describe("OMP local numeric filesystem monitor", () => {
     now = day.getTime() + 1_000;
     const nextDay = await current.poll();
     expect(nextDay.today).toMatchObject({ requests: 0, peakOutputTps: 0 });
-    expect(nextDay.activity).toEqual({
+    expect(nextDay.activity).toMatchObject({
       lastResponseAt: midnight + 1_000,
       peakAt: null,
       peakObservedAt: null,
@@ -1332,7 +1546,7 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(nextDay.days.at(-2)!.peakOutputTps).toBeCloseTo(200 / 3);
   });
 
-  it("uses local calendar retention, keeps inactive ancestors, and expires numeric records without a ledger", async () => {
+  it("retains available older local history and ancestors without claiming recovery after sources disappear", async () => {
     const root = await directory();
     let now = NOW;
     const oldDay = new Date(NOW);
@@ -1351,14 +1565,134 @@ describe("OMP local numeric filesystem monitor", () => {
     expect(first.today.requests).toBe(2);
     expect(first.agents).toHaveLength(2);
     expect(first.agents[1]!.parentId).toBe(first.agents[0]!.id);
+    const firstDate = calendarDay(oldDay.getTime() + 1_000)!.date;
+    expect(first.days.reduce((sum, day) => sum + day.requests, 0)).toBe(3);
+    expect(first.days).toHaveLength(31);
+    expect(first.historyRange).toEqual({
+      startDate: firstDate,
+      endDate: calendarDay(NOW)!.date,
+      limited: false,
+      scanning: false,
+    });
     now += 31 * 86_400_000;
-    const expired = await current.poll();
-    expect(expired.days.every((day) => day.requests === 0)).toBe(true);
-    expect(expired.activity).toEqual({
-      lastResponseAt: null,
+    const retained = await current.poll();
+    expect(retained.today.requests).toBe(0);
+    expect(retained.days.reduce((sum, day) => sum + day.requests, 0)).toBe(3);
+    expect(retained.historyRange.startDate).toBe(firstDate);
+    expect(retained.historyRange.endDate).toBe(calendarDay(now)!.date);
+    expect(retained.activity).toMatchObject({
+      lastResponseAt: NOW,
       peakAt: null,
       peakObservedAt: null,
     });
+    await rm(path.join(root, "bucket"), { recursive: true });
+    const missing = await current.poll({ refresh: true });
+    expect(missing.days.every((day) => day.requests === 0)).toBe(true);
+    expect(missing.historyRange.startDate).toBeNull();
+    expect(missing.performance.records).toEqual([]);
+  });
+
+  it("keeps 90-day, year and older-than-year facts scoped to their real available logs", async () => {
+    const firstRoot = await directory();
+    const secondRoot = await directory();
+    const dates = [45, 120, 400].map((ago) => {
+      const at = new Date(NOW);
+      at.setDate(at.getDate() - ago);
+      return at.getTime();
+    });
+    for (let index = 0; index < dates.length; index++) {
+      const at = dates[index]!;
+      await session(firstRoot, `archive-${index}.jsonl`, [
+        header(at - 1_000),
+        response(`archive-${index}`, at, (index + 1) * 100, {
+          provider: "openai",
+          serviceTier: "priority",
+          requestControls: { effort: { topLevel: "high" } },
+        }),
+      ]);
+    }
+    await session(secondRoot, "current.jsonl", [header(), response("current", NOW - 1_000, 40)]);
+    const current = new OmpLocalMonitor({
+      roots: [
+        { path: firstRoot, label: "default" },
+        { path: secondRoot, label: "work" },
+      ],
+      now: () => NOW,
+    });
+    monitors.push(current);
+    await current.poll();
+    const archived = current.getSnapshot({ profile: "default", project: null });
+    const live = current.getSnapshot({ profile: "work", project: null });
+    expect(archived.today.requests).toBe(0);
+    expect(archived.days).toHaveLength(33);
+    expect(archived.days.reduce((sum, day) => sum + day.requests, 0)).toBe(3);
+    expect(archived.historyRange).toEqual({
+      startDate: calendarDay(dates[2]! + 1_000)!.date,
+      endDate: calendarDay(NOW)!.date,
+      limited: false,
+      scanning: false,
+    });
+    expect(archived.breakdowns.models.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(600);
+    expect(
+      archived.breakdowns.modes
+        .filter((row) => row.kind === "effort")
+        .every((row) => row.value === "high" && row.evidence === "recorded"),
+    ).toBe(true);
+    expect(live.historyRange.startDate).toBe(calendarDay(NOW)!.date);
+    expect(live.days.reduce((sum, day) => sum + day.requests, 0)).toBe(1);
+    expect(live.today.outputTokens).toBe(40);
+  });
+
+  it("does not let old archive backfill evict live facts at the unchanged record cap", async () => {
+    const root = await directory();
+    Object.assign(MONITOR_LIMITS, { records: 2 });
+    const oldAt = new Date(NOW);
+    oldAt.setFullYear(oldAt.getFullYear() - 2);
+    const file = await session(root, "priority.jsonl", [
+      header(oldAt.getTime() - 10_000),
+      response("live", NOW - 2_000, 100),
+      response("archive-newer", oldAt.getTime(), 10),
+      response("archive-older", oldAt.getTime() - 2_000, 20),
+    ]);
+    let now = NOW;
+    const current = monitor(root, () => now);
+    const initial = await current.poll();
+    expect(initial.today).toMatchObject({ requests: 1, outputTokens: 100 });
+    expect(initial.days.reduce((sum, day) => sum + day.requests, 0)).toBe(2);
+    expect(initial.historyRange.limited).toBe(true);
+    expect(initial.coverage.issues).toContain("record_limit");
+    expect(initial.performance.limited).toBe(true);
+    now += 3_000;
+    await appendFile(file, `${JSON.stringify(response("next-live", now - 1_000, 200))}\n`);
+    const next = await current.poll();
+    expect(next.today).toMatchObject({ requests: 2, outputTokens: 300 });
+    expect(next.days.reduce((sum, day) => sum + day.requests, 0)).toBe(2);
+    expect(next.historyRange.startDate).toBe(calendarDay(now)!.date);
+    expect(next.historyRange.limited).toBe(true);
+  });
+
+  it("reorders the bounded retention heap when an existing request's measured end is corrected", async () => {
+    const root = await directory();
+    Object.assign(MONITOR_LIMITS, { records: 3 });
+    const file = await session(root, "corrections.jsonl", [
+      header(),
+      response("a", NOW - 6_000, 10),
+      response("b", NOW - 4_000, 20),
+      response("c", NOW - 2_000, 30),
+    ]);
+    let now = NOW;
+    const current = monitor(root, () => now);
+    expect((await current.poll()).today.requests).toBe(3);
+    await appendFile(
+      file,
+      `${JSON.stringify(response("a", NOW - 6_000, 10, { duration: 5_000 }))}\n`,
+    );
+    await current.poll();
+    now += 2_000;
+    await appendFile(file, `${JSON.stringify(response("d", NOW, 40))}\n`);
+    const retained = await current.poll();
+    expect(retained.today).toMatchObject({ requests: 3, outputTokens: 80 });
+    expect(retained.coverage.issues).toContain("record_limit");
   });
 
   it("rejects non-numeric usage guards and caps hostile numeric facts safely", async () => {
@@ -1486,6 +1820,118 @@ describe("OMP local numeric filesystem monitor", () => {
     });
 
     expect(current.getSnapshot().activity).toEqual(first.activity);
+  });
+
+  it("scores current timed requests while a large native session keeps growing during history scans", async () => {
+    const root = await directory();
+    let now = NOW;
+    const file = await session(root, "growing.jsonl", [
+      header(NOW - 120_000),
+      largeHistoryPadding(),
+      ...Array.from({ length: 20 }, (_, index) =>
+        response(`current-${index}`, NOW - 60_000 + index * 2000, 100),
+      ),
+    ]);
+    await utimes(file, new Date(now), new Date(now));
+    const current = monitor(root, () => now);
+    for (let poll = 0; poll < 8; poll++) {
+      await appendFile(
+        file,
+        `${JSON.stringify(event(`user-${poll}`, now, { role: "user", content: "fixture" }))}\n`,
+      );
+      const snapshot = await current.poll();
+      expect(snapshot.today.requests).toBe(20);
+      expect(snapshot.performance.scanning).toBe(true);
+      const value = snapshot.performance.current[snapshot.agents[0]!.id]!;
+      expect(value.n).toBe(20);
+      expect(value.score).not.toBeNull();
+      expect(value.components.find((component) => component.id === "T")).toMatchObject({
+        samples: 20,
+        measure: 100,
+      });
+      now += 1000;
+    }
+  });
+
+  it("keeps complete timed requests before an unfinished row, counts its completion once, and ages the live sample", async () => {
+    const root = await directory();
+    let now = NOW;
+    const file = await session(root, "unfinished.jsonl", [
+      header(),
+      ...Array.from({ length: 3 }, (_, index) =>
+        response(`complete-${index}`, NOW - 20_000 + index * 2000, 100),
+      ),
+    ]);
+    const next = JSON.stringify(response("unfinished", NOW - 2000, 200));
+    await appendFile(file, next.slice(0, next.length - 10));
+    const current = monitor(root, () => now);
+    let snapshot = await current.poll();
+    const id = snapshot.agents[0]!.id;
+    expect(snapshot.performance.current[id]?.n).toBe(3);
+    expect(snapshot.performance.current[id]?.score).not.toBeNull();
+    await appendFile(file, next.slice(-10) + "\n");
+    snapshot = await current.poll();
+    expect(snapshot.performance.current[id]?.n).toBe(4);
+    expect((await current.poll()).performance.current[id]?.n).toBe(4);
+    now += 30 * 60_000;
+    await appendFile(
+      file,
+      `${JSON.stringify(event("new-task-without-completion", now, { role: "user" }))}\n`,
+    );
+    expect((await current.poll()).performance.current[id]).toMatchObject({ n: 0, score: null });
+  });
+
+  it("preserves original OMP timing fallbacks and exclusions while historical EOF is pending", async () => {
+    const root = await directory();
+    const file = await session(root, "native-timing.jsonl", [
+      header(NOW - 40 * 60_000),
+      response("normal", NOW - 20_000),
+      response("completed-at", NOW - 16_000, 100, {
+        duration: undefined,
+        completedAt: NOW - 15_000,
+      }),
+      response("entry-end", NOW - 12_000, 100, { duration: undefined }),
+      response("tool-use", NOW - 8000, 100, {
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "live-tool", name: "fixture", arguments: {} }],
+      }),
+      response("missing-start", NOW - 6000, 100, { timestamp: undefined }),
+      response("failed", NOW - 5000, 100, { stopReason: "error" }),
+      response("aborted", NOW - 4000, 100, { stopReason: "aborted" }),
+      response("missing-stop", NOW - 3000, 100, { stopReason: undefined }),
+      response("expired", NOW - 30 * 60_000 - 2000),
+      response("future", NOW + 1000),
+      {
+        type: "model_usage",
+        id: "side-only",
+        timestamp: new Date(NOW - 1000).toISOString(),
+        model: "model-a",
+        provider: "fixture",
+        api: "fixture-api",
+        usage: { input: 10, output: 100 },
+      },
+    ]);
+    await appendFile(file, '{"type":"message"');
+    const current = monitor(root);
+    let snapshot = await current.poll();
+    const id = snapshot.agents[0]!.id;
+    expect(snapshot.performance.current[id]?.n).toBe(4);
+    expect(
+      snapshot.performance.current[id]?.components.find((value) => value.id === "T"),
+    ).toMatchObject({ measure: 100, samples: 4 });
+    expect(
+      snapshot.performance.current[id]?.components.find((value) => value.id === "L"),
+    ).toMatchObject({ reason: "notRecorded" });
+    await writeFile(
+      file,
+      [
+        JSON.stringify(header()),
+        JSON.stringify(response("replacement", NOW - 2000)),
+        '{"type":"message"',
+      ].join("\n"),
+    );
+    snapshot = await current.poll();
+    expect(snapshot.performance.current[id]).toMatchObject({ n: 1, score: null });
   });
 
   it("derives v1.6 performance from the canonical native requests without changing billing, TTFT, reasoning or scopes", async () => {

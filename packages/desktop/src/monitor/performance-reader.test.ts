@@ -33,6 +33,66 @@ function reader(atMs = START): OmpPerformanceLineReader {
 }
 
 describe("OMP v1.6 numeric performance extraction", () => {
+  it("merges a live tail and disjoint backfill in byte order without reverting a newer request revision", () => {
+    const stream = new OmpPerformanceLineReader(START, "current");
+    stream.apply({ type: "session", timestamp: new Date(START).toISOString() }, 0);
+    const content = [{ type: "toolCall", id: "paired", name: "fixture", arguments: {} }];
+    stream.apply(
+      JSON.parse(
+        assistant("revised", START + 1000, {
+          stopReason: "toolUse",
+          content,
+          usage: { input: 10, output: 1200 },
+        }),
+      ),
+      300,
+    );
+    stream.apply(
+      JSON.parse(
+        line("result", START + 2500, {
+          role: "toolResult",
+          toolCallId: "paired",
+          isError: false,
+        }),
+      ),
+      200,
+    );
+    stream.apply(
+      JSON.parse(assistant("revised", START + 1000, { stopReason: "toolUse", content })),
+      100,
+    );
+    const facts = stream.facts(() => true);
+    expect(facts.responses).toEqual([
+      expect.objectContaining({ startMs: START + 1000, endMs: START + 2000, output: 1200 }),
+    ]);
+    expect(facts.actions).toEqual([
+      { callMs: START + 2000, resultMs: START + 2500, failed: false, model: "raw-model" },
+    ]);
+  });
+
+  it("does not retain an old prefix behind current facts and releases the aged current window", () => {
+    const stream = new OmpPerformanceLineReader(START, "current");
+    stream.apply(
+      { type: "session", timestamp: new Date(START - 4 * 60 * 60_000).toISOString() },
+      0,
+    );
+    stream.apply(JSON.parse(assistant("current", START + 1000)), 1000);
+    for (let index = 0; index < 100; index++)
+      stream.apply(
+        JSON.parse(assistant(`archive-${index}`, START - 3 * 60 * 60_000 + index * 1000)),
+        index + 1,
+      );
+    expect(stream.facts(() => true).responses).toEqual([
+      expect.objectContaining({ key: hashId(`omp:current:${START + 1000}`) }),
+    ]);
+    stream.advanceFloor(START + 61 * 60_000);
+    expect(stream.facts(() => true)).toEqual({ responses: [], actions: [], completions: [] });
+    stream.apply(JSON.parse(assistant("next", START + 61 * 60_000)), 2000);
+    expect(stream.facts(() => true).responses).toEqual([
+      expect.objectContaining({ key: hashId(`omp:next:${START + 61 * 60_000}`) }),
+    ]);
+  });
+
   it("keeps exact normalized OMP input and native measured timestamps, but never invents firstMs from ttft", () => {
     const stream = reader();
     stream.read(

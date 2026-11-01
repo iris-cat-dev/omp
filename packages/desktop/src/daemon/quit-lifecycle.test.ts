@@ -118,16 +118,21 @@ describe("quit-lifecycle", () => {
 
     const quitLifecycle = createQuitLifecycle({
       app: {
+        quit: () => events.push("quit"),
         exit: (code) => {
           events.push(`exit:${code}`);
         },
       },
+      prepareToQuit: async () => {},
       closeTransportSessions: () => {
         events.push("close-transports");
       },
       stopDesktopManagedDaemonIfNeeded: () => stopDecision.promise,
       installAppUpdateOnQuit: () => updateDecision.promise,
       createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: () => {
+        events.push("prepare-error");
+      },
       onStopError: () => {
         events.push("stop-error");
       },
@@ -142,21 +147,23 @@ describe("quit-lifecycle", () => {
       },
     });
 
-    expect(events).toEqual(["close-transports", "prevent-default"]);
+    expect(events).toEqual(["prevent-default"]);
+    await waitForQuitLifecycle();
+    expect(events).toEqual(["prevent-default", "close-transports"]);
 
     events.push("daemon-stopped");
     stopDecision.resolve(false);
     await waitForQuitLifecycle();
 
-    expect(events).toEqual(["close-transports", "prevent-default", "daemon-stopped"]);
+    expect(events).toEqual(["prevent-default", "close-transports", "daemon-stopped"]);
 
     events.push("update-checked");
     updateDecision.resolve(false);
     await waitForQuitLifecycle();
 
     expect(events).toEqual([
-      "close-transports",
       "prevent-default",
+      "close-transports",
       "daemon-stopped",
       "update-checked",
       "exit:0",
@@ -175,11 +182,13 @@ describe("quit-lifecycle", () => {
   it("lets the updater own process exit when a validated update is installing", async () => {
     const exits: number[] = [];
     const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
+      app: { exit: (code) => exits.push(code), quit: () => {} },
+      prepareToQuit: async () => {},
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: () => {},
       onStopError: () => {},
       onUpdateError: () => {},
     });
@@ -196,11 +205,13 @@ describe("quit-lifecycle", () => {
     const exits: number[] = [];
     let preventedQuitCount = 0;
     const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
+      app: { exit: (code) => exits.push(code), quit: () => {} },
+      prepareToQuit: async () => {},
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: () => {},
       onStopError: () => {},
       onUpdateError: () => {},
     });
@@ -220,13 +231,15 @@ describe("quit-lifecycle", () => {
     let deadlineCount = 0;
     const exits: number[] = [];
     const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
+      app: { exit: (code) => exits.push(code), quit: () => {} },
+      prepareToQuit: async () => {},
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () =>
         deadlineCount++ === 0 ? revalidationDeadline.signal : handoffDeadline.signal,
       onStopError: () => {},
+      onPrepareError: () => {},
       onUpdateError: () => {},
     });
 
@@ -238,10 +251,20 @@ describe("quit-lifecycle", () => {
     expect(exits).toEqual([0]);
   });
 
-  it("does not intercept a quit started by a manual update", () => {
+  it("prepares live settings before resuming a manual update's own quit", async () => {
+    const preparation = Promise.withResolvers<void>();
     const events: string[] = [];
     const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => events.push(`exit:${code}`) },
+      app: {
+        exit: (code) => events.push(`exit:${code}`),
+        quit: (): void => {
+          events.push("resume-update-quit");
+          quitLifecycle.handleBeforeQuit({
+            preventDefault: () => events.push("unexpected-second-veto"),
+          });
+        },
+      },
+      prepareToQuit: () => preparation.promise,
       closeTransportSessions: () => events.push("close-transports"),
       stopDesktopManagedDaemonIfNeeded: async () => {
         events.push("stop-daemon");
@@ -252,16 +275,22 @@ describe("quit-lifecycle", () => {
         return false;
       },
       createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: () => events.push("prepare-error"),
       onStopError: () => events.push("stop-error"),
       onUpdateError: () => events.push("update-error"),
     });
 
     quitLifecycle.handleBeforeQuitForUpdate();
-    quitLifecycle.handleBeforeQuit({
-      preventDefault: () => events.push("prevent-default"),
-    });
-
-    expect(events).toEqual(["close-transports"]);
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => events.push("prevent-default") });
+    expect(events).toEqual(["prevent-default"]);
+    preparation.resolve();
+    await waitForQuitLifecycle();
+    expect(events).toEqual([
+      "prevent-default",
+      "close-transports",
+      "resume-update-quit",
+      "close-transports",
+    ]);
   });
 
   it("exits when update revalidation reaches its deadline", async () => {
@@ -269,12 +298,14 @@ describe("quit-lifecycle", () => {
     const updateDecision = deferred<boolean>();
     const exits: number[] = [];
     const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
+      app: { exit: (code) => exits.push(code), quit: () => {} },
+      prepareToQuit: async () => {},
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: () => updateDecision.promise,
       createUpdateDeadlineSignal: () => deadline.signal,
       onStopError: () => {},
+      onPrepareError: () => {},
       onUpdateError: () => {},
     });
 
@@ -288,5 +319,83 @@ describe("quit-lifecycle", () => {
     updateDecision.resolve(true);
     await waitForQuitLifecycle();
     expect(exits).toEqual([0]);
+  });
+  it("coalesces repeated quit requests while real save preparation is pending and never treats them as updater handoff", async () => {
+    const preparation = Promise.withResolvers<void>(),
+      daemon = Promise.withResolvers<boolean>();
+    const events: string[] = [];
+    let preparations = 0;
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`), quit: () => events.push("quit") },
+      prepareToQuit: async () => {
+        preparations++;
+        await preparation.promise;
+      },
+      closeTransportSessions: () => events.push("close-transports"),
+      stopDesktopManagedDaemonIfNeeded: () => daemon.promise,
+      installAppUpdateOnQuit: async () => {
+        events.push("check-update");
+        return false;
+      },
+      createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: () => events.push("prepare-error"),
+      onStopError: () => events.push("stop-error"),
+      onUpdateError: () => events.push("update-error"),
+    });
+    const event = { preventDefault: () => events.push("veto") };
+    quitLifecycle.handleBeforeQuit(event);
+    quitLifecycle.handleBeforeQuit(event);
+    await waitForQuitLifecycle();
+    expect(preparations).toBe(1);
+    expect(events).toEqual(["veto", "veto"]);
+    preparation.resolve();
+    await waitForQuitLifecycle();
+    quitLifecycle.handleBeforeQuit(event);
+    expect(events).toEqual(["veto", "veto", "close-transports", "veto"]);
+    daemon.resolve(false);
+    await waitForQuitLifecycle();
+    expect(events.slice(-2)).toEqual(["check-update", "exit:0"]);
+  });
+
+  it("vetoes failed genuine draft preparation without daemon, transport or update side effects and permits a later retry", async () => {
+    const failure = new Error("Settings title draft could not be saved");
+    const errors: unknown[] = [],
+      events: string[] = [];
+    let attempts = 0;
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`), quit: () => events.push("quit") },
+      prepareToQuit: async () => {
+        if (++attempts === 1) throw failure;
+      },
+      closeTransportSessions: () => events.push("close-transports"),
+      stopDesktopManagedDaemonIfNeeded: async () => {
+        events.push("stop-daemon");
+        return false;
+      },
+      installAppUpdateOnQuit: async () => {
+        events.push("check-update");
+        return false;
+      },
+      createUpdateDeadlineSignal: () => new AbortController().signal,
+      onPrepareError: (error) => errors.push(error),
+      onStopError: () => events.push("stop-error"),
+      onUpdateError: () => events.push("update-error"),
+    });
+    const event = { preventDefault: () => events.push("veto") };
+    quitLifecycle.handleBeforeQuit(event);
+    await waitForQuitLifecycle();
+    expect(errors).toEqual([failure]);
+    expect(events).toEqual(["veto"]);
+    quitLifecycle.handleBeforeQuit(event);
+    await waitForQuitLifecycle();
+    expect(attempts).toBe(2);
+    expect(events).toEqual([
+      "veto",
+      "veto",
+      "close-transports",
+      "stop-daemon",
+      "check-update",
+      "exit:0",
+    ]);
   });
 });

@@ -1,8 +1,9 @@
-import { Stats } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, Stats } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { currentDayUsage, OmpMonitorHistory } from "./history.js";
-import { LIVE_WINDOW_MS, liveMetrics } from "./math.js";
+import { calendarDay, LIVE_WINDOW_MS, liveMetrics } from "./math.js";
 import { emptyUsage, OmpNumericParser } from "./parser.js";
 import type { NumericResponse, NumericSink } from "./parser.js";
 import { projectActivity, scopeFiles, scopeResponses } from "./projection.js";
@@ -33,7 +34,7 @@ function reply(id: string, at: number, extra: Record<string, unknown> = {}, pare
   });
 }
 
-function capture(agentId = "main") {
+function capture(agentId = "main", headerAt = NOW - 60_000) {
   const parser = new OmpNumericParser(agentId);
   const responses = new Map<string, NumericResponse>();
   const sink: NumericSink = {
@@ -47,7 +48,7 @@ function capture(agentId = "main") {
       throw new Error("Unexpected telemetry retention limit");
     },
   };
-  parser.apply(journal("session", "session", NOW - 60_000), sink);
+  parser.apply(journal("session", "session", headerAt), sink);
   return {
     parser,
     sink,
@@ -75,6 +76,7 @@ function measured(
     provider: "openai",
     serviceTier: null,
     speedMode: null,
+    effortMode: null,
     startMs: start,
     endMs: end,
     ttftMs: null,
@@ -281,17 +283,24 @@ describe("OMP branch-scoped speed evidence", () => {
   it.each([
     ["openai-codex", "priority", "fast", "openai"],
     ["anthropic", "priority", "fast", "anthropic"],
-    ["google", "none", "standard", "google"],
-    ["custom", "priority", "priority", "custom"],
-    ["custom", "default", "default", "custom"],
-    ["", "priority", "priority", null],
-    ["custom", "Turbo-vNext", "turbo-vnext", "custom"],
+    ["azure", "default", "standard", "openai"],
+    ["azure-openai-responses", "ultrafast", "ultrafast", "openai"],
+    ["google-vertex", "priority", "fast", "google"],
+    ["google-gemini-cli", "standard", "standard", "google"],
+    ["google-antigravity", "flex", "flex", "google"],
+    ["google", "none", null, "google"],
+    ["custom", "priority", null, null],
+    ["custom", "default", null, null],
+    ["", "priority", null, null],
+    ["custom", "Turbo-vNext", null, null],
   ])(
     "normalizes %s/%s without inferring a provider family",
     (provider, serviceTier, value, family) => {
       const current = capture();
       current.feed(reply("one", NOW, { provider, serviceTier }));
-      expect(current.latest().speedMode).toEqual({ value, evidence: "recorded", provider: family });
+      expect(current.latest().speedMode).toEqual(
+        value === null ? null : { value, evidence: "recorded", provider: family },
+      );
     },
   );
 
@@ -386,15 +395,92 @@ describe("OMP branch-scoped speed evidence", () => {
     });
   });
 
-  it("records side-call evidence without changing the main request's current model or mode", () => {
+  it("resolves late inherited modes without replacing an explicit clear in either dimension", () => {
     const current = capture();
-    current.feed(reply("main", NOW - 1_000, { serviceTier: "default" }));
+    current.feed(journal("custom", "tail", NOW - 1_900, { parentId: "middle" }), 500);
+    current.feed(reply("unresolved", NOW - 1_800, {}, "tail"), 600);
+    expect(current.parser.speedMode).toBeNull();
+    expect(current.parser.effortMode).toBeNull();
+    current.feed(
+      journal("thinking_level_change", "effort-clear", NOW - 1_700, {
+        parentId: "tail",
+        thinkingLevel: null,
+      }),
+      700,
+    );
+    current.feed(
+      journal("service_tier_change", "tier-clear", NOW - 1_600, {
+        parentId: "tail",
+        serviceTier: {},
+      }),
+      800,
+    );
+    current.feed(
+      journal("service_tier_change", "root", NOW - 5_000, { serviceTier: { openai: "priority" } }),
+      100,
+      true,
+    );
+    current.feed(
+      journal("thinking_level_change", "high", NOW - 4_000, {
+        parentId: "root",
+        thinkingLevel: "high",
+      }),
+      200,
+      true,
+    );
+    current.feed(journal("custom", "middle", NOW - 3_000, { parentId: "high" }), 300, true);
+    expect(current.parser.speedMode).toBeNull();
+    expect(current.parser.effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+    current.feed(journal("custom", "effort-head", NOW - 500, { parentId: "effort-clear" }), 900);
+    expect(current.parser.effortMode).toBeNull();
+    expect(current.parser.speedMode).toEqual({
+      value: "fast",
+      evidence: "selected",
+      provider: "openai",
+    });
+    current.feed(journal("custom", "inherited-head", NOW, { parentId: "tail" }), 1_000);
+    expect(current.parser.effortMode?.value).toBe("high");
+    expect(current.parser.speedMode?.value).toBe("fast");
+  });
+
+  it("uses only a side call's selected family tier without adopting its provider or request effort", () => {
+    const current = capture();
+    current.feed(
+      journal("service_tier_change", "tiers", NOW - 3_000, {
+        serviceTier: { openai: "ultrafast", anthropic: "priority" },
+      }),
+    );
+    current.feed(
+      journal("thinking_level_change", "effort", NOW - 2_000, {
+        parentId: "tiers",
+        thinkingLevel: "high",
+      }),
+    );
+    current.feed(
+      reply(
+        "main",
+        NOW - 1_000,
+        {
+          serviceTier: "default",
+          requestControls: { effort: { tail: "max" } },
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "main-tool" }],
+        },
+        "effort",
+      ),
+    );
     current.feed(
       journal("model_usage", "side", NOW, {
+        parentId: "main",
         provider: "anthropic",
         model: "side-model",
         api: "anthropic-messages",
-        serviceTier: "priority",
+        serviceTier: "default",
+        requestControls: { effort: { tail: "low" } },
         usage: { input: 10, output: 500, reasoningTokens: 300 },
       }),
     );
@@ -402,14 +488,554 @@ describe("OMP branch-scoped speed evidence", () => {
       sideCall: true,
       startMs: null,
       measuredDurationMs: 0,
-      speedMode: { value: "fast", evidence: "recorded", provider: "anthropic" },
+      speedMode: { value: "fast", evidence: "selected", provider: "anthropic" },
+      effortMode: null,
     });
     expect(current.parser.model).toBe("model-a");
+    expect(current.parser.phase).toBe("tools");
     expect(current.parser.speedMode).toEqual({
-      value: "standard",
-      evidence: "recorded",
+      value: "ultrafast",
+      evidence: "selected",
       provider: "openai",
     });
+    expect(current.parser.effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+  });
+});
+
+describe("OMP native branch and request effort", () => {
+  it("matches the original v1.6.1 branch fixture without promoting message facts into descendants", () => {
+    const bytes = readFileSync(
+      new URL("../../test-fixtures/omp-execution-modes-v161/branch.jsonl", import.meta.url),
+    );
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      "bd163e5ed688f11d200ddf9093e1885ebe956e5231d098292a4b7e3b71fb228a",
+    );
+    const fixtureAt = Date.parse("2026-10-20T11:30:00.000Z");
+    const current = capture("fixture", fixtureAt);
+    for (const line of bytes.toString("utf8").trimEnd().split("\n")) current.feed(JSON.parse(line));
+    const responses = [...current.responses.values()];
+    expect(
+      responses.map((item) => [
+        item.effortMode?.value ?? null,
+        item.effortMode?.evidence ?? null,
+        item.speedMode?.value ?? null,
+        item.speedMode?.evidence ?? null,
+        item.speedMode?.provider ?? null,
+      ]),
+    ).toEqual([
+      ["high", "selected", "standard", "recorded", "openai"],
+      ["max", "recorded", "standard", "selected", "anthropic"],
+      ["low", "recorded", "standard", "selected", "anthropic"],
+      [null, null, "fast", "selected", "openai"],
+      [null, null, "fast", "selected", "openai"],
+      ["high", "selected", "standard", "selected", "anthropic"],
+    ]);
+    expect(responses.reduce((sum, item) => sum + item.totalTokens, 0)).toBe(995);
+    expect(responses.reduce((sum, item) => sum + item.measuredOutputTokens, 0)).toBe(350);
+    expect(current.parser.effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+    expect(current.parser.speedMode).toEqual({
+      value: "standard",
+      evidence: "selected",
+      provider: "anthropic",
+    });
+    expect(JSON.stringify(responses)).not.toMatch(
+      /One\.|Five\.|configured|requestControls|parentId/,
+    );
+  });
+
+  it("changes and clears effort independently of tiers and restores the branch instead of prior request facts", () => {
+    const current = capture();
+    current.feed(
+      journal("service_tier_change", "tier", NOW - 9_000, {
+        serviceTier: { openai: "priority" },
+      }),
+    );
+    current.feed(
+      journal("thinking_level_change", "high", NOW - 8_000, {
+        parentId: "tier",
+        thinkingLevel: "high",
+        configured: "auto",
+      }),
+    );
+    current.feed(
+      reply(
+        "recorded",
+        NOW - 7_000,
+        {
+          serviceTier: "default",
+          requestControls: { effort: { tail: "max" } },
+        },
+        "high",
+      ),
+    );
+    expect(current.parser.effortMode?.value).toBe("max");
+    current.feed(
+      journal("message", "next", NOW - 6_000, {
+        parentId: "recorded",
+        message: { role: "user" },
+      }),
+    );
+    expect(current.parser.effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+    expect(current.parser.speedMode?.value).toBe("fast");
+    current.feed(
+      journal("thinking_level_change", "missing", NOW - 5_000, {
+        parentId: "next",
+        configured: "max",
+      }),
+    );
+    expect(current.parser.effortMode?.value).toBe("high");
+    current.feed(
+      journal("thinking_level_change", "clear", NOW - 4_000, {
+        parentId: "missing",
+        thinkingLevel: null,
+        configured: "max",
+      }),
+    );
+    expect(current.parser.effortMode).toBeNull();
+    expect(current.parser.speedMode?.value).toBe("fast");
+    current.feed(reply("cleared", NOW - 3_000, {}, "clear"));
+    expect(current.latest().effortMode).toBeNull();
+    current.feed(reply("fork", NOW - 2_000, {}, "high"));
+    expect(current.latest().effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+    current.feed(reply("missing-parent", NOW - 1_000, { thinkingLevel: "max" }, "absent"));
+    expect(current.latest().effortMode).toBeNull();
+    current.feed(reply("root", NOW, { model: "model-max", effort: "high" }));
+    expect(current.parser.effortMode).toBeNull();
+    expect(current.parser.speedMode).toBeNull();
+  });
+
+  it.each([
+    ["none", "off"],
+    ["DISABLED", "off"],
+    ["enabled", "on"],
+    ["HIGH", "high"],
+    ["extra-low", "extra-low"],
+    ["auto", null],
+    ["default", null],
+    ["inherit", null],
+    ["inherited", null],
+    ["unknown", null],
+    ["thinking_level_unspecified", null],
+    ["high/path", null],
+    ["max\nprivate", null],
+    ["x".repeat(65), null],
+    [null, null],
+  ])("retains only native safe effort identifiers from %s", (native, value) => {
+    const current = capture();
+    current.feed(
+      journal("thinking_level_change", "effort", NOW - 1_000, {
+        thinkingLevel: native,
+        configured: "max",
+      }),
+    );
+    current.feed(reply("one", NOW, {}, "effort"));
+    expect(current.latest().effortMode).toEqual(
+      value === null ? null : { value, evidence: "selected", provider: null },
+    );
+    expect(current.latest().speedMode).toBeNull();
+  });
+
+  it.each([
+    ["max", "low", "max", "recorded"],
+    [null, "LOW", "low", "recorded"],
+    [undefined, "low", "low", "recorded"],
+    [42, "low", "low", "recorded"],
+    ["auto", "low", "high", "selected"],
+    ["", "low", "high", "selected"],
+    ["max/private", "low", "high", "selected"],
+    [null, null, "high", "selected"],
+  ])(
+    "uses native tail string precedence before validating it: %s / %s",
+    (tail, topLevel, value, evidence) => {
+      const current = capture();
+      current.feed(
+        journal("thinking_level_change", "effort", NOW - 1_000, {
+          thinkingLevel: "high",
+        }),
+      );
+      current.feed(
+        reply("one", NOW, { requestControls: { effort: { tail, topLevel } } }, "effort"),
+      );
+      expect(current.latest().effortMode).toEqual({ value, evidence, provider: null });
+      expect(current.parser.effortMode).toEqual(current.latest().effortMode);
+      current.feed(journal("custom", "next", NOW + 1, { parentId: "one" }));
+      expect(current.parser.effortMode).toEqual({
+        value: "high",
+        evidence: "selected",
+        provider: null,
+      });
+    },
+  );
+
+  it("resolves each missing ancestor dimension without losing a later independent selection", () => {
+    const current = capture();
+    current.feed(
+      journal("thinking_level_change", "tail-effort", NOW - 2_000, {
+        parentId: "middle",
+        thinkingLevel: "max",
+      }),
+      1_000,
+    );
+    current.feed(reply("latest", NOW - 1_000, {}, "tail-effort"), 1_100);
+    expect(current.parser.effortMode?.value).toBe("max");
+    expect(current.parser.speedMode).toBeNull();
+    current.feed(
+      journal("thinking_level_change", "old-effort", NOW + 5_000, {
+        thinkingLevel: "low",
+      }),
+      100,
+      true,
+    );
+    current.feed(
+      journal("service_tier_change", "old-tier", NOW + 6_000, {
+        parentId: "old-effort",
+        serviceTier: { openai: "priority" },
+      }),
+      200,
+      true,
+    );
+    current.feed(journal("custom", "middle", NOW + 7_000, { parentId: "old-tier" }), 300, true);
+    expect(current.parser.effortMode?.value).toBe("max");
+    expect(current.parser.speedMode?.value).toBe("fast");
+    current.feed(
+      journal("service_tier_change", "tail-tier", NOW, {
+        parentId: "unknown-effort",
+        serviceTier: { openai: "ultrafast" },
+      }),
+      1_200,
+    );
+    expect(current.parser.effortMode).toBeNull();
+    expect(current.parser.speedMode?.value).toBe("ultrafast");
+    current.feed(
+      journal("thinking_level_change", "unknown-effort", NOW + 8_000, {
+        thinkingLevel: "xhigh",
+      }),
+      400,
+      true,
+    );
+    expect(current.parser.effortMode?.value).toBe("xhigh");
+    expect(current.parser.speedMode?.value).toBe("ultrafast");
+  });
+
+  it("does not roll a newer recorded effort or provider family back during historical prefix replay", () => {
+    const current = capture();
+    current.feed(
+      journal("thinking_level_change", "latest-effort", NOW - 2_000, {
+        thinkingLevel: "high",
+      }),
+      1_000,
+    );
+    current.feed(
+      reply(
+        "latest",
+        NOW - 1_000,
+        {
+          provider: "anthropic",
+          serviceTier: "priority",
+          requestControls: { effort: { tail: "max" } },
+        },
+        "latest-effort",
+      ),
+      1_100,
+    );
+    current.feed(
+      journal("thinking_level_change", "latest-effort", NOW + 5_000, {
+        thinkingLevel: "off",
+      }),
+      100,
+      true,
+    );
+    current.feed(
+      reply("history", NOW + 6_000, {
+        provider: "openai",
+        serviceTier: "default",
+        requestControls: { effort: { topLevel: "low" } },
+      }),
+      200,
+      true,
+    );
+    expect(current.parser.effortMode).toEqual({
+      value: "max",
+      evidence: "recorded",
+      provider: null,
+    });
+    expect(current.parser.speedMode).toEqual({
+      value: "fast",
+      evidence: "recorded",
+      provider: "anthropic",
+    });
+    expect(current.parser.provider).toBe("anthropic");
+    current.feed(
+      journal("message", "next", NOW, {
+        parentId: "latest",
+        message: { role: "user" },
+      }),
+      1_200,
+    );
+    expect(current.parser.effortMode).toEqual({
+      value: "high",
+      evidence: "selected",
+      provider: null,
+    });
+    expect(current.parser.speedMode).toBeNull();
+    expect(current.parser.phase).toBe("generating");
+  });
+});
+
+describe("OMP local-day model and mode history", () => {
+  it("keeps pooled range sums, unknown buckets, native evidence and model pricing separate", () => {
+    const todayStart = new Date(NOW).setHours(0, 0, 0, 0);
+    const previous = measured("one", "previous", todayStart - 2_000, todayStart - 1_000, 100, 20);
+    const large = measured("one", "large", NOW - 13_000, NOW - 10_000, 600, 100);
+    const small = measured("one", "small", NOW - 8_000, NOW - 6_000, 100, null);
+    for (const response of [previous, small]) {
+      response.effortMode = { value: "high", evidence: "selected", provider: null };
+      response.speedMode = { value: "fast", evidence: "selected", provider: "openai" };
+    }
+    large.effortMode = { value: "high", evidence: "recorded", provider: null };
+    large.speedMode = { value: "fast", evidence: "recorded", provider: "google" };
+    const failed = {
+      ...measured("two", "failed", NOW - 5_000, NOW - 4_000, 50, null, "model-b"),
+      startMs: null,
+      measuredOutputTokens: 0,
+      measuredDurationMs: 0,
+      failedRequests: 1,
+    };
+    const side: NumericResponse = {
+      ...measured("one", "side", NOW - 3_000, NOW - 2_000, 100, null),
+      model: null,
+      sideCall: true,
+      startMs: null,
+      measuredOutputTokens: 0,
+      measuredDurationMs: 0,
+      speedMode: { value: "standard", evidence: "selected", provider: "anthropic" },
+    };
+    const responses = [previous, large, small, failed, side];
+    const history = new OmpMonitorHistory((response) =>
+      response.model === "model-a" ? response.outputTokens / 1_000 : null,
+    );
+    const projection = history.getDays(ALL, responses, NOW, 1, "prices-one");
+    const today = projection.days.at(-1)!;
+    expect(today.agentCount).toBe(2);
+    expect(projection.days.at(-2)!.agentCount).toBe(1);
+    expect(projection.breakdowns.models.filter((row) => row.date === today.date)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "model-a",
+          source: "omp",
+          requests: 2,
+          outputTokens: 700,
+          measuredOutputTokens: 700,
+          measuredDurationMs: 5_000,
+          costUsd: 1_998,
+          estimatedCostUsd: 0.7,
+          unestimatedRequests: 0,
+        }),
+        expect.objectContaining({
+          model: "model-b",
+          requests: 1,
+          outputTokens: 50,
+          measuredOutputTokens: 0,
+          measuredDurationMs: 0,
+          unestimatedRequests: 1,
+        }),
+        expect.objectContaining({
+          model: null,
+          requests: 1,
+          outputTokens: 100,
+          measuredOutputTokens: 0,
+          measuredDurationMs: 0,
+          unestimatedRequests: 1,
+        }),
+      ]),
+    );
+    const effort = projection.breakdowns.modes.filter(
+      (row) => row.date === today.date && row.kind === "effort",
+    );
+    expect(effort).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: "high", evidence: "recorded", outputTokens: 600 }),
+        expect.objectContaining({ value: "high", evidence: "selected", outputTokens: 100 }),
+        expect.objectContaining({
+          value: null,
+          evidence: null,
+          provider: null,
+          model: "model-b",
+          outputTokens: 50,
+        }),
+        expect.objectContaining({
+          value: null,
+          evidence: null,
+          provider: null,
+          model: null,
+          outputTokens: 100,
+        }),
+      ]),
+    );
+    for (const day of projection.days) {
+      const models = projection.breakdowns.models.filter((row) => row.date === day.date);
+      for (const rows of [
+        models,
+        projection.breakdowns.modes.filter((row) => row.date === day.date && row.kind === "effort"),
+        projection.breakdowns.modes.filter((row) => row.date === day.date && row.kind === "speed"),
+      ]) {
+        expect(rows.reduce((sum, row) => sum + row.requests, 0)).toBe(day.requests);
+        expect(rows.reduce((sum, row) => sum + row.outputTokens, 0)).toBe(day.outputTokens);
+        expect(rows.reduce((sum, row) => sum + row.measuredOutputTokens, 0)).toBe(
+          day.measuredOutputTokens,
+        );
+        expect(rows.reduce((sum, row) => sum + row.measuredDurationMs, 0)).toBe(
+          day.measuredDurationMs,
+        );
+      }
+    }
+    const selectedModel = projection.breakdowns.models.filter((row) => row.model === "model-a");
+    expect(
+      (selectedModel.reduce((sum, row) => sum + row.measuredOutputTokens, 0) * 1_000) /
+        selectedModel.reduce((sum, row) => sum + row.measuredDurationMs, 0),
+    ).toBeCloseTo(800 / 6);
+    expect(today.measuredOutputTokens / (today.measuredDurationMs / 1_000)).toBe(140);
+    expect(JSON.stringify(projection.breakdowns)).not.toMatch(
+      /agentId|completionState|requestControls|previous|private/,
+    );
+    const revised = history.getDays(
+      ALL,
+      [previous, { ...large, effortMode: null }, small, failed, side],
+      NOW,
+      2,
+      "prices-one",
+    );
+    expect(revised.days).toEqual(projection.days);
+    expect(
+      revised.breakdowns.modes
+        .filter((row) => row.date === today.date && row.kind === "effort" && row.value === "high")
+        .reduce((sum, row) => sum + row.outputTokens, 0),
+    ).toBe(100);
+    expect(
+      revised.breakdowns.modes
+        .filter((row) => row.date === today.date && row.kind === "effort" && row.value === null)
+        .reduce((sum, row) => sum + row.outputTokens, 0),
+    ).toBe(750);
+  });
+
+  it("keeps total peak provenance on its own actual winning window", () => {
+    const outputWinner = {
+      ...measured("one", "output", NOW - 12_000, NOW - 11_000, 300, null),
+      feedbackEligible: false,
+    };
+    const totalWinner = {
+      ...measured("one", "total", NOW - 2_000, NOW - 1_000, 30, null),
+      inputTokens: 3_000,
+      totalTokens: 999_999,
+      feedbackEligible: true,
+    };
+    const history = new OmpMonitorHistory();
+    const projection = history.getDays(ALL, [outputWinner, totalWinner], NOW, 1, "prices");
+    expect(projection.peaks.at(-1)).toEqual({
+      value: 100,
+      at: NOW - 11_000,
+      observedAt: null,
+    });
+    expect(projection.totalPeaks.at(-1)).toEqual({
+      value: 1_010,
+      at: NOW - 1_000,
+      observedAt: NOW - 1_000,
+    });
+    expect(projection.days.at(-1)).toMatchObject({ peakOutputTps: 100, peakTotalTps: 1_010 });
+    const captured = history.getDays(
+      ALL,
+      [outputWinner, { ...totalWinner, feedbackEligible: false }],
+      NOW,
+      2,
+      "prices",
+    );
+    expect(captured.totalPeaks.at(-1)).toEqual({
+      value: 1_010,
+      at: NOW - 1_000,
+      observedAt: null,
+    });
+  });
+
+  it("retains sparse 90-day, year and All facts without expanding extreme calendar spans", () => {
+    const ancient = new Date(0);
+    ancient.setFullYear(1, 0, 1);
+    ancient.setHours(12, 0, 0, 0);
+    const earliest: NumericResponse = {
+      ...measured("one", "ancient", ancient.getTime() - 1_000, ancient.getTime(), 10, null),
+      startMs: null,
+      measuredOutputTokens: 0,
+      measuredDurationMs: 0,
+    };
+    const responses = [earliest];
+    for (const ago of [45, 120, 400]) {
+      const at = new Date(NOW);
+      at.setDate(at.getDate() - ago);
+      responses.push(measured("one", `past-${ago}`, at.getTime() - 1_000, at.getTime(), ago, null));
+    }
+    const history = new OmpMonitorHistory();
+    const projection = history.getDays(
+      ALL,
+      [
+        ...responses,
+        { ...earliest, key: "unsafe-date", endMs: Number.MAX_SAFE_INTEGER },
+        { ...earliest, key: "year-zero", endMs: Date.parse("0000-01-01T12:00:00Z") },
+      ],
+      NOW,
+      1,
+      "prices",
+    );
+    expect(projection.days).toHaveLength(34);
+    expect(projection.startDate).toBe("0001-01-01");
+    expect(projection.endDate).toBe(calendarDay(NOW)!.date);
+    expect(projection.days.reduce((sum, day) => sum + day.requests, 0)).toBe(4);
+    expect(projection.days.reduce((sum, day) => sum + day.outputTokens, 0)).toBe(575);
+    expect(projection.breakdowns.models).toHaveLength(4);
+    expect(projection.breakdowns.modes).toHaveLength(8);
+    expect(projection.limited).toBe(true);
+    expect(currentDayUsage(projection.days).requests).toBe(0);
+    const next = history.getDays(ALL, responses, NOW + 31 * 86_400_000, 2, "prices");
+    expect(next.startDate).toBe("0001-01-01");
+    expect(next.days.reduce((sum, day) => sum + day.requests, 0)).toBe(4);
+    expect(next.days.length).toBeLessThanOrEqual(34);
+  });
+
+  it("keeps real archived cross-midnight peak days in the available range without inventing gap days", () => {
+    const midnight = new Date(2020, 3, 6).getTime();
+    const response = measured("one", "cross-midnight", midnight - 500, midnight + 500, 100, null);
+    const projection = new OmpMonitorHistory().getDays(ALL, [response], NOW, 1, "prices");
+    const first = calendarDay(midnight - 500)!.date;
+    const last = calendarDay(midnight + 500)!.date;
+    expect(projection.startDate).toBe(first);
+    expect(projection.days).toHaveLength(32);
+    expect(projection.days.find((day) => day.date === first)).toMatchObject({
+      requests: 0,
+      agentCount: 0,
+    });
+    expect(projection.days.find((day) => day.date === last)).toMatchObject({
+      requests: 1,
+      measuredOutputTokens: 100,
+      measuredDurationMs: 1_000,
+      agentCount: 1,
+    });
+    expect(projection.days.find((day) => day.date === first)!.peakOutputTps).toBeCloseTo(50 / 3);
+    expect(projection.days.find((day) => day.date === last)!.peakOutputTps).toBeCloseTo(50 / 3);
+    expect(projection.limited).toBe(false);
   });
 });
 
@@ -443,6 +1069,7 @@ describe("OMP additive three-second agent telemetry", () => {
     const subagent = activity.agents.find((agent) => agent.id === child.id)!;
     expect(parent).toMatchObject({
       outputTps: 120,
+      totalTps: 130,
       liveMeasuredTps: 40,
       liveEstimatedTps: 40,
       thinkingTps: 40,
@@ -451,6 +1078,7 @@ describe("OMP additive three-second agent telemetry", () => {
     });
     expect(subagent).toMatchObject({
       outputTps: 100,
+      totalTps: 610 / 6,
       liveMeasuredTps: 100,
       liveEstimatedTps: 0,
       thinkingTps: 10,
@@ -465,6 +1093,18 @@ describe("OMP additive three-second agent telemetry", () => {
       measuredThinkingTps: 30,
       estimatedThinkingTps: 20,
     });
+    expect(parent.liveMeasuredTotalTps).toBeCloseTo(130 / 3);
+    expect(parent.liveEstimatedTotalTps).toBeCloseTo(130 / 3);
+    expect(subagent.liveMeasuredTotalTps).toBeCloseTo(610 / 6);
+    expect(subagent.liveEstimatedTotalTps).toBe(0);
+    expect(total.measuredTotalTps).toBeCloseTo(145);
+    expect(total.estimatedTotalTps).toBeCloseTo(130 / 3);
+    expect(activity.agents.reduce((sum, agent) => sum + agent.liveMeasuredTotalTps, 0)).toBeCloseTo(
+      total.measuredTotalTps,
+    );
+    expect(
+      activity.agents.reduce((sum, agent) => sum + agent.liveEstimatedTotalTps, 0),
+    ).toBeCloseTo(total.estimatedTotalTps);
     expect(activity.agents.reduce((sum, agent) => sum + agent.liveMeasuredTps, 0)).toBe(
       total.measuredTps,
     );
@@ -498,6 +1138,8 @@ describe("OMP additive three-second agent telemetry", () => {
     expect(activity.agents[0]).toMatchObject({
       liveMeasuredTps: 0,
       liveEstimatedTps: 200,
+      totalTps: 210,
+      liveEstimatedTotalTps: 210,
       liveCostUsdPerSecond: 1,
     });
     expect(activity.agents[0]!.thinkingTps).toBeCloseTo(200 * (140 / 600));
@@ -542,13 +1184,17 @@ describe("OMP additive three-second agent telemetry", () => {
       );
       const expectedSpeed = sameModel ? 100 : 1_100 / 3;
       const expectedThinking = sameModel ? 25 : 50 / 3;
+      const expectedTotalSpeed = sameModel ? 105 : 1_120 / 3;
       expect(activity.agents[0]).toMatchObject({ liveMeasuredTps: 0, liveCostUsdPerSecond: 2 });
       expect(activity.agents[0]!.outputTps).toBeCloseTo(expectedSpeed);
       expect(activity.agents[0]!.liveEstimatedTps).toBeCloseTo(expectedSpeed);
+      expect(activity.agents[0]!.totalTps).toBeCloseTo(expectedTotalSpeed);
+      expect(activity.agents[0]!.liveEstimatedTotalTps).toBeCloseTo(expectedTotalSpeed);
       expect(activity.agents[0]!.thinkingTps).toBeCloseTo(expectedThinking);
       const live = liveMetrics(facts.responses, activity.estimates, NOW);
       expect(live).toMatchObject({ measuredTps: 0, measuredThinkingTps: null });
       expect(live.estimatedTps).toBeCloseTo(expectedSpeed);
+      expect(live.estimatedTotalTps).toBeCloseTo(expectedTotalSpeed);
       expect(live.estimatedThinkingTps).toBeCloseTo(expectedThinking);
     },
   );
@@ -588,8 +1234,11 @@ describe("OMP additive three-second agent telemetry", () => {
     expect(activity.agents[0]).toMatchObject({
       phase: "idle",
       outputTps: 100,
+      totalTps: 110,
       liveMeasuredTps: 0,
       liveEstimatedTps: 0,
+      liveMeasuredTotalTps: 0,
+      liveEstimatedTotalTps: 0,
       thinkingTps: null,
       liveCostUsdPerSecond: null,
     });
@@ -606,8 +1255,11 @@ describe("OMP additive three-second agent telemetry", () => {
     expect(activity.estimates).toEqual([]);
     expect(activity.agents[0]).toMatchObject({
       outputTps: null,
+      totalTps: null,
       liveMeasuredTps: 0,
       liveEstimatedTps: 0,
+      liveMeasuredTotalTps: 0,
+      liveEstimatedTotalTps: 0,
       thinkingTps: null,
       liveCostUsdPerSecond: null,
     });
@@ -636,5 +1288,71 @@ describe("OMP additive three-second agent telemetry", () => {
     expect(
       currentDayUsage(history.getDays(ALL, facts.responses, NOW, 1, "v3-new").days),
     ).toMatchObject({ estimatedCostUsd: 16, costUsd: 999 });
+  });
+});
+
+describe("OMP native total throughput", () => {
+  it("includes cached input but never double-counts reasoning or billed orchestration", () => {
+    const current = capture();
+    current.feed(
+      reply("one", NOW, {
+        timestamp: NOW - 3_000,
+        duration: 3_000,
+        usage: {
+          input: 100,
+          output: 300,
+          cacheRead: 200,
+          cacheWrite: 400,
+          reasoningTokens: 200,
+          totalTokens: 999_999,
+        },
+      }),
+    );
+    const main = file(path.join("bucket", "main.jsonl"), 0);
+    const response = { ...current.latest(), agentId: main.id };
+    const side = { ...response, key: "side", sideCall: true };
+    const files = scopeFiles([main], ALL);
+    const facts = scopeResponses(
+      [candidate(main, response), candidate(main, side)],
+      files.ids,
+      NOW,
+    );
+    const activity = projectActivity(files, facts, NOW);
+    const live = liveMetrics(facts.responses, activity.estimates, NOW);
+    expect(response.totalTokens).toBe(999_999);
+    expect(live.measuredTps).toBe(100);
+    expect(live.measuredTotalTps).toBeCloseTo(1_000 / 3);
+    expect(live.estimatedTotalTps).toBe(0);
+    expect(activity.agents[0]!.totalTps).toBeCloseTo(1_000 / 3);
+    expect(activity.agents[0]!.liveMeasuredTotalTps).toBeCloseTo(1_000 / 3);
+    for (const seriesPoint of live.series.filter(
+      (point) => point.timestamp >= NOW - 3_000 && point.timestamp < NOW,
+    )) {
+      expect(seriesPoint.measuredTps).toBe(100);
+      expect(seriesPoint.measuredTotalTps).toBeCloseTo(1_000 / 3);
+      expect(seriesPoint.estimatedTotalTps).toBe(0);
+    }
+  });
+
+  it("can estimate a real input-only reference without manufacturing output throughput", () => {
+    const main = file(path.join("bucket", "main.jsonl"), 0);
+    main.parser.phase = "generating";
+    main.parser.inFlightStartMs = NOW - 3_000;
+    const response = measured(main.id, "input-only", NOW - 11_000, NOW - 10_000, 0, null);
+    const files = scopeFiles([main], ALL);
+    const facts = scopeResponses([candidate(main, response)], files.ids, NOW);
+    const activity = projectActivity(files, facts, NOW);
+    expect(activity.agents[0]).toMatchObject({
+      outputTps: 0,
+      totalTps: 10,
+      liveEstimatedTps: 0,
+      liveEstimatedTotalTps: 10,
+    });
+    expect(liveMetrics(facts.responses, activity.estimates, NOW)).toMatchObject({
+      measuredTps: 0,
+      estimatedTps: 0,
+      measuredTotalTps: 0,
+      estimatedTotalTps: 10,
+    });
   });
 });

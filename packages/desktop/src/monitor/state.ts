@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import path from "node:path";
 import { hashId, OmpNumericParser } from "./parser.js";
 import type { NumericResponse, NumericSink } from "./parser.js";
+import { OmpPerformanceLineReader } from "./performance-reader.js";
 import type { OmpMonitorAgentKind, OmpMonitorCoverage, OmpMonitorRoot } from "./types.js";
 
 export const MONITOR_LIMITS = {
@@ -49,6 +50,7 @@ export interface FileState extends FileReadCursor {
   kind: OmpMonitorAgentKind;
   parentPath: string | null;
   parser: OmpNumericParser;
+  performance: OmpPerformanceLineReader;
   order: number;
   identity: string;
   size: number;
@@ -130,6 +132,7 @@ export function newFileState(entry: DiscoveredFile, order: number): FileState {
     kind,
     parentPath: depth >= 3 ? `${path.dirname(entry.path)}.jsonl` : null,
     parser: new OmpNumericParser(id),
+    performance: new OmpPerformanceLineReader(-Infinity, "current"),
     order,
     identity: "",
     size: 0,

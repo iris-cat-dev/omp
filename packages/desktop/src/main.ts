@@ -107,6 +107,7 @@ import { getPetLibrary } from "./pets/library.js";
 import { tryRunPetCreationCli } from "./pets/creation-cli.js";
 import { OmpMonitorController } from "./monitor/controller.js";
 import { MONITOR_HTML } from "./monitor/html.js";
+import { MONITOR_PERF_CARD_HTML } from "./monitor/perf-card-html.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "omp-desktop";
@@ -784,8 +785,11 @@ async function bootstrap(): Promise<void> {
     const { hostname, pathname, search, hash } = new URL(request.url);
     const decodedPath = decodeURIComponent(pathname);
     if (hostname === "monitor") {
-      if (decodedPath !== "/local-monitor") return new Response("Not found", { status: 404 });
-      return new Response(MONITOR_HTML, {
+      let html: string;
+      if (decodedPath === "/local-monitor") html = MONITOR_HTML;
+      else if (decodedPath === "/local-perf-card") html = MONITOR_PERF_CARD_HTML;
+      else return new Response("Not found", { status: 404 });
+      return new Response(html, {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     }
@@ -837,7 +841,7 @@ async function bootstrap(): Promise<void> {
     },
   });
   ensureNotificationCenterRegistration();
-  registerDaemonManager();
+  registerDaemonManager({ prepareForAppUpdate: prepareDesktopToQuit });
   registerWindowManager();
   registerDialogHandlers();
   registerNotificationHandlers();
@@ -924,13 +928,22 @@ function showDaemonShutdownDialog(): void {
   }
 }
 
+async function prepareDesktopToQuit(): Promise<void> {
+  await monitorController?.dispose();
+  mainWindowsQuitting = true;
+  rendererLossRecoveryController.beginShutdown();
+  beginMainWindowShutdown();
+  backgroundModeController.markAppQuitting();
+  petController?.beginShutdown();
+}
+
 // The headless pet installer owns neither the GUI nor its managed daemon.
 if (!isPetCreationCli) {
   const quitLifecycle = createQuitLifecycle({
     app,
+    prepareToQuit: prepareDesktopToQuit,
     closeTransportSessions: closeAllTransportSessions,
     stopDesktopManagedDaemonIfNeeded: async () => {
-      await monitorController?.dispose();
       return stopDesktopManagedDaemonOnQuitIfNeeded({
         settingsStore: getDesktopSettingsStore(),
         isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
@@ -950,6 +963,9 @@ if (!isPetCreationCli) {
       });
     },
     createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
+    onPrepareError: (error) => {
+      log.error("[local monitor] quit cancelled because settings could not be saved", error);
+    },
     onStopError: (error) => {
       log.error("[desktop daemon] failed to stop managed daemon on quit", error);
     },
@@ -965,12 +981,6 @@ if (!isPetCreationCli) {
   app.on("before-quit", (event) => {
     // A failed-lock relaunch must not stop the primary GUI's daemon or updater.
     if (!ownsDesktopInstance) return;
-    mainWindowsQuitting = true;
-    rendererLossRecoveryController.beginShutdown();
-    beginMainWindowShutdown();
-    backgroundModeController.markAppQuitting();
-    petController?.beginShutdown();
-    void monitorController?.dispose();
     quitLifecycle.handleBeforeQuit(event);
   });
   registerExternalQuitSignals({ signals: process, quit: () => app.quit() });

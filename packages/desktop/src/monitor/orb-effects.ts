@@ -1,20 +1,19 @@
-// Adapted from zoefix/agent-speed v1.4.1 (MIT), frozen a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c.
-// Normative LED source: spec/prototypes/led-effects.html emitSpark/emitEmber/burst,
-// makeArc/drawArc, jag/shapeBolt/makeBolt/zap, particle stepping and ray/bolt rendering.
+// Adapted from zoefix/agent-speed v1.6.1 Windows (MIT), 384ce020cc655133e95aaad5cc085f3985f0ed99.
+// Presentation/Orb/Styles/{LedParticles,LedLightning,LedArcs} and the original led-effects.html noise/bolt geometry;
+// source colors and alphabetic digit cells follow native HeatPalette/OrbReadoutDraw, not DOM em-box guesses.
 // Other accents: Presentation/Orb/Styles/{NeedleSparks,ReactorLightning,LiquidParticles,LiquidModel}.cs; DESIGN §2a.
 // No demonstration timeline, automatic response timer or peak inference is included. All event entry points are explicit.
 export const ORB_EFFECTS_SCRIPT = String.raw`
-function createEffects(st,valueEl,canvas){
-  // Only LED uses the normative prototype's particle ramp; native styles use HeatPalette.Sample.
-  const particleHeat=h=>st.style==='led'?prototypeHeatRgb(h):heatRgb(h);
-  const parts=Array.from({length:512},()=>({x:0,y:0,vx:0,vy:0,life:0,age:99,size:0,heat:0,kind:'spark',drag:0,seed:0,streak:false,gravity:0}));
+function createEffects(st){
+  const particleHeat=heatRgb;
+  const parts=Array.from({length:640},()=>({x:0,y:0,vx:0,vy:0,life:0,age:99,size:0,heat:0,kind:'spark',drag:0,seed:0,streak:false,gravity:0}));
   const arcs=Array.from({length:8},()=>({a0:0,a1:0,r0:0,r1:0,life:0,age:99,regen:0,type:0,path:new Float32Array(20)}));
   const bolts=Array.from({length:16},()=>({x0:0,y0:0,x1:0,y1:0,len:0,nf:0,life:0,age:99,w:0,regen:0,main:new Float32Array(66),forks:[new Float32Array(34),new Float32Array(34)]}));
   const zaps=Array.from({length:16},()=>({x:0,y:0,r:0,age:99,life:0,power:0}));
   const scratchA=new Float32Array(66),scratchB=new Float32Array(66),lastZap=new Float64Array(24);lastZap.fill(-1);
   let arcT=0,sparkDebt=0,emberDebt=0,bubbleDebt=0,steamDebt=0;
   function spawn(x,y,vx,vy,life,size,h,kind,drag,streak=false,gravity=0){
-    const cap=st.style==='needle'?(st.fx===3?80:48):st.style==='reactor'?(st.fx===3?64:40):st.S<120?192:512;let count=0;
+    const cap=st.style==='needle'?(st.fx===3?80:48):st.style==='reactor'?(st.fx===3?64:40):640;let count=0;
     for(const p of parts)if(p.age<p.life)count++;
     if(count>=cap)return null;
     for(const p of parts)if(p.age>=p.life){p.x=x;p.y=y;p.vx=vx;p.vy=vy;p.life=life;p.age=0;p.size=size;p.heat=h;p.kind=kind;p.drag=drag;p.seed=Math.random()*100;p.streak=streak;p.gravity=gravity;return p;}
@@ -72,9 +71,8 @@ function createEffects(st,valueEl,canvas){
   }
   function zap(text,prev){
     if(st.style!=='led'||!st.moving||st.fx<2||st.embedded||st.value<.5||!prev)return;
-    const node=valueEl.firstChild;if(!node||node.nodeType!==Node.TEXT_NODE)return;
-    const rect=canvas.getBoundingClientRect(),cx=rect.left+rect.width/2,cy=rect.top+rect.height/2,range=document.createRange(),boxes=[];
-    for(let i=0;i<text.length;i++){range.setStart(node,i);range.setEnd(node,i+1);const r=range.getBoundingClientRect();boxes.push({x:r.left+r.width/2-cx,y:r.top+r.height/2-cy,w:r.width,h:r.height});}
+    const cells=st.readoutCells;if(!cells||!cells.length)return;
+    const size=st.readoutValueSize,boxes=cells.map(cell=>({x:cell.x,y:st.readoutValueY-.355*size,w:cell.width,h:1.193*size}));
     const same=text.length===prev.length;
     for(let i=0;i<text.length&&i<lastZap.length;i++){
       if(!/[0-9]/.test(text[i])||(same&&text[i]===prev[i])||st.time-lastZap[i]<.11)continue;
@@ -127,8 +125,8 @@ function createEffects(st,valueEl,canvas){
       if(st.fx>=2)for(let i=0;i<22;i++)bubble((Math.random()-.5)*.5*st.S,.40*st.S,true);
       return;
     }
-    if(st.fx<2||st.embedded)return;
-    const S=st.S,n=Math.round(220*(S<120?.5:1));
+    if(st.style!=='led'||st.fx<2||st.embedded)return;
+    const S=st.S,n=Math.round(160*(S<120?.5:1));
     for(let i=0;i<n;i++){
       const a=Math.random()*TAU,sp=(.5+Math.random()*1.3)*S;
       spawn(Math.cos(a)*.48*S,Math.sin(a)*.48*S,Math.cos(a)*sp,Math.sin(a)*sp,.7+Math.random()*.9,1.4+Math.random()*2.2,.9+Math.random()*.1,Math.random()<.3?'gold':'spark',2.4,true);
@@ -180,20 +178,13 @@ function createEffects(st,valueEl,canvas){
   function draw(ctx,foreground=false){
     const S=st.S,dark=st.dark,h=st.h;ctx.save();ctx.globalCompositeOperation=dark?'lighter':'source-over';ctx.lineJoin=ctx.lineCap='round';
     if(!foreground){
-    if(st.peakAge<1.3&&st.style!=='minimal'){
-      const k=st.peakAge/1.3,rot=st.peakAge*.4;
-      for(let i=0;i<24;i++){
-        const a=rot+i/24*TAU,r0=.5*S,r1=(.55+.19*ease(k*1.4))*S,g=ctx.createLinearGradient(Math.cos(a)*r0,Math.sin(a)*r0,Math.cos(a)*r1,Math.sin(a)*r1);
-        g.addColorStop(0,'rgba(255,217,89,0)');g.addColorStop(.3,'rgba(255,204,77,'+(.75*(1-k))+')');g.addColorStop(1,'rgba(255,179,51,0)');line(ctx,Math.cos(a)*r0,Math.sin(a)*r0,Math.cos(a)*r1,Math.sin(a)*r1,.014*S*(1-k*.5),g);
-      }
-    }
     const liquid=st.style==='liquid';
     if(liquid){ctx.beginPath();ctx.arc(0,0,.455*S,0,TAU);ctx.clip();}
     for(const p of parts)if(p.age<p.life){
       const life=1-p.age/p.life;
       let c=p.kind==='gold'||p.seed===-1?GOLD:dark?mix(particleHeat(p.heat),HOT,Math.min(1,(1-life)*.3+.4)):p.heat>.92?AMBER:darken(particleHeat(p.heat),.1);
       let alpha=Math.min(1,life*1.4)*(p.kind==='ember'?.8:1);
-      const readout=Math.hypot(p.x/(.30*S),(p.y-.07*S)/(.19*S));if(!st.embedded)alpha*=1-.65*Math.exp(-readout*readout*2);
+      const readout=Math.hypot(p.x/(.30*S),(p.y-(.07*S+st.readoutShift))/(.19*S));if(!st.embedded)alpha*=1-.65*Math.exp(-readout*readout*2);
       if(p.kind==='bubble'){
         const gold=p.seed===-1,x=p.x+.006*S*Math.sin(TAU*2.3*p.age+p.seed),hot=gold?1:smooth(.35,.9,h);
         if(hot>.01)radial(ctx,x,p.y,p.size*2,gold?heatRgb(1):labMix(heatRgb(h),HOT,.9),(dark?.95:.90)*hot*alpha);

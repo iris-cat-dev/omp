@@ -1,9 +1,11 @@
 import type { Rectangle } from "electron";
 import type { MonitorPosition } from "./window-preferences.js";
+import { MONITOR_PERF_CARD_METRICS } from "./perf-card-types.js";
 
 export interface MonitorDisplay {
   id: number | string;
   workArea: Rectangle;
+  bounds?: Rectangle;
 }
 export interface OrbNeighbour {
   bounds: Rectangle;
@@ -160,4 +162,65 @@ export function monitorNameplate(
       maxWidth = Math.min(maxWidth, 2 * ((distance * size) / (size + otherSize) - 3));
   }
   return { placement: belowFits ? "below" : "above", maxWidth: Math.max(0, Math.floor(maxWidth)) };
+}
+
+/** MonitorFromRect's largest-intersection policy, with nearest-rectangle fallback. */
+export function monitorPerfCardArea(
+  anchor: Rectangle,
+  displays: readonly MonitorDisplay[],
+): Rectangle {
+  let result: Rectangle | undefined;
+  let largest = -1;
+  let nearest = Infinity;
+  for (const display of displays) {
+    const area = display.workArea;
+    if (area.width <= 0 || area.height <= 0) continue;
+    const bounds = display.bounds ?? area;
+    const width = Math.max(
+      0,
+      Math.min(anchor.x + anchor.width, bounds.x + bounds.width) - Math.max(anchor.x, bounds.x),
+    );
+    const height = Math.max(
+      0,
+      Math.min(anchor.y + anchor.height, bounds.y + bounds.height) - Math.max(anchor.y, bounds.y),
+    );
+    const intersection = width * height;
+    const dx = Math.max(bounds.x - anchor.x - anchor.width, anchor.x - bounds.x - bounds.width, 0);
+    const dy = Math.max(
+      bounds.y - anchor.y - anchor.height,
+      anchor.y - bounds.y - bounds.height,
+      0,
+    );
+    const distance = dx * dx + dy * dy;
+    if (intersection > largest || (intersection === largest && distance < nearest)) {
+      result = area;
+      largest = intersection;
+      nearest = distance;
+    }
+  }
+  if (!result) throw new Error("No available monitor display");
+  return result;
+}
+
+/** Right-first placement using Agent Speed v1.6.1 metrics; screen DIP excludes shadow margins. */
+export function placeMonitorPerfCard(
+  anchor: Rectangle,
+  rowTop: number,
+  cardHeight: number,
+  visible: Rectangle,
+): { x: number; y: number; slideFrom: number; onLeft: boolean } {
+  const { width, gap, inset } = MONITOR_PERF_CARD_METRICS;
+  const roomLeft = anchor.x - visible.x - inset - gap;
+  const roomRight = visible.x + visible.width - inset - gap - anchor.x - anchor.width;
+  const left = roomRight < width && roomLeft >= width;
+  const x = left ? anchor.x - gap - width : anchor.x + anchor.width + gap;
+  return {
+    x: Math.max(visible.x + inset, Math.min(x, visible.x + visible.width - inset - width)),
+    y: Math.max(
+      visible.y + inset,
+      Math.min(rowTop, visible.y + visible.height - inset - Math.max(0, cardHeight)),
+    ),
+    slideFrom: left ? 2 : -2,
+    onLeft: left,
+  };
 }

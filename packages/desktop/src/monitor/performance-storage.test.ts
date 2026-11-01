@@ -74,6 +74,8 @@ describe("v1.6 numeric-only cache boundary", () => {
     { source: "other-app" },
     { model: "C:\\PRIVATE\\model" },
     { agentId: "/PRIVATE/path" },
+    { day: "2026-02-31" },
+    { day: "0000-01-01" },
     { n: -1 },
     { n: 0.5 },
     { toolLnSum: Infinity },
@@ -107,7 +109,7 @@ describe("v1.6 numeric-only cache boundary", () => {
     expect(store.reuse(freshlyRead[0]!.agentId!, freshlyRead)).toBe(freshlyRead);
   });
 
-  it("persists exactly the retained 30 local dates and does not publish an aborted save", async () => {
+  it("persists bounded available historical dates, excludes future dates, and does not publish an aborted save", async () => {
     const root = await directory(),
       dates = calendarDays(NOW),
       expired = new Date(dates[0]!.start),
@@ -117,8 +119,13 @@ describe("v1.6 numeric-only cache boundary", () => {
     const before = calendarDays(expired.getTime()).at(-1)!.date,
       after = calendarDays(future.getTime()).at(-1)!.date,
       store = storage(root),
-      retained = [record(dates[0]!.date), record(dates.at(-1)!.date)];
-    await store.save([record(before), ...retained, record(after)], NOW, () => true);
+      retained = [
+        record("2024-03-15"),
+        record(before),
+        record(dates[0]!.date),
+        record(dates.at(-1)!.date),
+      ];
+    await store.save([...retained, record(after)], NOW, () => true);
     const text = await readFile(path.join(root, PERFORMANCE_CACHE_NAME), "utf8");
     expect(JSON.parse(text).records).toEqual(retained);
     await store.save([{ ...record(), outputSum: 999 }], NOW, () => false);

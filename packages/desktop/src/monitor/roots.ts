@@ -1,4 +1,4 @@
-import { lstat, opendir } from "node:fs/promises";
+import { lstat, opendir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { safeLabel } from "./parser.js";
@@ -70,6 +70,49 @@ async function defaultSessionRoot(context: RootContext): Promise<string> {
   if (context.xdg && (await regularDirectory(context.xdg)))
     return path.join(context.xdg, "sessions");
   return path.join(context.config, "agent", "sessions");
+}
+
+/** The source card names only the default sessions root, not individual transcript paths. */
+export async function defaultOmpMonitorFolder(options: OmpRootOptions = {}): Promise<string> {
+  return defaultSessionRoot(rootContext(options));
+}
+
+function hasSourcePathControl(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Only an absolute local directory may become an explicit OMP source. */
+export function canonicalOmpSourcePath(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > 4_096 ||
+    hasSourcePathControl(value) ||
+    !path.isAbsolute(value) ||
+    (process.platform === "win32" && !/^[a-z]:[\\/]/i.test(value))
+  )
+    throw new Error("Invalid local OMP source folder");
+  return path.resolve(value);
+}
+
+/** A native picker does not grant permission to follow a symlink/junction or a replaced parent. */
+export async function selectedOmpSourceFolder(value: unknown): Promise<string> {
+  const selected = canonicalOmpSourcePath(value);
+  if (!(await regularDirectory(selected))) throw new Error("OMP source folder is unavailable");
+  const canonical = canonicalOmpSourcePath(await realpath(selected));
+  if (!(await regularDirectory(selected)) || !(await regularDirectory(canonical)))
+    throw new Error("OMP source folder was replaced");
+  if (
+    process.platform === "win32"
+      ? selected.toLowerCase() !== canonical.toLowerCase()
+      : selected !== canonical
+  )
+    throw new Error("OMP source folder is not a regular directory");
+  return canonical;
 }
 
 async function readProfileFolder(folder: string, profiles: ProfileDiscovery): Promise<void> {

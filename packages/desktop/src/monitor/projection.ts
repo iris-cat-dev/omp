@@ -1,4 +1,4 @@
-import { LIVE_WINDOW_MS, liveOverlapMs } from "./math.js";
+import { LIVE_WINDOW_MS, liveOverlapMs, throughputTotalTokens } from "./math.js";
 import type { EstimateInterval } from "./math.js";
 import type { NumericResponse } from "./parser.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
@@ -47,17 +47,6 @@ export function scopeFiles(files: Iterable<FileState>, scope: OmpMonitorScope): 
     ids.add(file.id);
   }
   return { all, selected, ids, byPath, projects };
-}
-
-function speedOf(responses: readonly NumericResponse[]): number | null {
-  let output = 0;
-  let duration = 0;
-  const count = responses.length;
-  for (let position = 0; position < count; position++) {
-    output += responses[position]!.outputTokens;
-    duration += responses[position]!.measuredDurationMs;
-  }
-  return duration > 0 ? Math.min(Number.MAX_SAFE_INTEGER, (output * 1_000) / duration) : null;
 }
 
 interface SpeedReferences {
@@ -178,6 +167,14 @@ function projectAgent(
       : parser.phase;
   const parent = file.parentPath ? files.byPath.get(normalizedPath(file.parentPath)) : undefined;
   const parentId = parent && files.ids.has(parent.id) && parent.id !== file.id ? parent.id : null;
+  let output = 0;
+  let total = 0;
+  let duration = 0;
+  for (const response of references) {
+    output += response.outputTokens;
+    total += throughputTotalTokens(response);
+    duration += response.measuredDurationMs;
+  }
   return {
     id: file.id,
     parentId,
@@ -188,12 +185,16 @@ function projectAgent(
     model: parser.model,
     phase,
     lastActivityAt: parser.lastActivityAt,
-    outputTps: speedOf(references),
+    outputTps: duration > 0 ? Math.min(Number.MAX_SAFE_INTEGER, (output * 1_000) / duration) : null,
+    totalTps: duration > 0 ? Math.min(Number.MAX_SAFE_INTEGER, (total * 1_000) / duration) : null,
     liveMeasuredTps: 0,
     liveEstimatedTps: 0,
+    liveMeasuredTotalTps: 0,
+    liveEstimatedTotalTps: 0,
     thinkingTps: null,
     liveCostUsdPerSecond: null,
     speedMode: parser.speedMode,
+    effortMode: parser.effortMode,
     ttftMs: parser.ttftMs,
   };
 }
@@ -207,7 +208,8 @@ function estimateInterval(
   if (
     agent.phase !== "generating" ||
     file.parser.inFlightStartMs === null ||
-    agent.outputTps === null
+    agent.outputTps === null ||
+    agent.totalTps === null
   )
     return null;
   const start = Math.max(
@@ -215,7 +217,7 @@ function estimateInterval(
     latestEnd.get(file.id) ?? file.parser.inFlightStartMs,
   );
   if (start > now) return null;
-  return { agentId: file.id, start, end: now, speed: agent.outputTps };
+  return { agentId: file.id, start, end: now, speed: agent.outputTps, totalSpeed: agent.totalTps };
 }
 
 function visibleAgents(agents: Map<string, OmpMonitorAgent>, now: number): Set<string> {
@@ -334,6 +336,7 @@ export function projectActivity(
       estimates.push(estimate);
       const seconds = liveOverlapMs(estimate.start, estimate.end, now) / 1_000;
       agent.liveEstimatedTps = (estimate.speed * seconds) / (LIVE_WINDOW_MS / 1_000);
+      agent.liveEstimatedTotalTps = (estimate.totalSpeed * seconds) / (LIVE_WINDOW_MS / 1_000);
       if (seconds > 0 && thinkingSpeed !== null)
         agent.thinkingTps = (thinkingSpeed * seconds) / (LIVE_WINDOW_MS / 1_000);
       if (seconds > 0 && estimateCost) {
@@ -346,6 +349,8 @@ export function projectActivity(
   for (const agent of byId.values()) {
     agent.liveMeasuredTps = Math.min(Number.MAX_SAFE_INTEGER, agent.liveMeasuredTps);
     agent.liveEstimatedTps = Math.min(Number.MAX_SAFE_INTEGER, agent.liveEstimatedTps);
+    agent.liveMeasuredTotalTps = Math.min(Number.MAX_SAFE_INTEGER, agent.liveMeasuredTotalTps);
+    agent.liveEstimatedTotalTps = Math.min(Number.MAX_SAFE_INTEGER, agent.liveEstimatedTotalTps);
     if (agent.thinkingTps !== null)
       agent.thinkingTps = Math.min(Number.MAX_SAFE_INTEGER, agent.thinkingTps);
   }
@@ -373,6 +378,8 @@ function applyMeasuredActivity(
       liveOverlapMs(response.startMs, response.endMs, now) / response.measuredDurationMs;
     if (fraction <= 0) continue;
     agent.liveMeasuredTps += (response.outputTokens * fraction) / (LIVE_WINDOW_MS / 1_000);
+    agent.liveMeasuredTotalTps +=
+      (throughputTotalTokens(response) * fraction) / (LIVE_WINDOW_MS / 1_000);
     if (response.reasoningKnownRequests > 0)
       agent.thinkingTps =
         (agent.thinkingTps ?? 0) +
