@@ -1,4 +1,4 @@
-import type { OmpMonitorSnapshot, OmpMonitorUsage } from "./types.js";
+import type { OmpMonitorModeBreakdown, OmpMonitorSnapshot, OmpMonitorUsage } from "./types.js";
 import type { OmpMonitorExportRange } from "./view-types.js";
 
 type CsvValue = string | number | boolean | null | undefined;
@@ -51,11 +51,40 @@ const COLUMNS = [
   "range_end",
   "notes",
 ] as const;
+const MODE_COLUMNS = [
+  "date",
+  "source",
+  "model",
+  "kind",
+  "mode",
+  "evidence",
+  "provider",
+  "requests",
+  "output_tokens",
+  "measured_output_tokens",
+  "measured_ms",
+  "avg_speed_tok_s",
+] as const;
+const MODE_COUNTS = [
+  "requests",
+  "outputTokens",
+  "measuredOutputTokens",
+  "measuredDurationMs",
+] as const;
+const MODE_SORT_FIELDS = [
+  "date",
+  "model",
+  "source",
+  "kind",
+  "value",
+  "evidence",
+  "provider",
+] as const;
 
 type CsvColumn = (typeof COLUMNS)[number];
 type CsvRow = Partial<Record<CsvColumn, CsvValue>>;
 
-function csvCell(value: CsvValue): string {
+function csvCell(value: CsvValue, quoteAll = true): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
   let text = String(value);
@@ -65,7 +94,7 @@ function csvCell(value: CsvValue): string {
   const prefix = text.charCodeAt(0);
   if (/[=+\-@]/u.test(text[first] ?? "") || prefix === 9 || prefix === 10 || prefix === 13)
     text = `'${text}`;
-  return `"${text.replace(/"/g, '""')}"`;
+  return quoteAll || /[",\r\n]/u.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 /** Export numeric current-log facts with scope and pricing provenance, never raw transcripts. */
@@ -172,8 +201,72 @@ export function buildMonitorCsv(
   return encodeRows(rows);
 }
 
+/** Native ExecutionModeCsv detail: daily model/evidence/provider rows, not the on-screen value-only buckets. */
+export function buildMonitorModeCsv(
+  snapshot: OmpMonitorSnapshot,
+  range: OmpMonitorExportRange & { kind: "effort" | "speed" },
+): string {
+  const groups = new Map<string, OmpMonitorModeBreakdown>();
+  for (const row of snapshot.breakdowns.modes) {
+    if (row.kind !== range.kind || row.date < range.startDate || row.date > range.endDate) continue;
+    const key = JSON.stringify([
+      row.date,
+      row.model,
+      row.source,
+      row.kind,
+      row.value,
+      row.evidence,
+      row.provider,
+    ]);
+    const previous = groups.get(key);
+    if (!previous) {
+      groups.set(key, { ...row });
+      continue;
+    }
+    for (const field of MODE_COUNTS)
+      previous[field] = Math.max(
+        0,
+        Math.min(Number.MAX_SAFE_INTEGER, previous[field] + row[field]),
+      );
+  }
+  const rows = [...groups.values()].sort(compareModeCsvRows);
+  const lines = [MODE_COLUMNS.join(",")];
+  for (const row of rows) {
+    const average =
+      row.measuredDurationMs > 0
+        ? ((row.measuredOutputTokens * 1_000) / row.measuredDurationMs).toFixed(1)
+        : null;
+    const values: CsvValue[] = [
+      row.date,
+      row.source,
+      row.model,
+      row.kind,
+      row.value ?? "unknown",
+      row.evidence ?? "unknown",
+      row.provider,
+      row.requests,
+      row.outputTokens,
+      row.measuredOutputTokens,
+      row.measuredDurationMs,
+      average,
+    ];
+    lines.push(values.map((value) => csvCell(value, false)).join(","));
+  }
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function compareModeCsvRows(left: OmpMonitorModeBreakdown, right: OmpMonitorModeBreakdown): number {
+  for (const field of MODE_SORT_FIELDS) {
+    const unknown = field === "value" || field === "evidence" ? "unknown" : "";
+    const a = left[field] ?? unknown;
+    const b = right[field] ?? unknown;
+    if (a !== b) return a < b ? -1 : 1;
+  }
+  return 0;
+}
+
 function encodeRows(rows: readonly CsvRow[]): string {
-  const lines = [COLUMNS.map(csvCell).join(",")];
+  const lines = [COLUMNS.map((column) => csvCell(column)).join(",")];
   for (const row of rows) lines.push(COLUMNS.map((column) => csvCell(row[column])).join(","));
   return `${lines.join("\r\n")}\r\n`;
 }

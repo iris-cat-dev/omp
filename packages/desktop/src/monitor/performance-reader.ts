@@ -29,7 +29,7 @@ interface ResultEvent {
   atMs: number;
   failed: boolean;
 }
-type PerformanceEvent = AssistantEvent | ResultEvent;
+type PerformanceEvent = (AssistantEvent | ResultEvent) & { position?: number };
 type Completion = { key: string } | { action: MonitorPerformanceAction };
 export interface OmpPerformanceFacts {
   responses: MonitorPerformanceResponse[];
@@ -148,10 +148,19 @@ export class OmpPerformanceLineReader {
   private readonly callKeys = new Set<string>();
   private initialModel: string | null = null;
   private eventBytes = 0;
-  constructor(private floorMs = -Infinity) {}
+  private readonly responsePositions: Map<string, number> | null;
+  private position = 0;
+  private needsSort = false;
+  constructor(
+    private floorMs = -Infinity,
+    private readonly mode: "history" | "current" = "history",
+  ) {
+    this.responsePositions = mode === "current" ? new Map() : null;
+  }
   get retainedBytes(): number {
     return (
       this.eventBytes +
+      (this.responsePositions?.size ?? 0) * 48 +
       this.responses.size * 256 +
       this.requests.size * 96 +
       this.callKeys.size * 40
@@ -160,19 +169,7 @@ export class OmpPerformanceLineReader {
   advanceFloor(floorMs: number): void {
     this.floorMs = floorMs;
     const threshold = floorMs - RETENTION_HEADROOM_MS;
-    let cut = 0;
-    for (const event of this.events) {
-      if (event.kind === "assistant") {
-        if (
-          event.atMs >= threshold ||
-          (this.responses.get(event.key)?.endMs ?? -Infinity) >= threshold
-        )
-          break;
-        if (event.hasUsage) this.initialModel = event.model;
-      } else if (event.atMs >= threshold) break;
-      cut++;
-    }
-    if (cut) this.events.splice(0, cut);
+    this.pruneEvents(threshold);
     const retainedKeys = new Set<string>();
     this.callKeys.clear();
     for (const event of this.events) {
@@ -186,12 +183,35 @@ export class OmpPerformanceLineReader {
       if (this.responses.has(key) || retainedKeys.has(key)) continue;
       this.requests.delete(key);
       this.firstMeasured.delete(key);
+      this.responsePositions?.delete(key);
     }
     this.eventBytes = this.events.reduce(
       (sum, event) => sum + (event.kind === "assistant" ? 160 + event.calls.length * 80 : 96),
       0,
     );
     this.revision++;
+  }
+  private pruneEvents(threshold: number): void {
+    this.sortEvents();
+    let cut = 0,
+      kept = 0;
+    for (const event of this.events) {
+      const retained =
+        event.atMs >= threshold ||
+        (event.kind === "assistant" &&
+          (this.responses.get(event.key)?.endMs ?? -Infinity) >= threshold);
+      if (retained) {
+        if (this.mode === "history") break;
+        this.events[kept++] = event;
+      } else {
+        if (event.kind === "assistant" && event.hasUsage) this.initialModel = event.model;
+        cut++;
+      }
+    }
+    if (cut) {
+      if (this.mode === "current") this.events.length = kept;
+      else this.events.splice(0, cut);
+    }
   }
   read(raw: string): void {
     if (this.saturated) return;
@@ -203,6 +223,13 @@ export class OmpPerformanceLineReader {
       if (raw.trim()) this.markGap();
       return;
     }
+    this.apply(entry);
+  }
+  /** The numeric collector supplies already-decoded complete rows and their absolute byte order. */
+  apply(value: unknown, position = 0): void {
+    if (this.saturated) return;
+    const entry = object(value);
+    this.position = position;
     if (!entry || entry.type === "title") return;
     const atMs = timestamp(entry.timestamp);
     if (entry.type === "session") {
@@ -238,7 +265,8 @@ export class OmpPerformanceLineReader {
     if (message.role === "assistant") this.assistant(entryId, message, atMs);
     else if (
       message.role === "toolResult" &&
-      (this.events.length > 0 || atMs >= this.floorMs - RETENTION_HEADROOM_MS)
+      ((this.mode === "history" && this.events.length > 0) ||
+        atMs >= this.floorMs - RETENTION_HEADROOM_MS)
     ) {
       const id = opaque(message.toolCallId);
       if (id !== null) this.push({ kind: "result", id, atMs, failed: message.isError === true });
@@ -257,7 +285,7 @@ export class OmpPerformanceLineReader {
       key = hashId(`omp:${id}:${started ?? atMs}`),
       response = responseFact(key, message, usage, atMs);
     if (
-      this.events.length === 0 &&
+      (this.mode === "current" || this.events.length === 0) &&
       atMs < this.floorMs - RETENTION_HEADROOM_MS &&
       (response?.endMs ?? -Infinity) < this.floorMs - RETENTION_HEADROOM_MS
     ) {
@@ -270,21 +298,7 @@ export class OmpPerformanceLineReader {
     }
     const calls = toolCalls(message);
     if (!this.acceptCalls(calls)) return;
-    let first = false;
-    if (response) {
-      this.requests.add(key);
-      if (measured(response) && !this.firstMeasured.has(key)) {
-        first = true;
-        this.firstMeasured.add(key);
-      }
-      if (response.endMs < this.floorMs - RETENTION_HEADROOM_MS) {
-        this.responses.delete(key);
-        this.revision++;
-      } else if (!sameResponse(this.responses.get(key), response)) {
-        this.responses.set(key, response);
-        this.revision++;
-      }
-    }
+    const first = response !== null && this.recordResponse(response);
     this.push({
       kind: "assistant",
       key,
@@ -294,6 +308,24 @@ export class OmpPerformanceLineReader {
       measured: first,
       calls,
     });
+  }
+  private recordResponse(response: MonitorPerformanceResponse): boolean {
+    const key = response.key;
+    if (this.responsePositions) {
+      if (this.position < (this.responsePositions.get(key) ?? -Infinity)) return false;
+      this.responsePositions.set(key, this.position);
+    }
+    this.requests.add(key);
+    const first = measured(response) && !this.firstMeasured.has(key);
+    if (first) this.firstMeasured.add(key);
+    if (response.endMs < this.floorMs - RETENTION_HEADROOM_MS) {
+      this.responses.delete(key);
+      this.revision++;
+    } else if (!sameResponse(this.responses.get(key), response)) {
+      this.responses.set(key, response);
+      this.revision++;
+    }
+    return first;
   }
   private acceptCalls(calls: string[]): boolean {
     for (const id of calls) {
@@ -319,6 +351,10 @@ export class OmpPerformanceLineReader {
     const key = hashId(`omp:${entry.id as string}:${atMs}`),
       response = responseFact(key, entry, usage, atMs);
     if (!response) return;
+    if (this.responsePositions) {
+      if (this.position < (this.responsePositions.get(key) ?? -Infinity)) return;
+      this.responsePositions.set(key, this.position);
+    }
     if (!this.requests.has(key) && this.requests.size >= PERFORMANCE_READER_LIMITS.maxRequestKeys) {
       this.saturated = this.limited = true;
       return;
@@ -342,9 +378,18 @@ export class OmpPerformanceLineReader {
       this.saturated = this.limited = true;
       return;
     }
+    if (this.mode === "current") {
+      event.position = this.position;
+      this.needsSort ||= this.position < (this.events.at(-1)?.position ?? -Infinity);
+    }
     this.events.push(event);
     this.eventBytes += bytes;
     this.revision++;
+  }
+  private sortEvents(): void {
+    if (!this.needsSort) return;
+    this.events.sort((a, b) => a.position! - b.position!);
+    this.needsSort = false;
   }
   markGap(): void {
     this.limited = true;
@@ -352,6 +397,7 @@ export class OmpPerformanceLineReader {
     this.revision++;
   }
   facts(owns: (key: string) => boolean): OmpPerformanceFacts {
+    this.sortEvents();
     const responses: MonitorPerformanceResponse[] = [];
     for (const [key, response] of this.responses) if (owns(key)) responses.push(response);
     const calls = new Map<string, MonitorPerformanceAction>(),
@@ -404,6 +450,9 @@ export class OmpPerformanceLineReader {
     this.requests.clear();
     this.firstMeasured.clear();
     this.callKeys.clear();
+    this.responsePositions?.clear();
+    this.needsSort = false;
+    this.position = 0;
     this.events.length = this.eventBytes = 0;
     this.initialModel = null;
     this.headerSeen = false;

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     },
   },
   runExternalCliJsonCommand: vi.fn(),
+  prepareForAppUpdate: vi.fn(),
   runExternalCliTextCommand: vi.fn(),
   createNodeEntrypointInvocation: vi.fn(() => ({
     command: "node",
@@ -118,6 +119,7 @@ function scheduleFailedStartup(child: MockChildProcess): void {
 describe("daemon-manager commands", () => {
   beforeEach(() => {
     mocks.settings = DEFAULT_DESKTOP_SETTINGS;
+    mocks.prepareForAppUpdate.mockReset().mockResolvedValue(undefined);
     mocks.runExternalCliJsonCommand.mockReset();
     mocks.runExternalCliTextCommand.mockReset();
     mocks.createNodeEntrypointInvocation.mockReset();
@@ -142,7 +144,9 @@ describe("daemon-manager commands", () => {
 
   it("refuses start and restart while built-in daemon management is disabled", async () => {
     mocks.settings = desktopSettingsWithManagement(false);
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.start_desktop_daemon()).rejects.toThrow(
       "Built-in daemon management is disabled.",
@@ -161,7 +165,9 @@ describe("daemon-manager commands", () => {
       localDaemon: "stopped",
       serverId: "",
     });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.stop_desktop_daemon()).resolves.toEqual({
       serverId: "",
@@ -193,7 +199,9 @@ describe("daemon-manager commands", () => {
         localDaemon: "stopped",
         serverId: "",
       });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.stop_desktop_daemon()).resolves.toEqual({
       serverId: "",
@@ -272,7 +280,9 @@ describe("daemon-manager commands", () => {
         connectedDaemon: "unreachable",
         serverId: "",
       });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.stop_desktop_daemon()).resolves.toEqual({
       serverId: "",
@@ -313,7 +323,9 @@ describe("daemon-manager commands", () => {
         localDaemon: "stopped",
         serverId: "",
       });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await handlers.stop_desktop_daemon({ reason: "host_remove" });
 
@@ -345,7 +357,9 @@ describe("daemon-manager commands", () => {
         desktopManaged: true,
         desktopDistributionIdentity: identity,
       });
-      const handlers = createDaemonCommandHandlers();
+      const handlers = createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      });
 
       await expect(handlers.start_desktop_daemon()).rejects.toBeInstanceOf(Error);
       expect(mocks.spawnProcess).not.toHaveBeenCalled();
@@ -368,7 +382,9 @@ describe("daemon-manager commands", () => {
         desktopManaged: true,
         desktopDistributionIdentity: identity,
       });
-      const handlers = createDaemonCommandHandlers();
+      const handlers = createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      });
 
       await expect(handlers.start_desktop_daemon()).rejects.toBeInstanceOf(Error);
       expect(mocks.spawnProcess).not.toHaveBeenCalled();
@@ -429,7 +445,9 @@ describe("daemon-manager commands", () => {
       desktopManaged: true,
       desktopDistributionIdentity: "public",
     });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.start_desktop_daemon()).resolves.toEqual({
       serverId: "server-1",
@@ -469,7 +487,9 @@ describe("daemon-manager commands", () => {
         desktopManaged: true,
         desktopDistributionIdentity: `private-three-plugins:${"a".repeat(64)}`,
       });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.start_desktop_daemon()).rejects.toBeInstanceOf(Error);
     expect(mocks.spawnProcess).not.toHaveBeenCalled();
@@ -519,7 +539,9 @@ describe("daemon-manager commands", () => {
         desktopDistributionIdentity: "public",
       });
     mocks.spawnProcess.mockReturnValue(createMockChildProcess());
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     await expect(handlers.start_desktop_daemon()).resolves.toEqual({
       serverId: "server-2",
@@ -563,7 +585,9 @@ describe("daemon-manager commands", () => {
       scheduleFailedStartup(child);
       return child;
     });
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     let thrown: Error | null = null;
     try {
@@ -613,9 +637,11 @@ describe("daemon-manager commands", () => {
       return child;
     });
 
-    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
-      "Daemon failed to start: exit code 1",
-    );
+    await expect(
+      createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      }).start_desktop_daemon(),
+    ).rejects.toThrow("Daemon failed to start: exit code 1");
 
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["--reclaim-stale-pid-lock"] }),
@@ -630,9 +656,11 @@ describe("daemon-manager commands", () => {
       return child;
     });
 
-    await expect(createDaemonCommandHandlers().start_desktop_daemon()).rejects.toThrow(
-      "Daemon failed to start: exit code 1",
-    );
+    await expect(
+      createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      }).start_desktop_daemon(),
+    ).rejects.toThrow("Daemon failed to start: exit code 1");
 
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ args: [] }),
@@ -644,7 +672,9 @@ describe("daemon-manager commands", () => {
       mocks.appLogPath,
       Array.from({ length: 105 }, (_value, index) => `main log line ${index + 1}`).join("\n"),
     );
-    const handlers = createDaemonCommandHandlers();
+    const handlers = createDaemonCommandHandlers({
+      prepareForAppUpdate: mocks.prepareForAppUpdate,
+    });
 
     expect(handlers.desktop_app_logs()).toEqual({
       logPath: mocks.appLogPath,

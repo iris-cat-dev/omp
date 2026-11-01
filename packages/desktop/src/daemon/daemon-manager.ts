@@ -587,7 +587,11 @@ async function resolveRequestedReleaseChannel(
 // IPC registration
 // ---------------------------------------------------------------------------
 
-export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
+export function createDaemonCommandHandlers({
+  prepareForAppUpdate,
+}: {
+  prepareForAppUpdate: () => Promise<void>;
+}): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({
       settingsStore: getDesktopSettingsStore(),
@@ -653,8 +657,9 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
         require("../features/auto-updater.js") as typeof AppUpdater;
       return downloadAndInstallUpdate(
         { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
-        async () => {
-          await stopDesktopDaemon("app_update");
+        {
+          prepareToQuit: prepareForAppUpdate,
+          stopDaemon: () => stopDesktopDaemon("app_update"),
         },
       );
     },
@@ -674,8 +679,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
   };
 }
 
-export function registerDaemonManager(): void {
-  const handlers = createDaemonCommandHandlers();
+export function registerDaemonManager(deps: { prepareForAppUpdate: () => Promise<void> }): void {
+  const handlers = createDaemonCommandHandlers(deps);
   const attachmentReferences = new ManagedAttachmentReferenceRegistry();
   let attachmentGarbageCollectionTail: Promise<void> = Promise.resolve();
   const handleWallpaperCommand = createWallpaperCommandHandler({

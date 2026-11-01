@@ -3,8 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MONITOR_BOARD_MODEL_SCRIPT } from "./board-model.js";
 import { MONITOR_BOARD_MARKUP } from "./board-ui.js";
 import { MONITOR_BOARD_RENDERER_SCRIPT } from "./board-renderer.js";
-import { MONITOR_PERF_SCRIPT } from "./performance-ui.js";
-import { DEFAULT_BOARD_PREFERENCES } from "./board-types.js";
+import { MONITOR_BOARD_EFFECTS_SCRIPT } from "./board-renderer-effects.js";
+import { MONITOR_PERF_MARKUP, MONITOR_PERF_SCRIPT } from "./performance-ui.js";
+import { MONITOR_TITLE_THEMES_SCRIPT } from "./title-themes-ui.js";
+import type { OmpTitleThemesState } from "./title-themes.js";
+import { MONITOR_VISUALS_SCRIPT } from "./visuals.js";
+import type { MonitorPerformanceEvaluation } from "./performance-types.js";
+import {
+  DEFAULT_BOARD_PREFERENCES,
+  type OmpMonitorBoardPreferences,
+  type OmpMonitorBoardSize,
+  type OmpMonitorBoardStyle,
+} from "./board-types.js";
 
 interface RankGroup {
   id: string;
@@ -17,13 +27,25 @@ interface RankEvent {
   from: number;
   to: number;
 }
+interface ModeFact {
+  value: string;
+  evidence: "selected" | "recorded" | "configured";
+  provider: string | null;
+}
 interface Agent {
   id: string;
+  project?: string;
+  name?: string;
+  model?: string;
   parentId: string | null;
   lastActivityAt: number;
   phase: "idle" | "tools" | "generating";
   liveMeasuredTps: number;
   liveEstimatedTps: number;
+  liveMeasuredTotalTps?: number;
+  liveEstimatedTotalTps?: number;
+  effortMode?: ModeFact | null;
+  speedMode?: ModeFact | null;
   thinkingTps: number | null;
   liveCostUsdPerSecond: number | null;
   outputTps?: number;
@@ -54,6 +76,39 @@ interface Aggregate {
   lastActiveMs: number;
   score: Score;
 }
+interface BoardGroup extends Aggregate {
+  id: string;
+  root: Agent;
+  members: Agent[];
+  subs: Agent[];
+}
+type Readouts = Pick<OmpMonitorBoardPreferences, "showPerformance" | "showThinking" | "showCost">;
+interface BoardGeometry {
+  side: number;
+  pad: number;
+  heroTop: number;
+  hero: number;
+  listTop: number;
+  listBottom: number;
+  startY: number;
+  room: number;
+  groupHeight: number;
+  subHeight: number;
+  moreHeight: number;
+  footerTop: number;
+  footerHeight: number;
+}
+interface BoardEntry {
+  key: string;
+  kind: "group" | "sub" | "more";
+  group: BoardGroup;
+  agent?: Agent;
+  y: number;
+  height: number;
+  rest?: number;
+  live?: number;
+  allGroups?: boolean;
+}
 interface BoardModel {
   createRanking(): {
     tick(
@@ -63,11 +118,29 @@ interface BoardModel {
     ): { groups: RankGroup[]; events: RankEvent[] };
     reset(): void;
   };
+  metrics(
+    style: OmpMonitorBoardStyle,
+    size: OmpMonitorBoardSize,
+    readouts: Readouts,
+  ): BoardGeometry;
+  layout(
+    groups: BoardGroup[],
+    style: OmpMonitorBoardStyle,
+    size: OmpMonitorBoardSize,
+    readouts: Readouts,
+    expanded: string | null,
+    metric?: "output" | "total",
+  ): { rows: BoardEntry[]; height: number };
   groups(
     agents: Agent[],
     values: Record<string, PerformanceValue> | null,
-  ): Array<Aggregate & { id: string; root: Agent; members: Agent[]; subs: Agent[] }>;
-  aggregate(agents: Agent[], values: Record<string, PerformanceValue> | null): Aggregate;
+    metric?: "output" | "total",
+  ): BoardGroup[];
+  aggregate(
+    agents: Agent[],
+    values: Record<string, PerformanceValue> | null,
+    metric?: "output" | "total",
+  ): Aggregate;
   score(agents: Agent[], values: Record<string, PerformanceValue> | null): Score;
   formatSpeed(value: number | null): string;
   rateNumber(value: number | null, digits: number): string;
@@ -715,6 +788,10 @@ function agent(id: string, patch: Partial<Agent> = {}): Agent {
     phase: "generating",
     liveMeasuredTps: 0,
     liveEstimatedTps: 0,
+    liveMeasuredTotalTps: 0,
+    liveEstimatedTotalTps: 0,
+    effortMode: null,
+    speedMode: null,
     thinkingTps: null,
     liveCostUsdPerSecond: null,
     ...patch,
@@ -724,8 +801,35 @@ function perf(
   shown: number | null,
   form: PerformanceValue["form"] = "live",
   n = 10,
-): PerformanceValue {
-  return { form, score: shown, shown, provisional: shown !== null && n < 10, n };
+): MonitorPerformanceEvaluation {
+  return {
+    form,
+    score: shown,
+    shown,
+    provisional: shown !== null && n < 10,
+    n,
+    tools: 0,
+    activeMs: n * 1000,
+    spanStartMs: 0,
+    model: null,
+    components:
+      shown === null
+        ? []
+        : [
+            {
+              id: "T",
+              present: true,
+              reason: null,
+              samples: n,
+              measure: shown * 0.05,
+              ratio: shown / 1000,
+              subScore: shown,
+            },
+          ],
+    baseline: null,
+    vsUsual: null,
+    vsUsualPercent: null,
+  };
 }
 describe("Agent Speed original board ranking", () => {
   for (const fixture of originalCases)
@@ -942,27 +1046,207 @@ describe("board facts from own OMP agent windows", () => {
     ).toEqual(["–", "0.00", "0.000088", "0.10", "12.35", "1,000.00"]);
   });
 });
+describe("native Windows board layout invariants", () => {
+  const styles: OmpMonitorBoardStyle[] = ["glass", "timing", "neon"];
+  const sizes: OmpMonitorBoardSize[] = ["small", "medium", "large"];
+  const all: Readouts = { showPerformance: true, showThinking: true, showCost: true };
+  const none: Readouts = { showPerformance: false, showThinking: false, showCost: false };
+  function groups(count: number, children = 0): BoardGroup[] {
+    const agents: Agent[] = [];
+    for (let index = 0; index < count; index++) {
+      const id = "root-" + index;
+      agents.push(agent(id, { liveMeasuredTps: 20 }));
+      for (let sub = 0; sub < children; sub++)
+        agents.push(agent(id + "-" + sub, { parentId: id, liveMeasuredTps: children - sub }));
+    }
+    return model.groups(agents, null);
+  }
+  // BoardMetrics.For, DESIGN 2c hero/ranking table; independent of DOM rounding and desktop scale.
+  it.each([
+    ["glass", "small", 12, 78, 104, 38, 14, 124, 32],
+    ["glass", "medium", 14, 86, 116, 38, 14, 172, 38],
+    ["glass", "large", 16, 94, 128, 38, 14, 240, 40],
+    ["timing", "small", 14, 72, 109, 32, 16, 123, 30],
+    ["timing", "medium", 16, 80, 121, 32, 16, 171, 38],
+    ["timing", "large", 18, 88, 131, 32, 16, 241, 40],
+    ["neon", "small", 12, 92, 108, 36, 14, 122, 32],
+    ["neon", "medium", 14, 100, 118, 36, 14, 172, 38],
+    ["neon", "large", 16, 108, 128, 36, 14, 242, 40],
+  ] as const)(
+    "keeps %s/%s canonical bands and whole-row room",
+    (style, size, heroTop, hero, listTop, listBottom, startY, room, groupHeight) => {
+      expect(model.metrics(style, size, all)).toMatchObject({
+        heroTop,
+        hero,
+        listTop,
+        listBottom,
+        startY,
+        room,
+        groupHeight,
+      });
+    },
+  );
+  it("restores the original hero when every readout is off, retaining M/L second lines", () => {
+    expect(sizes.map((size) => model.metrics("timing", size, none).hero)).toEqual([70, 78, 86]);
+    expect(sizes.map((size) => model.metrics("neon", size, none).hero)).toEqual([82, 92, 100]);
+    expect(styles.map((style) => model.metrics(style, "medium", none).groupHeight)).toEqual([
+      38, 38, 38,
+    ]);
+    for (const style of styles)
+      for (const size of sizes) {
+        const withoutPerformance = model.metrics(style, size, { ...all, showPerformance: false });
+        expect(withoutPerformance.listTop).toBe(model.metrics(style, size, all).listTop);
+        expect(withoutPerformance.startY).toBe(style === "timing" ? 0 : 6);
+      }
+  });
+  it.each(styles.flatMap((style) => sizes.map((size) => [style, size] as const)))(
+    "never clips a %s/%s row, scrolls past capacity or lets sub rows displace groups for any switch combination",
+    (style, size) => {
+      for (let mask = 0; mask < 8; mask++) {
+        const readouts = {
+          showPerformance: !!(mask & 1),
+          showThinking: !!(mask & 2),
+          showCost: !!(mask & 4),
+        };
+        const geometry = model.metrics(style, size, readouts);
+        for (let count = 0; count <= 12; count++) {
+          const rootsOnly = model.layout(groups(count), style, size, readouts, null);
+          const ranked = groups(count, 10);
+          for (const expanded of [null, "root-0", "root-2", "outside-scope"]) {
+            const plan = model.layout(ranked, style, size, readouts, expanded);
+            expect(plan.rows.filter((row) => row.kind === "group")).toHaveLength(
+              rootsOnly.rows.filter((row) => row.kind === "group").length,
+            );
+            let y = geometry.startY;
+            for (const row of plan.rows) {
+              expect(row.y).toBe(y);
+              y += row.height;
+              expect(y).toBeLessThanOrEqual(geometry.startY + geometry.room);
+            }
+            expect(plan.height).toBe(y);
+            const rest = plan.rows.find((row) => row.allGroups);
+            const shown = plan.rows.filter((row) => row.kind === "group").length;
+            if (rest) {
+              expect(rest.rest).toBe(count - shown);
+              expect(rest.live).toBe(
+                ranked.slice(shown).reduce((sum, group) => sum + group.live, 0),
+              );
+            }
+          }
+        }
+      }
+    },
+  );
+  it("keeps the native team capacities including the timing L child and summary", () => {
+    for (const style of styles) {
+      expect(
+        model.layout(groups(5, 4), style, "small", all, null).rows.map((row) => row.kind),
+      ).toEqual(["group", "group", "group", "more"]);
+      expect(
+        model.layout(groups(5, 4), style, "medium", all, null).rows.map((row) => row.kind),
+      ).toEqual(["group", "group", "group", "group", "more"]);
+      const large = model.layout(groups(5, 4), style, "large", all, null).rows;
+      expect(large.filter((row) => row.kind === "group")).toHaveLength(5);
+      expect(large.filter((row) => row.kind === "sub")).toHaveLength(style === "timing" ? 1 : 0);
+      expect(large.filter((row) => row.kind === "more")).toHaveLength(style === "timing" ? 1 : 0);
+    }
+  });
+  it("includes a generating child before tokens arrive and expands S only inside its remaining room", () => {
+    const ranked = model.groups(
+      [
+        agent("root", { liveMeasuredTps: 20 }),
+        agent("starting", { parentId: "root", phase: "generating" }),
+        agent("idle", { parentId: "root", phase: "idle", lastActivityAt: 0 }),
+      ],
+      null,
+    );
+    expect(
+      model.layout(ranked, "glass", "medium", all, null).rows.find((row) => row.kind === "sub")
+        ?.agent?.id,
+    ).toBe("starting");
+    expect(
+      model.layout(ranked, "glass", "small", all, null).rows.some((row) => row.kind === "sub"),
+    ).toBe(false);
+    const expanded = model.layout(ranked, "glass", "small", all, "root");
+    expect(expanded.rows.filter((row) => row.kind === "sub").map((row) => row.agent?.id)).toEqual([
+      "starting",
+      "idle",
+    ]);
+    expect(expanded.height).toBeLessThanOrEqual(138);
+  });
+  it("uses the chosen metric for real group/sub rates and ranking without changing performance", () => {
+    const agents = [
+      agent("root", { liveMeasuredTps: 10, liveMeasuredTotalTps: 100 }),
+      agent("child", { parentId: "root", liveMeasuredTps: 5, liveMeasuredTotalTps: 20 }),
+      agent("grandchild", { parentId: "child", liveEstimatedTps: 1, liveEstimatedTotalTps: 60 }),
+      agent("other", { liveMeasuredTps: 30, liveMeasuredTotalTps: 40 }),
+    ];
+    const values = {
+      root: perf(1000),
+      child: perf(2000),
+      grandchild: perf(1200),
+      other: perf(1500),
+    };
+    const output = model.groups(agents, values, "output"),
+      total = model.groups(agents, values, "total");
+    expect(output[0]?.live).toBe(16);
+    expect(total[0]?.live).toBe(180);
+    expect(total[0]?.subs.map((sub) => sub.id)).toEqual(["grandchild", "child"]);
+    expect(total[0]?.score).toEqual(output[0]?.score);
+    const ranking = model.createRanking();
+    expect(ranking.tick(output, "output", 1).groups.map((group) => group.id)).toEqual([
+      "other",
+      "root",
+    ]);
+    expect(ranking.tick(total, "total", 1).groups.map((group) => group.id)).toEqual([
+      "root",
+      "other",
+    ]);
+    expect(model.aggregate(agents, values, "total").estimated).toBe(60);
+  });
+});
 
+interface BoardRowElement extends HTMLElement {
+  boardPerfFacts: string[];
+  boardTooltipFacts: string[];
+}
 interface BoardConsumer {
   paint(score: Score, instant?: boolean): void;
-  row(agents: Agent[], values: Record<string, PerformanceValue>): HTMLElement;
+  row(agents: Agent[], values: Record<string, PerformanceValue>): BoardRowElement;
+  capsule(agent: Agent, previous?: HTMLElement): HTMLElement;
+  rows(agents: Agent[]): HTMLElement[];
   words(score: Score): string;
   panel: HTMLElement;
+  title(value: number | null, id: string, source: OmpTitleThemesState): string;
 }
-function boardConsumer(style: "glass" | "timing" | "neon") {
-  document.body.innerHTML = MONITOR_BOARD_MARKUP;
+function boardConsumer(
+  style: OmpMonitorBoardStyle,
+  options: Partial<OmpMonitorBoardPreferences> & { appearance?: "dark" | "light" } = {},
+) {
+  document.body.innerHTML = MONITOR_BOARD_MARKUP + MONITOR_PERF_MARKUP;
   vi.stubGlobal("matchMedia", (media: string) => ({ media, matches: false }));
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.stubGlobal(
+    "Path2D",
+    class {
+      readonly data: string;
+      constructor(data: string) {
+        this.data = data;
+      }
+    },
+  );
   let now = 0;
   let serial = 0;
   const frames = new Map<number, FrameRequestCallback>();
   const code = `
-    let language='en',appearance='dark';
-    const view={surface:'board',preferences:{effects:'standard'},board:${JSON.stringify({ ...DEFAULT_BOARD_PREFERENCES, style, id: "board", orbId: "orb" })},orbs:[],snapshot:null};
+    let language='en',appearance=${JSON.stringify(options.appearance ?? "dark")};
+    const view={surface:'board',preferences:{effects:'standard',metric:'output',celebratePeaks:true,titleTheme:'vehicles',redline:2000},board:${JSON.stringify({ ...DEFAULT_BOARD_PREFERENCES, ...options, style, id: "board", orbId: "orb" })},orbs:[],snapshot:null,titleThemes:null};
     const node=id=>document.getElementById(id),snapshotFacts=()=>view.snapshot;
     const finite=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
     const timestamp=value=>String(value),number=(value,digits)=>value.toFixed(digits);
-    const agentSpeedVisuals={heat:()=>0,color:()=>''};
+    ${MONITOR_VISUALS_SCRIPT}
+    ${MONITOR_TITLE_THEMES_SCRIPT}
     const boardEffects={create:()=>({setVisible(){},destroy(){}})};
     ${MONITOR_PERF_SCRIPT}
     ${MONITOR_BOARD_MODEL_SCRIPT}
@@ -972,11 +1256,18 @@ function boardConsumer(style: "glass" | "timing" | "neon") {
       panel:boardState.panel,
       paint:boardPaintScore,
       words:boardScoreWords,
+      capsule:boardCapsule,
+      title(value,id,source){view.preferences.titleTheme=id;view.titleThemes=source;return boardTrackedTitle(value);},
+      rows(agents){
+        const values={};view.snapshot={agents,performance:{current:values,records:[],baselines:[],scanning:false,limited:false}};boardState.latest=view.snapshot;boardState.liveKnown=true;
+        boardRenderRows(boardModel.groups(agents,values),boardModel.aggregate(agents,values),[],true);
+        return [...boardState.panel.querySelectorAll('.item .row')];
+      },
       row(agents,values){
         view.snapshot={agents,performance:{current:values,records:[],baselines:[],scanning:false,limited:false}};
-        boardState.latest=view.snapshot;
+        boardState.latest=view.snapshot;boardState.liveKnown=true;
         const group=boardModel.groups(agents,values)[0],record=boardCreateRow('group',group.id);
-        boardPaintRow(record,{kind:'group',group},boardModel.aggregate(agents,values),1,null);
+        boardPaintRow(record,{kind:'group',group},boardModel.aggregate(agents,values),1,null,true);
         return record.row;
       }
     };
@@ -1018,6 +1309,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("board performance renderer consumer boundaries", () => {
+  it("renders a custom theme's idle and tracked labels and picks up edits without losing its tier", () => {
+    const page = boardConsumer("glass"),
+      id = "custom:00000000-0000-4000-8000-000000000052";
+    const titles: Array<string | null> = Array(13).fill(null);
+    titles[1] = "原版称号";
+    const source: OmpTitleThemesState = {
+      version: 1,
+      revision: 1,
+      custom: [{ id, name: "Owned theme", base: "vehicles", idle: "自定义待机", titles }],
+      draft: null,
+      undo: null,
+      error: false,
+    };
+    expect(page.consumer.title(52, id, source)).toBe("自定义待机");
+    page.advance(801);
+    expect(page.consumer.title(52, id, source)).toBe("原版称号");
+    titles[1] = "更新称号";
+    expect(page.consumer.title(52, id, source)).toBe("更新称号");
+    page.consumer.title(null, id, source);
+  });
   it.each([
     ["glass", "12.8k"],
     ["timing", "12,840"],
@@ -1077,16 +1388,33 @@ describe("board performance renderer consumer boundaries", () => {
   });
   it("uses the real score-cell consumer for group rows and names the child supplying the performance", () => {
     const { consumer } = boardConsumer("glass");
-    const row = consumer.row([agent("root"), agent("child", { parentId: "root" })], {
-      root: perf(1000),
-      child: perf(12840, "live", 8),
-    });
-    expect(row.dataset.perfAgentId).toBe("child");
-    expect(row.dataset.perfSetCount).toBe("2");
+    const row = consumer.row(
+      [
+        agent("root", {
+          project: "root-project",
+          model: "root-model",
+          liveMeasuredTps: 10,
+          effortMode: { value: "low", evidence: "recorded", provider: null },
+        }),
+        agent("child", {
+          parentId: "root",
+          project: "child-project",
+          model: "child-model",
+          liveMeasuredTps: 10,
+          effortMode: { value: "max", evidence: "recorded", provider: null },
+        }),
+      ],
+      { root: perf(1000), child: perf(12840, "live", 8) },
+    );
     expect(row.querySelector(".perf-score-value")!.textContent).toBe("12.8k");
-    expect(row.querySelector(".perf-score-value")!.classList.contains("perf-pm")).toBe(true);
-    expect(row.querySelector<HTMLElement>(".perf-score-cell")!.dataset.perfCardHost).toBe("board");
     expect(row.tabIndex).toBe(0);
+    const description = document.getElementById(
+      row.getAttribute("aria-describedby")!,
+    )!.textContent!;
+    expect(description).toContain("child-project");
+    expect(description).toContain("Speed 20 tok/s (sub-agents 10)");
+    expect(row.getAttribute("aria-label")).toContain("low");
+    expect(row.getAttribute("aria-label")).not.toContain("max");
   });
   it("keeps a real zero distinct from no score and removes a departed supplier anchor", () => {
     const { consumer } = boardConsumer("neon");
@@ -1099,5 +1427,371 @@ describe("board performance renderer consumer boundaries", () => {
     expect(consumer.panel.querySelector(".board-perf-value")!.textContent).toBe("–");
     expect(consumer.panel.querySelector("[data-perf-agent-id]")).toBeNull();
     expect(consumer.panel.querySelectorAll(".segs .on")).toHaveLength(0);
+  });
+});
+
+describe("native board execution-mode capsules", () => {
+  it.each(["glass", "timing", "neon"] as const)(
+    "renders real meters and both speed tiers in %s at every size/appearance",
+    (style) => {
+      for (const size of ["small", "medium", "large"] as const)
+        for (const appearance of ["dark", "light"] as const) {
+          const { consumer } = boardConsumer(style, { size, appearance });
+          const capsule = consumer.capsule(
+            agent("a", {
+              effortMode: { value: "ultracode", evidence: "selected", provider: null },
+              speedMode: { value: "ultrafast", evidence: "recorded", provider: "priority" },
+            }),
+          );
+          expect(capsule.classList.contains("top")).toBe(true);
+          expect(capsule.classList.contains("configured")).toBe(false);
+          expect(capsule.querySelectorAll(".meter i.on")).toHaveLength(5);
+          expect(capsule.querySelectorAll(".bolts svg")).toHaveLength(2);
+          expect(capsule.querySelector(".word")?.textContent).toBe("ultracode");
+          expect(capsule.title).toContain("priority");
+          expect(capsule.title.toLowerCase()).toContain("selected");
+          expect(consumer.panel.dataset.size).toBe({ small: "S", medium: "M", large: "L" }[size]);
+        }
+    },
+  );
+  it("keeps off, an unsupported known effort, standard speed and unknown distinct", () => {
+    const { consumer } = boardConsumer("glass", { size: "small" });
+    const off = consumer.capsule(
+      agent("off", { effortMode: { value: "off", evidence: "recorded", provider: null } }),
+    );
+    expect(off.classList.contains("none")).toBe(false);
+    expect(off.querySelectorAll(".meter i")).toHaveLength(5);
+    expect(off.querySelectorAll(".meter i.on")).toHaveLength(0);
+    const future = consumer.capsule(
+      agent("future", {
+        effortMode: { value: "future-effort", evidence: "recorded", provider: null },
+      }),
+    );
+    expect(future.classList.contains("no-meter")).toBe(true);
+    expect(future.classList.contains("word-only")).toBe(true);
+    expect(future.querySelector(".word")?.textContent).toBe("future-effort");
+    for (const speedMode of [
+      null,
+      { value: "standard", evidence: "selected" as const, provider: null },
+    ]) {
+      const unknown = consumer.capsule(agent("unknown", { speedMode }));
+      expect(unknown.classList.contains("none")).toBe(true);
+      expect(unknown.querySelectorAll(".meter i.on,.bolts svg")).toHaveLength(0);
+    }
+  });
+  it("preserves the meter nodes across changes and makes only literal configured facts dashed", () => {
+    const { consumer } = boardConsumer("neon");
+    const capsule = consumer.capsule(
+      agent("a", {
+        effortMode: { value: "max", evidence: "configured", provider: null },
+        speedMode: { value: "fast", evidence: "configured", provider: null },
+      }),
+    );
+    const bars = Array.from(capsule.querySelectorAll(".meter i"));
+    expect(capsule.classList.contains("configured")).toBe(true);
+    expect(capsule.classList.contains("max")).toBe(false);
+    expect(capsule.querySelector(".mode-mark")?.textContent).toBe("config");
+    consumer.capsule(
+      agent("a", {
+        effortMode: { value: "high", evidence: "selected", provider: null },
+        speedMode: { value: "highspeed", evidence: "recorded", provider: null },
+      }),
+      capsule,
+    );
+    expect(Array.from(capsule.querySelectorAll(".meter i"))).toEqual(bars);
+    expect(capsule.querySelectorAll(".meter i.on")).toHaveLength(3);
+    expect(capsule.querySelectorAll(".bolts svg")).toHaveLength(1);
+    expect(capsule.classList.contains("configured")).toBe(false);
+    expect(capsule.querySelector(".mode-mark")?.textContent).toBe("");
+  });
+  it("keeps overflow informational and carries inline summed speed without a show-all action", () => {
+    const { consumer } = boardConsumer("timing", { size: "small" });
+    const rows = consumer.rows(
+      Array.from({ length: 5 }, (_, index) => agent("root-" + index, { liveMeasuredTps: 10 })),
+    );
+    expect(rows).toHaveLength(4);
+    const summary = rows[3]!;
+    expect(summary.tabIndex).toBe(-1);
+    expect(summary.textContent).toContain("2 more agents · 20");
+    expect(summary.dataset.boardMore).toBeUndefined();
+    expect(consumer.panel.querySelectorAll(".fastest")).toHaveLength(1);
+  });
+});
+
+interface BoardBloomCanvasContext {
+  image(): ImageData | null;
+  createImageData(width: number, height: number): ImageData;
+  putImageData(image: ImageData): void;
+}
+function boardBloomConsumer(style: OmpMonitorBoardStyle, side: number, scale: number) {
+  const panel = document.createElement("section");
+  document.body.append(panel);
+  let currentSide = side,
+    now = 0,
+    serial = 0,
+    notifyResize = () => {};
+  const frames = new Map<number, FrameRequestCallback>(),
+    disconnected = vi.fn();
+  vi.spyOn(panel, "getBoundingClientRect").mockImplementation(function () {
+    const value = {
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: currentSide,
+      bottom: currentSide,
+      width: currentSide,
+      height: currentSide,
+    };
+    return { ...value, toJSON: () => value };
+  });
+  vi.stubGlobal("devicePixelRatio", scale);
+  vi.stubGlobal(
+    "Path2D",
+    class {
+      roundRect() {}
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        notifyResize = callback;
+      }
+      observe() {}
+      disconnect = disconnected;
+    },
+  );
+  function canvasContext() {
+    let framebuffer: ImageData | null = null;
+    const draw = () => {};
+    return {
+      image: () => framebuffer,
+      createImageData: vi.fn(
+        (width: number, height: number) =>
+          ({
+            width,
+            height,
+            data: new Uint8ClampedArray(width * height * 4),
+          }) as ImageData,
+      ),
+      putImageData: vi.fn((next: ImageData) => {
+        framebuffer = next;
+      }),
+      setTransform: draw,
+      clearRect: draw,
+      save: draw,
+      restore: draw,
+      translate: draw,
+      setLineDash: draw,
+      stroke: draw,
+      beginPath: draw,
+      moveTo: draw,
+      lineTo: draw,
+      arc: draw,
+      roundRect: draw,
+      clip: draw,
+    };
+  }
+  const contexts = new Map<HTMLCanvasElement, BoardBloomCanvasContext>();
+  const getContext = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockImplementation(function (this: HTMLCanvasElement) {
+      let context = contexts.get(this);
+      if (!context) {
+        context = canvasContext();
+        contexts.set(this, context);
+      }
+      return context as unknown as CanvasRenderingContext2D;
+    });
+  const factory = new Function(
+    "document",
+    "window",
+    "performance",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    MONITOR_BOARD_EFFECTS_SCRIPT + "\nreturn boardEffects;",
+  )(
+    document,
+    window,
+    { now: () => now },
+    (callback: FrameRequestCallback) => {
+      frames.set(++serial, callback);
+      return serial;
+    },
+    (id: number) => frames.delete(id),
+  ) as {
+    create(
+      panel: HTMLElement,
+      style: string,
+    ): {
+      update(frame: Record<string, unknown>): void;
+      setVisible(value: boolean): void;
+      destroy(): void;
+    };
+  };
+  const effects = factory.create(panel, style),
+    bloom = panel.querySelector<HTMLCanvasElement>(".board-bloom")!;
+  const context = contexts.get(bloom)!;
+  const frame = {
+    heat: 1,
+    overdrive: 0,
+    active: false,
+    reduced: true,
+    contrast: false,
+    intensity: 0,
+    maxFps: 60,
+    color: "rgba(124,135,152,1)",
+    bloomColor: "rgba(250,204,21,1)",
+    headColor: "rgba(255,247,214,1)",
+    tailColor: "rgba(250,204,21,1)",
+    starColors: [],
+  };
+  function update(patch: Partial<typeof frame> = {}) {
+    Object.assign(frame, patch);
+    effects.update(frame);
+  }
+  function image() {
+    const value = context.image();
+    if (!value) throw new Error("The visible board bloom has no painted pixels");
+    return value;
+  }
+  function pixel(x: number, y: number) {
+    const value = image(),
+      offset = (y * value.width + x) * 4;
+    return Array.from(value.data.subarray(offset, offset + 4));
+  }
+  update();
+  effects.setVisible(true);
+  return {
+    effects,
+    bloom,
+    context,
+    getContext,
+    disconnected,
+    update,
+    image,
+    pixel,
+    visibleAlpha: (x: number, y: number) => (bloom.hidden ? 0 : pixel(x, y)[3]),
+    pending: () => frames.size,
+    resize(nextSide = currentSide, nextScale = scale) {
+      currentSide = nextSide;
+      scale = nextScale;
+      vi.stubGlobal("devicePixelRatio", scale);
+      notifyResize();
+    },
+    advance(ms: number) {
+      now += ms;
+      const pending = Array.from(frames.values());
+      frames.clear();
+      for (const callback of pending) callback(now);
+    },
+  };
+}
+function outerBloomAlpha(image: ImageData, margin: number) {
+  let maximum = 0;
+  for (let y = 0; y < image.height; y++)
+    for (let x = 0; x < image.width; x++) {
+      if (x < margin || y < margin || x >= image.width - margin || y >= image.height - margin) {
+        maximum = Math.max(maximum, image.data[(y * image.width + x) * 4 + 3]!);
+      }
+    }
+  return maximum;
+}
+describe("original Windows board exterior bloom", () => {
+  it("matches native rounded Gaussian/fade alpha samples and preserves straight heat color", () => {
+    const page = boardBloomConsumer("glass", 340, 2);
+    // Frozen native BoardComets/OrbShapes/OrbCommon at heat=1, overdrive=0,
+    // scale=2: no offset shadow; these are pixel-center samples outside x=80.
+    for (const [x, alpha] of [
+      [79, 77],
+      [60, 66],
+      [40, 35],
+      [20, 7],
+      [12, 2],
+    ]) {
+      expect(page.pixel(x!, 420)).toEqual([250, 204, 21, alpha]);
+    }
+    expect(page.pixel(420, 420)).toEqual([0, 0, 0, 0]);
+    expect(page.pixel(0, 420)).toEqual([0, 0, 0, 0]);
+    expect(page.pixel(79, 79)[3]).toBeGreaterThan(0);
+    expect(page.pixel(79, 79)[3]).toBeLessThan(page.pixel(79, 420)[3]!);
+    expect(outerBloomAlpha(page.image(), 4)).toBe(0);
+    page.effects.destroy();
+  });
+  it.each([
+    ["glass", 280, 1],
+    ["timing", 340, 1.25],
+    ["neon", 420, 2],
+  ] as const)(
+    "keeps %s bloom rounded, symmetric and clear of the window edge at maximum drive",
+    (style, side, scale) => {
+      const page = boardBloomConsumer(style, side, scale);
+      page.update({ overdrive: 1 });
+      const image = page.image(),
+        center = Math.floor(image.width / 2),
+        near = Math.floor(35 * scale);
+      const alpha = page.pixel(near, center)[3]!;
+      expect(alpha).toBeGreaterThan(0);
+      expect(page.pixel(image.width - 1 - near, center)[3]).toBe(alpha);
+      expect(page.pixel(center, near)[3]).toBe(alpha);
+      expect(page.pixel(center, image.height - 1 - near)[3]).toBe(alpha);
+      expect(page.pixel(near, near)[3]).toBeLessThan(alpha);
+      expect(page.pixel(center, center)).toEqual([0, 0, 0, 0]);
+      expect(outerBloomAlpha(image, Math.floor(2 * scale))).toBe(0);
+      page.effects.destroy();
+    },
+  );
+  it("retains static bloom across off/reduced/idle, suspends hidden work and never resurrects disposed buffers", () => {
+    const page = boardBloomConsumer("glass", 340, 1),
+      original = page.image();
+    expect(page.context.putImageData).toHaveBeenCalledTimes(1);
+    expect(page.context.createImageData).toHaveBeenCalledTimes(1);
+    expect(page.getContext).toHaveBeenCalledTimes(2);
+    page.update({ active: true, reduced: false, intensity: 2 });
+    page.advance(34);
+    page.advance(34);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(1);
+    page.update({ active: false, reduced: true, intensity: 0 });
+    expect(page.pending()).toBe(0);
+    expect(page.visibleAlpha(39, 210)).toBe(77);
+    page.resize();
+    expect(page.image()).toBe(original);
+    expect(page.context.createImageData).toHaveBeenCalledTimes(1);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(1);
+    page.effects.setVisible(false);
+    page.update({ heat: 0.2, bloomColor: "rgba(45,212,191,1)" });
+    expect(page.visibleAlpha(39, 210)).toBe(0);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(1);
+    page.effects.setVisible(true);
+    expect(page.image()).toBe(original);
+    expect(page.pixel(39, 210)).toEqual([45, 212, 191, 77]);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(2);
+    page.update({ contrast: true });
+    expect(page.visibleAlpha(39, 210)).toBe(0);
+    page.update({ contrast: false });
+    expect(page.visibleAlpha(39, 210)).toBe(77);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(2);
+    page.resize(280, 1.5);
+    expect([page.image().width, page.image().height]).toEqual([540, 540]);
+    expect(outerBloomAlpha(page.image(), 3)).toBe(0);
+    page.resize();
+    expect(page.context.createImageData).toHaveBeenCalledTimes(2);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(3);
+    expect(page.getContext).toHaveBeenCalledTimes(2);
+    page.effects.destroy();
+    expect(page.disconnected).toHaveBeenCalledTimes(1);
+    expect(page.bloom.isConnected).toBe(false);
+    expect([page.bloom.width, page.bloom.height]).toEqual([0, 0]);
+    page.update({ heat: 1, reduced: false, intensity: 2, active: true });
+    page.effects.setVisible(true);
+    page.resize(420, 2);
+    page.advance(34);
+    expect(page.pending()).toBe(0);
+    expect(page.bloom.hidden).toBe(true);
+    expect([page.bloom.width, page.bloom.height]).toEqual([0, 0]);
+    expect(page.context.createImageData).toHaveBeenCalledTimes(2);
+    expect(page.context.putImageData).toHaveBeenCalledTimes(3);
+    expect(page.getContext).toHaveBeenCalledTimes(2);
   });
 });

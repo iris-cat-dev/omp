@@ -1,5 +1,5 @@
-// Agent Speed v1.6.0, MIT, ca460d7f899e7adc73391ea706b729f1fc481fde.
-// Ranking: spec/tools/board_ranking.py. Performance: METRICS 6.9, highest live before resting.
+// Agent Speed v1.6.1, MIT, 384ce020cc655133e95aaad5cc085f3985f0ed99.
+// Windows BoardMetrics/BoardLayoutPlan; ranking: spec/tools/board_ranking.py; performance: METRICS 6.9.
 // A static browser module, also exercised by behavioral fixtures without a DOM or provider.
 import { highestPerformanceValue } from "./performance.js";
 
@@ -7,8 +7,70 @@ export const MONITOR_BOARD_MODEL_SCRIPT = String.raw`
 const boardModel = (() => {
   const highest = ${highestPerformanceValue.toString()};
   const emptyValues = Object.create(null);
+  const sizes = {small:{key:'S',side:280,groups:4,subs:[]},medium:{key:'M',side:340,groups:6,subs:[2,1,1]},large:{key:'L',side:420,groups:8,subs:[3,3,3,2,2]}};
+  function metrics(style, size, readouts) {
+    const limits = sizes[size], index = limits.key === 'S' ? 0 : limits.key === 'L' ? 2 : 1, side = limits.side;
+    const timing = style === 'timing', neon = style === 'neon', gauge = readouts.showPerformance || readouts.showThinking || readouts.showCost;
+    const pad = (timing ? [12,14,16] : [14,16,18])[index], row = [30,30,32][index];
+    const heroTop = pad + (timing ? 2 : -2), big = (timing ? [30,36,42] : [34,40,46])[index];
+    const hero = (timing ? gauge ? [72,80,88] : [70,78,86] : neon ? gauge ? [92,100,108] : [82,92,100] : [78,86,94])[index];
+    const listBottom = timing ? 32 : neon ? 36 : 38, listInset = pad - (timing ? 4 : 6);
+    let stripTop = 0, stripHeight = 0, listTop, room, startY = timing ? 0 : 6;
+    if (gauge) {
+      if (neon) listTop = heroTop + hero + 4;
+      else {
+        stripTop = heroTop + hero + (timing ? 8 : 0);
+        stripHeight = (timing ? [10,12,12] : [14,16,18])[index];
+        listTop = stripTop + stripHeight + (timing ? 5 : 0);
+      }
+      if (readouts.showPerformance) startY = timing ? 16 : 14;
+      room = side - listTop - listBottom - startY;
+    } else {
+      listTop = pad + hero + (timing ? 8 : neon ? 2 : 4);
+      room = timing ? side - listTop - 32 - 6 : side - (pad + [78,86,94][index] + 4) - 38 - 8;
+    }
+    return {side,pad,heroTop,hero,big,listTop,listInset,listBottom,room,startY,stripTop,stripHeight,
+      groupHeight:limits.key === 'S' ? row + (timing ? 0 : 2) : row + 8,
+      subHeight:(timing ? [21,21,22] : [22,22,23])[index],moreHeight:timing ? 19 : 20,
+      footerTop:side - (timing ? 28 : neon ? 29 : 30),footerHeight:timing ? 28 : 18};
+  }
+  function layout(groups, style, size, readouts, expanded, metric = 'output') {
+    const limits = sizes[size], geometry = metrics(style,size,readouts), rowHeight = geometry.groupHeight, moreHeight = geometry.moreHeight;
+    let count = Math.min(limits.groups,groups.length);
+    while (count > 1 && count * rowHeight + (groups.length > count ? moreHeight : 0) > geometry.room) count--;
+    let free = geometry.room - count * rowHeight - (groups.length > count ? moreHeight : 0), y = geometry.startY;
+    const anyExpanded = expanded !== null && groups.slice(0,count).some(group => group.id === expanded), rows = [];
+    for (let index = 0; index < count; index++) {
+      const group = groups[index], open = anyExpanded && group.id === expanded, wanted = open ? Math.min(8,group.subs.length) : anyExpanded ? 0 : limits.subs[index] || 0;
+      const kept = []; let more = false, shownLive = 0;
+      for (const agent of group.subs) {
+        if (kept.length >= wanted) break;
+        if (!open && agent.phase !== 'generating' && rate(agent,metric) <= .05) continue;
+        const extra = !more && group.subs.length - kept.length - 1 > 0 ? moreHeight : 0;
+        if (free >= geometry.subHeight + extra) {
+          kept.push(agent); free -= geometry.subHeight + extra;
+          if (extra) more = true;
+        }
+      }
+      if (more && kept.length === group.subs.length) { more = false; free += moreHeight; }
+      rows.push({key:'group:'+group.id,kind:'group',group,y,height:rowHeight}); y += rowHeight;
+      for (const agent of kept) {
+        rows.push({key:'sub:'+agent.id,kind:'sub',agent,group,y,height:geometry.subHeight});
+        shownLive += rate(agent,metric); y += geometry.subHeight;
+      }
+      if (more) {
+        rows.push({key:'more:'+group.id,kind:'more',group,rest:group.subs.length-kept.length,live:Math.max(0,group.subs.reduce((sum,agent)=>sum+rate(agent,metric),0)-shownLive),y,height:moreHeight});
+        y += moreHeight;
+      }
+    }
+    if (groups.length > count && count > 0) {
+      rows.push({key:'rest',kind:'more',group:groups[count],rest:groups.length-count,live:groups.slice(count).reduce((sum,group)=>sum+group.live,0),y,height:moreHeight,allGroups:true});
+      y += moreHeight;
+    }
+    return {rows,height:y};
+  }
   function numeric(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
-  function rate(agent) { return (numeric(agent.liveMeasuredTps) || 0) + (numeric(agent.liveEstimatedTps) || 0); }
+  function rate(agent, metric = 'output') { return metric === 'total' ? (numeric(agent.liveMeasuredTotalTps) || 0) + (numeric(agent.liveEstimatedTotalTps) || 0) : (numeric(agent.liveMeasuredTps) || 0) + (numeric(agent.liveEstimatedTps) || 0); }
   function activity(agent) { return numeric(agent.lastActivityAt) || 0; }
   function score(agents, values) {
     const highestValue = highest(agents, values || emptyValues), supplier = agents.find(agent => agent.id === highestValue.agent) || null;
@@ -21,10 +83,10 @@ const boardModel = (() => {
     const evaluation = supplier && values[supplier.id];
     return { agent: supplier, value: highestValue.shown, form: highestValue.form, count, provisional: !!(evaluation && evaluation.provisional), n: evaluation ? evaluation.n : 0 };
   }
-  function aggregate(agents, values) {
+  function aggregate(agents, values, metric = 'output') {
     let live = 0, estimated = 0, thinking = 0, thinkingKnown = false, cost = 0, priced = 0, unknown = 0, generating = 0, tools = 0, lastActiveMs = 0;
     for (const agent of agents) {
-      const own = rate(agent); live += own; estimated += numeric(agent.liveEstimatedTps) || 0;
+      const own = rate(agent,metric); live += own; estimated += numeric(metric === 'total' ? agent.liveEstimatedTotalTps : agent.liveEstimatedTps) || 0;
       const thought = numeric(agent.thinkingTps); if (thought !== null) { thinking += thought; thinkingKnown = true; }
       const amount = numeric(agent.liveCostUsdPerSecond);
       if (amount !== null) { cost += amount; priced += own; }
@@ -37,7 +99,7 @@ const boardModel = (() => {
       costPartial: cost > 0 && unknown > 0 && (priced + unknown === 0 || priced / (priced + unknown) < .995),
       generating, tools, lastActiveMs, score: score(agents, values) };
   }
-  function groups(agents, values) {
+  function groups(agents, values, metric = 'output') {
     const byId = new Map(agents.map(agent => [agent.id, agent])), roots = new Map(), grouped = new Map();
     function rootFor(agent) {
       if (roots.has(agent.id)) return roots.get(agent.id);
@@ -59,8 +121,8 @@ const boardModel = (() => {
     const result = [];
     for (const [id, members] of grouped) {
       const root = byId.get(id), subs = members.filter(agent => agent.id !== id);
-      subs.sort((a, b) => rate(b) - rate(a) || activity(b) - activity(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      result.push({ id, root, members, subs, ...aggregate(members, values) });
+      subs.sort((a, b) => rate(b,metric) - rate(a,metric) || activity(b) - activity(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      result.push({ id, root, members, subs, ...aggregate(members, values, metric) });
     }
     return result;
   }
@@ -148,6 +210,6 @@ const boardModel = (() => {
     const [whole, fraction] = fixed.split('.');
     return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (fraction ? '.' + fraction : '');
   }
-  return { rate, score, aggregate, groups, createRanking, formatSpeed, rateNumber, amountNumber };
+  return { sizes, metrics, layout, rate, score, aggregate, groups, createRanking, formatSpeed, rateNumber, amountNumber };
 })();
 `;

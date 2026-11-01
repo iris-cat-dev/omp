@@ -12,6 +12,7 @@ interface BeforeQuitEvent {
 
 interface BeforeQuitApp {
   exit(code: number): void;
+  quit(): void;
 }
 
 interface ExternalQuitSignalSource {
@@ -93,41 +94,60 @@ function createDeferredUpdateQuit(): DeferredUpdateQuit {
 
 export function createQuitLifecycle({
   app,
+  prepareToQuit,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
   installAppUpdateOnQuit,
   createUpdateDeadlineSignal,
+  onPrepareError,
   onStopError,
   onUpdateError,
 }: {
   app: BeforeQuitApp;
+  prepareToQuit: () => Promise<void>;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
   installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
   createUpdateDeadlineSignal: () => AbortSignal;
+  onPrepareError: (error: unknown) => void;
   onStopError: (error: unknown) => void;
   onUpdateError: (error: unknown) => void;
 }): QuitLifecycle {
-  // The first quit waits for daemon shutdown and update revalidation. A validated
-  // update re-fires app.quit(); otherwise app.exit(0) bypasses Electron's macOS
-  // window-all-closed handler, which would veto that second quit.
+  // Draft persistence can veto a normal quit. Only a successful preparation may
+  // advance the daemon/update lifecycle or mark unrelated application windows as closing.
+  let preparing = false;
   let quitting = false;
   let quittingForUpdate = false;
+  let updateInstallationStarted = false;
   const updateQuit = createDeferredUpdateQuit();
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
-    closeTransportSessions();
-    if (quittingForUpdate) return;
-    if (quitting) {
-      // MacUpdater's no-relaunch path calls app.quit() without emitting
-      // before-quit-for-update. A second quit is equivalent handoff evidence.
+    if (quitting && (quittingForUpdate || updateInstallationStarted)) {
+      closeTransportSessions();
+      // MacUpdater's no-relaunch path re-fires app.quit() without the update event.
       updateQuit.resolve();
       return;
     }
-    quitting = true;
     event.preventDefault();
+    if (preparing || quitting) return;
+    preparing = true;
 
     void (async () => {
+      try {
+        await prepareToQuit();
+      } catch (error) {
+        preparing = false;
+        onPrepareError(error);
+        return;
+      }
+      preparing = false;
+      quitting = true;
+      closeTransportSessions();
+      if (quittingForUpdate) {
+        // Manual installation prepared before launch; its later quit still owns process exit.
+        app.quit();
+        return;
+      }
       try {
         await stopDesktopManagedDaemonIfNeeded();
       } catch (error) {
@@ -135,6 +155,7 @@ export function createQuitLifecycle({
       }
 
       const signal = createUpdateDeadlineSignal();
+      updateInstallationStarted = true;
       const updateInstallation = installAppUpdateOnQuit(signal).catch((error) => {
         onUpdateError(error);
         return false;
@@ -148,11 +169,11 @@ export function createQuitLifecycle({
           updateQuit.promise,
           waitForUpdateDeadline(createUpdateDeadlineSignal()),
         ]);
-        if (handoffStarted) {
-          return;
-        }
+        if (handoffStarted) return;
       }
 
+      // No validated updater owns exit. Preserve the existing macOS
+      // window-all-closed bypass, after actual monitor persistence has completed.
       app.exit(0);
     })();
   }

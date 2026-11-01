@@ -156,7 +156,13 @@ export async function checkForAppUpdate({
 
 export async function downloadAndInstallUpdate(
   { currentVersion, releaseChannel }: { currentVersion: string; releaseChannel: AppReleaseChannel },
-  onBeforeQuit?: () => Promise<void>,
+  {
+    prepareToQuit,
+    stopDaemon,
+  }: {
+    prepareToQuit: () => Promise<void>;
+    stopDaemon: () => Promise<unknown>;
+  },
 ): Promise<AppUpdateInstallResult> {
   const blocked = blockedUpdatesMessage();
   if (blocked) {
@@ -173,8 +179,11 @@ export async function downloadAndInstallUpdate(
         };
       }
 
+      // electron-updater starts installation before its before-quit-for-update event.
+      // The live editor/durable-settings veto therefore belongs before either effect.
+      await prepareToQuit();
+      await stopDaemon();
       autoUpdater.autoRunAppAfterInstall = true;
-      await onBeforeQuit?.();
       autoUpdater.quitAndInstall(false, true);
       return {
         installed: true,

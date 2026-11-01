@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { MonitorPerformanceRecord, MonitorPerformanceSums } from "./performance-types.js";
 import { object } from "./parser.js";
 import { performanceModel } from "./performance-reader.js";
-import { calendarDays } from "./math.js";
+import { calendarDay } from "./math.js";
 
 export const PERFORMANCE_CACHE_NAME = "omp-performance-records-v160.json";
 const CACHE_SCHEMA = "omp-performance-v160";
@@ -49,6 +49,7 @@ function cacheIdentity(
     row.source === "omp" &&
     typeof row.day === "string" &&
     /^\d{4}-\d{2}-\d{2}$/.test(row.day) &&
+    calendarDay(Date.parse(`${row.day}T12:00:00`))?.date === row.day &&
     typeof row.model === "string" &&
     (row.model === "" || performanceModel(row.model) === row.model)
   );
@@ -161,8 +162,12 @@ export class OmpPerformanceStorage {
       this.limited = true;
       return;
     }
-    const dates = new Set(calendarDays(now).map((day) => day.date)),
-      groups = new Map<string, MonitorPerformanceRecord[]>();
+    const endDate = calendarDay(now)?.date;
+    if (!endDate) {
+      this.limited = true;
+      return;
+    }
+    const groups = new Map<string, MonitorPerformanceRecord[]>();
     for (const raw of cache.records) {
       const record = cacheRecord(raw);
       if (!record) {
@@ -170,7 +175,7 @@ export class OmpPerformanceStorage {
         this.limited = true;
         return;
       }
-      if (!dates.has(record.day)) continue;
+      if (record.day > endDate) continue;
       const records = groups.get(record.agentId!) ?? [];
       records.push(record);
       groups.set(record.agentId!, records);
@@ -196,8 +201,12 @@ export class OmpPerformanceStorage {
     alive: () => boolean,
   ): Promise<void> {
     if (!this.cacheDir || this.disposed || !alive()) return;
-    const dates = new Set(calendarDays(now).map((day) => day.date)),
-      safe = records.filter((row) => dates.has(row.day)).map(cacheRecord);
+    const endDate = calendarDay(now)?.date;
+    if (!endDate) {
+      this.limited = true;
+      return;
+    }
+    const safe = records.filter((row) => row.day <= endDate).map(cacheRecord);
     if (safe.length > MAX_RECORDS || safe.some((row) => row === null)) {
       this.limited = true;
       return;

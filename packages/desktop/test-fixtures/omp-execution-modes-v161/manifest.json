@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/zoefix/agent-speed",
+  "version": "1.6.1",
+  "commit": "384ce020cc655133e95aaad5cc085f3985f0ed99",
+  "license": "MIT; Copyright (c) 2026 zoefix; complete original notice in LICENSE",
+  "fixtures": [
+    {
+      "file": "branch.jsonl",
+      "original": "spec/fixtures/omp/agent/sessions/-projects-branch/2026-10-20T11-30-00-000Z_01a15913-4ec0-792e-998a-0008a708a7ae.jsonl",
+      "bytes": 5251,
+      "sha256": "bd163e5ed688f11d200ddf9093e1885ebe956e5231d098292a4b7e3b71fb228a"
+    }
+  ],
+  "licenseSha256": "83de342c5fd532d3b25359a82cd62c6e18beb52c108353e54923c68dbe9592dd",
+  "safety": "Fictional upstream data copied byte-for-byte. Read-only numeric parsing only; tool and conversation text is never executed or retained in monitor DTOs."
+}

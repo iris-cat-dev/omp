@@ -512,7 +512,7 @@ describe("ordered native OMP v1.6 performance monitor", () => {
     expect(snapshot.limited).toBe(false);
   });
 
-  it("keeps only 30 local dates, includes boundary-crossing measured intervals, and excludes future/unmeasured completions", async () => {
+  it("retains available local dates across the old horizon, keeps crossing intervals, and excludes future/unmeasured completions", async () => {
     const root = await directory(),
       floor = calendarDays(NOW)[0]!.start,
       s = await source(
@@ -530,22 +530,21 @@ describe("ordered native OMP v1.6 performance monitor", () => {
       ),
       instance = monitor();
     const snapshot = await drain(instance, [s]);
-    expect(snapshot.records).toHaveLength(1);
-    expect(snapshot.records[0]).toMatchObject({ n: 1, durationMsSum: 20_000, activeMs: 15_000 });
+    expect(snapshot.records).toHaveLength(2);
+    expect(snapshot.records[0]).toMatchObject({ n: 2, durationMsSum: 16_000, activeMs: 16_000 });
+    expect(snapshot.records[1]).toMatchObject({ n: 1, durationMsSum: 20_000, activeMs: 15_000 });
     expect(snapshot.current.main?.n).toBe(0);
     const future = instance.getSnapshot(new Set([s.id]), NOW + 2000);
-    expect(future.records.reduce((sum, row) => sum + row.n, 0)).toBe(2);
+    expect(future.records.reduce((sum, row) => sum + row.n, 0)).toBe(4);
     const tomorrow = new Date(NOW);
     tomorrow.setDate(tomorrow.getDate() + 1);
     await instance.poll([s], tomorrow.getTime());
-    expect(
-      instance
-        .getSnapshot(new Set([s.id]), tomorrow.getTime())
-        .records.every((row) => row.day > calendarDays(NOW)[0]!.date),
-    ).toBe(true);
+    const retained = instance.getSnapshot(new Set([s.id]), tomorrow.getTime()).records;
+    expect(retained.reduce((sum, row) => sum + row.n, 0)).toBe(4);
+    expect(retained[0]!.day).toBe(calendarDays(floor - 1).at(-1)!.date);
   });
 
-  it("keeps a pre-horizon response's first completion position when a final duration revision affects retained coverage", async () => {
+  it("keeps an archived response's first completion position when a final duration revision affects coverage", async () => {
     const root = await directory(),
       floor = calendarDays(NOW)[0]!.start,
       oldStart = floor - 20 * 60_000,
@@ -560,12 +559,44 @@ describe("ordered native OMP v1.6 performance monitor", () => {
         ),
       );
     const snapshot = await drain(monitor(), [s]);
-    expect(snapshot.records).toHaveLength(1);
+    expect(snapshot.records).toHaveLength(2);
     expect(snapshot.records[0]).toMatchObject({
+      n: 1,
+      durationMsSum: 15 * 60_000,
+      activeMs: 15 * 60_000,
+    });
+    expect(snapshot.records[1]).toMatchObject({
       n: 1,
       durationMsSum: 15 * 60_000,
       activeMs: 10 * 60_000,
     });
+  });
+
+  it("produces genuine older-than-year records from available logs without adding them to current samples", async () => {
+    const root = await directory();
+    const archived = new Date(NOW);
+    archived.setFullYear(archived.getFullYear() - 2);
+    const oldAt = archived.getTime();
+    const s = await source(
+      root,
+      "years",
+      jsonl(
+        header(oldAt - 1_000),
+        ...sample("archived", oldAt, 20),
+        ...sample("current", START, 3),
+      ),
+    );
+    const snapshot = await drain(monitor(), [s]);
+    expect(snapshot.records).toHaveLength(2);
+    expect(snapshot.records[0]).toMatchObject({
+      day: calendarDays(oldAt).at(-1)!.date,
+      n: 20,
+      outputSum: 1_000,
+      durationMsSum: 20_000,
+    });
+    expect(snapshot.records[1]).toMatchObject({ n: 3, outputSum: 150, durationMsSum: 3_000 });
+    expect(snapshot.current.years?.n).toBe(3);
+    expect(snapshot.limited).toBe(false);
   });
 
   it("uses computer-wide same-source/raw-model 14-day baselines without leaking out-of-scope owners", async () => {

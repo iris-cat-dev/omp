@@ -12,6 +12,8 @@ export interface OmpPerformanceSource {
   path: string;
   phase: "generating" | "tools" | "idle";
   identity?: string;
+  /** Current facts share the numeric collector's tail-first read, independently of historical EOF. */
+  current?: OmpPerformanceLineReader;
 }
 export const PERFORMANCE_FILE_LIMITS = { chunkBytes: 65_536, maxChunks: 16_384 };
 export interface PerformanceReadBudget {
@@ -73,6 +75,7 @@ export class OmpOrderedPerformanceFile {
       this.source.path.length * 2 +
       this.source.id.length * 2 +
       this.stream.retainedBytes +
+      (this.source.current?.retainedBytes ?? 0) +
       this.pendingLength +
       (this.deferred?.byteLength ?? 0) +
       this.lineParts.length * 24 +
@@ -91,6 +94,15 @@ export class OmpOrderedPerformanceFile {
       this.pendingLength === 0 &&
       this.deferred === null &&
       !this.droppingLine
+    );
+  }
+  get coverageLimited(): boolean {
+    return (
+      this.limited ||
+      this.stream.limited ||
+      Boolean(this.source.current?.limited) ||
+      this.unavailable ||
+      this.rejected
     );
   }
   advanceFloor(floorMs: number): void {

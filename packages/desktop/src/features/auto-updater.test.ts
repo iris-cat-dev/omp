@@ -97,14 +97,73 @@ describe("desktop app updater", () => {
 
     const result = await downloadAndInstallUpdate(
       { currentVersion: "1.2.0", releaseChannel: "stable" },
-      async () => {
-        events.push("daemon-stopped");
+      {
+        prepareToQuit: async () => {
+          events.push("settings-saved");
+        },
+        stopDaemon: async () => {
+          events.push("daemon-stopped");
+        },
       },
     );
 
     expect(result).toMatchObject({ installed: true, version: "1.3.0" });
-    expect(events).toEqual(["downloaded", "daemon-stopped", "installer-started"]);
+    expect(events).toEqual(["downloaded", "settings-saved", "daemon-stopped", "installer-started"]);
     expect(mocks.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("vetoes every failed pre-install preparation before daemon or installer effects, then permits a delayed successful retry", async () => {
+    const events: string[] = [],
+      preparation = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    mocks.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    mocks.quitAndInstall.mockImplementation(() => {
+      events.push("installer-started");
+    });
+    const prepareToQuit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Settings save failed"))
+      .mockRejectedValueOnce(new Error("Settings save failed again"))
+      .mockImplementationOnce(async () => {
+        events.push("preparation-started");
+        started.resolve();
+        await preparation.promise;
+        events.push("settings-durable");
+      });
+    const stopDaemon = vi.fn(async () => {
+      events.push("daemon-stopped");
+    });
+    for (const message of ["Settings save failed", "Settings save failed again"]) {
+      const rejected = await downloadAndInstallUpdate(
+        { currentVersion: "1.2.0", releaseChannel: "stable" },
+        { prepareToQuit, stopDaemon },
+      );
+      expect(rejected).toEqual({ installed: false, version: null, message });
+      expect(stopDaemon).not.toHaveBeenCalled();
+      expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+    }
+    const retry = downloadAndInstallUpdate(
+      { currentVersion: "1.2.0", releaseChannel: "stable" },
+      { prepareToQuit, stopDaemon },
+    );
+    await started.promise;
+    try {
+      expect(events).toEqual(["preparation-started"]);
+      expect(stopDaemon).not.toHaveBeenCalled();
+      expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+    } finally {
+      preparation.resolve();
+    }
+    await expect(retry).resolves.toMatchObject({ installed: true, version: "1.3.0" });
+    expect(events).toEqual([
+      "preparation-started",
+      "settings-durable",
+      "daemon-stopped",
+      "installer-started",
+    ]);
+    expect(prepareToQuit).toHaveBeenCalledTimes(3);
+    expect(stopDaemon).toHaveBeenCalledTimes(1);
+    expect(mocks.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
   it("does not start an installer after the quit deadline has already expired", async () => {
@@ -141,10 +200,11 @@ describe("desktop app updater", () => {
       releaseChannel: "stable",
       intent: "automatic",
     });
+    const prepareToQuit = vi.fn();
     const stopDaemon = vi.fn();
     const install = await downloadAndInstallUpdate(
       { currentVersion: "1.2.0", releaseChannel: "stable" },
-      stopDaemon,
+      { prepareToQuit, stopDaemon },
     );
     const installOnQuit = await installAppUpdateOnQuit({
       currentVersion: "1.2.0",
@@ -159,5 +219,6 @@ describe("desktop app updater", () => {
     expect(mocks.downloadUpdate).not.toHaveBeenCalled();
     expect(mocks.quitAndInstall).not.toHaveBeenCalled();
     expect(stopDaemon).not.toHaveBeenCalled();
+    expect(prepareToQuit).not.toHaveBeenCalled();
   });
 });

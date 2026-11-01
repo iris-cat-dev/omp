@@ -13,7 +13,7 @@ import type {
   MonitorPerformanceRecord,
   OmpMonitorPerformance,
 } from "./performance-types.js";
-import { calendarDays } from "./math.js";
+import { calendarDay } from "./math.js";
 import { MONITOR_LIMITS } from "./state.js";
 export type { OmpPerformanceSource } from "./performance-reader-file.js";
 
@@ -36,7 +36,6 @@ interface Derived {
   stream: OmpPerformanceLineReader;
   revision: number;
   ownerVersion: number;
-  floor: number;
   atMs: number;
   nextFutureMs: number;
   facts: OmpPerformanceFacts;
@@ -54,12 +53,6 @@ function compareRecords(a: MonitorPerformanceRecord, b: MonitorPerformanceRecord
   const left = a.agentId ?? "",
     right = b.agentId ?? "";
   return left < right ? -1 : Number(left > right);
-}
-function localDay(atMs: number): string | null {
-  const date = new Date(atMs),
-    year = date.getFullYear();
-  if (!Number.isFinite(date.getTime()) || year < 0 || year > 9999) return null;
-  return `${year.toString().padStart(4, "0")}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
 }
 export class OmpPerformanceMonitor {
   private readonly files = new Map<string, OmpOrderedPerformanceFile>();
@@ -84,7 +77,6 @@ export class OmpPerformanceMonitor {
   private baselineVersion = -1;
   private baselineToday = "";
   private readonly baselineScores = new Map<string, number | null>();
-  private cutoff = -Infinity;
   constructor(options: { cacheDir?: string } = {}) {
     this.storage = new OmpPerformanceStorage(options.cacheDir);
   }
@@ -119,7 +111,7 @@ export class OmpPerformanceMonitor {
     this.ownership = ownership;
     this.ownershipRevision = ownership?.revision;
     const wanted = this.selectSources(sources);
-    this.reconcileSources(wanted, now);
+    this.reconcileSources(wanted);
     await this.readSources();
     if (this.disposed) return;
     this.refreshOwners();
@@ -148,7 +140,7 @@ export class OmpPerformanceMonitor {
     }
     return wanted;
   }
-  private reconcileSources(wanted: ReadonlyMap<string, OmpPerformanceSource>, now: number): void {
+  private reconcileSources(wanted: ReadonlyMap<string, OmpPerformanceSource>): void {
     for (const [id, file] of this.files) {
       if (wanted.has(id)) continue;
       file.dispose();
@@ -160,9 +152,6 @@ export class OmpPerformanceMonitor {
       this.historyVersion++;
     }
     this.storage.retain(new Set(wanted.keys()));
-    const floor = calendarDays(now)[0]!.start,
-      changedDate = floor !== this.cutoff;
-    this.cutoff = floor;
     for (const [id, source] of wanted) {
       let file = this.files.get(id);
       if (
@@ -178,16 +167,11 @@ export class OmpPerformanceMonitor {
         file = undefined;
       }
       if (!file) {
-        this.files.set(id, new OmpOrderedPerformanceFile(source, floor));
+        this.files.set(id, new OmpOrderedPerformanceFile(source, -Infinity));
         this.ownersDirty = true;
         this.historyVersion++;
       } else {
         file.source = { ...source };
-        if (changedDate) {
-          file.advanceFloor(floor);
-          this.ownersDirty = true;
-          this.historyVersion++;
-        }
       }
     }
   }
@@ -303,7 +287,6 @@ export class OmpPerformanceMonitor {
       previous.stream === file.stream &&
       previous.revision === file.stream.revision &&
       previous.ownerVersion === ownerVersion &&
-      previous.floor === this.cutoff &&
       now >= previous.atMs &&
       now < previous.nextFutureMs
     )
@@ -312,7 +295,9 @@ export class OmpPerformanceMonitor {
       const owner = this.owners.get(key);
       return owner === id || (owner === undefined && !file.stream.requests.has(key));
     });
-    const recorder = createPerformanceRecorder((atMs) => (atMs <= now ? localDay(atMs) : null));
+    const recorder = createPerformanceRecorder((atMs) =>
+      atMs <= now ? (calendarDay(atMs)?.date ?? null) : null,
+    );
     let nextFutureMs = Infinity;
     for (const completion of facts.completions) {
       if ("key" in completion) {
@@ -326,10 +311,8 @@ export class OmpPerformanceMonitor {
           nextFutureMs = Math.min(nextFutureMs, completion.action.resultMs);
       }
     }
-    const firstDay = localDay(this.cutoff) ?? "";
     const records: MonitorPerformanceRecord[] = [];
     for (const record of recorder.rows()) {
-      if (record.day < firstDay) continue;
       record.agentId = id;
       records.push(record);
     }
@@ -337,7 +320,6 @@ export class OmpPerformanceMonitor {
       stream: file.stream,
       revision: file.stream.revision,
       ownerVersion,
-      floor: this.cutoff,
       atMs: now,
       nextFutureMs,
       facts,
@@ -384,8 +366,16 @@ export class OmpPerformanceMonitor {
     records: MonitorPerformanceRecord[],
     today: string,
   ): MonitorPerformanceEvaluation {
-    const facts = file.caughtUp && file.stream.headerSeen ? this.facts(id, file, now).facts : null,
-      lastLineMs = file.stream.lastLineMs,
+    const current = file.source.current;
+    let facts: OmpPerformanceFacts | null = null;
+    if (file.caughtUp && file.stream.headerSeen) {
+      facts = this.facts(id, file, now).facts;
+    } else if (current?.headerSeen) {
+      facts = current.facts((key) =>
+        this.ownership ? this.ownership.owner(key) === id : (this.owners.get(key) ?? id) === id,
+      );
+    }
+    const lastLineMs = current?.lastLineMs ?? file.stream.lastLineMs,
       phase = now - lastLineMs > 300_000 || lastLineMs > now ? "idle" : file.source.phase;
     return evaluatePerformance(
       { id, source: "omp", phase, lastLineMs },
@@ -395,6 +385,22 @@ export class OmpPerformanceMonitor {
       records,
       today,
     );
+  }
+  private baselinesFor(
+    models: ReadonlySet<string>,
+    all: HistorySelection,
+    today: string,
+  ): OmpMonitorPerformance["baselines"] {
+    if (this.baselineVersion !== all.version || this.baselineToday !== today) {
+      this.baselineScores.clear();
+      this.baselineVersion = all.version;
+      this.baselineToday = today;
+    }
+    return [...models].sort().map((model) => {
+      if (!this.baselineScores.has(model))
+        this.baselineScores.set(model, performanceBaseline(all.records, "omp", model, today));
+      return { source: "omp", model, score: this.baselineScores.get(model) ?? null };
+    });
   }
   getSnapshot(
     ids: ReadonlySet<string>,
@@ -407,7 +413,7 @@ export class OmpPerformanceMonitor {
     const all = this.allHistory(now),
       selected = this.scopedHistory(ids, all),
       current = Object.create(null) as Record<string, MonitorPerformanceEvaluation>,
-      today = localDay(now) ?? "";
+      today = calendarDay(now)?.date ?? "";
     let scanning = false,
       limited =
         this.sourceLimited || this.memoryLimited || this.storage.limited || selected.limited;
@@ -415,23 +421,14 @@ export class OmpPerformanceMonitor {
       const file = this.files.get(id);
       if (!file) continue;
       scanning ||= file.scanning;
-      limited ||= file.limited || file.stream.limited || file.unavailable || file.rejected;
+      limited ||= file.coverageLimited;
       if (!currentIds.has(id)) continue;
       current[id] = this.currentValue(id, file, now, all.records, today);
     }
     const models = new Set(selected.records.map((row) => row.model));
     for (const evaluation of Object.values(current))
       if (evaluation.n > 0) models.add(evaluation.model ?? "");
-    if (this.baselineVersion !== all.version || this.baselineToday !== today) {
-      this.baselineScores.clear();
-      this.baselineVersion = all.version;
-      this.baselineToday = today;
-    }
-    const baselines = [...models].sort().map((model) => {
-      if (!this.baselineScores.has(model))
-        this.baselineScores.set(model, performanceBaseline(all.records, "omp", model, today));
-      return { source: "omp", model, score: this.baselineScores.get(model) ?? null };
-    });
+    const baselines = this.baselinesFor(models, all, today);
     return { current, records: selected.records, baselines, scanning, limited };
   }
   dispose(): void {
