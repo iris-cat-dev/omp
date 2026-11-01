@@ -131,7 +131,7 @@ export const ja: TranslationResources = {
       planModeSearchKeywords: "プラン 計画 プランモード",
       fastModeGroupLabel: "高速",
       fastModeDescription: "コストは高くなりますが、より速く応答します。",
-      fastModeSearchKeywords: "高速 速度 低遅延",
+      fastModeSearchKeywords: "高速 超高速 ultrafast ultra fast 標準 速度 低遅延",
       settingOn: "オン",
       settingOff: "オフ",
     },
@@ -262,6 +262,17 @@ export const ja: TranslationResources = {
       open: "エージェント機能を開く",
       on: "オン",
       off: "オフ",
+      fast: {
+        title: "速度",
+        standard: "標準",
+        fast: "高速 (Fast)",
+        ultrafast: "超高速 (Ultrafast)",
+        ultrafastNotice: "プラン内使用量 8 倍 / 購入クレジット 6 倍。対応アカウント・モデルのみ。",
+        standardDescription: "通常の速度と使用量の消費率。",
+        ultrafastDescription:
+          "Ultrafast は標準の 8 倍の割合でプラン内の使用量を、6 倍の割合で購入済みクレジットを消費します。対応するアカウントとモデルが必要で、実際の速度は状況によって異なります。",
+        selectWithValue: "速度を選択、現在：{{value}}",
+      },
       workflow: {
         title: "ワークフロー",
         standard: "標準",
@@ -479,6 +490,7 @@ export const ja: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "高速モードを有効にしました",
       fastModeDisabled: "高速モードを無効にしました",
+      ultrafastModeEnabled: "超高速 (Ultrafast) モードを有効にしました",
       modelChanged: "{{model}} に切り替えました",
       thinkingChanged:
         "思考レベルを {{thinking}} に変更しました · 次のモデルリクエストから適用されます",

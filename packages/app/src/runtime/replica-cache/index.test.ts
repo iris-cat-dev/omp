@@ -353,6 +353,7 @@ describe("ReplicaCache", () => {
   it.each([
     { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" },
     { type: "system_notice", notice: "thinking_changed", thinkingOptionId: "high" },
+    { type: "system_notice", notice: "ultrafast_mode_enabled" },
   ])("restores the selected setting from a $notice wire timeline notice", async (item) => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);

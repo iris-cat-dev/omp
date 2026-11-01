@@ -32,6 +32,7 @@ export type CommandCenterContribution =
       presentation: {
         kind: "choice";
         path: readonly [string, ...string[]];
+        subtitle?: string;
         icon?: CommandCenterIcon;
         selected: boolean;
         testId?: string;

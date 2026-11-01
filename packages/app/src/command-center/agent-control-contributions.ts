@@ -8,6 +8,7 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   FAST_MODE_FEATURE_ID,
+  normalizeFastModeFeatureValue,
   isPlanningAgentMode,
   PLAN_MODE_FEATURE_ID,
   resolveNonPlanningModeId,
@@ -28,6 +29,11 @@ export interface AgentControlContributionLabels {
   mode: string;
   planMode: string;
   fast: string;
+  speed: string;
+  standard: string;
+  fastTier: string;
+  ultrafast: string;
+  ultrafastNotice: string;
   on: string;
   off: string;
   modelKeywords: string;
@@ -46,6 +52,11 @@ export function buildAgentControlContributionLabels(
     mode: t("shell.commandCenter.modeGroupLabel"),
     planMode: t("shell.commandCenter.planModeGroupLabel"),
     fast: t("shell.commandCenter.fastModeGroupLabel"),
+    speed: t("agentControls.features.fast.title"),
+    standard: t("agentControls.features.fast.standard"),
+    fastTier: t("agentControls.features.fast.fast"),
+    ultrafast: t("agentControls.features.fast.ultrafast"),
+    ultrafastNotice: t("agentControls.features.fast.ultrafastNotice"),
     on: t("shell.commandCenter.settingOn"),
     off: t("shell.commandCenter.settingOff"),
     modelKeywords: t("shell.commandCenter.modelSearchKeywords"),
@@ -67,6 +78,7 @@ export interface AgentControlContributionIcons {
 interface CommandCenterChoice {
   id: string;
   path: readonly string[];
+  subtitle?: string;
   keywords?: readonly string[];
   icon?: CommandCenterIcon;
   selected: boolean;
@@ -131,6 +143,7 @@ function buildContributions(
           kind: "choice",
           path: [group.label, ...choice.path],
           icon: choice.icon,
+          ...(choice.subtitle ? { subtitle: choice.subtitle } : {}),
           selected: choice.selected,
           testId: choice.testId,
         },
@@ -280,24 +293,39 @@ function buildPlanModeGroup(source: AgentControlContributionSource): CommandCent
 }
 
 function buildFastModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const fastFeature = source.features.list.find(
-    (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
-  );
-  const choices =
-    fastFeature?.type === "toggle"
-      ? toggleChoices({
-          source,
-          key: "fast",
-          icon: source.icons.feature(fastFeature),
-          isOn: fastFeature.value,
-          turnOn: () => source.features.set(FAST_MODE_FEATURE_ID, true),
-          turnOff: () => source.features.set(FAST_MODE_FEATURE_ID, false),
-        })
-      : [];
+  const fastFeature = source.features.list.find((feature) => feature.id === FAST_MODE_FEATURE_ID);
+  let choices: CommandCenterChoice[] = [];
+  if (fastFeature?.type === "toggle") {
+    choices = toggleChoices({
+      source,
+      key: "fast",
+      icon: source.icons.feature(fastFeature),
+      isOn: fastFeature.value,
+      turnOn: () => source.features.set(FAST_MODE_FEATURE_ID, true),
+      turnOff: () => source.features.set(FAST_MODE_FEATURE_ID, false),
+    });
+  } else if (fastFeature?.type === "select") {
+    const selectedValue = normalizeFastModeFeatureValue(fastFeature, fastFeature.value);
+    const labels: Record<string, string> = {
+      off: source.labels.standard,
+      on: source.labels.fastTier,
+      ultrafast: source.labels.ultrafast,
+    };
+    choices = fastFeature.options.map((option) => ({
+      id: option.id,
+      path: [labels[option.id] ?? option.label],
+      subtitle: option.id === "ultrafast" ? source.labels.ultrafastNotice : undefined,
+      keywords: [option.id],
+      icon: source.icons.feature(fastFeature),
+      selected: option.id === selectedValue,
+      testId: `command-center-fast-${source.serverId}:${source.ownerKey}:${option.id}`,
+      select: () => source.features.set(FAST_MODE_FEATURE_ID, option.id),
+    }));
+  }
   return {
     id: "fast-mode",
     rank: GROUP_RANK.fastMode,
-    label: source.labels.fast,
+    label: fastFeature?.type === "select" ? source.labels.speed : source.labels.fast,
     keywords: [source.labels.fastKeywords],
     choices,
   };

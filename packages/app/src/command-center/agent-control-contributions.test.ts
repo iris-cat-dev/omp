@@ -17,6 +17,11 @@ const LABELS: AgentControlContributionSource["labels"] = {
   mode: "Mode",
   planMode: "Plan mode",
   fast: "Fast",
+  speed: "Speed",
+  standard: "Standard",
+  fastTier: "Fast",
+  ultrafast: "Ultrafast",
+  ultrafastNotice: "Higher usage rates; supported account and model required.",
   on: "On",
   off: "Off",
   modelKeywords: "model switch",
@@ -337,7 +342,7 @@ describe("Command Center agent-control contributions", () => {
     expect(calls).toEqual([["plan_mode", false]]);
   });
 
-  it("publishes Fast only for an available toggle and ignores unrelated features", () => {
+  it("keeps boolean Fast choices available and ignores unrelated features", () => {
     const calls: [string, unknown][] = [];
     const contributions = buildAgentControlContributions(
       makeSource({
@@ -361,6 +366,40 @@ describe("Command Center agent-control contributions", () => {
     const unavailable = buildAgentControlContributions(makeSource());
     expect(unavailable.filter((contribution) => contribution.group === "fast-mode")).toEqual([]);
   });
+
+  it.each(["off", "on", "ultrafast"])(
+    "preserves %s and sends exact speed ids from the command center",
+    (value) => {
+      const calls: [string, unknown][] = [];
+      const speedIds = ["off", "on", "ultrafast"];
+      const contributions = buildAgentControlContributions(
+        makeSource({
+          features: {
+            list: [
+              {
+                id: "fast_mode",
+                label: "Speed",
+                type: "select",
+                value,
+                options: speedIds.map((id) => ({ id, label: id })),
+              },
+            ],
+            set: (id, nextValue) => {
+              calls.push([id, nextValue]);
+            },
+          },
+        }),
+      ).filter((contribution) => contribution.group === "fast-mode");
+
+      expect(contributions.map((contribution) => contribution.id)).toEqual(
+        speedIds.map((id) => `fast-mode:${id}`),
+      );
+      expect(contributions.map(selected)).toEqual(speedIds.map((id) => id === value));
+      expect(calls).toEqual([]);
+      for (const contribution of contributions) contribution.run();
+      expect(calls).toEqual(speedIds.filter((id) => id !== value).map((id) => ["fast_mode", id]));
+    },
+  );
 
   it("centralizes query-only group ordering between built-in result sections", () => {
     const contributions = buildAgentControlContributions(

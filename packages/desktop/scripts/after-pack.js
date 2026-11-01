@@ -192,7 +192,11 @@ function assertOmpExtensions(resourcesDir) {
     "providers",
     "omp",
   );
-  for (const filename of ["background-jobs-extension.js", "image-settings-extension.js"]) {
+  for (const filename of [
+    "background-jobs-extension.js",
+    "image-settings-extension.js",
+    "service-tier-extension.js",
+  ]) {
     const extensionPath = path.join(extensionsDir, filename);
     if (!fs.existsSync(extensionPath)) {
       throw new Error(`Packaged OMP extension is missing: ${extensionPath}`);

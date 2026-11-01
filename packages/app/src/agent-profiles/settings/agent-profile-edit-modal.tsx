@@ -4,6 +4,12 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
 import type { AgentProfile } from "@omp-desktop/protocol/messages";
+import {
+  formatAgentFeatureLabel,
+  formatAgentFeatureOptionDescription,
+  formatAgentFeatureOptionLabel,
+} from "@/agent-controls/labels";
+import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { type FieldControlSize } from "@/components/ui/control-geometry";
@@ -413,6 +419,12 @@ function AgentProfileFeatureRow({
   size: FieldControlSize;
   model: AgentProfileFormModel;
 }): ReactElement {
+  const { t } = useTranslation();
+  const featureLabel = formatAgentFeatureLabel(feature);
+  const featureDescription =
+    feature.id === FAST_MODE_FEATURE_ID && feature.type === "select"
+      ? t("agentControls.features.fast.ultrafastDescription")
+      : feature.description;
   const rowStyle = useMemo(
     () => [styles.featureRow, isFirst ? null : styles.featureRowBorder],
     [isFirst],
@@ -431,35 +443,37 @@ function AgentProfileFeatureRow({
         ? feature.options.map((option) => ({
             id: option.id,
             value: option.id,
-            label: option.label,
-            ...(option.description ? { description: option.description } : {}),
+            label: formatAgentFeatureOptionLabel(feature.id, option, t),
+            description: formatAgentFeatureOptionDescription(feature.id, option, t),
             testID: `agent-profile-feature-option-${feature.id}-${option.id}`,
           }))
         : [],
-    [feature],
+    [feature, t],
   );
   const selectedDisplay = useMemo<SelectFieldDisplay | null>(() => {
     if (feature.type !== "select" || !feature.value) {
       return null;
     }
     const option = feature.options.find((candidate) => candidate.id === feature.value);
-    return { label: option?.label ?? feature.value };
-  }, [feature]);
+    return {
+      label: option ? formatAgentFeatureOptionLabel(feature.id, option, t) : feature.value,
+    };
+  }, [feature, t]);
 
   if (feature.type === "select") {
     return (
       <View style={rowStyle} testID={`agent-profile-feature-row-${feature.id}`}>
         <SelectField
-          label={feature.label}
+          label={featureLabel}
           value={feature.value}
           selectedDisplay={selectedDisplay}
           options={selectOptions}
           onChange={handleSelect}
-          placeholder={feature.label}
-          emptyText={feature.label}
+          placeholder={featureLabel}
+          emptyText={featureLabel}
           disabled={disabled}
-          {...(feature.description ? { hint: feature.description } : {})}
-          title={feature.label}
+          {...(featureDescription ? { hint: featureDescription } : {})}
+          title={featureLabel}
           size={size}
           testID={`agent-profile-feature-field-${feature.id}`}
           triggerTestID={`agent-profile-feature-trigger-${feature.id}`}
@@ -472,11 +486,11 @@ function AgentProfileFeatureRow({
     <View style={rowStyle} testID={`agent-profile-feature-row-${feature.id}`}>
       <View style={styles.featureMeta}>
         <Text style={styles.featureLabel} numberOfLines={1}>
-          {feature.label}
+          {featureLabel}
         </Text>
-        {feature.description ? (
+        {featureDescription ? (
           <Text style={styles.featureDescription} numberOfLines={2}>
-            {feature.description}
+            {featureDescription}
           </Text>
         ) : null}
       </View>
@@ -484,7 +498,7 @@ function AgentProfileFeatureRow({
         value={feature.value === true}
         onValueChange={handleToggle}
         disabled={disabled}
-        accessibilityLabel={feature.label}
+        accessibilityLabel={featureLabel}
         testID={`agent-profile-feature-switch-${feature.id}`}
       />
     </View>

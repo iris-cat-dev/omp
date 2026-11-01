@@ -131,7 +131,7 @@ export const es: TranslationResources = {
       planModeSearchKeywords: "plan planificación modo plan",
       fastModeGroupLabel: "Rápido",
       fastModeDescription: "Respuestas más rápidas a un coste mayor.",
-      fastModeSearchKeywords: "rápido velocidad baja latencia",
+      fastModeSearchKeywords: "rápido ultrafast ultra fast estándar velocidad baja latencia",
       settingOn: "Activado",
       settingOff: "Desactivado",
     },
@@ -262,6 +262,18 @@ export const es: TranslationResources = {
       open: "Funciones de agente abierto",
       on: "En",
       off: "Apagado",
+      fast: {
+        title: "Velocidad",
+        standard: "Estándar",
+        fast: "Rápido (Fast)",
+        ultrafast: "Ultrafast",
+        ultrafastNotice:
+          "Uso incluido 8× / créditos comprados 6×; solo cuentas y modelos compatibles.",
+        standardDescription: "Velocidad normal y tasas de consumo estándar.",
+        ultrafastDescription:
+          "Ultrafast consume el uso incluido a 8× y los créditos comprados a 6× la tasa estándar. Requiere una cuenta y un modelo compatibles; la velocidad real puede variar.",
+        selectWithValue: "Seleccionar velocidad, actual: {{value}}",
+      },
       workflow: {
         title: "Flujo de trabajo",
         standard: "Estándar",
@@ -480,6 +492,7 @@ export const es: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Modo rápido activado",
       fastModeDisabled: "Modo rápido desactivado",
+      ultrafastModeEnabled: "Modo Ultrafast activado",
       modelChanged: "Se cambió a {{model}}",
       thinkingChanged:
         "Nivel de razonamiento: {{thinking}} · Se aplica desde la próxima solicitud al modelo",

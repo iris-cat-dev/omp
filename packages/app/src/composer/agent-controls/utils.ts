@@ -1,7 +1,16 @@
 import type { AgentFeature, AgentModelDefinition } from "@omp-desktop/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
-import { formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { FAST_MODE_FEATURE_ID, PLAN_MODE_FEATURE_ID } from "@/agent-controls/policy";
+import {
+  formatAgentFeatureLabel,
+  formatAgentFeatureOptionLabel,
+  formatThinkingOptionLabel,
+} from "@/agent-controls/labels";
+import {
+  FAST_MODE_FEATURE_ID,
+  normalizeFastModeFeatureValue,
+  PLAN_MODE_FEATURE_ID,
+  type FastModeTier,
+} from "@/agent-controls/policy";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
@@ -9,7 +18,7 @@ export type AgentControlHintKey =
   | "agentControls.hints.thinking"
   | "agentControls.hints.model"
   | "agentControls.hints.mode";
-export type FastModeFeature = Extract<AgentFeature, { type: "toggle" }>;
+export type FastModeFeature = Extract<AgentFeature, { type: "toggle" | "select" }>;
 export interface PartitionedModelFeatures {
   fastMode: FastModeFeature | null;
   remaining: AgentFeature[];
@@ -21,13 +30,21 @@ export function partitionModelFeatures(
   let fastMode: FastModeFeature | null = null;
   const remaining: AgentFeature[] = [];
   for (const feature of features ?? []) {
-    if (feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle") {
+    if (feature.id === FAST_MODE_FEATURE_ID) {
       fastMode = feature;
     } else {
       remaining.push(feature);
     }
   }
   return { fastMode, remaining };
+}
+
+export function getFastModeTier(feature: FastModeFeature | null): FastModeTier | null {
+  if (!feature) return null;
+  const value = normalizeFastModeFeatureValue(feature, feature.value);
+  if (value === undefined) return null;
+  if (typeof value === "boolean") return value ? "on" : "off";
+  return value;
 }
 
 export function getAgentControlHintKey(selector: ExplainedAgentControl): AgentControlHintKey {
@@ -64,6 +81,14 @@ export function getFeatureTooltip(
   ) {
     return `${i18n.t("shell.commandCenter.fastModeGroupLabel")}: ${i18n.t(
       feature.value ? "shell.commandCenter.settingOn" : "shell.commandCenter.settingOff",
+    )}`;
+  }
+  if (feature.id === FAST_MODE_FEATURE_ID && feature.type === "select") {
+    let id = String(feature.value);
+    if (typeof feature.value === "boolean") id = feature.value ? "on" : "off";
+    const value = formatAgentFeatureOptionLabel(feature.id, { id });
+    return `${formatAgentFeatureLabel(feature)}: ${value}. ${i18n.t(
+      "agentControls.features.fast.ultrafastDescription",
     )}`;
   }
   return feature.tooltip ?? feature.label;

@@ -853,7 +853,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   }),
   z.object({
     type: z.literal("system_notice"),
-    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
+    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled", "ultrafast_mode_enabled"]),
   }),
   z.object({
     type: z.literal("system_notice"),

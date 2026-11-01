@@ -5,6 +5,7 @@ import type {
 } from "@omp-desktop/protocol/messages";
 import { formatOmpAccountSelectionLabel } from "@/components/omp-provider-accounts";
 import {
+  formatOmpAccountPlanLabel,
   formatOmpCodexCreditBalance,
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
@@ -204,7 +205,7 @@ export function buildOmpAccountProviderUsage(
       providerId: `${copy.providerId}:${account.credentialId}`,
       displayName: `${providerName} · ${accountLabel}`,
       status: source.error ? "error" : (quota?.status ?? "unavailable"),
-      planLabel: quota?.planLabel ?? null,
+      planLabel: formatOmpAccountPlanLabel(copy.providerId, quota?.planLabel),
       sourceLabel: providerName,
       fetchedAt: quota?.fetchedAt ?? source.updatedAt,
       windows: accountWindows(quota, copy),

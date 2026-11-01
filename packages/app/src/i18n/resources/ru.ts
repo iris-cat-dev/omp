@@ -131,7 +131,7 @@ export const ru: TranslationResources = {
       planModeSearchKeywords: "план планирование режим плана",
       fastModeGroupLabel: "Быстрый",
       fastModeDescription: "Более быстрые ответы при более высокой стоимости.",
-      fastModeSearchKeywords: "быстрый скорость низкая задержка",
+      fastModeSearchKeywords: "быстрый ultrafast ultra fast стандартный скорость низкая задержка",
       settingOn: "Вкл",
       settingOff: "Выкл",
     },
@@ -262,6 +262,18 @@ export const ru: TranslationResources = {
       open: "Открыть настройки функций агента",
       on: "Включено",
       off: "Выключено",
+      fast: {
+        title: "Скорость",
+        standard: "Стандартный",
+        fast: "Быстрый (Fast)",
+        ultrafast: "Ultrafast",
+        ultrafastNotice:
+          "Включённый лимит 8× / купленные кредиты 6×; только поддерживаемые аккаунты и модели.",
+        standardDescription: "Обычная скорость и стандартные нормы расхода.",
+        ultrafastDescription:
+          "Ultrafast расходует включённый лимит в 8 раз, а купленные кредиты — в 6 раз быстрее стандартного режима. Нужны поддерживаемые аккаунт и модель; фактическая скорость может отличаться.",
+        selectWithValue: "Выбрать скорость, текущая: {{value}}",
+      },
       workflow: {
         title: "Рабочий процесс",
         standard: "Стандартный",
@@ -488,6 +500,7 @@ export const ru: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Быстрый режим включён",
       fastModeDisabled: "Быстрый режим выключен",
+      ultrafastModeEnabled: "Режим Ultrafast включён",
       modelChanged: "Переключено на {{model}}",
       thinkingChanged:
         "Уровень размышлений: {{thinking}} · Применяется со следующего запроса к модели",

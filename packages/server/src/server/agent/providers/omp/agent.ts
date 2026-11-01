@@ -144,6 +144,7 @@ import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runt
 import type {
   OmpAgentSessionEvent,
   OmpAgentMessage,
+  OmpFastModeSelection,
   OmpImageContent,
   OmpModel,
   OmpRuntimeEvent,
@@ -799,10 +800,75 @@ function configuredOmpOAuthCredentialId(value: unknown): string | undefined {
   return configured && configured !== OMP_OAUTH_ACCOUNT_AUTOMATIC_VALUE ? configured : undefined;
 }
 
+function normalizeOmpFastMode(value: unknown): OmpFastModeSelection | undefined {
+  if (typeof value === "boolean") return value ? "on" : "off";
+  return value === "off" || value === "on" || value === "ultrafast" ? value : undefined;
+}
+
+function readOmpFastMode(state: OmpSessionState): OmpFastModeSelection {
+  if (state.fastModeTier === "ultrafast") return "ultrafast";
+  if (state.fastModeTier === "priority") return "on";
+  if (state.fastModeTier !== undefined) return "off";
+  return state.fastModeEnabled === true ? "on" : "off";
+}
+
+interface OmpFastModeStatus {
+  supported: boolean;
+  eligible: boolean;
+  selection: OmpFastModeSelection;
+  ultrafastSupported: boolean;
+  nativeTier?: string | null;
+}
+
+function createOmpFastFeature(
+  configured: unknown,
+  fastMode: OmpFastModeStatus | undefined,
+): AgentFeature | null {
+  if (!fastMode?.supported || !fastMode.eligible) return null;
+  if (
+    !fastMode.ultrafastSupported &&
+    (normalizeOmpFastMode(configured) === "ultrafast" || fastMode.selection === "ultrafast")
+  )
+    return null;
+  if (
+    fastMode.ultrafastSupported &&
+    fastMode.nativeTier != null &&
+    !["auto", "default", "priority", "ultrafast"].includes(fastMode.nativeTier)
+  )
+    return null;
+  const details = {
+    id: OMP_FAST_MODE_FEATURE_ID,
+    label: "Fast mode",
+    tooltip:
+      "Requires provider access. Model capability does not guarantee account access or speed.",
+    icon: "zap",
+  };
+  if (!fastMode.ultrafastSupported) {
+    return {
+      ...details,
+      type: "toggle",
+      description: "Faster responses at higher cost.",
+      value: fastMode.selection === "on",
+    };
+  }
+  return {
+    ...details,
+    type: "select",
+    description:
+      "Choose Standard, Fast, or Ultrafast service. Faster tiers have higher usage costs.",
+    value: fastMode.selection,
+    options: [
+      { id: "off", label: "Standard" },
+      { id: "on", label: "Fast" },
+      { id: "ultrafast", label: "Ultrafast" },
+    ],
+  };
+}
+
 function createOmpFeatures(
   config: AgentSessionConfig,
   oauthAccounts: readonly StoredOmpOAuthAccount[] = [],
-  fastMode?: { supported: boolean; eligible: boolean; enabled: boolean },
+  fastMode?: OmpFastModeStatus,
   activeCredential?: OmpSessionState["activeCredential"],
 ): AgentFeature[] {
   const features: AgentFeature[] = [
@@ -822,17 +888,11 @@ function createOmpFeatures(
     },
   ];
   const modelProvider = parseModelReference(config.model ?? null)?.provider;
-  if (fastMode?.supported && fastMode.eligible) {
-    features.push({
-      type: "toggle",
-      id: OMP_FAST_MODE_FEATURE_ID,
-      label: "Fast mode",
-      description: "Faster responses at higher cost.",
-      tooltip: "Requires provider fast-mode access. Additional charges may apply.",
-      icon: "zap",
-      value: fastMode.enabled,
-    });
-  }
+  const fastFeature = createOmpFastFeature(
+    config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
+    fastMode,
+  );
+  if (fastFeature) features.push(fastFeature);
   const providerAccounts =
     modelProvider === "openai-codex"
       ? oauthAccounts.filter((account) => account.provider === modelProvider)
@@ -1837,17 +1897,18 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = configuredModeId;
     this.launchModeId = configuredModeId;
     this.fastModeSupported = typeof options.initialState.fastModeEnabled === "boolean";
-    const configuredFastMode = optionalBoolean(
-      options.config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
-    );
-    this.fastModeEnabled = options.initialState.fastModeEnabled === true;
+    this.fastModeSelection = readOmpFastMode(options.initialState);
     this.features = createOmpFeatures(
       options.config,
       this.oauthAccounts,
       {
         supported: this.fastModeSupported,
-        eligible: isOmpFastModeEligibleModel(options.initialState.model, options.config.model),
-        enabled: configuredFastMode ?? this.fastModeEnabled,
+        eligible:
+          options.initialState.ultrafastSupported === true ||
+          isOmpFastModeEligibleModel(options.initialState.model, options.config.model),
+        selection: this.fastModeSelection,
+        ultrafastSupported: options.initialState.ultrafastSupported === true,
+        nativeTier: options.initialState.fastModeTier,
       },
       options.initialState.activeCredential,
     );
@@ -1914,16 +1975,38 @@ export class OmpAgentSession implements AgentSession {
   private readonly paseoTools?: PaseoToolCatalog;
   private readonly oauthAccounts: readonly StoredOmpOAuthAccount[];
   private readonly fastModeSupported: boolean;
-  private fastModeEnabled: boolean;
+  private fastModeSelection: OmpFastModeSelection;
+  private modelControls = Promise.resolve();
+  private modelControlRevision = 0;
+
+  private runModelControl<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.modelControls.then(async () => {
+      this.modelControlRevision += 1;
+      try {
+        return await operation();
+      } finally {
+        this.modelControlRevision += 1;
+      }
+    });
+    this.modelControls = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   private refreshFeatures(): void {
     const nextFeatures = createOmpFeatures(
       this.config,
       this.oauthAccounts,
       {
-        eligible: isOmpFastModeEligibleModel(this.state.model, this.config.model),
+        eligible:
+          this.state.ultrafastSupported === true ||
+          isOmpFastModeEligibleModel(this.state.model, this.config.model),
         supported: this.fastModeSupported,
-        enabled: this.fastModeEnabled,
+        selection: this.fastModeSelection,
+        ultrafastSupported: this.state.ultrafastSupported === true,
+        nativeTier: this.state.fastModeTier,
       },
       this.state.activeCredential,
     );
@@ -2322,36 +2405,7 @@ export class OmpAgentSession implements AgentSession {
   // eslint-disable-next-line complexity
   async setFeature(featureId: string, value: unknown): Promise<void> {
     if (featureId === OMP_FAST_MODE_FEATURE_ID) {
-      if (typeof value !== "boolean") {
-        throw new Error(`Invalid OMP fast mode '${String(value)}'`);
-      }
-      const feature = this.features.find((candidate) => candidate.id === featureId);
-      if (feature?.type !== "toggle") {
-        throw new Error("OMP fast mode is unavailable for the current model");
-      }
-      const result = await this.runtimeSession.setFastMode(value);
-      const changed = this.fastModeEnabled !== result.enabled;
-      this.fastModeEnabled = result.enabled;
-      this.state = {
-        ...this.state,
-        fastModeEnabled: result.enabled,
-        fastModeActive: result.active,
-      };
-      feature.value = result.enabled;
-      this.config.featureValues = {
-        ...this.config.featureValues,
-        [OMP_FAST_MODE_FEATURE_ID]: result.enabled,
-      };
-      if (changed) {
-        this.emit({
-          type: "timeline",
-          provider: this.provider,
-          item: {
-            type: "system_notice",
-            notice: result.enabled ? "fast_mode_enabled" : "fast_mode_disabled",
-          },
-        });
-      }
+      await this.runModelControl(() => this.setFastModeFeature(value));
       return;
     }
     if (featureId === OMP_OAUTH_ACCOUNT_FEATURE_ID) {
@@ -2434,26 +2488,97 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private async applyConfiguredFastMode(): Promise<void> {
-    if (!this.fastModeSupported) return;
-    if (!isOmpFastModeEligibleModel(this.state.model, this.config.model)) return;
-    const configured = optionalBoolean(this.config.featureValues?.[OMP_FAST_MODE_FEATURE_ID]);
-    if (configured === undefined) {
-      this.fastModeEnabled = this.state.fastModeEnabled === true;
-      this.refreshFeatures();
-      return;
+  private async setFastModeFeature(value: unknown): Promise<void> {
+    const feature = this.features.find((candidate) => candidate.id === OMP_FAST_MODE_FEATURE_ID);
+    if (!feature) throw new Error("OMP fast mode is unavailable for the current model");
+    const selection = normalizeOmpFastMode(value);
+    if (!selection || (feature.type === "toggle" && typeof value !== "boolean"))
+      throw new Error(`Invalid OMP fast mode '${String(value)}'`);
+    const previous = this.fastModeSelection;
+    try {
+      await this.updateNativeFastMode(selection);
+    } catch (error) {
+      // A failed/unknown write never persists the desired tier. Read native
+      // truth once so a rejected or lost response cannot leave a false label.
+      await this.refreshState().catch(() => undefined);
+      throw error;
     }
-    if (configured === this.fastModeEnabled) {
-      this.refreshFeatures();
-      return;
+    this.config.featureValues = {
+      ...this.config.featureValues,
+      [OMP_FAST_MODE_FEATURE_ID]: feature.type === "select" ? selection : selection === "on",
+    };
+    this.refreshFeatures();
+    if (previous !== this.fastModeSelection) {
+      const notice = selection === "on" ? "fast_mode_enabled" : "fast_mode_disabled";
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "system_notice",
+          notice: selection === "ultrafast" ? "ultrafast_mode_enabled" : notice,
+        },
+      });
     }
-    const result = await this.runtimeSession.setFastMode(configured);
-    this.fastModeEnabled = result.enabled;
+  }
+
+  private async updateNativeFastMode(selection: OmpFastModeSelection): Promise<void> {
+    const useNativeTier = this.state.ultrafastSupported === true;
+    if (selection === "ultrafast" && !useNativeTier) {
+      throw new Error("OMP Ultrafast is unavailable for the current model");
+    }
+    if (useNativeTier && !this.state.model) {
+      throw new Error("OMP model is unavailable for the service tier update");
+    }
+    const result = useNativeTier
+      ? await this.runtimeSession.setFastModeTier(selection, this.state.model!)
+      : await this.runtimeSession.setFastMode(selection === "on");
+    const selectedTier = selection === "on" ? "priority" : selection;
+    const expectedTier = selectedTier === "off" ? null : selectedTier;
+    if (
+      result.enabled !== (selection !== "off") ||
+      (selection !== "off" && !result.active) ||
+      (useNativeTier && result.tier !== expectedTier)
+    )
+      throw new Error("OMP did not apply the requested service tier");
     this.state = {
       ...this.state,
       fastModeEnabled: result.enabled,
       fastModeActive: result.active,
+      fastModeTier: result.tier,
     };
+    this.fastModeSelection = readOmpFastMode(this.state);
+    this.refreshFeatures();
+  }
+
+  private async applyConfiguredFastMode(): Promise<void> {
+    if (!this.fastModeSupported) return;
+    if (
+      this.state.ultrafastSupported !== true &&
+      !isOmpFastModeEligibleModel(this.state.model, this.config.model)
+    )
+      return;
+    const raw = this.config.featureValues?.[OMP_FAST_MODE_FEATURE_ID];
+    let configured = normalizeOmpFastMode(raw);
+    this.fastModeSelection = readOmpFastMode(this.state);
+    // Old boolean preferences cannot distinguish native Ultra from Fast.
+    if (raw === true && this.fastModeSelection === "ultrafast") configured = "ultrafast";
+    if (
+      configured === undefined ||
+      (configured === "ultrafast" && this.state.ultrafastSupported !== true) ||
+      (this.state.ultrafastSupported &&
+        this.state.fastModeTier != null &&
+        !["auto", "default", "priority", "ultrafast"].includes(this.state.fastModeTier))
+    ) {
+      this.refreshFeatures();
+      return;
+    }
+    if (configured !== this.fastModeSelection) await this.updateNativeFastMode(configured);
+    if (this.state.ultrafastSupported) {
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        [OMP_FAST_MODE_FEATURE_ID]: configured,
+      };
+    }
     this.refreshFeatures();
   }
 
@@ -2939,6 +3064,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async setModel(modelId: string | null): Promise<void> {
+    await this.runModelControl(() => this.setModelSelection(modelId));
+  }
+
+  private async setModelSelection(modelId: string | null): Promise<void> {
     const parsedReference = parseModelReference(modelId);
     if (!parsedReference) {
       return;
@@ -4422,24 +4551,30 @@ export class OmpAgentSession implements AgentSession {
 
   private async refreshState(): Promise<void> {
     const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
+    const previousFastMode = this.features.find(
+      (feature) => feature.id === OMP_FAST_MODE_FEATURE_ID,
+    );
+    const previousFastValue = previousFastMode?.value;
+    const previousFastType = previousFastMode?.type;
+    const revision = this.modelControlRevision;
     const state = await this.runtimeSession.getState();
+    if (revision !== this.modelControlRevision) return;
     this.state = {
       ...state,
       activeCredential: state.activeCredential ?? this.state.activeCredential,
     };
-    if (
-      this.fastModeSupported &&
-      typeof this.state.fastModeEnabled === "boolean" &&
-      this.fastModeEnabled !== this.state.fastModeEnabled
-    ) {
-      this.fastModeEnabled = this.state.fastModeEnabled;
-    }
+    this.fastModeSelection = readOmpFastMode(this.state);
     this.refreshFeatures();
+    const fastMode = this.features.find((feature) => feature.id === OMP_FAST_MODE_FEATURE_ID);
     const effectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
     if (effectiveValue) {
       this.stopAutomaticCredentialResolution();
     }
-    if (effectiveValue !== previousEffectiveValue) {
+    if (
+      effectiveValue !== previousEffectiveValue ||
+      fastMode?.value !== previousFastValue ||
+      fastMode?.type !== previousFastType
+    ) {
       this.emit({ type: "features_changed", provider: this.provider });
     }
   }
@@ -4985,7 +5120,9 @@ export class OmpAgentClient implements AgentClient {
         extraArgs: launchMode.extraArgs,
       });
       const state = await runtimeSession.getState();
-      const configuredFastMode = optionalBoolean(config.featureValues?.[OMP_FAST_MODE_FEATURE_ID]);
+      const configuredFastMode = normalizeOmpFastMode(
+        config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
+      );
       const automaticCredentialId = await this.resolveAutomaticCredentialId(
         config,
         state,
@@ -5007,8 +5144,15 @@ export class OmpAgentClient implements AgentClient {
         oauthAccounts,
         {
           supported: typeof state.fastModeEnabled === "boolean",
-          eligible: isOmpFastModeEligibleModel(state.model, config.model),
-          enabled: configuredFastMode ?? state.fastModeEnabled === true,
+          eligible:
+            state.ultrafastSupported === true ||
+            isOmpFastModeEligibleModel(state.model, config.model),
+          selection:
+            state.fastModeTier === "ultrafast"
+              ? "ultrafast"
+              : (configuredFastMode ?? readOmpFastMode(state)),
+          ultrafastSupported: state.ultrafastSupported === true,
+          nativeTier: state.fastModeTier,
         },
         activeCredential,
       );

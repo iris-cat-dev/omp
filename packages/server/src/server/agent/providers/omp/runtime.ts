@@ -5,6 +5,7 @@ import type {
 import type {
   OmpAgentMessage,
   OmpFastModeResult,
+  OmpFastModeSelection,
   OmpModel,
   OmpLoginProvider,
   OmpPromptAck,
@@ -67,6 +68,10 @@ export interface OmpRuntimeSession {
   stopBackgroundJob?(processId: string): Promise<boolean>;
   stopAllBackgroundJobs?(): Promise<number>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
+  setFastModeTier(
+    value: OmpFastModeSelection,
+    model: { provider: string; id: string },
+  ): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
   getLocalModelGatewayPort?(): Promise<number>;
