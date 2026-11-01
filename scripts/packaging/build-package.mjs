@@ -13,7 +13,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 With no target, package for the current OS.
 mac:     macOS arm64, requires a Mac; produces DMG and ZIP.
-windows: Windows x64; produces NSIS, ZIP and update metadata.
+windows: Windows x64, requires Windows x64 SDK native dependencies; produces NSIS, ZIP and update metadata.
 Output:  packages/desktop/release/
 Local builds default to --publish never.`);
   process.exit(0);
@@ -27,17 +27,15 @@ if (target === "mac" && process.platform !== "darwin") {
     "macOS packages must be built on macOS (Apple signing and DMG tools are required).",
   );
 }
+if (target === "windows" && (process.platform !== "win32" || process.arch !== "x64")) {
+  throw new Error(
+    "Windows SDK packaging requires target-native dependencies. Build on Windows x64; macOS cross-builds cannot stage a Windows SDK.",
+  );
+}
 
 const nativeWindows = target === "windows" && process.platform === "win32";
 const scriptPath = fileURLToPath(
-  new URL(
-    target === "mac"
-      ? "./build-mac.sh"
-      : nativeWindows
-        ? "./build-windows.ps1"
-        : "./build-windows.sh",
-    import.meta.url,
-  ),
+  new URL(target === "mac" ? "./build-mac.sh" : "./build-windows.ps1", import.meta.url),
 );
 const result = spawnSync(
   nativeWindows ? "powershell.exe" : "bash",

@@ -1625,11 +1625,6 @@ export const en = {
         statusFailed: "Unable to check CLI install status.",
         installFailed: "Unable to install the OMP Desktop CLI.",
       },
-      ompShortcut: {
-        statusFailed: "Unable to check the OMP command shortcut status.",
-        installFailed: "Unable to install the OMP command shortcut.",
-        uninstallFailed: "Unable to uninstall the OMP command shortcut.",
-      },
     },
   },
   rootError: {
@@ -2600,10 +2595,6 @@ export const en = {
       commandLine: {
         title: "Command line",
         description: "Control and script agents from your terminal",
-      },
-      ompShortcut: {
-        title: "OMP command shortcut",
-        description: "Run bundled OMP with the proxy currently configured for this host",
       },
       actions: {
         install: "Install",

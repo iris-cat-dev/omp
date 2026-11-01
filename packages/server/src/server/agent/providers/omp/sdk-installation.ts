@@ -18,6 +18,38 @@ export interface OmpSdkInstallation {
   workerEntry: string;
 }
 
+const sdkRequire = createRequire(import.meta.url);
+
+function resolveInstalledSdkRoot(): string | undefined {
+  try {
+    return path.dirname(sdkRequire.resolve("@oh-my-pi/pi-coding-agent/package.json"));
+  } catch (error) {
+    if (
+      !error ||
+      typeof error !== "object" ||
+      !("code" in error) ||
+      error.code !== "MODULE_NOT_FOUND"
+    )
+      throw error;
+    return undefined;
+  }
+}
+
+/** Desktop owns its runtime; standalone servers may deliberately select an external CLI. */
+export function resolveOmpBackend(
+  settings?: Pick<ProviderRuntimeSettings, "ompBackend" | "ompSdkPath" | "env">,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): "sdk" | "cli" {
+  if (env.PASEO_DESKTOP_MANAGED === "1") return "sdk";
+  if (settings?.ompBackend) return settings.ompBackend;
+  return settings?.ompSdkPath ||
+    settings?.env?.[OMP_SDK_ROOT_ENV] ||
+    env[OMP_SDK_ROOT_ENV] ||
+    resolveInstalledSdkRoot()
+    ? "sdk"
+    : "cli";
+}
+
 /** Locate the selected SDK, never substituting a CLI executable or another package. */
 export async function resolveOmpSdkInstallation(
   settings?: Pick<ProviderRuntimeSettings, "ompSdkPath" | "env">,
@@ -28,38 +60,17 @@ export async function resolveOmpSdkInstallation(
     (env
       ? env[OMP_SDK_ROOT_ENV]
       : (settings?.env?.[OMP_SDK_ROOT_ENV] ?? process.env[OMP_SDK_ROOT_ENV]));
+  root ??= resolveInstalledSdkRoot();
   if (!root) {
-    try {
-      root = path.dirname(
-        createRequire(import.meta.url).resolve(
-          "@oh-my-pi/pi-coding-agent/package.json",
-        ),
-      );
-    } catch (error) {
-      if (
-        !error ||
-        typeof error !== "object" ||
-        !("code" in error) ||
-        error.code !== "MODULE_NOT_FOUND"
-      )
-        throw error;
-      throw new Error(
-        "OMP SDK backend is selected but no Node SDK is installed. Set agents.providers.omp.ompSdkPath to a built SDK package root, or package it with OMP_DESKTOP_SDK_SOURCE.",
-      );
-    }
+    throw new Error(
+      "OMP SDK backend is selected but no Node SDK is installed. Build the project SDK, set agents.providers.omp.ompSdkPath to a built SDK package root, or package it with OMP_DESKTOP_SDK_SOURCE.",
+    );
   }
-  if (!path.isAbsolute(root))
-    throw new Error("OMP SDK package root must be absolute");
+  if (!path.isAbsolute(root)) throw new Error("OMP SDK package root must be absolute");
   const manifest = sdkMetadata.parse(
     JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8")),
   );
-  const required = [
-    "sdk.mjs",
-    "rpc.mjs",
-    "host.mjs",
-    "plugins.mjs",
-    "modules.json",
-  ];
+  const required = ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"];
   await Promise.all(
     required.map(async (file) => {
       const filename = path.join(root, "dist", "node", file);

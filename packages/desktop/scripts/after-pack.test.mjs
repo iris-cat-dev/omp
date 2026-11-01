@@ -4,7 +4,9 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { expect, test } from "vitest";
 
-const { deduplicateSdkSharp } = createRequire(import.meta.url)("./after-pack.js");
+const { deduplicateSdkSharp, stripCoreSdkAddon } = createRequire(import.meta.url)(
+  "./after-pack.js",
+);
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omp-image-package-"));
@@ -86,3 +88,84 @@ test("an SDK dependency linked outside the App is rejected without modifying its
     fs.rmSync(f.directory, { recursive: true, force: true });
   }
 });
+
+test("matching Sharp payloads share App-relative links without touching Desktop binaries", () => {
+  const f = fixture();
+  try {
+    deduplicateSdkSharp(f.resources, process.platform, process.arch);
+    const sdkNative = path.join(f.sdk, "node_modules", f.native);
+    expect(fs.lstatSync(sdkNative).isSymbolicLink()).toBe(true);
+    expect(path.isAbsolute(fs.readlinkSync(sdkNative))).toBe(false);
+    expect(fs.realpathSync(sdkNative)).toBe(
+      fs.realpathSync(path.join(f.desktop, "node_modules", f.native)),
+    );
+    expect(fs.readFileSync(path.join(sdkNative, "binding.node"), "utf8")).toBe("native-release-A");
+  } finally {
+    fs.rmSync(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("packaged Sharp deduplication fails clearly without the required SDK", () => {
+  const f = fixture();
+  try {
+    fs.rmSync(f.sdk, { recursive: true, force: true });
+    expect(() => deduplicateSdkSharp(f.resources, process.platform, process.arch)).toThrow(
+      "Required packaged SDK is missing",
+    );
+  } finally {
+    fs.rmSync(f.directory, { recursive: true, force: true });
+  }
+});
+
+function nativeStripFixture() {
+  const f = fixture();
+  fs.writeFileSync(
+    path.join(f.sdk, "node_modules", "@oh-my-pi", "pi-coding-agent", "package.json"),
+    JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", ompNodeSdk: { profile: "core" } }),
+  );
+  const native = path.join(f.sdk, "node_modules", "@oh-my-pi", "pi-natives", "native");
+  fs.mkdirSync(native, { recursive: true });
+  fs.writeFileSync(
+    path.join(native, "..", "package.json"),
+    JSON.stringify({ name: "@oh-my-pi/pi-natives", main: "native/index.js" }),
+  );
+  fs.writeFileSync(path.join(native, "index.js"), "module.exports = {};\n");
+  const source = path.join(f.directory, "source-addon.node");
+  fs.copyFileSync("/usr/bin/true", source);
+  return { ...f, source, addon: path.join(native, `pi_natives.darwin-${process.arch}.node`) };
+}
+
+test.skipIf(process.platform !== "darwin")(
+  "a symlinked App resources root is stripped without modifying source hardlinks",
+  () => {
+    const f = nativeStripFixture();
+    try {
+      fs.linkSync(f.source, f.addon);
+      const original = fs.readFileSync(f.source);
+      const alias = path.join(f.directory, "linked-resources");
+      fs.symlinkSync(f.resources, alias, "dir");
+      stripCoreSdkAddon(alias, "darwin", process.arch);
+      expect(fs.statSync(f.addon).ino).not.toBe(fs.statSync(f.source).ino);
+      expect(fs.readFileSync(f.source)).toEqual(original);
+    } finally {
+      fs.rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin")(
+  "a native addon linked outside the App is rejected without modifying its target",
+  () => {
+    const f = nativeStripFixture();
+    try {
+      fs.symlinkSync(f.source, f.addon);
+      const original = fs.readFileSync(f.source);
+      expect(() => stripCoreSdkAddon(f.resources, "darwin", process.arch)).toThrow(
+        "Refusing to strip a native addon outside the packaged app",
+      );
+      expect(fs.readFileSync(f.source)).toEqual(original);
+    } finally {
+      fs.rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -1,8 +1,10 @@
 # Development and verification
 
-All shell and PowerShell commands in this guide run from the repository root unless stated otherwise. See [packaging](packaging.md) for supported native runtimes, installer construction, signing, bundled OMP, and release metadata; [remote hosts](remote-hosts.md) and [deployment](deployment.md) cover remote daemon and Web/relay setup.
+All shell and PowerShell commands in this guide run from the repository root unless stated otherwise. See [packaging](packaging.md) for supported native runtimes, installer construction, signing, bundled SDK, and release metadata; [remote hosts](remote-hosts.md) and [deployment](deployment.md) cover remote daemon and Web/relay setup.
 
 ## Start development
+
+Build prerequisites: Node.js 24+, Bun, Rustup with the SDK's pinned Rust toolchain, and a native C/C++ toolchain (Xcode Command Line Tools on macOS; Visual Studio C++ Build Tools on Windows). Bun and Rust are build tools, not installed-application requirements.
 
 ```bash
 git submodule update --init --recursive
@@ -41,28 +43,15 @@ Main-process code keeps Electron-compatible `electron` imports; the stock `elect
 
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
-### Optional OMP SDK backend
+### OMP SDK backend
 
-OMP continues to use its CLI backend unless `agents.providers.omp.ompBackend` is explicitly set to `"sdk"` in the Desktop daemon's `config.json`:
+Desktop development, packaged applications, and SSH-managed deployments use the SDK. `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically.
 
-```json
-{
-  "agents": {
-    "providers": {
-      "omp": {
-        "ompBackend": "sdk",
-        "ompSdkPath": "/absolute/path/to/oh-my-pi/packages/coding-agent"
-      }
-    }
-  }
-}
-```
+Desktop-managed configuration ignores legacy `ompBackend: "cli"` and CLI command overrides; model policy, provider environment, and explicit SDK package paths remain. Standalone servers without an SDK retain external CLI support; an installed SDK selects SDK unless that standalone server explicitly selects CLI.
 
-`ompSdkPath` is optional when using the packaged SDK. For a custom checkout, it must be an absolute **SDK package root**, not a CLI executable or an individual module; the package must contain `package.json`, `dist/node/sdk.mjs`, and `dist/node/rpc.mjs`. These namespaced settings apply only to OMP, not other provider runtimes. Persisted provider overrides and mutable daemon provider patches retain both settings. An explicit `"ompBackend": "cli"` overrides an inherited SDK selection; omitting the backend does not opt an existing CLI configuration into SDK mode. CLI command configuration is not an SDK override.
+For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package root. Runtime `agents.providers.omp.ompSdkPath` also selects a package root, not a CLI executable or individual module. Installed packages must contain `package.json` and canonical `dist/node/` SDK, RPC, host, plugin-management, and module-registry artifacts.
 
-SDK mode uses a separate Node process for each top-level agent, but retains the same RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format as CLI mode. It never launches the OMP CLI or falls back to it after a startup error. The daemon needs Node 24+; remote SDK bundles pin Node 24.14.0, while CLI-only bundles retain `.tool-versions`.
-
-The SDK host is an internal child of the daemon, not an external provider command. Packaged Desktop launches it with the app's embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1`; the host's Node worker subprocesses inherit the same dispatch setting. No separate Node, Bun, or OMP executable is needed. CLI provider launches continue to use their external-command environment isolation.
+Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
 User Stop withdraws native steering and follow-up queues atomically before
 aborting the active request. Withdrawn Desktop submissions are echoed once in
@@ -76,54 +65,34 @@ replace provider classes already loaded by the daemon. Refreshing an agent from
 persistence does close only that agent's runtime and rehydrate its original
 native session history, without replaying a prompt or replacing the conversation.
 
-For a source checkout, build the OMP Node artifacts and then the Desktop server before selecting SDK mode:
+Build the staged SDK or an unpacked application:
 
 ```bash
-bun --cwd=/absolute/path/to/oh-my-pi/packages/coding-agent run gen:bundle:node
-npm run build:lib --workspace=@omp-desktop/server
+npm run build:omp-sdk
+npm run build -- --dir --publish never
 ```
 
-Restart the daemon and create a new agent after changing the backend. Existing sessions are not switched in place. SDK model/auth management uses the SDK itself; CLI install/update operations are unavailable in SDK mode. SDK statistics read the persisted SQLite index without launching a CLI refresh.
+Restart the daemon after changing its backend or SDK. Existing sessions are not switched in place. SDK model/auth and plugin management use the SDK itself; CLI install/update operations are unavailable. SDK statistics read the persisted SQLite index without launching a CLI refresh.
 
-SDK resources are optional packaging input:
+Build overrides, shared by development, Desktop packaging, and remote deployment:
 
-```bash
-OMP_DESKTOP_SDK_SOURCE=/absolute/path/to/oh-my-pi/packages/coding-agent npm run build:remote-backend
-```
+| Variable                  | Default                         | Purpose                              |
+| ------------------------- | ------------------------------- | ------------------------------------ |
+| `OMP_DESKTOP_SDK_SOURCE`  | `omp-sdk/packages/coding-agent` | Absolute source package root         |
+| `OMP_DESKTOP_SDK_TARGET`  | `desktop`                       | `desktop` or `generic` Node artifact |
+| `OMP_DESKTOP_SDK_PROFILE` | `core`                          | `core` or `full` capability profile  |
 
-The same environment variable works with the existing Desktop packaging commands. Staging uses the checkout's already installed production dependencies and matching native addon; it does not install Bun, fetch dependencies, or cross-build addons. The SDK is kept outside ASAR. Including SDK resources does not select SDK mode or remove the CLI; including both increases package size.
+The Desktop target builds `dist/node-desktop/` and installs it canonically at `dist/node/`, leaving generic source artifacts untouched. Extensions can import package roots and Desktop's SDK/headless/async/host-API aliases, not arbitrary source-file subpaths; select `generic` for extensions requiring those imports. Missing artifacts or stale source/target/profile metadata fail packaging instead of falling back.
 
-`OMP_DESKTOP_SDK_PROFILE=core` selects a compact runtime profile; `full` remains the default. Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests with remote/full-profile guidance. The installed SDK records its profile in `package.json`; setting an environment variable when launching the App cannot enable excluded capabilities.
+Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. The installed package records its profile; launch-time environment changes cannot restore excluded capabilities.
 
-For the Desktop-specific SDK, first run `bun --cwd=/absolute/path/to/oh-my-pi/packages/coding-agent run gen:bundle:desktop`, then set `OMP_DESKTOP_SDK_TARGET=desktop` while staging and packaging. This selects `dist/node-desktop/` from the source and installs it canonically at `dist/node/`; it does not overwrite the generic artifact. `generic` remains the default target. A missing artifact or mismatched staged target fails rather than falling back to a larger generic package. The target narrows extension imports to package roots and Desktop's SDK/headless/async/host-API aliases, not arbitrary source-file subpaths; use the generic target for extensions that need those imports. Capability profile (`core`/`full`) is independent of build target.
+SDK native dependencies must match the build host's OS and architecture. Windows x64 applications require Windows x64 builds; macOS arm64 applications require macOS arm64 builds. macOS core packaging resolves both the App resources root and addon to their real paths, rejects addons outside that root, and breaks packager hardlinks before stripping the release copy and signing; source addons remain unchanged.
 
-Build an SDK-only App without an OMP executable:
+Packaged SDK and Desktop image operations share Sharp 0.35.4 and one target-native libvips runtime. Packaging validates dependency versions, target metadata, and native payload hashes before creating App-internal relative links. The staged SDK and remote tar retain complete independent dependencies; moving the App requires neither the checkout nor external image libraries.
 
-```bash
-OMP_DESKTOP_BUNDLE_OMP=0 \
-OMP_DESKTOP_SDK_PROFILE=core \
-OMP_DESKTOP_SDK_TARGET=desktop \
-OMP_DESKTOP_SDK_SOURCE=/absolute/path/to/oh-my-pi/packages/coding-agent \
-npm run build --workspace=./packages/desktop
-```
+`npm run build:remote-backend` includes the same SDK by default, without a separate opt-in flag. Its manifest advertises only the native target built on that host. A different SSH target requires a backend bundle built on that OS/architecture; incompatible targets are rejected before deployment.
 
-Select `"ompBackend": "sdk"` in the daemon configuration before testing it. The CLI backend remains available for an externally installed OMP executable. macOS core packaging strips native symbols only from the App's release copy before signing; source addons are unchanged.
-
-Packaged SDK and Desktop image operations share Sharp 0.35.4 and one target-native libvips runtime. Before replacing SDK directories with App-internal relative links, packaging verifies resolved dependency versions, target metadata, and native payload hashes; mismatches fail before replacement. The source checkout, staged SDK, and remote SDK tar retain their own complete dependencies. Moving the App does not require a source checkout or external image libraries.
-
-Local SDK inclusion does not also embed a duplicate SDK deployment archive. To include the SDK in **remote backend deployment** packages, opt in separately:
-
-```bash
-OMP_DESKTOP_REMOTE_SDK=1 \
-OMP_DESKTOP_SDK_SOURCE=/absolute/path/to/oh-my-pi/packages/coding-agent \
-npm run build:remote-backend
-```
-
-Remote SDK bundles target the validated OS/architecture and Node 24.14.0. Without that flag, remote deployment retains the CLI backend and its existing platform matrix.
-
-The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and exercises TypeScript extension loading plus concurrent RPC sessions before checking SDK management. This prevents workspace dependencies from masking missing installed runtime packages.
-
-Custom CLI command overrides and plugin-bound private CLI distributions are rejected in SDK mode rather than silently skipped. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
+The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and exercises TypeScript extension loading plus concurrent RPC sessions and SDK management. CLI command overrides are not SDK entrypoints, and CLI-bound private plugin packages are unsupported. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
 
 ### Startup and first-window work
 
@@ -258,20 +227,6 @@ Remove-Item Env:ELECTRON_PATH
 ```
 
 Choose **Reload window**, then click **Verify interaction** in the replacement. The smoke uses a temporary profile and terminates only its own renderer child; it does not use an existing Desktop process or require Inspector/CDP.
-
-#### Installer switching and OMP preservation
-
-Run the installation-switch regression on a **clean Windows VM**, with standard and `no omp` installers for the same version and architecture:
-
-```powershell
-node packages/desktop/e2e/windows-installer-switch-smoke.js --standard "packages/desktop/release/OMP-Desktop-Setup-<version>-<arch>.exe" --no-omp "packages/desktop/release/OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe"
-```
-
-The smoke refuses to run if the configured application is already registered. It checks fresh installation, switching to `no omp`, repeated installation with a changed directory, switching back, and explicit uninstallation. It verifies the preserved executable's SHA-256 and runs the packaged renderer, daemon, OMP, CLI, and terminal checks after the `no omp` upgrades, including the daemon's actual runtime path. Wine checks do not replace this real Windows installation and startup verification.
-
-Pass `--updated-omp "<path-to-another-omp.exe>"` to replace the initially installed runtime before switching, proving that `no omp` preserves independently updated bytes and that the standard installer restores its own packaged version. The replacement must differ from the standard payload. For disposable installers built with an isolated application identity, pass `--config "<electron-builder.cjs-or-yml>"` describing their `appId` and executable name; the registration safety check then uses that identity instead of the production application.
-
-See [Windows packages without bundled OMP](packaging.md#windows-packages-without-bundled-omp) for the preservation and failure behavior being exercised.
 
 ### Local monitor native regression
 

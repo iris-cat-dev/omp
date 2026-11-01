@@ -2,10 +2,9 @@ import { spawn } from "node:child_process";
 
 const isWindows = process.platform === "win32";
 const npmCommand = isWindows ? "cmd.exe" : "npm";
-const script = isWindows ? "dev:win:desktop" : "dev";
 const args = isWindows
-  ? ["/d", "/s", "/c", `npm run ${script}`]
-  : ["run", script, "--workspace=@omp-desktop/desktop"];
+  ? ["/d", "/s", "/c", "npm run dev:win --workspace=@omp-desktop/desktop"]
+  : ["run", "dev", "--workspace=@omp-desktop/desktop"];
 const child = spawn(npmCommand, args, {
   stdio: "inherit",
   env: {

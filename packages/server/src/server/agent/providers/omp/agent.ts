@@ -136,6 +136,7 @@ import {
 } from "./installer.js";
 import { OmpCliRuntime, OmpReadyTimeoutError } from "./cli-runtime.js";
 import { OmpSdkRuntime } from "./sdk-runtime.js";
+import { resolveOmpBackend } from "./sdk-installation.js";
 import {
   inspectOmpSessionHistoryAvailability,
   listOmpImportableSessions,
@@ -1721,7 +1722,7 @@ function createRuntime(
   disabledBuiltInTools: readonly string[] | undefined,
   localModelBridge?: LocalModelBridge,
 ): OmpRuntime {
-  if (runtimeSettings?.ompBackend === "sdk") {
+  if (resolveOmpBackend(runtimeSettings) === "sdk") {
     return new OmpSdkRuntime({ logger, runtimeSettings, disabledBuiltInTools, localModelBridge });
   }
   return new OmpCliRuntime({
@@ -2762,16 +2763,20 @@ export class OmpAgentSession implements AgentSession {
           );
           // The original Desktop submission retains attachments even if RPC had
           // to omit them. Reuse the canonical echo path and consume its client ID.
-          this.handleMessageEnd({
-            type: "message_end",
-            message: {
-              role: "user",
-              content: [
-                { type: "text", text: message.text },
-                ...(pending?.images ?? message.images ?? []),
-              ],
+          this.handleMessageEnd(
+            {
+              type: "message_end",
+              message: {
+                role: "user",
+                content: [
+                  { type: "text", text: message.text },
+                  ...(pending?.images ?? message.images ?? []),
+                ],
+              },
             },
-          }, turnId ?? undefined, true);
+            turnId ?? undefined,
+            true,
+          );
         }
         if (restored.truncated || restored.imagesDropped) {
           this.logger.warn(
@@ -4533,15 +4538,17 @@ export class OmpAgentClient implements AgentClient {
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
       options.providerParams,
     );
-    const configuredRuntimeSettings = mergeOmpRuntimeSettings(
-      {
-        command: {
-          mode: "replace",
-          argv: [DEFAULT_OMP_BINARY],
-        },
-      },
-      options.runtimeSettings,
-    );
+    const configuredRuntimeSettings =
+      resolveOmpBackend(options.runtimeSettings) === "sdk"
+        ? {
+            ...options.runtimeSettings,
+            ompBackend: "sdk" as const,
+            ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { command: undefined } : {}),
+          }
+        : mergeOmpRuntimeSettings(
+            { command: { mode: "replace", argv: [DEFAULT_OMP_BINARY] } },
+            options.runtimeSettings,
+          );
     const runtimeSettings = applyOmpProxyEnabled(configuredRuntimeSettings, {
       params: { proxyEnabled: runtimeProviderParams.proxyEnabled },
     });

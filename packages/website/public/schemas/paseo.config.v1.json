@@ -152,11 +152,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "id",
-              "name",
-              "command"
-            ],
+            "required": ["id", "name", "command"],
             "additionalProperties": {}
           }
         },
@@ -200,11 +196,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "id",
-              "name",
-              "provider"
-            ],
+            "required": ["id", "name", "provider"],
             "additionalProperties": {}
           }
         },
@@ -300,10 +292,7 @@
         },
         "clientType": {
           "type": "string",
-          "enum": [
-            "oauth-app",
-            "github-app"
-          ]
+          "enum": ["oauth-app", "github-app"]
         },
         "hosts": {
           "type": "object",
@@ -320,10 +309,7 @@
               },
               "clientType": {
                 "type": "string",
-                "enum": [
-                  "oauth-app",
-                  "github-app"
-                ]
+                "enum": ["oauth-app", "github-app"]
               },
               "apiBaseUrl": {
                 "type": "string",
@@ -334,9 +320,7 @@
                 "format": "uri"
               }
             },
-            "required": [
-              "clientId"
-            ],
+            "required": ["clientId"],
             "additionalProperties": false
           }
         }
@@ -365,10 +349,7 @@
                 },
                 "backend": {
                   "type": "string",
-                  "enum": [
-                    "openai-api",
-                    "chatgpt-subscription"
-                  ]
+                  "enum": ["openai-api", "chatgpt-subscription"]
                 },
                 "apiKey": {
                   "type": "string",
@@ -422,10 +403,7 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "source",
-              "path"
-            ],
+            "required": ["source", "path"],
             "additionalProperties": false
           }
         ]
@@ -536,17 +514,11 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "id",
-                          "label"
-                        ]
+                        "required": ["id", "label"]
                       }
                     }
                   },
-                  "required": [
-                    "id",
-                    "label"
-                  ]
+                  "required": ["id", "label"]
                 }
               },
               "additionalModels": {
@@ -586,17 +558,11 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "id",
-                          "label"
-                        ]
+                        "required": ["id", "label"]
                       }
                     }
                   },
-                  "required": [
-                    "id",
-                    "label"
-                  ]
+                  "required": ["id", "label"]
                 }
               },
               "disallowedTools": {
@@ -607,11 +573,8 @@
               },
               "ompBackend": {
                 "type": "string",
-                "enum": [
-                  "cli",
-                  "sdk"
-                ],
-                "description": "OMP-only runtime backend. When omitted, the CLI backend is used."
+                "enum": ["cli", "sdk"],
+                "description": "OMP-only runtime backend. Desktop-managed runtimes use SDK; standalone servers default to an installed SDK, otherwise CLI."
               },
               "ompSdkPath": {
                 "type": "string",
@@ -653,9 +616,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "provider"
-                ],
+                "required": ["provider"],
                 "additionalProperties": false
               }
             },
@@ -677,9 +638,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "provider"
-                ],
+                "required": ["provider"],
                 "additionalProperties": false
               }
             }
@@ -707,9 +666,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "provider"
-                ],
+                "required": ["provider"],
                 "additionalProperties": false
               }
             }
@@ -729,9 +686,7 @@
                       "const": "all"
                     }
                   },
-                  "required": [
-                    "mode"
-                  ],
+                  "required": ["mode"],
                   "additionalProperties": false
                 },
                 {
@@ -748,10 +703,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "mode",
-                    "skills"
-                  ],
+                  "required": ["mode", "skills"],
                   "additionalProperties": false
                 }
               ]
@@ -786,42 +738,22 @@
       "properties": {
         "level": {
           "type": "string",
-          "enum": [
-            "trace",
-            "debug",
-            "info",
-            "warn",
-            "error",
-            "fatal"
-          ]
+          "enum": ["trace", "debug", "info", "warn", "error", "fatal"]
         },
         "format": {
           "type": "string",
-          "enum": [
-            "pretty",
-            "json"
-          ]
+          "enum": ["pretty", "json"]
         },
         "console": {
           "type": "object",
           "properties": {
             "level": {
               "type": "string",
-              "enum": [
-                "trace",
-                "debug",
-                "info",
-                "warn",
-                "error",
-                "fatal"
-              ]
+              "enum": ["trace", "debug", "info", "warn", "error", "fatal"]
             },
             "format": {
               "type": "string",
-              "enum": [
-                "pretty",
-                "json"
-              ]
+              "enum": ["pretty", "json"]
             }
           },
           "additionalProperties": false
@@ -831,14 +763,7 @@
           "properties": {
             "level": {
               "type": "string",
-              "enum": [
-                "trace",
-                "debug",
-                "info",
-                "warn",
-                "error",
-                "fatal"
-              ]
+              "enum": ["trace", "debug", "info", "warn", "error", "fatal"]
             },
             "path": {
               "type": "string",

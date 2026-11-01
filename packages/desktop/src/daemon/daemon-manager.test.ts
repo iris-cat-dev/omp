@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { delimiter } from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -71,7 +70,7 @@ vi.mock("../settings/desktop-settings-electron.js", () => ({
 
 vi.mock("./runtime-paths.js", () => ({
   createNodeEntrypointInvocation: mocks.createNodeEntrypointInvocation,
-  resolveBundledOmpPath: vi.fn(() => "/tmp/resources/bin/omp"),
+  resolveDesktopSdkRoot: vi.fn(() => "/tmp/resources/omp-sdk/node_modules/@oh-my-pi/pi-coding-agent"),
   resolveBundledRipgrepPath: vi.fn(() => "/tmp/resources/bin/rg"),
   resolveDaemonRunnerEntrypoint: vi.fn(() => ({
     entryPath: "/tmp/daemon.js",
@@ -591,8 +590,8 @@ describe("daemon-manager commands", () => {
         envOverlay: expect.objectContaining({
           PASEO_CLI: getBundledCliShimPath(),
           PASEO_WEB_UI_ENABLED: "false",
-          OMP_COMMAND: "/tmp/resources/bin/omp",
-          PATH: ["/tmp/resources/bin", "/usr/bin"].join(delimiter),
+          OMP_DESKTOP_SDK_ROOT: "/tmp/resources/omp-sdk/node_modules/@oh-my-pi/pi-coding-agent",
+          OMP_COMMAND: undefined,
           PASEO_RIPGREP_PATH: "/tmp/resources/bin/rg",
         }),
       }),

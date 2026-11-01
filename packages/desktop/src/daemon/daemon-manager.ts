@@ -25,7 +25,7 @@ import {
 } from "./local-transport.js";
 import {
   createNodeEntrypointInvocation,
-  resolveBundledOmpPath,
+  resolveDesktopSdkRoot,
   resolveBundledRipgrepPath,
   resolveDaemonRunnerEntrypoint,
 } from "./runtime-paths.js";
@@ -51,7 +51,7 @@ import { createWallpaperCommandHandler } from "../wallpaper/commands.js";
 import { isWallpaperCommand } from "@omp-desktop/protocol/desktop-wallpaper";
 import { getMainWindows } from "../window/main-windows.js";
 import { getPetLibrary } from "../pets/library.js";
-import { DESKTOP_DISTRIBUTION_IDENTITY, PRIVATE_PLUGIN_DISTRIBUTION } from "../distribution.js";
+import { DESKTOP_DISTRIBUTION_IDENTITY } from "../distribution.js";
 const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
@@ -332,9 +332,7 @@ function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
 
 function assertCompatibleDaemonDistribution(current: DesktopDaemonStatus): void {
   if (
-    (current.desktopManaged ||
-      PRIVATE_PLUGIN_DISTRIBUTION ||
-      current.distributionIdentity !== null) &&
+    (current.desktopManaged || current.distributionIdentity !== null) &&
     current.distributionIdentity !== DESKTOP_DISTRIBUTION_IDENTITY
   ) {
     throw new Error(
@@ -398,33 +396,17 @@ async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
   return poll(0);
 }
 function createDaemonEnvironment(invocationEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  // Use the exact packaged binary for provider launches. Keep its directory on PATH as well so
-  // installation status checks and legacy OMP subprocesses resolve the same executable.
+  const sdkRoot = resolveDesktopSdkRoot(invocationEnv);
   const bundledRipgrepPath = resolveBundledRipgrepPath();
-  const bundledOmpPath = resolveBundledOmpPath();
-  const bundledPluginsPath =
-    app.isPackaged && PRIVATE_PLUGIN_DISTRIBUTION
-      ? path.join(process.resourcesPath, "bundled-omp-plugins")
-      : null;
-  const daemonPathKey = Object.hasOwn(invocationEnv, "Path") ? "Path" : "PATH";
-  const daemonPath = bundledOmpPath
-    ? [path.dirname(bundledOmpPath), invocationEnv[daemonPathKey]]
-        .filter((entry): entry is string => Boolean(entry))
-        .join(path.delimiter)
-    : null;
   return {
     PASEO_DESKTOP_MANAGED: "1",
     PASEO_DESKTOP_DISTRIBUTION_IDENTITY: DESKTOP_DISTRIBUTION_IDENTITY,
     PASEO_CLI: getBundledCliShimPath(),
     PASEO_WEB_UI_ENABLED: "false",
-    ...(bundledOmpPath && daemonPath
-      ? {
-          OMP_COMMAND: bundledOmpPath,
-          [daemonPathKey]: daemonPath,
-        }
-      : {}),
+    OMP_DESKTOP_SDK_ROOT: sdkRoot,
+    OMP_COMMAND: undefined,
     ...(bundledRipgrepPath ? { PASEO_RIPGREP_PATH: bundledRipgrepPath } : {}),
-    OMP_DESKTOP_BUNDLED_PLUGINS: bundledPluginsPath ?? undefined,
+    OMP_DESKTOP_BUNDLED_PLUGINS: undefined,
   };
 }
 
@@ -686,21 +668,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       const { getCliInstallStatus } =
         require("../integrations/cli-install/install.js") as typeof CliInstall;
       return getCliInstallStatus();
-    },
-    get_omp_shortcut_install_status: async () => {
-      const { getOmpShortcutInstallStatus } =
-        require("../integrations/cli-install/install.js") as typeof CliInstall;
-      return getOmpShortcutInstallStatus();
-    },
-    install_omp_shortcut: async () => {
-      const { installOmpShortcut } =
-        require("../integrations/cli-install/install.js") as typeof CliInstall;
-      return installOmpShortcut();
-    },
-    uninstall_omp_shortcut: async () => {
-      const { uninstallOmpShortcut } =
-        require("../integrations/cli-install/install.js") as typeof CliInstall;
-      return uninstallOmpShortcut();
     },
     read_legacy_skill_selection: () => readLegacySkillSelection(),
     delete_legacy_skill_selection: () => deleteLegacySkillSelection(),

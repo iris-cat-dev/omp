@@ -17,9 +17,6 @@ vi.mock("node:fs", async (importOriginal) => ({
 vi.mock("../packaged-distribution.js", () => ({
   readPackagedDesktopDistribution: () => ({
     identity: "public",
-    privatePlugins: false,
-    bundledOmpPath: null,
-    bundledPluginsPath: null,
   }),
 }));
 
@@ -84,7 +81,7 @@ globalThis.__PASEO_NODE_ENTRYPOINT_RUNNER_FIXTURE__ = {
     }
   });
   it.each([true, false])(
-    "sets a packaged SDK root only when staged (staged=%s)",
+    "requires the packaged SDK instead of falling back to an inherited runtime (staged=%s)",
     async (staged) => {
       const originalArgv = process.argv;
       const originalFixture = globalThis.__PASEO_NODE_ENTRYPOINT_RUNNER_FIXTURE__;
@@ -110,18 +107,15 @@ globalThis.__PASEO_NODE_ENTRYPOINT_RUNNER_FIXTURE__ = {
       vi.stubEnv("OMP_DESKTOP_SDK_ROOT", "/inherited/sdk");
       process.argv = ["OMP Desktop", "runner", "node-script", fixturePath];
       try {
+        if (!staged) {
+          await expect(main()).rejects.toThrow("packaged OMP SDK manifest is missing");
+          return;
+        }
         await main();
         const manifestPath = String(mocks.existsSync.mock.calls[0]?.[0]);
         expect(manifestPath).toMatch(/[\\/]omp-sdk[\\/]manifest\.json$/u);
         expect(globalThis.__PASEO_NODE_ENTRYPOINT_RUNNER_FIXTURE__?.sdkRoot).toBe(
-          staged
-            ? path.resolve(
-                path.dirname(manifestPath),
-                "node_modules",
-                "@oh-my-pi",
-                "pi-coding-agent",
-              )
-            : undefined,
+          path.resolve(path.dirname(manifestPath), "node_modules", "@oh-my-pi", "pi-coding-agent"),
         );
       } finally {
         vi.unstubAllEnvs();

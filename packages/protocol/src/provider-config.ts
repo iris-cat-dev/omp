@@ -24,7 +24,9 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
 
 const OmpBackendSchema = z
   .enum(["cli", "sdk"])
-  .describe("OMP-only runtime backend. When omitted, the CLI backend is used.");
+  .describe(
+    "OMP-only runtime backend. Desktop-managed runtimes use SDK; standalone servers default to an installed SDK, otherwise CLI.",
+  );
 const OmpSdkPathSchema = z
   .string()
   .regex(

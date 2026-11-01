@@ -16,30 +16,15 @@ for arch in "${arches[@]}"; do
   esac
 done
 
-# electron-builder's supported Windows toolchain uses Intel Wine and NSIS on
-# macOS. Apple silicon hosts therefore need Rosetta; do not substitute a native
-# makensis because mixing it with electron-builder's pinned NSIS resources can
-# produce installers that Windows refuses to launch.
+# SDK native dependencies must be built on the target OS and architecture.
 host_platform_arch="$(node -p "process.platform + ':' + process.arch")"
-if [[ "$host_platform_arch" == "darwin:arm64" ]] &&
-  ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
-  echo "Rosetta 2 is required to build Windows installers on macOS arm64." >&2
-  echo "Install it with: softwareupdate --install-rosetta --agree-to-license" >&2
+if [[ "$host_platform_arch" != "win32:x64" ]]; then
+  echo "Windows SDK packaging requires target-native dependencies. Build on Windows x64 with npm run build:package -- windows; macOS cross-builds cannot stage a Windows SDK." >&2
   exit 1
 fi
-
-# npm installs only the host platform's optional dependencies. Cross-building on
-# macOS therefore omits the Windows keyring bindings that the packaged daemon
-# loads at runtime. Keep downloaded packages outside node_modules until the
-# desktop build finishes its npm-driven prerequisite builds, then stage them
-# immediately before electron-builder runs.
+# Stage the target keyring immediately before electron-builder.
 tmp_dir="$(mktemp -d)"
 cleanup() {
-  if [[ "$host_platform_arch" != win32:* ]]; then
-    for arch in "${arches[@]}"; do
-      rm -rf "node_modules/@napi-rs/keyring-win32-${arch}-msvc"
-    done
-  fi
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
@@ -59,7 +44,7 @@ for arch in "${arches[@]}"; do
   test -f "$package_dir/keyring.win32-${arch}-msvc.node"
 done
 
-# Keep private artifacts and update metadata entirely in release-plugins/.
+# Merge release update metadata only after all requested architectures finish.
 version="$(node -p "require('./packages/desktop/package.json').version")"
 build_output="$(node packages/desktop/scripts/windows-build-output.mjs "$version" "$@")"
 IFS=$'\t' read -r release_dir metadata_filename legacy_installer <<<"$build_output"

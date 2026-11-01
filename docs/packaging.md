@@ -11,6 +11,7 @@ npm run build:package
 ```
 
 The Node.js launcher selects macOS on a Mac and Windows on Windows. It keeps native Windows builds independent of Git Bash. Published mini-electron runtimes support **macOS arm64 (Apple Silicon)** and **Windows x64**; Intel Mac and Windows arm64 packages are not currently supported.
+Every application build compiles and stages `omp-sdk/`; Node.js 24+, Bun, Rustup, and a native compiler toolchain are required. The default is the `desktop` SDK target with the `core` profile. Applications include the SDK and embedded Node, not a standalone OMP executable; there is no separate no-OMP or CLI-bound private build. See [SDK build overrides](development.md#omp-sdk-backend).
 
 Explicit targets remain available:
 
@@ -36,11 +37,10 @@ Packaging orchestration is centralized in [`scripts/packaging/`](../scripts/pack
 | [`build-package.mjs`](../scripts/packaging/build-package.mjs)                                 | Cross-platform npm entry point; selects target and native shell |
 | [`build-mac.sh`](../scripts/packaging/build-mac.sh)                                           | macOS packaging helper                                          |
 | [`build-windows.ps1`](../scripts/packaging/build-windows.ps1)                                 | Native Windows packaging helper                                 |
-| [`build-windows.sh`](../scripts/packaging/build-windows.sh)                                   | Bash Windows packaging helper for macOS/Linux                   |
-| [`build-windows-no-omp.sh`](../scripts/packaging/build-windows-no-omp.sh)                     | Bash wrapper for Windows packages without bundled OMP           |
+| [`build-windows.sh`](../scripts/packaging/build-windows.sh)                                   | Bash helper for native Windows x64 builds                       |
 | [`merge-windows-update-metadata.mjs`](../scripts/packaging/merge-windows-update-metadata.mjs) | Merges Windows update metadata documents for the same version   |
 
-General-purpose scripts remain directly under `scripts/`: [`download-omp-binaries.mjs`](../scripts/download-omp-binaries.mjs), [`build-remote-backend.mjs`](../scripts/build-remote-backend.mjs), [`build-daemon-web-ui.mjs`](../scripts/build-daemon-web-ui.mjs), [`deploy-webui.sh`](../scripts/deploy-webui.sh), and [`clean-package-dist.mjs`](../scripts/clean-package-dist.mjs).
+General-purpose scripts remain directly under `scripts/`: [`build-omp-sdk.mjs`](../scripts/build-omp-sdk.mjs), [`stage-omp-sdk.mjs`](../scripts/stage-omp-sdk.mjs), [`build-remote-backend.mjs`](../scripts/build-remote-backend.mjs), [`build-daemon-web-ui.mjs`](../scripts/build-daemon-web-ui.mjs), [`deploy-webui.sh`](../scripts/deploy-webui.sh), and [`clean-package-dist.mjs`](../scripts/clean-package-dist.mjs).
 
 For an unpacked application without creating installers, use the lower-level build:
 
@@ -58,11 +58,10 @@ For local installer builds, pass `--publish never` to avoid uploading release ar
 
 ## GitHub Actions release packaging
 
-The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64, both bundled-OMP and no-OMP variants**, by default. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
+The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 SDK packages** by default. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
 
 - The root and desktop package versions must match. A tag build also requires the exact tag `<packages/desktop/package.json version>` without a `v` prefix; the workflow does not bump versions.
-- Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64`, `OMP-Desktop-No-OMP-Setup-<version>-x64`, or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. GitHub downloads each artifact as an outer ZIP containing the original installers, package ZIPs, and blockmaps when generated, not unpacked apps or builder diagnostics. Bundled-OMP builds also include update YAML metadata. Publish the files inside this outer ZIP, not the Actions wrapper itself; installer names and update metadata references are unchanged.
-- The no-OMP job runs `npm run build:windows:no-omp` and skips the OMP download. Its installer and ZIP filenames contain `No-OMP`, so both variants can coexist in the release. Its update YAML is deliberately excluded: both Windows variants generate the same channel metadata filename, and the public auto-update feed must continue pointing to the standard bundled-OMP build. This does not create a separate no-OMP update channel.
+- Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64` or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. Its outer ZIP contains original installers, package ZIPs, blockmaps, and update YAML, not unpacked apps or builder diagnostics. Publish those files, not the Actions wrapper; installer names and update references are unchanged.
 - Once all selected platforms succeed, a tag build uploads the assets to a **draft GitHub Release**. Reruns replace same-named assets only in a draft, preserve its notes, and refuse to modify an already published release. A failed upload leaves the release drafted; rerun after resolving the failure.
 - A manual run on a branch only creates Actions artifacts. A manual run with a tag selected also creates or updates its release draft.
 - Review the draft, add release notes, and perform the native packaged-application checks before publishing. Building installers does not verify native application behavior.
@@ -84,7 +83,7 @@ The workflow invokes `build:desktop` directly with `mac.identity=null`, `mac.not
 
 These CI packages do not satisfy Gatekeeper's signed and notarized distribution requirements and may be blocked on other Macs. Artifact creation alone does not establish launchability or native application acceptance.
 
-CI uses Node.js from `.tool-versions`, installs dependencies with `npm ci`, and downloads the selected platform's checksum-verified OMP binary. The lockfile pins the mini-electron installer, but the installer selects its current native runtime and the OMP downloader selects the latest upstream release; rebuilding a tag later is not guaranteed to reproduce identical binaries.
+CI checks out recursive submodules, uses Node.js from `.tool-versions`, installs Desktop dependencies with `npm ci`, and installs Bun and the SDK's pinned Rust toolchain. It compiles the SDK and addon on each target runner instead of downloading an OMP binary. The lockfile pins the mini-electron installer, which selects its current native runtime; rebuilding a tag later may select a different runtime.
 
 Commit the root `package-lock.json` together with dependency changes. Both the setup-node npm cache and `npm ci` require it in a fresh checkout; a lockfile present only on the developer's machine is insufficient. Nested/generated lockfiles remain ignored. After fixing a workflow dependency, start a new run on the updated commit: rerunning an older failed run still uses its original commit.
 
@@ -141,7 +140,7 @@ Both local and release builds verify the application's code signature after pack
 
 ## Windows builds
 
-Windows mini-electron packages currently support x64 only. On Windows, the npm scripts use [`scripts/packaging/build-windows.ps1`](../scripts/packaging/build-windows.ps1) with Windows PowerShell 5.1 or newer; Git Bash is not required. Node.js, npm, and Windows' built-in `tar.exe` must be on `PATH`.
+Windows mini-electron packages currently support x64 only. The npm scripts use [`scripts/packaging/build-windows.ps1`](../scripts/packaging/build-windows.ps1) with Windows PowerShell 5.1 or newer; Git Bash is not required. Node.js 24+, npm, Bun, Rustup, Visual Studio C++ Build Tools, and Windows' built-in `tar.exe` must be installed.
 
 ```powershell
 npm run build:windows
@@ -155,12 +154,7 @@ You can also run the native script directly from PowerShell, forwarding addition
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\packaging\build-windows.ps1
 ```
 
-On macOS and Linux, the Windows commands use [`scripts/packaging/build-windows.sh`](../scripts/packaging/build-windows.sh) through Bash. Cross-builds require an extracted **win32-x64** mini-electron distribution selected with `MINI_ELECTRON_DIST_PATH`, plus electron-builder's Wine toolchain. Apple Silicon Macs also require Rosetta 2. For example, on macOS:
-
-```bash
-MINI_ELECTRON_DIST_PATH=/absolute/path/to/windows-x64/runtime-dist \
-  npm run build:windows
-```
+Windows packaging must run on Windows x64 because the SDK includes target-native addons and their dependency closure. The Bash helper also requires Windows x64; macOS/Linux Wine cross-builds are rejected. Selecting a Windows mini-electron distribution alone cannot make host SDK addons compatible.
 
 ### Windows runtime version and local overrides
 
@@ -194,7 +188,7 @@ npm exec -- cross-env CSC_IDENTITY_AUTO_DISCOVERY=false \
 
 The output includes `OMP-Desktop-Setup-<version>-x64.exe`, its `.blockmap`, a `.zip`, and `latest.yml` (or the prerelease channel's metadata) in `packages/desktop/release`.
 
-Windows runtime builds disable Inspector/CDP. Qualify the real native window and bundled CLI/daemon using the [Windows packaged application smoke](development.md#packaged-windows-application); do not enable Inspector or bypass IPC frame checks to pass a smoke.
+Windows runtime builds disable Inspector/CDP. Qualify the real native window, bundled Desktop CLI, daemon, and SDK using the [Windows packaged application smoke](development.md#packaged-windows-application); do not enable Inspector or bypass IPC frame checks.
 
 ## Native runtime contracts
 
@@ -284,49 +278,13 @@ The Linux asset rule describes release metadata requirements, not an additional 
 
 Both `scripts/packaging/build-windows.ps1` and `scripts/packaging/build-windows.sh` write the updater metadata for the supported x64 target. A GitHub Release that only contains DMG or EXE files remains available for manual download but cannot be installed by the in-app updater. Publish the generated files only after every target for that release is complete; local Windows builds use `--publish never`.
 
-## Windows packages without bundled OMP
+## Bundled OMP SDK
 
-To build Windows packages without shipping a new OMP executable:
+`npm run build:omp-sdk` builds the pinned submodule and stages `packages/desktop/sdk-dist`. All application and remote-backend builds require it. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
 
-```bash
-npm run build:windows:no-omp
-npm run build:windows:no-omp:x64
-```
+The application contains no standalone `omp`/`omp.exe` and never downloads one during a build. The bundled `omp-desktop` launcher remains: it runs Desktop's CLI and daemon with the application's embedded Node runtime, not the retired OMP executable.
 
-These artifacts use `OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe` names so they do not overwrite the standard installers. The application still includes its daemon and CLI; only `omp.exe` is omitted.
-
-A fresh `no omp` installation uses `omp` on `PATH`. When switching from an installation with `resources\bin\omp.exe`, the NSIS installer backs up that existing executable before invoking the old uninstaller, then restores the exact file into the selected installation directory. This also preserves an independently updated bundled runtime and works when changing the installation directory. Repeated `no omp` installations retain it; switching back to the standard installer replaces it with that package's bundled runtime.
-
-Preservation applies only to installing the `no omp` upgrade, including silent installation. **Explicitly uninstalling Desktop still removes its installation directory and bundled OMP.**
-
-If the existing runtime cannot be backed up, installation stops before removing the previous version. If restoration fails, installation reports the location of the retained backup. The `no omp` ZIP payload itself still contains no OMP executable.
-
-Run the [installation-switch regression](development.md#installer-switching-and-omp-preservation) on a clean Windows VM, including independently updated OMP bytes when appropriate; Wine checks do not replace real Windows installation and startup verification.
-
-## Bundled OMP binaries
-
-Download and checksum-verify the latest supported OMP binaries:
-
-```bash
-npm run download:omp
-```
-
-Specific targets can be refreshed without downloading every architecture:
-
-```bash
-npm run download:omp -- linux-x64 linux-arm64
-```
-
-The script writes these release assets to the repository-root `bin/` directory:
-
-- `omp-darwin-arm64`
-- `omp-darwin-x64`
-- `omp-linux-arm64`
-- `omp-linux-x64`
-- `omp-windows-arm64.exe`
-- `omp-windows-x64.exe`
-
-electron-builder selects the target architecture and installs the executable as `Resources/bin/omp` on macOS, `resources/bin/omp` on Linux, or `resources/bin/omp.exe` on Windows. Available OMP binary targets do not expand the supported Desktop runtime targets.
+The old `download:omp`, `build:windows:no-omp`, executable-preservation installer hook, and CLI-bound private distribution are removed. Standard installer and updater asset names remain unchanged. Remote payloads include the SDK tar and advertise only their compiled native target.
 
 ## Bundled skills
 

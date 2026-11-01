@@ -433,6 +433,44 @@ describe("DaemonConfigStore", () => {
     ).toThrow("Unknown OMP built-in tools: unknown-tool");
   });
 
+  test("saves Desktop-managed tool policies from legacy CLI config without executing it", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-desktop-sdk-tools-"));
+    tempDirs.push(paseoHome);
+    const marker = path.join(paseoHome, "cli-invoked");
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {
+          omp: {
+            ompBackend: "cli",
+            command: [
+              process.execPath,
+              "-e",
+              `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "invoked"); process.exit(1)`,
+            ],
+          },
+        },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      {
+        env: {
+          PASEO_DESKTOP_MANAGED: "1",
+          OMP_DESKTOP_SDK_ROOT: path.join(paseoHome, "staged-sdk"),
+        },
+      },
+    );
+    store.patch({ providers: { omp: { params: { disabledBuiltInTools: ["write"] } } } });
+    expect(existsSync(marker)).toBe(false);
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp?.params).toMatchObject({
+      disabledBuiltInTools: ["write"],
+    });
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -166,21 +166,6 @@ async function copyRipgrep(resourcesDir, platform, arch) {
   console.log(`Bundled ripgrep for ${platform}-${arch}: ${destination}`);
 }
 
-function prepareBundledOmp(resourcesDir, platform, arch) {
-  const executablePath = path.join(resourcesDir, "bin", platform === "win32" ? "omp.exe" : "omp");
-  if (process.env.OMP_DESKTOP_BUNDLE_OMP === "0") {
-    rmSafe(executablePath);
-    console.log(`Building without bundled OMP for ${platform}-${arch}.`);
-    return;
-  }
-  if (!fs.existsSync(executablePath)) {
-    throw new Error(`Bundled OMP executable is missing for ${platform}-${arch}: ${executablePath}`);
-  }
-  if (platform !== "win32") fs.chmodSync(executablePath, 0o755);
-  console.log(`Prepared bundled OMP for ${platform}-${arch}: ${executablePath}`);
-}
-exports.prepareBundledOmp = prepareBundledOmp;
-
 function assertOmpExtensions(resourcesDir) {
   const extensionsDir = path.join(
     resourcesDir,
@@ -213,7 +198,11 @@ function deduplicateSdkSharp(resourcesDir, platform, arch) {
     "pi-coding-agent",
     "package.json",
   );
-  if (!fs.existsSync(sdkMetadata)) return;
+  if (!fs.existsSync(sdkMetadata)) {
+    throw new Error(
+      `Required packaged SDK is missing: ${sdkMetadata}. Run npm run build:omp-sdk before packaging.`,
+    );
+  }
   const desktop = path.join(resources, "app");
   const inside = (parent, file) => {
     const relative = path.relative(parent, file);
@@ -380,11 +369,13 @@ function stripCoreSdkAddon(resourcesDir, platform, arch) {
   if (!fs.existsSync(metadata)) return;
   if (JSON.parse(fs.readFileSync(metadata, "utf8")).ompNodeSdk?.profile !== "core") return;
   const load = createRequire(metadata);
-  const addon = path.join(
-    path.dirname(load.resolve("@oh-my-pi/pi-natives")),
-    `pi_natives.${platform}-${arch}.node`,
+  const addon = fs.realpathSync(
+    path.join(
+      path.dirname(load.resolve("@oh-my-pi/pi-natives")),
+      `pi_natives.${platform}-${arch}.node`,
+    ),
   );
-  const relative = path.relative(resourcesDir, addon);
+  const relative = path.relative(fs.realpathSync(resourcesDir), addon);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`Refusing to strip a native addon outside the packaged app: ${addon}`);
   }
@@ -405,6 +396,7 @@ function stripCoreSdkAddon(resourcesDir, platform, arch) {
   }
   console.log(`Core SDK native addon: ${fmtMB(before)} → ${fmtMB(fs.statSync(addon).size)}`);
 }
+exports.stripCoreSdkAddon = stripCoreSdkAddon;
 
 function dirSizeSync(dir) {
   let total = 0;
@@ -431,7 +423,6 @@ exports.default = async function afterPack(context) {
       ? path.join(context.appOutDir, `${PRODUCT_NAME}.app`, "Contents", "Resources")
       : path.join(context.appOutDir, "resources");
   await copyRipgrep(resourcesDir, platform, arch);
-  prepareBundledOmp(resourcesDir, platform, arch);
   assertOmpExtensions(resourcesDir);
   pruneNativeModules(context.appOutDir, platform, arch);
   stripCoreSdkAddon(resourcesDir, platform, arch);

@@ -1559,11 +1559,6 @@ export const ja: TranslationResources = {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "OMP Desktop CLIをインストールできません。",
       },
-      ompShortcut: {
-        statusFailed: "OMPコマンドショートカットの状態を確認できません。",
-        installFailed: "OMPコマンドショートカットをインストールできません。",
-        uninstallFailed: "OMPコマンドショートカットをアンインストールできません。",
-      },
     },
   },
   rootError: {
@@ -2450,10 +2445,6 @@ export const ja: TranslationResources = {
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
-      },
-      ompShortcut: {
-        title: "OMPコマンドショートカット",
-        description: "このHostに現在設定されているプロキシで内蔵OMPを実行",
       },
       actions: {
         install: "インストール",

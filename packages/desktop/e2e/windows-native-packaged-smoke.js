@@ -5,7 +5,6 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const nodeUtil = require("node:util");
-const { smokeBundledPlugins } = require("./windows-native-plugins-smoke.js");
 
 // Invoked by packaged-app-smoke.js on Windows. A visible, unlocked desktop is
 // required for the owned-window surface screenshots; no Inspector/CDP is used.
@@ -2034,17 +2033,6 @@ async function smokeWindowsPackagedApp({
         evidence,
         control,
         env,
-      });
-      await smokeBundledPlugins({
-        command,
-        page,
-        stagedApp,
-        profile: env.HOME,
-        serverId: status.serverId,
-        evidence,
-        report,
-        until,
-        navigateChinese,
       });
     } finally {
       await command({ action: "main-surface-topmost", enabled: originalSurfaceTopmost });

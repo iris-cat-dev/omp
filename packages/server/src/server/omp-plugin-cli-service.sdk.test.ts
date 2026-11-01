@@ -84,7 +84,6 @@ describe("SDK plugin management through the compiled Desktop host", () => {
         resolveOmpCommand,
         getProxyUrl: () => proxy,
         getProviderConfig: () => ({
-          ompBackend: "sdk",
           ompSdkPath: selected,
           command: [
             "nonexistent-cli-must-not-run",

@@ -30,6 +30,10 @@ $PreviousStaging = $env:OMP_DESKTOP_WINDOWS_KEYRING_STAGING
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "omp-desktop-windows-$([guid]::NewGuid().ToString('N'))"
 Push-Location -LiteralPath $RepositoryRoot
 try {
+    $HostPlatformArch = Invoke-CheckedCommand "node" @("-p", "process.platform + ':' + process.arch")
+    if ($HostPlatformArch -cne "win32:x64") {
+        throw "Windows SDK packaging requires target-native dependencies. Build on Windows x64; cross-platform SDK staging is not supported."
+    }
     $KeyringStaging = Join-Path $TempDir "keyring-packages"
     New-Item -ItemType Directory -Path $KeyringStaging -Force | Out-Null
     $env:OMP_DESKTOP_WINDOWS_KEYRING_STAGING = $KeyringStaging
@@ -48,7 +52,7 @@ try {
         }
     }
 
-    # Keep private artifacts and update metadata entirely in release-plugins/.
+    # Merge release update metadata only after all requested architectures finish.
     $Version = Invoke-CheckedCommand "node" @("-p", "require('./packages/desktop/package.json').version")
     $BuildOutput = (Invoke-CheckedCommand "node" (@("packages/desktop/scripts/windows-build-output.mjs", $Version) + $BuilderArgs)).Split("`t")
     $ReleaseDir = Join-Path $RepositoryRoot $BuildOutput[0]

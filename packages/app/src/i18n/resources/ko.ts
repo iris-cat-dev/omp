@@ -1555,11 +1555,6 @@ export const ko: TranslationResources = {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "OMP Desktop CLI를 설치할 수 없습니다.",
       },
-      ompShortcut: {
-        statusFailed: "OMP 명령 바로 가기 상태를 확인할 수 없습니다.",
-        installFailed: "OMP 명령 바로 가기를 설치할 수 없습니다.",
-        uninstallFailed: "OMP 명령 바로 가기를 제거할 수 없습니다.",
-      },
     },
   },
   rootError: {
@@ -2441,10 +2436,6 @@ export const ko: TranslationResources = {
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
-      },
-      ompShortcut: {
-        title: "OMP 명령 바로 가기",
-        description: "이 Host에 현재 설정된 프록시로 내장 OMP 실행",
       },
       actions: {
         install: "설치",

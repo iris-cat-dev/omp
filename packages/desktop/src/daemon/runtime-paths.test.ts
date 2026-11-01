@@ -2,7 +2,7 @@ import type * as NodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveBundledOmpPath } from "./runtime-paths";
+import { resolveDesktopSdkRoot } from "./runtime-paths";
 
 const mocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
@@ -49,6 +49,7 @@ function setProcessRuntime(input: {
 
 describe("runtime-paths", () => {
   beforeEach(() => {
+    mocks.existsSync.mockReset();
     mocks.app.isPackaged = true;
     mocks.existsSync.mockReturnValue(true);
     setProcessRuntime({
@@ -67,33 +68,43 @@ describe("runtime-paths", () => {
     });
   });
 
-  it("uses an existing resource runtime and otherwise allows PATH fallback", async () => {
+  it("requires staged SDK resources without a PATH fallback", async () => {
     const fs = await vi.importActual<typeof NodeFs>("node:fs");
     const resourcesPath = fs.mkdtempSync(path.join(tmpdir(), "omp resources 中文 "));
-    const executablePath = path.join(
+    const sdkRoot = path.join(
       resourcesPath,
-      "bin",
-      originalPlatform === "win32" ? "omp.exe" : "omp",
+      "omp-sdk",
+      "node_modules",
+      "@oh-my-pi",
+      "pi-coding-agent",
     );
     try {
-      setProcessRuntime({
-        platform: originalPlatform,
-        execPath: originalExecPath,
-        resourcesPath,
-      });
+      setProcessRuntime({ platform: originalPlatform, execPath: originalExecPath, resourcesPath });
       mocks.existsSync.mockImplementation(fs.existsSync);
-      expect(resolveBundledOmpPath()).toBeNull();
-
-      fs.mkdirSync(path.dirname(executablePath));
-      fs.writeFileSync(executablePath, "installed runtime");
-      expect(resolveBundledOmpPath()).toBe(executablePath);
+      expect(() => resolveDesktopSdkRoot({ OMP_DESKTOP_SDK_ROOT: "/inherited/sdk" })).toThrow(
+        "Bundled OMP SDK manifest is missing",
+      );
+      fs.mkdirSync(sdkRoot, { recursive: true });
+      fs.writeFileSync(path.join(resourcesPath, "omp-sdk", "manifest.json"), "{}");
+      expect(resolveDesktopSdkRoot({ OMP_DESKTOP_SDK_ROOT: "/inherited/sdk" })).toBe(sdkRoot);
     } finally {
       fs.rmSync(resourcesPath, { recursive: true, force: true });
     }
   });
 
-  it("does not resolve a bundled OMP executable during development", () => {
+  it("preserves an explicit development SDK root", () => {
     mocks.app.isPackaged = false;
-    expect(resolveBundledOmpPath()).toBeNull();
+    expect(resolveDesktopSdkRoot({ OMP_DESKTOP_SDK_ROOT: "/custom/sdk" })).toBe("/custom/sdk");
+    expect(mocks.existsSync).not.toHaveBeenCalled();
+  });
+
+  it("prefers the canonical development stage and otherwise uses built submodule artifacts", () => {
+    mocks.app.isPackaged = false;
+    mocks.existsSync.mockReturnValue(true);
+    expect(resolveDesktopSdkRoot({})).toMatch(
+      /[\\/]desktop[\\/]sdk-dist[\\/]node_modules[\\/]@oh-my-pi[\\/]pi-coding-agent$/u,
+    );
+    mocks.existsSync.mockReturnValue(false);
+    expect(resolveDesktopSdkRoot({})).toMatch(/[\\/]omp-sdk[\\/]packages[\\/]coding-agent$/u);
   });
 });

@@ -33,7 +33,7 @@ const cleanups: Array<() => Promise<void>> = [];
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("OMP_COMMAND", "");
-  vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+  vi.stubEnv("PASEO_DESKTOP_MANAGED", "0");
   vi.stubEnv("PI_INSTALL_DIR", "");
   vi.stubEnv("PI_PROXY", "");
   vi.stubEnv("PATH", process.env.PATH ?? "");
@@ -258,7 +258,10 @@ async function createFixture(
   function client(mode: "enabled" | "unconfigured" | "disabled" = "enabled") {
     return new OmpAgentClient({
       logger: createTestLogger(),
-      runtimeSettings: { env: mode === "unconfigured" ? {} : { PI_PROXY: proxyUrl } },
+      runtimeSettings: {
+        ompBackend: "cli",
+        env: mode === "unconfigured" ? {} : { PI_PROXY: proxyUrl },
+      },
       providerParams: { proxyEnabled: mode !== "disabled" },
     });
   }

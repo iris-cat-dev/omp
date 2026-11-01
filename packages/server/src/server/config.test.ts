@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
 import { mergeRuntimeSettings, toRuntimeSettings } from "./agent/provider-launch-config.js";
@@ -25,6 +25,106 @@ describe("server config", () => {
 
     expect(desktopConfig.desktopManaged).toBe(true);
     expect(standaloneConfig.desktopManaged).toBe(false);
+  });
+
+  test("selects the Desktop SDK even for a legacy CLI-era configuration", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-sdk-cutover-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        agents: {
+          providers: {
+            omp: {
+              ompBackend: "cli",
+              command: ["/old/resources/bin/omp", "--profile", "old"],
+              env: { OMP_PROFILE: "work", KEEP: "yes" },
+              params: { disabledBuiltInTools: ["write"] },
+            },
+          },
+        },
+      }),
+    );
+    const config = loadConfig(paseoHome, {
+      env: {
+        PASEO_DESKTOP_MANAGED: "1",
+        OMP_DESKTOP_SDK_ROOT: "/staged/sdk",
+      },
+    });
+    expect(config.providerOverrides?.omp).toMatchObject({
+      ompBackend: "sdk",
+      ompSdkPath: "/staged/sdk",
+      env: { OMP_PROFILE: "work", KEEP: "yes" },
+      params: { disabledBuiltInTools: ["write"] },
+    });
+    expect(config.providerOverrides?.omp?.command).toBeUndefined();
+    expect(config.agentProviderSettings?.omp?.command).toBeUndefined();
+  });
+
+  test("keeps custom SDK root precedence and isolated environment selection", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-sdk-env-"));
+    roots.push(paseoHome);
+    vi.stubEnv("OMP_DESKTOP_SDK_ROOT", "/ambient/sdk");
+    vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+    try {
+      expect(
+        loadConfig(paseoHome, {
+          env: {
+            OMP_DESKTOP_SDK_ROOT: "/selected/sdk",
+          },
+        }).agentProviderSettings?.omp,
+      ).toMatchObject({
+        ompBackend: "sdk",
+        ompSdkPath: "/selected/sdk",
+      });
+      const isolated = loadConfig(paseoHome, { env: {} });
+      expect(isolated.desktopManaged).toBe(false);
+      expect(isolated.agentProviderSettings?.omp?.ompSdkPath).toBeUndefined();
+      await writeFile(
+        path.join(paseoHome, "config.json"),
+        JSON.stringify({
+          agents: {
+            providers: {
+              omp: {
+                ompSdkPath: "/custom/sdk",
+                env: { OMP_DESKTOP_SDK_ROOT: "/provider/sdk" },
+              },
+            },
+          },
+        }),
+      );
+      expect(
+        loadConfig(paseoHome, {
+          env: {
+            PASEO_DESKTOP_MANAGED: "1",
+            OMP_DESKTOP_SDK_ROOT: "/staged/sdk",
+          },
+        }).agentProviderSettings?.omp?.ompSdkPath,
+      ).toBe("/custom/sdk");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("preserves an explicitly selected external CLI on a standalone SDK-equipped server", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-explicit-cli-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        agents: { providers: { omp: { ompBackend: "cli", command: ["/external/omp"] } } },
+      }),
+    );
+    expect(
+      loadConfig(paseoHome, {
+        env: {
+          OMP_DESKTOP_SDK_ROOT: "/installed/sdk",
+        },
+      }).agentProviderSettings?.omp,
+    ).toMatchObject({
+      ompBackend: "cli",
+      command: { mode: "replace", argv: ["/external/omp"] },
+    });
   });
 
   test("loads the provider catalog refresh timeout", async () => {
@@ -88,7 +188,7 @@ describe("server config", () => {
     );
     const config = loadConfig(paseoHome, { env: {} });
     expect(config.agentProviderSettings?.omp?.ompSdkPath).toBe("/opt/omp-sdk");
-    expect(config.agentProviderSettings?.omp?.ompBackend).toBeUndefined();
+    expect(config.agentProviderSettings?.omp?.ompBackend).toBe("sdk");
   });
 
   test("keeps existing CLI configuration unchanged and rejects invalid SDK paths", async () => {

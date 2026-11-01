@@ -50,7 +50,7 @@ Autonomous OMP continuations remain steerable after a foreground turn finishes: 
 
 The conversation's **Stop** interrupts its current run and all running managed descendants, including children still active when the parent finishes during the stop request. Detached agents are independent and are not stopped. The subagent list also offers **Stop** on each running child; stopped children remain listed, unlike archived children.
 
-Individual and parent-initiated OMP-native child cancellation requires OMP **18.4.9+** (`cancel_subagent` RPC). Older binaries report that the child could not be stopped and leave it marked running instead of claiming success. Update OMP in Host Settings, or run `npm run download:omp` before [packaging](../packaging.md). The repository's general minimum remains **OMP 18.8.7**, even when native child cancellation is not needed.
+Individual and parent-initiated OMP-native child cancellation uses `cancel_subagent` RPC, included in Desktop's pinned SDK. Standalone CLI hosts require OMP **18.4.9+** for that operation; older binaries report failure and leave the child marked running rather than claiming it stopped. Update packaged SDKs through Desktop updates. The general standalone CLI minimum remains **OMP 18.8.7**.
 
 ## Queued messages
 

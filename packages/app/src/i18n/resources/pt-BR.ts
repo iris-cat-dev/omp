@@ -1582,11 +1582,6 @@ export const ptBR: TranslationResources = {
         statusFailed: "Não foi possível verificar o status de instalação da CLI.",
         installFailed: "Não foi possível instalar a CLI do OMP Desktop.",
       },
-      ompShortcut: {
-        statusFailed: "Não foi possível verificar o atalho de comando do OMP.",
-        installFailed: "Não foi possível instalar o atalho de comando do OMP.",
-        uninstallFailed: "Não foi possível desinstalar o atalho de comando do OMP.",
-      },
     },
   },
   rootError: {
@@ -2474,10 +2469,6 @@ export const ptBR: TranslationResources = {
       commandLine: {
         title: "Linha de comando",
         description: "Controle agentes e execute scripts pelo terminal",
-      },
-      ompShortcut: {
-        title: "Atalho de comando do OMP",
-        description: "Executa o OMP incluído com o proxy configurado neste host",
       },
       actions: {
         install: "Instalar",

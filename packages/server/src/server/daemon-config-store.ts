@@ -10,6 +10,7 @@ import {
   validateOmpBuiltinToolConfigSync,
 } from "./agent/providers/omp/provider-config.js";
 import { ensureManagedOmpOnPath } from "./agent/providers/omp/installer.js";
+import { resolveOmpBackend } from "./agent/providers/omp/sdk-installation.js";
 import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
@@ -644,7 +645,7 @@ export class DaemonConfigStore {
       );
       if (disabled) {
         const provider = ProviderOverrideSchema.strip().parse(next.providers.omp);
-        if (provider.ompBackend === "sdk") {
+        if (resolveOmpBackend(provider, this.env) === "sdk") {
           // The SDK validates its installed registry before starting a session.
           // Saving a policy must not inspect or install an unrelated CLI binary.
           assertOmpBuiltinToolNames(disabled);

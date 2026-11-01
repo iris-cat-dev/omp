@@ -9,7 +9,7 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 - [Catalog refresh and sign-in](#catalog-refresh-and-sign-in)
 - [Thinking and Fast settings](#thinking-and-fast-settings)
 - [Subagent model overrides](#subagent-model-overrides)
-- [Runtime updates and command shortcut](#runtime-updates-and-command-shortcut)
+- [Runtime updates](#runtime-updates)
 
 ## Getting started and host scope
 
@@ -75,12 +75,10 @@ Changes are saved in OMP's user configuration and apply to newly spawned task/ev
 
 Choosing inheritance clears the agent's model and Fast overrides. Disabling the section removes the model mapping and bundled agents' Fast overrides while preserving custom agents' tiers and unrelated settings.
 
-## Runtime updates and command shortcut
+## Runtime updates
 
-**Host Settings → Agents** reports the version, source, and path of the exact OMP executable used for Agent sessions. Update checks/installations target that same binary. Packaged apps distinguish bundled runtimes from standalone, configured, and `PATH` installations.
+**Host Settings → Agents** reports the version, source, and package path of the SDK used for Agent sessions. Desktop-managed runtimes are updated through the whole application; SDK mode does not offer standalone CLI installation or binary replacement.
 
-Runtime update checks, checksum requests, binary downloads, and release-asset redirects use the enabled OMP `PI_PROXY`, including authenticated HTTP CONNECT proxies. An unset/disabled proxy means direct downloads; no routing or DNS changes are needed. Download timeouts, cancellation, progress, SHA-256 verification, and staged replacement still apply. The [private plugin distribution](tools-and-plugins.md#private-windows-three-plugin-distribution) has stricter update ownership and does not permit generic runtime replacement.
+Standalone servers can explicitly select an external CLI backend. Its runtime update checks, checksum requests, downloads, and redirects use the enabled `PI_PROXY`; cancellation, SHA-256 verification, and staged replacement remain unchanged.
 
-**Settings → General → Integrations → OMP command shortcut** installs a managed launcher for the bundled runtime and current proxy configuration. Status checks compare launcher size before reading; ownership checks read only a bounded script header instead of loading a standalone binary as text. Install/uninstall never overwrite or remove commands Desktop does not own.
-
-Standard Apple Silicon macOS and Windows x64 packages include OMP, without requiring a system installation. Windows `no omp` installers preserve an existing bundled runtime on upgrade; fresh installations need `omp` on `PATH`. See [Packaging](../packaging.md) and [Development](../development.md).
+Standard Apple Silicon macOS and Windows x64 applications include the SDK and embedded Node, without a system Node, Bun, or OMP installation. Legacy CLI-bound private packages and no-OMP installer variants are no longer built. See [Packaging](../packaging.md) and [Development](../development.md).

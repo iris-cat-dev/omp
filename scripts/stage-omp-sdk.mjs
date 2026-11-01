@@ -15,6 +15,7 @@ import {
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { resolveOmpSdkBuildConfig } from "./omp-sdk-build-config.mjs";
 
 const SDK_NAME = "@oh-my-pi/pi-coding-agent";
 const SDK_NODE_VERSION = "24.14.0";
@@ -40,9 +41,7 @@ function npm(args, cwd) {
   );
   if (result.error) throw result.error;
   if (result.status !== 0)
-    throw new Error(
-      `npm ${args.join(" ")} failed\n${result.stdout ?? ""}${result.stderr ?? ""}`,
-    );
+    throw new Error(`npm ${args.join(" ")} failed\n${result.stdout ?? ""}${result.stderr ?? ""}`);
   return JSON.parse(result.stdout);
 }
 
@@ -52,9 +51,7 @@ async function json(file) {
 
 async function requireFile(file) {
   if (!(await stat(file).catch(() => null))?.isFile())
-    throw new Error(
-      `OMP Desktop SDK input is missing a required file: ${file}`,
-    );
+    throw new Error(`OMP Desktop SDK input is missing a required file: ${file}`);
 }
 
 function compatible(values, target) {
@@ -73,12 +70,10 @@ async function resolvePackage(name, owner) {
   const require = createRequire(path.join(owner, "package.json"));
   for (const modules of require.resolve.paths(name) ?? []) {
     const directory = path.join(modules, name);
-    const manifest = await json(path.join(directory, "package.json")).catch(
-      (error) => {
-        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-        throw error;
-      },
-    );
+    const manifest = await json(path.join(directory, "package.json")).catch((error) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    });
     if (manifest) return { directory: await realpath(directory), manifest };
   }
   return null;
@@ -93,16 +88,11 @@ function safeRelativePath(relative) {
 }
 
 function keepRuntimeFile(name, relative, target, buildTarget) {
-  if (relative.split("/").includes(".DS_Store") || relative.endsWith(".map"))
-    return false;
+  if (relative.split("/").includes(".DS_Store") || relative.endsWith(".map")) return false;
   if (name === "onnxruntime-node" && relative.startsWith("bin/")) {
     // dist/binding.js loads bin/napi-v*/${process.platform}/${process.arch}.
     const [, abi, platform, arch] = relative.split("/");
-    return (
-      /^napi-v\d+$/u.test(abi) &&
-      platform === target.platform &&
-      arch === target.arch
-    );
+    return /^napi-v\d+$/u.test(abi) && platform === target.platform && arch === target.arch;
   }
   if (name === "koffi" && relative.startsWith("build/koffi/")) {
     // index.js loads build/koffi/<platform>_<arch>, with musl as a Linux fallback.
@@ -117,24 +107,16 @@ function keepRuntimeFile(name, relative, target, buildTarget) {
     if (relative.startsWith("native/desktop/")) return false;
     if (!relative.startsWith("native/"))
       return (
-        relative === "package.json" ||
-        /^(?:LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)/iu.test(relative)
+        relative === "package.json" || /^(?:LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)/iu.test(relative)
       );
     if (relative.endsWith(".node"))
       return (
         buildTarget !== "desktop" &&
         path.posix.dirname(relative) === "native" &&
-        (path
-          .basename(relative)
-          .startsWith(`pi_natives.${target.platform}-${target.arch}.`) ||
-          path
-            .basename(relative)
-            .startsWith(`pi_natives.${target.platform}-${target.arch}-`))
+        (path.basename(relative).startsWith(`pi_natives.${target.platform}-${target.arch}.`) ||
+          path.basename(relative).startsWith(`pi_natives.${target.platform}-${target.arch}-`))
       );
-    return (
-      !relative.split("/").some((part) => part.startsWith(".")) &&
-      !relative.endsWith(".d.ts")
-    );
+    return !relative.split("/").some((part) => part.startsWith(".")) && !relative.endsWith(".d.ts");
   }
   return true;
 }
@@ -162,31 +144,15 @@ async function validateSdk(source, buildTarget) {
   if (manifest.name !== SDK_NAME || !manifest.version)
     throw new Error(`Expected ${SDK_NAME} package metadata at ${source}`);
   const artifact = `dist/${buildTarget === "desktop" ? "node-desktop" : "node"}`;
-  for (const file of [
-    "sdk.mjs",
-    "rpc.mjs",
-    "host.mjs",
-    "plugins.mjs",
-    "modules.json",
-  ])
+  for (const file of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"])
     await requireFile(path.join(directory, artifact, file));
   for (const child of ["chunks", "modules"]) {
     if ((await readdir(path.join(directory, artifact, child))).length === 0)
-      throw new Error(
-        `SDK ${child} directory is empty in ${source}/${artifact}`,
-      );
+      throw new Error(`SDK ${child} directory is empty in ${source}/${artifact}`);
   }
   const registry = await json(path.join(directory, artifact, "modules.json"));
-  requireBuildTarget(
-    registry,
-    buildTarget,
-    path.join(directory, artifact, "modules.json"),
-  );
-  if (
-    registry.version !== 1 ||
-    !registry.modules ||
-    Object.keys(registry.modules).length === 0
-  )
+  requireBuildTarget(registry, buildTarget, path.join(directory, artifact, "modules.json"));
+  if (registry.version !== 1 || !registry.modules || Object.keys(registry.modules).length === 0)
     throw new Error(`Incompatible Node SDK module registry in ${source}`);
   for (const relative of Object.values(registry.modules)) {
     if (
@@ -197,18 +163,16 @@ async function validateSdk(source, buildTarget) {
       throw new Error(`Invalid SDK module path in ${source}`);
     await requireFile(path.join(directory, artifact, relative));
   }
-  const runtime = await json(
-    path.join(directory, artifact, "runtime-dependencies.json"),
-  ).catch((error) => {
-    throw new Error(
-      `SDK runtime dependency metadata is missing or unreadable in ${source}/${artifact}. Rebuild with gen:bundle:${buildTarget === "desktop" ? "desktop" : "node"} before staging.`,
-      { cause: error },
-    );
-  });
+  const runtime = await json(path.join(directory, artifact, "runtime-dependencies.json")).catch(
+    (error) => {
+      throw new Error(
+        `SDK runtime dependency metadata is missing or unreadable in ${source}/${artifact}. Rebuild with gen:bundle:${buildTarget === "desktop" ? "desktop" : "node"} before staging.`,
+        { cause: error },
+      );
+    },
+  );
   if (runtime.version !== 1 || !runtime.packages?.[SDK_NAME])
-    throw new Error(
-      `Incompatible SDK runtime dependency metadata in ${source}`,
-    );
+    throw new Error(`Incompatible SDK runtime dependency metadata in ${source}`);
   requireBuildTarget(
     runtime,
     buildTarget,
@@ -220,9 +184,7 @@ async function validateSdk(source, buildTarget) {
       !Array.isArray(scope.files) ||
       !scope.files.every(safeRelativePath) ||
       !Array.isArray(scope.dependencies) ||
-      !scope.dependencies.every((dependency) =>
-        /^(@[^/]+\/)?[^/]+$/u.test(dependency),
-      ) ||
+      !scope.dependencies.every((dependency) => /^(@[^/]+\/)?[^/]+$/u.test(dependency)) ||
       !Array.isArray(scope.optionalDependencies ?? []) ||
       !(scope.optionalDependencies ?? []).every((dependency) =>
         /^(@[^/]+\/)?[^/]+$/u.test(dependency),
@@ -242,8 +204,7 @@ async function validateSdk(source, buildTarget) {
           dependencies.length > 0 &&
           dependencies.every(
             (dependency) =>
-              typeof dependency === "string" &&
-              /^(@[^/]+\/)?[^/]+$/u.test(dependency),
+              typeof dependency === "string" && /^(@[^/]+\/)?[^/]+$/u.test(dependency),
           ),
       )
     )
@@ -258,9 +219,7 @@ async function validateSdk(source, buildTarget) {
     await requireFile(path.join(utils.directory, "dist", "node", file));
   const natives = await resolvePackage("@oh-my-pi/pi-natives", directory);
   if (!natives)
-    throw new Error(
-      `The SDK source must have @oh-my-pi/pi-natives installed (${source})`,
-    );
+    throw new Error(`The SDK source must have @oh-my-pi/pi-natives installed (${source})`);
   const nodeFiles = [];
   async function collect(relative) {
     for (const entry of await readdir(path.join(directory, relative), {
@@ -288,9 +247,7 @@ async function desktopNativeAddons(pkg, target) {
   const rebuild =
     "Build the isolated release addon with `bun --cwd=packages/natives run build:desktop`.";
   if (filenames.length === 0)
-    throw new Error(
-      `Desktop SDK has no isolated addon in ${directory}. ${rebuild}`,
-    );
+    throw new Error(`Desktop SDK has no isolated addon in ${directory}. ${rebuild}`);
   const require = createRequire(path.join(pkg.directory, "package.json"));
   for (const filename of filenames) {
     const file = path.join(directory, filename);
@@ -323,18 +280,14 @@ async function desktopNativeAddons(pkg, target) {
     const capabilities = bindings.nativeCapabilities();
     if (
       ["smollm", "liveVoice", "wasmGrammars"].some(
-        (name) =>
-          capabilities[name] !== false ||
-          metadata.capabilities?.[name] !== false,
+        (name) => capabilities[name] !== false || metadata.capabilities?.[name] !== false,
       ) ||
       typeof bindings.LiveWebRtcPeer !== "undefined" ||
       typeof bindings.AudioCapture !== "function" ||
       typeof bindings.AudioPlayback !== "function" ||
       typeof bindings.TextPredictor !== "function"
     )
-      throw new Error(
-        `Desktop native feature set is incompatible: ${file}. ${rebuild}`,
-      );
+      throw new Error(`Desktop native feature set is incompatible: ${file}. ${rebuild}`);
   }
   return filenames.map((filename) => ({
     source: path.join(directory, filename),
@@ -342,30 +295,15 @@ async function desktopNativeAddons(pkg, target) {
   }));
 }
 
-/**
- * Stage only when explicitly configured; never modify or install into the source.
- * OMP_DESKTOP_SDK_PROFILE=core omits build-declared optional local capabilities.
- * Full remains the default and preserves the complete runtime dependency graph.
- */
+/** Stage the built SDK without modifying its source checkout or dependencies. */
 export async function stageOmpSdk(
   source,
   outputDir,
   target = { platform: process.platform, arch: process.arch },
 ) {
-  if (!source)
-    throw new Error(
-      "OMP_DESKTOP_SDK_SOURCE is required to stage the optional SDK.",
-    );
-  const profile = process.env.OMP_DESKTOP_SDK_PROFILE ?? "full";
-  if (profile !== "core" && profile !== "full")
-    throw new Error(
-      `Unsupported OMP_DESKTOP_SDK_PROFILE: ${profile}. Use core or full.`,
-    );
-  const buildTarget = process.env.OMP_DESKTOP_SDK_TARGET ?? "generic";
-  if (buildTarget !== "generic" && buildTarget !== "desktop")
-    throw new Error(
-      `Unsupported OMP_DESKTOP_SDK_TARGET: ${buildTarget}. Use generic or desktop.`,
-    );
+  const config = resolveOmpSdkBuildConfig();
+  source ??= config.source;
+  const { profile, buildTarget } = config;
   if (target.platform !== process.platform || target.arch !== process.arch) {
     throw new Error(
       `The local SDK native dependency closure is ${process.platform}-${process.arch}, not ${target.platform}-${target.arch}. Stage on the target OS and architecture; native addons are not rebuilt.`,
@@ -381,9 +319,7 @@ export async function stageOmpSdk(
       `The core SDK profile requires optional capability metadata. Rebuild the SDK with gen:bundle:${buildTarget === "desktop" ? "desktop" : "node"} before staging.`,
     );
   const excludedPackages = new Set(
-    profile === "core"
-      ? Object.values(sdk.runtime.optionalCapabilities).flat()
-      : [],
+    profile === "core" ? Object.values(sdk.runtime.optionalCapabilities).flat() : [],
   );
   const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-desktop-sdk-"));
   const project = path.join(temporary, "project");
@@ -400,21 +336,13 @@ export async function stageOmpSdk(
       const scope = sdk.runtime.packages[pkg.manifest.name];
       const files = scope
         ? scope.files.map((relative) => ({ path: relative }))
-        : npm(
-            ["pack", pkg.directory, "--dry-run", "--ignore-scripts", "--json"],
-            temporary,
-          )[0].files;
-      const destination = path.join(
-        temporary,
-        "sources",
-        String(snapshotIndex++),
-      );
+        : npm(["pack", pkg.directory, "--dry-run", "--ignore-scripts", "--json"], temporary)[0]
+            .files;
+      const destination = path.join(temporary, "sources", String(snapshotIndex++));
       await mkdir(destination, { recursive: true });
       for (const { path: relative } of files) {
-        if (!safeRelativePath(relative))
-          throw new Error(`Unsafe npm package path: ${relative}`);
-        if (!keepRuntimeFile(pkg.manifest.name, relative, target, buildTarget))
-          continue;
+        if (!safeRelativePath(relative)) throw new Error(`Unsafe npm package path: ${relative}`);
+        if (!keepRuntimeFile(pkg.manifest.name, relative, target, buildTarget)) continue;
         const file = path.join(
           destination,
           installedRuntimePath(pkg.manifest.name, relative, buildTarget),
@@ -424,10 +352,7 @@ export async function stageOmpSdk(
           dereference: true,
         });
       }
-      if (
-        pkg.manifest.name === "@oh-my-pi/pi-natives" &&
-        buildTarget === "desktop"
-      ) {
+      if (pkg.manifest.name === "@oh-my-pi/pi-natives" && buildTarget === "desktop") {
         for (const addon of await desktopNativeAddons(pkg, target)) {
           const file = path.join(destination, "native", addon.filename);
           await mkdir(path.dirname(file), { recursive: true });
@@ -441,9 +366,7 @@ export async function stageOmpSdk(
       // Hoist compatible instances; preserve nested scopes for conflicting versions.
       let shadowed = false;
       for (let ancestor = owner; ancestor; ancestor = ancestor.parent) {
-        const existing = nodes.get(
-          path.join(ancestor.destination, "node_modules", name),
-        );
+        const existing = nodes.get(path.join(ancestor.destination, "node_modules", name));
         if (existing) {
           if (existing.directory === pkg.directory) return existing;
           shadowed = true;
@@ -453,9 +376,7 @@ export async function stageOmpSdk(
       const top = path.join(project, "node_modules", name);
       const existing = nodes.get(top);
       if (!shadowed && existing?.directory === pkg.directory) return existing;
-      const destination = existing
-        ? path.join(owner.destination, "node_modules", name)
-        : top;
+      const destination = existing ? path.join(owner.destination, "node_modules", name) : top;
       const node = { ...pkg, destination, parent: existing ? owner : null };
       nodes.set(destination, node);
       await mkdir(path.dirname(destination), { recursive: true });
@@ -479,10 +400,7 @@ export async function stageOmpSdk(
           target: buildTarget,
         };
       }
-      if (
-        !compatible(manifest.os, target.platform) ||
-        !compatible(manifest.cpu, target.arch)
-      )
+      if (!compatible(manifest.os, target.platform) || !compatible(manifest.cpu, target.arch))
         throw new Error(
           `SDK dependency ${manifest.name} does not support ${target.platform}-${target.arch}`,
         );
@@ -492,10 +410,9 @@ export async function stageOmpSdk(
       const runtimeScope = sdk.runtime.packages[manifest.name];
       const requests = runtimeScope
         ? Object.fromEntries(
-            [
-              ...runtimeScope.dependencies,
-              ...(runtimeScope.optionalDependencies ?? []),
-            ].map((name) => [name, "*"]),
+            [...runtimeScope.dependencies, ...(runtimeScope.optionalDependencies ?? [])].map(
+              (name) => [name, "*"],
+            ),
           )
         : {
             ...manifest.peerDependencies,
@@ -602,9 +519,7 @@ export async function stageOmpSdk(
     const packedPaths = new Set(packed.files.map((file) => file.path));
     for (const relative of [
       "package.json",
-      ...sdk.nodeFiles.map((relative) =>
-        installedRuntimePath(SDK_NAME, relative, buildTarget),
-      ),
+      ...sdk.nodeFiles.map((relative) => installedRuntimePath(SDK_NAME, relative, buildTarget)),
       "node_modules/@oh-my-pi/pi-utils/dist/node/runtime.mjs",
       "node_modules/@oh-my-pi/pi-utils/dist/node/runtime-image.mjs",
       "node_modules/@oh-my-pi/pi-utils/dist/node/sqlite-driver.mjs",
@@ -622,8 +537,7 @@ export async function stageOmpSdk(
     const nativePrefix = `node_modules/@oh-my-pi/pi-natives/native/pi_natives.${target.platform}-${target.arch}`;
     if (
       !packed.files.some(
-        (file) =>
-          file.path.startsWith(nativePrefix) && file.path.endsWith(".node"),
+        (file) => file.path.startsWith(nativePrefix) && file.path.endsWith(".node"),
       )
     )
       throw new Error(
@@ -637,20 +551,15 @@ export async function stageOmpSdk(
       platform: target.platform,
       arch: target.arch,
       buildTarget,
+      profile,
       packageRoot: `node_modules/${SDK_NAME}`,
     };
-    await writeFile(
-      path.join(project, "manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-    );
+    await writeFile(path.join(project, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
     await writeFile(
       path.join(project, "source.json"),
       `${JSON.stringify({ packageRoot: sdk.directory })}\n`,
     );
-    await cp(
-      path.join(archives, packed.filename),
-      path.join(project, "omp-sdk.tgz"),
-    );
+    await cp(path.join(archives, packed.filename), path.join(project, "omp-sdk.tgz"));
     await rm(outputDir, { recursive: true, force: true });
     await mkdir(path.dirname(outputDir), { recursive: true });
     await cp(project, outputDir, { recursive: true, dereference: true });

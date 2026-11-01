@@ -1587,11 +1587,6 @@ export const fr: TranslationResources = {
         statusFailed: "Impossible de vérifier l'état de l'installation deCLI.",
         installFailed: "Impossible d'installer leOMP DesktopCLI.",
       },
-      ompShortcut: {
-        statusFailed: "Impossible de vérifier l’état du raccourci de commande OMP.",
-        installFailed: "Impossible d’installer le raccourci de commande OMP.",
-        uninstallFailed: "Impossible de désinstaller le raccourci de commande OMP.",
-      },
     },
   },
   rootError: {
@@ -2485,10 +2480,6 @@ export const fr: TranslationResources = {
       commandLine: {
         title: "Ligne de commande",
         description: "Agents de contrôle et de script depuis votre terminal",
-      },
-      ompShortcut: {
-        title: "Raccourci de commande OMP",
-        description: "Lance OMP intégré avec le proxy actuellement configuré pour cet hôte",
       },
       actions: {
         install: "Installer",

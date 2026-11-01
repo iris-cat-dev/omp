@@ -171,7 +171,7 @@ function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
   };
 }
 
-function configureIsolatedDaemonHome(home, listen, backend = "cli") {
+function configureIsolatedDaemonHome(home, listen) {
   fs.writeFileSync(
     path.join(home, "config.json"),
     `${JSON.stringify(
@@ -182,7 +182,6 @@ function configureIsolatedDaemonHome(home, listen, backend = "cli") {
           relay: { enabled: false },
           mcp: { enabled: false, injectIntoAgents: false },
         },
-        ...(backend === "sdk" ? { agents: { providers: { omp: { ompBackend: "sdk" } } } } : {}),
       },
       null,
       2,
@@ -613,112 +612,6 @@ async function runCliShimJsonCommand({ appPath, env, args, label }) {
   } catch (error) {
     throw new Error(`${label} produced invalid JSON: ${output}`, { cause: error });
   }
-}
-
-async function smokeBundledOmpRuntime({ appPath, env, executableName }) {
-  const binaryPath = getBundledOmpPath(appPath);
-  assertExecutable(binaryPath, "Bundled OMP executable");
-
-  const version = spawnSync(binaryPath, ["--version"], {
-    encoding: "utf8",
-    env,
-    cwd: env.HOME || undefined,
-    timeout: SMOKE_TIMEOUT_MS,
-  });
-  if (version.error || version.status !== 0) {
-    throw new Error(
-      `Bundled OMP version check failed (status ${version.status}): ${
-        version.error || version.stderr?.trim() || version.stdout?.trim() || "<empty>"
-      }`,
-    );
-  }
-  if (!/\d+\.\d+\.\d+/.test(version.stdout)) {
-    throw new Error(
-      `Bundled OMP did not report a usable version: ${version.stdout.trim() || "<empty>"}`,
-    );
-  }
-
-  // Run Desktop's version probe inside the shipped runtime, not host Node.
-  // A plain --version spawn misses child_process/promisify incompatibilities.
-  const resourcesDir = path.dirname(path.dirname(binaryPath));
-  const imageSettingsUrl = require("node:url").pathToFileURL(
-    path.join(
-      resourcesDir,
-      "app",
-      "node_modules",
-      "@omp-desktop",
-      "server",
-      "dist",
-      "server",
-      "server",
-      "agent",
-      "providers",
-      "omp",
-      "image-settings.js",
-    ),
-  ).href;
-  const imageSettingsProbe = spawnSync(
-    getExecutablePath(appPath, executableName),
-    [
-      "--input-type=module",
-      "-e",
-      `const { prepareOmpImageSettingsLaunch } = await import(${JSON.stringify(imageSettingsUrl)});
-const launches = [];
-try {
-  for (let index = 0; index < 3; index++) {
-    const launch = await prepareOmpImageSettingsLaunch(
-      [${JSON.stringify(binaryPath)}], ${JSON.stringify(appPath)}, process.env,
-    );
-    launches.push(launch);
-  }
-  if (new Set(launches.map(launch => launch.configPath)).size !== launches.length) {
-    throw new Error("Concurrent agent launches reused an image settings directory");
-  }
-  console.log("native-image-launch-ready");
-} finally {
-  await Promise.all(launches.map(launch => launch.cleanup()));
-}`,
-    ],
-    { encoding: "utf8", env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, timeout: SMOKE_TIMEOUT_MS },
-  );
-  if (
-    imageSettingsProbe.error ||
-    imageSettingsProbe.status !== 0 ||
-    !imageSettingsProbe.stdout?.includes("native-image-launch-ready")
-  ) {
-    throw new Error(
-      `Packaged native image launch preparation failed: ${
-        imageSettingsProbe.error ||
-        imageSettingsProbe.stderr ||
-        imageSettingsProbe.stdout ||
-        "<empty>"
-      }`,
-    );
-  }
-
-  const diagnostic = await runCliShimCommand({
-    appPath,
-    env,
-    args: ["provider", "diagnostic", "omp"],
-    label: "Bundled OMP provider diagnostic",
-    // A cold private profile stages its complete runtimes before the catalog.
-    // Preserve the real 180s diagnostic RPC deadline plus CLI startup allowance.
-    timeoutMs: 180_000 + SMOKE_TIMEOUT_MS,
-  });
-  if (!diagnostic.stdout.includes(binaryPath)) {
-    throw new Error(
-      `Packaged daemon did not resolve the bundled OMP executable ${binaryPath}.\n${diagnostic.stdout}`,
-    );
-  }
-
-  await runCliShimJsonCommand({
-    appPath,
-    env,
-    args: ["provider", "models", "omp"],
-    label: "Bundled OMP provider models",
-  });
-  console.log("Packaged desktop smoke: bundled OMP runtime started through the daemon");
-  return { binaryPath, version: version.stdout.trim(), diagnostic: diagnostic.stdout };
 }
 
 async function smokePackagedSdkRuntime({ appPath, env, executableName }) {
@@ -1176,18 +1069,15 @@ async function smokePetCreationHelper({ page, appPath, env }) {
   return { installed: true, daemonPid: after.pid, selectedId: settingsAfter.pet.selectedId };
 }
 
-async function smokePackagedDesktopApp({ appPath, executableName, backend = "cli" }) {
-  if (backend !== "cli" && backend !== "sdk")
-    throw new Error(`Unsupported smoke backend: ${backend}`);
-  const smokeOmpRuntime = backend === "sdk" ? smokePackagedSdkRuntime : smokeBundledOmpRuntime;
+async function smokePackagedDesktopApp({ appPath, executableName }) {
+  const smokeOmpRuntime = smokePackagedSdkRuntime;
   if (process.platform === "win32") {
     const { smokeWindowsPackagedApp } = require("./windows-native-packaged-smoke");
     return smokeWindowsPackagedApp({
       appPath,
       executableName: executableName ?? EXECUTABLE_NAME,
       reserveLocalTcpPort,
-      configureIsolatedDaemonHome: (home, listen) =>
-        configureIsolatedDaemonHome(home, listen, backend),
+      configureIsolatedDaemonHome,
       runColdCli: smokeColdCliDaemonStart,
       runCliChecks: async ({ appPath: stagedAppPath, env, createTerminal }) => ({
         status: await smokeCliShim({ appPath: stagedAppPath, env }),
@@ -1214,7 +1104,7 @@ async function smokePackagedDesktopApp({ appPath, executableName, backend = "cli
     throw new Error("Failed to reserve distinct TCP ports for the daemon and CDP");
   }
   const listen = `127.0.0.1:${daemonPort}`;
-  configureIsolatedDaemonHome(daemonHome, listen, backend);
+  configureIsolatedDaemonHome(daemonHome, listen);
   const env = createIsolatedDesktopEnv({
     home: daemonHome,
     listen,
@@ -1337,16 +1227,14 @@ module.exports = {
 if (require.main === module) {
   const appIndex = process.argv.indexOf("--app");
   const appPath = appIndex >= 0 ? process.argv[appIndex + 1] : null;
-  const backendIndex = process.argv.indexOf("--backend");
-  const backend = backendIndex >= 0 ? process.argv[backendIndex + 1] : "cli";
   if (!appPath) {
     process.stderr.write(
-      "Usage: node packages/desktop/e2e/packaged-app-smoke.js --app <packaged-app-directory> [--backend cli|sdk]\n",
+      "Usage: node packages/desktop/e2e/packaged-app-smoke.js --app <packaged-app-directory>\n",
     );
     process.exit(2);
   }
 
-  smokePackagedDesktopApp({ appPath, backend }).catch((error) => {
+  smokePackagedDesktopApp({ appPath }).catch((error) => {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     process.stderr.write(`${message}\n`);
     process.exit(1);
