@@ -1815,6 +1815,7 @@ export class OmpAgentSession implements AgentSession {
     text: string;
     displayText: string;
     clientMessageId: string | null;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
   }> = [];
   private planContextResetPending: boolean;
   private readonly backgroundDaemons?: OmpBackgroundDaemons;
@@ -2223,6 +2224,7 @@ export class OmpAgentSession implements AgentSession {
       text: payload.text,
       displayText: payload.text,
       clientMessageId: options.clientMessageId ?? null,
+      images: payload.images,
     };
     this.pendingSteeredUserMessages.push(submittedMessage);
     try {
@@ -2740,7 +2742,46 @@ export class OmpAgentSession implements AgentSession {
     const interrupt = { turnId, reason };
     this.activeInterrupt = interrupt;
     try {
-      await this.runtimeSession.abort();
+      if (reason === "user") {
+        const restored = await this.runtimeSession.abortAndRestoreQueue();
+        const queued = [...restored.steering, ...restored.followUp];
+        if (restored.truncated) {
+          const unmatched = [...restored.steering];
+          for (const pending of this.pendingSteeredUserMessages) {
+            const index = unmatched.findIndex((message) => message.text === pending.text);
+            if (index >= 0) {
+              unmatched.splice(index, 1);
+            } else {
+              queued.push({ text: pending.text, images: pending.images });
+            }
+          }
+        }
+        for (const message of queued) {
+          const pending = this.pendingSteeredUserMessages.find(
+            (submitted) => submitted.text === message.text,
+          );
+          // The original Desktop submission retains attachments even if RPC had
+          // to omit them. Reuse the canonical echo path and consume its client ID.
+          this.handleMessageEnd({
+            type: "message_end",
+            message: {
+              role: "user",
+              content: [
+                { type: "text", text: message.text },
+                ...(pending?.images ?? message.images ?? []),
+              ],
+            },
+          }, turnId ?? undefined, true);
+        }
+        if (restored.truncated || restored.imagesDropped) {
+          this.logger.warn(
+            { truncated: restored.truncated, imagesDropped: restored.imagesDropped },
+            "OMP stopped queue exceeded the RPC response limit; Desktop retained original pending steering input",
+          );
+        }
+      } else {
+        await this.runtimeSession.abort();
+      }
     } catch (error) {
       if (this.activeInterrupt === interrupt) {
         this.activeInterrupt = null;
@@ -3933,6 +3974,7 @@ export class OmpAgentSession implements AgentSession {
         }
         if (
           (selectedWorkflowMode === "standard" || selectedWorkflowMode === "enhanced") &&
+          !this.activeInterrupt &&
           terminalAssistant?.stopReason === "length" &&
           !terminalAssistant.errorMessage?.trim()
         ) {
@@ -4148,6 +4190,7 @@ export class OmpAgentSession implements AgentSession {
   private handleMessageEnd(
     event: Extract<OmpAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
+    withdrawnFromQueue = false,
   ): void {
     if (event.message.role === "assistant") {
       this.observeClaudeMessage(event.message);
@@ -4225,6 +4268,12 @@ export class OmpAgentSession implements AgentSession {
         },
       });
     };
+    if (withdrawnFromQueue) {
+      // Withdrawn input was never recorded by native OMP: do not invent an
+      // entry ID or resolve an older identical branch message.
+      emitUserMessage();
+      return;
+    }
     if (messageId) {
       emitUserMessage(messageId);
       return;

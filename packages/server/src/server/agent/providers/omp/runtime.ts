@@ -3,6 +3,7 @@ import type {
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
 import type {
+  OmpAbortAndRestoreQueueResult,
   OmpAgentMessage,
   OmpFastModeResult,
   OmpModel,
@@ -60,6 +61,8 @@ export interface OmpRuntimeSession {
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
+  /** Withdraw queued input before aborting, preventing native post-abort queue drain. */
+  abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult>;
   cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;
   listBackgroundJobs?(): Promise<BackgroundProcess[]>;

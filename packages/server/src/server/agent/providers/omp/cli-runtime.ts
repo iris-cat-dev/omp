@@ -45,6 +45,8 @@ import {
   type OmpImageSettingsGetter,
 } from "./image-settings.js";
 import {
+  OmpAbortAndRestoreQueueResultSchema,
+  type OmpAbortAndRestoreQueueResult,
   OmpBranchMessagesResultSchema,
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
@@ -642,6 +644,12 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   async abort(): Promise<void> {
     await this.request({ type: "abort" });
+  }
+
+  async abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult> {
+    return OmpAbortAndRestoreQueueResultSchema.parse(
+      await this.request({ type: "abort_and_restore_queue" }),
+    );
   }
 
   async cancelSubagent(subagentId: string): Promise<boolean> {

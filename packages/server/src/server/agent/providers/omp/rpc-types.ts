@@ -562,6 +562,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
+  z.object({ ...OmpCommandBase, type: z.literal("abort_and_restore_queue") }),
   z.object({ ...OmpCommandBase, type: z.literal("cancel_subagent"), subagentId: z.string() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
@@ -609,6 +610,17 @@ export const OmpPromptAckSchema = z
   .object({ agentInvoked: z.boolean().optional() })
   .passthrough()
   .optional();
+const OmpRestoredQueuedMessageSchema = z
+  .object({ text: z.string(), images: z.array(OmpImageContentSchema).optional() })
+  .passthrough();
+export const OmpAbortAndRestoreQueueResultSchema = z
+  .object({
+    steering: z.array(OmpRestoredQueuedMessageSchema),
+    followUp: z.array(OmpRestoredQueuedMessageSchema),
+    imagesDropped: z.boolean().optional(),
+    truncated: z.boolean().optional(),
+  })
+  .passthrough();
 export const OmpMessagesResultSchema = z
   .object({ messages: z.array(OmpAgentMessageSchema).optional() })
   .passthrough();
@@ -645,6 +657,7 @@ export type OmpModel = z.infer<typeof OmpModelSchema>;
 export type OmpModelThinking = z.infer<typeof OmpModelThinkingSchema>;
 export type OmpSessionState = z.infer<typeof OmpSessionStateSchema>;
 export type OmpFastModeResult = z.infer<typeof OmpFastModeResultSchema>;
+export type OmpAbortAndRestoreQueueResult = z.infer<typeof OmpAbortAndRestoreQueueResultSchema>;
 export type OmpSessionStats = z.infer<typeof OmpSessionStatsSchema>;
 export type OmpRpcSlashCommand = z.infer<typeof OmpRpcSlashCommandSchema>;
 export type OmpAgentToolResult = z.infer<typeof OmpAgentToolResultSchema>;

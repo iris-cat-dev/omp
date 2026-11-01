@@ -5,6 +5,7 @@ import type {
   OmpStartSessionInput,
 } from "../runtime.js";
 import type {
+  OmpAbortAndRestoreQueueResult,
   OmpRpcHostToolDefinition,
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
@@ -170,6 +171,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  abortAndRestoreQueueRequested = false;
+  restoredQueue: OmpAbortAndRestoreQueueResult = { steering: [], followUp: [] };
+  onAbort: (() => void) | null = null;
   readonly canceledSubagentIds: string[] = [];
   cancelSubagentError: Error | null = null;
   cancelSubagentResult = true;
@@ -311,6 +315,15 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+    this.onAbort?.();
+  }
+
+  async abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult> {
+    this.abortAndRestoreQueueRequested = true;
+    const restored = this.restoredQueue;
+    this.restoredQueue = { steering: [], followUp: [] };
+    await this.abort();
+    return restored;
   }
 
   async cancelSubagent(subagentId: string): Promise<boolean> {

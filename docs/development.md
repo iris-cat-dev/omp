@@ -61,6 +61,18 @@ SDK mode uses a separate Node process for each top-level agent, but retains the 
 
 The SDK host is an internal child of the daemon, not an external provider command. Packaged Desktop launches it with the app's embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1`; the host's Node worker subprocesses inherit the same dispatch setting. No separate Node, Bun, or OMP executable is needed. CLI provider launches continue to use their external-command environment isolation.
 
+User Stop withdraws native steering and follow-up queues atomically before
+aborting the active request. Withdrawn Desktop submissions are echoed once in
+the canonical timeline with their client message IDs and original attachments;
+they are not automatically submitted again. Replacement and other non-user
+interruptions retain ordinary abort semantics. Length continuations are not
+scheduled while interruption is active.
+
+Backend code updates require a daemon restart: refreshing one agent cannot
+replace provider classes already loaded by the daemon. Refreshing an agent from
+persistence does close only that agent's runtime and rehydrate its original
+native session history, without replaying a prompt or replacing the conversation.
+
 For a source checkout, build the OMP Node artifacts and then the Desktop server before selecting SDK mode:
 
 ```bash

@@ -849,6 +849,78 @@ describe("OMP agent client and session", () => {
     expect(omp.wasAborted()).toBe(false);
   });
 
+  test("explicit Stop withdraws queued steering once and accepts a later continuation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("keep working", "initial-message");
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-client" });
+    runtime.restoredQueue = { steering: [{ text: "继续" }], followUp: [] };
+
+    await omp.interrupt();
+
+    expect(runtime.abortAndRestoreQueueRequested).toBe(true);
+    expect(omp.timeline().filter((item) => item.type === "user_message" && item.text === "继续"))
+      .toEqual([expect.objectContaining({ clientMessageId: "queued-client" })]);
+    await omp.runPrompt("continue after Stop", "visible answer");
+    expect(omp.timeline()).toContainEqual(expect.objectContaining({
+      type: "assistant_message", text: "visible answer",
+    }));
+  });
+
+  test("retains repeated original steering on a truncated Stop receipt without duplicating consumed input", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    await omp.steerActiveTurn("consumed", turnId, { clientMessageId: "consumed-client" });
+    runtime.acceptPrompt("consumed", "consumed-native");
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-one" });
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-two" });
+    runtime.restoredQueue = {
+      steering: [{ text: "继续" }], followUp: [], truncated: true, imagesDropped: true,
+    };
+
+    await omp.interrupt();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message"))
+      .toEqual([
+        expect.objectContaining({ text: "consumed", clientMessageId: "consumed-client" }),
+        expect.objectContaining({ text: "继续", clientMessageId: "queued-one" }),
+        expect.objectContaining({ text: "继续", clientMessageId: "queued-two" }),
+      ]);
+  });
+
+  test.each(["replacement", "reload", "rewind"] as const)(
+    "%s interrupt preserves ordinary native abort semantics",
+    async (reason) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      await omp.requireStartTurn("keep working");
+      await omp.interrupt(reason);
+      expect(omp.runtime().abortRequested).toBe(true);
+      expect(omp.runtime().abortAndRestoreQueueRequested).toBe(false);
+    },
+  );
+
+  test("does not queue a length continuation while Stop is aborting", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.onAbort = () => runtime.finishTurnWithEmptyAgentEnd({
+      role: "assistant", content: [], stopReason: "length",
+    });
+
+    await omp.interrupt();
+
+    expect(runtime.followUpRequests).toEqual([]);
+  });
+
   test("distinguishes absent and mismatched steering targets", async () => {
     const omp = new OmpHarness();
     await omp.start();
