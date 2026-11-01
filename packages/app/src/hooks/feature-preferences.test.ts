@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
 
 import {
   applyFeatureValues,
@@ -22,6 +23,17 @@ describe("feature-preferences", () => {
       value: false,
     },
   ];
+  const speedFeature: AgentFeature = {
+    id: "fast_mode",
+    label: "Speed",
+    type: "select",
+    value: "off",
+    options: [
+      { id: "off", label: "Standard" },
+      { id: "on", label: "Fast" },
+      { id: "ultrafast", label: "Ultrafast" },
+    ],
+  };
 
   it("restores persisted values for available features", () => {
     expect(
@@ -54,6 +66,85 @@ describe("feature-preferences", () => {
       fast_mode: false,
       plan_mode: false,
     });
+  });
+
+  it.each([
+    [false, "off"],
+    [true, "on"],
+  ])("normalizes saved boolean %s for the speed select", (storedValue, expectedValue) => {
+    const values = { fast_mode: storedValue };
+    expect(
+      resolveFeatureValues({
+        features: [speedFeature],
+        persistedFeatureValues: values,
+        localFeatureValues: {},
+      }),
+    ).toEqual({ fast_mode: expectedValue });
+    expect(pruneFeatureValues(values, [speedFeature])).toEqual({
+      fast_mode: expectedValue,
+    });
+    expect(applyFeatureValues([speedFeature], values)[0]).toMatchObject({
+      type: "select",
+      value: expectedValue,
+    });
+  });
+
+  it.each(["off", "on", "ultrafast"])("retains the selected %s id without coercion", (value) => {
+    const resolved = resolveFeatureValues({
+      features: [speedFeature],
+      persistedFeatureValues: {},
+      localFeatureValues: { fast_mode: value },
+    });
+    expect(resolved).toEqual({ fast_mode: value });
+    expect(applyFeatureValues([speedFeature], resolved)[0]).toMatchObject({ value });
+  });
+
+  it("preserves unavailable Ultrafast without applying it or falling back to saved Fast", () => {
+    const values = { fast_mode: "ultrafast" };
+    for (const availableFeatures of [[], [features[0]]]) {
+      const retained = pruneFeatureValues(values, availableFeatures);
+      const resolved = resolveFeatureValues({
+        features: availableFeatures,
+        persistedFeatureValues: { fast_mode: true },
+        localFeatureValues: retained,
+      });
+      expect(retained).toBe(values);
+      expect(resolved).toEqual({});
+      expect(applyFeatureValues(availableFeatures, retained)).toEqual(availableFeatures);
+    }
+    const restored = resolveFeatureValues({
+      features: [speedFeature],
+      persistedFeatureValues: {},
+      localFeatureValues: values,
+    });
+    expect(restored).toEqual({ fast_mode: "ultrafast" });
+    expect(applyFeatureValues([speedFeature], restored)[0]).toMatchObject({
+      value: "ultrafast",
+    });
+  });
+
+  it("does not enable a speed tier without an explicit preference", () => {
+    const resolved = resolveFeatureValues({
+      features: [speedFeature],
+      persistedFeatureValues: {},
+      localFeatureValues: {},
+    });
+    expect(resolved).toEqual({});
+    expect(applyFeatureValues([speedFeature], resolved)[0]).toBe(speedFeature);
+  });
+
+  it.each([
+    ["off", false],
+    ["on", true],
+  ])("adapts the %s standard/Fast id to existing boolean providers", (value, expectedValue) => {
+    expect(
+      resolveFeatureValues({
+        features,
+        persistedFeatureValues: { fast_mode: value },
+        localFeatureValues: {},
+      }),
+    ).toEqual({ fast_mode: expectedValue });
+    expect(applyFeatureValues(features, { fast_mode: value })[0].value).toBe(expectedValue);
   });
 
   it("clears a stale effective selection when a draft select value changes", () => {

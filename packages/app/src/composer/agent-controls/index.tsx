@@ -31,6 +31,7 @@ import {
   formatAgentFeatureOptionLabel,
   formatThinkingOptionLabel,
 } from "@/agent-controls/labels";
+import { FAST_MODE_FEATURE_ID, type FastModeTier } from "@/agent-controls/policy";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
@@ -72,6 +73,7 @@ import type {
 } from "@omp-desktop/protocol/agent-types";
 import type { AgentProviderDefinition } from "@omp-desktop/protocol/provider-manifest";
 import {
+  getFastModeTier,
   getFeatureHighlightColor,
   getFeatureTooltip,
   getAgentControlHintKey,
@@ -799,7 +801,7 @@ function ControlledAgentControls({
             comboboxProviderOptions={comboboxProviderOptions}
             displayProvider={displayProvider}
             displayThinking={canSelectThinking ? displayThinking : null}
-            fastModeEnabled={partitionedFeatures.fastMode?.value === true}
+            fastModeTier={getFastModeTier(partitionedFeatures.fastMode)}
             modelSettings={desktopModelSettings}
             modelSelectorOpen={modelSelectorOpen}
             openSelector={openSelector}
@@ -839,7 +841,7 @@ function ControlledAgentControls({
             modelDisabled={modelDisabled}
             openSelector={openSelector}
             displayThinking={canSelectThinking ? displayThinking : null}
-            fastModeEnabled={partitionedFeatures.fastMode?.value === true}
+            fastModeTier={getFastModeTier(partitionedFeatures.fastMode)}
             modelSettings={compactModelSettings}
             handleSheetModelSelect={handleSheetModelSelect}
             handleOpenChange={handleSheetOpenChange}
@@ -874,7 +876,7 @@ interface DesktopAgentControlsContentProps {
   comboboxProviderOptions: ComboboxOption[];
   displayProvider: string;
   displayThinking: string | null;
-  fastModeEnabled: boolean;
+  fastModeTier: FastModeTier | null;
   modelSettings: ReactNode;
   modelSelectorOpen: boolean;
   openSelector: AgentControlSelector | null;
@@ -922,7 +924,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     comboboxProviderOptions,
     displayProvider,
     displayThinking,
-    fastModeEnabled,
+    fastModeTier,
     modelSettings,
     modelSelectorOpen,
     openSelector,
@@ -952,15 +954,25 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     [t],
   );
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
-  const triggerAccessory =
-    (displayThinking && presentation.showThinkingLabel) || fastModeEnabled ? (
-      <>
-        {displayThinking && presentation.showThinkingLabel ? (
-          <Text style={styles.modelAccessoryText}>{displayThinking}</Text>
-        ) : null}
-        {fastModeEnabled ? <Zap size={14} color={theme.colors.palette.yellow[400]} /> : null}
-      </>
-    ) : null;
+  const fastModeLabel = fastModeTier
+    ? formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: fastModeTier })
+    : null;
+  const modelSelectionDetail = [displayThinking, fastModeLabel].filter(Boolean).join(" · ");
+  const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
+  const fastModeColor = theme.colors.palette.yellow[400];
+  const triggerAccessory = useMemo(
+    () =>
+      (displayThinking && presentation.showThinkingLabel) || fastModeActive ? (
+        <DesktopModelTriggerAccessory
+          thinkingLabel={displayThinking}
+          showThinkingLabel={presentation.showThinkingLabel}
+          fastModeActive={fastModeActive}
+          fastModeLabel={fastModeLabel}
+          fastModeColor={fastModeColor}
+        />
+      ) : null,
+    [displayThinking, presentation.showThinkingLabel, fastModeActive, fastModeLabel, fastModeColor],
+  );
   return (
     <>
       {providerOptions && providerOptions.length > 1 ? (
@@ -998,6 +1010,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 providers={modelSelectorProviders}
                 selectedProvider={provider}
                 selectedModel={selectedModelId ?? ""}
+                selectionDetail={modelSelectionDetail}
                 onSelect={handleDesktopModelSelect}
                 browseProviders={false}
                 isLoading={isModelLoading}
@@ -1080,6 +1093,31 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   );
 }
 
+function DesktopModelTriggerAccessory({
+  thinkingLabel,
+  showThinkingLabel,
+  fastModeActive,
+  fastModeLabel,
+  fastModeColor,
+}: {
+  thinkingLabel: string | null;
+  showThinkingLabel: boolean;
+  fastModeActive: boolean;
+  fastModeLabel: string | null;
+  fastModeColor: string;
+}) {
+  return (
+    <>
+      {thinkingLabel && showThinkingLabel ? (
+        <Text style={styles.modelAccessoryText}>{thinkingLabel}</Text>
+      ) : null}
+      {fastModeActive ? (
+        <Zap size={14} color={fastModeColor} accessibilityLabel={fastModeLabel ?? undefined} />
+      ) : null}
+    </>
+  );
+}
+
 interface SheetAgentControlsContentProps {
   provider: string;
   selectedModelId?: string;
@@ -1098,7 +1136,7 @@ interface SheetAgentControlsContentProps {
   modelDisabled: boolean;
   openSelector: AgentControlSelector | null;
   displayThinking: string | null;
-  fastModeEnabled: boolean;
+  fastModeTier: FastModeTier | null;
   modelSettings: ReactNode;
   handleSheetModelSelect: (providerId: string, modelId: string) => void | Promise<void>;
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
@@ -1126,7 +1164,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     modelDisabled,
     openSelector,
     displayThinking,
-    fastModeEnabled,
+    fastModeTier,
     modelSettings,
     handleSheetModelSelect,
     handleOpenChange,
@@ -1161,7 +1199,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       selectedProvider={provider}
       selectedModel={selectedModelId ?? ""}
       thinkingLabel={displayThinking}
-      fastModeEnabled={fastModeEnabled}
+      fastModeTier={fastModeTier}
       onSelect={handleSheetModelSelect}
       isLoading={isModelLoading}
       disabled={modelDisabled}

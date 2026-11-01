@@ -31,6 +31,7 @@ interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
+  selectionDetail?: string;
   onSelect: (provider: AgentProvider, modelId: string) => void | Promise<void>;
   isLoading: boolean;
   renderTrigger?: (input: {
@@ -72,6 +73,7 @@ export function CombinedModelSelector({
   providers,
   selectedProvider,
   selectedModel,
+  selectionDetail,
   onSelect,
   isLoading,
   renderTrigger,
@@ -238,7 +240,7 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: [browser.selectedModelLabel, selectionDetail].filter(Boolean).join(" · "),
           })}
           testID="combined-model-selector"
         >
@@ -262,7 +264,7 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: [browser.selectedModelLabel, selectionDetail].filter(Boolean).join(" · "),
           })}
           testID="combined-model-selector"
           chevron={toolbar?.showCaret === false ? null : undefined}

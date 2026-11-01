@@ -1,4 +1,5 @@
 import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
+import { FAST_MODE_FEATURE_ID, normalizeFastModeFeatureValue } from "@/agent-controls/policy";
 import type { SupportedLocale } from "@/i18n/locales";
 
 export const WORKFLOW_MODE_FEATURE_ID = "workflow_mode";
@@ -27,16 +28,28 @@ export function pruneFeatureValues(
   featureValues: Record<string, unknown>,
   features: AgentFeature[],
 ): Record<string, unknown> {
-  const allowedFeatureIds = new Set(features.map((feature) => feature.id));
+  const availableFeatures = new Map(features.map((feature) => [feature.id, feature]));
   let changed = false;
   const next: Record<string, unknown> = {};
 
   for (const [featureId, value] of Object.entries(featureValues)) {
-    if (!allowedFeatureIds.has(featureId) && DRAFT_FEATURE_COMPANION_IDS[featureId] !== true) {
+    if (
+      !availableFeatures.has(featureId) &&
+      featureId !== FAST_MODE_FEATURE_ID &&
+      DRAFT_FEATURE_COMPANION_IDS[featureId] !== true
+    ) {
       changed = true;
       continue;
     }
-    next[featureId] = value;
+    const feature = availableFeatures.get(featureId);
+    const normalizedValue =
+      featureId === FAST_MODE_FEATURE_ID && feature
+        ? normalizeFastModeFeatureValue(feature, value)
+        : value;
+    // Retain an unsupported tier for when its model returns; never coerce it to Fast.
+    const retainedValue = normalizedValue === undefined ? value : normalizedValue;
+    if (!Object.is(retainedValue, value)) changed = true;
+    next[featureId] = retainedValue;
   }
 
   return changed ? next : featureValues;
@@ -68,7 +81,11 @@ export function applyFeatureValues(
       return feature;
     }
 
-    const value = featureValues[feature.id];
+    const value =
+      feature.id === FAST_MODE_FEATURE_ID
+        ? normalizeFastModeFeatureValue(feature, featureValues[feature.id])
+        : featureValues[feature.id];
+    if (value === undefined) return feature;
     return {
       ...feature,
       value,
@@ -88,11 +105,17 @@ export function resolveFeatureValues(args: {
 
   for (const feature of args.features) {
     if (Object.prototype.hasOwnProperty.call(args.localFeatureValues, feature.id)) {
-      next[feature.id] = args.localFeatureValues[feature.id];
+      const value = args.localFeatureValues[feature.id];
+      const normalizedValue =
+        feature.id === FAST_MODE_FEATURE_ID ? normalizeFastModeFeatureValue(feature, value) : value;
+      if (normalizedValue !== undefined) next[feature.id] = normalizedValue;
       continue;
     }
     if (Object.prototype.hasOwnProperty.call(args.persistedFeatureValues, feature.id)) {
-      next[feature.id] = args.persistedFeatureValues[feature.id];
+      const value = args.persistedFeatureValues[feature.id];
+      const normalizedValue =
+        feature.id === FAST_MODE_FEATURE_ID ? normalizeFastModeFeatureValue(feature, value) : value;
+      if (normalizedValue !== undefined) next[feature.id] = normalizedValue;
     }
   }
   const supportsWorkflow = args.features.some((feature) => feature.id === "workflow_mode");

@@ -4,9 +4,10 @@ import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } fro
 import { StyleSheet } from "react-native-unistyles";
 import { Bot, Zap } from "lucide-react-native";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
+import { formatAgentFeatureOptionLabel } from "@/agent-controls/labels";
+import { FAST_MODE_FEATURE_ID, type FastModeTier } from "@/agent-controls/policy";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import {
@@ -31,7 +32,7 @@ interface CompactModelSheetProps {
   selectedProvider: string;
   selectedModel: string;
   thinkingLabel: string | null;
-  fastModeEnabled: boolean;
+  fastModeTier: FastModeTier | null;
   onSelect: (provider: string, modelId: string) => void | Promise<void>;
   isLoading: boolean;
   onOpen?: () => void;
@@ -101,7 +102,7 @@ export function CompactModelSheet({
   selectedProvider,
   selectedModel,
   thinkingLabel,
-  fastModeEnabled,
+  fastModeTier,
   onSelect,
   isLoading,
   onOpen,
@@ -140,9 +141,6 @@ export function CompactModelSheet({
     autoFocusSearch: isWeb && !usesBottomSheet,
     browseProviders: false,
   });
-  const ProviderIcon =
-    browserSelectedProvider.trim().length > 0 ? getProviderIcon(browserSelectedProvider) : null;
-  const ModelIcon = ProviderIcon ?? Bot;
   const selectedProviderLabel =
     availableProviders.find((provider) => provider.id === browserSelectedProvider)?.label ??
     selectedProvider;
@@ -162,12 +160,12 @@ export function CompactModelSheet({
   );
   const displayModelLabel =
     resolveGroupedModelLabel(availableProviders, selectedModel) ?? rootBrowser.selectedModelLabel;
+  const fastModeLabel = fastModeTier
+    ? formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: fastModeTier })
+    : null;
+  const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
   const selectedModelAccessibilityLabel = t("modelSelector.selectedModel", {
-    model: [
-      `${selectedProviderLabel} · ${displayModelLabel}`,
-      thinkingLabel,
-      fastModeEnabled ? t("shell.commandCenter.fastModeGroupLabel") : null,
-    ]
+    model: [`${selectedProviderLabel} · ${displayModelLabel}`, thinkingLabel, fastModeLabel]
       .filter(Boolean)
       .join(" · "),
   });
@@ -258,7 +256,7 @@ export function CompactModelSheet({
       <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
         <View style={styles.controlsContent}>
           <AgentControlTrigger
-            icon={ModelIcon}
+            icon={Bot}
             surface="sheet"
             label={t("modelSelector.model")}
             value={displayModelLabel}
@@ -272,7 +270,6 @@ export function CompactModelSheet({
       </View>
     ),
     [
-      ModelIcon,
       children,
       disabled,
       displayModelLabel,
@@ -298,14 +295,20 @@ export function CompactModelSheet({
           <Text style={styles.triggerText} numberOfLines={1}>
             {shortModelLabel(displayModelLabel)}
           </Text>
-          {thinkingLabel || fastModeEnabled ? (
+          {thinkingLabel || fastModeActive ? (
             <View style={styles.triggerSummary}>
               {thinkingLabel ? (
                 <Text style={styles.triggerThinking} numberOfLines={1}>
                   {thinkingLabel}
                 </Text>
               ) : null}
-              {fastModeEnabled ? <Zap size={12} color={styles.fastModeIcon.color} /> : null}
+              {fastModeActive ? (
+                <Zap
+                  size={12}
+                  color={styles.fastModeIcon.color}
+                  accessibilityLabel={fastModeLabel ?? undefined}
+                />
+              ) : null}
             </View>
           ) : null}
         </View>

@@ -1,11 +1,33 @@
 import { describe, expect, test } from "vitest";
 import {
+  formatOmpAccountPlanLabel,
   formatOmpQuotaResetTime,
   formatOmpQuotaCountdown,
   isOmpCodexResetCreditUsable,
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
 } from "./omp-provider-quota";
+
+describe("OMP account plan display", () => {
+  test.each([
+    ["free", "Free"],
+    ["plus", "Plus"],
+    ["prolite", "Pro100"],
+    ["pro", "Pro200"],
+    ["promax", "Pro500"],
+  ])("maps Codex plan %s to %s", (raw, expected) => {
+    expect(formatOmpAccountPlanLabel("openai-codex", raw)).toBe(expected);
+    expect(formatOmpAccountPlanLabel("openai-codex", ` ${raw.toUpperCase()} `)).toBe(expected);
+    expect(formatOmpAccountPlanLabel("openai-codex", expected)).toBe(expected);
+  });
+
+  test("does not invent a tier for missing or unknown plans or relabel another provider", () => {
+    expect(formatOmpAccountPlanLabel("openai-codex", null)).toBeNull();
+    expect(formatOmpAccountPlanLabel("openai-codex", " ")).toBeNull();
+    expect(formatOmpAccountPlanLabel("openai-codex", "enterprise")).toBe("enterprise");
+    expect(formatOmpAccountPlanLabel("anthropic", "pro")).toBe("pro");
+  });
+});
 
 describe("OMP provider quota percentage", () => {
   test.each([

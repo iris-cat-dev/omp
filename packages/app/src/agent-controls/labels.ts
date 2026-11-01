@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
 import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
 
@@ -95,9 +96,13 @@ export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   return formatControlLabel(option, true);
 }
 
-export function formatAgentFeatureLabel(feature: ControlLabelInput): string {
+export function formatAgentFeatureLabel(feature: ControlLabelInput & { type?: string }): string {
   if (feature.id === FAST_MODE_FEATURE_ID) {
-    return i18n.t("shell.commandCenter.fastModeGroupLabel");
+    return i18n.t(
+      feature.type === "select"
+        ? "agentControls.features.fast.title"
+        : "shell.commandCenter.fastModeGroupLabel",
+    );
   }
   if (feature.id === "workflow_mode") return i18n.t("agentControls.features.workflow.title");
   if (feature.id === "oauth_account_credential") {
@@ -109,18 +114,49 @@ export function formatAgentFeatureLabel(feature: ControlLabelInput): string {
 export function formatAgentFeatureOptionLabel(
   featureId: string,
   option: ControlLabelInput,
+  translate: TFunction = i18n.t,
 ): string {
+  if (featureId === FAST_MODE_FEATURE_ID) {
+    switch (option.id) {
+      case "off":
+        return translate("agentControls.features.fast.standard");
+      case "on":
+        return translate("agentControls.features.fast.fast");
+      case "ultrafast":
+        return translate("agentControls.features.fast.ultrafast");
+      default:
+        return option.label ?? option.id;
+    }
+  }
   if (featureId !== "workflow_mode") return option.label ?? option.id;
   switch (option.id) {
     case "standard":
-      return i18n.t("agentControls.features.workflow.standard");
+      return translate("agentControls.features.workflow.standard");
     case "enhanced":
-      return i18n.t("agentControls.features.workflow.enhanced");
+      return translate("agentControls.features.workflow.enhanced");
     case "plan":
-      return i18n.t("agentControls.features.workflow.plan");
+      return translate("agentControls.features.workflow.plan");
     case "goal":
-      return i18n.t("agentControls.features.workflow.goal");
+      return translate("agentControls.features.workflow.goal");
     default:
       return option.label ?? option.id;
   }
+}
+
+export function formatAgentFeatureOptionDescription(
+  featureId: string,
+  option: ControlLabelInput & { description?: string },
+  translate: TFunction = i18n.t,
+): string | undefined {
+  if (featureId === FAST_MODE_FEATURE_ID) {
+    switch (option.id) {
+      case "off":
+        return translate("agentControls.features.fast.standardDescription");
+      case "on":
+        return translate("shell.commandCenter.fastModeDescription");
+      case "ultrafast":
+        return translate("agentControls.features.fast.ultrafastDescription");
+    }
+  }
+  return option.description;
 }

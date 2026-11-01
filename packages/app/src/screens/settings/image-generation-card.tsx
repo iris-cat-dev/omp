@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@omp-desktop/protocol/messages";
 
 import { formatOmpAccountSelectionLabel } from "@/components/omp-provider-accounts";
+import { formatOmpAccountPlanLabel } from "@/components/omp-provider-quota";
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -318,7 +319,8 @@ export function ImageGenerationSettingsSection({ serverId }: { serverId: string 
           identityKey: account.identityKey,
           fallback: t("settings.imageGeneration.accountFallback", { number: index + 1 }),
         }),
-        description: account.quota?.planLabel ?? undefined,
+        description:
+          formatOmpAccountPlanLabel("openai-codex", account.quota?.planLabel) ?? undefined,
       })),
     [accounts, t],
   );

@@ -146,7 +146,7 @@ export const en = {
       planModeSearchKeywords: "plan planning plan mode",
       fastModeGroupLabel: "Fast",
       fastModeDescription: "Faster responses at higher cost.",
-      fastModeSearchKeywords: "fast speed low latency",
+      fastModeSearchKeywords: "fast ultrafast ultra fast standard speed low latency",
       settingOn: "On",
       settingOff: "Off",
     },
@@ -278,6 +278,18 @@ export const en = {
       open: "Open agent features",
       on: "On",
       off: "Off",
+      fast: {
+        title: "Speed",
+        standard: "Standard",
+        fast: "Fast",
+        ultrafast: "Ultrafast",
+        ultrafastNotice:
+          "8× included usage / 6× purchased credits; supported account and model only.",
+        standardDescription: "Normal speed and usage rates.",
+        ultrafastDescription:
+          "Ultrafast consumes included usage at 8× and purchased credits at 6× the Standard rate. Requires a supported account and model; actual speed varies.",
+        selectWithValue: "Select speed, current: {{value}}",
+      },
       workflow: {
         title: "Workflow",
         standard: "Standard",
@@ -505,6 +517,7 @@ export const en = {
     systemNotice: {
       fastModeEnabled: "Fast mode enabled",
       fastModeDisabled: "Fast mode disabled",
+      ultrafastModeEnabled: "Ultrafast mode enabled",
       modelChanged: "Switched to {{model}}",
       thinkingChanged: "Thinking set to {{thinking}} · Applies from the next model request",
     },

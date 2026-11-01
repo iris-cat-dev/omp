@@ -7,6 +7,7 @@ import type {
   OmpApprovalMode,
   OmpAgentMessage,
   OmpFastModeResult,
+  OmpFastModeSelection,
   OmpModel,
   OmpLoginProvider,
   OmpPromptAck,
@@ -81,6 +82,10 @@ export interface OmpRuntimeSession {
   stopAllBackgroundJobs?(): Promise<number>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
   setProxyPolicy(policy: ProxyPolicy): Promise<void>;
+  setFastModeTier(
+    value: OmpFastModeSelection,
+    model: { provider: string; id: string },
+  ): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;

@@ -9,7 +9,12 @@ import { describe, expect, test, vi } from "vitest";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import { OmpAgentSession } from "./agent.js";
 import { OmpHistoryMapper } from "./message-history.js";
-import { OmpCliRuntime, resolveOmpCodexCatalogPreloadPath } from "./cli-runtime.js";
+import {
+  OmpCliRuntime,
+  hasOmpUltrafastCommand,
+  resolveOmpCodexCatalogPreloadPath,
+  resolveOmpServiceTierExtensionPath,
+} from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import * as bundledPlugins from "../../../bundled-omp-plugins.js";
@@ -394,6 +399,272 @@ describe("OMP CLI runtime", () => {
 
     await expect(session.setFastMode(true)).resolves.toEqual({ enabled: true, active: true });
     expect(commands).toEqual([{ type: "set_fast_mode", enabled: true }]);
+  });
+
+  test.each([
+    { source: "builtin", input: { hint: "[on|ultra|off|status]" }, supported: true },
+    { source: "builtin", subcommands: [{ name: "ultra" }], supported: true },
+    { source: "extension", input: { hint: "[on|ultra|off|status]" }, supported: false },
+    { source: "builtin", input: { hint: "[on|off|status]" }, supported: false },
+    { source: undefined, input: { hint: "[on|ultra|off|status]" }, supported: false },
+  ])("gates Ultra on a builtin fast command: $source $supported", ({ supported, ...command }) => {
+    expect(hasOmpUltrafastCommand([{ name: "fast", ...command }])).toBe(supported);
+    expect(hasOmpUltrafastCommand([{ name: "not-fast", ...command }])).toBe(false);
+  });
+
+  test("loads a private tier extension and reads native Ultra without losing model metadata", async () => {
+    const child = createOmpChild();
+    const launches: OmpRuntimeLaunch[] = [];
+    const model = {
+      provider: "openai-codex",
+      id: "gpt-6.1-sol",
+      api: "openai-codex-responses",
+      serviceTiers: ["priority", "ultrafast"],
+      nativeExtra: { retained: true },
+    };
+    const commands: string[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(String(command.type));
+      return command.type === "get_available_commands"
+        ? { commands: [{ name: "fast", source: "builtin", subcommands: [{ name: "ultra" }] }] }
+        : {
+            model,
+            isStreaming: false,
+            isCompacting: false,
+            sessionId: "ultra-session",
+            fastModeEnabled: true,
+            fastModeActive: true,
+            messageCount: 0,
+            queuedMessageCount: 0,
+          };
+    });
+    const session = await createRuntime(child, launches).startSession({
+      cwd: "/workspace/project",
+    });
+    child.stdout.write(`${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`);
+    const native = {
+      available: true,
+      model: { provider: model.provider, id: model.id },
+      openaiFamily: true,
+      tier: "ultrafast",
+      ultrafastAvailable: true,
+    };
+    const fetchApi = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(native)));
+    try {
+      expect(launches[0]!.argv).toContain(resolveOmpServiceTierExtensionPath());
+      expect(launches[0]!.env?.OMP_DESKTOP_SERVICE_TIER_TOKEN).toBeTruthy();
+      await expect(session.getState()).resolves.toMatchObject({
+        fastModeTier: "ultrafast",
+        ultrafastSupported: true,
+        model,
+      });
+      expect(commands).toEqual(["get_state", "get_available_commands"]);
+      expect(fetchApi).toHaveBeenCalledWith(
+        "http://127.0.0.1:12345/tier",
+        expect.objectContaining({
+          method: "GET",
+          redirect: "error",
+          headers: { authorization: `Bearer ${launches[0]!.env!.OMP_DESKTOP_SERVICE_TIER_TOKEN}` },
+        }),
+      );
+    } finally {
+      fetchApi.mockRestore();
+      await session.close();
+    }
+  });
+
+  test.each([
+    { advertised: false, available: true, source: "builtin" },
+    { advertised: true, available: false, source: "builtin" },
+    { advertised: true, available: true, source: "extension" },
+  ])(
+    "hides Ultra without both native capabilities and model advertisement: $advertised/$available/$source",
+    async ({ advertised, available, source }) => {
+      const child = createOmpChild();
+      const model = {
+        provider: "openai-codex",
+        id: "gpt-6.1-sol",
+        serviceTiers: advertised ? ["priority", "ultrafast"] : ["priority"],
+      };
+      replyToCommands(child, (command) =>
+        command.type === "get_available_commands"
+          ? { commands: [{ name: "fast", source, input: { hint: "[on|ultra|off|status]" } }] }
+          : {
+              model,
+              isStreaming: false,
+              isCompacting: false,
+              sessionId: "session",
+              fastModeEnabled: true,
+              fastModeActive: false,
+              messageCount: 0,
+              queuedMessageCount: 0,
+            },
+      );
+      const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+      child.stdout.write(
+        `${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`,
+      );
+      const fetchApi = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            available,
+            model,
+            openaiFamily: true,
+            tier: "ultrafast",
+            ultrafastAvailable: available && advertised,
+          }),
+        ),
+      );
+      try {
+        await expect(session.getState()).resolves.toMatchObject({
+          ultrafastSupported: false,
+          ...(available ? { fastModeTier: "ultrafast" } : {}),
+        });
+      } finally {
+        fetchApi.mockRestore();
+        await session.close();
+      }
+    },
+  );
+
+  test("changes native tiers atomically over the private bridge without prompt or boolean RPC aliases", async () => {
+    const child = createOmpChild();
+    const commands: string[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(String(command.type));
+      return {
+        commands: [{ name: "fast", source: "builtin", input: { hint: "[on|ultra|off|status]" } }],
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    child.stdout.write(`${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`);
+    const model = {
+      provider: "openai-codex",
+      id: "gpt-6.1-sol",
+      name: "Large catalog metadata".repeat(200),
+    };
+    const updates: string[] = [];
+    const fetchApi = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (Buffer.byteLength(String(init?.body)) > 1024) {
+        return new Response(JSON.stringify({ error: "OMP service tier request is too large" }), {
+          status: 400,
+        });
+      }
+      const update = JSON.parse(String(init?.body)) as { value: string; model: typeof model };
+      expect(update.model).toEqual({ provider: model.provider, id: model.id });
+      expect(init?.redirect).toBe("error");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      updates.push(update.value);
+      const selectedTier = update.value === "on" ? "priority" : update.value;
+      return new Response(
+        JSON.stringify({
+          available: true,
+          model,
+          openaiFamily: true,
+          ultrafastAvailable: true,
+          tier: selectedTier === "off" ? null : selectedTier,
+        }),
+      );
+    });
+    try {
+      for (const value of ["ultrafast", "on", "off"] as const) {
+        const selectedTier = value === "on" ? "priority" : value;
+        await expect(session.setFastModeTier(value, model)).resolves.toMatchObject({
+          enabled: value !== "off",
+          tier: selectedTier === "off" ? null : selectedTier,
+        });
+      }
+      expect(updates).toEqual(["ultrafast", "on", "off"]);
+      expect(commands).toEqual(["get_available_commands"]);
+    } finally {
+      fetchApi.mockRestore();
+      await session.close();
+    }
+  });
+
+  test("rejects failed, ignored, or model-raced private native updates", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({
+      commands: [{ name: "fast", source: "builtin", input: { hint: "[on|ultra|off|status]" } }],
+    }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    child.stdout.write(`${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`);
+    const model = { provider: "openai-codex", id: "gpt-6.1-sol" };
+    const native = {
+      available: true,
+      model,
+      openaiFamily: true,
+      ultrafastAvailable: true,
+      tier: "priority",
+    };
+    const fetchApi = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "OMP native selection rejected" }), { status: 400 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(native)))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ...native, model: { ...model, id: "changed" }, tier: "ultrafast" }),
+        ),
+      );
+    try {
+      await expect(session.setFastModeTier("ultrafast", model)).rejects.toThrow(
+        "native selection rejected",
+      );
+      await expect(session.setFastModeTier("ultrafast", model)).rejects.toThrow("did not apply");
+      await expect(session.setFastModeTier("ultrafast", model)).rejects.toThrow("did not apply");
+      expect(fetchApi).toHaveBeenCalledTimes(3);
+    } finally {
+      fetchApi.mockRestore();
+      await session.close();
+    }
+  });
+
+  test("serializes tier writes with model RPCs until native readback completes", async () => {
+    const child = createOmpChild();
+    const commands: string[] = [];
+    const model = { provider: "openai-codex", id: "gpt-6.1-sol" };
+    replyToCommands(child, (command) => {
+      commands.push(String(command.type));
+      return command.type === "set_model"
+        ? { ...model, id: "other" }
+        : { commands: [{ name: "fast", source: "builtin", subcommands: [{ name: "ultra" }] }] };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    child.stdout.write(`${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`);
+    const held = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    const fetchApi = vi.spyOn(globalThis, "fetch").mockImplementationOnce(() => {
+      started.resolve();
+      return held.promise;
+    });
+    const select = session.setFastModeTier("ultrafast", model);
+    await started.promise;
+    const switchModel = session.setModel(model.provider, "other");
+    await waitForImmediate();
+    expect(commands).toEqual(["get_available_commands"]);
+    held.resolve(
+      new Response(
+        JSON.stringify({
+          available: true,
+          model,
+          openaiFamily: true,
+          ultrafastAvailable: true,
+          tier: "ultrafast",
+        }),
+      ),
+    );
+    try {
+      await select;
+      await switchModel;
+      expect(commands).toEqual(["get_available_commands", "set_model"]);
+    } finally {
+      fetchApi.mockRestore();
+      await session.close();
+    }
   });
 
   test("waits for OMP to acknowledge steering and reports delivery failures", async () => {

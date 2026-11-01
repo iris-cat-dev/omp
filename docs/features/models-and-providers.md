@@ -28,6 +28,10 @@ Official providers assign OAuth accounts stable, provider-local display numbers.
 
 These numbers are separate from OMP's globally increasing credential IDs. Their mapping lives in `agent.db` without renumbering credentials or changing notes, provider configuration, or session references. Disabled credential records stay disabled; a freed display number does not reactivate or reuse a credential.
 
+### Codex plan labels
+
+The sidebar, account choices, usage cards, and ChatGPT image-generation account picker display **Free**, **Plus**, **Pro100**, **Pro200**, and **Pro500**. Native Codex identifiers `prolite`, `pro`, and `promax` map to the three Pro price tiers respectively; `free` and `plus` use their standard capitalization. This is display-only: raw quota/account data stays unchanged, other providers are not relabeled, and unknown plans are preserved rather than guessed. Plan labels do not override the model capability checks for Ultrafast. See [Codex's native plan identifiers](https://github.com/openai/codex/pull/47971) and [OpenAI's plan pricing](https://developers.openai.com/codex/pricing).
+
 ## Custom provider names
 
 **Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
@@ -63,6 +67,16 @@ Changing Thinking in an existing conversation updates OMP without restarting. It
 Confirmed Fast changes add system notices too. Model switches show the selected model ID only after a conversation has received a user message; selecting a model for a draft adds none. These notices use centered muted text, an information icon, and separator lines, not chat bubbles. They persist in history and are not sent to the model. Failed requests, unchanged settings, and initial preferences produce no switch notices.
 
 Hover **Fast** for its cost explanation, localized in all nine supported locales.
+
+### OpenAI Ultrafast
+
+For supported models, the model picker's **Speed** control and command center offer **Standard**, **Fast**, and **Ultrafast**. The three-way selector requires the native service-tier APIs, a built-in `/fast ultra` command, and the current model's advertised `ultrafast` capability. Other supported providers keep the existing boolean Fast switch. Refresh the host's model catalog after account or plan changes; Desktop does not infer eligibility from a model name or subscription label.
+
+Desktop changes the native OpenAI-family service tier through a private authenticated loopback extension and reads it back before confirming the selection. Standard clears the override, Fast selects `priority`, and Ultrafast selects `ultrafast`. Changing speed does not send a chat prompt, create a model request, or reduce thinking effort. Model and tier changes are serialized, and a rejected update does not save the requested value or add a success notice.
+
+Existing boolean Fast preferences remain readable. New selections retain their exact tier in conversation defaults and profiles. A native Ultrafast session is not downgraded merely because an older preference says Fast is enabled. Unsupported models do not silently turn an Ultrafast preference into ordinary Fast; the saved preference remains available when returning to a capable model. Unrelated native tiers such as Flex are not relabeled as Standard.
+
+OpenAI currently documents Ultrafast for **GPT-6 Astra** and **GPT-6.1 Sol**, including **Pro $500** and eligible Enterprise/Edu access. It uses included subscription allowances at **8×** the Standard rate and purchased credits at **6×**. API-key billing is separate. The selector requests a tier, not guaranteed account access, capacity, or measured speed. Cost and availability warnings appear with the choices in all nine locales. See [OpenAI's Codex speed guide](https://developers.openai.com/codex/speed) and [Ultrafast API requirements](https://help.openai.com/en/articles/11647665-fast-mode-faq).
 
 ### Claude Fast mode
 

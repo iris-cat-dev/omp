@@ -131,7 +131,7 @@ export const ar: TranslationResources = {
       planModeSearchKeywords: "التخطيط خطة وضع التخطيط",
       fastModeGroupLabel: "سريع",
       fastModeDescription: "استجابات أسرع بتكلفة أعلى.",
-      fastModeSearchKeywords: "سريع سرعة زمن انتقال منخفض",
+      fastModeSearchKeywords: "سريع فائق السرعة ultrafast ultra fast قياسي سرعة زمن انتقال منخفض",
       settingOn: "تشغيل",
       settingOff: "إيقاف",
     },
@@ -263,6 +263,17 @@ export const ar: TranslationResources = {
       open: "ميزات الوكيل المفتوح",
       on: "على",
       off: "عن",
+      fast: {
+        title: "السرعة",
+        standard: "قياسي",
+        fast: "سريع (Fast)",
+        ultrafast: "فائق السرعة (Ultrafast)",
+        ultrafastNotice: "استخدام مشمول 8× / أرصدة مشتراة 6×؛ للحسابات والنماذج المدعومة فقط.",
+        standardDescription: "سرعة عادية ومعدلات استهلاك قياسية.",
+        ultrafastDescription:
+          "يستهلك Ultrafast الاستخدام المشمول بمعدل 8 أضعاف والأرصدة المشتراة بمعدل 6 أضعاف المعدل القياسي. يتطلب حسابًا ونموذجًا مدعومين؛ وتختلف السرعة الفعلية.",
+        selectWithValue: "اختر السرعة، الحالية: {{value}}",
+      },
       workflow: {
         title: "سير العمل",
         standard: "قياسي",
@@ -479,6 +490,7 @@ export const ar: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "تم تفعيل الوضع السريع",
       fastModeDisabled: "تم إيقاف الوضع السريع",
+      ultrafastModeEnabled: "تم تفعيل وضع فائق السرعة (Ultrafast)",
       modelChanged: "تم التبديل إلى {{model}}",
       thinkingChanged: "تم ضبط مستوى التفكير على {{thinking}} · يسري بدءًا من طلب النموذج التالي",
     },

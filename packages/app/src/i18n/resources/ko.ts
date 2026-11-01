@@ -131,7 +131,7 @@ export const ko: TranslationResources = {
       planModeSearchKeywords: "계획 플랜 계획 모드",
       fastModeGroupLabel: "빠르게",
       fastModeDescription: "더 높은 비용으로 더 빠른 응답을 제공합니다.",
-      fastModeSearchKeywords: "빠르게 속도 낮은 지연 시간",
+      fastModeSearchKeywords: "빠르게 초고속 ultrafast ultra fast 표준 속도 낮은 지연 시간",
       settingOn: "켜짐",
       settingOff: "꺼짐",
     },
@@ -263,6 +263,18 @@ export const ko: TranslationResources = {
       open: "에이전트 기능 열기",
       on: "켜짐",
       off: "꺼짐",
+      fast: {
+        title: "속도",
+        standard: "표준",
+        fast: "빠름 (Fast)",
+        ultrafast: "초고속 (Ultrafast)",
+        ultrafastNotice:
+          "요금제 포함 사용량 8배 / 구매 크레딧 6배. 지원 계정과 모델만 사용할 수 있습니다.",
+        standardDescription: "일반 속도와 표준 사용량 차감률입니다.",
+        ultrafastDescription:
+          "Ultrafast는 표준 대비 요금제에 포함된 사용량을 8배, 구매한 크레딧을 6배의 비율로 차감합니다. 지원되는 계정과 모델이 필요하며 실제 속도는 상황에 따라 달라집니다.",
+        selectWithValue: "속도 선택, 현재: {{value}}",
+      },
       workflow: {
         title: "워크플로",
         standard: "표준",
@@ -480,6 +492,7 @@ export const ko: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "빠른 모드가 켜졌습니다",
       fastModeDisabled: "빠른 모드가 꺼졌습니다",
+      ultrafastModeEnabled: "초고속 (Ultrafast) 모드가 켜졌습니다",
       modelChanged: "{{model}}(으)로 전환했습니다",
       thinkingChanged:
         "사고 강도를 {{thinking}}(으)로 변경했습니다 · 다음 모델 요청부터 적용됩니다",

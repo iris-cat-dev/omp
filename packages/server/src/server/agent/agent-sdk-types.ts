@@ -446,7 +446,10 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
-  | { type: "system_notice"; notice: "fast_mode_enabled" | "fast_mode_disabled" }
+  | {
+      type: "system_notice";
+      notice: "fast_mode_enabled" | "fast_mode_disabled" | "ultrafast_mode_enabled";
+    }
   | { type: "system_notice"; notice: "model_changed"; modelId: string }
   | { type: "system_notice"; notice: "thinking_changed"; thinkingOptionId: string }
   | { type: "extension_notification"; message: string; level: "info" | "warning" | "error" }

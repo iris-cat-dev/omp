@@ -11,6 +11,8 @@ import type {
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
   OmpAgentMessage,
+  OmpFastModeResult,
+  OmpFastModeSelection,
   OmpLoginProvider,
   OmpModel,
   OmpPromptAck,
@@ -48,6 +50,8 @@ export class FakeOmp implements OmpRuntime {
   private readonly queuedLoginProviders: OmpLoginProvider[][] = [];
   private readonly queuedLoginFlows: FakeOmpLoginFlow[] = [];
   private fastModeSupported = true;
+  private ultrafastSupported = false;
+  private initialFastModeTier: string | null | undefined;
   private initialModel: OmpModel | null = null;
   private initialStats: OmpSessionStats | null = null;
   private initialActiveCredential: OmpSessionState["activeCredential"];
@@ -72,6 +76,21 @@ export class FakeOmp implements OmpRuntime {
       model: this.initialModel,
       activeCredential: this.initialActiveCredential,
     };
+    session.nativeUltrafastSupported = this.ultrafastSupported;
+    if (this.initialFastModeTier !== undefined) {
+      const tier = this.initialFastModeTier;
+      session.nativeOpenAITier = tier;
+      session.state = {
+        ...session.state,
+        fastModeTier: tier,
+        fastModeEnabled: tier === "priority" || tier === "ultrafast",
+        fastModeActive:
+          tier === "priority" ||
+          (tier === "ultrafast" && this.initialModel?.serviceTiers?.includes("ultrafast") === true),
+      };
+    }
+    session.state.ultrafastSupported =
+      this.ultrafastSupported && this.initialModel?.serviceTiers?.includes("ultrafast") === true;
     if (!this.fastModeSupported) {
       session.state = { ...session.state, fastModeEnabled: undefined, fastModeActive: undefined };
     }
@@ -98,6 +117,12 @@ export class FakeOmp implements OmpRuntime {
   }
   setFastModeSupported(supported: boolean): void {
     this.fastModeSupported = supported;
+  }
+  setUltrafastSupported(supported: boolean): void {
+    this.ultrafastSupported = supported;
+  }
+  setInitialFastModeTier(tier: string | null | undefined): void {
+    this.initialFastModeTier = tier;
   }
   setInitialModel(model: OmpModel | null): void {
     this.initialModel = model;
@@ -135,6 +160,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly setFastModeRequests: boolean[] = [];
   proxyPolicy: ProxyPolicy = { enabled: false };
+  readonly setFastModeTierRequests: OmpFastModeSelection[] = [];
+  nativeUltrafastSupported = false;
+  nativeOpenAITier: string | null | undefined;
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
@@ -366,21 +394,69 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (!this.setModelResult) {
       throw new Error("FakeOmp setModel requires setModelResult to be scripted");
     }
-    this.state = { ...this.state, model: this.setModelResult };
+    const model = this.setModelResult;
+    const openaiFamily = model.provider === "openai" || model.provider === "openai-codex";
+    const tier = openaiFamily ? this.nativeOpenAITier : undefined;
+    this.state = {
+      ...this.state,
+      model,
+      ultrafastSupported:
+        this.nativeUltrafastSupported && model.serviceTiers?.includes("ultrafast") === true,
+      fastModeTier: tier,
+      ...(this.nativeOpenAITier !== undefined
+        ? {
+            fastModeEnabled: openaiFamily && (tier === "priority" || tier === "ultrafast"),
+            fastModeActive:
+              openaiFamily &&
+              (tier === "priority" ||
+                (tier === "ultrafast" && model.serviceTiers?.includes("ultrafast") === true)),
+          }
+        : {}),
+    };
     return this.setModelResult;
   }
 
-  async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+  async setFastMode(enabled: boolean): Promise<OmpFastModeResult> {
     if (this.state.fastModeEnabled === undefined) {
       throw new Error("FakeOmp set_fast_mode is unsupported");
     }
     this.setFastModeRequests.push(enabled);
+    let tier: OmpFastModeResult["tier"];
+    if (this.state.fastModeTier !== undefined) tier = enabled ? "priority" : null;
+    if (tier !== undefined) this.nativeOpenAITier = tier;
     this.state = {
       ...this.state,
       fastModeEnabled: enabled,
       fastModeActive: enabled,
+      fastModeTier: tier,
     };
-    return { enabled, active: enabled };
+    return { enabled, active: enabled, ...(tier !== undefined ? { tier } : {}) };
+  }
+
+  async setFastModeTier(
+    value: OmpFastModeSelection,
+    model: { provider: string; id: string },
+  ): Promise<OmpFastModeResult> {
+    if (
+      !this.state.ultrafastSupported ||
+      this.state.model?.provider !== model.provider ||
+      this.state.model.id !== model.id
+    )
+      throw new Error("OMP Ultrafast is unavailable for the current model");
+    if (value === "on" && !this.state.model.serviceTiers?.includes("priority")) {
+      throw new Error("OMP Fast is unavailable for the current model");
+    }
+    this.setFastModeTierRequests.push(value);
+    const selectedTier = value === "on" ? "priority" : value;
+    const tier = selectedTier === "off" ? null : selectedTier;
+    this.nativeOpenAITier = tier;
+    this.state = {
+      ...this.state,
+      fastModeTier: tier,
+      fastModeEnabled: value !== "off",
+      fastModeActive: value !== "off",
+    };
+    return { enabled: value !== "off", active: value !== "off", tier };
   }
 
   async setProxyPolicy(policy: ProxyPolicy): Promise<void> {

@@ -83,7 +83,7 @@ function contributionSearchText(contribution: CommandCenterContribution): string
   const presentationText =
     contribution.presentation.kind === "action"
       ? [contribution.presentation.title, contribution.presentation.subtitle ?? ""]
-      : contribution.presentation.path;
+      : [...contribution.presentation.path, contribution.presentation.subtitle ?? ""];
   return [...presentationText, ...contribution.keywords].join(" ").toLowerCase();
 }
 
@@ -93,7 +93,7 @@ function resultHeight(result: CommandCenterResult): number {
   if (result.contribution.presentation.kind === "action") {
     return result.contribution.presentation.subtitle ? 56 : 36;
   }
-  return 36;
+  return result.contribution.presentation.subtitle ? 88 : 36;
 }
 
 export function buildContributionSections(

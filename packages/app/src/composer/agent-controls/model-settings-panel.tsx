@@ -5,13 +5,17 @@ import { Zap } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentSelectOption } from "@omp-desktop/protocol/agent-types";
 import { ThinkingIcon } from "@/agent-controls/icons";
-import { formatThinkingOptionLabel } from "@/agent-controls/labels";
+import {
+  formatAgentFeatureOptionDescription,
+  formatAgentFeatureOptionLabel,
+  formatThinkingOptionLabel,
+} from "@/agent-controls/labels";
 import { formatTokenCount } from "@/components/context-window-meter.utils";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { FastModeFeature } from "@/composer/agent-controls/utils";
+import { getFastModeTier, type FastModeFeature } from "@/composer/agent-controls/utils";
 import type { Theme } from "@/styles/theme";
 
 const ThemedThinkingIcon = withUnistyles(ThinkingIcon);
@@ -80,7 +84,7 @@ export function ModelSettingsPanel({
     [onSelectThinkingOption],
   );
   const handleFastModeChange = useCallback(
-    (value: boolean) => {
+    (value: boolean | string) => {
       if (fastMode) onSetFeature?.(fastMode.id, value);
     },
     [fastMode, onSetFeature],
@@ -142,14 +146,13 @@ export function ModelSettingsPanel({
             />
           </>
         ) : null}
-        {fastMode ? (
-          <FastModeSetting
-            fastMode={fastMode}
-            disabled={controlsDisabled}
-            canSetFeature={Boolean(onSetFeature)}
-            onValueChange={handleFastModeChange}
-          />
-        ) : null}
+        <FastModeControl
+          fastMode={fastMode}
+          disabled={controlsDisabled}
+          canSetFeature={Boolean(onSetFeature)}
+          onValueChange={handleFastModeChange}
+          compact={compact}
+        />
         {contextControl ??
           (contextWindowMaxTokens !== undefined ? (
             <View style={styles.settingRow} testID="model-settings-context-window">
@@ -165,13 +168,47 @@ export function ModelSettingsPanel({
   );
 }
 
+function FastModeControl({
+  fastMode,
+  disabled,
+  canSetFeature,
+  onValueChange,
+  compact,
+}: {
+  fastMode: FastModeFeature | null;
+  disabled: boolean;
+  canSetFeature: boolean;
+  onValueChange: (value: boolean | string) => void;
+  compact?: boolean;
+}) {
+  if (!fastMode) return null;
+  if (fastMode.type === "select") {
+    return (
+      <FastModeSelectSetting
+        fastMode={fastMode}
+        disabled={disabled || !canSetFeature}
+        onValueChange={onValueChange}
+        compact={compact}
+      />
+    );
+  }
+  return (
+    <FastModeSetting
+      fastMode={fastMode}
+      disabled={disabled}
+      canSetFeature={canSetFeature}
+      onValueChange={onValueChange}
+    />
+  );
+}
+
 function FastModeSetting({
   fastMode,
   disabled,
   canSetFeature,
   onValueChange,
 }: {
-  fastMode: FastModeFeature;
+  fastMode: Extract<FastModeFeature, { type: "toggle" }>;
   disabled: boolean;
   canSetFeature: boolean;
   onValueChange: (value: boolean) => void;
@@ -206,6 +243,89 @@ function FastModeSetting({
         <Text style={styles.tooltipText}>{t("shell.commandCenter.fastModeDescription")}</Text>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function FastModeSelectSetting({
+  fastMode,
+  disabled,
+  onValueChange,
+  compact,
+}: {
+  fastMode: Extract<FastModeFeature, { type: "select" }>;
+  disabled: boolean;
+  onValueChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<View>(null);
+  const [open, setOpen] = useState(false);
+  const options = useMemo<ComboboxOption[]>(
+    () =>
+      fastMode.options.map((option) => ({
+        id: option.id,
+        label: formatAgentFeatureOptionLabel(fastMode.id, option, t),
+        description: formatAgentFeatureOptionDescription(fastMode.id, option, t),
+      })),
+    [fastMode.id, fastMode.options, t],
+  );
+  const selectedId = getFastModeTier(fastMode);
+  const selectedOption = options.find((option) => option.id === selectedId);
+  const title = t("agentControls.features.fast.title");
+  const selectedLabel = selectedOption?.label ?? title;
+  const notice = t("agentControls.features.fast.ultrafastDescription");
+  const handlePress = useCallback(() => setOpen((current) => !current), []);
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (disabled || !options.some((option) => option.id === id)) return;
+      onValueChange(id);
+      setOpen(false);
+    },
+    [disabled, onValueChange, options],
+  );
+
+  return (
+    <>
+      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <AgentControlTrigger
+            ref={anchorRef}
+            icon={Zap}
+            iconColor={
+              selectedId && selectedId !== "off" ? styles.fastIcon.color : styles.mutedIcon.color
+            }
+            surface="sheet"
+            label={title}
+            value={selectedLabel}
+            open={open}
+            disabled={disabled}
+            onPress={handlePress}
+            accessibilityLabel={t("agentControls.features.fast.selectWithValue", {
+              value: selectedLabel,
+            })}
+            accessibilityHint={notice}
+            testID="model-settings-fast-mode"
+          />
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" offset={8} maxWidth={360}>
+          <Text style={styles.tooltipText}>{`${title}: ${selectedLabel}. ${notice}`}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <Text style={styles.speedNotice} testID="model-settings-fast-mode-notice">
+        {notice}
+      </Text>
+      <Combobox
+        options={options}
+        value={selectedId ?? ""}
+        onSelect={handleSelect}
+        open={open}
+        onOpenChange={setOpen}
+        anchorRef={anchorRef}
+        presentation={compact ? "push" : undefined}
+        title={title}
+        searchable={false}
+      />
+    </>
   );
 }
 
@@ -280,6 +400,19 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     lineHeight: 18,
+  },
+  speedNotice: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    color: theme.colors.foregroundMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  fastIcon: {
+    color: theme.colors.palette.yellow[400],
+  },
+  mutedIcon: {
+    color: theme.colors.foregroundMuted,
   },
   settingValue: {
     color: theme.colors.foregroundMuted,
