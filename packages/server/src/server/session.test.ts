@@ -748,7 +748,6 @@ test("returns persisted OMP history when the configured model provider was remov
       direction: "tail",
     });
 
-    expect(resumeAgentFromPersistence).toHaveBeenCalledOnce();
     expect(messages).toEqual([
       expect.objectContaining({
         type: "fetch_agent_timeline_response",
@@ -779,6 +778,108 @@ test("returns persisted OMP history when the configured model provider was remov
         }),
       }),
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pages cold OMP history and indexes prompts without resuming the provider", async () => {
+  const root = mkdtempSync(join(tmpdir(), "paseo-cold-omp-history-"));
+  const sessionFile = join(root, "session.jsonl");
+  const nativeEntries = [
+    { type: "session", id: "root", parentId: null, cwd: root },
+    ...Array.from({ length: 6 }, (_, index) => ({
+      type: "message",
+      id: `message-${index + 1}`,
+      parentId: index === 0 ? "root" : `message-${index}`,
+      timestamp: new Date(Date.UTC(2026, 8, 2, 9, 36, index)).toISOString(),
+      message:
+        index % 2 === 0
+          ? { role: "user", content: `question ${index / 2 + 1}` }
+          : {
+              role: "assistant",
+              content: [{ type: "text", text: `answer ${(index + 1) / 2}` }],
+              responseId: `message-${index + 1}`,
+            },
+    })),
+  ];
+  writeFileSync(sessionFile, nativeEntries.map((entry) => JSON.stringify(entry)).join("\n"));
+  const agentId = "11111111-1111-4111-8111-111111111193";
+  const record: StoredAgentRecord = {
+    id: agentId,
+    provider: "omp",
+    cwd: root,
+    createdAt: "2026-09-02T09:36:00.000Z",
+    updatedAt: "2026-09-02T09:37:00.000Z",
+    labels: {},
+    lastStatus: "closed",
+    persistence: { provider: "omp", sessionId: "cold-history", nativeHandle: sessionFile },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      resumeAgentFromPersistence: vi
+        .fn()
+        .mockRejectedValue(new Error("Runtime must stay unloaded")),
+    },
+    agentStorage: { get: vi.fn().mockResolvedValue(record) },
+  });
+  session.updateClientCapabilities({ [CLIENT_CAPS.degradedAgentHistory]: true });
+  const fetchPage = async (
+    direction: "tail" | "before" | "after",
+    cursor?: { epoch: string; seq: number },
+  ) => {
+    await session.handleMessage({
+      type: "fetch_agent_timeline_request",
+      agentId,
+      requestId: `cold-${messages.length}`,
+      direction,
+      projection: "canonical",
+      limit: 2,
+      ...(cursor ? { cursor } : {}),
+    });
+    const response = messages.at(-1);
+    if (response?.type !== "fetch_agent_timeline_response") throw new Error("Missing history page");
+    expect(response.payload.error).toBeNull();
+    return response.payload;
+  };
+
+  try {
+    const tail = await fetchPage("tail");
+    expect(tail.entries.map((entry) => entry.item)).toEqual([
+      expect.objectContaining({ type: "user_message", text: "question 3" }),
+      expect.objectContaining({ type: "assistant_message", text: "answer 3" }),
+    ]);
+    expect(tail.hasOlder).toBe(true);
+    expect(tail.hasNewer).toBe(false);
+    expect(tail.startCursor).toEqual({ epoch: tail.epoch, seq: 5 });
+    const older = await fetchPage("before", tail.startCursor!);
+    expect(older.epoch).toBe(tail.epoch);
+    expect(older.entries.map((entry) => entry.item)).toEqual([
+      expect.objectContaining({ type: "user_message", text: "question 2" }),
+      expect.objectContaining({ type: "assistant_message", text: "answer 2" }),
+    ]);
+    expect((await fetchPage("after", tail.endCursor!)).entries).toEqual([]);
+    await session.handleMessage({
+      type: "agent.timeline.list_prompts.request",
+      agentId,
+      requestId: "cold-index",
+    });
+    const index = messages.at(-1);
+    if (index?.type !== "agent.timeline.list_prompts.response")
+      throw new Error("Missing prompt index");
+    expect(index.payload).toEqual(
+      expect.objectContaining({
+        epoch: tail.epoch,
+        error: null,
+        prompts: [1, 2, 3].map((turn) =>
+          expect.objectContaining({ seq: turn * 2 - 1, preview: `question ${turn}` }),
+        ),
+      }),
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

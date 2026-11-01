@@ -4679,6 +4679,10 @@ export class Session {
         ...(turnId ? { turnId } : {}),
       });
     }
+    // A prompt or reload may have resumed the agent while the file was being read.
+    if (this.agentManager.getAgent(agentId)) {
+      return null;
+    }
 
     return {
       agent: this.buildStoredAgentPayload(record),
@@ -4694,33 +4698,27 @@ export class Session {
       direction: AgentTimelineFetchDirection;
       cursor?: AgentTimelineCursor;
       limit: number;
-      allowPersistedOmpFallback: boolean;
+      allowPersistedOmpHistory: boolean;
     },
   ): Promise<AgentTimelineLoad> {
-    try {
-      const snapshot = await ensureAgentLoaded(agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      return {
-        agent: await this.buildAgentPayload(snapshot),
-        provider: snapshot.provider,
-        controlTimeline: this.agentManager.fetchTimeline(agentId, options),
-      };
-    } catch (error) {
-      const persistedHistory = options.allowPersistedOmpFallback
-        ? await this.readPersistedOmpHistory(agentId, options)
-        : null;
-      if (!persistedHistory) {
-        throw error;
+    if (options.allowPersistedOmpHistory) {
+      await this.agentManager.waitForAgentClose?.(agentId);
+      const persistedHistory = await this.readPersistedOmpHistory(agentId, options);
+      if (persistedHistory) {
+        return persistedHistory;
       }
-      this.sessionLogger.warn(
-        { err: error, agentId },
-        "Provider resume failed; serving persisted OMP history",
-      );
-      return persistedHistory;
     }
+
+    const snapshot = await ensureAgentLoaded(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    });
+    return {
+      agent: await this.buildAgentPayload(snapshot),
+      provider: snapshot.provider,
+      controlTimeline: this.agentManager.fetchTimeline(agentId, options),
+    };
   }
 
   private async resolveDelegationRootWorkspaceId(agentId: string): Promise<string | null> {
@@ -7456,7 +7454,7 @@ export class Session {
         direction,
         ...(cursor ? { cursor } : {}),
         limit: pageLimit,
-        allowPersistedOmpFallback: supportsDegradedHistory,
+        allowPersistedOmpHistory: supportsDegradedHistory,
       });
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
@@ -7560,17 +7558,14 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
-        limit: 1,
+        limit: 0,
+        allowPersistedOmpHistory: true,
       });
-      const index = buildTimelinePromptIndex(timeline.epoch, rows);
+      const rows =
+        loaded.fullTimeline?.rows ?? (await this.agentManager.getTimelineRows(msg.agentId));
+      const index = buildTimelinePromptIndex(loaded.controlTimeline.epoch, rows);
       this.emitForSource(
         {
           type: "agent.timeline.list_prompts.response",

@@ -78,6 +78,13 @@ replace provider classes already loaded by the daemon. Refreshing an agent from
 persistence does close only that agent's runtime and rehydrate its original
 native session history, without replaying a prompt or replacing the conversation.
 
+Cold OMP conversation history and the Chat outline read the persisted session
+directly instead of waiting for an SDK process to start. Loaded agents keep using
+their live timeline. Persisted pages share an epoch; once a prompt or reload
+creates a runtime timeline, old cursors reset through the existing sync protocol.
+Non-OMP sessions keep their provider-specific loading path. Automatic credential
+lookup skips retry delays when there is no multi-account automatic selection.
+
 Build the staged SDK or an unpacked application:
 
 ```bash

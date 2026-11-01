@@ -4649,20 +4649,21 @@ export class OmpAgentClient implements AgentClient {
       }
     };
   }
+  // null means automatic selection is inapplicable; undefined may still settle in the sticky cache.
   private readAutomaticCredentialId(
     config: AgentSessionConfig,
     state: OmpSessionState,
     accounts: readonly StoredOmpOAuthAccount[],
     launchEnv?: Record<string, string>,
-  ): number | undefined {
+  ): number | null | undefined {
     if (configuredOmpOAuthCredentialId(config.featureValues?.[OMP_OAUTH_ACCOUNT_FEATURE_ID])) {
-      return undefined;
+      return null;
     }
     const provider = state.model?.provider ?? parseModelReference(config.model ?? null)?.provider;
     const sessionId = state.sessionId;
-    if (!provider || !sessionId) return undefined;
+    if (!provider || !sessionId) return null;
     const providerAccounts = accounts.filter((account) => account.provider === provider);
-    if (providerAccounts.length < 2) return undefined;
+    if (providerAccounts.length < 2) return null;
     try {
       const credentialId = this.sessionCredentialReader
         ? this.sessionCredentialReader(provider, sessionId)
@@ -4693,7 +4694,7 @@ export class OmpAgentClient implements AgentClient {
     for (const retryDelayMs of OMP_SESSION_CREDENTIAL_READ_DELAYS_MS) {
       if (retryDelayMs > 0) await delay(retryDelayMs);
       const credentialId = this.readAutomaticCredentialId(config, state, accounts, launchEnv);
-      if (credentialId) return credentialId;
+      if (credentialId !== undefined) return credentialId ?? undefined;
     }
     return undefined;
   }
@@ -4844,7 +4845,9 @@ export class OmpAgentClient implements AgentClient {
         launchEnv,
       );
       const automaticCredentialResolver = (state: OmpSessionState) =>
-        Promise.resolve(this.readAutomaticCredentialId(config, state, oauthAccounts, launchEnv));
+        Promise.resolve(
+          this.readAutomaticCredentialId(config, state, oauthAccounts, launchEnv) ?? undefined,
+        );
       return await this.createInitializedSession(
         runtimeSession,
         config,
@@ -4918,7 +4921,8 @@ export class OmpAgentClient implements AgentClient {
       const oauthAccounts = this.readOAuthAccounts(launchEnv);
       const automaticCredentialResolver = (state: OmpSessionState) =>
         Promise.resolve(
-          this.readAutomaticCredentialId(resumeConfig.config, state, oauthAccounts, launchEnv),
+          this.readAutomaticCredentialId(resumeConfig.config, state, oauthAccounts, launchEnv) ??
+            undefined,
         );
       const automaticCredentialId = await this.resolveAutomaticCredentialId(
         resumeConfig.config,
