@@ -1,0 +1,3 @@
+[submodule "omp-sdk"]
+	path = omp-sdk
+	url = https://github.com/iris-cat-dev/omp-sdk
