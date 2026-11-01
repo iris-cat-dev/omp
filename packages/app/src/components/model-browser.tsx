@@ -630,10 +630,6 @@ function ModelRow({
 }) {
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={row.provider} size={ICON_SIZE.sm} />,
-    [row.provider],
-  );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
   const primary = profiledRows[profiledRows.length - 1];
@@ -744,7 +740,6 @@ function ModelRow({
         testID={`model-row-${row.provider}-${row.modelId}`}
       >
         <View style={styles.browserRowContent}>
-          <View style={styles.browserRowLeading}>{leadingSlot}</View>
           <View style={[styles.browserRowText, description && styles.browserRowTextInline]}>
             <Text numberOfLines={1} style={styles.browserRowLabel}>
               {row.modelLabel}

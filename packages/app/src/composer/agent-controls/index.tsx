@@ -919,7 +919,6 @@ function ControlledAgentControls({
             handleSheetModelSelect={handleSheetModelSelect}
             handleOpenChange={handleSheetOpenChange}
             modeControl={modeControl}
-            glyphSize={layoutContextValue.glyphSize}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={false}
           />
@@ -1030,8 +1029,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   } = props;
   const visibleFeatures = useMemo(() => features?.filter(isComposerFeatureVisible), [features]);
   const modelToolbar = useMemo(
-    () => ({ glyphSize, showCaret: presentation.showCarets }),
-    [glyphSize, presentation.showCarets],
+    () => ({ showCaret: presentation.showCarets }),
+    [presentation.showCarets],
   );
   const featuresSheetHeader = useMemo<SheetHeader>(
     () => ({ title: t("agentControls.features.title") }),
@@ -1199,7 +1198,6 @@ interface SheetAgentControlsContentProps {
   handleSheetModelSelect: (providerId: string, modelId: string) => void | Promise<void>;
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
   modeControl?: AgentModeControlValue | null;
-  glyphSize: number;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
 }
@@ -1233,7 +1231,6 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleSheetModelSelect,
     handleOpenChange,
     modeControl,
-    glyphSize,
     canSwitchProvider,
   } = props;
   const visibleFeatures = useMemo(() => features?.filter(isComposerFeatureVisible), [features]);
@@ -1277,7 +1274,6 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       onClose={onDropdownClose}
       onRetryProvider={onRetryModelProvider}
       isRetryingProvider={isRetryingModelProvider}
-      glyphSize={glyphSize}
       canSwitchProvider={canSwitchProvider}
     >
       {sheetControls}

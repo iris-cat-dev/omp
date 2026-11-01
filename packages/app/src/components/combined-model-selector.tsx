@@ -13,7 +13,7 @@ import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
-import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -66,7 +66,6 @@ interface CombinedModelSelectorProps {
    */
   triggerFill?: boolean;
   toolbar?: {
-    glyphSize: number;
     showCaret: boolean;
   };
   footer?: ReactNode;
@@ -313,14 +312,6 @@ export function CombinedModelSelector({
           testID="combined-model-selector"
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
-          {browserSelectedProvider.trim().length > 0 ? (
-            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
-              <ModelProviderGlyph
-                provider={browserSelectedProvider}
-                size={toolbar?.glyphSize ?? ICON_SIZE.md}
-              />
-            </View>
-          ) : null}
           <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
             {browser.triggerLabel}
           </Text>
@@ -368,16 +359,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
-  },
-  toolbarGlyph16: {
-    width: 16,
-    height: 16,
-    flexShrink: 0,
-  },
-  toolbarGlyph20: {
-    width: 20,
-    height: 20,
-    flexShrink: 0,
   },
   triggerPressed: {
     backgroundColor: theme.colors.surface0,

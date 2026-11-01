@@ -51,6 +51,8 @@ Official Codex OAuth accepts dynamic models only from the dedicated Codex catalo
 
 Desktop model pickers open above or below their selector according to available space and constrain height so search and the scrollable list stay inside the window. Scroll or search for any available model, including in small windows. The list and its **Thinking**, **Fast**, and **Context window** footer retain opaque theme-matched backing over wallpaper.
 
+Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons; selection checkmarks and profile actions are unchanged.
+
 Changing Thinking in an existing conversation updates OMP without restarting. It applies from the next model request, including after a tool call in the same turn, never to generation already in progress. Confirmed changes add a localized inline notice showing the level and effective timing. Failed requests and reselecting the same level add no notice. Notices retain their selected level through history replay and client reload.
 
 Confirmed Fast changes add system notices too. Model switches show the selected model ID only after a conversation has received a user message; selecting a model for a draft adds none. These notices use centered muted text, an information icon, and separator lines, not chat bubbles. They persist in history and are not sent to the model. Failed requests, unchanged settings, and initial preferences produce no switch notices.

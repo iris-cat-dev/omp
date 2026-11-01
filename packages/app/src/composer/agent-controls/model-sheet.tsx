@@ -10,7 +10,6 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
-import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import {
   groupOmpModelsByProviderNamespace,
   resolveModelBrowserProviderId,
@@ -46,7 +45,6 @@ interface CompactModelSheetProps {
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
   disabled?: boolean;
-  glyphSize: number;
   canSwitchProvider: boolean;
   children: ReactNode;
 }
@@ -146,7 +144,6 @@ export function CompactModelSheet({
   onRetryProvider,
   isRetryingProvider = false,
   disabled = false,
-  glyphSize,
   canSwitchProvider,
   children,
 }: CompactModelSheetProps) {
@@ -349,11 +346,6 @@ export function CompactModelSheet({
         testID="combined-model-selector"
         chevron={null}
       >
-        {ProviderIcon ? (
-          <ComposerToolbarGlyph size={glyphSize}>
-            <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
-          </ComposerToolbarGlyph>
-        ) : null}
         <View style={styles.triggerLabels}>
           <Text style={styles.triggerText} numberOfLines={1}>
             {shortModelLabel(displayModelLabel)}
@@ -502,9 +494,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   fastModeIcon: {
     color: theme.colors.palette.yellow[400],
-  },
-  providerIcon: {
-    color: theme.colors.foregroundMuted,
   },
   sheetBody: {
     paddingHorizontal: 0,
