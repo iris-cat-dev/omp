@@ -200,13 +200,25 @@ describe("OMP provider subagent mapper", () => {
 
   test("announces a child descriptor before its first live timeline item", () => {
     const index = new OmpSubagentIndex();
-    const frames = index.handleEvent({}, {
-      id: "child-1",
-      event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Child answer" }] } },
-    });
+    const frames = index.handleEvent(
+      {},
+      {
+        id: "child-1",
+        event: {
+          type: "message_end",
+          message: { role: "assistant", content: [{ type: "text", text: "Child answer" }] },
+        },
+      },
+    );
     expect(frames).toMatchObject([
       { event: { type: "upsert", id: "child-1", status: "running" } },
-      { event: { type: "timeline", id: "child-1", item: { type: "assistant_message", text: "Child answer" } } },
+      {
+        event: {
+          type: "timeline",
+          id: "child-1",
+          item: { type: "assistant_message", text: "Child answer" },
+        },
+      },
     ]);
   });
 
@@ -226,13 +238,45 @@ describe("OMP provider subagent mapper", () => {
   test("streams text and thinking independently without replaying final snapshots", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const message: OmpAgentMessage = { role: "assistant", responseId: "reply-1", content: [{ type: "thinking", thinking: "Think carefully" }, { type: "text", text: "Answer fully" }] };
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "reply-1",
+      content: [
+        { type: "thinking", thinking: "Think carefully" },
+        { type: "text", text: "Answer fully" },
+      ],
+    };
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
     emit({ type: "message_start", message: { ...message, content: [] } });
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Think" } })).toEqual([{ type: "reasoning", text: "Think" }]);
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" } })).toMatchObject([{ type: "assistant_message", text: "Answer" }]);
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "Think carefully" } })).toEqual([{ type: "reasoning", text: " carefully" }]);
-    expect(emit({ type: "message_end", message })).toMatchObject([{ type: "assistant_message", text: " fully" }]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Think" },
+      }),
+    ).toEqual([{ type: "reasoning", text: "Think" }]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+      }),
+    ).toMatchObject([{ type: "assistant_message", text: "Answer" }]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: "Think carefully",
+        },
+      }),
+    ).toEqual([{ type: "reasoning", text: " carefully" }]);
+    expect(emit({ type: "message_end", message })).toMatchObject([
+      { type: "assistant_message", text: " fully" },
+    ]);
     expect(emit({ type: "message_end", message })).toEqual([]);
     expect(emit({ type: "agent_end", messages: [message], isTerminal: false })).toEqual([]);
   });
@@ -598,46 +642,161 @@ describe("OMP provider subagent mapper", () => {
   test("cancel acknowledgement immediately ends all parallel child tools without waiting for SDK abort", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    for (const id of ["one", "two"]) index.handleEvent(parent, { id: "child", event: { type: "tool_execution_start", toolCallId: id, toolName: "bash", args: { command: "sleep 999" } } });
+    for (const id of ["one", "two"])
+      index.handleEvent(parent, {
+        id: "child",
+        event: {
+          type: "tool_execution_start",
+          toolCallId: id,
+          toolName: "bash",
+          args: { command: "sleep 999" },
+        },
+      });
     const canceled = index.markCanceled(parent, "child");
     expect(canceled).toMatchObject([
       { event: { type: "upsert", status: "canceled" } },
-      { event: { type: "timeline", item: { type: "tool_call", callId: "one", status: "canceled" } } },
-      { event: { type: "timeline", item: { type: "tool_call", callId: "two", status: "canceled" } } },
+      {
+        event: { type: "timeline", item: { type: "tool_call", callId: "one", status: "canceled" } },
+      },
+      {
+        event: { type: "timeline", item: { type: "tool_call", callId: "two", status: "canceled" } },
+      },
     ]);
-    expect(childItems(index.handleEvent(parent, { id: "child", event: { type: "tool_execution_end", toolCallId: "one", toolName: "bash", result: "late" } }))).toEqual([]);
+    expect(
+      childItems(
+        index.handleEvent(parent, {
+          id: "child",
+          event: {
+            type: "tool_execution_end",
+            toolCallId: "one",
+            toolName: "bash",
+            result: "late",
+          },
+        }),
+      ),
+    ).toEqual([]);
     expect(index.markCanceled(parent, "child")).toEqual([]);
   });
 
   test("handles projected child tool args and interleaved wire message identities", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
-    expect(emit({ type: "message_update", messageId: "wire-one", message: { role: "assistant" }, assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, block: { type: "toolCall", id: "stream-tool", name: "bash", arguments: {} } } })).toMatchObject([{ type: "tool_call", callId: "stream-tool", status: "running" }]);
-    expect(emit({ type: "message_update", messageId: "wire-one", message: { role: "assistant" }, assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"command":"sleep' } })).toMatchObject([{ type: "tool_call", detail: { type: "unknown", input: '{"command":"sleep' } }]);
-    expect(emit({ type: "message_update", messageId: "wire-two", message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Second" } })).toMatchObject([{ type: "assistant_message", messageId: "wire-two", text: "Second" }]);
-    expect(emit({ type: "message_update", messageId: "wire-one", message: { role: "assistant" }, assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: { type: "toolCall", id: "stream-tool", name: "bash", arguments: { command: "sleep 10" } } } })).toMatchObject([{ type: "tool_call", callId: "stream-tool", detail: { type: "shell", command: "sleep 10" } }]);
-    expect(emit({ type: "message_end", messageId: "wire-two", message: { role: "assistant", responseId: "final-two", content: [{ type: "text", text: "Second" }] } })).toEqual([]);
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
+    expect(
+      emit({
+        type: "message_update",
+        messageId: "wire-one",
+        message: { role: "assistant" },
+        assistantMessageEvent: {
+          type: "toolcall_start",
+          contentIndex: 0,
+          block: { type: "toolCall", id: "stream-tool", name: "bash", arguments: {} },
+        },
+      }),
+    ).toMatchObject([{ type: "tool_call", callId: "stream-tool", status: "running" }]);
+    expect(
+      emit({
+        type: "message_update",
+        messageId: "wire-one",
+        message: { role: "assistant" },
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"command":"sleep',
+        },
+      }),
+    ).toMatchObject([
+      { type: "tool_call", detail: { type: "unknown", input: '{"command":"sleep' } },
+    ]);
+    expect(
+      emit({
+        type: "message_update",
+        messageId: "wire-two",
+        message: { role: "assistant" },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Second" },
+      }),
+    ).toMatchObject([{ type: "assistant_message", messageId: "wire-two", text: "Second" }]);
+    expect(
+      emit({
+        type: "message_update",
+        messageId: "wire-one",
+        message: { role: "assistant" },
+        assistantMessageEvent: {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "stream-tool",
+            name: "bash",
+            arguments: { command: "sleep 10" },
+          },
+        },
+      }),
+    ).toMatchObject([
+      { type: "tool_call", callId: "stream-tool", detail: { type: "shell", command: "sleep 10" } },
+    ]);
+    expect(
+      emit({
+        type: "message_end",
+        messageId: "wire-two",
+        message: {
+          role: "assistant",
+          responseId: "final-two",
+          content: [{ type: "text", text: "Second" }],
+        },
+      }),
+    ).toEqual([]);
   });
 
   test("seeded final messages survive buffered started without swallowing a new continuation", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const old: OmpAgentMessage = { role: "assistant", responseId: "old", content: [{ type: "text", text: "Done" }] };
+    const old: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "old",
+      content: [{ type: "text", text: "Done" }],
+    };
     index.seedHistory(parent, [], [{ id: "child", messages: [old] }]);
-    index.hydrateSnapshot(parent, { id: "child", index: 0, agent: "task", agentSource: "bundled", lastUpdate: 1, status: "completed" });
+    index.hydrateSnapshot(parent, {
+      id: "child",
+      index: 0,
+      agent: "task",
+      agentSource: "bundled",
+      lastUpdate: 1,
+      status: "completed",
+    });
     index.handleLifecycle(parent, { id: "child", index: 0, agent: "task", status: "started" });
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
     emit({ type: "message_start", message: { ...old, content: [] } });
-    expect(emit({ type: "message_update", message: old, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Done" } })).toEqual([]);
+    expect(
+      emit({
+        type: "message_update",
+        message: old,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Done" },
+      }),
+    ).toEqual([]);
     expect(emit({ type: "message_end", message: old })).toEqual([]);
-    const next: OmpAgentMessage = { role: "assistant", responseId: "next", content: [{ type: "text", text: "Done" }] };
+    const next: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "next",
+      content: [{ type: "text", text: "Done" }],
+    };
     emit({ type: "message_start", message: { ...next, content: [] } });
-    expect(emit({ type: "message_update", message: next, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Done" } })).toMatchObject([{ type: "assistant_message", messageId: "next", text: "Done" }]);
+    expect(
+      emit({
+        type: "message_update",
+        message: next,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Done" },
+      }),
+    ).toMatchObject([{ type: "assistant_message", messageId: "next", text: "Done" }]);
     expect(emit({ type: "message_end", message: next })).toEqual([]);
   });
 });
 
 function childItems(events: AgentStreamEvent[]): AgentTimelineItem[] {
-  return events.flatMap((event) => event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event.item] : []);
+  return events.flatMap((event) =>
+    event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event.item] : [],
+  );
 }

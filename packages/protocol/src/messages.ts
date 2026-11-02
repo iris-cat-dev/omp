@@ -7920,7 +7920,9 @@ export type CancelProviderSubagentResponseMessage = z.infer<
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
-export type SetAgentProxyPolicyResponseMessage = z.infer<typeof SetAgentProxyPolicyResponseMessageSchema>;
+export type SetAgentProxyPolicyResponseMessage = z.infer<
+  typeof SetAgentProxyPolicyResponseMessageSchema
+>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type SetAgentGoalObjectiveResponseMessage = z.infer<
@@ -8220,7 +8222,9 @@ export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryIn
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
-export type SetAgentProxyPolicyRequestMessage = z.infer<typeof SetAgentProxyPolicyRequestMessageSchema>;
+export type SetAgentProxyPolicyRequestMessage = z.infer<
+  typeof SetAgentProxyPolicyRequestMessageSchema
+>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type SetAgentGoalObjectiveRequestMessage = z.infer<

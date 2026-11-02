@@ -2128,7 +2128,9 @@ export class AgentManager {
   async setAgentProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     if (!agent.session.setProxyPolicy) {
-      throw new Error(`Provider '${agent.provider}' does not support per-conversation proxy policies`);
+      throw new Error(
+        `Provider '${agent.provider}' does not support per-conversation proxy policies`,
+      );
     }
     const nextPolicy = policy === null ? undefined : ProxyPolicySchema.parse(policy);
     await agent.session.setProxyPolicy(nextPolicy);

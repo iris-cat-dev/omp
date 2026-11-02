@@ -4538,7 +4538,7 @@ export class OmpAgentSession implements AgentSession {
     originatingTurnId?: string,
   ): boolean {
     const task = this.nativeTaskCalls.get(toolCallId);
-    const turnId = task ? task.turnId : originatingTurnId ?? this.currentTurnIdForEvent();
+    const turnId = task ? task.turnId : (originatingTurnId ?? this.currentTurnIdForEvent());
     if (toolCall.toolName === "task") {
       this.nativeTaskCalls.set(toolCallId, { toolCall, status, result, error, turnId });
     }
@@ -4754,7 +4754,9 @@ export class OmpAgentClient implements AgentClient {
     const runtimeSettings = configuredRuntimeSettings;
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
-    this.defaultProxyPolicy = ProxyPolicySchema.parse(runtimeSettings?.proxyPolicy ?? DIRECT_PROXY_POLICY);
+    this.defaultProxyPolicy = ProxyPolicySchema.parse(
+      runtimeSettings?.proxyPolicy ?? DIRECT_PROXY_POLICY,
+    );
     this.providerParams = runtimeProviderParams;
     this.desktopConfigDir = options.desktopConfigDir;
     this.modelRoleParams = modelRoleParams;
@@ -4795,8 +4797,12 @@ export class OmpAgentClient implements AgentClient {
   async setDefaultProxyPolicy(policy: ProxyPolicy): Promise<void> {
     this.defaultProxyPolicy = ProxyPolicySchema.parse(policy);
     await Promise.all([
-      ...Array.from(this.proxySessions, (session) => session.applyDefaultProxyPolicy(this.defaultProxyPolicy)),
-      ...Array.from(this.loginFlows.values(), (flow) => flow.runtimeSession.setProxyPolicy(this.defaultProxyPolicy)),
+      ...Array.from(this.proxySessions, (session) =>
+        session.applyDefaultProxyPolicy(this.defaultProxyPolicy),
+      ),
+      ...Array.from(this.loginFlows.values(), (flow) =>
+        flow.runtimeSession.setProxyPolicy(this.defaultProxyPolicy),
+      ),
     ]);
   }
 

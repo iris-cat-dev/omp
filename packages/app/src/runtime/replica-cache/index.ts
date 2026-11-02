@@ -7,6 +7,7 @@ import {
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@omp-desktop/protocol/messages";
 import { AgentProviderSchema } from "@omp-desktop/protocol/provider-manifest";
+import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -47,8 +48,8 @@ const TodoEntrySchema = z.strictObject({
   id: z.string().optional(),
   status: z.enum(["pending", "in_progress", "completed", "blocked", "abandoned"]).optional(),
   activeForm: z.string().optional(),
-});
   phase: z.strictObject({ name: z.string(), index: z.number().int().nonnegative() }).optional(),
+});
 
 const TaskActivitySchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("created"), count: z.number().int().nonnegative() }),
@@ -125,6 +126,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
 const AgentCapabilitiesSchema = z.strictObject({
   supportsStreaming: z.boolean(),
   supportsSessionPersistence: z.boolean(),
+  supportsProxyPolicy: z.boolean().optional(),
   supportsSessionListing: z.boolean().optional(),
   supportsDynamicModes: z.boolean(),
   supportsMcpServers: z.boolean(),
@@ -179,6 +181,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
   lastUserMessageAt: IsoDateSchema.nullable(),
