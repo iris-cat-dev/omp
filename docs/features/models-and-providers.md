@@ -52,6 +52,8 @@ Official Codex OAuth accepts dynamic models only from the dedicated Codex catalo
 
 Desktop model pickers open above or below their selector according to available space and constrain height so search and the scrollable list stay inside the window. Scroll or search for any available model, including in small windows. The list and its **Thinking**, **Fast**, and **Context window** footer retain opaque theme-matched backing over wallpaper.
 
+The conversation's model picker contains model selection and model settings only, on desktop and compact interfaces. Proxy routing is configured separately in **Host Settings → Proxy** and never occupies the model list or its footer.
+
 Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons; selection checkmarks and profile actions are unchanged.
 
 Changing Thinking in an existing conversation updates OMP without restarting. It applies from the next model request, including after a tool call in the same turn, never to generation already in progress. Confirmed changes add a localized inline notice showing the level and effective timing. Failed requests and reselecting the same level add no notice. Notices retain their selected level through history replay and client reload.
@@ -78,7 +80,7 @@ Choosing inheritance clears the agent's model and Fast overrides. Disabling the 
 
 ## Proxy routing
 
-**Host Settings → Proxy** configures the host's default proxy policy. The conversation's model controls offer a separate policy: inherit the host, connect directly, or configure an HTTP(S) proxy with exact model-provider overrides. Settings are persisted per conversation; unloading and restoring a conversation restores its override automatically. Clearing it resumes host inheritance, including after another cold restore.
+**Host Settings → Proxy** configures the host's default proxy policy, including direct connections, an HTTP(S) proxy, and exact model-provider overrides. Existing per-conversation policies remain persisted and are restored automatically; removing proxy controls from the model picker does not change those policies.
 
 Saving a policy updates subsequent requests without restarting the conversation or daemon. In-flight requests finish on their existing connection; a reused Codex WebSocket reconnects for its next response when routing changes. Turning the policy off preserves configured addresses but sends requests directly. An omitted provider route uses the policy's default; an omitted default means direct.
 

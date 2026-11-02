@@ -2608,7 +2608,6 @@ export const ko: TranslationResources = {
           inherit: "기본값 상속 (설정 없으면 직접 연결)",
           direct: "직접 연결",
           proxy: "프록시",
-          inheritHost: "호스트 정책 사용",
           noProxy: "프록시 우회 호스트",
           noProxyHint: "호스트나 도메인을 쉼표로 구분하세요. 로컬 및 사설 네트워크는 항상 프록시를 우회합니다.",
         },

@@ -1315,7 +1315,7 @@ function OmpProxyCard({ serverId }: { serverId: string }) {
   if (!isConnected) return null;
   return <View style={settingsStyles.card}>
     <ProxyPolicyEditor serverId={serverId} policy={config?.providers.omp?.proxyPolicy}
-      onSave={async (policy) => { if (policy) await patchConfig({ providers: { omp: { proxyPolicy: policy } } }); }}
+      onSave={async (policy) => { await patchConfig({ providers: { omp: { proxyPolicy: policy } } }); }}
       testID="host-page-omp-proxy" />
   </View>;
 }

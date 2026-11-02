@@ -2687,7 +2687,6 @@ export const zhCN: TranslationResources = {
           inherit: "继承默认（未设置则直连）",
           direct: "直连",
           proxy: "代理",
-          inheritHost: "使用主机策略",
           noProxy: "绕过代理的主机",
           noProxyHint: "用逗号分隔主机或域名。本机及私网始终直连。",
         },

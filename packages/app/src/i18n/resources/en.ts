@@ -2784,7 +2784,6 @@ export const en = {
           inherit: "Inherit default (direct if unset)",
           direct: "Direct",
           proxy: "Proxy",
-          inheritHost: "Use host policy",
           noProxy: "Bypass hosts",
           noProxyHint: "Comma-separated hosts or domains. Local and private networks always bypass the proxy.",
         },

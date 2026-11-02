@@ -1,4 +1,3 @@
-import { ConversationProxySettings } from "@/components/proxy-policy-editor";
 import {
   memo,
   useCallback,
@@ -180,7 +179,6 @@ interface ControlledAgentControlsProps {
   isRetryingModelProvider?: boolean;
   modeControl?: AgentModeControlValue | null;
   modelSelectorServerId?: string | null;
-  conversationAgentId?: string;
   isCompactLayout?: boolean;
 }
 
@@ -559,7 +557,6 @@ function ControlledAgentControls({
   isRetryingModelProvider = false,
   modeControl,
   modelSelectorServerId = null,
-  conversationAgentId,
   isCompactLayout,
   workflowQuotaAccounts,
 }: ControlledAgentControlsProps) {
@@ -800,7 +797,6 @@ function ControlledAgentControls({
       onSelectThinkingOption={onSelectThinkingOption}
       fastMode={partitionedFeatures.fastMode}
       onSetFeature={onSetFeature}
-      proxyControl={conversationAgentId && modelSelectorServerId ? <ConversationProxySettings serverId={modelSelectorServerId} agentId={conversationAgentId} /> : undefined}
       contextControl={
         <ModelContextWindowControl
           serverId={modelSelectorServerId}
@@ -822,7 +818,6 @@ function ControlledAgentControls({
       onSelectThinkingOption={onSelectThinkingOption}
       fastMode={partitionedFeatures.fastMode}
       onSetFeature={onSetFeature}
-      proxyControl={conversationAgentId && modelSelectorServerId ? <ConversationProxySettings serverId={modelSelectorServerId} agentId={conversationAgentId} /> : undefined}
       contextControl={
         <ModelContextWindowControl
           serverId={modelSelectorServerId}
@@ -1964,7 +1959,6 @@ export const AgentControls = memo(function AgentControls({
       {profileEditor.element}
       <ControlledAgentControls
         provider={agent.provider}
-        conversationAgentId={agentId}
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}

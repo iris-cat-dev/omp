@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SelectField } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
 
@@ -34,21 +33,20 @@ function ProxyRouteField({ label, route, onChange, disabled, testID, policyKey }
 }
 
 export function ProxyPolicyEditor(props: Parameters<typeof ProxyPolicyEditorForm>[0]) {
-  const policyKey = JSON.stringify([props.serverId, props.policy, props.policy === undefined ? props.hostPolicy : undefined, props.allowInheritance]);
+  const policyKey = JSON.stringify([props.serverId, props.policy]);
   return <ProxyPolicyEditorForm key={policyKey} {...props} />;
 }
 
-function ProxyPolicyEditorForm({ serverId, policy, hostPolicy, onSave, allowInheritance = false, disabled = false, testID }: {
-  serverId: string; policy: ProxyPolicy | undefined; hostPolicy?: ProxyPolicy;
-  onSave: (policy: ProxyPolicy | null) => Promise<void>; allowInheritance?: boolean; disabled?: boolean; testID: string;
+function ProxyPolicyEditorForm({ serverId, policy, onSave, disabled = false, testID }: {
+  serverId: string; policy: ProxyPolicy | undefined;
+  onSave: (policy: ProxyPolicy) => Promise<void>; disabled?: boolean; testID: string;
 }) {
   const { t } = useTranslation();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const [draft, setDraft] = useState(policy ?? hostPolicy ?? DIRECT_POLICY);
-  const [inherit, setInherit] = useState(allowInheritance && policy === undefined);
+  const [draft, setDraft] = useState(policy ?? DIRECT_POLICY);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const policyKey = JSON.stringify(policy ?? hostPolicy ?? DIRECT_POLICY);
+  const policyKey = JSON.stringify(policy ?? DIRECT_POLICY);
   const management = useQuery({
     queryKey: ["ompProxyModelProviders", serverId],
     queryFn: async () => { if (!client) throw new Error("Host unavailable"); return client.getOmpProviderManagement(); },
@@ -58,23 +56,18 @@ function ProxyPolicyEditorForm({ serverId, policy, hostPolicy, onSave, allowInhe
     ...(management.data?.providerModels.map((provider) => provider.id) ?? []),
     ...Object.keys(draft.providers ?? {}),
   ])).sort();
-  const nextPolicy = inherit ? null : draft;
-  const changed = JSON.stringify(nextPolicy) !== JSON.stringify(policy ?? (allowInheritance ? null : DIRECT_POLICY));
-  const valid = inherit || ProxyPolicySchema.safeParse(draft).success;
-  const controlsDisabled = disabled || saving || inherit;
+  const changed = JSON.stringify(draft) !== JSON.stringify(policy ?? DIRECT_POLICY);
+  const valid = ProxyPolicySchema.safeParse(draft).success;
+  const controlsDisabled = disabled || saving;
   async function save() {
     setSaving(true); setError(null);
-    try { await onSave(nextPolicy === null ? null : ProxyPolicySchema.parse(nextPolicy)); }
+    try { await onSave(ProxyPolicySchema.parse(draft)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setSaving(false); }
   }
   return <View style={styles.editor} testID={testID}>
     <Text style={settingsStyles.rowTitle}>{t("settings.host.orchestration.proxy.title")}</Text>
     <Text style={settingsStyles.rowHint}>{t("settings.host.orchestration.proxy.hint")}</Text>
-    {allowInheritance ? <View style={settingsStyles.row}>
-      <Text style={settingsStyles.rowTitle}>{t("settings.host.orchestration.proxy.inheritHost")}</Text>
-      <Switch value={inherit} onValueChange={setInherit} disabled={disabled || saving} testID={`${testID}-inherit`} />
-    </View> : null}
     <View style={settingsStyles.row}>
       <Text style={settingsStyles.rowTitle}>{t("settings.host.orchestration.proxy.enabled")}</Text>
       <Switch value={draft.enabled} onValueChange={(enabled) => setDraft({ ...draft, enabled })} disabled={controlsDisabled} testID={`${testID}-switch`} />
@@ -95,15 +88,6 @@ function ProxyPolicyEditorForm({ serverId, policy, hostPolicy, onSave, allowInhe
       {t(`settings.host.orchestration.proxy.${saving ? "saving" : "save"}`)}
     </Button>
   </View>;
-}
-
-export function ConversationProxySettings({ serverId, agentId }: { serverId: string; agentId: string }) {
-  const agent = useSessionStore((state) => state.sessions[serverId]?.agents.get(agentId));
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const { config } = useDaemonConfig(serverId);
-  if (!agent || !client || agent.capabilities.supportsProxyPolicy !== true) return null;
-  return <ProxyPolicyEditor serverId={serverId} policy={agent.proxyPolicy} hostPolicy={config?.providers.omp?.proxyPolicy}
-    allowInheritance onSave={(policy) => client.setAgentProxyPolicy(agentId, policy)} testID="conversation-proxy-policy" />;
 }
 
 const styles = StyleSheet.create((theme) => ({

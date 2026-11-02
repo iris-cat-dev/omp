@@ -2618,7 +2618,6 @@ export const ja: TranslationResources = {
           inherit: "既定を継承（未設定の場合は直接接続）",
           direct: "直接接続",
           proxy: "プロキシ",
-          inheritHost: "ホストのポリシーを使用",
           noProxy: "プロキシを迂回するホスト",
           noProxyHint: "ホスト名やドメインをカンマで区切ります。ローカル・プライベートネットワークは常に直接接続します。",
         },

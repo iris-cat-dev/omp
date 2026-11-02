@@ -2654,7 +2654,6 @@ export const fr: TranslationResources = {
           inherit: "Hériter du défaut (direct si non défini)",
           direct: "Direct",
           proxy: "Proxy",
-          inheritHost: "Utiliser la politique de l’hôte",
           noProxy: "Hôtes sans proxy",
           noProxyHint: "Hôtes ou domaines séparés par des virgules. Les réseaux locaux et privés contournent toujours le proxy.",
         },

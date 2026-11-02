@@ -2642,7 +2642,6 @@ export const ptBR: TranslationResources = {
           inherit: "Herdar padrão (direto se não definido)",
           direct: "Direto",
           proxy: "Proxy",
-          inheritHost: "Usar política do host",
           noProxy: "Hosts sem proxy",
           noProxyHint: "Hosts ou domínios separados por vírgulas. Redes locais e privadas sempre ignoram o proxy.",
         },

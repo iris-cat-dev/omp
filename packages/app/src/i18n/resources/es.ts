@@ -2649,7 +2649,6 @@ export const es: TranslationResources = {
           inherit: "Heredar predeterminado (directo si no se define)",
           direct: "Directo",
           proxy: "Proxy",
-          inheritHost: "Usar política del host",
           noProxy: "Hosts sin proxy",
           noProxyHint: "Hosts o dominios separados por comas. Las redes locales y privadas siempre omiten el proxy.",
         },

@@ -28,7 +28,6 @@ interface ModelSettingsPanelProps {
   onSetFeature?: (featureId: string, value: unknown) => void;
   contextWindowMaxTokens?: number;
   contextControl?: ReactNode;
-  proxyControl?: ReactNode;
   disabled?: boolean;
   pending?: boolean;
   compact?: boolean;
@@ -42,7 +41,6 @@ export function ModelSettingsPanel({
   onSetFeature,
   contextWindowMaxTokens,
   contextControl,
-  proxyControl,
   disabled,
   pending,
   compact,
@@ -69,7 +67,7 @@ export function ModelSettingsPanel({
   const controlsDisabled = Boolean(disabled || pending);
   const hasThinking = thinkingComboboxOptions.length > 1 && Boolean(onSelectThinkingOption);
   const hasContext = contextControl != null || contextWindowMaxTokens !== undefined;
-  const hasControls = hasThinking || fastMode !== null || hasContext || proxyControl != null;
+  const hasControls = hasThinking || fastMode !== null || hasContext;
 
   const handleThinkingPress = useCallback(() => {
     setThinkingOpen((current) => !current);
@@ -163,7 +161,6 @@ export function ModelSettingsPanel({
             </View>
           ) : null)}
       </View>
-      {proxyControl}
     </View>
   );
 }
