@@ -1,19 +1,14 @@
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
+import { fork, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { importSdkArtifact } from "./sdk-artifact.mjs";
 
-const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-sdk-artifact-smoke-"));
-try {
-  const staged = await importSdkArtifact(
-    path.resolve(process.argv[2] ?? "sdk-artifacts"),
-    path.join(temporary, "sdk"),
-  );
+async function smoke(staged, temporary) {
   const load = createRequire(path.join(staged.directory, "package.json"));
   const sdk = await import(pathToFileURL(path.join(staged.directory, "dist/node/sdk.mjs")).href);
   assert.equal(typeof sdk.createAgentSession, "function");
@@ -146,9 +141,41 @@ try {
       await exited;
     }
   }
-  console.log(
-    `SDK artifact ${staged.version} passed read/write, native addon, SQLite, image, Koffi and worker smoke on ${staged.platform}-${staged.arch}`,
-  );
-} finally {
-  await rm(temporary, { recursive: true, force: true });
+}
+
+if (process.argv[2] === "--probe") {
+  await smoke(JSON.parse(process.argv[3]), process.argv[4]);
+} else {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-sdk-artifact-smoke-"));
+  try {
+    const staged = await importSdkArtifact(
+      path.resolve(process.argv[2] ?? "sdk-artifacts"),
+      path.join(temporary, "sdk"),
+    );
+    // Windows retains loaded DLLs until process exit; the importer must never load them.
+    const probe = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), "--probe", JSON.stringify(staged), temporary],
+      {
+        cwd: temporary,
+        stdio: "inherit",
+        timeout: 120_000,
+        env: {
+          ...process.env,
+          HOME: temporary,
+          USERPROFILE: temporary,
+          NODE_PATH: "",
+          NODE_OPTIONS: "",
+        },
+      },
+    );
+    if (probe.error) throw probe.error;
+    if (probe.status !== 0)
+      throw new Error(`SDK artifact probe failed (${probe.status}/${probe.signal}).`);
+    console.log(
+      `SDK artifact ${staged.version} passed read/write, native addon, SQLite, image, Koffi and worker smoke on ${staged.platform}-${staged.arch}`,
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
