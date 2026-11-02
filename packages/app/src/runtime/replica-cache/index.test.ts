@@ -210,6 +210,39 @@ afterEach(() => {
 });
 
 describe("ReplicaCache", () => {
+  it("round-trips todo phase identity, blocked/abandoned statuses, and legacy unphased tasks", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    const original: StreamItem = {
+      kind: "todo_list",
+      id: "todo-phases",
+      timestamp: new Date("2026-11-01T00:00:00Z"),
+      provider: "omp",
+      items: [
+        { text: "Shared", completed: false, status: "blocked", phase: { name: "Tasks", index: 0 } },
+        {
+          text: "Shared",
+          completed: false,
+          status: "abandoned",
+          phase: { name: "Tasks", index: 1 },
+        },
+        { text: "Legacy", completed: true },
+      ],
+      activity: { type: "created", count: 3 },
+    };
+    useSessionStore.getState().setAgentStreamTail(SERVER_ID, new Map([["agent-1", [original]]]));
+    await writer.flush();
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1")).toEqual([
+      original,
+    ]);
+  });
+
   it("round-trips complete native custom originals, identity, and metadata without truncation", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);

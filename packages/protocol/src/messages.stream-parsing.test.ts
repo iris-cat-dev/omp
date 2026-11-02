@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentTimelineListPromptsResponseMessageSchema,
   AgentStreamMessageSchema,
+  AgentTimelineEntryPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
@@ -10,6 +11,44 @@ import {
 } from "./messages.js";
 
 describe("shared messages stream parsing", () => {
+  it("retains same-named phase identity and open/closed statuses on live and history todos", () => {
+    const item = {
+      type: "todo",
+      items: [
+        { text: "Shared", completed: false, status: "blocked", phase: { name: "Tasks", index: 0 } },
+        {
+          text: "Shared",
+          completed: false,
+          status: "abandoned",
+          phase: { name: "Tasks", index: 1 },
+        },
+        { text: "Legacy", completed: true },
+      ],
+    };
+    const timestamp = "2026-11-01T00:00:00Z";
+    expect(
+      AgentStreamMessageSchema.parse({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent_live",
+          timestamp,
+          event: { type: "timeline", provider: "omp", item },
+        },
+      }).payload.event,
+    ).toMatchObject({ item });
+    expect(
+      AgentTimelineEntryPayloadSchema.parse({
+        provider: "omp",
+        item,
+        timestamp,
+        seqStart: 1,
+        seqEnd: 1,
+        sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+        collapsed: [],
+      }).item,
+    ).toEqual(item);
+  });
+
   it("preserves screenshot-only user messages through wire parsing", () => {
     const item = {
       type: "user_message",

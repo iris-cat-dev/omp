@@ -355,8 +355,9 @@ export interface AgentTaskItem {
   text: string;
   completed: boolean;
   id?: string;
-  status?: "pending" | "in_progress" | "completed";
+  status?: "pending" | "in_progress" | "completed" | "blocked" | "abandoned";
   activeForm?: string;
+  phase?: { name: string; index: number };
 }
 export type AssistantMessagePresentation = "plan";
 

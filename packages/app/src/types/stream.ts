@@ -875,8 +875,9 @@ export interface TodoEntry {
   text: string;
   completed: boolean;
   id?: string;
-  status?: "pending" | "in_progress" | "completed";
+  status?: "pending" | "in_progress" | "completed" | "blocked" | "abandoned";
   activeForm?: string;
+  phase?: { name: string; index: number };
 }
 
 export type TaskActivity =
@@ -1350,6 +1351,7 @@ function appendTodoList(
     ...(item.id ? { id: item.id } : {}),
     ...(item.status ? { status: item.status } : {}),
     ...(item.activeForm ? { activeForm: item.activeForm } : {}),
+    ...(item.phase ? { phase: item.phase } : {}),
   }));
 
   const previousIndex = state.findLastIndex(
@@ -1409,7 +1411,7 @@ function appendTodoList(
 
 function taskStatus(task: TodoEntry): NonNullable<TodoEntry["status"]> {
   if (task.completed || task.status === "completed") return "completed";
-  return task.status === "in_progress" ? "in_progress" : "pending";
+  return task.status ?? "pending";
 }
 
 function taskKey(task: TodoEntry, index: number): string {
@@ -1621,6 +1623,7 @@ function reduceTimelineEvent(
         id: todo.id,
         status: todo.status,
         activeForm: todo.activeForm,
+        phase: todo.phase,
       }));
       return finalizeActiveThoughts(
         appendTodoList(state, event.provider, items, timestamp, timelineCursor),

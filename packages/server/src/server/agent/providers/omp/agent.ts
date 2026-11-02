@@ -1845,6 +1845,8 @@ export class OmpAgentSession implements AgentSession {
     this.automaticCredentialScheduler =
       options.automaticCredentialScheduler ?? createOmpAutomaticCredentialScheduler();
     this.state = options.initialState;
+    const initialTodo = mapOmpTodoState(this.state)[0];
+    this.lastTodoItem = initialTodo?.type === "todo" ? initialTodo : null;
     const configuredModeId = options.currentModeId ?? null;
     const configuredWorkflowMode = normalizeOmpWorkflowSelection(
       options.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID],
@@ -2255,6 +2257,9 @@ export class OmpAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     for await (const event of this.readNativeHistory(true)) {
+      if (event.type === "timeline" && event.item.type === "todo") {
+        this.lastTodoItem = event.item;
+      }
       if (
         event.type === "timeline" &&
         event.item.type === "assistant_message" &&
@@ -2269,6 +2274,7 @@ export class OmpAgentSession implements AgentSession {
       yield event;
     }
     for (const item of mapOmpTodoState(this.state)) {
+      if (item.type === "todo") this.lastTodoItem = item;
       yield {
         type: "timeline",
         provider: this.provider,
@@ -2888,6 +2894,8 @@ export class OmpAgentSession implements AgentSession {
     }
     await this.runtimeSession.branch(target);
     await this.refreshState();
+    const currentTodo = mapOmpTodoState(this.state)[0];
+    this.lastTodoItem = currentTodo?.type === "todo" ? currentTodo : null;
     this.activeToolCalls.clear();
     this.nativeTaskCalls.clear();
     this.subagentCardTracker.clear();
@@ -3638,7 +3646,7 @@ export class OmpAgentSession implements AgentSession {
       return true;
     }
     if (event.type === "todo_reminder") {
-      const item = mapOmpTodoReminderEvent(event);
+      const item = mapOmpTodoReminderEvent(event, this.lastTodoItem?.items);
       if (item) {
         this.emitTodoItem(item);
       } else {
@@ -3702,7 +3710,11 @@ export class OmpAgentSession implements AgentSession {
         previous.items.every((previousItem, index) => {
           const nextItem = item.items[index];
           return (
-            nextItem?.text === previousItem.text && nextItem.completed === previousItem.completed
+            nextItem?.text === previousItem.text &&
+            nextItem.completed === previousItem.completed &&
+            nextItem.status === previousItem.status &&
+            nextItem.phase?.name === previousItem.phase?.name &&
+            nextItem.phase?.index === previousItem.phase?.index
           );
         });
       if (isDuplicate) {

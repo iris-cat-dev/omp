@@ -159,6 +159,23 @@ Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster s
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
 
+The task panel and expanded todo activity details share UI tree controls built
+from the directory trees' disclosure chevrons and row presentation, without
+terminal connector glyphs or display-only phase numbering. Every phase remains
+visible and expands independently; the current phase opens by default. The
+header expands or collapses all phases, and explicit disclosure choices survive
+status updates. Web trees support roving focus, arrow-key navigation and
+disclosure, Home and End.
+Desktop task rows use a compact 24px minimum height; narrow screens retain
+32px rows. Leaf rows omit the empty disclosure slot. Tighter panel padding and
+18px text line heights reduce wasted space while preserving label wrapping.
+OMP task snapshots retain each non-empty phase's name and zero-based index across
+live updates, history and replica caching. Completed and abandoned tasks count
+as closed progress. Legacy and non-OMP tasks without phase metadata remain an
+ungrouped task tree without a viewport cutoff; long labels wrap. Native partial
+todo reminders merge into the full snapshot instead of discarding closed,
+blocked or subsequent-phase tasks.
+
 ### Changes renderer memory
 
 Wrapped diff lines search for each endpoint with exponential local bounds before

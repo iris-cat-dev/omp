@@ -373,8 +373,9 @@ function todoTimeline(
     id?: string;
     text: string;
     completed: boolean;
-    status?: "pending" | "in_progress" | "completed";
+    status?: "pending" | "in_progress" | "completed" | "blocked" | "abandoned";
     activeForm?: string;
+    phase?: { name: string; index: number };
   }>,
   provider: AgentProvider = "codex",
 ): AgentStreamEventPayload {
@@ -1180,6 +1181,37 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(todos.items.length, 2);
     assert.strictEqual(todos.items[1]?.completed, true);
     assert.deepStrictEqual(todos.activity, { type: "created", count: 2 });
+  });
+
+  it("retains phase identity and blocked/abandoned state through updates and empty resets", () => {
+    const items = [
+      {
+        text: "Shared",
+        completed: false,
+        status: "blocked" as const,
+        phase: { name: "Tasks", index: 0 },
+      },
+      {
+        text: "Shared",
+        completed: false,
+        status: "abandoned" as const,
+        phase: { name: "Tasks", index: 1 },
+      },
+    ];
+    const timestamp = new Date("2026-11-01T00:00:00Z");
+    const initial = hydrateStreamState([{ event: todoTimeline(items, "omp"), timestamp }]);
+    expect(initial.find((item) => item.kind === "todo_list")?.items).toEqual(items);
+    const updated = items.map((item) => ({ ...item, phase: { ...item.phase, name: "Renamed" } }));
+    const next = hydrateStreamState([
+      { event: todoTimeline(items, "omp"), timestamp },
+      { event: todoTimeline(updated, "omp"), timestamp },
+    ]);
+    expect(next.findLast((item) => item.kind === "todo_list")?.items).toEqual(updated);
+    const reset = hydrateStreamState([
+      { event: todoTimeline(items, "omp"), timestamp },
+      { event: todoTimeline([], "omp"), timestamp },
+    ]);
+    expect(reset.findLast((item) => item.kind === "todo_list")?.items).toEqual([]);
   });
 
   it("turns task snapshots into semantic timeline activity", () => {

@@ -1,6 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { TaskListRow } from "@/components/task-list-row";
+import { TaskListTree } from "@/components/task-list-tree";
 import {
   View,
   Text,
@@ -2332,13 +2332,6 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   detailsWrapper: {
     padding: theme.spacing[2],
   },
-  list: {
-    gap: theme.spacing[1],
-  },
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-  },
 }));
 
 export const TodoListCard = memo(function TodoListCard({
@@ -2368,16 +2361,10 @@ export const TodoListCard = memo(function TodoListCard({
   const renderDetails = useCallback(() => {
     return (
       <View style={todoListCardStylesheet.detailsWrapper}>
-        <View style={todoListCardStylesheet.list}>
-          {items.length === 0 ? (
-            <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
-          ) : (
-            items.map((item) => <TaskListRow key={item.id ?? item.text} task={item} />)
-          )}
-        </View>
+        <TaskListTree items={items} />
       </View>
     );
-  }, [items, t]);
+  }, [items]);
 
   return (
     <ExpandableBadge

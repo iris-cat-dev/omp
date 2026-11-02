@@ -469,11 +469,13 @@ describe("OMP history mapper", () => {
               text: "Locate submit path",
               status: "completed",
               completed: true,
+              phase: { name: "Implementation", index: 0 },
             },
             {
               text: "Add directory check",
               status: "in_progress",
               completed: false,
+              phase: { name: "Implementation", index: 0 },
             },
           ],
         },

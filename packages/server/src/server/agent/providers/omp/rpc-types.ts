@@ -323,7 +323,7 @@ export const OmpAssistantMessageEventSchema = z.discriminatedUnion("type", [
 export const OmpTodoItemSchema = z
   .object({
     content: z.string(),
-    status: z.enum(["pending", "in_progress", "completed", "abandoned"]),
+    status: z.enum(["pending", "in_progress", "completed", "blocked", "abandoned"]),
   })
   .passthrough();
 export const OmpTodoPhaseSchema = z

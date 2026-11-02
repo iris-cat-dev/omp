@@ -45,9 +45,10 @@ const TodoEntrySchema = z.strictObject({
   text: z.string(),
   completed: z.boolean(),
   id: z.string().optional(),
-  status: z.enum(["pending", "in_progress", "completed"]).optional(),
+  status: z.enum(["pending", "in_progress", "completed", "blocked", "abandoned"]).optional(),
   activeForm: z.string().optional(),
 });
+  phase: z.strictObject({ name: z.string(), index: z.number().int().nonnegative() }).optional(),
 
 const TaskActivitySchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("created"), count: z.number().int().nonnegative() }),
