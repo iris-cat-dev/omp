@@ -214,6 +214,9 @@ interface ActiveFollowOutputLayout {
   activationKey: string;
   isActivationReady: boolean;
   renderLiveAuxiliary: StreamRenderInput["renderers"]["renderLiveAuxiliary"];
+  renderHistoryMountedRow: StreamRenderInput["renderers"]["renderHistoryMountedRow"];
+  renderLiveHeadRow: StreamRenderInput["renderers"]["renderLiveHeadRow"];
+  liveHeadRowRevision: StreamRenderInput["liveHeadRowRevision"];
   historyMounted: StreamRenderInput["segments"]["historyMounted"];
   historyVirtualized: StreamRenderInput["segments"]["historyVirtualized"];
   liveHead: StreamRenderInput["segments"]["liveHead"];
@@ -231,6 +234,9 @@ function activeFollowOutputLayoutsEqual(
     previous.activationKey === next.activationKey &&
     previous.isActivationReady === next.isActivationReady &&
     previous.renderLiveAuxiliary === next.renderLiveAuxiliary &&
+    previous.renderHistoryMountedRow === next.renderHistoryMountedRow &&
+    previous.renderLiveHeadRow === next.renderLiveHeadRow &&
+    previous.liveHeadRowRevision === next.liveHeadRowRevision &&
     previous.historyMounted === next.historyMounted &&
     previous.historyVirtualized === next.historyVirtualized &&
     previous.liveHead === next.liveHead &&
@@ -862,6 +868,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       activationKey,
       isActivationReady,
       renderLiveAuxiliary,
+      renderHistoryMountedRow,
+      renderLiveHeadRow,
+      liveHeadRowRevision,
       historyMounted: segments.historyMounted,
       historyVirtualized: segments.historyVirtualized,
       liveHead: segments.liveHead,
@@ -888,6 +897,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     cancelPendingStickToBottom,
     isActive,
     isActivationReady,
+    liveHeadRowRevision,
+    renderHistoryMountedRow,
+    renderLiveHeadRow,
     renderLiveAuxiliary,
     scrollMessagesToBottom,
     segments.historyMounted,

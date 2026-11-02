@@ -1227,17 +1227,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (item) => renderHistoryRow(item),
       [renderHistoryRow],
     );
-    // useStableEvent keeps the function reference stable across flushes.
-    // layoutLiveHeadItemById and renderStreamItem are read from the ref at call time,
-    // so the live-head render always uses the latest layout without causing renderers
-    // to be a new object on every text-chunk flush.
-    const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
+    const renderLiveHeadRow = useCallback<StreamSegmentRenderers["renderLiveHeadRow"]>(
       (item: StreamItem) =>
         renderLiveHeadStreamItem({
           item,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
         }),
+      [layoutLiveHeadItemById, renderStreamItem],
     );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       const existingTailSpacing =

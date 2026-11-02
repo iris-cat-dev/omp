@@ -242,59 +242,86 @@ describe("createWebStreamStrategy", () => {
     expect(scrollContainer?.dataset.overlayScrollbar).toBe("true");
   });
 
-  it("rerenders a stable live-head row when its revision changes", () => {
-    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
-    const viewportRef = React.createRef<StreamViewportHandle>();
-    const liveHead = [userMessage(1)];
-    let label = "collapsed";
-    const renderLiveHeadRow = vi.fn(() => <div>{label}</div>);
-    const renderInput: StreamRenderInput = {
-      agentId: "agent",
-      segments: {
-        historyVirtualized: [],
-        historyMounted: [],
-        liveHead,
-      },
-      boundary: {
-        hasVirtualizedHistory: false,
-        hasMountedHistory: false,
-        hasLiveHead: true,
-      },
-      renderers: {
-        ...createRenderers(vi.fn()),
-        renderLiveHeadRow,
-      },
-      listEmptyComponent: null,
-      viewportRef,
-      routeBottomAnchorRequest: null,
-      isAuthoritativeHistoryReady: true,
-      onNearBottomChange: vi.fn(),
-      onNearHistoryStart: vi.fn().mockReturnValue(true),
-      isLoadingOlderHistory: false,
-      hasOlderHistory: false,
-      olderHistoryProgressKey: null,
-      scrollEnabled: true,
-      listStyle: null,
-      baseListContentContainerStyle: null,
-      forwardListContentContainerStyle: null,
-    };
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
+  it.each(["live row", "history row", "live revision"])(
+    "follows %s growth without scrolling and preserves upward reading",
+    (change) => {
+      HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
+        const top = typeof options === "object" ? (options.top ?? 0) : 0;
+        this.scrollTop = Math.min(top, Math.max(0, this.scrollHeight - this.clientHeight));
+      };
+      const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+      const renderInput: StreamRenderInput = {
+        agentId: "agent",
+        segments: {
+          historyVirtualized: [],
+          historyMounted: [userMessage(1)],
+          liveHead: [userMessage(2)],
+        },
+        boundary: {
+          hasVirtualizedHistory: false,
+          hasMountedHistory: true,
+          hasLiveHead: true,
+        },
+        renderers: createRenderers(vi.fn()),
+        liveHeadRowRevision: 0,
+        listEmptyComponent: null,
+        viewportRef: React.createRef<StreamViewportHandle>(),
+        routeBottomAnchorRequest: null,
+        isAuthoritativeHistoryReady: true,
+        onNearBottomChange: vi.fn(),
+        onNearHistoryStart: vi.fn().mockReturnValue(true),
+        isLoadingOlderHistory: false,
+        hasOlderHistory: false,
+        olderHistoryProgressKey: null,
+        scrollEnabled: true,
+        listStyle: null,
+        baseListContentContainerStyle: null,
+        forwardListContentContainerStyle: null,
+      };
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      act(() => root?.render(strategy.render(renderInput)));
 
-    act(() => {
-      root?.render(strategy.render({ ...renderInput, liveHeadRowRevision: 0 }));
-    });
-    expect(container.textContent).toContain("collapsed");
+      const scrollContainer = container.querySelector<HTMLElement>(
+        '[data-testid="agent-chat-scroll"]',
+      )!;
+      let contentHeight = 1000;
+      Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+      Object.defineProperty(scrollContainer, "clientWidth", { configurable: true, value: 600 });
+      Object.defineProperty(scrollContainer, "scrollHeight", {
+        configurable: true,
+        get: () => contentHeight,
+      });
+      scrollContainer.scrollTop = 600;
 
-    label = "expanded";
-    act(() => {
-      root?.render(strategy.render({ ...renderInput, liveHeadRowRevision: 1 }));
-    });
+      let revision = 0;
+      const growContent = () => {
+        contentHeight += 240;
+        if (change === "live revision") {
+          renderInput.liveHeadRowRevision = ++revision;
+        } else {
+          renderInput.renderers = {
+            ...renderInput.renderers,
+            [change === "live row" ? "renderLiveHeadRow" : "renderHistoryMountedRow"]: () => (
+              <div style={{ height: contentHeight }} />
+            ),
+          };
+        }
+        act(() => root?.render(strategy.render(renderInput)));
+      };
+      growContent();
+      expect(scrollContainer.scrollTop).toBe(840);
 
-    expect(container.textContent).toContain("expanded");
-    expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
-  });
+      act(() => {
+        scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -200 }));
+        scrollContainer.scrollTop = 640;
+        scrollContainer.dispatchEvent(new Event("scroll"));
+      });
+      growContent();
+      expect(scrollContainer.scrollTop).toBe(640);
+    },
+  );
 
   it("keeps a row mounted when it moves from the live head into mounted history", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });

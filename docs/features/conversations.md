@@ -82,6 +82,8 @@ Sidebar rows always use the conversation title and last-activity time (for examp
 
 Only online hosts contribute project and chat rows. Disconnecting hides cached rows but preserves host profiles, project order, and host filters; reconnecting restores them. See [Remote hosts](../remote-hosts.md) for connection management.
 
+Resuming a reopened conversation displays live output and late-arriving approvals without a wheel-scroll refresh. When already at the bottom, changes to live rows or loaded-message presentation keep the latest content visible. Scrolling upward disengages output following and preserves the reading position.
+
 The chat's left outline excludes prompts sent by another agent through **send_agent_prompt**, while keeping them visible in the transcript. Direct user input, top-level tool input, and self-sent prompts remain eligible. Source metadata survives native-history reloads. Older messages without recorded source metadata remain indexed; Desktop does not guess provenance from their text.
 
 In project grouping, pinned chats stay above unpinned chats. Within each section, task-state order is running, needs input, failed, attention, then done; equal-state chats retain saved order and keyboard shortcuts follow displayed order. Drag pinned conversations to set their saved priority, previewed before release. Manual order persists locally across restarts, project switches, and sidebar collapse/expansion. Reordering does not open the chat or reorder unpinned chats, and is disabled when host or label filters hide part of the pinned list.
