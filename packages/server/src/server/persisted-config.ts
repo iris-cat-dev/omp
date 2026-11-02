@@ -280,7 +280,19 @@ export const PersistedConfigSchema = z
     worktrees: WorktreesConfigSchema.optional(),
     agents: z
       .object({
-        providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
+        providers: z
+          .preprocess(normalizeAgentProviders, ProviderOverridesSchema)
+          .transform((providers) => {
+            // Removed when routing moved from environment variables to proxyPolicy.
+            // Strip only the retired OMP key; runtime params remain strictly validated.
+            for (const [providerId, provider] of Object.entries(providers)) {
+              if (providerId === "omp" || provider.extends === "omp") {
+                delete provider.params?.proxyEnabled;
+              }
+            }
+            return providers;
+          })
+          .optional(),
         catalogRefreshTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
         quickAsk: AgentQuickAskSchema.optional(),

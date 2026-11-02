@@ -84,6 +84,8 @@ Saving a policy updates subsequent requests without restarting the conversation 
 
 Provider routes cover model HTTP/WebSocket traffic, OAuth login/refresh, provider usage and model discovery, remote compaction, and provider media/judgment requests. Host-level usage cards and runtime downloads use the host policy. Ordinary tool/MCP fetches, local/private/metadata destinations, and explicit bypass rules stay direct. `PI_PROXY`, provider-specific proxy variables, and standard proxy environment variables no longer select OMP routes.
 
+Upgrades discard the retired `agents.providers.omp.params.proxyEnabled` setting before provider startup, including for custom providers extending OMP. Other parameters and explicit `proxyPolicy` settings remain intact; saving the configuration removes the retired key from disk. The old toggle and proxy environment variables are not converted into a policy: configure **Host Settings → Proxy** to enable routing.
+
 Only HTTP(S) proxy URLs without paths, queries, or fragments are accepted; SOCKS is not supported. Broker-delegated OAuth refresh sends the effective policy to the broker, which must run the updated refresh endpoint and be able to reach that proxy. A desktop-only loopback proxy cannot route refreshes performed on a remote broker.
 
 ## Runtime updates

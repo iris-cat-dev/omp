@@ -130,10 +130,7 @@ import {
   readOmpMemorySettings,
   updateOmpMemorySettings as updateMemorySettings,
 } from "./memory-settings.js";
-import {
-  readOmpCodexResetSettings,
-  updateOmpCodexResetSettings,
-} from "./codex-reset-settings.js";
+import { readOmpCodexResetSettings, updateOmpCodexResetSettings } from "./codex-reset-settings.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import {
   cancelOmpInstall,

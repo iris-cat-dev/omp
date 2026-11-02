@@ -93,7 +93,10 @@ describe("shared messages stream parsing", () => {
         ...message,
         payload: {
           ...message.payload,
-          event: { ...message.payload.event, item: { type: "system_notice", notice: "model_changed" } },
+          event: {
+            ...message.payload.event,
+            item: { type: "system_notice", notice: "model_changed" },
+          },
         },
       }).success,
     ).toBe(false);
