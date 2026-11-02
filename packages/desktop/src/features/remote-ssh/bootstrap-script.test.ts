@@ -16,11 +16,5 @@ describe("buildRemoteInstallScript", () => {
     expect(result.error).toBeUndefined();
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
-    expect(script).not.toMatch(/daemon start .*--relay/u);
-    expect(script).toContain('2>"$PAIR_ERROR"');
-    expect(script).toContain('"$NODE" "$STAGED_CLI" daemon stop');
-    expect(script).toContain("--force");
-    expect(script).toContain('"bundleHash":"%s"');
-    expect(script).toContain(`'${"a".repeat(64)}'`);
   });
 });

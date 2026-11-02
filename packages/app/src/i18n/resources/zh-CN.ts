@@ -1795,6 +1795,8 @@ export const zhCN: TranslationResources = {
       phases: {
         connecting: "正在连接 SSH…",
         inspecting: "正在检查远端 Host…",
+        downloading: "正在下载远端 SDK…",
+        downloadingProgress: "正在下载远端 SDK… {{percent}}%",
         "preparing-runtime": "正在准备托管 Runtime…",
         uploading: "正在上传后端…",
         uploadingProgress: "正在上传后端… {{percent}}%",

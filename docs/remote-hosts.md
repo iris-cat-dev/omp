@@ -32,7 +32,11 @@ Only enable sharing for hosts you trust: while attached, a host can submit infer
 
 ## Supported hosts and prerequisites
 
-SSH provisioning supports POSIX macOS and glibc Linux hosts on x64 or arm64 only when the bundled backend's native target matches. Application builds include one target-native SDK, not a portable multi-platform CLI payload. An incompatible target is rejected; build the remote backend on the destination OS/architecture. Remote Windows and musl-based Linux distributions such as Alpine are unsupported.
+SSH provisioning supports macOS x64/arm64 and glibc Linux x64/arm64, independently of the Desktop machine's platform. The app selects the remote host's native SDK from the pinned public [OMP SDK Release](https://github.com/iris-cat-dev/omp-sdk/releases), verifies its SHA-256 and size, then uploads it over SSH. Remote Windows and musl-based Linux distributions such as Alpine remain unsupported.
+
+The Desktop machine needs HTTPS access to GitHub for the first download of each pinned SDK. Downloads are cached by checksum and reverified before reuse; interrupted or corrupt downloads are not installed. A running managed backend with the same bundle hash is reused without downloading or reinstalling. The app never selects `latest` or falls back to another platform's SDK.
+
+The SSH dialog shows SDK download progress. **Cancel** stops an active download and removes partial files.
 
 The remote account needs:
 

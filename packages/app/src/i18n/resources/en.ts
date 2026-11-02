@@ -1823,6 +1823,8 @@ export const en = {
       phases: {
         connecting: "Connecting with SSH…",
         inspecting: "Inspecting the remote host…",
+        downloading: "Downloading the remote SDK…",
+        downloadingProgress: "Downloading the remote SDK… {{percent}}%",
         "preparing-runtime": "Preparing the managed runtime…",
         uploading: "Uploading the backend…",
         uploadingProgress: "Uploading the backend… {{percent}}%",

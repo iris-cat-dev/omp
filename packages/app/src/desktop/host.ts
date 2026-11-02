@@ -239,6 +239,7 @@ export type DesktopRemoteSshEvent =
       phase:
         | "connecting"
         | "inspecting"
+        | "downloading"
         | "preparing-runtime"
         | "uploading"
         | "installing"

@@ -3,10 +3,10 @@ import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOmpSdkBuildConfig } from "./omp-sdk-build-config.mjs";
-import { stageOmpSdk } from "./stage-omp-sdk.mjs";
+import { stageNodeSdk } from "../omp-sdk/scripts/stage-node-sdk.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { source, buildTarget } = resolveOmpSdkBuildConfig();
+const { source, buildTarget, profile } = resolveOmpSdkBuildConfig();
 if (Number(process.versions.node.split(".")[0]) < 24) {
   throw new Error("Building the OMP Node SDK requires Node.js 24 or newer.");
 }
@@ -49,7 +49,10 @@ run([
   "run",
   buildTarget === "desktop" ? "gen:bundle:desktop" : "gen:bundle:node",
 ]);
-const sdk = await stageOmpSdk(sdkRoot, path.join(rootDir, "packages", "desktop", "sdk-dist"));
+const sdk = await stageNodeSdk(sdkRoot, path.join(rootDir, "packages", "desktop", "sdk-dist"), {
+  buildTarget,
+  profile,
+});
 console.log(
   `Built OMP SDK ${sdk.version} (${sdk.buildTarget}, ${sdk.platform}-${sdk.arch}) at ${sdk.directory}`,
 );

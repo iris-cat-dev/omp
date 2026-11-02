@@ -40,7 +40,7 @@ Packaging orchestration is centralized in [`scripts/packaging/`](../scripts/pack
 | [`build-windows.sh`](../scripts/packaging/build-windows.sh)                                   | Bash helper for native Windows x64 builds                       |
 | [`merge-windows-update-metadata.mjs`](../scripts/packaging/merge-windows-update-metadata.mjs) | Merges Windows update metadata documents for the same version   |
 
-General-purpose scripts remain directly under `scripts/`: [`build-omp-sdk.mjs`](../scripts/build-omp-sdk.mjs), [`stage-omp-sdk.mjs`](../scripts/stage-omp-sdk.mjs), [`build-remote-backend.mjs`](../scripts/build-remote-backend.mjs), [`build-daemon-web-ui.mjs`](../scripts/build-daemon-web-ui.mjs), [`deploy-webui.sh`](../scripts/deploy-webui.sh), and [`clean-package-dist.mjs`](../scripts/clean-package-dist.mjs).
+General-purpose scripts remain directly under `scripts/`: [`build-omp-sdk.mjs`](../scripts/build-omp-sdk.mjs), [`build-remote-backend.mjs`](../scripts/build-remote-backend.mjs), [`build-daemon-web-ui.mjs`](../scripts/build-daemon-web-ui.mjs), [`deploy-webui.sh`](../scripts/deploy-webui.sh), and [`clean-package-dist.mjs`](../scripts/clean-package-dist.mjs). SDK staging is shared with release construction through the submodule's [`stage-node-sdk.mjs`](../omp-sdk/scripts/stage-node-sdk.mjs).
 
 For an unpacked application without creating installers, use the lower-level build:
 
@@ -280,13 +280,21 @@ Both `scripts/packaging/build-windows.ps1` and `scripts/packaging/build-windows.
 
 ## Bundled OMP SDK
 
-`npm run build:omp-sdk` builds the pinned submodule and stages `packages/desktop/sdk-dist`. All application and remote-backend builds require it. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
+`npm run build:omp-sdk` builds the pinned submodule and stages `packages/desktop/sdk-dist` for the local application. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
 
 The application contains no standalone `omp`/`omp.exe` and never downloads one during a build. The bundled `omp-desktop` launcher remains: it runs Desktop's CLI and daemon with the application's embedded Node runtime, not the retired OMP executable.
 
 The Node SDK runtime does not ship `@ts-morph/common` or transpile TypeScript/JSX. Executable extensions, custom tools/commands, and eval scripts must be JavaScript; plugin manifests must reference precompiled `.js`, `.mjs`, or `.cjs` entries. Desktop's internal extensions are compiled during the server build. Reading/editing TypeScript files and the standalone Bun CLI are unaffected.
 
-The old `download:omp`, `build:windows:no-omp`, executable-preservation installer hook, and CLI-bound private distribution are removed. Standard installer and updater asset names remain unchanged. Remote payloads include the SDK tar and advertise only their compiled native target.
+The old `download:omp`, `build:windows:no-omp`, executable-preservation installer hook, and CLI-bound private distribution are removed. Standard installer and updater asset names remain unchanged.
+
+### Release-backed remote SDK
+
+Before building Desktop, publish the complete SDK-only Release pinned in [`omp-sdk/sdk/node-release.json`](../omp-sdk/sdk/node-release.json). The submodule's **Node SDK release (draft only)** workflow builds and installed-smokes macOS x64/arm64 and glibc Linux x64/arm64 on matching native runners; all four SDK archives and `omp-sdk-release.json` must be present and verified before publication. This is separate from Desktop installers and upstream npm/CLI releases. See [the SDK release procedure](../omp-sdk/docs/sdk.md#platform-specific-desktop-core-releases).
+
+`npm run build:remote-backend` downloads and verifies those fixed assets to generate each target's npm lockfile, then discards the SDK tarballs. `resources/remote-backend` contains only the compiled workspace archives, four target package/lock pairs and the schema-2 manifest. A missing or incomplete Release fails packaging rather than retaining an old or host-only bundle.
+
+At deployment, Desktop selects the SSH host's target, streams its pinned SDK through SHA-256/size verification into a checksum-keyed cache, then uploads the verified file. Download progress and cancellation are part of the existing SSH dialog. No GitHub token is embedded; first-time deployment requires GitHub access from Desktop, while the remote account still needs Node.js/npm HTTPS access.
 
 ## Bundled skills
 

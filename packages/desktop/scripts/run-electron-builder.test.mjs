@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import { createQualifiedPackager } from "./run-electron-builder.mjs";
 import { windowsBuildOutput } from "./windows-build-output.mjs";
-import { stageOmpSdk } from "../../../scripts/stage-omp-sdk.mjs";
+import { stageNodeSdk } from "../../../omp-sdk/scripts/stage-node-sdk.mjs";
 import { resolveOmpSdkBuildConfig } from "../../../scripts/omp-sdk-build-config.mjs";
 
 const require = createRequire(import.meta.url);
@@ -501,7 +501,7 @@ describe("SDK artifact target staging", () => {
         );
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "generic");
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", profile);
-        const result = await stageOmpSdk(fixture.source, fixture.output);
+        const result = await stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig());
         const manifest = JSON.parse(
           readFileSync(path.join(result.directory, "package.json"), "utf8"),
         );
@@ -581,7 +581,7 @@ describe("SDK artifact target staging", () => {
       try {
         rmSync(path.join(fixture.source, fixture.artifact, "plugins.mjs"));
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", buildTarget);
-        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow("plugins.mjs");
+        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow("plugins.mjs");
         expect(existsSync(fixture.output)).toBe(false);
       } finally {
         vi.unstubAllEnvs();
@@ -601,7 +601,7 @@ describe("SDK artifact target staging", () => {
       }
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "generic");
       vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-      const result = await stageOmpSdk(fixture.source, fixture.output);
+      const result = await stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig());
       expect(existsSync(path.join(result.directory, "dist/node/sdk.mjs"))).toBe(true);
     } finally {
       vi.unstubAllEnvs();
@@ -633,7 +633,7 @@ describe("SDK artifact target staging", () => {
         writeFileSync(metadataFile, JSON.stringify(metadata));
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", artifactTarget);
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
           "SDK build target mismatch",
         );
       } finally {
@@ -647,7 +647,7 @@ describe("SDK artifact target staging", () => {
     const fixture = createSdkFixture("generic");
     try {
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
-      await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+      await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
         "dist/node-desktop",
       );
       expect(existsSync(fixture.output)).toBe(false);
@@ -705,7 +705,7 @@ describe("SDK artifact target staging", () => {
         }
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
           "Desktop SDK has no isolated addon",
         );
         expect(existsSync(fixture.output)).toBe(false);
@@ -765,7 +765,7 @@ describe("SDK artifact target staging", () => {
       }
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
       vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-      await expect(stageOmpSdk(fixture.source, fixture.output)).rejects.toThrow(
+      await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
         "Desktop native addon metadata is stale or incompatible",
       );
       expect(existsSync(fixture.output)).toBe(false);

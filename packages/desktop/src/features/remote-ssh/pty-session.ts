@@ -1,8 +1,10 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import * as pty from "node-pty";
 import { MarkerBuffer } from "./marker-buffer.js";
 import { buildSshArguments, resolveSshExecutable } from "./target.js";
@@ -24,6 +26,7 @@ export class SshPtySession {
   private readonly target: RemoteSshTarget;
   private readonly controlPath: string;
   private readonly sshExecutable: string;
+  private readonly commands = new Set<ChildProcessWithoutNullStreams>();
   private interactive = true;
   private closed = false;
 
@@ -62,6 +65,7 @@ export class SshPtySession {
     });
     this.process.onExit(({ exitCode, signal }) => {
       this.closed = true;
+      for (const command of this.commands) command.kill();
       this.markers.rejectAll(
         new Error(`SSH exited before deployment completed (exit ${exitCode}, signal ${signal})`),
       );
@@ -93,7 +97,7 @@ export class SshPtySession {
     return this.runMultiplexedCommand(remoteCommand);
   }
 
-  async uploadFile(remotePath: string, contents: Buffer, expectedHash: string): Promise<void> {
+  async uploadFile(remotePath: string, contents: Buffer | Readable, expectedHash: string): Promise<void> {
     const directory = path.posix.dirname(remotePath);
     const quotedPath = shellQuote(remotePath);
     const remoteCommand = `umask 077; mkdir -p ${shellQuote(directory)} && cat > ${quotedPath} && if command -v sha256sum >/dev/null 2>&1; then sha256sum ${quotedPath} | awk '{print $1}'; else shasum -a 256 ${quotedPath} | awk '{print $1}'; fi`;
@@ -103,7 +107,7 @@ export class SshPtySession {
     }
   }
 
-  private async runMultiplexedCommand(remoteCommand: string, input?: Buffer): Promise<string> {
+  private async runMultiplexedCommand(remoteCommand: string, input?: Buffer | Readable): Promise<string> {
     if (this.closed) throw new Error("The SSH session is closed");
     const child = spawn(
       this.sshExecutable,
@@ -117,6 +121,7 @@ export class SshPtySession {
       ],
       { env: process.env, stdio: ["pipe", "pipe", "pipe"] },
     );
+    this.commands.add(child);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -141,9 +146,21 @@ export class SshPtySession {
         );
       });
     });
-    child.stdin.end(input);
-    await completed;
-    return stdout;
+    try {
+      if (input) {
+        await Promise.all([
+          completed,
+          pipeline(Buffer.isBuffer(input) ? Readable.from([input]) : input, child.stdin),
+        ]);
+      } else {
+        child.stdin.end();
+        await completed;
+      }
+      return stdout;
+    } finally {
+      this.commands.delete(child);
+      if (child.exitCode === null) child.kill();
+    }
   }
 
   private removeControlSocket(): void {
@@ -156,6 +173,7 @@ export class SshPtySession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    for (const command of this.commands) command.kill();
     this.process.kill();
     this.markers.rejectAll(new Error("SSH deployment was cancelled"));
     this.removeControlSocket();
