@@ -82,8 +82,34 @@ Cold OMP conversation history and the Chat outline read the persisted session
 directly instead of waiting for an SDK process to start. Loaded agents keep using
 their live timeline. Persisted pages share an epoch; once a prompt or reload
 creates a runtime timeline, old cursors reset through the existing sync protocol.
+Subagent lists and paged child timelines also read from disk without loading the
+parent runtime.
 Non-OMP sessions keep their provider-specific loading path. Automatic credential
 lookup skips retry delays when there is no multi-account automatic selection.
+
+Enhanced workflows synchronize the interface language immediately before sending
+a message, not when the composer mounts. Opening cold history therefore stays
+read-only; explicitly changing the workflow still synchronizes the language
+immediately.
+
+Cold background-process lists inspect durable OMP daemon metadata and its broker
+without resuming the conversation. Only the original native session's daemons are
+included; live runtime jobs remain on the loaded-session path.
+
+Persisted OMP runtimes automatically close after five minutes without live
+activity. Running turns, pending permissions, active subagents and unfinished
+background processes prevent retirement; a failed process inventory also keeps
+the runtime alive. Retirement releases the SDK process and daemon-side timeline
+and subagent caches, not the stored conversation, title, settings or unread state.
+History remains readable without starting an SDK process; sending another prompt
+restores the original session through the normal persistence loader. The main
+window, daemon, non-OMP providers and internal agents are unaffected.
+`AgentManagerOptions.idleRuntimeTimeoutMs` controls the timeout for embedded
+managers and deterministic verification; zero disables retirement.
+
+Cold OMP snapshots retain saved workflow features and approval-mode options.
+The composer reads active-directory entries or retained agent details, so
+retirement does not reset controls or skip enhanced-workflow language sync.
 
 Build the staged SDK or an unpacked application:
 

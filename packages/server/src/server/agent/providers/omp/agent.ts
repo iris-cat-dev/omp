@@ -5015,6 +5015,20 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
+  async listPersistedBackgroundProcesses(
+    handle: AgentPersistenceHandle,
+    cwd: string,
+  ): Promise<BackgroundProcess[]> {
+    const daemons = this.createBackgroundDaemons(cwd);
+    try {
+      return (await daemons.list())
+        .filter((entry) => entry.providerOwnerId === handle.sessionId)
+        .map(({ providerOwnerId: _owner, ...entry }) => entry);
+    } finally {
+      daemons.dispose();
+    }
+  }
+
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,

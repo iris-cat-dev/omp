@@ -857,6 +857,11 @@ export interface AgentClient {
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;
+  /** Read durable background processes without creating a provider session. */
+  listPersistedBackgroundProcesses?(
+    handle: AgentPersistenceHandle,
+    cwd: string,
+  ): Promise<BackgroundProcess[]>;
   importSession?(
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,

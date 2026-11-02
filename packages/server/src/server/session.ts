@@ -146,6 +146,7 @@ import {
 import { inspectOmpSessionHistoryAvailability } from "./agent/providers/omp/session-descriptor.js";
 import { streamOmpHistory, streamOmpSubagentHistory } from "./agent/providers/omp/history.js";
 import { ProviderSubagentStore } from "./agent/provider-subagents/store.js";
+import { OMP_AGENT_CAPABILITIES, OMP_MODES } from "./agent/providers/omp/provider-config.js";
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
@@ -1791,7 +1792,16 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds);
+    const payload = buildStoredAgentPayload(record, registeredProviderIds);
+    if (record.provider !== "omp") {
+      return payload;
+    }
+    return {
+      ...payload,
+      capabilities: { ...OMP_AGENT_CAPABILITIES },
+      availableModes: [...OMP_MODES],
+      ...(record.features ? { features: record.features } : {}),
+    };
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -7614,13 +7624,23 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      const record =
+        msg.type === "agent.background_processes.list.request"
+          ? await this.agentStorage.get(msg.agentId)
+          : null;
+      const persistedProcesses = record
+        ? await this.agentManager.listPersistedBackgroundProcesses(record)
+        : null;
+      if (persistedProcesses === null) {
+        await ensureUnarchivedAgentLoaded(msg.agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
       if (msg.type === "agent.background_processes.list.request") {
-        const processes = await this.agentManager.listBackgroundProcesses(msg.agentId);
+        const processes =
+          persistedProcesses ?? await this.agentManager.listBackgroundProcesses(msg.agentId);
         if (this.terminalManager)
           processes.push(...listAgentTerminalProcesses(this.terminalManager, msg.agentId));
         this.emitForSource(

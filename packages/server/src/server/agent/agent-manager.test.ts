@@ -539,6 +539,39 @@ class CloseRecordingTestAgentSession extends TestAgentSession {
   }
 }
 
+class IdleOmpTestClient extends TestAgentClient {
+  readonly sessions: TestAgentSession[] = [];
+
+  constructor() {
+    super("omp");
+  }
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const session = new TestAgentSession(config);
+    const contract: AgentSession = session;
+    contract.describePersistence = () => ({
+      provider: "omp",
+      sessionId: session.id,
+      nativeHandle: join(config.cwd, "session.jsonl"),
+    });
+    this.sessions.push(session);
+    return contract;
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    const session = await this.createSession({
+      provider: "omp",
+      cwd: config?.cwd ?? process.cwd(),
+      ...config,
+    });
+    session.describePersistence = () => handle;
+    return session;
+  }
+}
+
 class SteeringTestSession extends TestAgentSession {
   interruptCount = 0;
   interruptReasons: AgentInterruptReason[] = [];
@@ -10052,6 +10085,223 @@ test("idle agents remain resident until an explicit lifecycle action closes them
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
       () => undefined,
     );
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("retires idle OMP runtimes while preserving records, history and prompt restoration", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-retirement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimeline = new RecordingTimelineStore();
+  const client = new IdleOmpTestClient();
+  const manager = new AgentManager({
+    clients: { omp: client },
+    registry: storage,
+    durableTimelineStore: durableTimeline,
+    idleRuntimeTimeoutMs: 1000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "omp", cwd: workdir, title: "Keep this conversation" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const history: AgentTimelineItem[] = [
+      { type: "user_message", text: "Keep the context" },
+      { type: "assistant_message", text: "Context preserved" },
+    ];
+    for (const item of history) await manager.appendTimelineItem(agent.id, item);
+    await manager.flush();
+    const before = await storage.get(agent.id);
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(manager.getAgent(agent.id)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(10);
+    await manager.flush();
+
+    expect(manager.getAgent(agent.id)).toBeNull();
+    const retired = await storage.get(agent.id);
+    expect(retired).toMatchObject({
+      title: before?.title,
+      persistence: before?.persistence,
+      lastStatus: "closed",
+    });
+    expect(Boolean(retired?.archivedAt)).toBe(false);
+    expect((await durableTimeline.getCommittedRows(agent.id)).map((row) => row.item)).toEqual(
+      history,
+    );
+
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    const run = manager.runAgent(agent.id, "Continue with the saved context");
+    await vi.advanceTimersByTimeAsync(0);
+    await run;
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(agent.id)?.persistence?.sessionId).toBe(before?.persistence?.sessionId);
+    expect(
+      (await durableTimeline.getCommittedRows(agent.id)).slice(0, 2).map((row) => row.item),
+    ).toEqual(history);
+  } finally {
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  "running",
+  "permission",
+  "native child",
+  "managed child",
+  "background job",
+  "background lookup error",
+] as const)("protects idle OMP runtimes with %s work until it settles", async (blocker) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-protection-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new IdleOmpTestClient();
+  const manager = new AgentManager({
+    clients: { omp: client },
+    registry: storage,
+    idleRuntimeTimeoutMs: 1000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = client.sessions[0]!;
+    let busySession = session;
+    const contract: AgentSession = session;
+    if (blocker === "managed child") {
+      await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+      });
+      busySession = client.sessions[1]!;
+    }
+    if (blocker === "running" || blocker === "managed child") {
+      busySession.pushEvent({ type: "turn_started", provider: "omp", turnId: "busy-turn" });
+    } else if (blocker === "permission") {
+      session.pushEvent({
+        type: "permission_requested",
+        provider: "omp",
+        request: { id: "pending", provider: "omp", kind: "tool", name: "Write file" },
+      });
+    } else if (blocker === "native child") {
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "omp",
+        event: { type: "upsert", id: "native-child", status: "running" },
+      });
+    } else if (blocker === "background job") {
+      contract.listBackgroundProcesses = async () => [
+        {
+          id: "job",
+          name: "Build",
+          command: "build",
+          cwd: workdir,
+          ownerAgentId: agent.id,
+          scope: "agent",
+          source: "omp-job",
+          status: "running",
+          startedAt: Date.now(),
+          endedAt: null,
+          exitCode: null,
+          terminalId: null,
+        },
+      ];
+    } else {
+      contract.listBackgroundProcesses = async () => {
+        throw new Error("Process inventory unavailable");
+      };
+    }
+    await manager.flush();
+    await vi.advanceTimersByTimeAsync(4000);
+    await manager.flush();
+    expect(manager.getAgent(agent.id)).not.toBeNull();
+
+    if (blocker === "running" || blocker === "managed child") {
+      busySession.pushEvent({ type: "turn_completed", provider: "omp", turnId: "busy-turn" });
+    } else if (blocker === "permission") {
+      session.pushEvent({
+        type: "permission_resolved",
+        provider: "omp",
+        requestId: "pending",
+        resolution: { behavior: "allow" },
+      });
+    } else if (blocker === "native child") {
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "omp",
+        event: { type: "upsert", id: "native-child", status: "completed" },
+      });
+    } else {
+      contract.listBackgroundProcesses = async () => [];
+    }
+    await manager.flush();
+    await vi.advanceTimersByTimeAsync(2000);
+    await manager.flush();
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not retire a turn accepted during the background-process check", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new IdleOmpTestClient();
+  const manager = new AgentManager({
+    clients: { omp: client },
+    registry: storage,
+    idleRuntimeTimeoutMs: 1000,
+    logger,
+  });
+  const inventoryStarted = deferred<void>();
+  const releaseInventory = deferred<[]>();
+
+  try {
+    const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = client.sessions[0]!;
+    const contract: AgentSession = session;
+    contract.listBackgroundProcesses = async () => {
+      inventoryStarted.resolve();
+      return releaseInventory.promise;
+    };
+    contract.startTurn = async () => ({ turnId: "accepted-turn" });
+    await vi.advanceTimersByTimeAsync(1010);
+    await inventoryStarted.promise;
+    const stream = manager.streamAgent(agent.id, "Do not interrupt this new turn");
+    await stream.next();
+    releaseInventory.resolve([]);
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+    session.pushEvent({ type: "turn_completed", provider: "omp", turnId: "accepted-turn" });
+    await stream.return(undefined);
+  } finally {
+    releaseInventory.resolve([]);
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

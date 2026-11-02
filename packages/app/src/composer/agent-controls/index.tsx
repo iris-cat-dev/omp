@@ -458,7 +458,8 @@ function selectAgentControlsSlice(
   serverId: string,
   agentId: string,
 ): AgentControlsSlice {
-  const currentAgent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+  const session = state.sessions[serverId];
+  const currentAgent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
   if (!currentAgent) {
     return null;
   }
@@ -1772,20 +1773,7 @@ export const AgentControls = memo(function AgentControls({
     agentProvider,
     activeModelId,
   );
-  const workflowMode = agent?.features?.find(
-    (feature) => feature.id === WORKFLOW_MODE_FEATURE_ID,
-  )?.value;
   const workflowLocale = (i18n.resolvedLanguage ?? i18n.language) as SupportedLocale;
-  useEffect(() => {
-    if (!client || agentProvider !== "omp" || workflowMode !== ENHANCED_WORKFLOW_MODE) {
-      return;
-    }
-    void client
-      .setAgentFeature(agentId, WORKFLOW_LOCALE_FEATURE_ID, workflowLocale)
-      .catch((error) => {
-        console.warn("[AgentControls] sync enhanced workflow locale failed", error);
-      });
-  }, [agentId, agentProvider, client, workflowLocale, workflowMode]);
 
   const handleSelectModel = useCallback(
     async (modelId: string) => {

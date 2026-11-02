@@ -93,6 +93,8 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const IDLE_RUNTIME_TIMEOUT_MS = 5 * 60_000;
+const IDLE_RUNTIME_RECHECK_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -318,6 +320,8 @@ export interface AgentManagerOptions {
   getImageGenerationConfig?: () => ImageGenerationRuntimeConfig | null;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
+  /** OMP runtime inactivity timeout; zero disables automatic retirement. */
+  idleRuntimeTimeoutMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
     agentId: string;
@@ -746,6 +750,8 @@ export class AgentManager {
   private readonly agentRegistrationTasks = new Map<Promise<void>, string | undefined>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly idleRuntimeTimers = new Map<string, NodeJS.Timeout>();
+  private readonly idleRuntimeTimeoutMs: number;
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private readonly workspaceRootCreationTails = new Map<string, Promise<void>>();
   private mcpBaseUrl: string | null;
@@ -766,6 +772,7 @@ export class AgentManager {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
+    this.idleRuntimeTimeoutMs = options.idleRuntimeTimeoutMs ?? IDLE_RUNTIME_TIMEOUT_MS;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
@@ -843,6 +850,8 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const timer of this.idleRuntimeTimers.values()) clearTimeout(timer);
+    this.idleRuntimeTimers.clear();
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1155,6 +1164,23 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  async listPersistedBackgroundProcesses(
+    record: StoredAgentRecord,
+  ): Promise<BackgroundProcess[] | null> {
+    await this.waitForAgentClose(record.id);
+    if (this.agents.has(record.id) || record.internal || record.archivedAt || !record.persistence) {
+      return null;
+    }
+    const client = this.clients.get(record.provider);
+    if (!client?.listPersistedBackgroundProcesses) return null;
+    const processes = await client.listPersistedBackgroundProcesses(record.persistence, record.cwd);
+    if (this.agents.has(record.id)) return null;
+    for (const entry of processes) {
+      entry.ownerAgentId = entry.scope === "agent" ? record.id : null;
+    }
+    return processes;
   }
 
   async listBackgroundProcesses(agentId: string): Promise<BackgroundProcess[]> {
@@ -1743,12 +1769,16 @@ export class AgentManager {
   }
 
   closeAgent(agentId: string): Promise<void> {
+    return this.beginAgentClose(agentId);
+  }
+
+  private beginAgentClose(agentId: string, retireIdle = false): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId);
+    const close = this.closeAgentRuntime(agentId, retireIdle);
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -1759,7 +1789,7 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  private async closeAgentRuntime(agentId: string, retireIdle: boolean): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1773,7 +1803,8 @@ export class AgentManager {
       },
       "agent.manager.close.start",
     );
-    await this.drainSessionEvents(agentId);
+    // Retirement drains and rechecks before entering this synchronous close boundary.
+    if (!retireIdle) await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
@@ -1805,6 +1836,88 @@ export class AgentManager {
     if (persistError !== undefined) {
       throw persistError;
     }
+    if (retireIdle) this.discardRetainedAgentState(agentId);
+  }
+
+  private clearIdleRuntimeTimer(agentId: string): void {
+    clearTimeout(this.idleRuntimeTimers.get(agentId));
+    this.idleRuntimeTimers.delete(agentId);
+  }
+
+  private scheduleIdleRuntimeRetirement(agent: ManagedAgent, recheck = false): void {
+    this.clearIdleRuntimeTimer(agent.id);
+    if (
+      !this.acceptingAgentRegistrations ||
+      this.idleRuntimeTimeoutMs <= 0 ||
+      !this.registry ||
+      agent.internal ||
+      agent.provider !== "omp" ||
+      !agent.persistence?.nativeHandle ||
+      (agent.lifecycle !== "idle" && agent.lifecycle !== "error")
+    )
+      return;
+
+    const remaining = this.idleRuntimeTimeoutMs - (Date.now() - agent.updatedAt.getTime());
+    const delay =
+      remaining > 0
+        ? remaining
+        : recheck
+          ? Math.min(this.idleRuntimeTimeoutMs, IDLE_RUNTIME_RECHECK_MS)
+          : 1;
+    const timer = setTimeout(() => {
+      this.idleRuntimeTimers.delete(agent.id);
+      const task = this.retireIdleRuntime(agent.id)
+        .catch((err) =>
+          this.logger.warn({ err, agentId: agent.id }, "Failed to retire idle OMP runtime"),
+        )
+        .finally(() => {
+          const current = this.agents.get(agent.id);
+          if (current) this.scheduleIdleRuntimeRetirement(current, true);
+        });
+      this.trackBackgroundTask(task);
+    }, delay);
+    timer.unref();
+    this.idleRuntimeTimers.set(agent.id, timer);
+  }
+
+  private canRetireIdleRuntime(agent: LiveManagedAgent): boolean {
+    if (
+      !this.acceptingAgentRegistrations ||
+      this.agents.get(agent.id) !== agent ||
+      Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs ||
+      this.inFlightAgentCloses.has(agent.id)
+    )
+      return false;
+
+    for (const candidate of this.agents.values()) {
+      if (!this.isAgentInRunTree(candidate.id, agent.id)) continue;
+      if (
+        (candidate.lifecycle !== "idle" && candidate.lifecycle !== "error") ||
+        this.hasInFlightRun(candidate.id) ||
+        candidate.activeTurnId ||
+        candidate.pendingReplacement ||
+        candidate.pendingPermissions.size > 0 ||
+        this.stoppingAgentIds.has(candidate.id) ||
+        this.foregroundMutationTails.has(candidate.id) ||
+        this.lifecycleMutationTails.has(candidate.id) ||
+        this.sessionEventTails.has(candidate.id) ||
+        this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
+      )
+        return false;
+    }
+    return true;
+  }
+
+  private async retireIdleRuntime(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent || !this.canRetireIdleRuntime(agent)) return;
+    const processes = (await agent.session.listBackgroundProcesses?.()) ?? [];
+    if (processes.some((process) => !["exited", "failed", "cancelled"].includes(process.status)))
+      return;
+    await this.drainSessionEvents(agentId);
+    if (!this.canRetireIdleRuntime(agent)) return;
+    // No await between the final liveness check and removing the live runtime.
+    await this.beginAgentClose(agentId, true);
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -3964,6 +4077,7 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    this.clearIdleRuntimeTimer(agent.id);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -5140,6 +5254,7 @@ export class AgentManager {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
     this.syncFeaturesFromSession(agent);
+    this.scheduleIdleRuntimeRetirement(agent);
     if (options?.persist !== false) {
       this.enqueueBackgroundPersist(agent);
     }
