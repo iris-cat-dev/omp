@@ -24,6 +24,8 @@ Known releases use their tool catalog; unfamiliar versions use the combined know
 
 During an OMP run, the conversation footer shows the latest tool intent next to the loading indicator, token speed, and elapsed time. The label can update while a tool call is being generated, before execution starts; it does not depend on a visible tool card. Missing or empty intent leaves the existing loading indicator unchanged.
 
+Intent text uses the same looping shimmer as running tool-call labels, without changing its font size, single-line truncation, token speed, or elapsed-time layout. The shimmer pauses while the conversation pane is inactive and resumes when it becomes visible again.
+
 New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering; it does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
 
 The label belongs to the active run, survives reconnect, and clears when the run completes, fails, or stops. Late events from another or closed run cannot replace it. Saved tool history retains its original intent metadata without turning completed history into a live working status.

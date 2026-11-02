@@ -15,7 +15,12 @@ import {
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
-import { AssistantTurnFooter, LiveElapsed, STREAM_METADATA_FONT_SIZE } from "@/components/message";
+import {
+  AssistantTurnFooter,
+  LiveElapsed,
+  ShimmerText,
+  STREAM_METADATA_FONT_SIZE,
+} from "@/components/message";
 import type { TurnFooterHost } from "./layout";
 import { AssistantForkButton } from "@/components/assistant-fork-button";
 import { SyncedLoader } from "@/components/synced-loader";
@@ -169,15 +174,11 @@ const WorkingIndicator = memo(function WorkingIndicator({
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
       {workingMessage ? (
-        <Text
+        <ShimmerText
+          label={workingMessage}
           style={stylesheet.workingMessage}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          accessibilityLabel={workingMessage}
           testID="turn-working-message"
-        >
-          {workingMessage}
-        </Text>
+        />
       ) : null}
       {outputTokenSpeed !== null ? (
         <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
