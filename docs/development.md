@@ -123,6 +123,8 @@ npm run build -- --dir --publish never
 
 Restart the daemon after changing its backend or SDK. Existing sessions are not switched in place. SDK model/auth and plugin management use the SDK itself; CLI install/update operations are unavailable. SDK statistics read the persisted SQLite index without launching a CLI refresh.
 
+Host Agents settings omit standalone OMP installation and update controls. Update the bundled SDK through Desktop app updates; manage standalone CLI installations outside these settings. Desktop app update controls remain available.
+
 Build overrides, shared by development, Desktop packaging, and remote deployment:
 
 | Variable                  | Default                         | Purpose                              |
