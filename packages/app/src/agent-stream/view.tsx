@@ -78,7 +78,6 @@ import {
   TurnFooter,
   TURN_FOOTER_BOTTOM_SPACING,
   type AssistantTurnForkHandler,
-  type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
 import { useOutputTokenSpeed } from "./token-output-speed";
@@ -552,17 +551,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         });
       },
     );
-
-    // The in-flight turn forks with no boundary at all: `selectForkContextRows`
-    // projects the whole timeline when neither boundary field is given, so the
-    // fork carries everything up to now, including the response still streaming
-    // in front of the user.
-    const handleForkInFlightTurn: InFlightTurnForkHandler = useStableEvent(async () => {
-      await forkAgent({
-        agentId,
-        agent: context,
-      });
-    });
 
     // Freeze stream presentation while this tab slot is hidden to prevent offscreen
     // cell-window and turn-lifecycle renders from background agents.
@@ -1157,12 +1145,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             onOpenFile={handleFilePreviewOpen}
             onRestoreFile={readOnly ? undefined : handleRestoreDeletedFile}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
         handleForkAssistantTurn,
-        handleForkInFlightTurn,
         handleFilePreviewOpen,
         handleRestoreDeletedFile,
         readOnly,
