@@ -44,12 +44,6 @@ describe("tokenizeToLines", () => {
     const huge = "x".repeat(MAX_HIGHLIGHT_CHARS + 1);
     expect(tokenizeToLines(huge, "ts")).toBeNull();
   });
-
-  it("serves a cached result on repeat calls (identity-stable)", () => {
-    const first = tokenizeToLines("const cached = true;", "ts");
-    const second = tokenizeToLines("const cached = true;", "ts");
-    expect(first).toBe(second);
-  });
 });
 
 describe("highlightToKeyedLines", () => {

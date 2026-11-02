@@ -694,27 +694,40 @@ function selectReplicaInput(session: SessionState, agentId: string | null): Repl
 }
 
 function serializeHost(serverId: string, input: ReplicaInput, directorySync?: unknown): StoredHost {
-  const canonicalItems = input.timelineItems?.filter(
-    (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
-  );
-  const items = canonicalItems
-    ? canonicalItems.map(serializeTimelineItem).filter((item) => item !== null)
-    : undefined;
+  const timeline = input.timelineItems;
+  const items: StoredTimelineItem[] | undefined = timeline ? [] : undefined;
   const range = input.timelineRange;
-  const canPersistCoverage =
-    range !== null &&
-    range.retainedRanges === undefined &&
-    canonicalItems !== undefined &&
-    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
-    items?.length === canonicalItems.length &&
-    canonicalItems.every(
-      (item) =>
-        isTimelineItemStoredLosslessly(item) &&
-        item.timelineCursor?.epoch === range.epoch &&
-        item.timelineCursor.seq >= range.startSeq &&
-        item.timelineCursor.seq <= range.endSeq,
-    ) &&
-    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
+  let canPersistCoverage =
+    range !== null && range.retainedRanges === undefined && timeline !== undefined;
+  let canonicalCount = 0;
+  let reachesRangeEnd = false;
+
+  if (timeline && items) {
+    // Select the last serializable rows, not just the last source rows.
+    for (let index = timeline.length - 1; index >= 0; index--) {
+      const item = timeline[index];
+      if (item.kind === "user_message" && isUnreconciledLocalUserMessage(item)) continue;
+      canonicalCount += 1;
+      if (items.length < MAX_TIMELINE_ITEMS) {
+        const stored = serializeTimelineItem(item);
+        if (stored) items.push(stored);
+        else canPersistCoverage = false;
+      }
+      if (canPersistCoverage && range !== null) {
+        canPersistCoverage =
+          canonicalCount <= MAX_TIMELINE_ITEMS &&
+          isTimelineItemStoredLosslessly(item) &&
+          item.timelineCursor?.epoch === range.epoch &&
+          item.timelineCursor.seq >= range.startSeq &&
+          item.timelineCursor.seq <= range.endSeq;
+        reachesRangeEnd ||= item.timelineCursor?.seq === range.endSeq;
+      }
+      // Earlier rows cannot affect a full tail once coverage is already lost.
+      if (items.length === MAX_TIMELINE_ITEMS && !canPersistCoverage) break;
+    }
+    items.reverse();
+  }
+  canPersistCoverage &&= reachesRangeEnd;
   return {
     serverId,
     agents: Array.from(input.agents.values(), serializeAgent),
@@ -725,10 +738,11 @@ function serializeHost(serverId: string, input: ReplicaInput, directorySync?: un
       input.focusedAgent && items
         ? {
             agentId: input.focusedAgent.id,
-            items: items.slice(-MAX_TIMELINE_ITEMS),
-            range: canPersistCoverage
-              ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
-              : null,
+            items,
+            range:
+              canPersistCoverage && range !== null
+                ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+                : null,
             hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
           }
         : null,

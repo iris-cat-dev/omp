@@ -159,6 +159,17 @@ Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster s
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
 
+Replica persistence serializes only the latest 50 serializable canonical timeline
+items. Pending local messages do not count toward that window; omitted canonical
+rows still prevent authoritative coverage. Older rows are inspected only when
+needed to fill the tail or verify coverage. Cache version 6 and restored cursor
+semantics are unchanged. This bounds serialization work, not live timeline retention.
+
+Syntax tokenization keeps a 200-entry LRU with an additional 2,000,000 UTF-16 code
+unit budget across its extension/source keys. This is not a byte-accurate token
+heap limit. Eviction only requires re-tokenization; highlighting output and the
+existing per-block size limit are unchanged.
+
 The task panel and expanded todo activity details share UI tree controls built
 from the directory trees' disclosure chevrons and row presentation, without
 terminal connector glyphs or display-only phase numbering. Every phase remains
