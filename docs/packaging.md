@@ -284,6 +284,8 @@ Both `scripts/packaging/build-windows.ps1` and `scripts/packaging/build-windows.
 
 The application contains no standalone `omp`/`omp.exe` and never downloads one during a build. The bundled `omp-desktop` launcher remains: it runs Desktop's CLI and daemon with the application's embedded Node runtime, not the retired OMP executable.
 
+The Node SDK runtime does not ship `@ts-morph/common` or transpile TypeScript/JSX. Executable extensions, custom tools/commands, and eval scripts must be JavaScript; plugin manifests must reference precompiled `.js`, `.mjs`, or `.cjs` entries. Desktop's internal extensions are compiled during the server build. Reading/editing TypeScript files and the standalone Bun CLI are unaffected.
+
 The old `download:omp`, `build:windows:no-omp`, executable-preservation installer hook, and CLI-bound private distribution are removed. Standard installer and updater asset names remain unchanged. Remote payloads include the SDK tar and advertise only their compiled native target.
 
 ## Bundled skills

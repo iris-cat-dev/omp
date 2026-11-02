@@ -151,7 +151,7 @@ Packaged SDK and Desktop image operations share Sharp 0.35.4 and one target-nati
 
 `npm run build:remote-backend` includes the same SDK by default, without a separate opt-in flag. Its manifest advertises only the native target built on that host. A different SSH target requires a backend bundle built on that OS/architecture; incompatible targets are rejected before deployment.
 
-The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and exercises TypeScript extension loading plus concurrent RPC sessions and SDK management. CLI command overrides are not SDK entrypoints, and CLI-bound private plugin packages are unsupported. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
+The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and exercises JavaScript extension loading plus concurrent RPC sessions and SDK management. Node SDK plugins, custom tools/commands, and eval are JavaScript-only: precompile TS/TSX/JSX sources and dependencies to `.js`, `.mjs`, or `.cjs`. Development selects the server's built JavaScript helpers for internal background-job, image, and local-model extensions instead of asking the SDK to compile their TypeScript sources. CLI command overrides are not SDK entrypoints, and CLI-bound private plugin packages are unsupported. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
 
 ### Startup and first-window work
 

@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 import { z } from "zod";
 import {
   BackgroundProcessSchema,
@@ -105,28 +106,21 @@ export function resolveOmpBackgroundJobsExtensionPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./background-jobs-extension.js", moduleUrl));
-  const source = fileURLToPath(new URL("./background-jobs-extension.ts", moduleUrl));
-  const extension = pathExists(compiled) ? compiled : source;
-  return extension.replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("background-jobs-extension", moduleUrl, pathExists);
 }
 
 export function resolveOmpImageSettingsExtensionPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./image-settings-extension.js", moduleUrl));
-  const source = fileURLToPath(new URL("./image-settings-extension.ts", moduleUrl));
-  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("image-settings-extension", moduleUrl, pathExists);
 }
 
 export function resolveOmpCodexCatalogPreloadPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./codex-catalog-preload.js", moduleUrl));
-  const source = fileURLToPath(new URL("./codex-catalog-preload.ts", moduleUrl));
-  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("codex-catalog-preload", moduleUrl, pathExists);
 }
 
 function installCodexCatalogPreload(launch: OmpRuntimeLaunch): void {
@@ -330,11 +324,9 @@ export async function prepareOmpLocalModelsLaunch(
     // The final CLI selector wins over persisted defaults and resumed remote models.
     launch.argv.push("--model", reference);
     launch.model = reference;
-    const compiled = fileURLToPath(new URL("./local-models-extension.js", import.meta.url));
-    const source = fileURLToPath(new URL("./local-models-extension.ts", import.meta.url));
     launch.argv.push(
       "--extension",
-      (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked"),
+      resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url),
     );
     launch.env = {
       ...launch.env,
