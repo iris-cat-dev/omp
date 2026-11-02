@@ -125,6 +125,8 @@ Older workspaces with multiple active roots restore each root as a tab and focus
 
 Native `task` workers appear in the parent's subagent track as soon as OMP reports them, without waiting for the parent tool result. They are provider children, not independent Desktop conversations. Opening a child shows a read-only transcript with live text, reasoning, tool arguments, and tool output; nested children retain their dotted native IDs.
 
+The child's native progress owns its displayed model selector, including thinking level and fallback changes. Assistant-message metadata is used only until progress reports a model for that run; streaming text cannot toggle the model label between selector and response-model forms. Missing description fields preserve an existing task label rather than replacing it with the full assignment.
+
 An idle child can resume under the same ID. A new native `started` event begins that run; delayed progress or metadata cannot reopen a completed or canceled run. The existing transcript remains available across continuation and reconnection.
 
 Native snapshots and JSONL history restore child transcripts independently of the parent's conversation history. Retained child lists and paged transcripts can also be read while the parent runtime is unloaded. Ordinary reads preserve the timeline epoch; explicit history replacement, such as a session reload or rewind, can replace it and requires a fresh client snapshot.

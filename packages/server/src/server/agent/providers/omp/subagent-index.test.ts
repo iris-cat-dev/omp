@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpSubagentEventPayload } from "./rpc-types.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
+import { ProviderSubagentStore } from "../../provider-subagents/store.js";
 
 describe("OMP provider subagent mapper", () => {
   test("maps lifecycle and progress frames to stable provider_subagent descriptors", () => {
@@ -73,6 +74,140 @@ describe("OMP provider subagent mapper", () => {
         title: "explore",
       },
     });
+  });
+
+  test("keeps the progress model stable across text metadata and accepts model and run changes", () => {
+    const index = new OmpSubagentIndex();
+    const store = new ProviderSubagentStore();
+    const parent = {};
+    const lifecycle = { id: "child", index: 0, agent: "task" };
+    const apply = (events: AgentStreamEvent[]) => {
+      for (const event of events) {
+        if (event.type === "provider_subagent") store.apply("parent", event.provider, event.event);
+      }
+      return store.get("parent", "child")!.model;
+    };
+    const progress = (model: string) =>
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "task",
+        task: "Inspect files",
+        progress: { id: "child", status: "running", resolvedModel: model },
+      });
+    const message = (text: string) =>
+      index.handleEvent(parent, {
+        id: "child",
+        event: {
+          type: "message_update",
+          message: {
+            role: "assistant",
+            provider: "trae",
+            model: "gpt-6-astra@i18n-tt",
+            responseModel: "gpt-6-astra-response",
+            content: [{ type: "text", text }],
+          },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text },
+        },
+      });
+    apply(index.handleLifecycle(parent, { ...lifecycle, status: "started" }));
+    for (const text of ["Inspect", " the", " files"]) {
+      expect(apply(progress("trae/gpt-6-astra@i18n-tt:high"))).toBe(
+        "trae/gpt-6-astra@i18n-tt:high",
+      );
+      expect(apply(message(text))).toBe("trae/gpt-6-astra@i18n-tt:high");
+    }
+    expect(store.fetchTimeline("parent", "child").rows.map((row) => row.item)).toMatchObject([
+      { type: "assistant_message", text: "Inspect" },
+      { type: "assistant_message", text: " the" },
+      { type: "assistant_message", text: " files" },
+    ]);
+    expect(apply(progress("anthropic/claude-sonnet-5:low"))).toBe("anthropic/claude-sonnet-5:low");
+    expect(apply(message("Old metadata"))).toBe("anthropic/claude-sonnet-5:low");
+    apply(index.handleLifecycle(parent, { ...lifecycle, status: "completed" }));
+    apply(index.handleLifecycle(parent, { ...lifecycle, status: "started" }));
+    expect(apply(message("New run"))).toBe("trae/gpt-6-astra-response");
+    expect(apply(progress("trae/gpt-6-astra@i18n-tt:low"))).toBe("trae/gpt-6-astra@i18n-tt:low");
+  });
+
+  test("does not replace a known task label with an assignment fallback", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    const lifecycle = { id: "child", index: 0, agent: "task" };
+    const assignment = "# Target\nOwn blender/zones/rr.py";
+    index.handleLifecycle(parent, {
+      ...lifecycle,
+      status: "started",
+      description: "Inspect zones",
+    });
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "task",
+        task: assignment,
+        assignment,
+        progress: { id: "child", status: "running" },
+      }),
+    ).toMatchObject([{ event: { description: "Inspect zones" } }]);
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "task",
+        task: assignment,
+        assignment,
+        progress: { id: "child", status: "running", description: "Review zone boundaries" },
+      }),
+    ).toMatchObject([{ event: { description: "Review zone boundaries" } }]);
+    expect(
+      index.hydrateSnapshot(parent, {
+        ...lifecycle,
+        agentSource: "bundled",
+        lastUpdate: 1,
+        status: "running",
+        assignment,
+      }),
+    ).toMatchObject([{ event: { description: "Review zone boundaries" } }]);
+    const restoredParent = {};
+    expect(
+      index.hydrateSnapshot(restoredParent, {
+        ...lifecycle,
+        agentSource: "bundled",
+        lastUpdate: 1,
+        status: "running",
+        assignment,
+        progress: {
+          id: "child",
+          status: "running",
+          description: "Inspect zones",
+          resolvedModel: "trae/gpt-6-astra@i18n-tt:high",
+        },
+      }),
+    ).toMatchObject([{ event: { description: "Inspect zones" } }]);
+    expect(
+      index.handleEvent(restoredParent, {
+        id: "child",
+        event: {
+          type: "message_start",
+          message: {
+            role: "assistant",
+            provider: "trae",
+            model: "gpt-6-astra@i18n-tt",
+            content: [],
+          },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      index.handleProgress(
+        {},
+        {
+          index: 0,
+          agent: "task",
+          task: assignment,
+          assignment,
+          progress: { id: "child", status: "running" },
+        },
+      ),
+    ).toMatchObject([{ event: { description: assignment } }]);
   });
 
   test("updates from child message metadata and preserves it through metadata-less events", () => {
