@@ -202,6 +202,7 @@ export interface DispatchComposerAgentMessageInput {
     images: AttachmentMetadata[],
   ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
   submission: MessageSubmissionWriter;
+  prepare?: () => Promise<void>;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
 }
@@ -226,6 +227,9 @@ export async function dispatchComposerAgentMessage(
   });
   input.submission.begin(input.agentId, userMessage);
   try {
+    if (input.prepare) {
+      await input.prepare();
+    }
     const imagesData = await input.encodeImages(wirePayload.images);
     assertLocalModelBridgeReady(input.client);
     await input.client.sendAgentMessage(input.agentId, input.text, {

@@ -1326,13 +1326,6 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
-      if (client) {
-        await assertWorkspaceDirectoryExists({
-          cwd,
-          directoryExists: (path) => client.directoryExists(path),
-          missingDirectoryMessage: t("panels.file.directoryMissing"),
-        });
-      }
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
@@ -1368,13 +1361,6 @@ function ComposerContentImpl({
       const session = useSessionStore.getState().sessions[serverId];
       const targetAgent =
         session?.agents.get(targetAgentId) ?? session?.agentDetails.get(targetAgentId);
-      if (targetAgent?.provider === "omp") {
-        await client.setAgentFeature(
-          targetAgentId,
-          WORKFLOW_LOCALE_FEATURE_ID,
-          i18n.resolvedLanguage ?? i18n.language,
-        );
-      }
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1385,6 +1371,20 @@ function ComposerContentImpl({
         }),
         encodeImages,
         submission: createMessageSubmissionWriter(serverId),
+        prepare: async () => {
+          await assertWorkspaceDirectoryExists({
+            cwd,
+            directoryExists: (path) => client.directoryExists(path),
+            missingDirectoryMessage: t("panels.file.directoryMissing"),
+          });
+          if (targetAgent?.provider === "omp") {
+            await client.setAgentFeature(
+              targetAgentId,
+              WORKFLOW_LOCALE_FEATURE_ID,
+              i18n.resolvedLanguage ?? i18n.language,
+            );
+          }
+        },
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
@@ -1397,6 +1397,7 @@ function ComposerContentImpl({
   }, [
     appSettings.sendBehavior,
     client,
+    cwd,
     i18n,
     onAttentionPromptSend,
     serverId,

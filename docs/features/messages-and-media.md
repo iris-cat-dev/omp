@@ -4,6 +4,7 @@ Read assistant output, inspect/save images, open workspace links safely, and con
 
 ## Contents
 
+- [Sending messages](#sending-messages)
 - [Long input messages](#long-input-messages)
 - [Images and previews](#images-and-previews)
 - [Links and local files](#links-and-local-files)
@@ -11,6 +12,12 @@ Read assistant output, inspect/save images, open workspace links safely, and con
 - [Math](#math)
 - [Thinking and tool calls](#thinking-and-tool-calls)
 - [Turn statistics](#turn-statistics)
+
+## Sending messages
+
+Sending adds the message to the conversation immediately, before workspace validation, workflow-language synchronization, attachment encoding, or host acceptance completes. The composer keeps its existing sending/loading behavior until submission finishes. The host's canonical message reconciles with the local row by client message ID rather than creating a duplicate.
+
+If validation or sending fails, the unacknowledged local row is removed, the text and attachments return to the composer, and the error is shown. A message already acknowledged by the host remains in the conversation.
 
 ## Long input messages
 

@@ -94,6 +94,8 @@ Enhanced workflows synchronize the interface language immediately before sending
 a message, not when the composer mounts. Opening cold history therefore stays
 read-only; explicitly changing the workflow still synchronizes the language
 immediately.
+The renderer publishes the local message before asynchronous workspace checks
+and language synchronization; both still finish before the prompt is sent.
 
 Cold background-process lists inspect durable OMP daemon metadata and its broker
 without resuming the conversation. Only the original native session's daemons are

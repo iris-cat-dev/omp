@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Composer } from "@/composer";
+import { assertWorkspaceDirectoryExists } from "@/composer/submit";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
@@ -262,8 +263,13 @@ export function WorkspaceSetupDialog() {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
         const connectedClient = withConnectedClient();
+        await assertWorkspaceDirectoryExists({
+          cwd,
+          directoryExists: (path) => connectedClient.directoryExists(path),
+          missingDirectoryMessage: t("panels.file.directoryMissing"),
+        });
+        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
         if (!composerState) {
           throw new Error(t("workspaceSetup.errors.composerStateRequired"));
         }

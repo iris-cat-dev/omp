@@ -488,6 +488,76 @@ describe("withRetainedComposerImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  it("shows the submitted message while preparation is pending and rolls it back on failure", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+    const preparation = Promise.withResolvers<void>();
+    const failure = new Error("Workspace directory not found");
+
+    const sending = dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "show immediately",
+      attachments: [{ kind: "image", metadata: imageMetadata }],
+      encodeImages: passthroughEncodeImages,
+      submission: stream,
+      prepare: () => preparation.promise,
+    });
+
+    expect(stream.tail.get("agent")).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        text: "show immediately",
+        images: [imageMetadata],
+      }),
+    ]);
+    expect(client.calls).toEqual([]);
+
+    preparation.reject(failure);
+    await expect(sending).rejects.toBe(failure);
+    expect(stream.tail.get("agent")).toEqual([]);
+  });
+
+  it("keeps the submitted row pending through preparation and RPC acceptance", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+    const preparation = Promise.withResolvers<void>();
+    const acceptance = Promise.withResolvers<void>();
+    const rpcStarted = Promise.withResolvers<void>();
+    client.sendAgentMessage = async () => {
+      rpcStarted.resolve();
+      await acceptance.promise;
+    };
+
+    const sending = dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "send after preparation",
+      attachments: [],
+      encodeImages: passthroughEncodeImages,
+      submission: stream,
+      prepare: () => preparation.promise,
+    });
+    const submitted = stream.tail.get("agent")![0];
+    const clientMessageId = (submitted as Extract<StreamItem, { kind: "user_message" }>)
+      .clientMessageId!;
+    expect(readSubmission(stream, "agent").submissions).toEqual([
+      { clientMessageId, providerAcknowledged: false, rpcSettled: false },
+    ]);
+
+    preparation.resolve();
+    await rpcStarted.promise;
+    expect(stream.tail.get("agent")).toEqual([submitted]);
+    expect(readSubmission(stream, "agent").submissions[0].rpcSettled).toBe(false);
+
+    acceptance.resolve();
+    await sending;
+    expect(stream.tail.get("agent")).toEqual([submitted]);
+    expect(readSubmission(stream, "agent").submissions).toEqual([
+      { clientMessageId, providerAcknowledged: false, rpcSettled: true },
+    ]);
+  });
+
   it("forwards the configured active-turn intent without provider capability checks", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
