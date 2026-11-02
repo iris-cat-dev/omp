@@ -40,7 +40,6 @@ function reloadableConfig(
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
     terminalProfiles: daemon.terminalProfiles,
-    agentProfiles: daemon.agentProfiles,
     ompProviderAccountNotes: daemon.ompProviderAccountNotes,
     cors: { allowedOrigins: [] },
     trustedProxies: ["loopback"],
@@ -350,20 +349,35 @@ describe("DaemonConfigStore", () => {
     store.patch({
       providers: {
         omp: {
-          proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
+          proxyPolicy: {
+            enabled: false,
+            default: { mode: "proxy", url: "http://127.0.0.1:7890" },
+            providers: { anthropic: { mode: "direct" } },
+          },
         },
       },
     });
 
     expect(store.get().providers.omp).toMatchObject({
-      proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
+      proxyPolicy: {
+        enabled: false,
+        default: { mode: "proxy", url: "http://127.0.0.1:7890" },
+        providers: { anthropic: { mode: "direct" } },
+      },
     });
     expect(loadPersistedConfig(paseoHome).agents?.providers?.omp).toMatchObject({
-      proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
+      proxyPolicy: {
+        enabled: false,
+        default: { mode: "proxy", url: "http://127.0.0.1:7890" },
+        providers: { anthropic: { mode: "direct" } },
+      },
     });
     store.patch({ providers: { omp: { proxyPolicy: { enabled: true, providers: {} } } } });
     expect(store.get().providers.omp?.proxyPolicy).toEqual({ enabled: true, providers: {} });
-    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp?.proxyPolicy).toEqual({ enabled: true, providers: {} });
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp?.proxyPolicy).toEqual({
+      enabled: true,
+      providers: {},
+    });
   });
 
   test("saves a disabled OMP tool using the stock 18.3.0 CLI flags", () => {
@@ -469,51 +483,6 @@ describe("DaemonConfigStore", () => {
     });
   });
 
-  test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
-    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
-    tempDirs.push(paseoHome);
-    const store = new DaemonConfigStore(paseoHome, {
-      relay: { enabled: false },
-      mcp: { injectIntoAgents: false },
-      providers: {},
-      metadataGeneration: { providers: [] },
-      autoArchiveAfterMerge: false,
-      enableTerminalAgentHooks: false,
-      appendSystemPrompt: "",
-    });
-
-    store.patch({
-      agentProfiles: [
-        {
-          id: "profile_ui",
-          name: "UI work",
-          icon: "🎨",
-          provider: "claude",
-          model: "claude-opus-5",
-          modeId: "plan",
-          thinkingOptionId: "think-hard",
-          featureValues: { webSearch: true },
-          notes: "Use for components, layout and design tokens.",
-        },
-      ],
-    });
-
-    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
-      {
-        id: "profile_ui",
-        name: "UI work",
-        icon: "🎨",
-        provider: "claude",
-        model: "claude-opus-5",
-        modeId: "plan",
-        thinkingOptionId: "think-hard",
-        featureValues: { webSearch: true },
-        notes: "Use for components, layout and design tokens.",
-      },
-    ]);
-    expect(store.get().agentProfiles).toHaveLength(1);
-  });
-
   test("persists SDK backend settings and explicit CLI overrides through daemon patches", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-sdk-"));
     tempDirs.push(paseoHome);
@@ -585,29 +554,6 @@ describe("DaemonConfigStore", () => {
     const persisted = loadPersistedConfig(paseoHome);
     expect(persisted.daemon?.ompProviderAccountNotes).toEqual({ "4": "个人订阅" });
     expect(reloadableConfig(persisted).ompProviderAccountNotes).toEqual({ "4": "个人订阅" });
-  });
-
-  test("patch replaces the whole agent profile list rather than merging entries", () => {
-    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
-    tempDirs.push(paseoHome);
-    const store = new DaemonConfigStore(paseoHome, {
-      relay: { enabled: false },
-      mcp: { injectIntoAgents: false },
-      providers: {},
-      metadataGeneration: { providers: [] },
-      autoArchiveAfterMerge: false,
-      enableTerminalAgentHooks: false,
-      appendSystemPrompt: "",
-      agentProfiles: [
-        { id: "a", name: "Keep", provider: "claude" },
-        { id: "b", name: "Drop", provider: "codex" },
-      ],
-    });
-
-    store.patch({ agentProfiles: [{ id: "a", name: "Keep", provider: "claude" }] });
-
-    expect(store.get().agentProfiles).toEqual([{ id: "a", name: "Keep", provider: "claude" }]);
-    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toHaveLength(1);
   });
 
   test("rolls back config when a field transition fails", () => {
@@ -1521,14 +1467,13 @@ describe("DaemonConfigStore reload", () => {
     expect(store.get()).toEqual(before);
   });
 
-  test("removing providers and optional profiles clears live state", () => {
+  test("removing providers and optional terminal profiles clears live state", () => {
     const { paseoHome, store, persisted } = createReloadableStore();
     writeConfig(paseoHome, {
       ...persisted,
       daemon: {
         ...persisted.daemon,
         terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
-        agentProfiles: [{ id: "review", name: "Review", provider: "codex" }],
       },
       agents: {
         providers: {
@@ -1541,14 +1486,9 @@ describe("DaemonConfigStore reload", () => {
     writeConfig(paseoHome, persisted);
     const result = store.reload();
 
-    expect(result.appliedPaths).toEqual([
-      "agents.providers",
-      "daemon.agentProfiles",
-      "daemon.terminalProfiles",
-    ]);
+    expect(result.appliedPaths).toEqual(["agents.providers", "daemon.terminalProfiles"]);
     expect(store.get().providers).toEqual({});
     expect(store.get().terminalProfiles).toBeUndefined();
-    expect(store.get().agentProfiles).toBeUndefined();
   });
 
   test("reports a launch-controlled edit without changing live state", () => {

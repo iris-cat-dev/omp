@@ -45,7 +45,6 @@ interface SupportedMutableConfigPatch {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
-  agentProfiles?: MutableDaemonConfig["agentProfiles"];
   ompProviderAccountNotes?: MutableDaemonConfig["ompProviderAccountNotes"];
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
@@ -321,7 +320,6 @@ const RELOADABLE_PATHS = [
   "daemon.enableTerminalAgentHooks",
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
-  "daemon.agentProfiles",
   "daemon.ompProviderAccountNotes",
   "app.baseUrl",
   "agents.providers",
@@ -351,7 +349,6 @@ const PERSISTED_TO_MUTABLE_PATH: Record<string, string> = {
   "daemon.enableTerminalAgentHooks": "enableTerminalAgentHooks",
   "daemon.appendSystemPrompt": "appendSystemPrompt",
   "daemon.terminalProfiles": "terminalProfiles",
-  "daemon.agentProfiles": "agentProfiles",
   "daemon.ompProviderAccountNotes": "ompProviderAccountNotes",
   "app.baseUrl": "app.baseUrl",
   "agents.providers": "providers",
@@ -457,7 +454,6 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       ? { appendSystemPrompt: patch.appendSystemPrompt }
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
-    ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.ompProviderAccountNotes !== undefined
       ? { ompProviderAccountNotes: patch.ompProviderAccountNotes }
       : {}),
@@ -1048,7 +1044,6 @@ function mergeMutableDaemonPatch(
   }
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
-  if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
   if (patch.ompProviderAccountNotes !== undefined) {
     next.ompProviderAccountNotes = patch.ompProviderAccountNotes;
   }

@@ -770,7 +770,7 @@ describe("loadPersistedConfig", () => {
     }
   });
 
-  test("discards speech settings left by older releases", () => {
+  test("preserves supported settings while discarding retired configuration", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");
     try {
@@ -778,6 +778,11 @@ describe("loadPersistedConfig", () => {
         configPath,
         `${JSON.stringify({
           version: 1,
+          daemon: {
+            listen: "127.0.0.1:6767",
+            terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+            agentProfiles: { obsolete: "not a valid launch configuration" },
+          },
           providers: {
             local: { enabled: true },
             openai: {
@@ -796,10 +801,19 @@ describe("loadPersistedConfig", () => {
 
       const config = loadPersistedConfig(home);
 
+      const expectedDaemon = {
+        listen: "127.0.0.1:6767",
+        terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+      };
+      expect(config.daemon).toEqual(expectedDaemon);
       expect(config.providers?.openai).toEqual({ apiKey: "global-key" });
       expect(config.providers).not.toHaveProperty("local");
       expect(config.features).not.toHaveProperty("dictation");
       expect(config.features).not.toHaveProperty("voiceMode");
+      savePersistedConfig(home, config);
+      const saved = loadPersistedConfig(home);
+      expect(saved.daemon).toEqual(expectedDaemon);
+      expect(saved.providers?.openai).toEqual({ apiKey: "global-key" });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

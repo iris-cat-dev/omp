@@ -635,10 +635,11 @@ export class PaseoWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
-      fetchForProvider: (provider) => createProxyFetch({
-        getProxyPolicy: () => this.daemonConfigStore.get().providers.omp?.proxyPolicy,
-        provider,
-      }),
+      fetchForProvider: (provider) =>
+        createProxyFetch({
+          getProxyPolicy: () => this.daemonConfigStore.get().providers.omp?.proxyPolicy,
+          provider,
+        }),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -1647,8 +1648,6 @@ export class PaseoWebSocketServer {
         checkoutDiscardUnstagedChanges: true,
         // COMPAT(checkoutDiffSummary): lightweight file lists and path-scoped diff subscriptions.
         checkoutDiffSummary: true,
-        // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
-        agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
       },

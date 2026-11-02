@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { router } from "expo-router";
 import {
   View,
   Text,
@@ -46,10 +45,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { shouldPersistAgentFeatureValue } from "@/create-agent-preferences/preferences";
-import {
-  WORKFLOW_LOCALE_FEATURE_ID,
-  WORKFLOW_MODE_FEATURE_ID,
-} from "@/hooks/feature-preferences";
+import { WORKFLOW_LOCALE_FEATURE_ID, WORKFLOW_MODE_FEATURE_ID } from "@/hooks/feature-preferences";
 import type { SupportedLocale } from "@/i18n/locales";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import {
@@ -108,16 +104,6 @@ import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
 import { ModelSettingsPanel } from "@/composer/agent-controls/model-settings-panel";
 import { partitionModelFeatures } from "@/composer/agent-controls/utils";
 import { ModelContextWindowControl } from "@/composer/agent-controls/model-context-window-control";
-import {
-  useAgentProfileEditor,
-  useAgentProfilePicker,
-  type AgentProfileApplyTarget,
-  type AgentProfileEditorControls,
-  type AgentProfilePicker,
-  type AgentProfileSeed,
-  type DraftAgentProfileControls,
-} from "@/agent-profiles";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
 const OMP_OAUTH_ACCOUNT_FEATURE_ID = "oauth_account_credential";
 
@@ -164,11 +150,6 @@ interface ControlledAgentControlsProps {
   accountSelectionDisabled?: boolean;
   isModelLoading?: boolean;
   modelSelectorProviders?: ProviderSelectorProvider[];
-  agentProfiles?: AgentProfilePicker | null;
-  onApplyAgentProfile?: (profileId: string) => void;
-  onEditAgentProfiles?: () => void;
-  onCreateAgentProfile?: (seed: AgentProfileSeed) => void;
-  onEditAgentProfile?: (profileId: string) => void;
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
@@ -197,7 +178,6 @@ export interface DraftAgentControlsProps {
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   selectedThinkingOptionId: string;
   onSelectThinkingOption: (thinkingOptionId: string) => void;
-  onApplyAgentProfile: DraftAgentProfileControls["applyProfile"];
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
@@ -318,37 +298,6 @@ function toThinkingControlOptions(options: AgentControlOption[] | undefined): Ag
     id: option.id,
     label: formatThinkingOptionLabel(option),
   }));
-}
-
-/**
- * The picker's edit shortcut. Agent profiles are host config, so it lands on the
- * host settings section that owns the list.
- */
-function useEditAgentProfilesNavigation(
-  serverId: string | null,
-  isSupported: boolean,
-): (() => void) | undefined {
-  const handleEdit = useCallback(() => {
-    if (!serverId) return;
-    router.push(buildSettingsHostSectionRoute(serverId, "agents"));
-  }, [serverId]);
-  return serverId && isSupported ? handleEdit : undefined;
-}
-
-function resolveAgentProfileEditorActions(
-  isSupported: boolean,
-  editor: AgentProfileEditorControls,
-): {
-  create?: (seed: AgentProfileSeed) => void;
-  edit?: (profileId: string) => void;
-} {
-  if (!isSupported) {
-    return {};
-  }
-  return {
-    create: editor.openCreateFromModel,
-    edit: editor.openEdit,
-  };
 }
 
 function buildFallbackModelSelectorProviders(
@@ -482,15 +431,6 @@ function resolveSnapshotSelectedEntry(
   return snapshotEntries.find((e) => e.provider === agentProvider) ?? null;
 }
 
-function resolveSnapshotModeIds(
-  entry: ReturnType<typeof resolveSnapshotSelectedEntry>,
-): string[] | null {
-  if (entry?.status !== "ready" || !entry.modes) {
-    return null;
-  }
-  return entry.modes.map((mode) => mode.id);
-}
-
 function buildAgentProviderDefinitions(
   agentProvider: string | undefined,
   snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"],
@@ -543,11 +483,6 @@ function ControlledAgentControls({
   accountSelectionDisabled = false,
   isModelLoading = false,
   modelSelectorProviders,
-  agentProfiles = null,
-  onApplyAgentProfile,
-  onEditAgentProfiles,
-  onCreateAgentProfile,
-  onEditAgentProfile,
   features,
   onSetFeature,
   onDropdownClose,
@@ -850,15 +785,10 @@ function ControlledAgentControls({
             selectedModelId={selectedModelId}
             features={partitionedFeatures.remaining}
             onSetFeature={onSetFeature}
-            onApplyAgentProfile={onApplyAgentProfile}
-            onEditAgentProfiles={onEditAgentProfiles}
-            onCreateAgentProfile={onCreateAgentProfile}
-            onEditAgentProfile={onEditAgentProfile}
             onDropdownClose={handleModelSelectorClosed}
             onModelSelectorOpen={handleModelSelectorOpened}
             onRetryModelProvider={onRetryModelProvider}
             isRetryingModelProvider={isRetryingModelProvider}
-            agentProfiles={agentProfiles}
             disabled={disabled}
             accountSelectionDisabled={accountSelectionDisabled}
             isModelLoading={isModelLoading}
@@ -897,15 +827,10 @@ function ControlledAgentControls({
             features={partitionedFeatures.remaining}
             oauthAccounts={workflowQuotaAccounts}
             onSetFeature={onSetFeature}
-            onApplyAgentProfile={onApplyAgentProfile}
-            onEditAgentProfiles={onEditAgentProfiles}
-            onCreateAgentProfile={onCreateAgentProfile}
-            onEditAgentProfile={onEditAgentProfile}
             onDropdownClose={handleModelSelectorClosed}
             onModelSelectorOpen={handleModelSelectorOpened}
             onRetryModelProvider={onRetryModelProvider}
             isRetryingModelProvider={isRetryingModelProvider}
-            agentProfiles={agentProfiles}
             disabled={disabled}
             accountSelectionDisabled={accountSelectionDisabled}
             isModelLoading={isModelLoading}
@@ -935,15 +860,10 @@ interface DesktopAgentControlsContentProps {
   selectedModelId?: string;
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
-  onApplyAgentProfile?: (profileId: string) => void;
-  onEditAgentProfiles?: () => void;
-  onCreateAgentProfile?: (seed: AgentProfileSeed) => void;
-  onEditAgentProfile?: (profileId: string) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider: boolean;
-  agentProfiles: AgentProfilePicker | null;
   disabled: boolean;
   accountSelectionDisabled: boolean;
   isModelLoading: boolean;
@@ -988,15 +908,10 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     selectedModelId,
     features,
     onSetFeature,
-    onApplyAgentProfile,
-    onEditAgentProfiles,
-    onCreateAgentProfile,
-    onEditAgentProfile,
     onDropdownClose,
     onModelSelectorOpen,
     onRetryModelProvider,
     isRetryingModelProvider,
-    agentProfiles,
     disabled,
     accountSelectionDisabled,
     isModelLoading,
@@ -1085,11 +1000,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 selectedModel={selectedModelId ?? ""}
                 onSelect={handleDesktopModelSelect}
                 browseProviders={false}
-                profiles={agentProfiles}
-                onApplyProfile={onApplyAgentProfile}
-                onEditProfiles={onEditAgentProfiles}
-                onCreateProfile={onCreateAgentProfile}
-                onEditProfile={onEditAgentProfile}
                 isLoading={isModelLoading}
                 disabled={modelDisabled}
                 onOpen={onModelSelectorOpen}
@@ -1176,15 +1086,10 @@ interface SheetAgentControlsContentProps {
   features?: AgentFeature[];
   oauthAccounts?: OmpWorkflowQuotaDisplayAccount[];
   onSetFeature?: (featureId: string, value: unknown) => void;
-  onApplyAgentProfile?: (profileId: string) => void;
-  onEditAgentProfiles?: () => void;
-  onCreateAgentProfile?: (seed: AgentProfileSeed) => void;
-  onEditAgentProfile?: (profileId: string) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider: boolean;
-  agentProfiles: AgentProfilePicker | null;
   disabled: boolean;
   accountSelectionDisabled: boolean;
   isModelLoading: boolean;
@@ -1209,15 +1114,10 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     features,
     oauthAccounts,
     onSetFeature,
-    onApplyAgentProfile,
-    onEditAgentProfiles,
-    onCreateAgentProfile,
-    onEditAgentProfile,
     onDropdownClose,
     onModelSelectorOpen,
     onRetryModelProvider,
     isRetryingModelProvider,
-    agentProfiles,
     disabled,
     accountSelectionDisabled,
     isModelLoading,
@@ -1263,11 +1163,6 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       thinkingLabel={displayThinking}
       fastModeEnabled={fastModeEnabled}
       onSelect={handleSheetModelSelect}
-      profiles={agentProfiles}
-      onApplyProfile={onApplyAgentProfile}
-      onEditProfiles={onEditAgentProfiles}
-      onCreateProfile={onCreateAgentProfile}
-      onEditProfile={onEditAgentProfile}
       isLoading={isModelLoading}
       disabled={modelDisabled}
       onOpen={onModelSelectorOpen}
@@ -1795,26 +1690,6 @@ export const AgentControls = memo(function AgentControls({
     [handleSelectModel],
   );
 
-  // A running agent is one provider's process, so only that provider's profiles
-  // can apply to it.
-  const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
-  const profileModeIds = useMemo(
-    () => resolveSnapshotModeIds(snapshotSelectedEntry),
-    [snapshotSelectedEntry],
-  );
-  const profileTarget = useMemo<AgentProfileApplyTarget>(
-    () => ({ kind: "agent", agentId, availableModeIds: profileModeIds }),
-    [agentId, profileModeIds],
-  );
-  const agentProfiles = useAgentProfilePicker({
-    serverId,
-    availableProviders: profileProviders,
-    target: profileTarget,
-  });
-  const handleEditAgentProfiles = useEditAgentProfilesNavigation(serverId, agentProfiles !== null);
-  const profileEditor = useAgentProfileEditor(serverId);
-  const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
-
   const handleSelectThinkingOption = useCallback(
     (thinkingOptionId: string) => {
       if (!client || !agentProvider) {
@@ -1951,18 +1826,12 @@ export const AgentControls = memo(function AgentControls({
   return (
     <>
       {commandCenterRegistration}
-      {profileEditor.element}
       <ControlledAgentControls
         provider={agent.provider}
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
         onSelectModel={handleSelectModel}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
         thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
         selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
         onSelectThinkingOption={handleSelectThinkingOption}
@@ -2000,7 +1869,6 @@ export function DraftAgentControls({
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
-  onApplyAgentProfile,
   features,
   onSetFeature,
   onDropdownClose,
@@ -2034,33 +1902,6 @@ export function DraftAgentControls({
     selectedProvider,
     selectedModel,
   );
-
-  // The draft form is the one surface that can switch provider, so every profile
-  // the host can actually run is offered here.
-  const profileProviders = useMemo(
-    () => modelSelectorProviders.map((entry) => entry.id),
-    [modelSelectorProviders],
-  );
-  const profileTarget = useMemo<AgentProfileApplyTarget>(
-    () => ({
-      kind: "draft",
-      controls: {
-        applyProfile: onApplyAgentProfile,
-      },
-    }),
-    [onApplyAgentProfile],
-  );
-  const agentProfiles = useAgentProfilePicker({
-    serverId: modelSelectorServerId,
-    availableProviders: profileProviders,
-    target: profileTarget,
-  });
-  const handleEditAgentProfiles = useEditAgentProfilesNavigation(
-    modelSelectorServerId,
-    agentProfiles !== null,
-  );
-  const profileEditor = useAgentProfileEditor(modelSelectorServerId);
-  const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
 
   const modeControl = useMemo<AgentModeControlValue | null>(
     () =>
@@ -2129,7 +1970,6 @@ export function DraftAgentControls({
   });
   return (
     <>
-      {profileEditor.element}
       <ControlledAgentControls
         provider={selectedProvider ?? ""}
         modelSelectorProviders={modelSelectorProviders}
@@ -2138,11 +1978,6 @@ export function DraftAgentControls({
         onSelectModel={onSelectModel}
         onSelectProviderAndModel={onSelectProviderAndModel}
         isModelLoading={isAllModelsLoading}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
         thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
         selectedThinkingOptionId={effectiveSelectedThinkingOption}
         onSelectThinkingOption={onSelectThinkingOption}

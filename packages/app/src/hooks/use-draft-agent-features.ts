@@ -168,15 +168,10 @@ export function useDraftAgentFeatures(input: {
     [provider, updatePreferences, input.persistPreferences],
   );
 
-  const applyProfileFeatureValues = useCallback((values: Record<string, unknown>) => {
-    setLocalFeatureValues(sanitizePersistentAgentFeatureValues(values));
-  }, []);
-
   return {
     features,
     featureValues: effectiveFeatureValues,
     isLoading: featuresQuery.isLoading,
     setFeatureValue,
-    applyProfileFeatureValues,
   };
 }

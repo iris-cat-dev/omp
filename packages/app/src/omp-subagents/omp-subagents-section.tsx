@@ -218,7 +218,7 @@ function OmpSubagentRow({
                 options={thinkingOptions}
                 onChange={handleThinkingChange}
                 placeholder={t("settings.host.ompSubagents.ompDefault")}
-                emptyText={t("settings.host.agentProfiles.noThinkingOptions")}
+                emptyText={t("agentControls.thinking.noOptions")}
                 disabled={disabled || catalogLoading}
                 title={t("agentControls.thinking.title")}
                 size="sm"

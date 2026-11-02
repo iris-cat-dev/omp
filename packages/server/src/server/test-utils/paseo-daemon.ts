@@ -7,7 +7,6 @@ import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/index.js";
-import type { AgentProfile } from "@omp-desktop/protocol/messages";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
@@ -35,7 +34,6 @@ interface TestPaseoDaemonOptions {
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
-  agentProfiles?: AgentProfile[];
   autoArchiveAfterMerge?: boolean;
   pluginsEnabled?: PaseoDaemonConfig["pluginsEnabled"];
   plugins?: PaseoDaemonConfig["plugins"];
@@ -182,7 +180,6 @@ async function prepareTestDaemonConfig(
     webUi: options.webUi,
     trustedProxies: options.trustedProxies,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
-    agentProfiles: options.agentProfiles,
     autoArchiveAfterMerge: options.autoArchiveAfterMerge,
     pluginsEnabled: options.pluginsEnabled,
     plugins: options.plugins,

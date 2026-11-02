@@ -21,7 +21,6 @@ import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
 } from "@omp-desktop/protocol/terminal-profiles";
-import { AgentProfilesSection } from "@/agent-profiles";
 import { OmpSubagentsSection } from "@/omp-subagents";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { RemoteSshHostModal } from "@/components/remote-ssh-host-modal";
@@ -253,7 +252,6 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
-      <AgentProfilesSection serverId={serverId} />
       <OmpSubagentsSection serverId={serverId} />
     </View>
   );
@@ -975,11 +973,18 @@ function OmpProxyCard({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   if (!isConnected) return null;
-  return <View style={settingsStyles.card}>
-    <ProxyPolicyEditor serverId={serverId} policy={config?.providers.omp?.proxyPolicy}
-      onSave={async (policy) => { await patchConfig({ providers: { omp: { proxyPolicy: policy } } }); }}
-      testID="host-page-omp-proxy" />
-  </View>;
+  return (
+    <View style={settingsStyles.card}>
+      <ProxyPolicyEditor
+        serverId={serverId}
+        policy={config?.providers.omp?.proxyPolicy}
+        onSave={async (policy) => {
+          await patchConfig({ providers: { omp: { proxyPolicy: policy } } });
+        }}
+        testID="host-page-omp-proxy"
+      />
+    </View>
+  );
 }
 
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {

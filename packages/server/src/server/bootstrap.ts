@@ -179,7 +179,6 @@ import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import { DEFAULT_OMP_DESKTOP_TOOL_CAPABILITIES } from "@omp-desktop/protocol/messages";
 import type {
-  AgentProfile,
   AgentSkillSelection,
   FirstAgentContext,
   OmpDesktopToolCapabilities,
@@ -396,7 +395,6 @@ export interface PaseoDaemonConfig {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
-  agentProfiles?: AgentProfile[];
   ompProviderAccountNotes?: Record<string, string>;
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
@@ -616,10 +614,6 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
 
   if (config.terminalProfiles !== undefined) {
     initialConfig.terminalProfiles = config.terminalProfiles;
-  }
-
-  if (config.agentProfiles !== undefined) {
-    initialConfig.agentProfiles = config.agentProfiles;
   }
 
   if (config.ompProviderAccountNotes !== undefined) {

@@ -32,7 +32,7 @@ These numbers are separate from OMP's globally increasing credential IDs. Their 
 
 **Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
 
-Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, credentials, or profile references. Different providers may share a display name; their internal IDs remain distinct.
+Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, or credentials. Different providers may share a display name; their internal IDs remain distinct.
 
 Names are stored as `providers.<id>.name` in the host's native `models.yml`. Existing entries without a name keep their previous display fallback; opening **Edit** prefills the old ID as the name so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
 
@@ -54,7 +54,9 @@ Desktop model pickers open above or below their selector according to available 
 
 The conversation's model picker contains model selection and model settings only, on desktop and compact interfaces. Proxy routing is configured separately in **Host Settings → Proxy** and never occupies the model list or its footer.
 
-Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons. Model-row left padding mirrors the trailing control width and gap, giving model names and context sizes equal outer insets. Profile actions and selection checkmarks share one trailing slot: selected rows show the checkmark at rest and the profile action on hover or keyboard focus, without reserving a second empty column. Touch layouts keep profile buttons available without hovering.
+Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons. Model rows use compact, equal outer insets; only the selected row adds a trailing checkmark. No empty action column is reserved.
+
+Host-wide Agent launch presets have been removed from model pickers, Host settings, daemon configuration, and Desktop MCP tools. Loading an older configuration ignores `daemon.agentProfiles` while preserving unrelated settings; retired device-local model favorites are ignored without replacing ordinary model, thinking, or feature preferences. OMP's native profiles and terminal profiles are unchanged.
 
 Changing Thinking in an existing conversation updates OMP without restarting. It applies from the next model request, including after a tool call in the same turn, never to generation already in progress. Confirmed changes add a localized inline notice showing the level and effective timing. Failed requests and reselecting the same level add no notice. Notices retain their selected level through history replay and client reload.
 

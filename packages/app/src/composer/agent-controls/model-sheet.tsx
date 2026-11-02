@@ -4,7 +4,6 @@ import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } fro
 import { StyleSheet } from "react-native-unistyles";
 import { Bot, Zap } from "lucide-react-native";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -35,11 +34,6 @@ interface CompactModelSheetProps {
   fastModeEnabled: boolean;
   onSelect: (provider: string, modelId: string) => void | Promise<void>;
   isLoading: boolean;
-  profiles?: AgentProfilePicker | null;
-  onApplyProfile?: (profileId: string) => void;
-  onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
-  onEditProfile?: (profileId: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
@@ -52,30 +46,6 @@ interface CompactModelSheetProps {
 function shortModelLabel(label: string): string {
   const separatorIndex = label.lastIndexOf("/");
   return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
-}
-
-function resolveModelSheetProfileActions(
-  onCreateProfile: ((seed: AgentProfileSeed) => void) | undefined,
-  onEditProfile: ((profileId: string) => void) | undefined,
-  close: () => void,
-): {
-  create?: (seed: AgentProfileSeed) => void;
-  edit?: (profileId: string) => void;
-} {
-  return {
-    create: onCreateProfile
-      ? (seed: AgentProfileSeed) => {
-          close();
-          onCreateProfile(seed);
-        }
-      : undefined,
-    edit: onEditProfile
-      ? (profileId: string) => {
-          close();
-          onEditProfile(profileId);
-        }
-      : undefined,
-  };
 }
 
 function resolveModelProviderNavigation(input: {
@@ -134,11 +104,6 @@ export function CompactModelSheet({
   fastModeEnabled,
   onSelect,
   isLoading,
-  profiles = null,
-  onApplyProfile,
-  onEditProfiles,
-  onCreateProfile,
-  onEditProfile,
   onOpen,
   onClose,
   onRetryProvider,
@@ -165,7 +130,6 @@ export function CompactModelSheet({
     selectedModel,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet && !canBrowseProviders,
-    profiles,
     browseProviders: usesBottomSheet,
   });
   const modelBrowser = useModelBrowser({
@@ -174,7 +138,6 @@ export function CompactModelSheet({
     selectedModel,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet,
-    profiles,
     browseProviders: false,
   });
   const ProviderIcon =
@@ -273,21 +236,6 @@ export function CompactModelSheet({
     [close, onSelect],
   );
 
-  const handleApplyProfile = useCallback(
-    (profileId: string) => {
-      onApplyProfile?.(profileId);
-      close();
-    },
-    [close, onApplyProfile],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    close();
-    onEditProfiles?.();
-  }, [close, onEditProfiles]);
-
-  const profileActions = resolveModelSheetProfileActions(onCreateProfile, onEditProfile, close);
-
   const toggle = useCallback(() => {
     if (isOpen) {
       close();
@@ -383,10 +331,6 @@ export function CompactModelSheet({
           <ModelBrowser
             state={rootBrowser}
             onSelect={usesBottomSheet ? handleSearchSelect : handleDesktopSelect}
-            onApplyProfile={handleApplyProfile}
-            onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-            onCreateProfile={profileActions.create}
-            onEditProfile={profileActions.edit}
             onRetryProvider={onRetryProvider}
             isRetryingProvider={isRetryingProvider}
             scrolling={modelBrowserScrolling}
@@ -429,14 +373,10 @@ export function CompactModelSheet({
             <ModelBrowser
               state={modelBrowser}
               onSelect={handleBrowserSelect}
-              onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-              onCreateProfile={profileActions.create}
-              onEditProfile={profileActions.edit}
               onRetryProvider={onRetryProvider}
               isRetryingProvider={isRetryingProvider}
               scrolling={modelBrowserScrolling}
               searchAllOnFocus
-              showProfilesSection={false}
             />
           </View>
         </AdaptiveModalSheet>

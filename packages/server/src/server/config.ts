@@ -551,18 +551,6 @@ function resolveGitHubConfig(
   };
 }
 
-/**
- * Both profile lists stay `undefined` when absent rather than defaulting to an
- * empty array: for terminal profiles that is what selects the built-in
- * defaults, so an empty array has to keep meaning "the user removed them all".
- */
-function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) {
-  return {
-    terminalProfiles: persisted.daemon?.terminalProfiles,
-    agentProfiles: persisted.daemon?.agentProfiles,
-  };
-}
-
 function resolveMcpSettings(cli: CliConfigOverrides | undefined, persisted: PersistedConfig) {
   return {
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
@@ -581,7 +569,8 @@ function resolveStaticLoadConfigSettings(
     ...resolveMcpSettings(cli, persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
-    ...resolveProfileLists(persisted),
+    // Undefined selects built-in terminal defaults; an empty array removes them all.
+    terminalProfiles: persisted.daemon?.terminalProfiles,
     ompProviderAccountNotes: persisted.daemon?.ompProviderAccountNotes,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
@@ -617,7 +606,6 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
-    agentProfiles,
     ompProviderAccountNotes,
     hostnames,
     trustedProxies,
@@ -673,7 +661,6 @@ export function resolveConfigFromPersisted(
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,
-    agentProfiles,
     ompProviderAccountNotes,
     skillSelection: persisted.agents?.skills?.selection,
     pluginsEnabled: persisted.pluginsEnabled ?? false,

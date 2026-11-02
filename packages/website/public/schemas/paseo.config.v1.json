@@ -156,50 +156,6 @@
             "additionalProperties": {}
           }
         },
-        "agentProfiles": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "icon": {
-                "type": "string"
-              },
-              "color": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "model": {
-                "type": "string"
-              },
-              "modeId": {
-                "type": "string"
-              },
-              "thinkingOptionId": {
-                "type": "string"
-              },
-              "featureValues": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "notes": {
-                "type": "string"
-              }
-            },
-            "required": ["id", "name", "provider"],
-            "additionalProperties": {}
-          }
-        },
         "ompProviderAccountNotes": {
           "type": "object",
           "propertyNames": {
@@ -580,6 +536,84 @@
                 "type": "string",
                 "pattern": "^(?:\\/|[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\]+\\\\[^\\\\]+)",
                 "description": "OMP-only absolute SDK package root containing package.json, dist/node/sdk.mjs, and dist/node/rpc.mjs."
+              },
+              "proxyPolicy": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "default": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "direct"
+                          }
+                        },
+                        "required": ["mode"]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "proxy"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        },
+                        "required": ["mode", "url"]
+                      }
+                    ]
+                  },
+                  "providers": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "type": "string",
+                              "const": "direct"
+                            }
+                          },
+                          "required": ["mode"]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "type": "string",
+                              "const": "proxy"
+                            },
+                            "url": {
+                              "type": "string",
+                              "format": "uri"
+                            }
+                          },
+                          "required": ["mode", "url"]
+                        }
+                      ]
+                    }
+                  },
+                  "noProxy": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": ["enabled"]
               },
               "enabled": {
                 "type": "boolean"
