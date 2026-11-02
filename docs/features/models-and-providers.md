@@ -27,6 +27,10 @@ Official providers assign OAuth accounts stable, provider-local display numbers.
 
 These numbers are separate from OMP's globally increasing credential IDs. Their mapping lives in `agent.db` without renumbering credentials or changing notes, provider configuration, or session references. Disabled credential records stay disabled; a freed display number does not reactivate or reuse a credential.
 
+### Codex plan labels
+
+The sidebar, account choices, usage cards, and ChatGPT image-generation account picker display **Free**, **Plus**, **Pro100**, **Pro200**, and **Pro500**. Native Codex identifiers `prolite`, `pro`, and `promax` map to the three Pro price tiers respectively; `free` and `plus` use their standard capitalization. This is display-only: raw quota/account data stays unchanged, other providers are not relabeled, and unknown plans are preserved rather than guessed. Plan labels do not override the model capability checks for Ultrafast. See [Codex's native plan identifiers](https://github.com/openai/codex/pull/47971) and [OpenAI's plan pricing](https://developers.openai.com/codex/pricing).
+
 ## Custom provider names
 
 **Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
@@ -57,6 +61,16 @@ Confirmed Fast changes add system notices too. Model switches show the selected 
 
 Hover **Fast** for its cost explanation, localized in all nine supported locales.
 
+### OpenAI Ultrafast
+
+For supported models, the model picker's **Speed** control and command center offer **Standard**, **Fast**, and **Ultrafast**. The three-way selector requires the native service-tier APIs, a built-in `/fast ultra` command, and the current model's advertised `ultrafast` capability. Other supported providers keep the existing boolean Fast switch. Refresh the host's model catalog after account or plan changes; Desktop does not infer eligibility from a model name or subscription label.
+
+Desktop changes the native OpenAI-family service tier through a private authenticated loopback extension and reads it back before confirming the selection. Standard clears the override, Fast selects `priority`, and Ultrafast selects `ultrafast`. Changing speed does not send a chat prompt, create a model request, or reduce thinking effort. Model and tier changes are serialized, and a rejected update does not save the requested value or add a success notice.
+
+Existing boolean Fast preferences remain readable. New selections retain their exact tier in conversation defaults and profiles. A native Ultrafast session is not downgraded merely because an older preference says Fast is enabled. Unsupported models do not silently turn an Ultrafast preference into ordinary Fast; the saved preference remains available when returning to a capable model. Unrelated native tiers such as Flex are not relabeled as Standard.
+
+OpenAI currently documents Ultrafast for **GPT-6 Astra** and **GPT-6.1 Sol**, including **Pro $500** and eligible Enterprise/Edu access. It uses included subscription allowances at **8×** the Standard rate and purchased credits at **6×**. API-key billing is separate. The selector requests a tier, not guaranteed account access, capacity, or measured speed. Cost and availability warnings appear with the choices in all nine locales. See [OpenAI's Codex speed guide](https://developers.openai.com/codex/speed) and [Ultrafast API requirements](https://help.openai.com/en/articles/11647665-fast-mode-faq).
+
 ### Claude Fast mode
 
 Fast supports direct Anthropic **Claude Opus 4.8, Opus 5, and Opus 5.5** using native `set_fast_mode` RPC, `speed: "fast"`, and the `fast-mode-2026-02-01` beta header. It is not approximated with prompts or thinking changes.
@@ -67,11 +81,11 @@ Fast costs more and requires Anthropic fast-mode access. Claude subscribers need
 
 ## Subagent model overrides
 
-In **Host Settings → OMP subagents**, enable **Override built-in subagent models** and select each built-in agent's model. Supported **Thinking** levels appear; **Fast** appears only when the host's capability probe confirms it. Unsupported controls are hidden. **OMP default** leaves native thinking/service-tier policy unchanged, and a manually configured tier is displayed rather than interpreted as explicit Fast-off. Fast may increase provider charges.
+In **Host Settings → OMP subagents**, enable **Override built-in subagent models** and select each built-in agent's model. Supported **Thinking** levels appear; speed controls appear only when the host's capability probe confirms them. Ultrafast-capable models show a **Speed** selector with **OMP default**, **Standard**, **Fast**, and **Ultrafast** (limited to the host's advertised options); older supported hosts retain the Fast switch. Unsupported controls are hidden. **OMP default** leaves native thinking/service-tier policy unchanged, and a manually configured tier is displayed rather than interpreted as explicit Fast-off. Fast and Ultrafast may increase usage costs; model capability does not guarantee account eligibility.
 
-Changes are saved in OMP's user configuration and apply to newly spawned task/eval subagents, even from an already running conversation, not existing children. Thinking uses native selector suffixes such as `provider/model:high`; Fast writes `priority` or `none` to that agent's `task.agentServiceTierOverrides`.
+Changes are saved in OMP's user configuration and apply to newly spawned task/eval subagents, even from an already running conversation, not existing children. Thinking uses native selector suffixes such as `provider/model:high`; Standard, Fast, and Ultrafast write `none`, `priority`, and `ultrafast` respectively to that agent's `task.agentServiceTierOverrides`. Choosing **OMP default** removes only that agent's tier override. Editing the model or thinking alone preserves its existing tier.
 
-Choosing inheritance clears the agent's model and Fast overrides. Disabling the section removes the model mapping and bundled agents' Fast overrides while preserving custom agents' tiers and unrelated settings.
+Choosing inheritance clears the agent's model and speed overrides. Disabling the section removes the model mapping and bundled agents' speed overrides while preserving custom agents' tiers and unrelated settings.
 
 ## Runtime updates and command shortcut
 

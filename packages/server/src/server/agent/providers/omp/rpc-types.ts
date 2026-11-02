@@ -137,6 +137,7 @@ export const OmpModelSchema = z
     baseUrl: z.string().optional(),
     input: z.array(z.string()).optional(),
     cost: z.record(z.string(), z.unknown()).optional(),
+    serviceTiers: z.array(z.string()).optional(),
     compat: z.unknown().optional(),
   })
   .passthrough();
@@ -171,6 +172,9 @@ export const OmpSessionStateSchema = z
     autoCompactionEnabled: z.boolean().optional(),
     fastModeEnabled: z.boolean().optional(),
     fastModeActive: z.boolean().optional(),
+    /** Desktop's private native extension readback; undefined on older hosts. */
+    fastModeTier: z.string().nullable().optional(),
+    ultrafastSupported: z.boolean().optional(),
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
@@ -182,10 +186,22 @@ export const OmpSessionStateSchema = z
   })
   .passthrough();
 
+export const OmpFastModeSelectionSchema = z.enum(["off", "on", "ultrafast"]);
+export type OmpFastModeSelection = z.infer<typeof OmpFastModeSelectionSchema>;
+
+export const OmpNativeServiceTierSnapshotSchema = z.object({
+  available: z.boolean(),
+  model: z.object({ provider: z.string(), id: z.string() }).nullable(),
+  openaiFamily: z.boolean(),
+  tier: z.string().nullable(),
+  ultrafastAvailable: z.boolean(),
+});
+
 export const OmpFastModeResultSchema = z
   .object({
     enabled: z.boolean(),
     active: z.boolean(),
+    tier: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -213,6 +229,7 @@ export const OmpRpcSlashCommandSchema = z
     source: z.string().optional(),
     sourceInfo: z.record(z.string(), z.unknown()).optional(),
     input: z.object({ hint: z.string().optional() }).passthrough().nullable().optional(),
+    subcommands: z.array(z.object({ name: z.string() }).passthrough()).optional(),
   })
   .passthrough();
 

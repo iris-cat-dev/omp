@@ -704,6 +704,262 @@ describe("OMP agent client and session", () => {
     },
   );
 
+  const ultrafastModel = {
+    provider: "openai-codex",
+    id: "gpt-6.1-sol",
+    api: "openai-codex-responses",
+    serviceTiers: ["priority", "ultrafast"],
+  };
+
+  test.each([false, true])(
+    "normalizes legacy Fast %s for an Ultrafast-capable draft and session",
+    async (enabled) => {
+      const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+      const config = {
+        model: "openai-codex/gpt-6.1-sol",
+        featureValues: { fast_mode: enabled },
+      };
+      const feature = expect.objectContaining({
+        id: "fast_mode",
+        type: "select",
+        value: enabled ? "on" : "off",
+        options: [
+          expect.objectContaining({ id: "off" }),
+          expect.objectContaining({ id: "on" }),
+          expect.objectContaining({ id: "ultrafast" }),
+        ],
+      });
+      expect(await omp.listFeatures(config)).toEqual(expect.arrayContaining([feature]));
+      await omp.start(config);
+      expect(omp.features()).toEqual(expect.arrayContaining([feature]));
+      expect(omp.fastModeRequests()).toEqual([]);
+      expect(omp.runtime().setFastModeTierRequests).toEqual(enabled ? ["on"] : []);
+    },
+  );
+
+  test("selects true native Ultrafast, Fast, and Standard without creating user turns", async () => {
+    const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    for (const value of ["ultrafast", "on", "off"]) {
+      await omp.setFeature("fast_mode", value);
+      expect(omp.features()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "fast_mode", type: "select", value }),
+        ]),
+      );
+    }
+    expect(omp.runtime().setFastModeTierRequests).toEqual(["ultrafast", "on", "off"]);
+    expect(omp.fastModeRequests()).toEqual([]);
+    expect(omp.recordedPrompts()).toEqual([]);
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([
+      { type: "system_notice", notice: "ultrafast_mode_enabled" },
+      { type: "system_notice", notice: "fast_mode_enabled" },
+      { type: "system_notice", notice: "fast_mode_disabled" },
+    ]);
+  });
+
+  test("does not demote a resumed native Ultrafast tier through a legacy true preference", async () => {
+    const omp = new OmpHarness({
+      initialModel: ultrafastModel,
+      ultrafastSupported: true,
+      initialFastModeTier: "ultrafast",
+    });
+    await omp.resume(
+      {
+        user: { id: "earlier-user", text: "Earlier request" },
+        assistant: { id: "earlier-assistant", text: "Earlier response" },
+      },
+      {
+        model: "openai-codex/gpt-6.1-sol",
+        featureValues: { fast_mode: true },
+      },
+    );
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "fast_mode", type: "select", value: "ultrafast" }),
+      ]),
+    );
+    expect(omp.runtime().setFastModeTierRequests).toEqual([]);
+    expect(omp.fastModeRequests()).toEqual([]);
+  });
+
+  test.each(["new", "resume"])(
+    "applies a saved Ultrafast preference without a switch notice on %s sessions",
+    async (kind) => {
+      const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+      const config = {
+        model: "openai-codex/gpt-6.1-sol",
+        featureValues: { fast_mode: "ultrafast" },
+      };
+      if (kind === "resume") {
+        await omp.resume(
+          {
+            user: { id: "prior-user", text: "Prior request" },
+            assistant: { id: "prior-assistant", text: "Prior answer" },
+          },
+          config,
+        );
+      } else {
+        await omp.start(config);
+      }
+      expect(omp.runtime().setFastModeTierRequests).toEqual(["ultrafast"]);
+      expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+    },
+  );
+
+  test.each([
+    { model: ultrafastModel, supported: false },
+    { model: { ...ultrafastModel, serviceTiers: ["priority"] }, supported: true },
+  ])(
+    "never aliases a saved Ultrafast preference to boolean Fast without both capabilities",
+    async ({ model, supported }) => {
+      const omp = new OmpHarness({ initialModel: model, ultrafastSupported: supported });
+      const config = {
+        model: "openai-codex/gpt-6.1-sol",
+        featureValues: { fast_mode: "ultrafast" },
+      };
+      expect(await omp.listFeatures(config)).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+      );
+      await omp.start(config);
+      expect(omp.features()).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+      );
+      await expect(omp.setFeature("fast_mode", "ultrafast")).rejects.toThrow("unavailable");
+      expect(omp.fastModeRequests()).toEqual([]);
+      expect(omp.runtime().setFastModeTierRequests).toEqual([]);
+    },
+  );
+
+  test("preserves Ultrafast while switching to unsupported models and back", async () => {
+    const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    await omp.setFeature("fast_mode", "ultrafast");
+    await omp.setModel("openai-codex", "older", {
+      api: "openai-codex-responses",
+      serviceTiers: ["priority"],
+    });
+    expect(omp.features()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+    );
+    expect(omp.runtime().state.fastModeTier).toBe("ultrafast");
+    expect(omp.runtime().state.fastModeActive).toBe(false);
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("unavailable");
+    await omp.setModel("anthropic", "claude-opus-5-5", { api: "anthropic-messages" });
+    expect(omp.features()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+    );
+    await omp.setModel(ultrafastModel.provider, ultrafastModel.id, ultrafastModel);
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "fast_mode", type: "select", value: "ultrafast" }),
+      ]),
+    );
+    expect(omp.runtime().setFastModeTierRequests).toEqual(["ultrafast"]);
+    expect(omp.fastModeRequests()).toEqual([]);
+  });
+
+  test("keeps rejected and failed native tier selections out of values and notices", async () => {
+    const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    const setter = vi.spyOn(omp.runtime(), "setFastModeTier");
+    setter.mockRejectedValueOnce(new Error("Native tier update failed"));
+    await expect(omp.setFeature("fast_mode", "ultrafast")).rejects.toThrow(
+      "Native tier update failed",
+    );
+    setter.mockResolvedValueOnce({ enabled: true, active: true, tier: "priority" });
+    await expect(omp.setFeature("fast_mode", "ultrafast")).rejects.toThrow("did not apply");
+    await expect(omp.setFeature("fast_mode", "ultra")).rejects.toThrow("Invalid OMP fast mode");
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "fast_mode", type: "select", value: "off" }),
+      ]),
+    );
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+    await omp.setModel(ultrafastModel.provider, ultrafastModel.id, ultrafastModel);
+    expect(omp.runtime().setFastModeTierRequests).toEqual([]);
+    setter.mockRestore();
+  });
+
+  test("reports native truth after an unknown-outcome tier update without claiming success", async () => {
+    const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    const setter = vi.spyOn(omp.runtime(), "setFastModeTier").mockImplementationOnce(async () => {
+      omp.runtime().state.fastModeTier = "ultrafast";
+      omp.runtime().state.fastModeEnabled = true;
+      omp.runtime().state.fastModeActive = true;
+      throw new Error("Lost native response");
+    });
+    await expect(omp.setFeature("fast_mode", "ultrafast")).rejects.toThrow("Lost native response");
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "fast_mode", type: "select", value: "ultrafast" }),
+      ]),
+    );
+    expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+    setter.mockRestore();
+  });
+
+  test("does not present inherited native Flex as Standard", async () => {
+    const omp = new OmpHarness({
+      initialModel: ultrafastModel,
+      ultrafastSupported: true,
+      initialFastModeTier: "flex",
+    });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    expect(omp.features()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+    );
+    expect(omp.runtime().state.fastModeTier).toBe("flex");
+    expect(omp.runtime().setFastModeTierRequests).toEqual([]);
+  });
+
+  test.each([
+    { enabled: false, active: false },
+    { enabled: true, active: false },
+  ])(
+    "rejects a boolean Fast RPC that acknowledges an unavailable tier: $enabled/$active",
+    async (result) => {
+      const omp = new OmpHarness();
+      await omp.start({ model: "openai-codex/gpt-5.6" });
+      const setter = vi.spyOn(omp.runtime(), "setFastMode").mockResolvedValueOnce(result);
+      await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("did not apply");
+      expect(omp.features()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "fast_mode", type: "toggle", value: false }),
+        ]),
+      );
+      expect(omp.timeline().filter((item) => item.type === "system_notice")).toEqual([]);
+      setter.mockRestore();
+    },
+  );
+
+  test("serializes tier choices with model switches before checking capability", async () => {
+    const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
+    await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    const held = Promise.withResolvers<void>();
+    const original = omp.runtime().setFastModeTier.bind(omp.runtime());
+    const setter = vi
+      .spyOn(omp.runtime(), "setFastModeTier")
+      .mockImplementationOnce(async (value, model) => {
+        await held.promise;
+        return original(value, model);
+      });
+    const select = omp.setFeature("fast_mode", "ultrafast");
+    const switchModel = omp.setModel("anthropic", "claude-opus-5-5", { api: "anthropic-messages" });
+    await Promise.resolve();
+    expect(omp.runtime().setModelRequests).toEqual([]);
+    held.resolve();
+    await select;
+    await switchModel;
+    expect(omp.features()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
+    );
+    expect(omp.runtime().setFastModeTierRequests).toEqual(["ultrafast"]);
+    expect(omp.fastModeRequests()).toEqual([]);
+    setter.mockRestore();
+  });
+
   test("enables fast mode for custom GPT models on OpenAI wire APIs", async () => {
     const omp = new OmpHarness({
       initialModel: {

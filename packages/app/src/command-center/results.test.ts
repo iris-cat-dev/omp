@@ -82,6 +82,33 @@ describe("Command Center result projection", () => {
     expect(sectionResultIds(buildContributionSections(contributions, "home"))).toEqual(["home"]);
   });
 
+  it("reserves notice space for a speed choice without changing ordinary choice rows", () => {
+    const choices = ["off", "on", "ultrafast"].map(
+      (id, rank): CommandCenterContribution => ({
+        id,
+        group: "speed",
+        groupRank: 1,
+        rank,
+        keywords: ["speed"],
+        visibility: "query",
+        run: () => undefined,
+        presentation: {
+          kind: "choice",
+          path: ["Speed", id],
+          selected: false,
+          ...(id === "ultrafast" ? { subtitle: "rate-notice" } : {}),
+        },
+      }),
+    );
+    const projection = projectCommandCenterRows(buildContributionSections(choices, "speed"));
+    expect(projection.rows.filter((row) => row.kind === "result").map((row) => row.height)).toEqual(
+      [36, 36, 88],
+    );
+    expect(sectionResultIds(buildContributionSections(choices, "rate-notice"))).toEqual([
+      "ultrafast",
+    ]);
+  });
+
   it("preserves active selection by id and falls back to the first result", () => {
     const first = workspace("workspace:first");
     const second = workspace("workspace:second");

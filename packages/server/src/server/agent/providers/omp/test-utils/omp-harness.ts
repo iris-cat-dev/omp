@@ -83,6 +83,8 @@ export class OmpHarness {
     options: {
       oauthAccounts?: readonly StoredOmpOAuthAccount[];
       fastModeSupported?: boolean;
+      ultrafastSupported?: boolean;
+      initialFastModeTier?: string | null;
       sessionCredentialReader?: (providerId: string, sessionId: string) => number | undefined;
       initialModel?: OmpModel;
       initialActiveCredential?: OmpSessionState["activeCredential"];
@@ -93,6 +95,8 @@ export class OmpHarness {
     } = {},
   ) {
     this.omp.setFastModeSupported(options.fastModeSupported ?? true);
+    this.omp.setUltrafastSupported(options.ultrafastSupported ?? false);
+    this.omp.setInitialFastModeTier(options.initialFastModeTier);
     this.omp.setInitialModel(options.initialModel ?? null);
     this.omp.setInitialActiveCredential(options.initialActiveCredential);
     if (options.initialStats) {

@@ -147,7 +147,7 @@ export const zhCN: TranslationResources = {
       planModeSearchKeywords: "计划 规划 计划模式",
       fastModeGroupLabel: "快速",
       fastModeDescription: "以更高费用获得更快的响应。",
-      fastModeSearchKeywords: "快速 速度 低延迟",
+      fastModeSearchKeywords: "快速 极速 ultrafast ultra fast 标准 速度 低延迟",
       settingOn: "开",
       settingOff: "关",
     },
@@ -277,6 +277,17 @@ export const zhCN: TranslationResources = {
       open: "打开 Agent 功能",
       on: "开启",
       off: "关闭",
+      fast: {
+        title: "速度",
+        standard: "标准",
+        fast: "快速 (Fast)",
+        ultrafast: "极速 (Ultrafast)",
+        ultrafastNotice: "8 倍套餐内用量 / 6 倍购买额度；仅限受支持的账号和模型。",
+        standardDescription: "使用常规速度和标准额度消耗速率。",
+        ultrafastDescription:
+          "极速 (Ultrafast) 的套餐内额度消耗速率为标准模式的 8 倍，购买额度的消耗速率为 6 倍。需账号和模型支持，实际速度因情况而异。",
+        selectWithValue: "选择速度，当前：{{value}}",
+      },
       workflow: {
         title: "工作流",
         standard: "标准",
@@ -501,6 +512,7 @@ export const zhCN: TranslationResources = {
     systemNotice: {
       fastModeEnabled: "Fast 模式已开启",
       fastModeDisabled: "Fast 模式已关闭",
+      ultrafastModeEnabled: "极速 (Ultrafast) 模式已开启",
       modelChanged: "已切换至 {{model}}",
       thinkingChanged: "思考强度已切换为 {{thinking}} · 从下一次模型请求起生效",
     },
@@ -2789,7 +2801,7 @@ export const zhCN: TranslationResources = {
         loading: "正在加载 OMP 子智能体配置...",
         overrideEnabled: "复写内置子智能体模型",
         overrideEnabledHint:
-          "为 scout、task、sonic、reviewer 和 security-reviewer 设置模型、思考强度与 Fast 覆写。新启动的子智能体使用保存的设置。关闭后会删除模型覆写及这些智能体的 Fast 覆写。",
+          "为 scout、task、sonic、reviewer 和 security-reviewer 设置模型、思考强度与速度（Fast / Ultrafast）覆写。可用速度取决于模型及内核支持。新启动的子智能体使用保存的设置。关闭后会删除模型及速度覆写。",
         inherit: "继承父 Agent",
         inheritHint: "使用父 Agent 当前或默认的模型。",
         modelLabel: "模型",

@@ -101,7 +101,7 @@ describe("buildOmpAccountProviderUsage", () => {
         providerId: "openai-codex:41",
         displayName: "OpenAI Codex · Personal",
         status: "available",
-        planLabel: "plus",
+        planLabel: "Plus",
         windows: [
           expect.objectContaining({
             id: "codex_five_hour",
@@ -121,7 +121,7 @@ describe("buildOmpAccountProviderUsage", () => {
         providerId: "openai-codex:42",
         displayName: "OpenAI Codex · bob@example.com",
         status: "available",
-        planLabel: "pro",
+        planLabel: "Pro200",
         windows: [
           expect.objectContaining({
             id: "codex_five_hour",

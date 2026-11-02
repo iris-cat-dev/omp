@@ -885,7 +885,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   }),
   z.object({
     type: z.literal("system_notice"),
-    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled"]),
+    notice: z.enum(["fast_mode_enabled", "fast_mode_disabled", "ultrafast_mode_enabled"]),
   }),
   z.object({
     type: z.literal("system_notice"),
@@ -1850,7 +1850,10 @@ export const OmpSubagentSettingsUpdateRequestMessageSchema = z.object({
   type: z.literal("omp.subagents.management.update.request"),
   agentName: z.string().trim().min(1),
   model: z.string().trim().min(1).nullable(),
-  fastMode: z.boolean().nullable().optional(),
+  fastMode: z
+    .union([z.boolean(), z.literal("ultrafast")])
+    .nullable()
+    .optional(),
   requestId: z.string(),
 });
 export const OmpSubagentSettingsEnabledUpdateRequestMessageSchema = z.object({
@@ -6725,7 +6728,7 @@ export const OmpSubagentSettingsSchema = z.object({
       name: z.string(),
       description: z.string(),
       model: z.string().optional(),
-      fastMode: z.boolean().optional(),
+      fastMode: z.union([z.boolean(), z.literal("ultrafast")]).optional(),
       serviceTier: z.string().optional(),
     }),
   ),

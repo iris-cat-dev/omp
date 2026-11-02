@@ -5,9 +5,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { Bot, Zap } from "lucide-react-native";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import { formatAgentFeatureOptionLabel } from "@/agent-controls/labels";
+import { FAST_MODE_FEATURE_ID, type FastModeTier } from "@/agent-controls/policy";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon } from "@/components/provider-icons";
+import { getProviderIcon, type ProviderIconComponent } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
@@ -33,7 +35,7 @@ interface CompactModelSheetProps {
   selectedProvider: string;
   selectedModel: string;
   thinkingLabel: string | null;
-  fastModeEnabled: boolean;
+  fastModeTier: FastModeTier | null;
   onSelect: (provider: string, modelId: string) => void | Promise<void>;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
@@ -133,7 +135,7 @@ export function CompactModelSheet({
   selectedProvider,
   selectedModel,
   thinkingLabel,
-  fastModeEnabled,
+  fastModeTier,
   onSelect,
   isLoading,
   profiles = null,
@@ -202,12 +204,11 @@ export function CompactModelSheet({
   );
   const displayModelLabel =
     resolveGroupedModelLabel(availableProviders, selectedModel) ?? rootBrowser.selectedModelLabel;
+  const fastModeLabel = fastModeTier
+    ? formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: fastModeTier })
+    : null;
   const selectedModelAccessibilityLabel = t("modelSelector.selectedModel", {
-    model: [
-      `${selectedProviderLabel} · ${displayModelLabel}`,
-      thinkingLabel,
-      fastModeEnabled ? t("shell.commandCenter.fastModeGroupLabel") : null,
-    ]
+    model: [`${selectedProviderLabel} · ${displayModelLabel}`, thinkingLabel, fastModeLabel]
       .filter(Boolean)
       .join(" · "),
   });
@@ -349,26 +350,14 @@ export function CompactModelSheet({
         testID="combined-model-selector"
         chevron={null}
       >
-        {ProviderIcon ? (
-          <ComposerToolbarGlyph size={glyphSize}>
-            <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
-          </ComposerToolbarGlyph>
-        ) : null}
-        <View style={styles.triggerLabels}>
-          <Text style={styles.triggerText} numberOfLines={1}>
-            {shortModelLabel(displayModelLabel)}
-          </Text>
-          {thinkingLabel || fastModeEnabled ? (
-            <View style={styles.triggerSummary}>
-              {thinkingLabel ? (
-                <Text style={styles.triggerThinking} numberOfLines={1}>
-                  {thinkingLabel}
-                </Text>
-              ) : null}
-              {fastModeEnabled ? <Zap size={12} color={styles.fastModeIcon.color} /> : null}
-            </View>
-          ) : null}
-        </View>
+        <CompactModelTriggerContent
+          providerIcon={ProviderIcon}
+          glyphSize={glyphSize}
+          displayModelLabel={displayModelLabel}
+          thinkingLabel={thinkingLabel}
+          fastModeTier={fastModeTier}
+          fastModeLabel={fastModeLabel}
+        />
       </ComboboxTrigger>
 
       <AdaptiveModalSheet
@@ -449,6 +438,54 @@ export function CompactModelSheet({
           </View>
         </AdaptiveModalSheet>
       ) : null}
+    </>
+  );
+}
+
+function CompactModelTriggerContent({
+  providerIcon: ProviderIcon,
+  glyphSize,
+  displayModelLabel,
+  thinkingLabel,
+  fastModeTier,
+  fastModeLabel,
+}: {
+  providerIcon: ProviderIconComponent | null;
+  glyphSize: number;
+  displayModelLabel: string;
+  thinkingLabel: string | null;
+  fastModeTier: FastModeTier | null;
+  fastModeLabel: string | null;
+}) {
+  const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
+  return (
+    <>
+      {ProviderIcon ? (
+        <ComposerToolbarGlyph size={glyphSize}>
+          <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
+        </ComposerToolbarGlyph>
+      ) : null}
+      <View style={styles.triggerLabels}>
+        <Text style={styles.triggerText} numberOfLines={1}>
+          {shortModelLabel(displayModelLabel)}
+        </Text>
+        {thinkingLabel || fastModeActive ? (
+          <View style={styles.triggerSummary}>
+            {thinkingLabel ? (
+              <Text style={styles.triggerThinking} numberOfLines={1}>
+                {thinkingLabel}
+              </Text>
+            ) : null}
+            {fastModeActive ? (
+              <Zap
+                size={12}
+                color={styles.fastModeIcon.color}
+                accessibilityLabel={fastModeLabel ?? undefined}
+              />
+            ) : null}
+          </View>
+        ) : null}
+      </View>
     </>
   );
 }

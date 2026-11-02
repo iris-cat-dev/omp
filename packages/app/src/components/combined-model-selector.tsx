@@ -32,6 +32,7 @@ interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
+  selectionDetail?: string;
   onSelect: (provider: AgentProvider, modelId: string) => void | Promise<void>;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
@@ -79,6 +80,7 @@ export function CombinedModelSelector({
   providers,
   selectedProvider,
   selectedModel,
+  selectionDetail,
   onSelect,
   isLoading,
   profiles = null,
@@ -284,7 +286,7 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: [browser.selectedModelLabel, selectionDetail].filter(Boolean).join(" · "),
           })}
           testID="combined-model-selector"
         >
@@ -308,25 +310,17 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: [browser.selectedModelLabel, selectionDetail].filter(Boolean).join(" · "),
           })}
           testID="combined-model-selector"
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
-          {browserSelectedProvider.trim().length > 0 ? (
-            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
-              <ModelProviderGlyph
-                provider={browserSelectedProvider}
-                size={toolbar?.glyphSize ?? ICON_SIZE.md}
-              />
-            </View>
-          ) : null}
-          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-            {browser.triggerLabel}
-          </Text>
-          {triggerAccessory ? (
-            <View style={styles.triggerAccessory}>{triggerAccessory}</View>
-          ) : null}
+          <DefaultModelTriggerContent
+            provider={browserSelectedProvider}
+            label={browser.triggerLabel}
+            glyphSize={toolbar?.glyphSize}
+            accessory={triggerAccessory}
+          />
         </ComboboxTrigger>
       )}
       <Combobox
@@ -347,6 +341,32 @@ export function CombinedModelSelector({
       >
         {selectorBody}
       </Combobox>
+    </>
+  );
+}
+
+function DefaultModelTriggerContent({
+  provider,
+  label,
+  glyphSize,
+  accessory,
+}: {
+  provider: string;
+  label: string;
+  glyphSize?: number;
+  accessory?: ReactNode;
+}) {
+  return (
+    <>
+      {provider.trim().length > 0 ? (
+        <View style={glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
+          <ModelProviderGlyph provider={provider} size={glyphSize ?? ICON_SIZE.md} />
+        </View>
+      ) : null}
+      <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+        {label}
+      </Text>
+      {accessory ? <View style={styles.triggerAccessory}>{accessory}</View> : null}
     </>
   );
 }

@@ -1,6 +1,32 @@
 import type { TFunction } from "i18next";
 import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
 
+export function formatOmpAccountPlanLabel(
+  providerId: string,
+  planLabel: string | null | undefined,
+): string | null {
+  const label = planLabel?.trim();
+  if (!label) return null;
+  if (providerId !== "openai-codex") return label;
+  switch (label.toLowerCase()) {
+    case "free":
+      return "Free";
+    case "plus":
+      return "Plus";
+    case "prolite":
+    case "pro100":
+      return "Pro100";
+    case "pro":
+    case "pro200":
+      return "Pro200";
+    case "promax":
+    case "pro500":
+      return "Pro500";
+    default:
+      return label;
+  }
+}
+
 export function formatOmpCodexCreditBalance(
   credits: OmpProviderAccountQuota["credits"],
   t: TFunction,

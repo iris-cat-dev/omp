@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -55,6 +56,7 @@ import {
   OmpMessagesResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
+  OmpNativeServiceTierSnapshotSchema,
   OmpPromptAckSchema,
   OmpRpcCommandSchema,
   OmpRuntimeEventSchema,
@@ -62,6 +64,7 @@ import {
   OmpSessionStatsSchema,
   type OmpThinkingLevel,
   type OmpFastModeResult,
+  type OmpFastModeSelection,
   type OmpAgentMessage,
   type OmpLoginProvider,
   type OmpModel,
@@ -82,6 +85,8 @@ const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
 /** Allow cold OMP starts the same 30-second budget as other control-plane RPCs. */
 const OMP_READY_TIMEOUT_MS = JSONL_RPC_DEFAULT_TIMEOUT_MS;
 const OMP_CODEX_CATALOG_PRELOAD_URL_ENV = "OMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL";
+const OMP_SERVICE_TIER_TOKEN_ENV = "OMP_DESKTOP_SERVICE_TIER_TOKEN";
+const OMP_SERVICE_TIER_TIMEOUT_MS = 5_000;
 const OMP_CODEX_CATALOG_PRELOAD_BRIDGE =
   "data:text/javascript,await%20import(process%2Eenv%2EOMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL)";
 const OmpToolInventorySchema = z.object({
@@ -105,6 +110,25 @@ export function resolveOmpImageSettingsExtensionPath(
   const compiled = fileURLToPath(new URL("./image-settings-extension.js", moduleUrl));
   const source = fileURLToPath(new URL("./image-settings-extension.ts", moduleUrl));
   return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+}
+
+export function resolveOmpServiceTierExtensionPath(
+  moduleUrl: string | URL = import.meta.url,
+  pathExists: (path: string) => boolean = existsSync,
+): string {
+  const compiled = fileURLToPath(new URL("./service-tier-extension.js", moduleUrl));
+  const source = fileURLToPath(new URL("./service-tier-extension.ts", moduleUrl));
+  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+}
+
+export function hasOmpUltrafastCommand(commands: readonly OmpRpcSlashCommand[]): boolean {
+  return commands.some(
+    (command) =>
+      command.name === "fast" &&
+      command.source === "builtin" &&
+      (command.subcommands?.some((subcommand) => subcommand.name === "ultra") === true ||
+        /\bultra\b/.test(command.input?.hint ?? "")),
+  );
 }
 
 export function resolveOmpCodexCatalogPreloadPath(
@@ -288,6 +312,9 @@ export class OmpCliRuntime implements OmpRuntime {
     );
     await hostVerifier(launch.argv[0], providerEnv);
     installCodexCatalogPreload(launch);
+    const serviceTierToken = randomUUID();
+    launch.env = { ...launch.env, [OMP_SERVICE_TIER_TOKEN_ENV]: serviceTierToken };
+    launch.argv.push("--extension", resolveOmpServiceTierExtensionPath());
     const imageLaunch = input.getImageGenerationConfig
       ? await prepareOmpImageSettingsLaunch(effectiveCommand, launch.cwd, {
           ...globalThis.process.env,
@@ -329,6 +356,7 @@ export class OmpCliRuntime implements OmpRuntime {
         imageToolAllowed,
         bridge,
         localModelsEnabled,
+        serviceTierToken,
       );
       if (imageLaunch)
         process.onExit(() => {
@@ -462,6 +490,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   private appliedImageSettings: string | undefined;
   private imageUpdates = Promise.resolve();
   private readonly localModelGatewayEndpoint = Promise.withResolvers<number | Error>();
+  private serviceTierEndpointPort: number | undefined;
+  private ultrafastCommand: Promise<boolean> | undefined;
+  private modelControls = Promise.resolve();
 
   constructor(
     private readonly process: JsonlRpcProcess,
@@ -471,8 +502,14 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     private readonly imageToolAllowed = true,
     private readonly localModelBridge?: LocalModelBridge,
     private readonly usesLocalModels = false,
+    private readonly serviceTierToken?: string,
   ) {
     process.onMessage((message) => {
+      if (message.type === "desktop_service_tier_ready") {
+        const endpoint = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(message);
+        if (endpoint.success) this.serviceTierEndpointPort = endpoint.data.port;
+        return;
+      }
       if (message.type === "desktop_local_model_gateway_ready") {
         const endpoint = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(message);
         if (endpoint.success) this.localModelGatewayEndpoint.resolve(endpoint.data.port);
@@ -503,6 +540,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       }
     });
     process.onExit(({ error }) => {
+      this.serviceTierEndpointPort = undefined;
       this.appliedImageSettings = undefined;
       this.localModelGatewayEndpoint.resolve(new Error("The local OMP model worker stopped"));
       this.emit({ type: "process_exit", error: error.message });
@@ -634,7 +672,21 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async getState(): Promise<OmpSessionState> {
-    return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+    return this.runModelControl(async () => {
+      const state = OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+      if (!this.serviceTierEndpointPort) return state;
+      const native = await this.requestServiceTier();
+      if (native.model?.provider !== state.model?.provider || native.model?.id !== state.model?.id)
+        throw new Error("OMP model changed during service tier readback");
+      return {
+        ...state,
+        ...(native.available && native.openaiFamily ? { fastModeTier: native.tier } : {}),
+        ultrafastSupported:
+          native.ultrafastAvailable &&
+          state.model?.serviceTiers?.includes("ultrafast") === true &&
+          (await this.supportsUltrafastCommand()),
+      };
+    });
   }
 
   async listBackgroundJobs(): Promise<BackgroundProcess[]> {
@@ -678,7 +730,83 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async setFastMode(enabled: boolean): Promise<OmpFastModeResult> {
-    return OmpFastModeResultSchema.parse(await this.request({ type: "set_fast_mode", enabled }));
+    return this.runModelControl(async () => {
+      const result = OmpFastModeResultSchema.parse(
+        await this.request({ type: "set_fast_mode", enabled }),
+      );
+      if (!this.serviceTierEndpointPort) return result;
+      const native = await this.requestServiceTier();
+      return {
+        ...result,
+        ...(native.available && native.openaiFamily ? { tier: native.tier } : {}),
+      };
+    });
+  }
+
+  async setFastModeTier(
+    value: OmpFastModeSelection,
+    model: { provider: string; id: string },
+  ): Promise<OmpFastModeResult> {
+    return this.runModelControl(async () => {
+      if (!(await this.supportsUltrafastCommand())) {
+        throw new Error("OMP Ultrafast requires a native /fast ultra command");
+      }
+      const native = await this.requestServiceTier({
+        value,
+        model: { provider: model.provider, id: model.id },
+      });
+      const selectedTier = value === "on" ? "priority" : value;
+      const tier = selectedTier === "off" ? null : selectedTier;
+      if (
+        !native.available ||
+        !native.ultrafastAvailable ||
+        native.model?.provider !== model.provider ||
+        native.model.id !== model.id ||
+        native.tier !== tier
+      )
+        throw new Error("OMP did not apply the requested service tier");
+      return { enabled: value !== "off", active: value !== "off", tier: native.tier };
+    });
+  }
+
+  private supportsUltrafastCommand(): Promise<boolean> {
+    this.ultrafastCommand ??= this.getCommands().then(hasOmpUltrafastCommand, () => false);
+    return this.ultrafastCommand;
+  }
+
+  private async requestServiceTier(update?: {
+    value: OmpFastModeSelection;
+    model: { provider: string; id: string };
+  }): Promise<z.infer<typeof OmpNativeServiceTierSnapshotSchema>> {
+    const port = this.serviceTierEndpointPort;
+    if (!port || !this.serviceTierToken) {
+      throw new Error("OMP native service tier bridge is unavailable");
+    }
+    const response = await fetch(`http://127.0.0.1:${port}/tier`, {
+      method: update ? "POST" : "GET",
+      headers: {
+        authorization: `Bearer ${this.serviceTierToken}`,
+        ...(update ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(update ? { body: JSON.stringify(update) } : {}),
+      signal: AbortSignal.timeout(OMP_SERVICE_TIER_TIMEOUT_MS),
+      redirect: "error",
+    });
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      const error = z.object({ error: z.string() }).safeParse(payload);
+      throw new Error(error.success ? error.data.error : "OMP service tier update failed");
+    }
+    return OmpNativeServiceTierSnapshotSchema.parse(payload);
+  }
+
+  private runModelControl<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.modelControls.then(operation);
+    this.modelControls = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   async getMessages(): Promise<OmpAgentMessage[]> {
@@ -708,7 +836,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     if (this.usesLocalModels && provider !== LOCAL_MODEL_PROVIDER) {
       throw new Error("Select a model from this Desktop while local models are enabled.");
     }
-    return OmpModelSchema.parse(await this.request({ type: "set_model", provider, modelId }));
+    return this.runModelControl(async () =>
+      OmpModelSchema.parse(await this.request({ type: "set_model", provider, modelId })),
+    );
   }
 
   async setThinkingLevel(level: OmpThinkingLevel): Promise<void> {

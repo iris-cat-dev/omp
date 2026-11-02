@@ -58,6 +58,7 @@ import {
   resolveOmpAccountSelectorOptions,
 } from "@/components/omp-provider-accounts";
 import {
+  formatOmpAccountPlanLabel,
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
 } from "@/components/omp-provider-quota";
@@ -900,12 +901,14 @@ function resolveSidebarAccountCopy({
   selectedAccount,
   accountOptions,
   selectedAccountId,
+  providerId,
   t,
 }: {
   accountSelection: { isAutomatic: boolean } | null;
   selectedAccount: SidebarAccount | null;
   accountOptions: ComboboxOption[];
   selectedAccountId: string;
+  providerId: string;
   t: TFunction;
 }) {
   const accountIdentity = formatOmpAccountIdentity(selectedAccount?.identityKey);
@@ -915,7 +918,7 @@ function resolveSidebarAccountCopy({
     accountIdentity.primary ||
     accountOptions.find((option) => option.id === selectedAccountId)?.label ||
     t("agentControls.features.oauthAccount.title");
-  const accountPlan = selectedAccount?.quota?.planLabel?.trim();
+  const accountPlan = formatOmpAccountPlanLabel(providerId, selectedAccount?.quota?.planLabel);
   if (accountSelection?.isAutomatic === true) {
     return {
       primary: [t("agentControls.quota.automatic"), accountPlan].filter(Boolean).join(" · "),
@@ -1047,7 +1050,7 @@ function useSidebarAccountModel({
       const weeklyRemaining = resolveOmpRemainingQuotaPct(account.quota?.weeklyUsedPct);
       const fiveHourRemaining = resolveOmpRemainingQuotaPct(account.quota?.fiveHourUsedPct);
       const quotaParts = [
-        account.quota?.planLabel?.trim(),
+        formatOmpAccountPlanLabel(selectedProviderUsageId, account.quota?.planLabel),
         weeklyRemaining === null
           ? null
           : `${t("agentControls.quota.weekly")} ${Math.round(weeklyRemaining)}%`,
@@ -1066,12 +1069,13 @@ function useSidebarAccountModel({
         label: [identity, ...quotaParts].join(" · "),
       };
     });
-  }, [accountSelectorOptions, selectableAccounts, t]);
+  }, [accountSelectorOptions, selectableAccounts, selectedProviderUsageId, t]);
   const accountCopy = resolveSidebarAccountCopy({
     accountSelection,
     selectedAccount,
     accountOptions,
     selectedAccountId,
+    providerId: selectedProviderUsageId,
     t,
   });
   const hasAccountSwitcher =

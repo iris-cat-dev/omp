@@ -100,6 +100,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     notice: z.enum([
       "fast_mode_enabled",
       "fast_mode_disabled",
+      "ultrafast_mode_enabled",
       "model_changed",
       "thinking_changed",
     ]),

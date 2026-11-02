@@ -5082,7 +5082,7 @@ export class DaemonClient {
   async updateOmpSubagentModel(
     agentName: string,
     model: string | null,
-    options?: { requestId?: string; fastMode?: boolean | null },
+    options?: { requestId?: string; fastMode?: boolean | "ultrafast" | null },
   ): Promise<OmpSubagentSettingsUpdatePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,

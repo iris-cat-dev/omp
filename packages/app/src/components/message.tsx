@@ -2283,6 +2283,9 @@ export const SystemNotice = memo(function SystemNotice({
     case "fast_mode_enabled":
       message = t("message.systemNotice.fastModeEnabled");
       break;
+    case "ultrafast_mode_enabled":
+      message = t("message.systemNotice.ultrafastModeEnabled");
+      break;
     default:
       message = t("message.systemNotice.fastModeDisabled");
   }

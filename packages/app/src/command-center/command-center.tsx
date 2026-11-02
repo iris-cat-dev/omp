@@ -360,10 +360,12 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
       ? result.contribution.presentation
       : null;
-  const accessibilityLabel =
-    result.kind === "file"
-      ? [result.title, result.subtitle].filter(Boolean).join(" ")
-      : choice?.path.join(" › ");
+  let accessibilityLabel: string | undefined;
+  if (result.kind === "file") {
+    accessibilityLabel = [result.title, result.subtitle].filter(Boolean).join(" ");
+  } else if (choice) {
+    accessibilityLabel = [choice.path.join(" › "), choice.subtitle].filter(Boolean).join(". ");
+  }
   const accessibilityState = useMemo(
     () => (isNative && choice ? { selected: choice.selected } : undefined),
     [choice],
@@ -373,10 +375,12 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
       styles.row,
       (result.kind === "agent" ||
         result.kind === "workspace" ||
-        (result.kind === "contribution" &&
-          result.contribution.presentation.kind === "action" &&
-          Boolean(result.contribution.presentation.subtitle))) &&
+        (result.kind === "contribution" && Boolean(result.contribution.presentation.subtitle))) &&
         styles.tallRow,
+      result.kind === "contribution" &&
+        result.contribution.presentation.kind === "choice" &&
+        Boolean(result.contribution.presentation.subtitle) &&
+        styles.choiceNoticeRow,
       (Boolean(hovered) || pressed || active) && styles.activeRow,
     ],
     [active, result],
@@ -503,23 +507,30 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
             <Icon size={16} />
           </View>
         ) : null}
-        <View style={styles.breadcrumb}>
-          {presentation.path.map((part, index) => (
-            <View
-              key={presentation.path.slice(0, index + 1).join("\u0000")}
-              style={styles.breadcrumbPart}
-            >
-              {index > 0 ? <ThemedChevronRight size={13} strokeWidth={2} /> : null}
-              <Text
-                style={
-                  index === presentation.path.length - 1 ? styles.title : styles.breadcrumbGroup
-                }
-                numberOfLines={1}
+        <View style={styles.textContent}>
+          <View style={styles.breadcrumb}>
+            {presentation.path.map((part, index) => (
+              <View
+                key={presentation.path.slice(0, index + 1).join("\u0000")}
+                style={styles.breadcrumbPart}
               >
-                {part}
-              </Text>
-            </View>
-          ))}
+                {index > 0 ? <ThemedChevronRight size={13} strokeWidth={2} /> : null}
+                <Text
+                  style={
+                    index === presentation.path.length - 1 ? styles.title : styles.breadcrumbGroup
+                  }
+                  numberOfLines={1}
+                >
+                  {part}
+                </Text>
+              </View>
+            ))}
+          </View>
+          {presentation.subtitle ? (
+            <Text style={styles.subtitle} numberOfLines={3}>
+              {presentation.subtitle}
+            </Text>
+          ) : null}
         </View>
       </View>
       {presentation.selected ? (
@@ -890,6 +901,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   row: { height: 36, paddingHorizontal: theme.spacing[4], paddingVertical: theme.spacing[2] },
   tallRow: { height: 56 },
+  choiceNoticeRow: { height: 88 },
   activeRow: { backgroundColor: setCssColorAlpha(theme.colors.surface1, 1) },
   rowContent: {
     flexDirection: "row",

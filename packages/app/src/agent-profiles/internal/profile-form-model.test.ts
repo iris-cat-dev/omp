@@ -1,4 +1,4 @@
-import type { ProviderSnapshotEntry } from "@omp-desktop/protocol/agent-types";
+import type { AgentFeature, ProviderSnapshotEntry } from "@omp-desktop/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 import {
   buildFeatureRequestKey,
@@ -335,6 +335,18 @@ describe("openAgentProfileForm", () => {
   });
 
   describe("features", () => {
+    const speedFeature: AgentFeature = {
+      id: "fast_mode",
+      label: "Speed",
+      type: "select",
+      value: "off",
+      options: [
+        { id: "off", label: "Standard" },
+        { id: "on", label: "Fast" },
+        { id: "ultrafast", label: "Ultrafast" },
+      ],
+    };
+
     it("asks for features per provider/model/mode/thinking combination", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
@@ -388,6 +400,61 @@ describe("openAgentProfileForm", () => {
 
       expect(model.getState().features[0]).toMatchObject({ id: "webSearch", value: true });
       expect(model.getState().featureValues).toEqual({ webSearch: true });
+    });
+
+    it.each([
+      [false, "off"],
+      [true, "on"],
+    ])("migrates a saved boolean %s and saves exact profile speed ids", (value, expectedValue) => {
+      const model = openWithCatalog({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "Speed profile",
+          provider: "claude",
+          featureValues: { fast_mode: value },
+        },
+      });
+      model.applyFeatures(model.getState().featureRequestKey ?? "", [speedFeature]);
+
+      expect(model.getState().features[0]).toMatchObject({
+        type: "select",
+        value: expectedValue,
+      });
+      expect(model.getState().submitValue?.featureValues).toEqual({
+        fast_mode: expectedValue,
+      });
+      for (const tier of ["off", "on", "ultrafast"]) {
+        model.setFeatureValue("fast_mode", tier);
+        expect(model.getState().features[0]).toMatchObject({ value: tier });
+        expect(model.getState().submitValue?.featureValues).toEqual({ fast_mode: tier });
+      }
+    });
+
+    it("retains an Ultrafast profile preference across models without applying it to a toggle", () => {
+      const model = openWithCatalog({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "Speed profile",
+          provider: "claude",
+          featureValues: { fast_mode: "ultrafast" },
+        },
+      });
+      model.applyFeatures(model.getState().featureRequestKey ?? "", [speedFeature]);
+      expect(model.getState().features[0].value).toBe("ultrafast");
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+      model.applyFeatures(model.getState().featureRequestKey ?? "", [
+        { id: "fast_mode", label: "Fast", type: "toggle", value: false },
+      ]);
+      expect(model.getState().features[0].value).toBe(false);
+      expect(model.getState().featureValues).toEqual({ fast_mode: "ultrafast" });
+
+      model.setModel("claude-opus-5", { label: "Opus 5" });
+      model.applyFeatures(model.getState().featureRequestKey ?? "", [speedFeature]);
+      expect(model.getState().features[0].value).toBe("ultrafast");
+      expect(model.getState().submitValue?.featureValues).toEqual({ fast_mode: "ultrafast" });
     });
 
     it("keeps stored feature values while the feature list is still pending", () => {
