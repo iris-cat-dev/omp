@@ -2862,7 +2862,7 @@ export const en = {
         loading: "Loading OMP subagent settings...",
         overrideEnabled: "Override built-in subagent models",
         overrideEnabledHint:
-          "Set model, thinking, and Fast overrides for scout, task, sonic, reviewer, and security-reviewer. New subagents use saved settings. Turning this off removes model overrides and these agents' Fast overrides.",
+          "Set model, thinking, and speed (Fast / Ultrafast) overrides for scout, task, sonic, reviewer, and security-reviewer. Available speeds depend on model and runtime support. New subagents use saved settings. Turning this off removes their model and speed overrides.",
         inherit: "Inherit parent agent",
         inheritHint: "Use the parent agent's active or default model.",
         modelLabel: "Model",

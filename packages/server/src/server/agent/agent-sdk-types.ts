@@ -887,7 +887,7 @@ export interface AgentClient {
   updateOmpSubagentModel?(
     agentName: string,
     model: string | null,
-    options?: { fastMode?: boolean | null },
+    options?: { fastMode?: boolean | "ultrafast" | null },
   ): Promise<OmpSubagentSettings>;
   updateOmpSubagentSettingsEnabled?(enabled: boolean): Promise<OmpSubagentSettings>;
   getOmpCodexResetSettings?(): Promise<OmpCodexResetSettings>;

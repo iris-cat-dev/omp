@@ -88,11 +88,11 @@ Fast costs more and requires Anthropic fast-mode access. Claude subscribers need
 
 ## Subagent model overrides
 
-In **Host Settings → OMP subagents**, enable **Override built-in subagent models** and select each built-in agent's model. Supported **Thinking** levels appear; **Fast** appears only when the host's capability probe confirms it. Unsupported controls are hidden. **OMP default** leaves native thinking/service-tier policy unchanged, and a manually configured tier is displayed rather than interpreted as explicit Fast-off. Fast may increase provider charges.
+In **Host Settings → OMP subagents**, enable **Override built-in subagent models** and select each built-in agent's model. Supported **Thinking** levels appear; speed controls appear only when the host's capability probe confirms them. Ultrafast-capable models show a **Speed** selector with **OMP default**, **Standard**, **Fast**, and **Ultrafast** (limited to the host's advertised options); older supported hosts retain the Fast switch. Unsupported controls are hidden. **OMP default** leaves native thinking/service-tier policy unchanged, and a manually configured tier is displayed rather than interpreted as explicit Fast-off. Fast and Ultrafast may increase usage costs; model capability does not guarantee account eligibility.
 
-Changes are saved in OMP's user configuration and apply to newly spawned task/eval subagents, even from an already running conversation, not existing children. Thinking uses native selector suffixes such as `provider/model:high`; Fast writes `priority` or `none` to that agent's `task.agentServiceTierOverrides`.
+Changes are saved in OMP's user configuration and apply to newly spawned task/eval subagents, even from an already running conversation, not existing children. Thinking uses native selector suffixes such as `provider/model:high`; Standard, Fast, and Ultrafast write `none`, `priority`, and `ultrafast` respectively to that agent's `task.agentServiceTierOverrides`. Choosing **OMP default** removes only that agent's tier override. Editing the model or thinking alone preserves its existing tier.
 
-Choosing inheritance clears the agent's model and Fast overrides. Disabling the section removes the model mapping and bundled agents' Fast overrides while preserving custom agents' tiers and unrelated settings.
+Choosing inheritance clears the agent's model and speed overrides. Disabling the section removes the model mapping and bundled agents' speed overrides while preserving custom agents' tiers and unrelated settings.
 
 ## Proxy routing
 

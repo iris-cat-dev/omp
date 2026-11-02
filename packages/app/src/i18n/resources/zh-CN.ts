@@ -2762,7 +2762,7 @@ export const zhCN: TranslationResources = {
         loading: "正在加载 OMP 子智能体配置...",
         overrideEnabled: "复写内置子智能体模型",
         overrideEnabledHint:
-          "为 scout、task、sonic、reviewer 和 security-reviewer 设置模型、思考强度与 Fast 覆写。新启动的子智能体使用保存的设置。关闭后会删除模型覆写及这些智能体的 Fast 覆写。",
+          "为 scout、task、sonic、reviewer 和 security-reviewer 设置模型、思考强度与速度（Fast / Ultrafast）覆写。可用速度取决于模型及内核支持。新启动的子智能体使用保存的设置。关闭后会删除模型及速度覆写。",
         inherit: "继承父 Agent",
         inheritHint: "使用父 Agent 当前或默认的模型。",
         modelLabel: "模型",

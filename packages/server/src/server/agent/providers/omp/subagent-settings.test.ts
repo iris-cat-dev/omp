@@ -61,8 +61,9 @@ describe("OMP subagent settings", () => {
   test.each([
     { fastMode: true, serviceTier: "priority", model: "openai/gpt-5.6-sol:high" },
     { fastMode: false, serviceTier: "none", model: "@review:max" },
+    { fastMode: "ultrafast" as const, serviceTier: "ultrafast", model: "openai/gpt-6.1-sol:xhigh" },
   ])(
-    "round trips $model with Fast $fastMode in native settings",
+    "round trips $model with speed $fastMode in native settings",
     async ({ fastMode, serviceTier, model }) => {
       const { agentDir, env } = await createAgentDir();
       const configPath = join(agentDir, "config.yml");
@@ -103,6 +104,7 @@ describe("OMP subagent settings", () => {
     { serviceTier: "default", fastMode: undefined },
     { serviceTier: "auto", fastMode: undefined },
     { serviceTier: "priority", fastMode: true },
+    { serviceTier: "ultrafast", fastMode: "ultrafast" },
     { serviceTier: "none", fastMode: false },
   ])(
     "preserves native $serviceTier when only the model is edited",

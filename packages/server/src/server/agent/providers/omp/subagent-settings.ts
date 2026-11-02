@@ -71,6 +71,7 @@ function toSettings(configPath: string, document: Document.Parsed): OmpSubagentS
         ...(serviceTier ? { serviceTier } : {}),
         ...(serviceTier === "priority" ? { fastMode: true } : {}),
         ...(serviceTier === "none" ? { fastMode: false } : {}),
+        ...(serviceTier === "ultrafast" ? { fastMode: "ultrafast" as const } : {}),
       };
     }),
   };
@@ -121,7 +122,7 @@ function removeServiceTierOverride(document: Document.Parsed, agentName: string)
 }
 
 interface OmpSubagentModelOptions {
-  fastMode?: boolean | null;
+  fastMode?: boolean | "ultrafast" | null;
 }
 
 export async function updateOmpSubagentModel(
@@ -151,10 +152,9 @@ export async function updateOmpSubagentModel(
     if (options?.fastMode === null) {
       removeServiceTierOverride(document, agentName);
     } else if (options?.fastMode !== undefined) {
-      document.setIn(
-        ["task", "agentServiceTierOverrides", agentName],
-        options.fastMode ? "priority" : "none",
-      );
+      let tier: string = options.fastMode ? "priority" : "none";
+      if (options.fastMode === "ultrafast") tier = "ultrafast";
+      document.setIn(["task", "agentServiceTierOverrides", agentName], tier);
     }
   } else {
     document.deleteIn(["task", "agentModelOverrides", agentName]);

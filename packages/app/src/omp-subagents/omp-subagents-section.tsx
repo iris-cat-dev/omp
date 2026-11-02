@@ -12,7 +12,11 @@ import { StyleSheet } from "react-native-unistyles";
 import type { AgentModelDefinition } from "@omp-desktop/protocol/agent-types";
 import type { OmpSubagentSettings } from "@omp-desktop/protocol/messages";
 
-import { formatThinkingOptionLabel } from "@/agent-controls/labels";
+import {
+  formatAgentFeatureOptionDescription,
+  formatAgentFeatureOptionLabel,
+  formatThinkingOptionLabel,
+} from "@/agent-controls/labels";
 import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
 import { SelectField, type SelectFieldOption } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
@@ -25,6 +29,7 @@ import { settingsStyles } from "@/styles/settings";
 
 const INHERIT_MODEL = "__inherit_parent_agent__";
 const DEFAULT_THINKING = "__omp_default_thinking__";
+const DEFAULT_SPEED = "__omp_default_speed__";
 const NATIVE_THINKING_OPTIONS: Record<string, true> = {
   off: true,
   minimal: true,
@@ -64,7 +69,160 @@ interface OmpSubagentRowProps {
   modelOptions: SelectFieldOption<string>[];
   catalogLoading: boolean;
   disabled: boolean;
-  onChange: (agentName: string, model: string, options?: { fastMode: boolean | null }) => void;
+  onChange: (
+    agentName: string,
+    model: string,
+    options?: { fastMode: boolean | "ultrafast" | null },
+  ) => void;
+}
+
+function OmpSubagentSpeedControl({
+  serverId,
+  agent,
+  model,
+  catalogLoading,
+  disabled,
+  onChange,
+}: Pick<OmpSubagentRowProps, "serverId" | "agent" | "catalogLoading" | "disabled" | "onChange"> & {
+  model: AgentModelDefinition | undefined;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  const client = useHostRuntimeClient(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  // Share capability probes across rows, without leaking the previous model's data.
+  const featuresQuery = useFetchQuery({
+    queryKey: ["ompSubagentFeatures", serverId, model?.id ?? null],
+    dataShape: "value",
+    staleTimeMs: 5 * 60 * 1000,
+    enabled: Boolean(client && isConnected && model),
+    retry: false,
+    queryFn: async () => {
+      if (!client || !model) throw new Error(t("workspace.terminal.hostDisconnected"));
+      const payload = await client.listProviderFeatures({
+        provider: "omp",
+        model: model.id,
+        cwd: "~",
+      });
+      if (payload.error) throw new Error(payload.error);
+      return payload.features ?? [];
+    },
+  });
+  const fastFeature = model
+    ? featuresQuery.data?.find(
+        (feature) =>
+          feature.id === FAST_MODE_FEATURE_ID &&
+          (feature.type === "toggle" || feature.type === "select"),
+      )
+    : undefined;
+  let speedValue = agent.serviceTier ?? DEFAULT_SPEED;
+  if (agent.fastMode === "ultrafast") speedValue = "ultrafast";
+  else if (agent.fastMode === true) speedValue = "on";
+  else if (agent.fastMode === false) speedValue = "off";
+  const speedOptions = useMemo<SelectFieldOption<string>[]>(() => {
+    if (fastFeature?.type !== "select") return [];
+    return [
+      {
+        id: DEFAULT_SPEED,
+        value: DEFAULT_SPEED,
+        label: t("settings.host.ompSubagents.ompDefault"),
+      },
+      ...fastFeature.options
+        .filter((option) => ["off", "on", "ultrafast"].includes(option.id))
+        .map((option) => ({
+          id: option.id,
+          value: option.id,
+          label: formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, option, t),
+          description: formatAgentFeatureOptionDescription(FAST_MODE_FEATURE_ID, option, t),
+        })),
+    ];
+  }, [fastFeature, t]);
+  const speedDisplay = useMemo(
+    () =>
+      speedOptions.find((option) => option.value === speedValue) ?? {
+        label: t("settings.host.ompSubagents.currentTier", {
+          tier: agent.serviceTier ?? speedValue,
+        }),
+      },
+    [agent.serviceTier, speedOptions, speedValue, t],
+  );
+  const handleFastChange = useCallback(
+    (fastMode: boolean) => {
+      if (agent.model) onChange(agent.name, agent.model, { fastMode });
+    },
+    [agent.model, agent.name, onChange],
+  );
+  const handleSpeedChange = useCallback(
+    (next: string) => {
+      if (!agent.model || !speedOptions.some((option) => option.value === next)) return;
+      let fastMode: boolean | "ultrafast" | null = next === "on";
+      if (next === DEFAULT_SPEED) fastMode = null;
+      else if (next === "ultrafast") fastMode = "ultrafast";
+      onChange(agent.name, agent.model, { fastMode });
+    },
+    [agent.model, agent.name, onChange, speedOptions],
+  );
+  const fastState = useMemo(() => {
+    if (agent.fastMode === "ultrafast") {
+      return formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: "ultrafast" }, t);
+    }
+    if (agent.fastMode !== undefined) {
+      return t(agent.fastMode ? "shell.commandCenter.settingOn" : "shell.commandCenter.settingOff");
+    }
+    if (agent.serviceTier) {
+      return t("settings.host.ompSubagents.currentTier", { tier: agent.serviceTier });
+    }
+    return t("settings.host.ompSubagents.ompDefault");
+  }, [agent.fastMode, agent.serviceTier, t]);
+  if (fastFeature?.type === "select") {
+    return (
+      <View style={styles.fastMeta} testID={`omp-subagent-fast-row-${agent.name}`}>
+        <View style={styles.controlRow}>
+          <Text style={styles.controlLabel}>{t("agentControls.features.fast.title")}</Text>
+          <View style={styles.thinkingField}>
+            <SelectField
+              field={false}
+              label={t("agentControls.features.fast.title")}
+              value={speedValue}
+              selectedDisplay={speedDisplay}
+              options={speedOptions}
+              onChange={handleSpeedChange}
+              placeholder={t("settings.host.ompSubagents.ompDefault")}
+              emptyText={t("settings.host.ompSubagents.noModels")}
+              disabled={disabled || catalogLoading}
+              title={t("agentControls.features.fast.title")}
+              size="sm"
+              testID={`omp-subagent-fast-${agent.name}`}
+            />
+          </View>
+        </View>
+        <Text style={styles.mutedText}>
+          {t(
+            speedOptions.some((option) => option.value === "ultrafast")
+              ? "agentControls.features.fast.ultrafastDescription"
+              : "shell.commandCenter.fastModeDescription",
+          )}
+        </Text>
+      </View>
+    );
+  }
+  if (fastFeature?.type !== "toggle") return null;
+  return (
+    <View style={styles.controlRow} testID={`omp-subagent-fast-row-${agent.name}`}>
+      <View style={styles.fastMeta}>
+        <Text style={styles.controlLabel}>
+          {t("shell.commandCenter.fastModeGroupLabel")} · {fastState}
+        </Text>
+        <Text style={styles.mutedText}>{t("shell.commandCenter.fastModeDescription")}</Text>
+      </View>
+      <Switch
+        value={agent.fastMode === true}
+        onValueChange={handleFastChange}
+        disabled={disabled || catalogLoading}
+        accessibilityLabel={`${t("shell.commandCenter.fastModeGroupLabel")} · ${fastState}`}
+        testID={`omp-subagent-fast-${agent.name}`}
+      />
+    </View>
+  );
 }
 
 function OmpSubagentRow({
@@ -77,8 +235,6 @@ function OmpSubagentRow({
   onChange,
 }: OmpSubagentRowProps): ReactElement {
   const { t } = useTranslation();
-  const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
   const { model, selector, thinking } = useMemo(
     () => resolveModelSelector(agent.model, models),
     [agent.model, models],
@@ -123,39 +279,6 @@ function OmpSubagentRow({
       },
     [thinking, thinkingOptions, thinkingValue, t],
   );
-  // Share capability probes across rows, without leaking the previous model's data.
-  const featuresQuery = useFetchQuery({
-    queryKey: ["ompSubagentFeatures", serverId, model?.id ?? null],
-    dataShape: "value",
-    staleTimeMs: 5 * 60 * 1000,
-    enabled: Boolean(client && isConnected && model),
-    retry: false,
-    queryFn: async () => {
-      if (!client || !model) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const payload = await client.listProviderFeatures({
-        provider: "omp",
-        model: model.id,
-        cwd: "~",
-      });
-      if (payload.error) throw new Error(payload.error);
-      return payload.features ?? [];
-    },
-  });
-  const supportsFast =
-    model !== undefined &&
-    featuresQuery.data?.some(
-      (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
-    ) === true;
-  let fastState: string;
-  if (agent.fastMode !== undefined) {
-    fastState = t(
-      agent.fastMode ? "shell.commandCenter.settingOn" : "shell.commandCenter.settingOff",
-    );
-  } else if (agent.serviceTier) {
-    fastState = t("settings.host.ompSubagents.currentTier", { tier: agent.serviceTier });
-  } else {
-    fastState = t("settings.host.ompSubagents.ompDefault");
-  }
   const handleChange = useCallback(
     (next: string) => onChange(agent.name, next),
     [agent.name, onChange],
@@ -166,12 +289,6 @@ function OmpSubagentRow({
       onChange(agent.name, next === DEFAULT_THINKING ? selector : `${selector}:${next}`);
     },
     [agent.name, onChange, selector],
-  );
-  const handleFastChange = useCallback(
-    (fastMode: boolean) => {
-      if (agent.model) onChange(agent.name, agent.model, { fastMode });
-    },
-    [agent.model, agent.name, onChange],
   );
 
   return (
@@ -227,23 +344,14 @@ function OmpSubagentRow({
             </View>
           </View>
         ) : null}
-        {supportsFast ? (
-          <View style={styles.controlRow} testID={`omp-subagent-fast-row-${agent.name}`}>
-            <View style={styles.fastMeta}>
-              <Text style={styles.controlLabel}>
-                {t("shell.commandCenter.fastModeGroupLabel")} · {fastState}
-              </Text>
-              <Text style={styles.mutedText}>{t("shell.commandCenter.fastModeDescription")}</Text>
-            </View>
-            <Switch
-              value={agent.fastMode ?? false}
-              onValueChange={handleFastChange}
-              disabled={disabled || catalogLoading}
-              accessibilityLabel={`${t("shell.commandCenter.fastModeGroupLabel")} · ${fastState}`}
-              testID={`omp-subagent-fast-${agent.name}`}
-            />
-          </View>
-        ) : null}
+        <OmpSubagentSpeedControl
+          serverId={serverId}
+          agent={agent}
+          model={model}
+          catalogLoading={catalogLoading}
+          disabled={disabled}
+          onChange={onChange}
+        />
       </View>
     </View>
   );
@@ -316,7 +424,11 @@ export function OmpSubagentsSection({ serverId }: { serverId: string }): ReactEl
   }, [models, t]);
 
   const updateModel = useCallback(
-    async (agentName: string, value: string, options?: { fastMode: boolean | null }) => {
+    async (
+      agentName: string,
+      value: string,
+      options?: { fastMode: boolean | "ultrafast" | null },
+    ) => {
       if (!client) return;
       setSavingAgent(agentName);
       setError(null);
