@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -52,6 +52,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { streamOmpHistory, streamOmpSubagentHistory } from "./providers/omp/history.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
@@ -4976,6 +4977,111 @@ test("hydrateTimelineFromProvider restores and broadcasts provider children from
       }),
     },
   });
+});
+
+test("restores native child transcripts after restart without replaying durable parent rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-native-child-"));
+  const parent = join(workdir, "parent.jsonl");
+  mkdirSync(join(workdir, "parent"));
+  const child = join(workdir, "parent", "RecoveredChild.jsonl");
+  const writeMessages = (file: string, messages: object[]) => {
+    const entries = [{ type: "session", id: "root" }, ...messages.map((message, index) => ({
+      type: "message", id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : "root", message,
+    }))];
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  };
+  writeMessages(parent, [
+    { role: "assistant", content: [{ type: "toolCall", id: "spawn", name: "task", arguments: { tasks: [{ task: "Inspect" }] } }] },
+    { role: "toolResult", toolName: "task", toolCallId: "spawn", content: [], details: { results: [{ id: "RecoveredChild", exitCode: 0 }] } },
+  ]);
+  writeMessages(child, [{ role: "assistant", responseId: "saved-child", content: [{ type: "text", text: "Saved child answer" }] }]);
+  class NativeHistorySession extends TestAgentSession {
+    async *streamSubagentHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* streamOmpSubagentHistory({ sessionFile: parent, provider: "omp" });
+    }
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* streamOmpHistory({ sessionFile: parent, provider: "omp" });
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new NativeHistorySession(config);
+    }
+    override async resumeSession(_handle: AgentPersistenceHandle, config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+      return new NativeHistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  })();
+  const durable = new RecordingTimelineStore();
+  const first = new AgentManager({ clients: { codex: client }, durableTimelineStore: durable, logger });
+  const second = new AgentManager({ clients: { codex: client }, durableTimelineStore: durable, logger });
+  let agentId: string | undefined;
+  try {
+    const agent = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, { workspaceId: undefined });
+    agentId = agent.id;
+    await first.appendTimelineItem(agent.id, { type: "assistant_message", text: "Canonical parent answer", messageId: "parent-answer" });
+    await first.flush();
+    const parentRows = await durable.getCommittedRows(agent.id);
+    const oldChildEpoch = first.fetchProviderSubagentTimeline(agent.id, "RecoveredChild").epoch;
+    await first.closeAgent(agent.id);
+    await second.resumeAgentFromPersistence({ provider: "codex", sessionId: "parent", nativeHandle: parent }, { cwd: workdir }, agent.id);
+    await second.hydrateTimelineFromProvider(agent.id);
+    expect(await second.getTimelineRows(agent.id)).toEqual(parentRows);
+    expect(second.listProviderSubagents(agent.id)).toEqual([expect.objectContaining({ id: "RecoveredChild", status: "completed", toolCallId: "spawn" })]);
+    const restored = second.fetchProviderSubagentTimeline(agent.id, "RecoveredChild", { limit: 0 });
+    expect(restored.epoch).not.toBe(oldChildEpoch);
+    expect(restored.rows.map((row) => row.item)).toEqual([expect.objectContaining({ type: "assistant_message", text: "Saved child answer" })]);
+    await second.hydrateTimelineFromProvider(agent.id);
+    expect(second.fetchProviderSubagentTimeline(agent.id, "RecoveredChild", { limit: 0 })).toEqual(restored);
+  } finally {
+    if (agentId) {
+      await first.closeAgent(agentId).catch(() => undefined);
+      await second.closeAgent(agentId).catch(() => undefined);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("retains live child output arriving during forced history replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-child-replay-race-"));
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  let session: TestAgentSession | undefined;
+  class ReplaySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "provider_subagent", provider: "codex", event: { type: "upsert", id: "child", status: "running" } };
+      yield { type: "provider_subagent", provider: "codex", event: { type: "timeline", id: "child", item: { type: "assistant_message", messageId: "reply", text: "Stored " } } };
+      entered.resolve();
+      await gate.promise;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ReplaySession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, { workspaceId: undefined });
+    agentId = agent.id;
+    const replay = manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await entered.promise;
+    session!.pushEvent({ type: "provider_subagent", provider: "codex", event: { type: "timeline", id: "child", item: { type: "assistant_message", messageId: "reply", text: "live tail" } } });
+    session!.pushEvent({ type: "provider_subagent", provider: "codex", event: { type: "upsert", id: "child", status: "completed" } });
+    gate.resolve();
+    await replay;
+    await manager.flush();
+    expect(manager.listProviderSubagents(agent.id)).toEqual([expect.objectContaining({ id: "child", status: "completed" })]);
+    expect(manager.fetchProviderSubagentTimeline(agent.id, "child", { limit: 0 }).rows.map((row) => row.item)).toEqual([
+      expect.objectContaining({ type: "assistant_message", messageId: "reply", text: "Stored " }),
+      expect.objectContaining({ type: "assistant_message", messageId: "reply", text: "live tail" }),
+    ]);
+  } finally {
+    gate.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("force provider hydration removes children absent from current history", async () => {

@@ -117,6 +117,14 @@ Older workspaces with multiple active roots restore each root as a tab and focus
 
 `notifyOnFinish: true` can notify the creator when an independent agent finishes, fails, or needs permission without creating a parent relationship. It does not revive an archived creator. Ordinary child agents retain parent-owned notifications, which cease if the child is detached.
 
+### OMP-native task subagents
+
+Native `task` workers appear in the parent's subagent track as soon as OMP reports them, without waiting for the parent tool result. They are provider children, not independent Desktop conversations. Opening a child shows a read-only transcript with live text, reasoning, tool arguments, and tool output; nested children retain their dotted native IDs.
+
+An idle child can resume under the same ID. A new native `started` event begins that run; delayed progress or metadata cannot reopen a completed or canceled run. The existing transcript remains available across continuation and reconnection.
+
+Native snapshots and JSONL history restore child transcripts independently of the parent's conversation history. Retained child lists and paged transcripts can also be read while the parent runtime is unloaded. Ordinary reads preserve the timeline epoch; explicit history replacement, such as a session reload or rewind, can replace it and requires a fresh client snapshot.
+
 ## Schedules
 
 On **Schedules**, use a task's **⋮ → Pause / Resume**, including heartbeats prompting an existing Agent. Paused tasks display **Paused** and retain cadence, prompt, target, and limits. Pausing prevents future triggers without interrupting started executions. Resume computes the next trigger from the original cadence without replaying missed runs.

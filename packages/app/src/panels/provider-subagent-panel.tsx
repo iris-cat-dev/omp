@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
@@ -11,8 +11,10 @@ import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry
 import { useSessionStore } from "@/stores/session-store";
 import {
   providerSubagentKey,
+  providerSubagentParentKey,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
+  refreshProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
@@ -38,6 +40,10 @@ function useProviderSubagentDescriptor(
   target: { kind: "provider_subagent"; parentAgentId: string; subagentId: string },
   context: { serverId: string },
 ): PanelDescriptor {
+  const { t } = useTranslation();
+  const listStatus = useProviderSubagentStore((state) =>
+    state.listSync.get(providerSubagentParentKey(context.serverId, target.parentAgentId)),
+  );
   const descriptor = useProviderSubagentStore((state) =>
     state.descriptors.get(
       providerSubagentKey(context.serverId, target.parentAgentId, target.subagentId),
@@ -49,14 +55,15 @@ function useProviderSubagentDescriptor(
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
   // The task names the tab; the subagent type is supporting detail beside the provider.
   const subagentType = descriptor?.title?.trim();
-  const label = descriptor?.description?.trim() || subagentType || "Subagent";
+  const label = descriptor?.description?.trim() || subagentType ||
+    (listStatus === "ready" ? t("agentPanel.states.notFound") : "Subagent");
   const providerLabel = `${formatProviderLabel(provider)} subagent`;
   return {
     label,
     subtitle:
       subagentType && subagentType !== label ? `${subagentType} · ${providerLabel}` : providerLabel,
     tooltip: label,
-    titleState: descriptor ? "ready" : "loading",
+    titleState: descriptor || (listStatus && listStatus !== "loading") ? "ready" : "loading",
     icon: getProviderIcon(provider),
     statusBucket: descriptor
       ? deriveSidebarStateBucket({
@@ -73,10 +80,12 @@ function ProviderSubagentPanel() {
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
   const streamId = `provider:${encodeURIComponent(target.parentAgentId)}:${encodeURIComponent(target.subagentId)}`;
-  const { descriptor, timeline } = useProviderSubagentStore(
+  const { descriptor, timeline, listStatus, timelineStatus } = useProviderSubagentStore(
     useShallow((state) => ({
       descriptor: state.descriptors.get(key) ?? null,
       timeline: state.timelines.get(key) ?? null,
+      listStatus: state.listSync.get(providerSubagentParentKey(serverId, target.parentAgentId)),
+      timelineStatus: state.timelineSync.get(key),
     })),
   );
   const parent = useSessionStore(
@@ -98,16 +107,9 @@ function ProviderSubagentPanel() {
 
   useEffect(() => {
     if (!client || !supported) return;
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
-        direction: "tail",
-        limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined);
+    void refreshProviderSubagentTimeline(
+      client, serverId, target.parentAgentId, target.subagentId,
+    ).catch(() => undefined);
   }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
 
   const loadOlder = useCallback((): boolean => {
@@ -117,17 +119,13 @@ function ProviderSubagentPanel() {
     const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
     if (firstSeq === null) return false;
     setIsLoadingOlder(true);
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
+    void refreshProviderSubagentTimeline(
+      client, serverId, target.parentAgentId, target.subagentId, {
         direction: "before",
         cursor: { epoch: timeline.epoch, seq: firstSeq },
         limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined)
+      },
+    ).catch(() => undefined)
       .finally(() => setIsLoadingOlder(false));
     return true;
   }, [
@@ -174,6 +172,14 @@ function ProviderSubagentPanel() {
     [descriptor?.status],
   );
 
+  const retrySync = useCallback(() => {
+    if (!client || !supported) return;
+    void refreshProviderSubagents(client, serverId, target.parentAgentId).catch(() => undefined);
+    void refreshProviderSubagentTimeline(
+      client, serverId, target.parentAgentId, target.subagentId,
+    ).catch(() => undefined);
+  }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
+
   if (serverInfo && !supported) {
     return (
       <View style={styles.unsupported} testID="provider-subagent-panel-unsupported">
@@ -182,9 +188,31 @@ function ProviderSubagentPanel() {
     );
   }
 
+  if (!descriptor && (listStatus === "ready" || timelineStatus === "missing" ||
+    listStatus === "error" || timelineStatus === "error")) {
+    const failed = listStatus === "error" || timelineStatus === "error";
+    return (
+      <View style={styles.unsupported} testID="provider-subagent-panel-unavailable">
+        <Text style={styles.unsupportedText}>
+          {t(failed ? "agentPanel.states.failedToLoad" : "agentPanel.states.notFound")}
+        </Text>
+        <Pressable accessibilityRole="button" onPress={retrySync}>
+          <Text style={styles.unsupportedText}>{t("common.actions.retry")}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container} testID="provider-subagent-panel">
       <ProviderSubagentMetadata model={descriptor?.model} subtitle={descriptor?.subtitle} />
+      {timelineStatus === "error" ? (
+        <Pressable accessibilityRole="button" onPress={retrySync} style={styles.syncError}>
+          <Text style={styles.unsupportedText}>
+            {t("agentPanel.states.timelineSyncFailed")} {t("common.actions.retry")}
+          </Text>
+        </Pressable>
+      ) : null}
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
@@ -193,7 +221,7 @@ function ProviderSubagentPanel() {
         streamHead={timeline?.head ?? EMPTY_STREAM_ITEMS}
         turnPresentation={turnPresentation}
         pendingPermissions={EMPTY_PERMISSIONS}
-        isAuthoritativeHistoryReady
+        isAuthoritativeHistoryReady={timeline !== null || timelineStatus === "ready"}
         onOpenWorkspaceFile={openFileInWorkspace}
         readOnly
         historyPagination={historyPagination}
@@ -206,6 +234,7 @@ const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0 },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
+  syncError: { padding: 12 },
 }));
 
 export const providerSubagentPanelRegistration: PanelRegistration<"provider_subagent"> = {

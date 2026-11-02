@@ -79,6 +79,8 @@ export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
   private readonly timelines = new InMemoryAgentTimelineStore();
 
+  constructor(private readonly epochPrefix?: string) {}
+
   apply(
     parentAgentId: string,
     provider: AgentProvider,
@@ -93,7 +95,10 @@ export class ProviderSubagentStore {
 
     if (event.type === "timeline") {
       if (!this.timelines.has(key)) {
-        this.timelines.initialize(key);
+        this.timelines.initialize(
+          key,
+          this.epochPrefix ? { epoch: `${this.epochPrefix}:${key}` } : undefined,
+        );
       }
       const row = this.timelines.append(key, limitAgentTimelineItemContent(event.item), {
         timestamp: event.timestamp,
@@ -110,7 +115,10 @@ export class ProviderSubagentStore {
 
     const previous = this.descriptors.get(key);
     if (!this.timelines.has(key)) {
-      this.timelines.initialize(key);
+      this.timelines.initialize(
+        key,
+        this.epochPrefix ? { epoch: `${this.epochPrefix}:${key}` } : undefined,
+      );
     }
     const timestamp = event.timestamp ?? new Date().toISOString();
     const subagent: ProviderSubagentDescriptor = {

@@ -70,6 +70,11 @@ afterEach(() => {
     descriptors: new Map(),
     timelines: new Map(),
     hiddenFromTrack: new Set(),
+    connectionGenerations: new Map(),
+    listSync: new Map(),
+    timelineSync: new Map(),
+    liveRevisions: new Map(),
+    runVersions: new Map(),
   });
 });
 

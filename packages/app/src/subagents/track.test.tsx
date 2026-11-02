@@ -111,4 +111,43 @@ describe("SubagentsTrack stop controls", () => {
     expect(screen.queryByRole("button", { name: "Stopping Managed task" })).toBeNull();
     expect(screen.getByRole("button", { name: "Stop Managed task" })).toBeTruthy();
   });
+
+  it("allows stopping a resumed child without an old stop response clearing the new pending state", async () => {
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const stopProvider = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+    const props = {
+      onOpenSubagent: vi.fn(), onOpenProviderSubagent: vi.fn(),
+      onStopSubagent: vi.fn(async () => {}), onStopProviderSubagent: stopProvider,
+      onArchiveSubagent: vi.fn(),
+    };
+    const view = render(<SubagentsTrack {...props} rows={[{ ...provider, runVersion: 0 }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop Inspect code" }));
+    expect(screen.getByRole("button", { name: "Stopping Inspect code" })).toBeTruthy();
+    view.rerender(<SubagentsTrack {...props} rows={[{ ...provider, status: "canceled", runVersion: 0 }]} />);
+    expect(screen.queryByTestId("subagents-track-stop-native")).toBeNull();
+    view.rerender(<SubagentsTrack {...props} rows={[{ ...provider, runVersion: 1 }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop Inspect code" }));
+    expect(stopProvider).toHaveBeenCalledTimes(2);
+    await act(async () => first.resolve());
+    expect(screen.getByRole("button", { name: "Stopping Inspect code" })).toBeTruthy();
+    await act(async () => second.resolve());
+    expect(screen.getByRole("button", { name: "Stop Inspect code" })).toBeTruthy();
+  });
+
+  it("does not transfer a pending stop to a different parent using the same native child id", () => {
+    const pending = Promise.withResolvers<void>();
+    const props = {
+      onOpenSubagent: vi.fn(), onOpenProviderSubagent: vi.fn(),
+      onStopSubagent: vi.fn(async () => {}), onStopProviderSubagent: vi.fn(() => pending.promise),
+      onArchiveSubagent: vi.fn(),
+    };
+    const view = render(<SubagentsTrack {...props} rows={[provider]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop Inspect code" }));
+    view.rerender(<SubagentsTrack {...props} rows={[{ ...provider, parentAgentId: "other-parent", description: "Inspect another task" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop Inspect another task" }));
+    expect(props.onStopProviderSubagent).toHaveBeenNthCalledWith(1, "parent", "native");
+    expect(props.onStopProviderSubagent).toHaveBeenNthCalledWith(2, "other-parent", "native");
+    pending.resolve();
+  });
 });

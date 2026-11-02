@@ -517,6 +517,13 @@ function attachManagedTurnIdentity(
       if (event.item.type === "assistant_message" && event.item.customMessage) {
         return { event, turnId: undefined };
       }
+      if (
+        event.item.type === "tool_call" &&
+        event.item.detail?.type === "sub_agent" &&
+        event.item.status !== "running"
+      ) {
+        return { event, turnId: undefined };
+      }
       // Live provider items belong to the foreground turn that owns their dispatch.
       // Provider history deliberately keeps absent IDs because it has no daemon turn identity.
       const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
@@ -717,6 +724,8 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
+  private readonly providerSubagentHistory = new WeakMap<AgentSession, Promise<void>>();
+  private readonly providerSubagentReplayEvents = new Map<string, AgentStreamEvent[]>();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
@@ -1571,9 +1580,11 @@ export class AgentManager {
         publishWhenReady: true,
         admission,
       });
-      for (const event of imported.providerSubagentEvents ?? []) {
-        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-        this.dispatch({ type: "provider_subagent", event: update });
+      if (!imported.session.streamSubagentHistory) {
+        for (const event of imported.providerSubagentEvents ?? []) {
+          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+          this.dispatch({ type: "provider_subagent", event: update });
+        }
       }
       return agent;
     } finally {
@@ -3765,6 +3776,10 @@ export class AgentManager {
       this.touchUpdatedAt(managed);
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed, options?.admission);
+      if (managed.historyPrimed) {
+        await this.hydrateProviderSubagentHistory(managed, true);
+        this.assertAgentRegistrationActive(managed, options?.admission);
+      }
       this.emitState(managed, { persist: false });
       this.subscribeToSession(managed);
       this.assertRunAdmission(options?.admission, getParentAgentIdFromLabels(managed.labels));
@@ -3998,6 +4013,11 @@ export class AgentManager {
       },
       "agent.manager.enqueue",
     );
+    const replayEvents = this.providerSubagentReplayEvents.get(agentId);
+    if (replayEvents && event.type === "provider_subagent") {
+      replayEvents.push(event);
+      return;
+    }
     const steerBarrier = this.steerEventBarriers.get(agentId);
     if (steerBarrier) {
       steerBarrier.events.push(event);
@@ -4193,20 +4213,64 @@ export class AgentManager {
     options?: HydrateTimelineOptions,
   ): Promise<void> {
     if (agent.historyPrimed && !options?.force) {
+      await this.hydrateProviderSubagentHistory(agent, options?.broadcast ?? false);
       return;
     }
 
     const broadcast = options?.broadcast ?? false;
 
     if (options?.force) {
-      await this.forceHydrateTimelineFromLegacyProviderHistory(
-        agent,
-        typeof broadcast === "function" ? broadcast() : broadcast,
-      );
+      const liveEvents: AgentStreamEvent[] = [];
+      this.providerSubagentReplayEvents.set(agent.id, liveEvents);
+      try {
+        await this.forceHydrateTimelineFromLegacyProviderHistory(
+          agent,
+          typeof broadcast === "function" ? broadcast() : broadcast,
+        );
+      } finally {
+        this.providerSubagentReplayEvents.delete(agent.id);
+        if (this.agents.get(agent.id) === agent) {
+          for (const event of liveEvents) this.enqueueSessionEvent(agent.id, event);
+        }
+      }
       return;
     }
 
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+  }
+
+  private async hydrateProviderSubagentHistory(
+    agent: ActiveManagedAgent,
+    broadcast: boolean | (() => boolean),
+  ): Promise<void> {
+    const source = agent.session.streamSubagentHistory;
+    if (!source) return;
+    const previous = this.providerSubagentHistory.get(agent.session);
+    if (previous) return previous;
+    const replay = (async () => {
+      for (const event of this.providerSubagents.deleteParent(agent.id)) {
+        if (typeof broadcast === "function" ? broadcast() : broadcast) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
+      }
+      for await (const event of source.call(agent.session)) {
+        if (this.agents.get(agent.id) !== agent) return;
+        if (event.type !== "provider_subagent") continue;
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        if (typeof broadcast === "function" ? broadcast() : broadcast) {
+          this.dispatch({ type: "provider_subagent", event: update });
+        }
+      }
+    })();
+    this.providerSubagentHistory.set(agent.session, replay);
+    try {
+      await replay;
+    } catch (error) {
+      if (this.providerSubagentHistory.get(agent.session) === replay) {
+        this.providerSubagentHistory.delete(agent.session);
+      }
+      throw error;
+    }
   }
 
   private async getPromptSources(agentId: string): Promise<Record<string, string>> {
@@ -4250,6 +4314,7 @@ export class AgentManager {
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
+    this.providerSubagentHistory.set(agent.session, Promise.resolve());
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
@@ -4335,6 +4400,7 @@ export class AgentManager {
       throw error;
     }
     agent.historyPrimed = true;
+    this.providerSubagentHistory.set(agent.session, Promise.resolve());
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;

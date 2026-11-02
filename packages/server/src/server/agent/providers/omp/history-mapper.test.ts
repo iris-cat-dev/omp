@@ -934,7 +934,8 @@ describe("OMP history mapper", () => {
       const echoFile = join(parentStem, `${echoId}.jsonl`);
       const failedFile = join(parentStem, "FailedChild.jsonl");
       const abortedFile = join(parentStem, "AbortedChild.jsonl");
-      const nestedFile = join(parentStem, echoId, "NestedChild.jsonl");
+      const nestedId = "EchoChild.NestedChild";
+      const nestedFile = join(parentStem, echoId, `${nestedId}.jsonl`);
       mkdirSync(join(parentStem, echoId), { recursive: true });
 
       const writeEntries = (file: string, entries: object[]): void => {
@@ -1024,7 +1025,7 @@ describe("OMP history mapper", () => {
             toolCallId: "nested-task",
             toolName: "task",
             content: [{ type: "text", text: "nested done" }],
-            details: { results: [{ id: "NestedChild", exitCode: 0 }] },
+            details: { results: [{ id: nestedId, exitCode: 0 }] },
           },
         },
       ]);
@@ -1127,7 +1128,7 @@ describe("OMP history mapper", () => {
       expect(subagentEvents).toContainEqual(
         expect.objectContaining({
           type: "timeline",
-          id: "NestedChild",
+          id: nestedId,
           timestamp: "2026-07-07T03:00:01Z",
         }),
       );
@@ -1137,7 +1138,6 @@ describe("OMP history mapper", () => {
             id: echoId,
             title: "task",
             model: "openai-codex/gpt-5.5",
-            status: "running",
             timestamp: "2026-07-07T02:00:00Z",
           }),
           expect.objectContaining({
@@ -1155,7 +1155,7 @@ describe("OMP history mapper", () => {
           }),
           expect.objectContaining({ id: "MissingChild", status: "failed", model: null }),
           expect.objectContaining({
-            id: "NestedChild",
+            id: nestedId,
             status: "completed",
             model: "anthropic/claude-sonnet-5-20260701",
           }),

@@ -20,6 +20,11 @@ import type {
   OmpSubagentSubscriptionLevel,
   OmpThinkingLevel,
 } from "./rpc-types.js";
+import type {
+  OmpSubagentSnapshot,
+  OmpSubagentMessagesSelector,
+  OmpSubagentMessagesResult,
+} from "./subagent-rpc.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
 
@@ -73,6 +78,8 @@ export interface OmpRuntimeSession {
   stopAllBackgroundJobs?(): Promise<number>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
+  getSubagents(): Promise<OmpSubagentSnapshot[]>;
+  getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
   getLocalModelGatewayPort?(): Promise<number>;
   getLoginProviders(): Promise<OmpLoginProvider[]>;

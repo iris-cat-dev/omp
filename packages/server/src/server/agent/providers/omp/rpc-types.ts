@@ -34,6 +34,7 @@ export const OmpAssistantContentSchema = z.discriminatedUnion("type", [
   OmpTextContentSchema,
   OmpThinkingContentSchema,
   OmpToolCallContentSchema,
+  OmpImageContentSchema,
 ]);
 
 const OmpUserMessageSchema = z
@@ -276,8 +277,12 @@ export const OmpSubagentProgressSchema = z
     id: z.string(),
     status: OmpSubagentStatusSchema,
     description: z.string().optional(),
-    currentTool: z.unknown().optional(),
-    recentTools: z.array(z.unknown()).optional(),
+    currentTool: z.string().optional(),
+    currentToolArgs: z.string().optional(),
+    currentToolArgsKey: z.string().optional(),
+    currentToolIntent: z.string().optional(),
+    currentToolStartMs: z.number().optional(),
+    recentTools: z.array(z.object({ tool: z.string(), args: z.string().optional(), endMs: z.number().optional() }).passthrough()).optional(),
     recentOutput: z.array(z.unknown()).optional(),
     resolvedModel: z.string().optional(),
   })
@@ -297,76 +302,21 @@ export const OmpSubagentProgressPayloadSchema = z
   .passthrough();
 
 export const OmpAssistantMessageEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text_delta"), delta: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("thinking_delta"), delta: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("text_delta"), contentIndex: z.number().optional(), delta: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("thinking_delta"), contentIndex: z.number().optional(), delta: z.string().optional() }).passthrough(),
   z.object({ type: z.literal("start") }).passthrough(),
-  z.object({ type: z.literal("text_start") }).passthrough(),
-  z.object({ type: z.literal("text_end") }).passthrough(),
-  z.object({ type: z.literal("thinking_start") }).passthrough(),
-  z.object({ type: z.literal("thinking_end") }).passthrough(),
+  z.object({ type: z.literal("text_start"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("text_end"), contentIndex: z.number().optional(), content: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("thinking_start"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("thinking_end"), contentIndex: z.number().optional(), content: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("toolcall_start"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("toolcall_delta"), contentIndex: z.number().optional(), delta: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("toolcall_end"), contentIndex: z.number().optional(), toolCall: OmpToolCallContentSchema.optional() }).passthrough(),
+  z.object({ type: z.literal("image_end"), contentIndex: z.number().optional(), content: OmpImageContentSchema.optional() }).passthrough(),
   z.object({ type: z.literal("done") }).passthrough(),
+  z.object({ type: z.literal("error"), reason: z.string().optional() }).passthrough(),
 ]);
 
-export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("agent_start") }).passthrough(),
-  z.object({ type: z.literal("turn_start") }).passthrough(),
-  z.object({ type: z.literal("message_start"), message: OmpAgentMessageSchema }).passthrough(),
-  z.object({ type: z.literal("message_end"), message: OmpAgentMessageSchema }).passthrough(),
-  z
-    .object({
-      type: z.literal("message_update"),
-      message: OmpAgentMessageSchema,
-      assistantMessageEvent: OmpAssistantMessageEventSchema,
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("tool_execution_start"),
-      toolCallId: z.string(),
-      toolName: z.string(),
-      args: z.unknown(),
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("tool_execution_update"),
-      toolCallId: z.string(),
-      toolName: z.string(),
-      args: z.unknown().optional(),
-      partialResult: z.unknown(),
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("tool_execution_end"),
-      toolCallId: z.string(),
-      toolName: z.string(),
-      result: z.unknown(),
-      isError: z.boolean().optional(),
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("compaction_start"),
-      reason: z.string().optional(),
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("compaction_end"),
-      reason: z.string().optional(),
-      errorMessage: z.string().optional(),
-      aborted: z.boolean().optional(),
-    })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("agent_end"),
-      messages: z.array(OmpAgentMessageSchema).optional(),
-      isTerminal: z.boolean().optional(),
-    })
-    .passthrough(),
-]);
 
 export const OmpTodoItemSchema = z
   .object({
@@ -480,6 +430,90 @@ export const OmpCredentialChangedEventSchema = z
     credentialId: z.number().int().positive(),
   })
   .passthrough();
+export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("agent_start") }).passthrough(),
+  z.object({ type: z.literal("turn_start") }).passthrough(),
+  z.object({ type: z.literal("turn_end"), message: OmpAgentMessageSchema, toolResults: z.array(OmpAgentMessageSchema).optional() }).passthrough(),
+  z.object({ type: z.literal("message_start"), message: OmpAgentMessageSchema }).passthrough(),
+  z.object({ type: z.literal("message_end"), message: OmpAgentMessageSchema }).passthrough(),
+  z
+    .object({
+      type: z.literal("message_update"),
+      message: OmpAgentMessageSchema,
+      assistantMessageEvent: OmpAssistantMessageEventSchema,
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("tool_execution_start"),
+      toolCallId: z.string(),
+      toolName: z.string(),
+      args: z.unknown(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("tool_execution_update"),
+      toolCallId: z.string(),
+      toolName: z.string(),
+      args: z.unknown().optional(),
+      partialResult: z.unknown(),
+    })
+    .passthrough(),
+  z.object({ type: z.literal("tool_stream_update"), toolCallId: z.string(), toolName: z.string(), update: z.unknown() }).passthrough(),
+  z
+    .object({
+      type: z.literal("tool_execution_end"),
+      toolCallId: z.string(),
+      toolName: z.string(),
+      result: z.unknown(),
+      isError: z.boolean().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("compaction_start"),
+      reason: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("compaction_end"),
+      reason: z.string().optional(),
+      errorMessage: z.string().optional(),
+      aborted: z.boolean().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("agent_end"),
+      messages: z.array(OmpAgentMessageSchema).optional(),
+      isTerminal: z.boolean().optional(),
+    })
+    .passthrough(),
+  OmpAutoRetryStartEventSchema,
+  OmpAutoRetryEndEventSchema,
+  OmpRetryFallbackAppliedEventSchema,
+  OmpRetryFallbackSucceededEventSchema,
+  OmpAutoCompactionStartEventSchema,
+  OmpAutoCompactionEndEventSchema,
+  z.object({ type: z.literal("manual_compaction_start"), mode: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("manual_compaction_end"), result: z.unknown().optional(), aborted: z.boolean(), skipped: z.boolean().optional(), errorMessage: z.string().optional() }).passthrough(),
+  z.object({ type: z.literal("cache_warming_start") }).passthrough(),
+  z.object({ type: z.literal("cache_warming_end") }).passthrough(),
+  z.object({ type: z.literal("model_changed") }).passthrough(),
+  z.object({ type: z.literal("config_warnings_changed") }).passthrough(),
+  z.object({ type: z.literal("advisor_cost_changed") }).passthrough(),
+  z.object({ type: z.literal("advisor_yielded") }).passthrough(),
+  z.object({ type: z.literal("ttsr_triggered"), rules: z.array(z.unknown()) }).passthrough(),
+  OmpTodoReminderEventSchema,
+  z.object({ type: z.literal("todo_auto_clear") }).passthrough(),
+  z.object({ type: z.literal("irc_message"), message: OmpCustomMessageSchema }).passthrough(),
+  OmpNoticeEventSchema,
+  z.object({ type: z.literal("thinking_level_changed"), thinkingLevel: z.string().optional(), configured: z.string().optional(), resolved: z.string().optional() }).passthrough(),
+  OmpGoalUpdatedEventSchema,
+  z.object({ type: z.literal("queue_update"), steering: z.array(z.string()), followUp: z.array(z.string()), liveSteered: z.number().optional() }).passthrough(),
+]);
 
 const OmpExtensionUiRequestSchema = z
   .object({
@@ -504,7 +538,13 @@ const OmpSubagentProgressEventSchema = z
   .object({ type: z.literal("subagent_progress"), payload: OmpSubagentProgressPayloadSchema })
   .passthrough();
 export const OmpSubagentEventPayloadSchema = z
-  .object({ id: z.string(), event: OmpAgentSessionEventSchema })
+  .object({
+    id: z.string(),
+    event: z.union([
+      OmpAgentSessionEventSchema,
+      z.object({ type: z.string() }).passthrough(),
+    ]),
+  })
   .passthrough();
 const OmpSubagentEventSchema = z
   .object({
@@ -528,15 +568,6 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpSubagentLifecycleEventSchema,
   OmpSubagentProgressEventSchema,
   OmpSubagentEventSchema,
-  OmpTodoReminderEventSchema,
-  OmpNoticeEventSchema,
-  OmpGoalUpdatedEventSchema,
-  OmpAutoRetryStartEventSchema,
-  OmpAutoRetryEndEventSchema,
-  OmpRetryFallbackAppliedEventSchema,
-  OmpRetryFallbackSucceededEventSchema,
-  OmpAutoCompactionStartEventSchema,
-  OmpAutoCompactionEndEventSchema,
   OmpAvailableCommandsUpdateEventSchema,
   OmpCredentialChangedEventSchema,
   OmpRpcHostToolCallRequestSchema,
@@ -699,30 +730,3 @@ export type OmpAvailableCommand = z.infer<typeof OmpAvailableCommandSchema>;
 export type OmpAvailableCommandsUpdateEvent = z.infer<typeof OmpAvailableCommandsUpdateEventSchema>;
 export type OmpRpcCommand = z.infer<typeof OmpRpcCommandSchema>;
 export type OmpPromptAck = z.infer<typeof OmpPromptAckSchema> & { requestId?: string };
-
-export interface OmpSubagentSnapshot {
-  id: string;
-  index: number;
-  agent: string;
-  description?: string;
-  status: OmpSubagentStatus;
-  task?: string;
-  assignment?: string;
-  sessionFile?: string;
-  parentToolCallId?: string;
-  lastUpdate?: number;
-}
-
-export interface OmpSubagentMessagesResult {
-  sessionFile: string;
-  fromByte: number;
-  nextByte: number;
-  reset: boolean;
-  messages: OmpAgentMessage[];
-}
-
-export interface OmpSubagentMessagesSelector {
-  subagentId?: string;
-  sessionFile?: string;
-  fromByte?: number;
-}

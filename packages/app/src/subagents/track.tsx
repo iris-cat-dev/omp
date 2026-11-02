@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Archive, Bot, Square, Unlink } from "lucide-react-native";
@@ -104,7 +104,7 @@ export function SubagentsTrack({
       ) : null}
       {orderedRows.map((row) => (
         <SubagentsTrackRow
-          key={row.id}
+          key={row.kind === "provider" ? `provider:${row.parentAgentId}:${row.id}` : `paseo:${row.id}`}
           row={row}
           onOpenSubagent={onOpenSubagent}
           onOpenProviderSubagent={onOpenProviderSubagent}
@@ -216,18 +216,35 @@ function SubagentsTrackRow({
   }, [onDetachSubagent, row.id]);
   const [isStopping, setIsStopping] = useState(false);
   const stoppingRef = useRef(false);
+  const stopGeneration = useRef(0);
+  const runVersion = row.kind === "provider" ? row.runVersion : undefined;
+  useEffect(() => {
+    stopGeneration.current += 1;
+    stoppingRef.current = false;
+    setIsStopping(false);
+  }, [row.status, runVersion]);
   const handleStopPress = useCallback(() => {
-    if (stoppingRef.current) return;
+    if (row.status !== "running" || stoppingRef.current) return;
     stoppingRef.current = true;
     setIsStopping(true);
-    const request =
-      row.kind === "provider"
+    const generation = stopGeneration.current;
+    let request: Promise<void>;
+    try {
+      request = row.kind === "provider"
         ? onStopProviderSubagent(row.parentAgentId, row.id)
         : onStopSubagent(row.id);
-    void Promise.resolve(request).finally(() => {
+    } catch {
       stoppingRef.current = false;
       setIsStopping(false);
-    });
+      return;
+    }
+    void request
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation !== stopGeneration.current) return;
+        stoppingRef.current = false;
+        setIsStopping(false);
+      });
   }, [onStopProviderSubagent, onStopSubagent, row]);
   const actionsAlwaysVisible = isNative || isCompact;
 

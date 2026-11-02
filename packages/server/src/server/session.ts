@@ -145,7 +145,8 @@ import {
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
 import { inspectOmpSessionHistoryAvailability } from "./agent/providers/omp/session-descriptor.js";
-import { streamOmpHistory } from "./agent/providers/omp/history.js";
+import { streamOmpHistory, streamOmpSubagentHistory } from "./agent/providers/omp/history.js";
+import { ProviderSubagentStore } from "./agent/provider-subagents/store.js";
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
@@ -7695,21 +7696,53 @@ export class Session {
     }
   }
 
+  private async readPersistedOmpSubagents(
+    parentAgentId: string,
+  ): Promise<ProviderSubagentStore | null> {
+    await this.agentManager.waitForAgentClose?.(parentAgentId);
+    if (this.agentManager.getAgent(parentAgentId)) return null;
+    const record = await this.agentStorage.get(parentAgentId);
+    const nativeHandle = record?.persistence?.nativeHandle;
+    if (
+      !record || record.internal || record.archivedAt || record.provider !== "omp" ||
+      typeof nativeHandle !== "string" || !nativeHandle.trim()
+    ) return null;
+    if ((await inspectOmpSessionHistoryAvailability(nativeHandle)).status !== "available") return null;
+
+    const subagents = new ProviderSubagentStore(
+      `persisted-omp-subagents:${parentAgentId}:${record.updatedAt}`,
+    );
+    for await (const event of streamOmpSubagentHistory({
+      sessionFile: nativeHandle,
+      provider: record.provider,
+    })) {
+      if (event.type === "provider_subagent") {
+        subagents.apply(parentAgentId, event.provider, event.event);
+      }
+    }
+    return this.agentManager.getAgent(parentAgentId) ? null : subagents;
+  }
+
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      const persistedSubagents = await this.readPersistedOmpSubagents(msg.parentAgentId);
+      if (!persistedSubagents) {
+        await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
-          subagents: this.agentManager.listProviderSubagents(msg.parentAgentId),
+          subagents: persistedSubagents
+            ? persistedSubagents.list(msg.parentAgentId)
+            : this.agentManager.listProviderSubagents(msg.parentAgentId),
           error: null,
         },
       });
@@ -7731,24 +7764,28 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
+      const persistedSubagents = await this.readPersistedOmpSubagents(msg.parentAgentId);
+      if (!persistedSubagents) {
+        await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
+      const descriptor = persistedSubagents
+        ? persistedSubagents.get(msg.parentAgentId, msg.subagentId)
+        : this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
-      const timeline = this.agentManager.fetchProviderSubagentTimeline(
-        msg.parentAgentId,
-        msg.subagentId,
-        {
-          direction,
-          cursor: msg.cursor,
-          limit: msg.limit ?? (direction === "after" ? 0 : 200),
-        },
-      );
+      const options = {
+        direction,
+        cursor: msg.cursor,
+        limit: msg.limit ?? (direction === "after" ? 0 : 200),
+      };
+      const timeline = persistedSubagents
+        ? persistedSubagents.fetchTimeline(msg.parentAgentId, msg.subagentId, options)
+        : this.agentManager.fetchProviderSubagentTimeline(msg.parentAgentId, msg.subagentId, options);
       this.emit({
         type: "agent.provider_subagents.timeline.get.response",
         payload: {

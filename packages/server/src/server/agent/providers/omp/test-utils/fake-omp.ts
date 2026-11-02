@@ -20,38 +20,18 @@ import type {
   OmpSessionStats,
   OmpThinkingLevel,
 } from "../rpc-types.js";
+import {
+  OmpSubagentSnapshotSchema,
+  OmpSubagentMessagesSelectorSchema,
+  parseOmpSubagentMessagesResult,
+  type OmpSubagentSnapshot,
+  type OmpSubagentMessagesSelector,
+  type OmpSubagentMessagesResult,
+} from "../subagent-rpc.js";
 import { buildOmpLaunch } from "../runtime.js";
 import { resolveOmpApprovalMode } from "../provider-config.js";
 
 type FakeOmpSubagentSubscriptionLevel = "off" | "progress" | "events";
-type FakeOmpSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
-
-export interface FakeOmpSubagentSnapshot {
-  id: string;
-  index: number;
-  agent: string;
-  description?: string;
-  status: FakeOmpSubagentStatus;
-  task?: string;
-  assignment?: string;
-  sessionFile?: string;
-  parentToolCallId?: string;
-  lastUpdate?: number;
-}
-
-export interface FakeOmpSubagentMessagesSelector {
-  subagentId?: string;
-  sessionFile?: string;
-  fromByte?: number;
-}
-
-export interface FakeOmpSubagentMessagesResult {
-  sessionFile: string;
-  fromByte: number;
-  nextByte: number;
-  reset: boolean;
-  messages: OmpAgentMessage[];
-}
 
 export interface FakeOmpLoginFlow {
   url: string;
@@ -71,10 +51,6 @@ export class FakeOmp implements OmpRuntime {
   private initialStats: OmpSessionStats | null = null;
   private initialActiveCredential: OmpSessionState["activeCredential"];
   private readonly queuedStartErrors: Error[] = [];
-  private readonly queuedSubagentSubscriptionErrors = new Map<
-    FakeOmpSubagentSubscriptionLevel,
-    Error
-  >();
 
   constructor(command: [string, ...string[]] = ["omp"]) {
     this.command = command;
@@ -104,10 +80,6 @@ export class FakeOmp implements OmpRuntime {
     session.models = this.queuedModels.shift() ?? [];
     session.loginProviders = this.queuedLoginProviders.shift() ?? [];
     session.loginFlow = this.queuedLoginFlows.shift();
-    for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
-      session.subagentSubscriptionErrors.set(level, error);
-    }
-    this.queuedSubagentSubscriptionErrors.clear();
     this.sessions.push(session);
     return session;
   }
@@ -142,9 +114,6 @@ export class FakeOmp implements OmpRuntime {
     this.queuedStartErrors.push(error);
   }
 
-  failNextSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel, error: Error): void {
-    this.queuedSubagentSubscriptionErrors.set(level, error);
-  }
 
   latestSession(): FakeOmpSession {
     const session = this.sessions.at(-1);
@@ -159,8 +128,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
-  readonly subagentSubscriptionRequests: FakeOmpSubagentSubscriptionLevel[] = [];
-  readonly subagentMessageRequests: FakeOmpSubagentMessagesSelector[] = [];
+  readonly subagentMessageRequests: OmpSubagentMessagesSelector[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly setFastModeRequests: boolean[] = [];
@@ -195,8 +163,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     cost: 0,
   };
   commands: OmpRpcSlashCommand[] = [];
-  subagents: FakeOmpSubagentSnapshot[] = [];
-  readonly subagentSubscriptionErrors = new Map<FakeOmpSubagentSubscriptionLevel, Error>();
+  subagents: OmpSubagentSnapshot[] = [];
   compactError: Error | null = null;
   emitCompactStart = true;
   emitCompactEnd = true;
@@ -215,8 +182,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private readonly stateRequestWaiters: Array<{ count: number; resolve: () => void }> = [];
   private readonly hostToolResultWaiters: Array<(result: OmpRpcHostToolResult) => void> = [];
   private readonly promptWaiters: Array<() => void> = [];
-  private readonly subscriptionWaiters: Array<{ count: number; resolve: () => void }> = [];
-  private readonly subagentMessageResults = new Map<string, FakeOmpSubagentMessagesResult[]>();
+  private readonly subagentMessageResults = new Map<string, OmpSubagentMessagesResult[]>();
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
@@ -422,22 +388,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.stats;
   }
 
-  async setSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel): Promise<void> {
-    this.subagentSubscriptionRequests.push(level);
-    for (const waiter of this.subscriptionWaiters.splice(0)) {
-      if (this.subagentSubscriptionRequests.length >= waiter.count) waiter.resolve();
-      else this.subscriptionWaiters.push(waiter);
-    }
-    const error = this.subagentSubscriptionErrors.get(level);
-    if (error) {
-      throw error;
-    }
-  }
+  async setSubagentSubscription(_level: FakeOmpSubagentSubscriptionLevel): Promise<void> {}
 
-  waitForSubagentSubscriptions(count: number): Promise<void> {
-    if (this.subagentSubscriptionRequests.length >= count) return Promise.resolve();
-    return new Promise((resolve) => this.subscriptionWaiters.push({ count, resolve }));
-  }
 
   async setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]> {
     this.hostToolSetRequests.push(tools);
@@ -487,27 +439,28 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return new Promise((resolve) => this.hostToolResultWaiters.push(resolve));
   }
 
-  async getSubagents(): Promise<FakeOmpSubagentSnapshot[]> {
-    return this.subagents;
+  async getSubagents(): Promise<OmpSubagentSnapshot[]> {
+    return this.subagents.map((snapshot) => OmpSubagentSnapshotSchema.parse(snapshot));
   }
 
   async getSubagentMessages(
-    selector: FakeOmpSubagentMessagesSelector,
-  ): Promise<FakeOmpSubagentMessagesResult> {
-    this.subagentMessageRequests.push(selector);
-    const key = selector.sessionFile ?? selector.subagentId;
-    if (!key) {
-      throw new Error("FakeOmp getSubagentMessages requires a selector");
-    }
+    selector: OmpSubagentMessagesSelector,
+  ): Promise<OmpSubagentMessagesResult> {
+    const validated = OmpSubagentMessagesSelectorSchema.parse(selector);
+    this.subagentMessageRequests.push(validated);
+    const snapshot = this.subagents.find((child) => child.id === validated.subagentId);
+    const key = validated.subagentId
+      ? snapshot?.sessionFile ?? validated.subagentId
+      : validated.sessionFile!;
     const results = this.subagentMessageResults.get(key);
     const result = results?.shift();
     if (!result) {
       throw new Error(`FakeOmp has no subagent messages queued for ${key}`);
     }
-    return result;
+    return parseOmpSubagentMessagesResult(validated, result);
   }
 
-  queueSubagentMessages(result: FakeOmpSubagentMessagesResult): void {
+  queueSubagentMessages(result: OmpSubagentMessagesResult): void {
     const results = this.subagentMessageResults.get(result.sessionFile) ?? [];
     results.push(result);
     this.subagentMessageResults.set(result.sessionFile, results);

@@ -885,6 +885,88 @@ test("pages cold OMP history and indexes prompts without resuming the provider",
   }
 });
 
+test("reads cold OMP child history across pages without loading its parent runtime", async () => {
+  const root = mkdtempSync(join(tmpdir(), "paseo-cold-omp-child-history-"));
+  const sessionFile = join(root, "session.jsonl");
+  const writeMessages = (file: string, messages: object[]) => {
+    const entries = [
+      { type: "session", id: "root", cwd: root },
+      ...messages.map((message, index) => ({
+        type: "message",
+        id: `message-${index}`,
+        parentId: index === 0 ? "root" : `message-${index - 1}`,
+        timestamp: new Date(Date.UTC(2026, 8, 2, 9, 36, index)).toISOString(),
+        message,
+      })),
+    ];
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n"));
+  };
+  const agentId = "11111111-1111-4111-8111-111111111194";
+  const record: StoredAgentRecord = {
+    id: agentId,
+    provider: "omp",
+    cwd: root,
+    createdAt: "2026-09-02T09:36:00.000Z",
+    updatedAt: "2026-09-02T09:37:00.000Z",
+    labels: {},
+    lastStatus: "closed",
+    persistence: { provider: "omp", sessionId: "cold-children", nativeHandle: sessionFile },
+  };
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      resumeAgentFromPersistence: vi.fn().mockRejectedValue(new Error("Runtime must stay unloaded")),
+    },
+    agentStorage: { get: vi.fn().mockResolvedValue(record) },
+  });
+  try {
+    await fs.mkdir(join(root, "session"));
+    writeMessages(sessionFile, [
+      { role: "assistant", content: [{ type: "toolCall", id: "spawn", name: "task", arguments: { tasks: [{ agent: "scout", task: "Inspect" }] } }] },
+      { role: "toolResult", toolName: "task", toolCallId: "spawn", content: [{ type: "text", text: "Completed" }], details: { results: [{ id: "Worker", agent: "scout", exitCode: 0 }] }, isError: false },
+    ]);
+    writeMessages(join(root, "session", "Worker.jsonl"), [
+      { role: "user", content: "Inspect first file" },
+      { role: "assistant", content: [{ type: "text", text: "First result" }], responseId: "first" },
+      { role: "user", content: "Inspect second file" },
+      { role: "assistant", content: [{ type: "text", text: "Second result" }], responseId: "second" },
+    ]);
+    await session.handleMessage({ type: "agent.provider_subagents.list.request", parentAgentId: agentId, requestId: "cold-children" });
+    const list = messages.at(-1);
+    if (list?.type !== "agent.provider_subagents.list.response") throw new Error("Missing child list");
+    expect(list.payload.error).toBeNull();
+    expect(list.payload.subagents).toEqual([
+      expect.objectContaining({ id: "Worker", parentAgentId: agentId, status: "completed", toolCallId: "spawn" }),
+    ]);
+    const fetchPage = async (direction: "tail" | "before", cursor?: { epoch: string; seq: number }) => {
+      await session.handleMessage({ type: "agent.provider_subagents.timeline.get.request", parentAgentId: agentId, subagentId: "Worker", requestId: `child-${messages.length}`, direction, limit: 2, ...(cursor ? { cursor } : {}) });
+      const page = messages.at(-1);
+      if (page?.type !== "agent.provider_subagents.timeline.get.response") throw new Error("Missing child history");
+      expect(page.payload.error).toBeNull();
+      return page.payload;
+    };
+    const tail = await fetchPage("tail");
+    expect(tail.rows.map((row) => row.item)).toEqual([
+      expect.objectContaining({ type: "user_message", text: "Inspect second file" }),
+      expect.objectContaining({ type: "assistant_message", text: "Second result" }),
+    ]);
+    expect(tail.hasOlder).toBe(true);
+    const older = await fetchPage("before", { epoch: tail.epoch, seq: tail.rows[0]!.seq });
+    expect(older.reset).toBe(false);
+    expect(older.epoch).toBe(tail.epoch);
+    expect(older.rows.map((row) => row.item)).toEqual([
+      expect.objectContaining({ type: "user_message", text: "Inspect first file" }),
+      expect.objectContaining({ type: "assistant_message", text: "First result" }),
+    ]);
+    expect(older.hasOlder).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];
   const status = {

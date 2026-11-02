@@ -167,7 +167,7 @@ import {
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
 import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./commands.js";
-import { streamOmpHistory } from "./history.js";
+import { streamOmpHistory, streamOmpSubagentHistory } from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -1743,6 +1743,14 @@ function createRuntime(
   });
 }
 
+interface OmpNativeTaskCall {
+  toolCall: OmpTrackedToolCall;
+  status: "running" | "completed" | "failed" | "canceled";
+  result: OmpToolResult;
+  error: unknown;
+  turnId: string | undefined;
+}
+
 export class OmpAgentSession implements AgentSession {
   readonly provider: AgentProvider = OMP_PROVIDER;
   readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
@@ -1751,6 +1759,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly blobDir: string | undefined;
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
+  private readonly nativeTaskCalls = new Map<string, OmpNativeTaskCall>();
   private readonly activeRuntimeToolCalls = new Map<
     string,
     Extract<AgentTimelineItem, { type: "tool_call" }>
@@ -1793,6 +1802,10 @@ export class OmpAgentSession implements AgentSession {
   private commandCache: AgentSlashCommand[] | null = null;
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
+  private readonly subagentSubscription: Promise<void>;
+  private subagentHistoryTail: Promise<void> = Promise.resolve();
+  private subagentHistoryLoading = false;
+  private readonly queuedSubagentRuntimeEvents: OmpRuntimeEvent[] = [];
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
   private currentModeId: string | null;
@@ -1906,20 +1919,7 @@ export class OmpAgentSession implements AgentSession {
     this.runtimeSession.onEvent((event) => {
       this.handleRuntimeEvent(event);
     });
-    void this.runtimeSession.setSubagentSubscription("events").catch((eventsError: unknown) => {
-      this.logger.debug(
-        { err: eventsError },
-        "OMP subagent event subscription unavailable; falling back to progress",
-      );
-      void this.runtimeSession
-        .setSubagentSubscription("progress")
-        .catch((progressError: unknown) => {
-          this.logger.debug(
-            { err: progressError },
-            "OMP subagent progress subscription unavailable",
-          );
-        });
-    });
+    this.subagentSubscription = this.runtimeSession.setSubagentSubscription("events");
   }
 
   private readonly runtimeSession: OmpRuntimeSession;
@@ -2246,6 +2246,9 @@ export class OmpAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    for (const event of this.queuedSubagentRuntimeEvents.splice(0)) {
+      this.handleExtraRuntimeEvent(event);
+    }
     if (!this.live && !this.initialUsageProbeStarted) {
       this.initialUsageProbeStarted = true;
       void this.usagePoller.refresh();
@@ -2256,12 +2259,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    for await (const event of streamOmpHistory({
-      sessionFile: this.state.sessionFile,
-      runtimeSession: this.runtimeSession,
-      provider: this.provider,
-      blobDir: this.blobDir,
-    })) {
+    for await (const event of this.readNativeHistory(true)) {
       if (
         event.type === "timeline" &&
         event.item.type === "assistant_message" &&
@@ -2281,6 +2279,56 @@ export class OmpAgentSession implements AgentSession {
         provider: this.provider,
         item,
       };
+    }
+  }
+
+  async *streamSubagentHistory(): AsyncGenerator<AgentStreamEvent> {
+    yield* this.readNativeHistory(false);
+  }
+
+  private async *readNativeHistory(includeParent: boolean): AsyncGenerator<AgentStreamEvent> {
+    const previous = this.subagentHistoryTail;
+    const completion = Promise.withResolvers<void>();
+    this.subagentHistoryTail = completion.promise;
+    await previous;
+    this.subagentHistoryLoading = true;
+    try {
+      await this.subagentSubscription;
+      const snapshots = await this.runtimeSession.getSubagents();
+      const nativeHistory: Array<{ id: string; messages: readonly OmpAgentMessage[] }> = [];
+      const childEvents: AgentStreamEvent[] = [];
+      const source = includeParent ? streamOmpHistory : streamOmpSubagentHistory;
+      for await (const event of source({
+        sessionFile: this.state.sessionFile,
+        runtimeSession: this.runtimeSession,
+        provider: this.provider,
+        blobDir: this.blobDir,
+        subagentSnapshots: snapshots,
+        onSubagentTranscript: (id, messages) => nativeHistory.push({ id, messages }),
+      })) {
+        if (event.type === "provider_subagent") childEvents.push(event);
+        else yield event;
+      }
+      this.subagentIndex.seedHistory(this.runtimeSession, childEvents, nativeHistory);
+      for (const event of childEvents) yield event;
+      this.subagentHistoryLoading = false;
+      for (const event of this.queuedSubagentRuntimeEvents.splice(0)) {
+        this.handleExtraRuntimeEvent(event);
+      }
+      for (const snapshot of await this.runtimeSession.getSubagents()) {
+        for (const event of this.subagentIndex.hydrateSnapshot(this.runtimeSession, snapshot)) {
+          yield event;
+        }
+      }
+    } finally {
+      this.subagentHistoryLoading = false;
+      try {
+        for (const event of this.queuedSubagentRuntimeEvents.splice(0)) {
+          this.handleExtraRuntimeEvent(event);
+        }
+      } finally {
+        completion.resolve();
+      }
     }
   }
 
@@ -2501,6 +2549,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async initialize(): Promise<void> {
+    await this.subagentSubscription;
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
   }
@@ -2693,8 +2742,10 @@ export class OmpAgentSession implements AgentSession {
     }
     const cancelled = await this.runtimeSession.cancelSubagent(subagentId);
     if (cancelled) {
-      const event = this.subagentIndex.markCanceled(this.runtimeSession, subagentId);
-      if (event) this.emit(event);
+      this.subagentCardTracker.markCanceled(subagentId);
+      for (const event of this.subagentIndex.markCanceled(this.runtimeSession, subagentId)) {
+        this.emit(event);
+      }
     }
     return cancelled;
   }
@@ -2815,6 +2866,9 @@ export class OmpAgentSession implements AgentSession {
     await this.runtimeSession.branch(target);
     await this.refreshState();
     this.activeToolCalls.clear();
+    this.nativeTaskCalls.clear();
+    this.subagentCardTracker.clear();
+    this.subagentIndex.clear(this.runtimeSession);
   }
 
   async close(): Promise<void> {
@@ -2838,6 +2892,9 @@ export class OmpAgentSession implements AgentSession {
 
   private clearOmpSessionState(): void {
     this.activeRuntimeToolCalls.clear();
+    this.nativeTaskCalls.clear();
+    this.queuedSubagentRuntimeEvents.length = 0;
+    this.subagentCardTracker.clear();
     this.subagentIndex.clear(this.runtimeSession);
     this.clearOmpTurnState();
   }
@@ -2855,7 +2912,7 @@ export class OmpAgentSession implements AgentSession {
 
   private clearOmpTurnState(): void {
     clearOmpHostToolState(this.runtimeSession);
-    this.subagentCardTracker.clear();
+    // Native children can outlive a parent turn; their task cards are session-owned.
   }
 
   private terminalizeActiveWork(): void {
@@ -3507,6 +3564,15 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (
+      (this.subagentHistoryLoading || this.subscribers.size === 0) &&
+      (event.type === "subagent_lifecycle" ||
+        event.type === "subagent_progress" ||
+        event.type === "subagent_event")
+    ) {
+      this.queuedSubagentRuntimeEvents.push(event);
+      return true;
+    }
     this.updateWorkflowModeFromRuntimeEvent(event);
     if (
       handleOmpHostToolRuntimeEvent(event, {
@@ -3519,11 +3585,9 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "subagent_lifecycle") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_lifecycle" }>).payload;
-      if (payload.parentToolCallId && this.activeToolCalls.has(payload.parentToolCallId)) {
-        this.subagentCardTracker.handleLifecycle(payload, (toolCallId) =>
-          this.emitActiveToolCall(toolCallId),
-        );
-      }
+      this.subagentCardTracker.handleLifecycle(payload, (toolCallId) =>
+        this.emitNativeTaskCall(toolCallId),
+      );
       for (const mapped of this.subagentIndex.handleLifecycle(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
@@ -3531,11 +3595,9 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "subagent_progress") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_progress" }>).payload;
-      if (payload.parentToolCallId && this.activeToolCalls.has(payload.parentToolCallId)) {
-        this.subagentCardTracker.handleProgress(payload, (toolCallId) =>
-          this.emitActiveToolCall(toolCallId),
-        );
-      }
+      this.subagentCardTracker.handleProgress(payload, (toolCallId) =>
+        this.emitNativeTaskCall(toolCallId),
+      );
       for (const mapped of this.subagentIndex.handleProgress(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
@@ -3592,9 +3654,17 @@ export class OmpAgentSession implements AgentSession {
     return true;
   }
 
-  private emitActiveToolCall(toolCallId: string): boolean {
-    const toolCall = this.activeToolCalls.get(toolCallId);
-    return toolCall ? this.emitToolCallEvent(toolCallId, toolCall, "running", null, null) : false;
+  private emitNativeTaskCall(toolCallId: string): boolean {
+    const task = this.nativeTaskCalls.get(toolCallId);
+    if (!task) return false;
+    return this.emitToolCallEvent(
+      toolCallId,
+      task.toolCall,
+      task.status,
+      task.result,
+      task.error,
+      task.turnId,
+    );
   }
 
   private emitTodoItem(item: AgentTimelineItem, turnId?: string): void {
@@ -4053,7 +4123,7 @@ export class OmpAgentSession implements AgentSession {
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
     if (event.toolName === "task") {
-      this.subagentCardTracker.delete(event.toolCallId);
+      this.subagentCardTracker.flush(event.toolCallId);
     }
     if (event.toolName === "todo") {
       const item = mapOmpTodoToolResult(result);
@@ -4104,6 +4174,27 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role !== "assistant") {
+      return;
+    }
+    if (
+      event.assistantMessageEvent.type === "toolcall_start" ||
+      event.assistantMessageEvent.type === "toolcall_delta" ||
+      event.assistantMessageEvent.type === "toolcall_end"
+    ) {
+      for (const block of event.message.content) {
+        if (block.type !== "toolCall" || block.name !== "task") continue;
+        const task = this.nativeTaskCalls.get(block.id);
+        if (task && event.assistantMessageEvent.type !== "toolcall_end") continue;
+        if (task && task.status !== "running") continue;
+        this.emitToolCallEvent(
+          block.id,
+          parseToolArgs(block.name, block.arguments),
+          "running",
+          null,
+          null,
+          turnId,
+        );
+      }
       return;
     }
     if (event.assistantMessageEvent.type === "text_delta") {
@@ -4328,8 +4419,13 @@ export class OmpAgentSession implements AgentSession {
     status: "running" | "completed" | "failed" | "canceled",
     result: OmpToolResult,
     error: unknown,
+    originatingTurnId?: string,
   ): boolean {
-    const turnId = this.currentTurnIdForEvent();
+    const task = this.nativeTaskCalls.get(toolCallId);
+    const turnId = task ? task.turnId : originatingTurnId ?? this.currentTurnIdForEvent();
+    if (toolCall.toolName === "task") {
+      this.nativeTaskCalls.set(toolCallId, { toolCall, status, result, error, turnId });
+    }
     const detail = this.mapToolDetail(
       toolCallId,
       toolCall,

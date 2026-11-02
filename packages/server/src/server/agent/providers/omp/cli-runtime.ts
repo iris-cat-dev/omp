@@ -79,6 +79,15 @@ import {
   type OmpSessionStats,
   type OmpSubagentSubscriptionLevel,
 } from "./rpc-types.js";
+import {
+  OmpSubagentsResultSchema,
+  OmpSubagentMessagesSelectorSchema,
+  OmpSubagentRpcCommandSchema,
+  parseOmpSubagentMessagesResult,
+  type OmpSubagentSnapshot,
+  type OmpSubagentMessagesSelector,
+  type OmpSubagentMessagesResult,
+} from "./subagent-rpc.js";
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
@@ -727,6 +736,22 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async getMessages(): Promise<OmpAgentMessage[]> {
     const data = OmpMessagesResultSchema.parse(await this.request({ type: "get_messages" }));
     return data.messages ?? [];
+  }
+
+  async getSubagents(): Promise<OmpSubagentSnapshot[]> {
+    const command = OmpSubagentRpcCommandSchema.parse({ type: "get_subagents" });
+    return OmpSubagentsResultSchema.parse(await this.process.request(command)).subagents;
+  }
+
+  async getSubagentMessages(
+    selector: OmpSubagentMessagesSelector,
+  ): Promise<OmpSubagentMessagesResult> {
+    const validated = OmpSubagentMessagesSelectorSchema.parse(selector);
+    const command = OmpSubagentRpcCommandSchema.parse({
+      type: "get_subagent_messages",
+      ...validated,
+    });
+    return parseOmpSubagentMessagesResult(validated, await this.process.request(command));
   }
 
   async getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]> {

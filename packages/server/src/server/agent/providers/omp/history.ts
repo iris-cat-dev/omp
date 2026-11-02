@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import { OmpAgentMessageSchema, type OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
+import type { OmpSubagentSnapshot } from "./subagent-rpc.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
 import { resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { buildOmpModelId, readOmpAssistantModel } from "./subagent-model.js";
@@ -35,13 +36,41 @@ function extractOmpSubagentModel(entries: readonly OmpSessionEntry[]): string | 
   return resolvedModel;
 }
 
-export async function* streamOmpHistory(input: {
+export interface OmpHistoryInput {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
+  subagentSnapshots?: readonly OmpSubagentSnapshot[];
   visitedSessionFiles?: Set<string>;
   blobDir?: string;
-}): AsyncGenerator<AgentStreamEvent> {
+  onSubagentTranscript?: (id: string, messages: readonly OmpAgentMessage[]) => void;
+}
+
+/** Replay native children even when the parent's durable timeline was already primed. */
+export async function* streamOmpSubagentHistory(
+  input: OmpHistoryInput,
+): AsyncGenerator<AgentStreamEvent> {
+  if (!input.sessionFile) return;
+  const visitedSessionFiles = input.visitedSessionFiles ?? new Set<string>();
+  if (visitedSessionFiles.has(input.sessionFile)) return;
+  visitedSessionFiles.add(input.sessionFile);
+  let entries: OmpSessionEntry[];
+  try {
+    entries = await readActiveOmpEntryChain(input.sessionFile, input.runtimeSession?.activeBranchEntryId);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const messages = entries.flatMap((entry) => {
+    const message = mapEntryMessage(entry);
+    return message ? [message] : [];
+  });
+  for (const transcript of readSubagentTranscripts(messages, input.sessionFile, input.subagentSnapshots)) {
+    yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles, input.blobDir, input.subagentSnapshots, input.onSubagentTranscript);
+  }
+}
+
+export async function* streamOmpHistory(input: OmpHistoryInput): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
     return;
   }
@@ -62,6 +91,15 @@ export async function* streamOmpHistory(input: {
     }
     throw error;
   }
+  yield* streamOmpHistoryEntries({ ...input, sessionFile: input.sessionFile }, entries, visitedSessionFiles);
+}
+
+async function* streamOmpHistoryEntries(
+  input: OmpHistoryInput & { sessionFile: string },
+  entries: readonly OmpSessionEntry[],
+  visitedSessionFiles: Set<string>,
+  subagentId?: string,
+): AsyncGenerator<AgentStreamEvent> {
   const messages: OmpAgentMessage[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
   for (const entry of entries) {
@@ -72,6 +110,7 @@ export async function* streamOmpHistory(input: {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
   }
+  if (subagentId) input.onSubagentTranscript?.(subagentId, messages);
   const imageOutputDir =
     input.blobDir ?? join(dirname(resolveOmpDiagnosticPaths().agentDb), "blobs");
   const mapper = new OmpHistoryMapper(input.provider, userEntries, {
@@ -101,8 +140,15 @@ export async function* streamOmpHistory(input: {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
-  for (const transcript of readSubagentTranscripts(messages, input.sessionFile)) {
-    yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles, input.blobDir);
+  for (const transcript of readSubagentTranscripts(messages, input.sessionFile, subagentId ? undefined : input.subagentSnapshots)) {
+    yield* replaySubagentTranscript(
+      transcript,
+      input.provider,
+      visitedSessionFiles,
+      input.blobDir,
+      input.subagentSnapshots,
+      input.onSubagentTranscript,
+    );
   }
 }
 
@@ -122,7 +168,17 @@ async function* replaySubagentTranscript(
   provider: AgentProvider,
   visitedSessionFiles: Set<string>,
   blobDir?: string,
+  snapshots?: readonly OmpSubagentSnapshot[],
+  onSubagentTranscript?: OmpHistoryInput["onSubagentTranscript"],
 ): AsyncGenerator<AgentStreamEvent> {
+  const snapshot = snapshots?.find((child) => child.id === transcript.id);
+  if (snapshot) {
+    transcript.sessionFile = snapshot.sessionFile ?? transcript.sessionFile;
+    transcript.title = snapshot.agent;
+    transcript.toolCallId = snapshot.parentToolCallId ?? transcript.toolCallId;
+  }
+  if (visitedSessionFiles.has(transcript.sessionFile)) return;
+  visitedSessionFiles.add(transcript.sessionFile);
   const childEntries = await readActiveOmpEntryChain(transcript.sessionFile).catch(
     (error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -131,13 +187,14 @@ async function* replaySubagentTranscript(
   );
   const resolvedModel = extractOmpSubagentModel(childEntries);
   const firstTimestamp = normalizeProviderReplayTimestamp(childEntries[0]?.timestamp);
-  yield subagentUpsert(transcript, provider, "running", firstTimestamp, resolvedModel);
-  for await (const event of streamOmpHistory({
+  yield subagentUpsert(transcript, provider, undefined, firstTimestamp, resolvedModel);
+  for await (const event of streamOmpHistoryEntries({
     sessionFile: transcript.sessionFile,
     provider,
-    visitedSessionFiles,
     blobDir,
-  })) {
+    subagentSnapshots: snapshots,
+    onSubagentTranscript,
+  }, childEntries, visitedSessionFiles, transcript.id)) {
     if (event.type === "timeline") {
       yield {
         type: "provider_subagent",
@@ -154,13 +211,16 @@ async function* replaySubagentTranscript(
     }
   }
   const lastTimestamp = normalizeProviderReplayTimestamp(childEntries.at(-1)?.timestamp);
-  yield subagentUpsert(transcript, provider, transcript.status, lastTimestamp, resolvedModel);
+  const status = snapshot
+    ? nativeSubagentStatus(snapshot.status)
+    : await recoverPersistedSubagentStatus(transcript, childEntries);
+  yield subagentUpsert(transcript, provider, status, lastTimestamp, resolvedModel);
 }
 
 function subagentUpsert(
   transcript: OmpSubagentTranscript,
   provider: AgentProvider,
-  status: OmpSubagentTranscript["status"] | "running",
+  status: OmpSubagentTranscript["status"],
   timestamp: string | null,
   resolvedModel: string | null,
 ): AgentStreamEvent {
@@ -172,7 +232,7 @@ function subagentUpsert(
       id: transcript.id,
       title: transcript.title,
       model: resolvedModel,
-      status,
+      ...(status ? { status } : {}),
       toolCallId: transcript.toolCallId,
       ...(timestamp ? { timestamp } : {}),
     },
@@ -182,36 +242,153 @@ function subagentUpsert(
 interface OmpSubagentTranscript {
   id: string;
   title: string;
-  toolCallId: string;
+  toolCallId?: string;
   sessionFile: string;
-  status: "completed" | "failed" | "canceled";
+  status?: "running" | "completed" | "failed" | "canceled";
 }
 
 function readSubagentTranscripts(
   messages: readonly OmpAgentMessage[],
   parentSessionFile: string,
+  snapshots?: readonly OmpSubagentSnapshot[],
 ): OmpSubagentTranscript[] {
   const taskCalls = collectTaskCalls(messages);
-  const transcripts: OmpSubagentTranscript[] = [];
+  const transcripts = new Map<string, OmpSubagentTranscript>();
   for (const message of messages) {
+    const details = recordOf(Reflect.get(message, "details")) ?? recordOf(recordOf(message.content)?.details);
+    if (message.role === "custom" && Reflect.get(message, "customType") === "async-result") {
+      const jobs = details?.jobs;
+      if (!Array.isArray(jobs)) continue;
+      for (const value of jobs) {
+        const job = recordOf(value);
+        if (!job || job.type !== "task") continue;
+        const id = typeof job.agentId === "string" ? job.agentId : job.jobId;
+        if (typeof id !== "string" || !id) continue;
+        const existing = transcripts.get(id);
+        transcripts.set(id, {
+          id,
+          title: existing?.title ?? (typeof job.label === "string" ? job.label : "OMP subagent"),
+          toolCallId: existing?.toolCallId ?? String(job.jobId),
+          sessionFile: existing?.sessionFile ?? childSessionFile(parentSessionFile, id),
+          status: nativeSubagentStatus(job.status),
+        });
+      }
+      continue;
+    }
     if (message.role !== "toolResult" || message.toolName !== "task") continue;
-    const call = taskCalls.get(message.toolCallId);
-    if (!call) continue;
+    const title = taskCalls.get(message.toolCallId)?.title ?? "OMP subagent";
     const results = readTaskResults(message);
+    const resultIds = new Set(results.map((result) => result.id));
+    const progress = details?.progress;
+    if (Array.isArray(progress)) {
+      for (const value of progress) {
+        const child = recordOf(value);
+        if (!child || typeof child.id !== "string" || !child.id || resultIds.has(child.id)) continue;
+        const existing = transcripts.get(child.id);
+        transcripts.set(child.id, {
+          id: child.id,
+          title: typeof child.agent === "string" ? child.agent : existing?.title ?? title,
+          toolCallId: message.toolCallId,
+          sessionFile: typeof child.sessionFile === "string"
+            ? child.sessionFile
+            : existing?.sessionFile ?? childSessionFile(parentSessionFile, child.id),
+          // The dispatch-time running/pending row says nothing about the history's current state.
+          status: child.status === "running" || child.status === "pending"
+            ? undefined
+            : nativeSubagentStatus(child.status),
+        });
+      }
+    }
     for (const result of results) {
-      transcripts.push({
+      const existing = transcripts.get(result.id);
+      transcripts.set(result.id, {
         id: result.id,
-        title: result.agent ?? call.title,
+        title: result.agent ?? existing?.title ?? title,
         toolCallId: message.toolCallId,
-        sessionFile: join(stripExtension(parentSessionFile), `${basename(result.id)}.jsonl`),
-        status: taskResultStatus(result, message.isError === true),
+        sessionFile: result.sessionFile ?? existing?.sessionFile ?? childSessionFile(parentSessionFile, result.id),
+        status: taskResultStatus(result),
       });
     }
-    if (results.length > 0) continue;
-    const legacy = readLegacyTranscript(message, call.title);
-    if (legacy) transcripts.push(legacy);
+    const async = recordOf(details?.async);
+    if (results.length === 0 && (!Array.isArray(progress) || progress.length === 0) && async?.type === "task" && typeof async.jobId === "string") {
+      const id = async.jobId;
+      transcripts.set(id, {
+        id,
+        title,
+        toolCallId: message.toolCallId,
+        sessionFile: childSessionFile(parentSessionFile, id),
+        status: async.state === "running" ? undefined : nativeSubagentStatus(async.state),
+      });
+    }
+    if (results.length > 0 || (Array.isArray(progress) && progress.length > 0) || async) continue;
+    const legacy = readLegacyTranscript(message, title);
+    if (legacy) transcripts.set(legacy.id, legacy);
   }
-  return transcripts;
+  // Root snapshots can predate the parent task result; never rediscover the root roster in recursion.
+  for (const snapshot of snapshots ?? []) {
+    if (!snapshot.sessionFile) continue;
+    const existing = transcripts.get(snapshot.id);
+    transcripts.set(snapshot.id, {
+      id: snapshot.id,
+      title: snapshot.agent,
+      toolCallId: snapshot.parentToolCallId ?? existing?.toolCallId,
+      sessionFile: snapshot.sessionFile,
+      status: nativeSubagentStatus(snapshot.status),
+    });
+  }
+  return [...transcripts.values()];
+}
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function childSessionFile(parentSessionFile: string, id: string): string {
+  return join(stripExtension(parentSessionFile), `${id}.jsonl`);
+}
+
+function nativeSubagentStatus(status: unknown): OmpSubagentTranscript["status"] {
+  if (status === "pending" || status === "running") return "running";
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "aborted" || status === "canceled" || status === "cancelled") return "canceled";
+  return undefined;
+}
+
+async function recoverPersistedSubagentStatus(
+  transcript: OmpSubagentTranscript,
+  entries: readonly OmpSessionEntry[],
+): Promise<OmpSubagentTranscript["status"]> {
+  try {
+    await access(`${transcript.sessionFile}.tombstone`);
+    return "canceled";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (transcript.status) return transcript.status;
+  let exit: Record<string, unknown> | undefined;
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!;
+    if (entry.type === "custom" && entry.customType === "session_exit") {
+      exit ??= recordOf(entry.data);
+      continue;
+    }
+    const message = entry.message;
+    if (!message) continue;
+    if (message.role === "assistant") {
+      if (message.stopReason === "aborted") return "canceled";
+      if (message.stopReason === "error" || message.errorMessage) return "failed";
+      if (Array.isArray(message.content) && !message.content.some((block) => recordOf(block)?.type === "toolCall")) return "completed";
+    }
+    if (message.role === "toolResult" && message.toolName === "yield") return message.isError ? "failed" : "completed";
+    if (exit?.kind === "fatal") return "failed";
+    if (exit?.kind === "normal" && (!Array.isArray(exit.pendingToolCalls) || exit.pendingToolCalls.length === 0)) return "completed";
+    // An unfinished transcript without an authoritative live roster is interrupted, not still running.
+    return "canceled";
+  }
+  return "canceled";
 }
 
 function collectTaskCalls(messages: readonly OmpAgentMessage[]): Map<string, { title: string }> {
@@ -258,18 +435,14 @@ interface OmpTaskResult {
   exitCode?: number;
   error?: unknown;
   aborted?: boolean;
+  sessionFile?: string;
 }
 
 function readTaskResults(
   message: Extract<OmpAgentMessage, { role: "toolResult" }>,
 ): OmpTaskResult[] {
-  const details =
-    Reflect.get(message, "details") ??
-    (message.content && typeof message.content === "object"
-      ? Reflect.get(message.content, "details")
-      : undefined);
-  const results =
-    details && typeof details === "object" ? Reflect.get(details, "results") : undefined;
+  const details = recordOf(message.details) ?? recordOf(recordOf(message.content)?.details);
+  const results = details?.results;
   if (!Array.isArray(results)) return [];
   return results.flatMap((result) => {
     if (!result || typeof result !== "object") return [];
@@ -283,20 +456,17 @@ function readTaskResults(
         ...(typeof agent === "string" ? { agent } : {}),
         ...(typeof exitCode === "number" ? { exitCode } : {}),
         error: Reflect.get(result, "error"),
+        ...(typeof Reflect.get(result, "sessionFile") === "string" ? { sessionFile: Reflect.get(result, "sessionFile") as string } : {}),
         aborted: Reflect.get(result, "aborted") === true,
       },
     ];
   });
 }
 
-function taskResultStatus(
-  result: OmpTaskResult,
-  messageIsError: boolean,
-): "completed" | "failed" | "canceled" {
-  if (messageIsError || result.error || (result.exitCode !== undefined && result.exitCode !== 0)) {
-    return "failed";
-  }
-  return result.aborted ? "canceled" : "completed";
+function taskResultStatus(result: OmpTaskResult): "completed" | "failed" | "canceled" {
+  if (result.aborted) return "canceled";
+  if (result.error || (result.exitCode !== undefined && result.exitCode !== 0)) return "failed";
+  return "completed";
 }
 
 function taskResultText(message: Extract<OmpAgentMessage, { role: "toolResult" }>): string {
@@ -335,10 +505,15 @@ export async function readActiveOmpEntryChain(
   });
   if (entries.length === 0) return [];
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const parentIds = new Set(entries.flatMap((entry) => (entry.parentId ? [entry.parentId] : [])));
-  const leaves = entries.filter((entry) => !parentIds.has(entry.id));
-  let current: OmpSessionEntry | undefined =
-    (activeEntryId ? byId.get(activeEntryId) : undefined) ?? leaves.at(-1) ?? entries.at(-1);
+  let leafId: string | undefined;
+  let selfSelectedLeafId: string | undefined;
+  for (const entry of entries) {
+    if (typeof entry.activeLeafId === "string") leafId = entry.activeLeafId;
+    else if (entry.activeLeafId === null) leafId = undefined;
+    else leafId = selfSelectedLeafId = entry.id;
+  }
+  if (leafId !== undefined && !byId.has(leafId)) leafId = selfSelectedLeafId;
+  let current = (activeEntryId ? byId.get(activeEntryId) : undefined) ?? (leafId ? byId.get(leafId) : undefined);
   const chain: OmpSessionEntry[] = [];
   const seen = new Set<string>();
   while (current?.id && !seen.has(current.id)) {

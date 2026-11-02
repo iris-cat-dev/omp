@@ -66,7 +66,10 @@ import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
-import { useProviderSubagentStore } from "@/subagents/provider-store";
+import {
+  applyProviderSubagentUpdate,
+  bindProviderSubagentRecovery,
+} from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
 import { refreshOmpAccountQuotaManagement } from "@/hooks/use-omp-account-quota";
 
@@ -495,6 +498,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     }
   }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
 
+  useEffect(() => bindProviderSubagentRecovery(client, serverId), [client, serverId]);
+
   useEffect(
     () =>
       client.subscribeConnectionStatus((connection) => {
@@ -763,7 +768,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
       if (message.type !== "agent.provider_subagents.update") return;
-      useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
+      applyProviderSubagentUpdate(client, serverId, message.payload);
     });
 
     const unsubScriptStatusUpdate = client.on("script_status_update", (message) => {
