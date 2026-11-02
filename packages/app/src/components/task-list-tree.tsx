@@ -211,7 +211,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
     lineHeight: proseLineHeight(theme.fontSize.content),
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.medium,
   },
   overallProgress: {
     marginLeft: "auto",
@@ -246,7 +246,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
-  activePhaseLabel: { color: theme.colors.foreground, fontWeight: theme.fontWeight.semibold },
+  activePhaseLabel: { color: theme.colors.foreground },
   phaseProgress: {
     color: theme.colors.foregroundExtraMuted,
     fontSize: theme.fontSize.content,

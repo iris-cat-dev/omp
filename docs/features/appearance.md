@@ -18,7 +18,7 @@ Customize local appearance and wallpaper, understand platform window behavior, a
 
 Conversation prose uses medium weight with semibold emphasis, with deeper near-black primary text in the light theme. Code remains regular weight; font sizes, line heights, and secondary tones are unchanged. Math retains bundled KaTeX fonts even if the interface font changes; see [Messages and media](messages-and-media.md).
 
-Task cards use the conversation content font size and prose line height, including custom font-size settings. Phase and task rows have additional vertical padding, with wider icon gaps and card insets. Long tasks wrap without truncation; phase expansion and panel collapse remain independent.
+Task cards use the conversation content font size and prose line height, including custom font-size settings. Card titles and phase labels also use the prose's medium weight; the active phase is emphasized by color and background, not heavier text. Phase and task rows have additional vertical padding, with wider icon gaps and card insets. Long tasks wrap without truncation; phase expansion and panel collapse remain independent.
 
 ## Window and theme behavior
 
