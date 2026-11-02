@@ -399,7 +399,7 @@ export interface OmpProviderActions {
   updateSubagentModel(
     agentName: string,
     model: string | null,
-    options?: { requestId?: string; fastMode?: boolean | null },
+    options?: { requestId?: string; fastMode?: boolean | "ultrafast" | null },
   ): Promise<OmpSubagentSettingsUpdateResponseMessage["payload"]>;
   updateSubagentSettingsEnabled(
     enabled: boolean,

@@ -5490,7 +5490,7 @@ export class OmpAgentClient implements AgentClient {
   async updateOmpSubagentModel(
     agentName: string,
     model: string | null,
-    options?: { fastMode?: boolean | null },
+    options?: { fastMode?: boolean | "ultrafast" | null },
   ): Promise<OmpSubagentSettings> {
     return updateOmpSubagentModel(
       agentName,

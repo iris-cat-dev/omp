@@ -564,7 +564,7 @@ export class ProviderSnapshotManager {
   async updateOmpSubagentModel(
     agentName: string,
     model: string | null,
-    options?: { fastMode?: boolean | null },
+    options?: { fastMode?: boolean | "ultrafast" | null },
   ) {
     const definition = this.providerRegistry.omp;
     if (!definition) throw new Error("OMP provider is not configured");
