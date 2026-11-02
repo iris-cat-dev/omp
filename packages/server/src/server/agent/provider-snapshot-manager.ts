@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import equal from "fast-deep-equal";
 
 import type { Logger } from "pino";
 import type {
@@ -228,6 +229,7 @@ export class ProviderSnapshotManager {
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private ompProviderManagementRead: Promise<OmpProviderManagement> | null = null;
+  private proxyPolicyUpdates: Promise<void> = Promise.resolve();
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
@@ -727,6 +729,10 @@ export class ProviderSnapshotManager {
     return await client.reorderOmpProviderAccounts(providerId, credentialIds);
   }
 
+  async waitForProxyPolicyUpdates(): Promise<void> {
+    await this.proxyPolicyUpdates;
+  }
+
   applyMutableProviderConfig(
     mutableProviders: MutableDaemonConfig["providers"] | undefined,
     options: ApplyMutableProviderConfigOptions = {},
@@ -766,6 +772,13 @@ export class ProviderSnapshotManager {
       if (options.replace) this.runtimeSettings = undefined;
       this.providerRegistry = this.buildRegistry();
       this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+      for (const [provider, client] of Object.entries(previous.providerClients)) {
+        const { proxyPolicy: _before, ...before } = previous.providerOverrides?.[provider] ?? {};
+        const { proxyPolicy: _after, ...after } = this.providerOverrides?.[provider] ?? {};
+        if (this.providerRegistry[provider] && equal(before, after)) {
+          this.providerClients[provider] = client;
+        }
+      }
 
       for (const cwd of this.snapshots.keys()) {
         this.providerLoads.delete(cwd);
@@ -775,6 +788,18 @@ export class ProviderSnapshotManager {
       return {
         agentManagerState: this.getAgentManagerProviderState(),
         publish: () => {
+          const clients = new Set([...this.ownedClients, ...Object.values(this.providerClients)]);
+          const policies = this.providerOverrides;
+          this.proxyPolicyUpdates = this.proxyPolicyUpdates.catch(() => undefined).then(async () => {
+            await Promise.all(Array.from(clients, async (client) => {
+              if (!client.setDefaultProxyPolicy) return;
+              await client.setDefaultProxyPolicy(
+                policies?.[client.provider]?.proxyPolicy ?? policies?.omp?.proxyPolicy ?? { enabled: false },
+              );
+            }));
+          });
+          // Errors stay observable by the mutation response and do not become unhandled rejections.
+          void this.proxyPolicyUpdates.catch((error) => this.logger.error({ error }, "Failed to apply proxy policy"));
           for (const cwd of snapshotCwds) {
             this.emitChange(cwd);
             const target = createGlobalSnapshotTarget();

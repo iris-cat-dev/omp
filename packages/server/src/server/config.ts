@@ -228,7 +228,8 @@ function extractAgentProviderSettings(
       (!provider.command &&
         !provider.env &&
         provider.ompBackend === undefined &&
-        provider.ompSdkPath === undefined)
+        provider.ompSdkPath === undefined &&
+        provider.proxyPolicy === undefined)
     ) {
       return [];
     }
@@ -246,6 +247,7 @@ function extractAgentProviderSettings(
           env: provider.env,
           ompBackend: provider.ompBackend,
           ompSdkPath: provider.ompSdkPath,
+          proxyPolicy: provider.proxyPolicy,
         },
       ] as const,
     ];

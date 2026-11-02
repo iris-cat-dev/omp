@@ -30,6 +30,7 @@ import {
 } from "../subagent-rpc.js";
 import { buildOmpLaunch } from "../runtime.js";
 import { resolveOmpApprovalMode } from "../provider-config.js";
+import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 
 type FakeOmpSubagentSubscriptionLevel = "off" | "progress" | "events";
 
@@ -65,6 +66,7 @@ export class FakeOmp implements OmpRuntime {
     });
     this.recordedLaunches.push(launch);
     const session = new FakeOmpSession(launch);
+    if (input.proxyPolicy) await session.setProxyPolicy(input.proxyPolicy);
     session.state = {
       ...session.state,
       model: this.initialModel,
@@ -132,6 +134,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly setFastModeRequests: boolean[] = [];
+  proxyPolicy: ProxyPolicy = { enabled: false };
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
@@ -378,6 +381,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
       fastModeActive: enabled,
     };
     return { enabled, active: enabled };
+  }
+
+  async setProxyPolicy(policy: ProxyPolicy): Promise<void> {
+    this.proxyPolicy = ProxyPolicySchema.parse(policy);
   }
 
   async setThinkingLevel(level: OmpThinkingLevel): Promise<void> {

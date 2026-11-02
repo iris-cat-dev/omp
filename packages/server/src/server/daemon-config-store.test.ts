@@ -108,7 +108,6 @@ describe("applyMutableProviderConfigToOverrides", () => {
           omp: {
             command: ["omp"],
             params: {
-              proxyEnabled: false,
               agentShell: { mode: "custom", path: "/bin/bash" },
             },
           },
@@ -118,7 +117,6 @@ describe("applyMutableProviderConfigToOverrides", () => {
     ).toMatchObject({
       command: ["omp"],
       params: {
-        proxyEnabled: false,
         agentShell: { mode: "custom", path: "/bin/bash" },
         disabledBuiltInTools: ["bash"],
       },
@@ -336,7 +334,7 @@ describe("DaemonConfigStore", () => {
     expect(() => publicOverride.patch({ relay: { publicUseTls: false } })).toThrow();
   });
 
-  test("persists the OMP PI_PROXY environment setting", () => {
+  test("persists disabled SDK proxy policies and replaces removed route overrides", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
     const store = new DaemonConfigStore(paseoHome, {
@@ -352,20 +350,20 @@ describe("DaemonConfigStore", () => {
     store.patch({
       providers: {
         omp: {
-          env: { PI_PROXY: "http://127.0.0.1:7890" },
-          params: { proxyEnabled: false },
+          proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
         },
       },
     });
 
     expect(store.get().providers.omp).toMatchObject({
-      env: { PI_PROXY: "http://127.0.0.1:7890" },
-      params: { proxyEnabled: false },
+      proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
     });
     expect(loadPersistedConfig(paseoHome).agents?.providers?.omp).toMatchObject({
-      env: { PI_PROXY: "http://127.0.0.1:7890" },
-      params: { proxyEnabled: false },
+      proxyPolicy: { enabled: false, default: { mode: "proxy", url: "http://127.0.0.1:7890" }, providers: { anthropic: { mode: "direct" } } },
     });
+    store.patch({ providers: { omp: { proxyPolicy: { enabled: true, providers: {} } } } });
+    expect(store.get().providers.omp?.proxyPolicy).toEqual({ enabled: true, providers: {} });
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.omp?.proxyPolicy).toEqual({ enabled: true, providers: {} });
   });
 
   test("saves a disabled OMP tool using the stock 18.3.0 CLI flags", () => {

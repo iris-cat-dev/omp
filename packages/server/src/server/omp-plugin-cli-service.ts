@@ -65,14 +65,6 @@ export interface OmpPluginCliServiceOptions {
    * `~/.omp/marketplaces.json` (the runtime's own config root).
    */
   marketplacesRegistryPath?: string;
-  /**
-   * Returns the proxy URL configured via the host settings UI (PI_PROXY).
-   * When set, HTTPS_PROXY/HTTP_PROXY are injected into the spawned omp CLI
-   * process so that plugin marketplace git clones and npm installs respect
-   * the user's proxy — the omp binary's native git clone does not read
-   * PI_PROXY directly.
-   */
-  getProxyUrl?: () => string | undefined;
   /** Live provider settings; management must target the same profile as sessions. */
   getProviderConfig?: () => ProviderOverride | undefined;
 }
@@ -215,13 +207,11 @@ export class OmpPluginCliService {
   private readonly runner: OmpPluginRunner;
   private readonly resolveOmpCommand: () => Promise<string | null>;
   private readonly marketplacesRegistryPath: string | undefined;
-  private readonly getProxyUrl: (() => string | undefined) | undefined;
   private readonly getProviderConfig: (() => ProviderOverride | undefined) | undefined;
   private inFlight: Promise<unknown> | null = null;
 
   constructor(options: OmpPluginCliServiceOptions) {
     this.logger = options.logger.child({ module: "omp-plugin-cli" });
-    this.getProxyUrl = options.getProxyUrl;
     this.getProviderConfig = options.getProviderConfig;
     this.runner =
       options.runner ??
@@ -230,7 +220,7 @@ export class OmpPluginCliService {
           timeout: runnerOptions.timeout,
           cwd: runnerOptions.cwd,
           envMode: "internal",
-          env: { ...runnerOptions.env, ...this.buildProxyEnv() },
+          env: runnerOptions.env,
         }));
     this.resolveOmpCommand =
       options.resolveOmpCommand ??
@@ -238,11 +228,6 @@ export class OmpPluginCliService {
     this.marketplacesRegistryPath = options.marketplacesRegistryPath;
   }
 
-  private buildProxyEnv(): Record<string, string> | undefined {
-    const proxyUrl = this.getProxyUrl?.();
-    if (!proxyUrl) return undefined;
-    return { HTTPS_PROXY: proxyUrl, HTTP_PROXY: proxyUrl };
-  }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     // Concurrent callers (e.g. list + marketplaceList fired together by the UI)
@@ -297,7 +282,6 @@ export class OmpPluginCliService {
       const runtimeSettings = toRuntimeSettings(provider);
       const env = createProviderEnv({
         runtimeSettings,
-        overlays: [this.buildProxyEnv()],
       });
       if (hasBundledOmpPlugins(env)) {
         throw new Error(

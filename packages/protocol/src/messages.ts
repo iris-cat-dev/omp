@@ -12,7 +12,7 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
-import { ProviderRuntimeSettingsSchema } from "./provider-config.js";
+import { ProviderRuntimeSettingsSchema, ProxyPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { OmpStatsGetRequestMessageSchema, OmpStatsGetResponseMessageSchema } from "./omp-stats.js";
@@ -121,6 +121,7 @@ const MutableDaemonProviderConfigSchema = z
     params: z.record(z.string(), z.unknown()).optional(),
     ompBackend: ProviderRuntimeSettingsSchema.shape.ompBackend,
     ompSdkPath: ProviderRuntimeSettingsSchema.shape.ompSdkPath,
+    proxyPolicy: ProxyPolicySchema.optional(),
   })
   .passthrough();
 
@@ -487,6 +488,7 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
   .object({
     supportsStreaming: z.boolean(),
     supportsSessionPersistence: z.boolean(),
+    supportsProxyPolicy: z.boolean().optional(),
     supportsSessionListing: z.boolean().optional(),
     supportsDynamicModes: z.boolean(),
     supportsMcpServers: z.boolean(),
@@ -566,6 +568,7 @@ const AgentSessionConfigSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
 });
 
 const AgentPermissionUpdateSchema = z.record(z.string(), z.unknown());
@@ -992,6 +995,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -2337,6 +2341,18 @@ export const SetAgentModelResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const SetAgentProxyPolicyRequestMessageSchema = z.object({
+  type: z.literal("set_agent_proxy_policy_request"),
+  agentId: z.string(),
+  policy: ProxyPolicySchema.nullable(),
+  requestId: z.string(),
+});
+
+export const SetAgentProxyPolicyResponseMessageSchema = z.object({
+  type: z.literal("set_agent_proxy_policy_response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
 export const SetAgentThinkingRequestMessageSchema = z.object({
   type: z.literal("set_agent_thinking_request"),
   agentId: z.string(),
@@ -3523,6 +3539,7 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
 });
 
@@ -3748,6 +3765,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
+  SetAgentProxyPolicyRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   SetAgentGoalObjectiveRequestMessageSchema,
@@ -7654,6 +7672,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
+  SetAgentProxyPolicyResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   SetAgentGoalObjectiveResponseMessageSchema,
@@ -7893,6 +7912,7 @@ export type CancelProviderSubagentResponseMessage = z.infer<
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
+export type SetAgentProxyPolicyResponseMessage = z.infer<typeof SetAgentProxyPolicyResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type SetAgentGoalObjectiveResponseMessage = z.infer<
@@ -8192,6 +8212,7 @@ export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryIn
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
+export type SetAgentProxyPolicyRequestMessage = z.infer<typeof SetAgentProxyPolicyRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type SetAgentGoalObjectiveRequestMessage = z.infer<

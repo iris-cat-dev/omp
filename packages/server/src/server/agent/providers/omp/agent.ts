@@ -80,7 +80,7 @@ import {
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
-import { applyOmpProxyEnabled } from "@omp-desktop/protocol/provider-config";
+import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import {
@@ -100,6 +100,7 @@ import {
   resolveOmpApprovalMode,
   resolveOmpProviderParams,
   OMP_MODES,
+  OMP_AGENT_CAPABILITIES,
   type OmpModelRoleParams,
   type OmpRuntimeProviderParams,
 } from "./provider-config.js";
@@ -197,6 +198,7 @@ import { OmpClaudeLimitResetConsumeRequestMessageSchema } from "@omp-desktop/pro
 import { createProxyFetch } from "../../../../services/quota-fetcher/proxy-fetch.js";
 
 const OMP_PROVIDER = "omp";
+const DIRECT_PROXY_POLICY: ProxyPolicy = { enabled: false };
 const DEFAULT_OMP_BINARY = process.env.OMP_COMMAND?.trim() || "omp";
 const QUESTION_RESPONSE_HEADER = "Response";
 const codexResetConsumptions = new Map<
@@ -605,19 +607,6 @@ export function disableStoredOmpCredential(
   }
 }
 
-const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
-  supportsStreaming: true,
-  supportsSessionPersistence: true,
-  supportsSessionListing: true,
-  supportsDynamicModes: true,
-  supportsMcpServers: false,
-  supportsReasoningStream: true,
-  supportsToolInvocations: true,
-  supportsRewindConversation: true,
-  supportsRewindFiles: false,
-  supportsRewindBoth: false,
-};
-
 export interface OmpAgentClientOptions {
   oauthAccounts?: readonly StoredOmpOAuthAccount[];
   logger: Logger;
@@ -687,6 +676,8 @@ interface OmpAgentSessionOptions {
   automaticCredentialScheduler?: OmpAutomaticCredentialScheduler;
   runtimeSession: OmpRuntimeSession;
   config: AgentSessionConfig;
+  getDefaultProxyPolicy?: () => ProxyPolicy;
+  onClosed?: () => void;
   initialState: OmpSessionState;
   currentModeId?: string | null;
   logger: Logger;
@@ -1143,6 +1134,7 @@ function buildResumeStartInput(input: {
 }): OmpStartSessionInput {
   return {
     cwd: input.resumeConfig.cwd,
+    proxyPolicy: input.resumeConfig.config.proxyPolicy,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
     getImageGenerationConfig: input.launchContext?.getImageGenerationConfig,
@@ -1166,14 +1158,6 @@ function readNativeMessageId(
     return message.id;
   }
   return typeof message.entryId === "string" ? message.entryId : undefined;
-}
-
-function withOmpCapabilities(): AgentCapabilityFlags {
-  return {
-    ...OMP_CORE_CAPABILITIES,
-    supportsMcpServers: false,
-    supportsNativePaseoTools: true,
-  };
 }
 
 function isOmpRequestAbortError(error: unknown): boolean {
@@ -1753,7 +1737,7 @@ interface OmpNativeTaskCall {
 
 export class OmpAgentSession implements AgentSession {
   readonly provider: AgentProvider = OMP_PROVIDER;
-  readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
+  readonly capabilities: AgentCapabilityFlags = { ...OMP_AGENT_CAPABILITIES };
   readonly features: AgentFeature[];
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -1843,10 +1827,15 @@ export class OmpAgentSession implements AgentSession {
   private readonly observeClaudeCompletion?: OmpAgentSessionOptions["observeClaudeCompletion"];
   private streamedClaudeCompletionKey: string | null = null;
   private streamedClaudeCompletionMessage: OmpAgentMessage | null = null;
+  private readonly getDefaultProxyPolicy: () => ProxyPolicy;
+  private readonly onClosed?: () => void;
+  private proxyPolicyUpdate: Promise<void> = Promise.resolve();
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
+    this.getDefaultProxyPolicy = options.getDefaultProxyPolicy ?? (() => DIRECT_PROXY_POLICY);
+    this.onClosed = options.onClosed;
     this.blobDir = options.blobDir;
     this.backgroundDaemons = options.backgroundDaemons;
     this.oauthAccounts = [...(options.oauthAccounts ?? [])];
@@ -2359,6 +2348,30 @@ export class OmpAgentSession implements AgentSession {
     this.state = { ...this.state, approvalMode };
     this.currentModeId = mapOmpApprovalMode(approvalMode);
     this.config.modeId = this.currentModeId;
+  }
+
+  setProxyPolicy(policy: ProxyPolicy | undefined): Promise<void> {
+    const validated = policy === undefined ? undefined : ProxyPolicySchema.parse(policy);
+    const apply = async () => {
+      if (this.closed) throw new Error("OMP session is closed");
+      await this.runtimeSession.setProxyPolicy(validated ?? this.getDefaultProxyPolicy());
+      if (validated === undefined) delete this.config.proxyPolicy;
+      else this.config.proxyPolicy = validated;
+    };
+    const update = this.proxyPolicyUpdate.then(apply, apply);
+    this.proxyPolicyUpdate = update;
+    return update;
+  }
+
+  applyDefaultProxyPolicy(policy: ProxyPolicy): Promise<void> {
+    const apply = async () => {
+      if (!this.closed && this.config.proxyPolicy === undefined) {
+        await this.runtimeSession.setProxyPolicy(policy);
+      }
+    };
+    const update = this.proxyPolicyUpdate.then(apply, apply);
+    this.proxyPolicyUpdate = update;
+    return update;
   }
 
   // eslint-disable-next-line complexity
@@ -2887,6 +2900,7 @@ export class OmpAgentSession implements AgentSession {
       await this.runtimeSession.close();
     } finally {
       this.clearOmpSessionState();
+      this.onClosed?.();
     }
   }
 
@@ -4592,7 +4606,7 @@ export class OmpAgentSession implements AgentSession {
 
 export class OmpAgentClient implements AgentClient {
   readonly provider: AgentProvider = OMP_PROVIDER;
-  readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
+  readonly capabilities: AgentCapabilityFlags = { ...OMP_AGENT_CAPABILITIES };
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -4605,7 +4619,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly automaticCredentialScheduler?: OmpAutomaticCredentialScheduler;
   private readonly proxyFetch: typeof fetch;
-  private readonly quotaFetch: typeof fetch;
+  private readonly quotaFetchForProvider: (provider: string) => typeof fetch;
   private readonly quotaNow: () => number;
   private readonly runtime: OmpRuntime;
   private readonly localModelBridge?: LocalModelBridge;
@@ -4616,6 +4630,8 @@ export class OmpAgentClient implements AgentClient {
     sessionId: string,
   ) => number | undefined;
   private readonly loginFlows = new Map<string, OmpProviderLoginFlow>();
+  private defaultProxyPolicy: ProxyPolicy;
+  private readonly proxySessions = new Set<OmpAgentSession>();
 
   constructor(options: OmpAgentClientOptions) {
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
@@ -4632,11 +4648,10 @@ export class OmpAgentClient implements AgentClient {
             { command: { mode: "replace", argv: [DEFAULT_OMP_BINARY] } },
             options.runtimeSettings,
           );
-    const runtimeSettings = applyOmpProxyEnabled(configuredRuntimeSettings, {
-      params: { proxyEnabled: runtimeProviderParams.proxyEnabled },
-    });
+    const runtimeSettings = configuredRuntimeSettings;
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
+    this.defaultProxyPolicy = ProxyPolicySchema.parse(runtimeSettings?.proxyPolicy ?? DIRECT_PROXY_POLICY);
     this.providerParams = runtimeProviderParams;
     this.desktopConfigDir = options.desktopConfigDir;
     this.modelRoleParams = modelRoleParams;
@@ -4645,10 +4660,17 @@ export class OmpAgentClient implements AgentClient {
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
     this.automaticCredentialScheduler = options.automaticCredentialScheduler;
-    this.proxyFetch = createProxyFetch({
-      getProxyUrl: () => runtimeSettings?.env?.PI_PROXY,
-    });
-    this.quotaFetch = options.quotaFetch ?? this.proxyFetch;
+    this.proxyFetch = createProxyFetch({ getProxyPolicy: () => this.defaultProxyPolicy });
+    const quotaFetches = new Map<string, typeof fetch>();
+    this.quotaFetchForProvider = (provider) => {
+      if (options.quotaFetch) return options.quotaFetch;
+      let fetchApi = quotaFetches.get(provider);
+      if (!fetchApi) {
+        fetchApi = createProxyFetch({ getProxyPolicy: () => this.defaultProxyPolicy, provider });
+        quotaFetches.set(provider, fetchApi);
+      }
+      return fetchApi;
+    };
     this.quotaNow = options.quotaNow ?? Date.now;
     this.claudeQuotaState = new ClaudeQuotaState(this.quotaNow);
     this.localModelBridge = options.localModelBridge;
@@ -4665,6 +4687,14 @@ export class OmpAgentClient implements AgentClient {
     }
     this.sessionCredentialReader = options.sessionCredentialReader;
     this.oauthAccountsOverride = options.oauthAccounts;
+  }
+
+  async setDefaultProxyPolicy(policy: ProxyPolicy): Promise<void> {
+    this.defaultProxyPolicy = ProxyPolicySchema.parse(policy);
+    await Promise.all([
+      ...Array.from(this.proxySessions, (session) => session.applyDefaultProxyPolicy(this.defaultProxyPolicy)),
+      ...Array.from(this.loginFlows.values(), (flow) => flow.runtimeSession.setProxyPolicy(this.defaultProxyPolicy)),
+    ]);
   }
 
   private async configureNativePaseoTools(
@@ -4805,8 +4835,11 @@ export class OmpAgentClient implements AgentClient {
       config,
       oauthAccounts,
       ...options,
+      getDefaultProxyPolicy: () => this.defaultProxyPolicy,
+      onClosed: () => this.proxySessions.delete(session),
     });
     await session.initialize();
+    this.proxySessions.add(session);
     return session;
   }
 
@@ -4840,14 +4873,15 @@ export class OmpAgentClient implements AgentClient {
           env: { ...this.runtimeSettings?.env, ...input.env },
         })
       : input.env;
+    const proxyPolicy = input.proxyPolicy ?? this.defaultProxyPolicy;
     try {
-      return await this.runtime.startSession({ ...input, env });
+      return await this.runtime.startSession({ ...input, env, proxyPolicy });
     } catch (error) {
       if (!isOmpRpcMissingModelError(error)) throw error;
       const injected = await this.ensureRpcBootstrapModel();
       if (!injected) throw error;
       this.logger.debug({}, "Retrying OMP RPC after adding a keyless bootstrap model");
-      return await this.runtime.startSession({ ...input, env });
+      return await this.runtime.startSession({ ...input, env, proxyPolicy });
     }
   }
 
@@ -4916,6 +4950,7 @@ export class OmpAgentClient implements AgentClient {
     const launchEnv = launchContext?.env;
     const runtimeSession = await this.startConversationRuntimeSession({
       cwd: config.cwd,
+      proxyPolicy: config.proxyPolicy,
       protocolMode: "rpc-ui",
       model: config.model,
       thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
@@ -5374,7 +5409,7 @@ export class OmpAgentClient implements AgentClient {
             account.provider === "anthropic" ? fetchClaudeAccountQuota : fetchCodexAccountQuota;
           const quota = await fetchQuota({
             credential: account,
-            fetch: this.quotaFetch,
+            fetch: this.quotaFetchForProvider(account.provider),
             now: this.quotaNow,
           });
           quotaByCredentialId.set(
@@ -5470,7 +5505,7 @@ export class OmpAgentClient implements AgentClient {
       credential,
       creditId,
       redeemRequestId,
-      fetch: this.quotaFetch,
+      fetch: this.quotaFetchForProvider("openai-codex"),
       now: this.quotaNow,
     });
     const consumption = { creditId, redeemRequestId, promise };
@@ -5510,7 +5545,7 @@ export class OmpAgentClient implements AgentClient {
       credential,
       grantId,
       redeemRequestId,
-      fetch: this.quotaFetch,
+      fetch: this.quotaFetchForProvider("anthropic"),
       now: this.quotaNow,
     });
   }

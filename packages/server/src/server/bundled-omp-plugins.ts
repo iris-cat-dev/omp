@@ -17,7 +17,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import { execCommand, spawnProcess } from "../utils/spawn.js";
-import { applyOmpProxyEnabled } from "@omp-desktop/protocol/provider-config";
 import type { AgentInitializationPhase } from "@omp-desktop/protocol/messages";
 import {
   createProviderEnv,
@@ -566,10 +565,7 @@ export async function resolveOmpPluginInvocation(options: {
   cwd: string;
 }): Promise<OmpPluginInvocation> {
   const baseEnv = options.env ?? process.env;
-  const settings = applyOmpProxyEnabled(
-    mergeRuntimeSettings(options.runtimeSettings, toRuntimeSettings(options.provider)),
-    options.provider,
-  );
+  const settings = mergeRuntimeSettings(options.runtimeSettings, toRuntimeSettings(options.provider));
   const prefix = await resolveProviderCommandPrefix(
     settings?.command,
     () => baseEnv.OMP_COMMAND?.trim() || "omp",

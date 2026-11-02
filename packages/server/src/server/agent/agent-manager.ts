@@ -1,3 +1,4 @@
+import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import { randomUUID } from "node:crypto";
 import type {
   BackgroundProcess,
@@ -188,6 +189,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
+  if (record.config.proxyPolicy !== undefined) config.proxyPolicy = record.config.proxyPolicy;
   return stripInternalPaseoMcpServer(config);
 }
 
@@ -2005,6 +2007,19 @@ export class AgentManager {
     if (agent.runtimeInfo) {
       agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
     }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  async setAgentProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void> {
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.setProxyPolicy) {
+      throw new Error(`Provider '${agent.provider}' does not support per-conversation proxy policies`);
+    }
+    const nextPolicy = policy === null ? undefined : ProxyPolicySchema.parse(policy);
+    await agent.session.setProxyPolicy(nextPolicy);
+    if (nextPolicy === undefined) delete agent.config.proxyPolicy;
+    else agent.config.proxyPolicy = nextPolicy;
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }

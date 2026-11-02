@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@omp-desktop/protocol/agent-types";
 import { z } from "zod";
-import { applyOmpProxyEnabled } from "@omp-desktop/protocol/provider-config";
 
 import type {
   AgentClient,
@@ -347,6 +346,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     close: () => inner.close(),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
+    setProxyPolicy: inner.setProxyPolicy?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
     setFeature: inner.setFeature?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
@@ -396,6 +396,7 @@ function wrapClientProvider(
   return {
     provider,
     capabilities: inner.capabilities,
+    setDefaultProxyPolicy: inner.setDefaultProxyPolicy?.bind(inner),
     createSession: async (config, launchContext) =>
       wrapSessionProvider(
         provider,
@@ -647,14 +648,10 @@ function buildResolvedBuiltinProviders(
       runtimeSettings?.[definition.id],
       toRuntimeSettings(override),
     );
-    const mergedRuntimeSettings =
-      definition.id === "omp"
-        ? applyOmpProxyEnabled(configuredRuntimeSettings, override)
-        : configuredRuntimeSettings;
 
     resolvedProviders.set(definition.id, {
       definition: applyOverrideToDefinition(definition, override),
-      runtimeSettings: mergedRuntimeSettings,
+      runtimeSettings: configuredRuntimeSettings,
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
       profileModelsAreAdditive: false,
@@ -662,7 +659,7 @@ function buildResolvedBuiltinProviders(
       derivedFromProviderId: null,
       providerParams: override?.params,
       createBaseClient: (logger) =>
-        factory(logger, mergedRuntimeSettings, {
+        factory(logger, configuredRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
           managedProcesses: options.managedProcesses,
           ompRuntime: options.ompRuntime,

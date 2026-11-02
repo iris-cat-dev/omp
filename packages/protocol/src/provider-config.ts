@@ -37,35 +37,42 @@ const OmpSdkPathSchema = z
     "OMP-only absolute SDK package root containing package.json, dist/node/sdk.mjs, and dist/node/rpc.mjs.",
   );
 
+export const ProxyRouteSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("direct") }),
+  z.object({
+    mode: z.literal("proxy"),
+    url: z.string().trim().url().superRefine((value, ctx) => {
+      let url: URL;
+      try { url = new URL(value); }
+      catch { return; }
+      if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.pathname !== "/" || url.search || url.hash) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Proxy URL must use HTTP or HTTPS without a path, query, or fragment" });
+      }
+      try { decodeURIComponent(url.username); decodeURIComponent(url.password); }
+      catch { ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid proxy URL credentials" }); }
+    }),
+  }),
+]);
+
+export const ProxyPolicySchema = z.object({
+  enabled: z.boolean(),
+  default: ProxyRouteSchema.optional(),
+  providers: z.record(z.string(), ProxyRouteSchema).optional(),
+  noProxy: z.array(z.string().trim().min(1)).optional(),
+});
+
+export type ProxyRoute = z.infer<typeof ProxyRouteSchema>;
+export type ProxyPolicy = z.infer<typeof ProxyPolicySchema>;
+
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   ompBackend: OmpBackendSchema.optional(),
   ompSdkPath: OmpSdkPathSchema.optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
 });
 
-export interface OmpProxyConfig {
-  env?: Record<string, string>;
-  params?: Record<string, unknown>;
-}
-
-export function resolveOmpProxyUrl(config: OmpProxyConfig | undefined): string | undefined {
-  if (config?.params?.proxyEnabled === false) return undefined;
-  const value = config?.env?.PI_PROXY?.trim();
-  return value || undefined;
-}
-
-export function applyOmpProxyEnabled(
-  runtimeSettings: ProviderRuntimeSettings | undefined,
-  config: OmpProxyConfig | undefined,
-): ProviderRuntimeSettings | undefined {
-  if (config?.params?.proxyEnabled !== false) return runtimeSettings;
-  return {
-    ...runtimeSettings,
-    env: { ...runtimeSettings?.env, PI_PROXY: "" },
-  };
-}
 
 const ProviderProfileThinkingOptionSchema = z.object({
   id: z.string(),
@@ -94,6 +101,7 @@ export const ProviderOverrideSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
   ompBackend: OmpBackendSchema.optional(),
   ompSdkPath: OmpSdkPathSchema.optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   enabled: z.boolean().optional(),
   order: z.number().optional(),
 });

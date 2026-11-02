@@ -10,7 +10,6 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
-import { resolveOmpProxyUrl } from "@omp-desktop/protocol/provider-config";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -938,7 +937,6 @@ export class Session {
     this.ompPluginSession = new OmpPluginSession({
       service: new OmpPluginCliService({
         logger: this.sessionLogger,
-        getProxyUrl: () => resolveOmpProxyUrl(daemonConfigStore.get().providers.omp),
         getProviderConfig: () => daemonConfigStore.get().providers.omp,
       }),
       emit: (msg) => this.emit(msg),
@@ -960,6 +958,7 @@ export class Session {
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
+        setProxyPolicy: (agentId, policy) => agentManager.setAgentProxyPolicy(agentId, policy),
         setFeature: (agentId, featureId, value) =>
           agentManager.setAgentFeature(agentId, featureId, value),
         setGoalObjective: (agentId, objective) =>
@@ -2290,6 +2289,8 @@ export class Session {
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
       case "set_agent_model_request":
         return this.agentConfigSession.handleSetAgentModelRequest(msg);
+      case "set_agent_proxy_policy_request":
+        return this.agentConfigSession.handleSetAgentProxyPolicyRequest(msg);
       case "set_agent_feature_request":
         return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
       case "set_agent_goal_objective_request":
@@ -2323,16 +2324,13 @@ export class Session {
         return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request": {
         const config = this.daemonConfigStore.patch(msg.config);
-        // Keep this response in the same dispatch as the mutation. Relay rotation
-        // starts at the next dispatch boundary and drains this encrypted send.
-        this.emit({
-          type: "set_daemon_config_response",
-          payload: {
-            requestId: msg.requestId,
-            config,
-          },
+        // Keep the response in this dispatch so relay rotation drains the encrypted send.
+        return this.providerSnapshotManager.waitForProxyPolicyUpdates().then(() => {
+          this.emit({
+            type: "set_daemon_config_response",
+            payload: { requestId: msg.requestId, config },
+          });
         });
-        return undefined;
       }
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);

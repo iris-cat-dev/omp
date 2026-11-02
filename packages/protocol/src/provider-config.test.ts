@@ -1,40 +1,44 @@
 import { describe, expect, test } from "vitest";
 import {
-  applyOmpProxyEnabled,
   ProviderOverrideSchema,
   ProviderRuntimeSettingsSchema,
-  resolveOmpProxyUrl,
+  ProxyPolicySchema,
 } from "./provider-config.js";
 import { MutableDaemonConfigPatchSchema } from "./messages.js";
 
-describe("OMP proxy configuration", () => {
-  test("keeps a configured proxy enabled by default for existing configs", () => {
-    expect(resolveOmpProxyUrl({ env: { PI_PROXY: "  http://127.0.0.1:7890  " } })).toBe(
-      "http://127.0.0.1:7890",
-    );
+describe("SDK proxy configuration boundaries", () => {
+  test("preserves disabled policies and arbitrary model-provider routes", () => {
+    const proxyPolicy = {
+      enabled: false,
+      default: { mode: "proxy", url: "http://127.0.0.1:7890" },
+      providers: { "custom/model-provider": { mode: "direct" } },
+      noProxy: ["internal.example"],
+    };
+    expect(ProxyPolicySchema.parse(proxyPolicy)).toEqual(proxyPolicy);
+    expect(ProviderRuntimeSettingsSchema.parse({ proxyPolicy })).toEqual({ proxyPolicy });
+    expect(ProviderOverrideSchema.parse({ proxyPolicy })).toEqual({ proxyPolicy });
+    expect(MutableDaemonConfigPatchSchema.parse({ providers: { omp: { proxyPolicy } } })).toEqual({ providers: { omp: { proxyPolicy } } });
   });
 
-  test("disables the proxy without deleting its configured URL", () => {
-    const config = {
-      env: { PI_PROXY: "http://127.0.0.1:7890", OTHER: "value" },
-      params: { proxyEnabled: false },
-    };
-
-    expect(resolveOmpProxyUrl(config)).toBeUndefined();
-    expect(applyOmpProxyEnabled({ env: config.env }, config)).toEqual({
-      env: { PI_PROXY: "", OTHER: "value" },
-    });
-    expect(config.env.PI_PROXY).toBe("http://127.0.0.1:7890");
+  test("rejects malformed policies at public configuration boundaries", () => {
+    const proxyPolicy = { enabled: true, default: { mode: "proxy", url: "not-a-url" } };
+    expect(ProviderRuntimeSettingsSchema.safeParse({ proxyPolicy }).success).toBe(false);
+    expect(ProviderOverrideSchema.safeParse({ proxyPolicy }).success).toBe(false);
+    expect(MutableDaemonConfigPatchSchema.safeParse({ providers: { omp: { proxyPolicy } } }).success).toBe(false);
   });
 
-  test("restores the saved proxy when enabled again", () => {
-    const config = {
-      env: { PI_PROXY: "http://127.0.0.1:7890" },
-      params: { proxyEnabled: true },
-    };
+  test.each([
+    "ftp://proxy.example", "http://proxy.example/path", "https://proxy.example/?query=1",
+    "http://proxy.example/#fragment", "http://%XX:password@proxy.example", "http://user:%FF@proxy.example",
+  ])("rejects SDK-incompatible proxy URL %s", (url) => {
+    const proxyPolicy = { enabled: true, default: { mode: "proxy", url } };
+    expect(ProxyPolicySchema.safeParse(proxyPolicy).success).toBe(false);
+    expect(MutableDaemonConfigPatchSchema.safeParse({ providers: { omp: { proxyPolicy } } }).success).toBe(false);
+  });
 
-    expect(resolveOmpProxyUrl(config)).toBe("http://127.0.0.1:7890");
-    expect(applyOmpProxyEnabled({ env: config.env }, config)).toEqual({ env: config.env });
+  test("accepts encoded credentials and normalizes nonempty bypass rules", () => {
+    expect(ProxyPolicySchema.parse({ enabled: true, default: { mode: "proxy", url: "https://user%40example:p%3Ass@proxy.example:8443/" }, noProxy: [" internal.example "] }).noProxy).toEqual(["internal.example"]);
+    expect(ProxyPolicySchema.safeParse({ enabled: false, noProxy: [" "] }).success).toBe(false);
   });
 });
 

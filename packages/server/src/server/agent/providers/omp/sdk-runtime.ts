@@ -143,6 +143,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       const systemPrompt = input.systemPrompt?.trim();
       const payload = OmpSdkHostLaunchSchema.parse({
         cwd: input.cwd,
+        proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
         protocolMode: launch.protocolMode,
         model: launch.model,
         thinkingOptionId: input.thinkingOptionId,

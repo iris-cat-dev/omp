@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
 
 export const OMP_SDK_ROOT_ENV = "OMP_DESKTOP_SDK_ROOT";
 export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
@@ -6,6 +7,7 @@ export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
 export const OmpSdkHostLaunchSchema = z
   .object({
     cwd: z.string().min(1),
+    proxyPolicy: ProxyPolicySchema.optional(),
     protocolMode: z.enum(["rpc", "rpc-ui"]).optional(),
     model: z.string().optional(),
     thinkingOptionId: z.string().optional(),

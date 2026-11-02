@@ -611,6 +611,12 @@ export class DaemonConfigStore {
     const { removeProviders = [], imageGeneration, ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    // Policies are complete values: deep-merging routes would retain removed overrides.
+    for (const [providerId, providerPatch] of Object.entries(parsedPatch.providers ?? {})) {
+      if (providerPatch.proxyPolicy !== undefined) {
+        merged.providers[providerId]!.proxyPolicy = structuredClone(providerPatch.proxyPolicy);
+      }
+    }
     const relayAddressChanged =
       parsedPatch.relay !== undefined &&
       Object.keys(parsedPatch.relay).some((field) => field !== "enabled");

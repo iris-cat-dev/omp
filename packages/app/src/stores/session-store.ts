@@ -1,3 +1,4 @@
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -97,6 +98,7 @@ export interface Agent {
   model: string | null;
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
+  proxyPolicy?: ProxyPolicy;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;

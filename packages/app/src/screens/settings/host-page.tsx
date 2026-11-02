@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 import { Alert, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import type { OmpInstallationStatus, TerminalProfile } from "@omp-desktop/protocol/messages";
-import { resolveOmpProxyUrl } from "@omp-desktop/protocol/provider-config";
+import { ProxyPolicyEditor } from "@/components/proxy-policy-editor";
 import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
@@ -31,7 +31,6 @@ import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
-import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
@@ -1311,122 +1310,14 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
 }
 
 function OmpProxyCard({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const ompConfig = config?.providers.omp;
-  const persistedProxy = ompConfig?.env?.PI_PROXY ?? "";
-  const isProxyEnabled = resolveOmpProxyUrl(ompConfig) !== undefined;
-  const [draft, setDraft] = useState(persistedProxy);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(persistedProxy);
-  }, [persistedProxy]);
-
-  const normalizedDraft = draft.trim();
-  const hasChanges = normalizedDraft !== persistedProxy;
-  const handleSave = useCallback(() => {
-    setIsSaving(true);
-    void patchConfig({
-      providers: {
-        omp: {
-          env: {
-            PI_PROXY: normalizedDraft,
-          },
-        },
-      },
-    })
-      .catch((error) => {
-        console.error("[HostPage] Failed to save OMP proxy", error);
-        Alert.alert(
-          t("settings.host.orchestration.proxy.saveError"),
-          error instanceof Error ? error.message : String(error),
-        );
-      })
-      .finally(() => setIsSaving(false));
-  }, [normalizedDraft, patchConfig, t]);
-
-  const handleEnabledChange = useCallback(
-    (enabled: boolean) => {
-      setIsSaving(true);
-      void patchConfig({
-        providers: {
-          omp: {
-            params: {
-              proxyEnabled: enabled,
-            },
-          },
-        },
-      })
-        .catch((error) => {
-          console.error("[HostPage] Failed to toggle OMP proxy", error);
-          Alert.alert(
-            t("settings.host.orchestration.proxy.saveError"),
-            error instanceof Error ? error.message : String(error),
-          );
-        })
-        .finally(() => setIsSaving(false));
-    },
-    [patchConfig, t],
-  );
-
   if (!isConnected) return null;
-
-  return (
-    <View style={settingsStyles.card} testID="host-page-omp-proxy-card">
-      <View style={styles.proxyHeader}>
-        <View style={styles.proxyIcon}>
-          <Globe size={theme.iconSize.md} color={theme.colors.accent} />
-        </View>
-        <View style={styles.proxyHeaderContent}>
-          <Text style={styles.proxyTitle}>{t("settings.host.orchestration.proxy.title")}</Text>
-          <Text style={styles.proxyHint}>{t("settings.host.orchestration.proxy.hint")}</Text>
-        </View>
-        <Switch
-          value={isProxyEnabled}
-          onValueChange={handleEnabledChange}
-          disabled={!persistedProxy.trim() || hasChanges || isSaving}
-          accessibilityLabel={t("settings.host.orchestration.proxy.title")}
-          testID="host-page-omp-proxy-switch"
-        />
-      </View>
-      <View style={styles.proxyForm}>
-        <Field label="PI_PROXY" testID="host-page-omp-proxy-field">
-          <View style={styles.proxyControlRow}>
-            <View style={styles.proxyInput}>
-              <FormTextInput
-                initialValue={persistedProxy}
-                resetKey={persistedProxy}
-                onChangeText={setDraft}
-                onSubmitEditing={handleSave}
-                placeholder={t("settings.host.orchestration.proxy.placeholder")}
-                accessibilityLabel={t("settings.host.orchestration.proxy.accessibilityLabel")}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isSaving}
-                testID="host-page-omp-proxy-input"
-              />
-            </View>
-            <Button
-              variant="default"
-              size="md"
-              style={styles.proxySaveButton}
-              onPress={handleSave}
-              disabled={!hasChanges || isSaving}
-              loading={isSaving}
-              testID="host-page-omp-proxy-save"
-            >
-              {isSaving
-                ? t("settings.host.orchestration.proxy.saving")
-                : t("settings.host.orchestration.proxy.save")}
-            </Button>
-          </View>
-        </Field>
-      </View>
-    </View>
-  );
+  return <View style={settingsStyles.card}>
+    <ProxyPolicyEditor serverId={serverId} policy={config?.providers.omp?.proxyPolicy}
+      onSave={async (policy) => { if (policy) await patchConfig({ providers: { omp: { proxyPolicy: policy } } }); }}
+      testID="host-page-omp-proxy" />
+  </View>;
 }
 
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {
@@ -2192,57 +2083,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
-  },
-  proxyHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-  },
-  proxyIcon: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface3,
-  },
-  proxyHeaderContent: {
-    flex: 1,
-    paddingTop: 1,
-  },
-  proxyTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-  },
-  proxyHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: Math.round(theme.fontSize.sm * 1.5),
-    marginTop: theme.spacing[1],
-  },
-  proxyForm: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-  },
-  proxyControlRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  proxyInput: {
-    flex: 1,
-    minWidth: 0,
-  },
-  proxySaveButton: {
-    minWidth: 88,
   },
   appendPromptActions: {
     flexDirection: "row",

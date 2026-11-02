@@ -27,11 +27,13 @@ import type {
 } from "./subagent-rpc.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
   argv: string[];
   env?: Record<string, string>;
+  proxyPolicy?: ProxyPolicy;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -46,6 +48,7 @@ export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   getImageGenerationConfig?: OmpImageSettingsGetter;
+  proxyPolicy?: ProxyPolicy;
   localModelGateway?: boolean;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
@@ -77,6 +80,7 @@ export interface OmpRuntimeSession {
   stopBackgroundJob?(processId: string): Promise<boolean>;
   stopAllBackgroundJobs?(): Promise<number>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
+  setProxyPolicy(policy: ProxyPolicy): Promise<void>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
@@ -146,6 +150,7 @@ export function buildOmpLaunch(input: {
             ...input.session.env,
           }
         : undefined,
+    proxyPolicy: input.session.proxyPolicy,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,

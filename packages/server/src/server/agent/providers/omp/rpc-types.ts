@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
 
 export const OmpThinkingLevelSchema = z.enum([
   "off",
@@ -606,6 +607,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     mode: OmpApprovalModeSchema,
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_proxy_policy"), policy: ProxyPolicySchema }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_login_providers") }),

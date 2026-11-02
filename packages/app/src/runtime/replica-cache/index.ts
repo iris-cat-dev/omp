@@ -533,6 +533,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.model,
     thinkingOptionId: agent.thinkingOptionId ?? null,
+    proxyPolicy: agent.proxyPolicy,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
@@ -548,6 +549,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     capabilities: {
       supportsStreaming: agent.capabilities.supportsStreaming,
       supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
+      supportsProxyPolicy: agent.capabilities.supportsProxyPolicy,
       ...(agent.capabilities.supportsSessionListing !== undefined
         ? { supportsSessionListing: agent.capabilities.supportsSessionListing }
         : {}),

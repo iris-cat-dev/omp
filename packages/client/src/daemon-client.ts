@@ -1,3 +1,4 @@
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type {
   VisualFeedbackRequest,
   VisualFeedbackResponse,
@@ -3422,6 +3423,21 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentModel rejected");
     }
+  }
+
+  async setAgentProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_proxy_policy_request", agentId, policy, requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => msg.type === "set_agent_proxy_policy_response" &&
+        msg.payload.requestId === requestId ? msg.payload : null,
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setAgentProxyPolicy rejected");
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {

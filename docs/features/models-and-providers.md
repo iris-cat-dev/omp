@@ -9,6 +9,7 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 - [Catalog refresh and sign-in](#catalog-refresh-and-sign-in)
 - [Thinking and Fast settings](#thinking-and-fast-settings)
 - [Subagent model overrides](#subagent-model-overrides)
+- [Proxy routing](#proxy-routing)
 - [Runtime updates](#runtime-updates)
 
 ## Getting started and host scope
@@ -75,10 +76,20 @@ Changes are saved in OMP's user configuration and apply to newly spawned task/ev
 
 Choosing inheritance clears the agent's model and Fast overrides. Disabling the section removes the model mapping and bundled agents' Fast overrides while preserving custom agents' tiers and unrelated settings.
 
+## Proxy routing
+
+**Host Settings → Proxy** configures the host's default proxy policy. The conversation's model controls offer a separate policy: inherit the host, connect directly, or configure an HTTP(S) proxy with exact model-provider overrides. Settings are persisted per conversation; unloading and restoring a conversation restores its override automatically. Clearing it resumes host inheritance, including after another cold restore.
+
+Saving a policy updates subsequent requests without restarting the conversation or daemon. In-flight requests finish on their existing connection; a reused Codex WebSocket reconnects for its next response when routing changes. Turning the policy off preserves configured addresses but sends requests directly. An omitted provider route uses the policy's default; an omitted default means direct.
+
+Provider routes cover model HTTP/WebSocket traffic, OAuth login/refresh, provider usage and model discovery, remote compaction, and provider media/judgment requests. Host-level usage cards and runtime downloads use the host policy. Ordinary tool/MCP fetches, local/private/metadata destinations, and explicit bypass rules stay direct. `PI_PROXY`, provider-specific proxy variables, and standard proxy environment variables no longer select OMP routes.
+
+Only HTTP(S) proxy URLs without paths, queries, or fragments are accepted; SOCKS is not supported. Broker-delegated OAuth refresh sends the effective policy to the broker, which must run the updated refresh endpoint and be able to reach that proxy. A desktop-only loopback proxy cannot route refreshes performed on a remote broker.
+
 ## Runtime updates
 
 **Host Settings → Agents** reports the version, source, and package path of the SDK used for Agent sessions. Desktop-managed runtimes are updated through the whole application; SDK mode does not offer standalone CLI installation or binary replacement.
 
-Standalone servers can explicitly select an external CLI backend. Its runtime update checks, checksum requests, downloads, and redirects use the enabled `PI_PROXY`; cancellation, SHA-256 verification, and staged replacement remain unchanged.
+Standalone servers can explicitly select an external CLI backend. Its runtime update checks, checksum requests, downloads, and redirects use the enabled host proxy policy; cancellation, SHA-256 verification, and staged replacement remain unchanged.
 
 Standard Apple Silicon macOS and Windows x64 applications include the SDK and embedded Node, without a system Node, Bun, or OMP installation. Legacy CLI-bound private packages and no-OMP installer variants are no longer built. See [Packaging](../packaging.md) and [Development](../development.md).

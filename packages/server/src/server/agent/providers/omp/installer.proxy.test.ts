@@ -35,7 +35,6 @@ beforeEach(() => {
   vi.stubEnv("OMP_COMMAND", "");
   vi.stubEnv("PASEO_DESKTOP_MANAGED", "0");
   vi.stubEnv("PI_INSTALL_DIR", "");
-  vi.stubEnv("PI_PROXY", "");
   vi.stubEnv("PATH", process.env.PATH ?? "");
 });
 
@@ -260,9 +259,13 @@ async function createFixture(
       logger: createTestLogger(),
       runtimeSettings: {
         ompBackend: "cli",
-        env: mode === "unconfigured" ? {} : { PI_PROXY: proxyUrl },
+        ...(mode === "unconfigured" ? {} : {
+          proxyPolicy: {
+            enabled: mode !== "disabled",
+            default: { mode: "proxy" as const, url: proxyUrl },
+          },
+        }),
       },
-      providerParams: { proxyEnabled: mode !== "disabled" },
     });
   }
 
@@ -386,7 +389,7 @@ describe("OMP runtime updates through the application proxy", () => {
   );
 
   test.each(["unconfigured", "disabled"] as const)(
-    "keeps %s PI_PROXY traffic direct",
+    "keeps %s explicit proxy traffic direct",
     async (mode) => {
       const fixture = await createFixture();
       const client = fixture.client(mode);

@@ -21,6 +21,7 @@ import type {
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
@@ -200,6 +201,7 @@ export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
+  supportsProxyPolicy?: boolean;
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
@@ -653,6 +655,7 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  proxyPolicy?: ProxyPolicy;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
@@ -732,6 +735,7 @@ export interface AgentSession {
   stopBackgroundProcess?(processId: string): Promise<boolean>;
   stopAllBackgroundProcesses?(): Promise<number>;
   setModel?(modelId: string | null): Promise<void>;
+  setProxyPolicy?(policy: ProxyPolicy | undefined): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   setGoalObjective?(objective: string): Promise<void>;
@@ -819,6 +823,7 @@ export interface OmpProviderLoginStart {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  setDefaultProxyPolicy?(policy: ProxyPolicy): Promise<void>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,

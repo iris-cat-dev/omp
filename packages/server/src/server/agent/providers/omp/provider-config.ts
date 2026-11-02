@@ -13,6 +13,7 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { AgentCapabilityFlags } from "../../agent-sdk-types.js";
 import type { OmpApprovalMode } from "./rpc-types.js";
 
 const OMP_SESSION_DIR = "~/.omp/agent/sessions";
@@ -20,6 +21,21 @@ const DEFAULT_OMP_MODE_ID = "ask";
 
 export const MIN_SUPPORTED_OMP_VERSION = "18.8.7";
 export { OMP_MODES };
+
+export const OMP_AGENT_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsSessionListing: true,
+  supportsProxyPolicy: true,
+  supportsDynamicModes: true,
+  supportsMcpServers: false,
+  supportsReasoningStream: true,
+  supportsToolInvocations: true,
+  supportsNativePaseoTools: true,
+  supportsRewindConversation: true,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
+};
 
 export const OmpAgentShellModeSchema = z.enum(["auto", "git-bash", "omp-default", "custom"]);
 export type OmpAgentShellMode = z.infer<typeof OmpAgentShellModeSchema>;
@@ -42,12 +58,10 @@ export const OmpProviderParamsSchema = z
     planModel: z.string().min(1).optional(),
     agentShell: OmpAgentShellConfigSchema.optional(),
     disabledBuiltInTools: z.array(z.string()).optional(),
-    proxyEnabled: z.boolean().optional(),
   })
   .strict();
 
 export interface OmpRuntimeProviderParams {
-  proxyEnabled: boolean;
   disabledBuiltInTools?: readonly string[];
   sessionDir: string;
   agentShell: {
@@ -246,7 +260,6 @@ export function resolveOmpProviderParams(providerParams: unknown): {
   return {
     runtimeProviderParams: {
       sessionDir: params.sessionDir ?? OMP_SESSION_DIR,
-      proxyEnabled: params.proxyEnabled !== false,
       agentShell: params.agentShell ?? { mode: "auto" },
       ...(params.disabledBuiltInTools !== undefined
         ? { disabledBuiltInTools: params.disabledBuiltInTools }
@@ -384,6 +397,7 @@ export function mergeOmpRuntimeSettings(
     command: override?.command ?? base?.command,
     ompBackend: override?.ompBackend ?? base?.ompBackend,
     ompSdkPath: override?.ompSdkPath ?? base?.ompSdkPath,
+    proxyPolicy: override?.proxyPolicy ?? base?.proxyPolicy,
     env: base?.env || override?.env ? { ...base?.env, ...override?.env } : undefined,
     disallowedTools:
       base?.disallowedTools || override?.disallowedTools

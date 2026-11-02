@@ -44,8 +44,6 @@ async function createFixture() {
       assert.equal(process.env.ELECTRON_RUN_AS_NODE, "1");
       assert.equal(process.env.${OMP_SDK_ROOT_ENV}, ${JSON.stringify(root)});
       assert.equal(process.env.OMP_PLUGIN_FIXTURE_TOKEN, "provider-token");
-      assert.equal(process.env.HTTP_PROXY, process.env.OMP_PLUGIN_FIXTURE_PROXY);
-      assert.equal(process.env.HTTPS_PROXY, process.env.OMP_PLUGIN_FIXTURE_PROXY);
       assert.equal(process.cwd(), ${JSON.stringify(cwd)});
       const file = ${JSON.stringify(state)};
       const plugins = JSON.parse(await readFile(file, "utf8"));
@@ -75,14 +73,12 @@ describe("SDK plugin management through the compiled Desktop host", () => {
       const first = await fixture.sdk("first-sdk");
       const second = await fixture.sdk("second-sdk");
       let selected = first.root;
-      let proxy = "http://127.0.0.1:18880";
       const resolveOmpCommand = vi.fn(async () => {
         throw new Error("CLI lookup forbidden");
       });
       const service = new OmpPluginCliService({
         logger: createTestLogger(),
         resolveOmpCommand,
-        getProxyUrl: () => proxy,
         getProviderConfig: () => ({
           ompSdkPath: selected,
           command: [
@@ -92,8 +88,6 @@ describe("SDK plugin management through the compiled Desktop host", () => {
           ],
           env: {
             OMP_PLUGIN_FIXTURE_TOKEN: "provider-token",
-            OMP_PLUGIN_FIXTURE_PROXY: proxy,
-            HTTP_PROXY: "http://stale.invalid",
             OMP_DESKTOP_BUNDLED_PLUGINS: "",
             PATH: "",
             [OMP_SDK_ROOT_ENV]: first.root,
@@ -105,7 +99,6 @@ describe("SDK plugin management through the compiled Desktop host", () => {
         "first-sdk",
       );
       selected = second.root;
-      proxy = "http://127.0.0.1:18881";
       const secondResult = await service.list(fixture.cwd);
       expect(secondResult.plugins[0]?.name, secondResult.rawOutput).toBe(
         "second-sdk",

@@ -4,7 +4,6 @@ import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { resolveOmpProxyUrl } from "@omp-desktop/protocol/provider-config";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
@@ -636,8 +635,9 @@ export class PaseoWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
-      fetch: createProxyFetch({
-        getProxyUrl: () => resolveOmpProxyUrl(this.daemonConfigStore.get().providers.omp),
+      fetchForProvider: (provider) => createProxyFetch({
+        getProxyPolicy: () => this.daemonConfigStore.get().providers.omp?.proxyPolicy,
+        provider,
       }),
     });
 

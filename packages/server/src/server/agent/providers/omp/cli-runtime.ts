@@ -11,6 +11,7 @@ import {
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import {
   JSONL_RPC_DEFAULT_TIMEOUT_MS,
   JsonlRpcProcess,
@@ -278,7 +279,7 @@ export class OmpCliRuntime implements OmpRuntime {
       }
       if (imageLaunch) launch.argv.push("--extension", resolveOmpImageSettingsExtensionPath());
       const imageToolAllowed = imageToolAllowedByArguments(launch.argv);
-      return await startOmpRpcSession({
+      const session = await startOmpRpcSession({
         launch,
         logger: this.options.logger,
         commandsRpcName: this.commandsRpcName,
@@ -291,6 +292,16 @@ export class OmpCliRuntime implements OmpRuntime {
         localModelsEnabled,
         cleanup: imageLaunch?.cleanup,
       });
+      const proxyPolicy = input.proxyPolicy ?? this.options.runtimeSettings?.proxyPolicy;
+      if (proxyPolicy) {
+        try {
+          await session.setProxyPolicy(proxyPolicy);
+        } catch (error) {
+          await session.close();
+          throw error;
+        }
+      }
+      return session;
     } catch (error) {
       await imageLaunch?.cleanup();
       throw error;
@@ -731,6 +742,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   async setFastMode(enabled: boolean): Promise<OmpFastModeResult> {
     return OmpFastModeResultSchema.parse(await this.request({ type: "set_fast_mode", enabled }));
+  }
+
+  async setProxyPolicy(policy: ProxyPolicy): Promise<void> {
+    await this.request({ type: "set_proxy_policy", policy: ProxyPolicySchema.parse(policy) });
   }
 
   async getMessages(): Promise<OmpAgentMessage[]> {

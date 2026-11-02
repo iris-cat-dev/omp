@@ -7,6 +7,7 @@ import {
 } from "./agent-config-session.js";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 
 class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly loadedAgentIds: string[] = [];
@@ -41,6 +42,10 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   async setModel(agentId: string, modelId: string | null): Promise<void> {
     this.modelCalls.push({ agentId, modelId });
     this.callLog.push("model");
+    if (this.failWith) throw this.failWith;
+  }
+
+  async setProxyPolicy(_agentId: string, _policy: ProxyPolicy | null): Promise<void> {
     if (this.failWith) throw this.failWith;
   }
 
