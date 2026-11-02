@@ -34,11 +34,13 @@ The conversation remains active until continuation succeeds or is stopped. **Sto
 
 ### Approval changes during a session
 
-**Always ask**, **Write approval**, and **Full access** can be changed in either direction while an OMP turn is running, including sessions launched with Full access. Desktop uses OMP's native `set_approval_mode` command; it does not restart the session, interrupt the turn, or synthesize approval responses. Desktop updates its runtime mode only after OMP accepts the update. A failed update leaves the current mode unchanged.
+Desktop offers **Always ask** and **Auto approval**. New conversations default to Auto approval (`yolo` in the SDK); an explicitly selected or saved Always ask preference is retained. The former Full access selection keeps its `full` ID and now displays as Auto approval. Retired Write approval preferences and stored conversations migrate to Always ask, without granting execution permission; imported native `write` settings also select Always ask.
+
+Both modes can be changed in either direction while an OMP turn is running, including sessions launched with Auto approval. Desktop uses OMP's native `set_approval_mode` command; it does not restart the session, interrupt the turn, or synthesize approval responses. Desktop updates its runtime mode only after OMP accepts the update. A failed update leaves the current mode unchanged.
 
 OMP withdraws pending tool approvals and re-evaluates the waiting calls under the new mode. Desktop removes the withdrawn requests: newly allowed calls continue, while calls that still require approval receive a fresh request. Answers to withdrawn requests are rejected. Questions and plan confirmations still need an explicit answer.
 
-Explicit per-tool `prompt` and `deny` policies remain effective with Full access. Switching modes does not grant a persistent per-tool approval exemption.
+Explicit per-tool `prompt` and `deny` policies remain effective with Auto approval. Switching modes does not grant a persistent per-tool approval exemption.
 
 ## Steering and stopping
 

@@ -118,12 +118,16 @@ export function parseFormPreferences(value: unknown): FormPreferences {
 
   let nextProviderPreferences: Record<string, ProviderPreferences> | null = null;
   for (const [provider, providerPreferences] of Object.entries(result.data.providerPreferences)) {
+    if (provider === "omp" && providerPreferences.mode === "write") {
+      nextProviderPreferences ??= { ...result.data.providerPreferences };
+      nextProviderPreferences[provider] = { ...providerPreferences, mode: "ask" };
+    }
     if (!providerPreferences.featureValues) continue;
     const featureValues = sanitizePersistentAgentFeatureValues(providerPreferences.featureValues);
     if (featureValues === providerPreferences.featureValues) continue;
     nextProviderPreferences ??= { ...result.data.providerPreferences };
     nextProviderPreferences[provider] = {
-      ...providerPreferences,
+      ...(nextProviderPreferences[provider] ?? providerPreferences),
       ...(Object.keys(featureValues).length > 0 ? { featureValues } : {}),
     };
     if (Object.keys(featureValues).length === 0) {

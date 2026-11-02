@@ -152,6 +152,25 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("restores retired OMP write approvals as ask rather than granting automatic approval", async () => {
+    const legacy = createManagedAgent({
+      provider: "omp",
+      currentModeId: "write",
+      config: { modeId: "write" },
+      persistence: { provider: "omp", sessionId: "legacy-session", metadata: { modeId: "write" } },
+    });
+    await storage.applySnapshot(legacy);
+    await storage.flush();
+
+    const restored = await new AgentStorage(storagePath, logger).get(legacy.id);
+    expect(restored).toMatchObject({
+      lastModeId: "ask",
+      config: { modeId: "ask" },
+      runtimeInfo: { modeId: "ask" },
+      persistence: { metadata: { modeId: "ask" } },
+    });
+  });
+
   test("restores agent prompt sources by native ID after storage and native history reload", async () => {
     const agent = createManagedAgent({ id: "receiving-agent", provider: "omp" });
     await storage.applySnapshot(agent);

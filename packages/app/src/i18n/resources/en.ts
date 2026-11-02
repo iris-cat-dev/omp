@@ -311,7 +311,7 @@ export const en = {
       selectWithValue: "Select agent mode ({{value}})",
       options: {
         alwaysAsk: "Always ask",
-        writeApproval: "Write approval",
+        autoApproval: "Auto approval",
         fullAccess: "Full access",
         auto: "Auto",
         plan: "Plan",

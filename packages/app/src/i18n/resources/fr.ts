@@ -287,7 +287,7 @@ export const fr: TranslationResources = {
       selectWithValue: "Sélectionnez le mode agent ({{value}})",
       options: {
         alwaysAsk: "Toujours demander",
-        writeApproval: "Approuver les écritures",
+        autoApproval: "Approbation automatique",
         fullAccess: "Accès total",
         auto: "Automatique",
         plan: "Plan",

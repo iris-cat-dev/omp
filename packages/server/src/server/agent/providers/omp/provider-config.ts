@@ -17,7 +17,7 @@ import type { AgentCapabilityFlags } from "../../agent-sdk-types.js";
 import type { OmpApprovalMode } from "./rpc-types.js";
 
 const OMP_SESSION_DIR = "~/.omp/agent/sessions";
-const DEFAULT_OMP_MODE_ID = "ask";
+const DEFAULT_OMP_MODE_ID = "full";
 
 export const MIN_SUPPORTED_OMP_VERSION = "18.8.7";
 export { OMP_MODES };
@@ -80,8 +80,6 @@ export function resolveOmpApprovalMode(modeId: string): OmpApprovalMode {
   switch (modeId) {
     case "full":
       return "yolo";
-    case "write":
-      return "write";
     case "ask":
       return "always-ask";
     default:
@@ -94,7 +92,7 @@ export function mapOmpApprovalMode(mode: OmpApprovalMode): string {
     case "yolo":
       return "full";
     case "write":
-      return "write";
+      return "ask";
     case "always-ask":
     case "always-ask-cached":
       return "ask";
@@ -119,7 +117,7 @@ export function resolveOmpLaunchMode(
 /**
  * CLI approval flags are runtime-only and are not recorded in session JSONL.
  * Recover an explicitly configured native default for imports, never the CLI's
- * permissive schema default. Creation keeps its existing desktop default.
+ * permissive schema default. New conversations default to automatic approval.
  */
 export async function readOmpImportMode(
   cwd: string,
@@ -170,7 +168,7 @@ export async function readOmpImportMode(
         modeId = "ask";
         break;
       case "write":
-        modeId = "write";
+        modeId = "ask";
         break;
       case "yolo":
         modeId = "full";

@@ -96,7 +96,16 @@ export type SerializableAgentConfig = Pick<
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
-  return STORED_AGENT_SCHEMA.parse(value);
+  const record = STORED_AGENT_SCHEMA.parse(value);
+  if (record.provider === "omp" || record.persistence?.provider === "omp") {
+    if (record.lastModeId === "write") record.lastModeId = "ask";
+    if (record.config?.modeId === "write") record.config.modeId = "ask";
+    if (record.runtimeInfo?.modeId === "write") record.runtimeInfo.modeId = "ask";
+    if (record.persistence?.metadata?.modeId === "write") {
+      record.persistence.metadata.modeId = "ask";
+    }
+  }
+  return record;
 }
 
 export class AgentStorage {

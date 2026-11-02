@@ -286,7 +286,7 @@ export const ko: TranslationResources = {
       selectWithValue: "에이전트 모드 선택 ({{value}})",
       options: {
         alwaysAsk: "항상 묻기",
-        writeApproval: "쓰기 승인",
+        autoApproval: "자동 승인",
         fullAccess: "전체 접근",
         auto: "자동",
         plan: "계획",

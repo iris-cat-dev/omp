@@ -34,10 +34,8 @@ function translateKnownMode(compactValue: string): string | null {
     case "ask":
     case "alwaysask":
       return i18n.t("agentControls.mode.options.alwaysAsk");
-    case "write":
-    case "writeapproval":
-      return i18n.t("agentControls.mode.options.writeApproval");
     case "full":
+      return i18n.t("agentControls.mode.options.autoApproval");
     case "fullaccess":
       return i18n.t("agentControls.mode.options.fullAccess");
     case "auto":

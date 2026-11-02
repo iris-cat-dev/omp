@@ -4,6 +4,32 @@ import { mergeProviderPreferences, parseFormPreferences } from "./preferences";
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
+  it("migrates retired OMP write approvals without losing durable preferences", () => {
+    expect(
+      parseFormPreferences({
+        provider: "omp",
+        providerPreferences: {
+          omp: {
+            mode: "write",
+            model: "openai/gpt-5.5",
+            featureValues: { workflow_mode: "plan", fast_mode: true },
+          },
+          custom: { mode: "write" },
+        },
+      }),
+    ).toEqual({
+      provider: "omp",
+      providerPreferences: {
+        omp: {
+          mode: "ask",
+          model: "openai/gpt-5.5",
+          featureValues: { fast_mode: true },
+        },
+        custom: { mode: "write" },
+      },
+    });
+  });
+
   it("keeps the selected mode after saving model and thinking", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

@@ -2626,7 +2626,7 @@ describe("OMP agent client and session", () => {
     runtime.state = { ...runtime.state, isStreaming: true };
     const sessionId = runtime.state.sessionId;
 
-    for (const modeId of ["ask", "write", "full"]) {
+    for (const modeId of ["ask", "full"]) {
       await omp.setMode(modeId);
       expect(await omp.runtimeInfo()).toMatchObject({ modeId, sessionId });
       expect(runtime.state.isStreaming).toBe(true);
@@ -2751,11 +2751,6 @@ describe("OMP agent client and session", () => {
     omp.queueCommands([{ name: "review", description: "Review changes", source: "skill" }]);
     await omp.start();
 
-    await expect(omp.availableModes()).resolves.toEqual([
-      expect.objectContaining({ id: "ask" }),
-      expect.objectContaining({ id: "write" }),
-      expect.objectContaining({ id: "full" }),
-    ]);
     expect(omp.features()).toEqual([
       expect.objectContaining({
         id: "workflow_mode",

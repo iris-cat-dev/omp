@@ -1093,7 +1093,9 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
     ...(typeof metadata.thinkingOptionId === "string"
       ? { thinkingOptionId: metadata.thinkingOptionId }
       : {}),
-    ...(typeof metadata.modeId === "string" ? { modeId: metadata.modeId } : {}),
+    ...(typeof metadata.modeId === "string"
+      ? { modeId: metadata.modeId === "write" ? "ask" : metadata.modeId }
+      : {}),
     ...(typeof metadata.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
   };
 }
@@ -5363,7 +5365,7 @@ export class OmpAgentClient implements AgentClient {
           ...context.launchContext?.env,
         },
         this.runtimeSettings?.command,
-      ));
+      )) ?? "ask";
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,

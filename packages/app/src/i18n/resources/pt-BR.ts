@@ -286,7 +286,7 @@ export const ptBR: TranslationResources = {
       selectWithValue: "Selecionar modo do agente ({{value}})",
       options: {
         alwaysAsk: "Sempre perguntar",
-        writeApproval: "Aprovar gravações",
+        autoApproval: "Aprovação automática",
         fullAccess: "Acesso total",
         auto: "Automático",
         plan: "Plano",

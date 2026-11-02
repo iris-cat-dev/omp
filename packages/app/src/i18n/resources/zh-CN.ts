@@ -311,7 +311,7 @@ export const zhCN: TranslationResources = {
       selectWithValue: "选择 Agent 模式（{{value}}）",
       options: {
         alwaysAsk: "始终询问",
-        writeApproval: "写入时审批",
+        autoApproval: "自动审批",
         fullAccess: "完全访问",
         auto: "自动",
         plan: "计划",

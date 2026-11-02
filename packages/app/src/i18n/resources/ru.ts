@@ -296,7 +296,7 @@ export const ru: TranslationResources = {
       selectWithValue: "Выбрать режим агента ({{value}})",
       options: {
         alwaysAsk: "Всегда спрашивать",
-        writeApproval: "Подтверждать запись",
+        autoApproval: "Автоматическое одобрение",
         fullAccess: "Полный доступ",
         auto: "Автоматически",
         plan: "План",

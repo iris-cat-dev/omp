@@ -286,7 +286,7 @@ export const ja: TranslationResources = {
       selectWithValue: "エージェントモードを選択（{{value}}）",
       options: {
         alwaysAsk: "常に確認",
-        writeApproval: "書き込みを承認",
+        autoApproval: "自動承認",
         fullAccess: "フルアクセス",
         auto: "自動",
         plan: "計画",

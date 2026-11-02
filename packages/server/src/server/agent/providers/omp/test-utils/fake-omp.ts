@@ -195,7 +195,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.state = {
       model: null,
       thinkingLevel: "medium",
-      approvalMode: resolveOmpApprovalMode(launch.modeId ?? "ask"),
+      approvalMode: resolveOmpApprovalMode(launch.modeId ?? "full"),
       isStreaming: false,
       isCompacting: false,
       autoCompactionEnabled: true,

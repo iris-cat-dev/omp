@@ -286,7 +286,7 @@ export const ar: TranslationResources = {
       selectWithValue: "حدد وضع الوكيل ({{value}})",
       options: {
         alwaysAsk: "اسأل دائمًا",
-        writeApproval: "موافقة الكتابة",
+        autoApproval: "الموافقة التلقائية",
         fullAccess: "وصول كامل",
         auto: "تلقائي",
         plan: "تخطيط",
