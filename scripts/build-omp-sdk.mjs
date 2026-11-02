@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOmpSdkBuildConfig } from "./omp-sdk-build-config.mjs";
 import { stageNodeSdk } from "../omp-sdk/scripts/stage-node-sdk.mjs";
+import { importSdkArtifact } from "./packaging/sdk-artifact.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { source, buildTarget, profile } = resolveOmpSdkBuildConfig();
@@ -37,22 +38,35 @@ function run(args) {
   }
 }
 
-// The SDK uses its own lockfile and workspace graph, not Desktop's npm workspace.
-run(["install", "--frozen-lockfile"]);
-run([
-  `--cwd=${path.join(sdkRepo, "packages", "natives")}`,
-  "run",
-  buildTarget === "desktop" ? "build:desktop" : "build:bindings",
-]);
-run([
-  `--cwd=${sdkRoot}`,
-  "run",
-  buildTarget === "desktop" ? "gen:bundle:desktop" : "gen:bundle:node",
-]);
-const sdk = await stageNodeSdk(sdkRoot, path.join(rootDir, "packages", "desktop", "sdk-dist"), {
-  buildTarget,
-  profile,
-});
+const outputDir = path.join(rootDir, "packages", "desktop", "sdk-dist");
+const target = process.env.OMP_DESKTOP_PACKAGE_TARGET ?? `${process.platform}-${process.arch}`;
+const [platform, arch] = target.split("-");
+let sdk;
+if (process.env.OMP_DESKTOP_SDK_ARTIFACT) {
+  sdk = await importSdkArtifact(process.env.OMP_DESKTOP_SDK_ARTIFACT, outputDir, {
+    platform,
+    arch,
+  });
+} else {
+  if (platform !== process.platform || arch !== process.arch) {
+    throw new Error(
+      `Packaging ${target} on ${process.platform}-${process.arch} requires OMP_DESKTOP_SDK_ARTIFACT from Package release.`,
+    );
+  }
+  // The SDK uses its own lockfile and workspace graph, not Desktop's npm workspace.
+  run(["install", "--frozen-lockfile"]);
+  run([
+    `--cwd=${path.join(sdkRepo, "packages", "natives")}`,
+    "run",
+    buildTarget === "desktop" ? "build:desktop" : "build:bindings",
+  ]);
+  run([
+    `--cwd=${sdkRoot}`,
+    "run",
+    buildTarget === "desktop" ? "gen:bundle:desktop" : "gen:bundle:node",
+  ]);
+  sdk = await stageNodeSdk(sdkRoot, outputDir, { buildTarget, profile });
+}
 console.log(
-  `Built OMP SDK ${sdk.version} (${sdk.buildTarget}, ${sdk.platform}-${sdk.arch}) at ${sdk.directory}`,
+  `Prepared OMP SDK ${sdk.version} (${sdk.buildTarget}, ${sdk.platform}-${sdk.arch}) at ${sdk.directory}`,
 );

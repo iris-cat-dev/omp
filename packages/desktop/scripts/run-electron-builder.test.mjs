@@ -1133,19 +1133,3 @@ test("rejects CLI-bound private distribution metadata even without its old packa
   }
 });
 
-test.runIf(process.platform !== "win32" || process.arch !== "x64")(
-  "Windows packaging rejects non-native SDK builds before prerequisites",
-  () => {
-    const result = spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("../../../scripts/packaging/build-package.mjs", import.meta.url)),
-        "windows",
-      ],
-      { encoding: "utf8", timeout: 20_000 },
-    );
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("requires target-native dependencies");
-  },
-);

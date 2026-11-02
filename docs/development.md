@@ -45,7 +45,7 @@ The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, pr
 
 ### OMP SDK backend
 
-Desktop development, packaged applications, and SSH-managed deployments use the SDK. `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically.
+Desktop development, packaged applications, and SSH-managed deployments use the SDK. By default, `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. With an absolute `OMP_DESKTOP_SDK_ARTIFACT` directory, it instead imports the matching **Package release** artifact, checking SDK commit/version, target/profile, and archive integrity without rebuilding native addons. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically. [Mac-to-Windows packaging](packaging.md#mac-to-windows-packaging) sets the target to Windows x64 and consumes the Windows-built SDK.
 
 Desktop-managed configuration ignores legacy `ompBackend: "cli"` and CLI command overrides; model policy, provider environment, and explicit SDK package paths remain. Standalone servers without an SDK retain external CLI support; an installed SDK selects SDK unless that standalone server explicitly selects CLI.
 

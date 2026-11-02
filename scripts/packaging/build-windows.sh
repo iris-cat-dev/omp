@@ -16,33 +16,39 @@ for arch in "${arches[@]}"; do
   esac
 done
 
-# SDK native dependencies must be built on the target OS and architecture.
+# Windows native SDK compilation stays on Windows; Mac builds import its artifact.
 host_platform_arch="$(node -p "process.platform + ':' + process.arch")"
-if [[ "$host_platform_arch" != "win32:x64" ]]; then
-  echo "Windows SDK packaging requires target-native dependencies. Build on Windows x64 with npm run build:package -- windows; macOS cross-builds cannot stage a Windows SDK." >&2
-  exit 1
+case "$host_platform_arch" in
+  win32:x64) ;;
+  darwin:*)
+    if [[ -z "${OMP_DESKTOP_SDK_ARTIFACT:-}" ]]; then
+      echo "macOS Windows cross-builds require an extracted native Windows x64 SDK artifact at absolute OMP_DESKTOP_SDK_ARTIFACT." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Windows packaging requires native Windows x64 or macOS with a Windows x64 SDK artifact." >&2
+    exit 1
+    ;;
+esac
+if [[ -n "${OMP_DESKTOP_SDK_ARTIFACT:-}" ]]; then
+  node -e 'const fs = require("node:fs"); const path = require("node:path"); const artifact = process.env.OMP_DESKTOP_SDK_ARTIFACT; if (!path.isAbsolute(artifact) || !fs.statSync(artifact).isDirectory()) throw new Error("OMP_DESKTOP_SDK_ARTIFACT must be an absolute extracted artifact directory");'
 fi
-# Stage the target keyring immediately before electron-builder.
+export OMP_DESKTOP_PACKAGE_TARGET=win32-x64
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
-keyring_staging="$tmp_dir/keyring-packages"
-mkdir -p "$keyring_staging"
-export OMP_DESKTOP_WINDOWS_KEYRING_STAGING="$keyring_staging"
+# Keep the installed Mac mini-electron distribution untouched. The target
+# installer downloads and validates the genuine Windows runtime in isolation.
+if [[ "$host_platform_arch" == darwin:* && -z "${MINI_ELECTRON_DIST_PATH:-}" ]]; then
+  export MINI_ELECTRON_DIST_PATH
+  MINI_ELECTRON_DIST_PATH="$(node scripts/packaging/prepare-windows-runtime.mjs "$tmp_dir/runtime")"
+fi
 
-keyring_version="$(node -p "require('./node_modules/@napi-rs/keyring/package.json').version")"
-
-for arch in "${arches[@]}"; do
-  package_name="keyring-win32-${arch}-msvc"
-  package="@napi-rs/$package_name"
-  archive="$(npm pack --silent --pack-destination "$tmp_dir" "$package@$keyring_version")"
-  package_dir="$keyring_staging/$package_name"
-  mkdir -p "$package_dir"
-  tar -xzf "$tmp_dir/$archive" -C "$package_dir" --strip-components=1
-  test -f "$package_dir/keyring.win32-${arch}-msvc.node"
-done
+# Desktop stages all target-native optional modules after prerequisite builds.
 
 # Merge release update metadata only after all requested architectures finish.
 version="$(node -p "require('./packages/desktop/package.json').version")"

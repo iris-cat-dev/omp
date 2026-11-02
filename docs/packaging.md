@@ -11,7 +11,7 @@ npm run build:package
 ```
 
 The Node.js launcher selects macOS on a Mac and Windows on Windows. It keeps native Windows builds independent of Git Bash. Published mini-electron runtimes support **macOS arm64 (Apple Silicon)** and **Windows x64**; Intel Mac and Windows arm64 packages are not currently supported.
-Every application build compiles and stages `omp-sdk/`; Node.js 24+, Bun, Rustup, and a native compiler toolchain are required. The default is the `desktop` SDK target with the `core` profile. Applications include the SDK and embedded Node, not a standalone OMP executable; there is no separate no-OMP or CLI-bound private build. See [SDK build overrides](development.md#omp-sdk-backend).
+Application builds stage the `desktop` SDK target with the `core` profile by default. Native builds compile `omp-sdk/` and require Node.js 24+, Bun, Rustup, and a native compiler toolchain. With `OMP_DESKTOP_SDK_ARTIFACT`, builds import the matching Actions artifact instead, without compiling or reinstalling its native dependencies. Applications include the SDK and embedded Node, not a standalone OMP executable. See [SDK build overrides](development.md#omp-sdk-backend) and [Mac-to-Windows packaging](#mac-to-windows-packaging).
 
 Explicit targets remain available:
 
@@ -32,13 +32,16 @@ macOS packaging requires a Mac; the launcher rejects it on Windows before starti
 
 Packaging orchestration is centralized in [`scripts/packaging/`](../scripts/packaging):
 
-| Script                                                                                        | Purpose                                                         |
-| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [`build-package.mjs`](../scripts/packaging/build-package.mjs)                                 | Cross-platform npm entry point; selects target and native shell |
-| [`build-mac.sh`](../scripts/packaging/build-mac.sh)                                           | macOS packaging helper                                          |
-| [`build-windows.ps1`](../scripts/packaging/build-windows.ps1)                                 | Native Windows packaging helper                                 |
-| [`build-windows.sh`](../scripts/packaging/build-windows.sh)                                   | Bash helper for native Windows x64 builds                       |
-| [`merge-windows-update-metadata.mjs`](../scripts/packaging/merge-windows-update-metadata.mjs) | Merges Windows update metadata documents for the same version   |
+| Script                                                                                        | Purpose                                                                   |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`build-package.mjs`](../scripts/packaging/build-package.mjs)                                 | Cross-platform npm entry point; selects target and native shell           |
+| [`build-mac.sh`](../scripts/packaging/build-mac.sh)                                           | macOS packaging helper                                                    |
+| [`build-windows.ps1`](../scripts/packaging/build-windows.ps1)                                 | Native Windows packaging helper                                           |
+| [`build-windows.sh`](../scripts/packaging/build-windows.sh)                                   | Windows x64 packaging on native Windows or macOS with a prebuilt SDK      |
+| [`merge-windows-update-metadata.mjs`](../scripts/packaging/merge-windows-update-metadata.mjs) | Merges Windows update metadata documents for the same version             |
+| [`sdk-artifact.mjs`](../scripts/packaging/sdk-artifact.mjs)                                   | Exports/imports the exact SDK archive with portable provenance            |
+| [`smoke-sdk-artifact.mjs`](../scripts/packaging/smoke-sdk-artifact.mjs)                       | Exercises imported SDK native modules and its real worker                 |
+| [`prepare-windows-runtime.mjs`](../scripts/packaging/prepare-windows-runtime.mjs)             | Downloads the Windows runtime without replacing the installed Mac runtime |
 
 General-purpose scripts remain directly under `scripts/`: [`build-omp-sdk.mjs`](../scripts/build-omp-sdk.mjs), [`build-remote-backend.mjs`](../scripts/build-remote-backend.mjs), [`build-daemon-web-ui.mjs`](../scripts/build-daemon-web-ui.mjs), [`deploy-webui.sh`](../scripts/deploy-webui.sh), and [`clean-package-dist.mjs`](../scripts/clean-package-dist.mjs). SDK staging is shared with release construction through the submodule's [`stage-node-sdk.mjs`](../omp-sdk/scripts/stage-node-sdk.mjs).
 
@@ -58,10 +61,11 @@ For local installer builds, pass `--publish never` to avoid uploading release ar
 
 ## GitHub Actions release packaging
 
-The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 SDK packages** by default. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
+The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 packages** by default: a Windows runner builds and smoke-tests the native SDK, then a Mac runner imports that artifact and produces the Windows NSIS installer, ZIP, blockmaps, and update YAML. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
 
 - The root and desktop package versions must match. A tag build also requires the exact tag `<packages/desktop/package.json version>` without a `v` prefix; the workflow does not bump versions.
 - Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64` or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. Its outer ZIP contains original installers, package ZIPs, blockmaps, and update YAML, not unpacked apps or builder diagnostics. Publish those files, not the Actions wrapper; installer names and update references are unchanged.
+- The SDK job separately uploads `OMP-SDK-win32-x64`, retained for 14 days. It contains `manifest.json`, `omp-sdk.tgz`, and `provenance.json`, and is available as soon as the SDK job succeeds, even if later packaging fails. It is an Actions artifact, not a public Release asset, and can also be used for local Mac-to-Windows builds.
 - Once all selected platforms succeed, a tag build uploads the assets to a **draft GitHub Release**. Reruns replace same-named assets only in a draft, preserve its notes, and refuse to modify an already published release. A failed upload leaves the release drafted; rerun after resolving the failure.
 - A manual run on a branch only creates Actions artifacts. A manual run with a tag selected also creates or updates its release draft.
 - Review the draft, add release notes, and perform the native packaged-application checks before publishing. Building installers does not verify native application behavior.
@@ -83,11 +87,11 @@ The workflow invokes `build:desktop` directly with `mac.identity=null`, `mac.not
 
 These CI packages do not satisfy Gatekeeper's signed and notarized distribution requirements and may be blocked on other Macs. Artifact creation alone does not establish launchability or native application acceptance.
 
-CI checks out recursive submodules, uses Node.js from `.tool-versions`, installs Desktop dependencies with `npm ci`, and installs Bun and the SDK's pinned Rust toolchain. It compiles the SDK and addon on each target runner instead of downloading an OMP binary. The lockfile pins the mini-electron installer, which selects its current native runtime; rebuilding a tag later may select a different runtime.
+CI checks out recursive submodules, uses Node.js from `.tool-versions`, and installs Desktop dependencies with `npm ci`. Only native SDK builds install Bun and the SDK's pinned Rust toolchain: Windows SDK compilation runs on Windows, while optional macOS SDK compilation runs on its native Mac runner. Windows installer construction runs on Mac with the prebuilt Windows SDK. The lockfile pins the mini-electron installer, which selects its current target runtime; rebuilding a tag later may select a different runtime.
 
 Commit the root `package-lock.json` together with dependency changes. Both the setup-node npm cache and `npm ci` require it in a fresh checkout; a lockfile present only on the developer's machine is insufficient. Nested/generated lockfiles remain ignored. After fixing a workflow dependency, start a new run on the updated commit: rerunning an older failed run still uses its original commit.
 
-CI deliberately sets `ELECTRON_SKIP_BINARY_DOWNLOAD` to the string `"0"`: the stock Electron installer skips downloads for any nonempty value, while the pinned mini-electron installer treats `"0"` as false and downloads its native runtime. Do not change this to `"1"`: that also disables mini-electron downloads and fails on fresh runners. Recheck both installer behaviors when upgrading these dependencies.
+CI sets `ELECTRON_SKIP_BINARY_DOWNLOAD="0"`: stock Electron skips downloads for any nonempty value, while mini-electron treats `"0"` as false. The Mac-to-Windows job additionally sets `MINI_ELECTRON_SKIP_BINARY_DOWNLOAD=1` during `npm ci`, then runs the pinned mini-electron installer separately with Windows x64 selected and both skip flags reset to `"0"`. This avoids installing a host runtime on the cross-build runner and never substitutes stock Electron. Recheck both installer behaviors when upgrading these dependencies.
 
 ## Native runtime selection
 
@@ -140,7 +144,7 @@ Both local and release builds verify the application's code signature after pack
 
 ## Windows builds
 
-Windows mini-electron packages currently support x64 only. The npm scripts use [`scripts/packaging/build-windows.ps1`](../scripts/packaging/build-windows.ps1) with Windows PowerShell 5.1 or newer; Git Bash is not required. Node.js 24+, npm, Bun, Rustup, Visual Studio C++ Build Tools, and Windows' built-in `tar.exe` must be installed.
+Windows mini-electron packages currently support x64 only. Native Windows builds use [`scripts/packaging/build-windows.ps1`](../scripts/packaging/build-windows.ps1) with Windows PowerShell 5.1 or newer; Git Bash is not required. Source SDK builds require Node.js 24+, npm, Git, Bun, Rustup, Visual Studio C++ Build Tools, and Windows' built-in `tar.exe`. Supplying a matching SDK artifact removes the Bun/Rust/compiler requirement for SDK compilation.
 
 ```powershell
 npm run build:windows
@@ -154,7 +158,26 @@ You can also run the native script directly from PowerShell, forwarding addition
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\packaging\build-windows.ps1
 ```
 
-Windows packaging must run on Windows x64 because the SDK includes target-native addons and their dependency closure. The Bash helper also requires Windows x64; macOS/Linux Wine cross-builds are rejected. Selecting a Windows mini-electron distribution alone cannot make host SDK addons compatible.
+SDK native compilation still requires Windows x64. Installer construction can run on Windows x64 or on Mac using the complete Windows SDK artifact; Linux cross-builds remain unsupported. Selecting a Windows mini-electron distribution alone cannot make Mac SDK addons compatible.
+
+### Mac-to-Windows packaging
+
+1. Commit the build scripts and pinned SDK submodule revision to GitHub, then run **Actions → Package release → Run workflow** on that commit.
+2. After **Build reusable SDK (win32-x64)** succeeds, download `OMP-SDK-win32-x64` from the run's **Artifacts** section. Extract its ZIP into `.tmp/windows-sdk` (the directory must contain `manifest.json`, `omp-sdk.tgz`, and `provenance.json` directly, not another wrapper directory).
+3. In a local checkout with the same SDK commit, run:
+
+```bash
+git submodule update --init --recursive
+# Fresh cross-build-only checkout; do not need a Mac mini-electron runtime:
+MINI_ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+OMP_DESKTOP_SDK_ARTIFACT="$PWD/.tmp/windows-sdk" npm run build:windows
+```
+
+Mac cross-builds require Node.js 24+, npm, Git, `tar`, and access to npm and mini-electron's GitHub runtime assets. They do not require a local Windows compiler, Bun, or Rust. A supplied `MINI_ELECTRON_DIST_PATH` must already contain a genuine Windows x64 distribution; otherwise the script prepares one in a temporary directory without modifying an installed Mac runtime.
+
+Import validates the SDK version, target/profile, Windows x64 identity, SDK checkout commit, archive checksum, and complete bundled dependency closure before replacing `sdk-dist`. It does not run SDK install scripts or load Windows addons on Mac. Desktop Windows Sharp, keyring, Koffi, node-pty, and ripgrep payloads are staged from exact locked npm packages; executable version/icon resource editing remains enabled. Native Mac dependency payloads are retained for later Mac builds.
+
+Cross-builds skip the native packaged-app smoke because Windows executables cannot run natively on Mac. Before distribution, copy the unpacked app to Windows x64 and run the [native packaged smoke](development.md#packaged-windows-application); creating an installer is not Windows runtime acceptance.
 
 ### Windows runtime version and local overrides
 

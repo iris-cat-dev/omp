@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
@@ -13,7 +15,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 With no target, package for the current OS.
 mac:     macOS arm64, requires a Mac; produces DMG and ZIP.
-windows: Windows x64, requires Windows x64 SDK native dependencies; produces NSIS, ZIP and update metadata.
+windows: Windows x64; macOS cross-builds require OMP_DESKTOP_SDK_ARTIFACT. Produces NSIS, ZIP and update metadata.
 Output:  packages/desktop/release/
 Local builds default to --publish never.`);
   process.exit(0);
@@ -27,15 +29,33 @@ if (target === "mac" && process.platform !== "darwin") {
     "macOS packages must be built on macOS (Apple signing and DMG tools are required).",
   );
 }
-if (target === "windows" && (process.platform !== "win32" || process.arch !== "x64")) {
-  throw new Error(
-    "Windows SDK packaging requires target-native dependencies. Build on Windows x64; macOS cross-builds cannot stage a Windows SDK.",
-  );
+if (target === "windows") {
+  if (process.platform !== "darwin" && (process.platform !== "win32" || process.arch !== "x64")) {
+    throw new Error(
+      "Windows packaging requires macOS with a Windows x64 SDK artifact or native Windows x64.",
+    );
+  }
+  if (process.platform === "darwin" && !process.env.OMP_DESKTOP_SDK_ARTIFACT) {
+    throw new Error(
+      "macOS Windows cross-builds require an extracted native Windows x64 SDK artifact at absolute OMP_DESKTOP_SDK_ARTIFACT.",
+    );
+  }
+  const artifact = process.env.OMP_DESKTOP_SDK_ARTIFACT;
+  if (artifact && (!path.isAbsolute(artifact) || !statSync(artifact).isDirectory())) {
+    throw new Error("OMP_DESKTOP_SDK_ARTIFACT must be an absolute extracted artifact directory.");
+  }
 }
 
 const nativeWindows = target === "windows" && process.platform === "win32";
 const scriptPath = fileURLToPath(
-  new URL(target === "mac" ? "./build-mac.sh" : "./build-windows.ps1", import.meta.url),
+  new URL(
+    target === "mac"
+      ? "./build-mac.sh"
+      : nativeWindows
+        ? "./build-windows.ps1"
+        : "./build-windows.sh",
+    import.meta.url,
+  ),
 );
 const result = spawnSync(
   nativeWindows ? "powershell.exe" : "bash",

@@ -51,19 +51,17 @@ jobs:
               throw new Error(`Release tag must be ${desktop.version}`);
             }
             const include = [
-              { os: 'windows-2022', target: 'windows-x64', artifact: `OMP-Desktop-Setup-${desktop.version}-x64` }
+              { os: 'macos-14', target: 'windows-x64', artifact: `OMP-Desktop-Setup-${desktop.version}-x64` }
             ];
             if (process.env.BUILD_MACOS === 'true') {
-              include.push({ os: 'macos-14', target: 'darwin-arm64', artifact: `OMP-Desktop-${desktop.version}-arm64` });
+              include.push({ os: 'macos-15', target: 'darwin-arm64', artifact: `OMP-Desktop-${desktop.version}-arm64` });
             }
             core.setOutput('matrix', JSON.stringify({ include }));
 
-  build:
+  sdk:
+    name: Build reusable SDK (win32-x64)
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-2022
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -85,13 +83,66 @@ jobs:
           workspaces: omp-sdk -> target/desktop
       - name: Install dependencies
         run: npm ci
+      - name: Build native Windows SDK
+        run: npm run build:omp-sdk
+      - name: Create portable SDK artifact
+        run: node scripts/packaging/sdk-artifact.mjs create sdk-artifacts
+      - name: Exercise SDK native modules and worker
+        run: node scripts/packaging/smoke-sdk-artifact.mjs sdk-artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OMP-SDK-win32-x64
+          path: sdk-artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  build:
+    needs: [prepare, sdk]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .tool-versions
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.target == 'darwin-arm64'
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@master
+        if: matrix.target == 'darwin-arm64'
+        with:
+          toolchain: nightly-2026-10-06
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.target == 'darwin-arm64'
+        with:
+          workspaces: omp-sdk -> target/desktop
+      - name: Install dependencies
+        run: npm ci
+        env:
+          MINI_ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ matrix.target == 'windows-x64' && '1' || '0' }}
+      - name: Download native Windows SDK
+        if: matrix.target == 'windows-x64'
+        uses: actions/download-artifact@v4
+        with:
+          name: OMP-SDK-win32-x64
+          path: sdk-artifacts
       - name: Package Windows
-        if: runner.os == 'Windows'
+        if: matrix.target == 'windows-x64'
         run: npm run build:windows
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          OMP_DESKTOP_SDK_ARTIFACT: ${{ github.workspace }}/sdk-artifacts
       - name: Package unsigned macOS
-        if: runner.os == 'macOS'
+        if: matrix.target == 'darwin-arm64'
         run: >-
           npm run build:desktop -- --mac --arm64 --publish never
           --config.mac.identity=null
@@ -101,6 +152,8 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: Collect release assets
         uses: actions/github-script@v7
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
         with:
           script: |
             const fs = require('node:fs');
@@ -109,7 +162,7 @@ jobs:
             const files = fs.readdirSync(source).filter(name =>
               /\.(exe|dmg|zip|blockmap)$/.test(name) ||
               (/\.yml$/.test(name) && !name.startsWith('builder-')));
-            const required = process.platform === 'win32'
+            const required = process.env.PACKAGE_TARGET === 'windows-x64'
               ? [/\.exe$/, /\.zip$/, /\.blockmap$/, /\.yml$/]
               : [/\.dmg$/, /\.zip$/, /-mac\.yml$/];
             for (const pattern of required) {

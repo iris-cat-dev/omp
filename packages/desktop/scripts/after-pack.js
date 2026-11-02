@@ -431,9 +431,9 @@ exports.default = async function afterPack(context) {
   assertNativeKoffiBinding(resourcesDir, platform, arch);
 
   if (platform === "linux" || platform === "win32") {
-    if (arch !== process.arch) {
+    if (platform !== process.platform || arch !== process.arch) {
       console.log(
-        `Skipping packaged-app smoke: build arch ${arch} differs from host ${process.arch}.`,
+        `Skipping packaged-app smoke: build ${platform}-${arch} differs from host ${process.platform}-${process.arch}.`,
       );
     } else {
       await smokeUnpackedAppIfRequested(context.appOutDir);

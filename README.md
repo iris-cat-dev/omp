@@ -43,7 +43,7 @@ npm run build:windows          # Windows x64: NSIS installer + ZIP
 npm run build:package -- --help
 ```
 
-Installer builds default to `--publish never` and write to `packages/desktop/release/`. Platform scripts live in [`scripts/packaging/`](scripts/packaging). SDK addons require target-native builds: macOS arm64 on macOS arm64, Windows x64 on Windows x64. See [packaging](docs/packaging.md) for runtime selection, signing, SDK resources, and updater metadata. A successful build does not replace native application verification.
+Installer builds default to `--publish never` and write to `packages/desktop/release/`. Platform scripts live in [`scripts/packaging/`](scripts/packaging). SDK compilation remains target-native. **Package release** builds the Windows SDK on Windows, then packages Windows installers on Mac; local Mac builds use its extracted `OMP-SDK-win32-x64` artifact via `OMP_DESKTOP_SDK_ARTIFACT`. See [packaging](docs/packaging.md#mac-to-windows-packaging) for the download/build commands, runtime selection, signing, and updater metadata. A successful build does not replace native application verification.
 
 ## Documentation
 
