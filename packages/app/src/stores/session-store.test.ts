@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { WorkspaceDescriptorPayload } from "@omp-desktop/protocol/messages";
+import type { AgentNativeOutputMetrics } from "@omp-desktop/protocol/agent-types";
 
 import {
   normalizeWorkspaceDescriptor,
@@ -1110,5 +1111,47 @@ describe("patchWorkspaceScripts", () => {
 
     expect(next).toBe(current);
     expect(next.get(workspace.id)).toBe(workspace);
+  });
+});
+
+describe("native per-turn usage isolation", () => {
+  it("rejects session totals and old generations without contaminating consecutive turns", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const native: AgentNativeOutputMetrics = {
+      generation: 1,
+      phase: "idle",
+      inFlightStartMs: null,
+      lastActivityMs: 10_000,
+      latestEndMs: 10_000,
+      measuredOutputTokens: 1_000,
+      measuredDurationMs: 10_000,
+      recentRequests: [],
+      agentReferences: [],
+      modelReferences: [],
+    };
+    store.recordAgentTurnUsage("test-server", "agent", "one", {
+      scope: "turn",
+      outputTokens: 1_000,
+      nativeMetrics: native,
+    });
+    store.recordAgentTurnUsage("test-server", "agent", "two", {
+      scope: "turn",
+      outputTokens: 1_000,
+      nativeMetrics: { ...native, generation: 2 },
+    });
+    store.recordAgentTurnUsage("test-server", "agent", "two", {
+      scope: "session",
+      outputTokens: 20_000,
+    });
+    store.recordAgentTurnUsage("test-server", "agent", "two", {
+      scope: "turn",
+      outputTokens: 9_000,
+      nativeMetrics: native,
+    });
+    const turns = useSessionStore.getState().sessions["test-server"]!.agentTurnUsage.get("agent")!;
+    expect(turns.get("one")?.outputTokens).toBe(1_000);
+    expect(turns.get("two")?.outputTokens).toBe(1_000);
+    expect(turns.get("two")?.nativeMetrics?.generation).toBe(2);
   });
 });

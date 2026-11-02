@@ -5,6 +5,7 @@ import type {
 import type {
   AgentProviderNotice,
   AgentTaskItem,
+  AgentUsage,
   ProviderOptions,
   ToolPolicy,
 } from "@omp-desktop/protocol/agent-types";
@@ -24,7 +25,7 @@ import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type { AgentProviderNotice, AgentTaskItem, AgentUsage };
 
 export type AgentProvider = string;
 
@@ -253,15 +254,6 @@ export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
 
-export interface AgentUsage {
-  inputTokens?: number;
-  cachedInputTokens?: number;
-  outputTokens?: number;
-  totalCostUsd?: number;
-  contextWindowMaxTokens?: number;
-  contextWindowUsedTokens?: number;
-}
-
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",
@@ -442,6 +434,7 @@ export type AgentTimelineItem =
       presentation?: AssistantMessagePresentation;
       /** Original native custom record metadata; never interpreted as foreground-turn authority. */
       customMessage?: { customType: string; details?: unknown };
+      nativeUsage?: AgentUsage;
     }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

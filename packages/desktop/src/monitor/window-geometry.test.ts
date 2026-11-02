@@ -3,6 +3,8 @@ import {
   clampMonitorPanel,
   monitorArrangement,
   monitorNameplate,
+  monitorPerfCardArea,
+  placeMonitorPerfCard,
   placeMonitorOrb,
   snapMonitorOrb,
 } from "./window-geometry.js";
@@ -39,5 +41,92 @@ describe("original orb native geometry", () => {
   it("keeps arrangement identity stable when native screen enumeration order changes", () => {
     const left = { id: "left", workArea: { x: -1280, y: 0, width: 1280, height: 720 } };
     expect(monitorArrangement([displays[0]!, left])).toBe(monitorArrangement([left, displays[0]!]));
+  });
+});
+
+describe("performance-card placement", () => {
+  const area = displays[0]!.workArea;
+  it("prefers the right even when the left has more room", () => {
+    const anchor = { x: 1000, y: 100, width: 340, height: 340 };
+    expect(placeMonitorPerfCard(anchor, 180, 540, area)).toEqual({
+      x: 1348,
+      y: 180,
+      slideFrom: -2,
+      onLeft: false,
+    });
+  });
+  it("uses the left only when the right cannot fit and the left can", () => {
+    const right = { x: 1500, y: 100, width: 368, height: 400 };
+    expect(placeMonitorPerfCard(right, 180, 540, area)).toEqual({
+      x: 1172,
+      y: 180,
+      slideFrom: 2,
+      onLeft: true,
+    });
+    const left = { x: 100, y: 100, width: 340, height: 340 };
+    expect(placeMonitorPerfCard(left, 180, 540, area)).toEqual({
+      x: 448,
+      y: 180,
+      slideFrom: -2,
+      onLeft: false,
+    });
+    const middle = { x: 790, y: 100, width: 340, height: 340 };
+    expect(placeMonitorPerfCard(middle, 180, 540, area).onLeft).toBe(false);
+  });
+  it("keeps an exactly fitting right card on the right", () => {
+    const anchor = { x: 1244, y: 100, width: 340, height: 340 };
+    expect(placeMonitorPerfCard(anchor, 180, 540, area)).toEqual({
+      x: 1592,
+      y: 180,
+      slideFrom: -2,
+      onLeft: false,
+    });
+  });
+  it("clamps fixed-width cards at the work-area inset when neither side can hold them", () => {
+    const narrow = { x: 0, y: 0, width: 1000, height: 800 };
+    const anchor = { x: 270, y: 40, width: 480, height: 400 };
+    expect(placeMonitorPerfCard(anchor, 100, 500, narrow)).toEqual({
+      x: 672,
+      y: 100,
+      slideFrom: -2,
+      onLeft: false,
+    });
+    const asymmetric = { x: 0, y: 0, width: 1200, height: 800 };
+    const wide = { x: 300, y: 40, width: 640, height: 400 };
+    expect(placeMonitorPerfCard(wide, 100, 500, asymmetric)).toEqual({
+      x: 872,
+      y: 100,
+      slideFrom: -2,
+      onLeft: false,
+    });
+  });
+  it("keeps natural height independent of the host and clamps only against the screen work area", () => {
+    const anchor = { x: -900, y: 600, width: 280, height: 280 };
+    const work = { x: -1280, y: 40, width: 1280, height: 960 };
+    expect(placeMonitorPerfCard(anchor, 680, 600, work)).toEqual({
+      x: -612,
+      y: 392,
+      slideFrom: -2,
+      onLeft: false,
+    });
+    expect(placeMonitorPerfCard(anchor, 680, 1200, work).y).toBe(48);
+    expect(placeMonitorPerfCard(anchor, 680, 600, { ...work, width: 300 }).x).toBe(-1272);
+  });
+  it("uses the whole panel's largest monitor intersection, including monitors with negative origins", () => {
+    const screens: MonitorDisplay[] = [
+      {
+        id: "left",
+        bounds: { x: -1280, y: 0, width: 1280, height: 1024 },
+        workArea: { x: -1280, y: 0, width: 1280, height: 984 },
+      },
+      { id: "right", bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: area },
+    ];
+    expect(monitorPerfCardArea({ x: -300, y: 100, width: 340, height: 340 }, screens)).toBe(
+      screens[0]!.workArea,
+    );
+    expect(monitorPerfCardArea({ x: -100, y: 100, width: 340, height: 340 }, screens)).toBe(area);
+    expect(monitorPerfCardArea({ x: -3000, y: 100, width: 340, height: 340 }, screens)).toBe(
+      screens[0]!.workArea,
+    );
   });
 });

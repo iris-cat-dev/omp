@@ -1,8 +1,13 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BUNDLED_CURRENCY_TABLE, BUNDLED_PRICE_TABLE } from "./pricing-assets.js";
+import {
+  BUNDLED_CURRENCY_TABLE,
+  BUNDLED_PRICE_TABLE,
+  BUNDLED_PRICING_METADATA,
+} from "./pricing-assets.js";
 import { OmpPriceCatalog, type OmpMonitorCostInput } from "./pricing.js";
 import {
   DAY_MS,
@@ -21,7 +26,26 @@ import {
   validateCurrencies,
 } from "./pricing-rates.js";
 
-const NOW = Date.parse("2026-10-24T12:00:00Z");
+const storage = vi.hoisted(() => ({
+  beforeCopy: undefined as ((source: string, target: string) => Promise<void>) | undefined,
+  beforeRename: undefined as ((source: string, target: string) => Promise<void>) | undefined,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FileSystem>();
+  return {
+    ...actual,
+    async copyFile(...args: Parameters<typeof actual.copyFile>) {
+      await storage.beforeCopy?.(String(args[0]), String(args[1]));
+      return actual.copyFile(...args);
+    },
+    async rename(...args: Parameters<typeof actual.rename>) {
+      await storage.beforeRename?.(String(args[0]), String(args[1]));
+      return actual.rename(...args);
+    },
+  };
+});
+
+const NOW = Date.parse(`${BUNDLED_PRICING_METADATA.priceTable.updated}T12:00:00Z`);
 const PRICE_URL =
   "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json";
 const MIRROR_URL = "https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json";
@@ -115,6 +139,8 @@ async function createCatalog(
 
 // Every test owns its cache. None sends network requests or accesses OMP's real user data.
 afterEach(async () => {
+  storage.beforeCopy = undefined;
+  storage.beforeRename = undefined;
   for (const catalog of catalogs.splice(0)) catalog.dispose();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
   vi.useRealTimers();
@@ -469,6 +495,7 @@ describe("network settings, persistence and cadence", () => {
     await restarted.initialize();
     expect(restarted.getState()).toMatchObject({
       networkEnabled: false,
+      autoSyncPrices: true,
       currency: "EUR",
       exchangeRate: 0.889437,
     });
@@ -502,6 +529,457 @@ describe("network settings, persistence and cadence", () => {
     );
     expect(archived).toBeTruthy();
     expect(await readFile(path.join(cacheDir, archived!), "utf8")).toBe("{broken opt-out");
+  });
+
+  it("keeps corrupt pricing permissions closed across an interrupted replacement and a failed install", async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>();
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    const file = path.join(cacheDir, "pricing-settings.json");
+    await writeFile(file, "{corrupt pricing permission");
+    await catalog.initialize();
+    const staged = Promise.withResolvers<void>(),
+      install = Promise.withResolvers<void>();
+    storage.beforeRename = async (_source, target) => {
+      if (target !== file) return;
+      staged.resolve();
+      await install.promise;
+    };
+    const saving = catalog.configure({ autoSyncPrices: false, currency: "EUR" });
+    const failed = expect(saving).rejects.toThrow("Unable to save monitor pricing settings");
+    await staged.promise;
+    let handedOff = false;
+    const handoff = catalog.waitForIdle().then(() => {
+      handedOff = true;
+      return undefined;
+    });
+    const blocked = expect(handoff).rejects.toThrow("Unable to save monitor pricing settings");
+    try {
+      const { catalog: interrupted } = await createCatalog(fetcher, () => NOW, cacheDir);
+      await interrupted.refresh({ force: true });
+      expect(interrupted.getState().networkEnabled).toBe(false);
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(handedOff).toBe(false);
+      const evidence = (await readdir(cacheDir)).find((name) =>
+        name.startsWith("pricing-settings.json.invalid-"),
+      )!;
+      expect(await readFile(path.join(cacheDir, evidence), "utf8")).toBe(
+        "{corrupt pricing permission",
+      );
+    } finally {
+      install.reject(new Error(`owned replacement failure: ${file}`));
+      await Promise.all([failed, blocked]);
+      storage.beforeRename = undefined;
+    }
+    expect(handedOff).toBe(false);
+    expect(catalog.getState()).toMatchObject({
+      networkEnabled: false,
+      autoSyncPrices: false,
+      currency: "EUR",
+    });
+    expect(await readFile(file, "utf8")).toBe("{corrupt pricing permission");
+    expect((await readdir(cacheDir)).some((name) => name.endsWith(".tmp"))).toBe(false);
+    const { catalog: afterFailure } = await createCatalog(fetcher, () => NOW, cacheDir);
+    await afterFailure.refresh({ force: true });
+    expect(afterFailure.getState().networkEnabled).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+    await catalog.configure({});
+    await catalog.waitForIdle();
+    const { catalog: repaired } = await createCatalog(fetcher, () => NOW, cacheDir);
+    await repaired.refresh({ force: true });
+    expect(repaired.getState()).toMatchObject({
+      networkEnabled: false,
+      autoSyncPrices: false,
+      currency: "EUR",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("retains corrupt pricing denial when exclusive evidence preservation fails, then recovers on an explicit save", async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>();
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    const file = path.join(cacheDir, "pricing-settings.json");
+    await writeFile(file, "{corrupt pricing permission");
+    storage.beforeCopy = async (source) => {
+      if (source === file) throw new Error(`owned evidence failure: ${file}`);
+    };
+    await expect(catalog.configure({ autoSyncPrices: false })).rejects.toThrow(
+      "Unable to save monitor pricing settings",
+    );
+    await expect(catalog.waitForIdle()).rejects.toThrow("Unable to save monitor pricing settings");
+    expect(await readFile(file, "utf8")).toBe("{corrupt pricing permission");
+    expect(await readdir(cacheDir)).toEqual(["pricing-settings.json"]);
+    const { catalog: interrupted } = await createCatalog(fetcher, () => NOW, cacheDir);
+    await interrupted.refresh({ force: true });
+    expect(interrupted.getState().networkEnabled).toBe(false);
+    storage.beforeCopy = undefined;
+    await catalog.configure({});
+    await catalog.waitForIdle();
+    const { catalog: repaired } = await createCatalog(fetcher, () => NOW, cacheDir);
+    await repaired.refresh({ force: true });
+    expect(repaired.getState()).toMatchObject({ networkEnabled: false, autoSyncPrices: false });
+    expect(fetcher).not.toHaveBeenCalled();
+    const evidence = (await readdir(cacheDir)).find((name) =>
+      name.startsWith("pricing-settings.json.invalid-"),
+    )!;
+    expect(await readFile(path.join(cacheDir, evidence), "utf8")).toBe(
+      "{corrupt pricing permission",
+    );
+  });
+
+  it.each([
+    {
+      label: "network opt-out",
+      patch: { networkEnabled: false },
+      state: { networkEnabled: false, autoSyncPrices: true, currency: "USD" },
+    },
+    {
+      label: "automatic-sync opt-out",
+      patch: { autoSyncPrices: false },
+      state: { networkEnabled: true, autoSyncPrices: false, currency: "USD" },
+    },
+    {
+      label: "currency selection",
+      patch: { currency: "EUR" },
+      state: { networkEnabled: true, autoSyncPrices: true, currency: "EUR" },
+    },
+  ])(
+    "rejects an undurable $label, retains desired state and retries even when the selection is unchanged",
+    async ({ patch, state }) => {
+      const fetcher = vi.fn<typeof globalThis.fetch>();
+      const { catalog, cacheDir } = await createCatalog(fetcher);
+      const file = path.join(cacheDir, "pricing-settings.json");
+      await catalog.configure({});
+      const durable = await readFile(file, "utf8");
+      storage.beforeRename = async (_source, target) => {
+        if (target === file) throw new Error(`owned settings storage denied: ${file}`);
+      };
+      const error = await catalog.configure(patch).then(
+        () => null,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Unable to save monitor pricing settings\./u);
+      expect((error as Error).message).not.toContain(cacheDir);
+      expect(catalog.getState()).toMatchObject(state);
+      expect(await readFile(file, "utf8")).toBe(durable);
+      await expect(catalog.waitForIdle()).rejects.toThrow(
+        "Unable to save monitor pricing settings",
+      );
+      if (patch.networkEnabled === false) {
+        await catalog.refresh({ force: true });
+        expect(fetcher).not.toHaveBeenCalled();
+      }
+      storage.beforeRename = undefined;
+      await catalog.configure(patch);
+      await catalog.waitForIdle();
+      const { catalog: restarted } = await createCatalog(fetcher, () => NOW, cacheDir);
+      await restarted.initialize();
+      expect(restarted.getState()).toMatchObject(state);
+    },
+  );
+
+  it.each([1, 2])(
+    "recovers the write queue after settings write %s fails, without acknowledging an undurable successor",
+    async (failingWrite) => {
+      const fetcher = vi.fn<typeof globalThis.fetch>();
+      const { catalog, cacheDir } = await createCatalog(fetcher);
+      const file = path.join(cacheDir, "pricing-settings.json");
+      await catalog.configure({});
+      const staged = Promise.withResolvers<void>(),
+        install = Promise.withResolvers<void>();
+      let writes = 0;
+      storage.beforeRename = async (_source, target) => {
+        if (target !== file) return;
+        const write = ++writes;
+        if (write === 1) {
+          staged.resolve();
+          await install.promise;
+        }
+        if (write === failingWrite) throw new Error("owned queued settings failure");
+      };
+      const first = catalog.configure({ autoSyncPrices: false }).then(
+        () => true,
+        () => false,
+      );
+      await staged.promise;
+      const second = catalog.configure({ networkEnabled: false }).then(
+        () => true,
+        () => false,
+      );
+      // Let the second desired state join the queue while the first atomic install is suspended.
+      await Promise.resolve();
+      install.resolve();
+      expect(await Promise.all([first, second])).toEqual([failingWrite !== 1, failingWrite !== 2]);
+      expect(catalog.getState()).toMatchObject({ networkEnabled: false, autoSyncPrices: false });
+      storage.beforeRename = undefined;
+      if (failingWrite === 2) {
+        await expect(catalog.waitForIdle()).rejects.toThrow(
+          "Unable to save monitor pricing settings",
+        );
+        expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+          networkEnabled: true,
+          autoSyncPrices: false,
+        });
+        await catalog.configure({});
+      }
+      await catalog.waitForIdle();
+      const { catalog: restarted } = await createCatalog(fetcher, () => NOW, cacheDir);
+      await restarted.refresh({ force: true });
+      expect(restarted.getState()).toMatchObject({ networkEnabled: false, autoSyncPrices: false });
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps cache failures expendable and prevents any cache write from clearing an undurable settings blocker", async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>(async () => jsonResponse(quoteTable()));
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    const settings = path.join(cacheDir, "pricing-settings.json"),
+      prices = path.join(cacheDir, "prices.json");
+    await catalog.configure({});
+    storage.beforeRename = async (_source, target) => {
+      if (target === settings) throw new Error("owned settings storage failure");
+    };
+    await expect(catalog.configure({ autoSyncPrices: false })).rejects.toThrow(
+      "Unable to save monitor pricing settings",
+    );
+    await catalog.refresh({ force: true, target: "prices" });
+    expect(catalog.estimateCost(QUOTE)).toBe(14.125);
+    expect(JSON.parse(await readFile(prices, "utf8")).table.version).toBe(quoteTable().version);
+    await expect(catalog.waitForIdle()).rejects.toThrow("Unable to save monitor pricing settings");
+    storage.beforeRename = async (_source, target) => {
+      if (target === prices) throw new Error("owned expendable cache failure");
+    };
+    await expect(catalog.refresh({ force: true, target: "prices" })).resolves.toBeUndefined();
+    await expect(catalog.waitForIdle()).rejects.toThrow("Unable to save monitor pricing settings");
+    await catalog.configure({});
+    await expect(catalog.refresh({ force: true, target: "prices" })).resolves.toBeUndefined();
+    await expect(catalog.waitForIdle()).resolves.toBeUndefined();
+    expect(JSON.parse(await readFile(settings, "utf8"))).toMatchObject({
+      networkEnabled: true,
+      autoSyncPrices: false,
+    });
+    expect(catalog.getState()).toMatchObject({
+      networkEnabled: true,
+      autoSyncPrices: false,
+      prices: { status: "fresh" },
+    });
+  });
+
+  it("persists automatic catalog sync independently of network permission and manual checks", async () => {
+    let now = NOW;
+    const fetcher = vi.fn<typeof globalThis.fetch>(async () => jsonResponse(newTable()));
+    const { catalog, cacheDir } = await createCatalog(fetcher, () => now);
+    await catalog.initialize();
+    expect(catalog.getState()).toMatchObject({ networkEnabled: true, autoSyncPrices: true });
+    await catalog.configure({ autoSyncPrices: false });
+    now += DAY_MS;
+    await catalog.refresh();
+    expect(fetcher).not.toHaveBeenCalled();
+    await catalog.refresh({ force: true, target: "prices" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(catalog.getState()).toMatchObject({
+      networkEnabled: true,
+      autoSyncPrices: false,
+      prices: { status: "fresh", fetchedAt: now },
+    });
+    catalog.dispose();
+    const { catalog: restarted } = await createCatalog(fetcher, () => now, cacheDir);
+    await restarted.initialize();
+    expect(restarted.getState()).toMatchObject({ networkEnabled: true, autoSyncPrices: false });
+    now += DAY_MS;
+    await restarted.refresh();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await restarted.configure({ networkEnabled: false });
+    await restarted.configure({ autoSyncPrices: true });
+    await restarted.refresh({ force: true, target: "prices" });
+    await restarted.refresh({ force: true, target: "rates" });
+    await restarted.refresh({ force: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    restarted.dispose();
+    const { catalog: offline } = await createCatalog(fetcher, () => now, cacheDir);
+    await offline.initialize();
+    expect(offline.getState()).toMatchObject({ networkEnabled: false, autoSyncPrices: true });
+    await offline.refresh({ force: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([null, 0, "false"])(
+    "fails closed on an invalid persisted auto-sync value %j",
+    async (autoSyncPrices) => {
+      const fetcher = vi.fn<typeof globalThis.fetch>();
+      const { catalog, cacheDir } = await createCatalog(fetcher);
+      const content = JSON.stringify({
+        schema: 1,
+        networkEnabled: true,
+        autoSyncPrices,
+        currency: "USD",
+      });
+      await writeFile(path.join(cacheDir, "pricing-settings.json"), content);
+      await catalog.refresh({ force: true });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(catalog.getState().networkEnabled).toBe(false);
+      expect(await readFile(path.join(cacheDir, "pricing-settings.json"), "utf8")).toBe(content);
+    },
+  );
+
+  it("keeps the FX schedule independent and refreshes only the requested public resource", async () => {
+    let now = NOW;
+    const calls: string[] = [];
+    const fetcher: typeof globalThis.fetch = async (url) => {
+      const resource = String(url);
+      calls.push(resource);
+      return resource === PRICE_URL
+        ? jsonResponse(newTable())
+        : fxResponse(resource, { CNY: 6.8 }, new Date(now).toISOString().slice(0, 10));
+    };
+    const { catalog, cacheDir } = await createCatalog(fetcher, () => now);
+    await writeFile(
+      path.join(cacheDir, "pricing-settings.json"),
+      JSON.stringify({ schema: 1, networkEnabled: true, autoSyncPrices: false, currency: "CNY" }),
+    );
+    await catalog.initialize();
+    const initialPrices = catalog.getState().prices;
+    now += 29_999;
+    await catalog.refresh();
+    expect(calls).toHaveLength(0);
+    now++;
+    await catalog.refresh();
+    expect(calls).toEqual([FX_PROVIDERS[0].url]);
+    expect(catalog.getState().prices).toEqual(initialPrices);
+    const rates = catalog.getState().rates;
+    await catalog.refresh({ force: true, target: "prices" });
+    expect(calls).toEqual([FX_PROVIDERS[0].url, PRICE_URL]);
+    expect(catalog.getState().rates).toEqual(rates);
+    const prices = catalog.getState().prices;
+    await catalog.refresh({ force: true, target: "rates" });
+    expect(catalog.getState().prices).toEqual(prices);
+    expect(calls.filter((url) => url === PRICE_URL)).toHaveLength(1);
+    expect(calls.filter((url) => url === FX_PROVIDERS[0].url)).toHaveLength(2);
+    now += DAY_MS;
+    await catalog.refresh();
+    expect(calls.filter((url) => url === PRICE_URL)).toHaveLength(1);
+    expect(calls.filter((url) => url === FX_PROVIDERS[0].url)).toHaveLength(3);
+    await catalog.refresh({ force: true });
+    expect(calls.filter((url) => url === PRICE_URL)).toHaveLength(2);
+    expect(calls.filter((url) => url === FX_PROVIDERS[0].url)).toHaveLength(4);
+  });
+
+  it("does not reset a due catalog schedule when auto-sync is enabled or cancel an accepted flight when it is disabled", async () => {
+    let now = NOW;
+    const pending = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<AbortSignal>();
+    let first = true;
+    const fetcher = vi.fn<typeof globalThis.fetch>(async (_url, options) => {
+      if (first) {
+        first = false;
+        started.resolve(options!.signal!);
+        return pending.promise;
+      }
+      return jsonResponse(newTable());
+    });
+    const { catalog } = await createCatalog(fetcher, () => now);
+    await catalog.initialize();
+    await catalog.configure({ autoSyncPrices: false });
+    now += DAY_MS;
+    await catalog.refresh();
+    expect(fetcher).not.toHaveBeenCalled();
+    await catalog.configure({ autoSyncPrices: true });
+    const round = catalog.refresh();
+    const signal = await started.promise;
+    await catalog.configure({ autoSyncPrices: false });
+    expect(signal.aborted).toBe(false);
+    pending.resolve(jsonResponse(newTable()));
+    await round;
+    expect(catalog.getState().prices).toMatchObject({ status: "fresh", fetchedAt: now });
+    now += DAY_MS;
+    await catalog.refresh();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await catalog.configure({ autoSyncPrices: true });
+    await catalog.refresh();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    now += DAY_MS;
+    await catalog.configure({ networkEnabled: false });
+    await catalog.configure({ networkEnabled: true });
+    await catalog.refresh();
+    now += 59_999;
+    await catalog.refresh();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    now++;
+    await catalog.refresh();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("completes a targeted FX refresh while the singleflight catalog check is stalled", async () => {
+    const pending = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<AbortSignal>();
+    const calls: string[] = [];
+    const fetcher: typeof globalThis.fetch = async (url, options) => {
+      const resource = String(url);
+      calls.push(resource);
+      if (resource === PRICE_URL) {
+        started.resolve(options!.signal!);
+        return pending.promise;
+      }
+      return fxResponse(resource, { CNY: 6.8 });
+    };
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    await writeFile(
+      path.join(cacheDir, "pricing-settings.json"),
+      JSON.stringify({ schema: 1, networkEnabled: true, autoSyncPrices: false, currency: "CNY" }),
+    );
+    await catalog.initialize();
+    const beforePrices = catalog.getState().prices;
+    const first = catalog.refresh({ force: true, target: "prices" });
+    const signal = await started.promise;
+    const second = catalog.refresh({ force: true, target: "prices" });
+    await catalog.refresh({ force: true, target: "rates" });
+    expect(calls).toEqual([PRICE_URL, FX_PROVIDERS[0].url]);
+    expect(catalog.getState()).toMatchObject({
+      prices: { status: "updating" },
+      rates: { status: "fresh" },
+      exchangeRate: 6.8,
+    });
+    await catalog.configure({ networkEnabled: false });
+    expect(signal.aborted).toBe(true);
+    pending.resolve(jsonResponse(newTable()));
+    await Promise.all([first, second]);
+    expect(catalog.getState().prices).toEqual({ ...beforePrices, lastAttemptAt: NOW });
+    await catalog.refresh({ force: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("retains the other feed's last-good state when a targeted refresh fails", async () => {
+    let failing: "prices" | "rates" | null = null;
+    const fetcher: typeof globalThis.fetch = async (url) => {
+      const resource = String(url);
+      const price = resource === PRICE_URL || resource === MIRROR_URL;
+      if (failing === (price ? "prices" : "rates")) throw new Error("private remote error");
+      return price ? jsonResponse(newTable()) : fxResponse(resource, { CNY: 6.8 });
+    };
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    await writeFile(
+      path.join(cacheDir, "pricing-settings.json"),
+      JSON.stringify({ schema: 1, networkEnabled: true, autoSyncPrices: false, currency: "CNY" }),
+    );
+    await catalog.refresh({ force: true });
+    const good = catalog.getState();
+    failing = "prices";
+    await catalog.refresh({ force: true, target: "prices" });
+    expect(catalog.getState().rates).toEqual(good.rates);
+    expect(catalog.getState().prices).toMatchObject({
+      status: "error",
+      version: good.prices.version,
+    });
+    const prices = catalog.getState().prices;
+    failing = "rates";
+    await catalog.refresh({ force: true, target: "rates" });
+    expect(catalog.getState().prices).toEqual(prices);
+    expect(catalog.getState()).toMatchObject({
+      rates: { status: "error", fetchedAt: good.rates.fetchedAt, source: good.rates.source },
+      exchangeRate: good.exchangeRate,
+      attribution: good.attribution,
+    });
+    expect(JSON.stringify(catalog.getState())).not.toContain("private");
   });
 
   it("honors the 60-second launch delay, daily success schedule and USD's zero-FX rule", async () => {
@@ -1106,5 +1584,40 @@ describe("FX source validation and truthful provenance", () => {
     await catalog.refresh({ force: true });
     expect(requests).toHaveLength(1);
     expect(catalog.getState()).toMatchObject({ exchangeRate: 6.67476, rates: { fetchedAt: null } });
+  });
+});
+
+describe("source worker catalog handoff", () => {
+  it("waits for a currency-triggered FX flight and its persisted data without starting any new network request", async () => {
+    const started = Promise.withResolvers<string>();
+    const response = Promise.withResolvers<Response>();
+    const fetcher = vi.fn<typeof globalThis.fetch>(async (url) => {
+      started.resolve(String(url));
+      return response.promise;
+    });
+    const { catalog, cacheDir } = await createCatalog(fetcher);
+    await catalog.configure({ currency: "CNY" });
+    const url = await started.promise;
+    let drained = false;
+    const idle = catalog.waitForIdle().then(() => {
+      drained = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    response.resolve(fxResponse(url, { CNY: 6.8 }));
+    await idle;
+    expect(drained).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(catalog.getState()).toMatchObject({ currency: "CNY", exchangeRate: 6.8 });
+    expect(
+      JSON.parse(await readFile(path.join(cacheDir, "rates.json"), "utf8")).entries.CNY.rate,
+    ).toBe(6.8);
+    const settings = JSON.parse(
+      await readFile(path.join(cacheDir, "pricing-settings.json"), "utf8"),
+    );
+    expect(settings).toMatchObject({ currency: "CNY" });
+    await catalog.waitForIdle();
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

@@ -170,6 +170,7 @@ import {
 import { OmpSubagentIndex } from "./subagent-index.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
+import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
   buildOmpRpcUiPermissionResponse,
   mapOmpRpcUiPermissionRequest,
@@ -1789,6 +1790,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
+  private readonly nativeUsage = new OmpNativeUsageTracker();
+  private nativeUsagePublishedAt = 0;
   private readonly automaticCredentialId?: number;
   private readonly automaticCredentialResolver?: (
     state: OmpSessionState,
@@ -1870,12 +1873,11 @@ export class OmpAgentSession implements AgentSession {
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
-      onUsage: (usage, turnId) => {
+      onUsage: (usage) => {
         this.emit({
           type: "usage_updated",
           provider: this.provider,
           usage,
-          ...(turnId === undefined ? {} : { turnId }),
         });
       },
       onPollError: (error) => {
@@ -2141,6 +2143,7 @@ export class OmpAgentSession implements AgentSession {
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = displayPromptText;
+    this.nativeUsage.startTurn(turnId, Date.now(), this.state.model);
     this.usagePoller.startTurn();
     this.startAutomaticCredentialResolution();
 
@@ -2175,6 +2178,7 @@ export class OmpAgentSession implements AgentSession {
         }
         this.cancelModelErrorContinuation();
         this.usagePoller.stopTurn();
+        this.finishNativeUsage(turnId);
         this.stopAutomaticCredentialResolution();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
@@ -2250,6 +2254,7 @@ export class OmpAgentSession implements AgentSession {
       runtimeSession: this.runtimeSession,
       provider: this.provider,
       blobDir: this.blobDir,
+      onOwnAssistant: (message) => this.nativeUsage.seedReference(message, Date.now()),
     })) {
       if (
         event.type === "timeline" &&
@@ -2753,6 +2758,7 @@ export class OmpAgentSession implements AgentSession {
     if (turnId && this.activeTurnId === turnId) {
       this.terminalizeActiveWork();
       this.usagePoller.stopTurn();
+      this.finishNativeUsage(turnId);
       this.stopAutomaticCredentialResolution();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -2797,6 +2803,7 @@ export class OmpAgentSession implements AgentSession {
     this.backgroundDaemons?.dispose();
     this.stopAutomaticCredentialResolution();
     this.usagePoller.close();
+    this.nativeUsage.finish(Date.now());
     this.cancelNoTurnPromptCompletion();
     try {
       await this.runtimeSession.close();
@@ -3028,6 +3035,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
+    this.nativeUsage.startTurn(this.activeTurnId, Date.now(), this.state.model);
     this.usagePoller.startTurn();
     this.startAutomaticCredentialResolution();
   }
@@ -3043,6 +3051,38 @@ export class OmpAgentSession implements AgentSession {
 
   private currentTurnIdForEvent(): string | undefined {
     return this.activeTurnId ?? undefined;
+  }
+
+  private publishNativeUsage(
+    turnId = this.currentTurnIdForEvent(),
+    messageId?: string,
+    persistMessage = false,
+  ): void {
+    if (!turnId) return;
+    const nowMs = Date.now();
+    const usage = this.nativeUsage.getUsage(turnId, nowMs);
+    if (!usage) return;
+    this.nativeUsagePublishedAt = nowMs;
+    this.emit({ type: "usage_updated", provider: this.provider, turnId, usage });
+    if (persistMessage) {
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "assistant_message",
+          text: "",
+          messageId,
+          ...(this.activeWorkflowMode === "plan" ? { presentation: "plan" as const } : {}),
+          nativeUsage: this.nativeUsage.getUsage(turnId, nowMs, false),
+        },
+      });
+    }
+  }
+
+  private finishNativeUsage(turnId = this.currentTurnIdForEvent()): void {
+    this.nativeUsage.finish(Date.now());
+    this.publishNativeUsage(turnId);
   }
 
   private scheduleNoTurnPromptCompletion(turnId: string): void {
@@ -3778,6 +3818,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.usagePoller.stopTurn();
+    this.finishNativeUsage();
     this.stopAutomaticCredentialResolution();
     this.terminalizeActiveWork();
     this.subagentIndex.clear(this.runtimeSession);
@@ -3836,6 +3877,12 @@ export class OmpAgentSession implements AgentSession {
         return;
       case "message_start":
         this.handleMessageStart(event);
+        if (
+          event.message.role === "assistant" &&
+          this.nativeUsage.startRequest(event.message, Date.now())
+        ) {
+          this.publishNativeUsage(turnId);
+        }
         return;
       case "message_end":
         if (event.message.role === "user") {
@@ -3845,8 +3892,16 @@ export class OmpAgentSession implements AgentSession {
         return;
       case "message_update":
         this.handleMessageUpdate(event, turnId);
+        if (
+          event.message.role === "assistant" &&
+          this.nativeUsage.touch(event.message, Date.now())
+        ) {
+          if (Date.now() - this.nativeUsagePublishedAt >= 1_000) this.publishNativeUsage(turnId);
+        }
         return;
       case "tool_execution_start": {
+        this.nativeUsage.pause(Date.now(), "tools");
+        this.publishNativeUsage(turnId);
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
@@ -3868,6 +3923,8 @@ export class OmpAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
+        this.nativeUsage.pause(Date.now());
+        this.publishNativeUsage(turnId);
         this.emitCompactionTimeline({
           turnId,
           item: {
@@ -4146,19 +4203,47 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
-      this.observeClaudeMessage(event.message);
-      this.activeAssistantMessageId = null;
-      if (turnId) {
-        this.activeTurnTerminalAssistantMessage = event.message;
-      }
+      this.handleAssistantMessageEnd(event.message, turnId);
       return;
     }
 
-    if (event.message.role !== "user") {
-      return;
+    if (
+      (event.message.role === "user" ||
+        event.message.role === "developer" ||
+        event.message.role === "toolResult") &&
+      this.nativeUsage.observeInput(event.message, Date.now())
+    ) {
+      this.publishNativeUsage(turnId);
     }
-    const text = getUserMessageText(event.message.content);
-    const images = getUserMessageImages(event.message.content);
+    if (event.message.role === "user") {
+      this.handleUserMessageEnd(event.message, turnId);
+    }
+  }
+
+  private handleAssistantMessageEnd(
+    message: Extract<OmpAgentMessage, { role: "assistant" }>,
+    turnId: string | undefined,
+  ): void {
+    if (this.nativeUsage.recordAssistant(message, Date.now())) {
+      this.publishNativeUsage(
+        turnId,
+        message.responseId || this.activeAssistantMessageId || undefined,
+        true,
+      );
+    }
+    this.observeClaudeMessage(message);
+    this.activeAssistantMessageId = null;
+    if (turnId) {
+      this.activeTurnTerminalAssistantMessage = message;
+    }
+  }
+
+  private handleUserMessageEnd(
+    message: Extract<OmpAgentMessage, { role: "user" }>,
+    turnId: string | undefined,
+  ): void {
+    const text = getUserMessageText(message.content);
+    const images = getUserMessageImages(message.content);
     if (!text && !images) {
       return;
     }
@@ -4176,7 +4261,7 @@ export class OmpAgentSession implements AgentSession {
     ) {
       return;
     }
-    const nativeMessage = event.message as OmpAgentMessage & {
+    const nativeMessage = message as OmpAgentMessage & {
       id?: unknown;
       entryId?: unknown;
     };
@@ -4228,7 +4313,9 @@ export class OmpAgentSession implements AgentSession {
     void this.runtimeSession
       .getBranchMessages()
       .then((messages) =>
-        emitUserMessage(messages.toReversed().find((message) => message.text === text)?.entryId),
+        emitUserMessage(
+          messages.toReversed().find((branchMessage) => branchMessage.text === text)?.entryId,
+        ),
       )
       .catch((error: unknown) => {
         this.logger.debug(
@@ -4330,6 +4417,13 @@ export class OmpAgentSession implements AgentSession {
     generation?: number,
   ): void {
     if (!this.ownsActiveTurn(turnId, generation)) return;
+    for (const message of messages) {
+      if (message.role === "assistant") this.nativeUsage.recordAssistant(message, Date.now());
+    }
+    this.finishNativeUsage(turnId);
+    const nativeTurnUsage = turnId
+      ? this.nativeUsage.getUsage(turnId, Date.now(), false)
+      : undefined;
     const streamedPlanText = this.activePlanText.trim();
     const streamedPlan: OmpPlanDraft | null = streamedPlanText
       ? {
@@ -4382,11 +4476,12 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.emitPlanApprovalRequest(turnId, messages, streamedPlan);
-    const finalUsage = this.usagePoller.completeTurn(turnId);
+    const finalUsage = this.usagePoller.completeTurn();
     this.emit({
       type: "turn_completed",
       provider: this.provider,
       turnId,
+      ...(nativeTurnUsage ? { usage: nativeTurnUsage } : {}),
     });
     void this.refreshAfterTurn(finalUsage);
   }

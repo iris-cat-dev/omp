@@ -486,9 +486,8 @@ export interface SessionState {
   agentStreamHead: Map<string, StreamItem[]>;
   agentTasks: Map<string, TodoEntry[]>;
   agentTurnLiveness: Map<string, TurnLiveness>;
-  // Completed-turn usage, keyed agentId -> turnId -> usage. Populated from
-  // turn_completed events (which carry usage) so the completed-turn footer can
-  // show this turn's token total and average speed. Bounded per agent.
+  // Own per-turn usage/native timing, including the active turn. Session quota
+  // counters remain in agent.lastUsage and cannot enter this bounded map.
   agentTurnUsage: Map<string, Map<string, AgentUsage>>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
@@ -1311,11 +1310,19 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       recordAgentTurnUsage: (serverId, agentId, turnId, usage) => {
-        if (!turnId) return;
+        if (!turnId || usage.scope === "session") return;
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
           const perAgent = session.agentTurnUsage.get(agentId) ?? new Map<string, AgentUsage>();
+          const previous = perAgent.get(turnId)?.nativeMetrics;
+          if (
+            previous &&
+            usage.nativeMetrics &&
+            usage.nativeMetrics.generation < previous.generation
+          ) {
+            return prev;
+          }
           if (perAgent.get(turnId) === usage) return prev;
           const nextPerAgent = new Map(perAgent);
           nextPerAgent.set(turnId, usage);

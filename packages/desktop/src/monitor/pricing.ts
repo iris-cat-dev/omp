@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { open, mkdir, rename, rm, lstat, type FileHandle } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, open, mkdir, rename, rm, lstat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   BUNDLED_CURRENCY_TABLE,
@@ -45,6 +46,8 @@ const PRICES_FILE = "prices.json";
 const RATES_FILE = "rates.json";
 const PRICE_CACHE_CAP = PRICE_MAX_BYTES + (64 << 10);
 const SETTINGS_CAP = 4096;
+const SETTINGS_SAVE_ERROR =
+  "Unable to save monitor pricing settings. Retry saving before closing or changing sources.";
 let bundled: { prices: ValidatedPriceTable; currencies: CurrencyCatalog } | undefined;
 
 function bundledCatalogs(): { prices: ValidatedPriceTable; currencies: CurrencyCatalog } {
@@ -63,6 +66,7 @@ export function getBundledPricingState(): OmpMonitorPricing {
   const { prices, currencies } = bundledCatalogs();
   return {
     networkEnabled: false,
+    autoSyncPrices: true,
     currency: "USD",
     currencies: [...currencies.codes],
     prices: {
@@ -100,7 +104,22 @@ function storedStamp(value: unknown, now: number): number | null {
 
 interface CachedSettings {
   networkEnabled: boolean;
+  autoSyncPrices: boolean;
   currency: string;
+}
+function assertPricingSettingsPatch(
+  patch: Partial<CachedSettings>,
+  currencies: readonly string[],
+): void {
+  if (patch.networkEnabled !== undefined && typeof patch.networkEnabled !== "boolean")
+    throw new Error("invalid network setting");
+  if (patch.autoSyncPrices !== undefined && typeof patch.autoSyncPrices !== "boolean")
+    throw new Error("invalid automatic price sync setting");
+  if (
+    patch.currency !== undefined &&
+    (typeof patch.currency !== "string" || !currencies.includes(patch.currency))
+  )
+    throw new Error("unsupported currency");
 }
 interface CachedPrices {
   table: ValidatedPriceTable;
@@ -120,11 +139,16 @@ function validateCachedSettings(value: unknown, currencies: CurrencyCatalog): Ca
     !isObject(value) ||
     value.schema !== 1 ||
     typeof value.networkEnabled !== "boolean" ||
+    (value.autoSyncPrices !== undefined && typeof value.autoSyncPrices !== "boolean") ||
     typeof value.currency !== "string" ||
     !currencies.codes.includes(value.currency)
   )
     throw new Error("invalid pricing settings");
-  return { networkEnabled: value.networkEnabled, currency: value.currency };
+  return {
+    networkEnabled: value.networkEnabled,
+    autoSyncPrices: value.autoSyncPrices ?? true,
+    currency: value.currency,
+  };
 }
 
 function validateCachedPrices(value: unknown, now: number): CachedPrices {
@@ -317,6 +341,7 @@ export class OmpPriceCatalog {
   private entries: Record<string, RateEntry>;
   private currency = "USD";
   private networkEnabled = true;
+  private autoSyncPrices = true;
   private initialized: Promise<void> | undefined;
   private disposed = false;
   private priceLaunchAt = 0;
@@ -331,8 +356,11 @@ export class OmpPriceCatalog {
   private rateController: AbortController | undefined;
   private priceFlight: Promise<void> | undefined;
   private rateFlight: Promise<void> | undefined;
+  private currencyRefresh: Promise<void> | undefined;
   private readonly invalidCaches = new Set<string>();
   private writes: Promise<void> = Promise.resolve();
+  private settingsVersion = 0;
+  private savedSettingsVersion = 0;
 
   constructor(options: { cacheDir: string; now?: () => number; fetch?: typeof globalThis.fetch }) {
     this.cacheDir = options.cacheDir;
@@ -368,6 +396,7 @@ export class OmpPriceCatalog {
     try {
       const settings = validateCachedSettings(value, this.currencies);
       this.networkEnabled = settings.networkEnabled;
+      this.autoSyncPrices = settings.autoSyncPrices;
       this.currency = settings.currency;
     } catch {
       this.invalidCaches.add(SETTINGS_FILE);
@@ -457,6 +486,7 @@ export class OmpPriceCatalog {
     const usd = this.currency === "USD";
     return {
       networkEnabled: this.networkEnabled,
+      autoSyncPrices: this.autoSyncPrices,
       currency: this.currency,
       currencies: [...this.currencies.codes],
       prices: this.priceFeed(now),
@@ -469,19 +499,19 @@ export class OmpPriceCatalog {
     };
   }
 
-  async configure(patch: { networkEnabled?: boolean; currency?: string }): Promise<void> {
-    if (patch.networkEnabled !== undefined && typeof patch.networkEnabled !== "boolean")
-      throw new Error("invalid network setting");
-    if (
-      patch.currency !== undefined &&
-      (typeof patch.currency !== "string" || !this.currencies.codes.includes(patch.currency))
-    )
-      throw new Error("unsupported currency");
+  /** Failed saves retain desired opt-outs in memory; an explicit configure (even {}) retries them. */
+  async configure(patch: {
+    networkEnabled?: boolean;
+    autoSyncPrices?: boolean;
+    currency?: string;
+  }): Promise<void> {
+    assertPricingSettingsPatch(patch, this.currencies.codes);
     await this.initialize();
     if (this.disposed) return;
     const currencyChanged = patch.currency !== undefined && patch.currency !== this.currency;
     const enabling = patch.networkEnabled === true && !this.networkEnabled;
     if (patch.networkEnabled !== undefined) this.networkEnabled = patch.networkEnabled;
+    if (patch.autoSyncPrices !== undefined) this.autoSyncPrices = patch.autoSyncPrices;
     if (patch.currency !== undefined) this.currency = patch.currency;
     if (!this.networkEnabled) {
       this.priceController?.abort();
@@ -492,11 +522,15 @@ export class OmpPriceCatalog {
     }
     if (currencyChanged) this.rateController?.abort();
     const currency = this.currency;
-    await this.persist(SETTINGS_FILE, { schema: 1, networkEnabled: this.networkEnabled, currency });
+    await this.persistSettings({
+      networkEnabled: this.networkEnabled,
+      autoSyncPrices: this.autoSyncPrices,
+      currency,
+    });
     if (currencyChanged && currency !== "USD") {
       // Settings commands must never wait for network I/O: a queued opt-out must
       // reach the abort path even if every rate provider is stalled.
-      void (this.rateFlight ?? Promise.resolve())
+      this.currencyRefresh = (this.rateFlight ?? Promise.resolve())
         .then(() => {
           if (this.currency === currency && this.networkEnabled && !this.disposed)
             return this.refreshRates(false, true);
@@ -506,13 +540,13 @@ export class OmpPriceCatalog {
     }
   }
 
-  async refresh(options?: { force?: boolean }): Promise<void> {
+  async refresh(options?: { force?: boolean; target?: "prices" | "rates" }): Promise<void> {
     await this.initialize();
     if (!this.networkEnabled || this.disposed) return;
-    await Promise.all([
-      this.refreshPrices(options?.force === true),
-      this.refreshRates(options?.force === true, false),
-    ]);
+    const force = options?.force === true;
+    if (options?.target === "prices") return this.refreshPrices(force);
+    if (options?.target === "rates") return this.refreshRates(force, false);
+    await Promise.all([this.refreshPrices(force), this.refreshRates(force, false)]);
   }
 
   estimateCost(input: OmpMonitorCostInput): number | null {
@@ -530,7 +564,7 @@ export class OmpPriceCatalog {
     if (
       !this.networkEnabled ||
       this.disposed ||
-      (!force && now < Math.max(this.priceLaunchAt, due))
+      (!force && (!this.autoSyncPrices || now < Math.max(this.priceLaunchAt, due)))
     )
       return Promise.resolve();
     const controller = new AbortController();
@@ -739,10 +773,30 @@ export class OmpPriceCatalog {
     }
   }
 
+  private persistSettings(settings: CachedSettings): Promise<void> {
+    const version = ++this.settingsVersion;
+    return this.enqueueWrite(SETTINGS_FILE, { schema: 1, ...settings }).then(
+      () => {
+        this.savedSettingsVersion = version;
+        return undefined;
+      },
+      () => {
+        throw new Error(SETTINGS_SAVE_ERROR);
+      },
+    );
+  }
+
   private persist(name: string, value: unknown): Promise<void> {
+    // Public price/rate caches are expendable, unlike permission and currency settings.
+    return this.enqueueWrite(name, value).catch(() => undefined);
+  }
+
+  private enqueueWrite(name: string, value: unknown): Promise<void> {
     const content = JSON.stringify(value);
-    this.writes = this.writes.then(() => this.writeCacheFile(name, content));
-    return this.writes;
+    const write = this.writes.then(() => this.writeCacheFile(name, content));
+    // A rejected save must not poison later explicit retries or independent cache writes.
+    this.writes = write.catch(() => undefined);
+    return write;
   }
 
   private async writeCacheFile(name: string, content: string): Promise<void> {
@@ -757,20 +811,44 @@ export class OmpPriceCatalog {
       } finally {
         await file.close();
       }
-      // Keep corrupt files as evidence; never remove them or unrelated cache-directory contents.
+      // Copy evidence without removing the fail-closed primary before the atomic replacement.
       if (this.invalidCaches.has(name)) {
         try {
-          await rename(target, `${target}.invalid-${randomUUID()}`);
+          const info = await lstat(target);
+          if (!info.isFile() || info.isSymbolicLink()) throw new Error("unsafe pricing cache file");
+          await copyFile(target, `${target}.invalid-${randomUUID()}`, constants.COPYFILE_EXCL);
         } catch (error) {
           if (!(isObject(error) && error.code === "ENOENT")) throw error;
         }
-        this.invalidCaches.delete(name);
       }
       await rename(temporary, target);
-    } catch {
-      // Read-only/unavailable storage is not a reason to stop local/offline monitoring.
+      this.invalidCaches.delete(name);
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
+
+  /** Drain requested work; undurable settings veto a source handoff or normal shutdown. */
+  async waitForIdle(): Promise<void> {
+    await this.initialize();
+    while (true) {
+      const prices = this.priceFlight,
+        rates = this.rateFlight;
+      const currency = this.currencyRefresh,
+        writes = this.writes;
+      await Promise.all([prices, rates, currency, writes]);
+      // Currency changes may enqueue a successor FX flight after the previous one settles.
+      await Promise.resolve();
+      if (
+        prices === this.priceFlight &&
+        rates === this.rateFlight &&
+        currency === this.currencyRefresh &&
+        writes === this.writes
+      ) {
+        if (this.savedSettingsVersion !== this.settingsVersion)
+          throw new Error(SETTINGS_SAVE_ERROR);
+        return;
+      }
     }
   }
 

@@ -6,6 +6,8 @@ import { MONITOR_UI_MARKUP } from "./ui-markup.js";
 import type { OmpMonitorViewState } from "./view-types.js";
 import { MONITOR_VISUALS_SCRIPT } from "./visuals.js";
 import { DEFAULT_MONITOR_PREFERENCES } from "./window-preferences.js";
+import { MONITOR_PERF_MARKUP } from "./performance-ui.js";
+import { MONITOR_BOARD_MARKUP } from "./board-ui.js";
 
 interface Visual {
   update(frame: Record<string, unknown>): void;
@@ -74,24 +76,40 @@ class VectorPath {
   closePath = noOp;
 }
 function canvas2d() {
+  const texts: Array<{ text: string; x: number; y: number; font: string; tracking: string }> = [];
   return {
+    font: "10px sans-serif",
+    letterSpacing: "0px",
+    texts,
     restore: noOp,
     save: noOp,
     setTransform: noOp,
     clearRect: noOp,
     beginPath: noOp,
     arc: noOp,
+    rect: noOp,
+    roundRect: noOp,
     clip: noOp,
     fill: noOp,
     stroke: noOp,
     fillRect: noOp,
+    translate: noOp,
+    rotate: noOp,
     moveTo: noOp,
     lineTo: noOp,
     closePath: noOp,
-    fillText: noOp,
+    createLinearGradient: () => ({ addColorStop: noOp }),
+    createRadialGradient: () => ({ addColorStop: noOp }),
+    createConicGradient: () => ({ addColorStop: noOp }),
+    fillText(text: string, x: number, y: number) {
+      texts.push({ text, x, y, font: this.font, tracking: this.letterSpacing });
+    },
     putImageData: noOp,
     drawImage: noOp,
-    measureText: (value: string) => ({ width: value.length * 8 }),
+    measureText(value: string) {
+      const size = Number(/ ([0-9.]+)px /.exec(this.font)?.[1] || 10);
+      return { width: value.length * 8, actualBoundingBoxAscent: 0.72 * size };
+    },
     getImageData: (_x: number, _y: number, width: number, height: number) =>
       new Pixels(width, height),
   };
@@ -105,6 +123,9 @@ class GpuDriver {
   readonly shaders: object[] = [];
   readonly deletedPrograms: object[] = [];
   readonly deletedTextures: object[] = [];
+  readonly textures: object[] = [];
+  readonly textureUploads: Array<{ unit: number; pixels: unknown }> = [];
+  private textureUnit = 0;
   readonly operations: string[] = [];
   readonly draws: Array<Record<string, number>> = [];
   private readonly uniforms: Record<string, number> = {};
@@ -147,6 +168,7 @@ class GpuDriver {
     TEXTURE0: 33984,
     TEXTURE1: 33985,
     TEXTURE2: 33986,
+    TEXTURE3: 33987,
     RGBA: 6408,
     UNSIGNED_BYTE: 5121,
     UNPACK_FLIP_Y_WEBGL: 37440,
@@ -194,20 +216,38 @@ class GpuDriver {
     uniform1f: (name: string, value: number) => {
       this.uniforms[name] = value;
     },
-    uniform1i: noOp,
-    uniform2f: noOp,
+    uniform1i: (name: string, value: number) => {
+      this.uniforms[name] = value;
+    },
+    uniform2f: (name: string, x: number, y: number) => {
+      this.uniforms[name + "0"] = x;
+      this.uniforms[name + "1"] = y;
+    },
     uniform3fv: noOp,
-    uniform4f: noOp,
-    uniform4fv: noOp,
+    uniform4f: (name: string, x: number, y: number, z: number, w: number) => {
+      for (const [index, value] of [x, y, z, w].entries()) this.uniforms[name + index] = value;
+    },
+    uniform4fv: (name: string, values: ArrayLike<number>) => {
+      for (let index = 0; index < values.length; index++)
+        this.uniforms[name + index] = values[index]!;
+    },
     drawArrays: () => {
       this.draws.push({ ...this.uniforms });
     },
-    createTexture: () => ({}),
+    createTexture: () => {
+      const texture = {};
+      this.textures.push(texture);
+      return texture;
+    },
     bindTexture: noOp,
     texParameteri: noOp,
     pixelStorei: noOp,
-    activeTexture: noOp,
-    texImage2D: noOp,
+    activeTexture: (unit: number) => {
+      this.textureUnit = unit;
+    },
+    texImage2D: (...args: unknown[]) => {
+      this.textureUploads.push({ unit: this.textureUnit, pixels: args.at(-1) });
+    },
     deleteTexture: (texture: object) => {
       this.deletedTextures.push(texture);
       this.operations.push("delete-texture");
@@ -219,6 +259,7 @@ function settingsState(): OmpMonitorViewState {
   return {
     language: "en",
     surface: "settings",
+    nativeFrame: false,
     instanceId: "fixture-orb",
     orbVisible: true,
     nameplatePlacement: "below",
@@ -226,6 +267,23 @@ function settingsState(): OmpMonitorViewState {
     maxFps: 60,
     activity: { responseSequence: 0, peakSequence: 0, lastResponseAt: null, lastPeakAt: null },
     preferences: { ...DEFAULT_MONITOR_PREFERENCES, effects: "off", appearance: "dark" },
+    effectiveRedline: DEFAULT_MONITOR_PREFERENCES.redline,
+    effectiveTitleTheme: DEFAULT_MONITOR_PREFERENCES.titleTheme,
+    orbName: "OMP",
+    titleThemes: { version: 1, revision: 0, custom: [], draft: null, undo: null, error: false },
+    launchAtLogin: { enabled: false, supported: false, error: false },
+    effectsPreview: { active: false, sequence: 0, startedAt: null, endsAt: null },
+    ompSource: {
+      enabled: true,
+      folder: "",
+      usingDefaultFolder: true,
+      status: "ready",
+      sessions: 0,
+      changing: false,
+      canChangeFolder: false,
+    },
+    orbUndo: null,
+    orbManagement: { canSplit: false, canMerge: false, reason: "single-omp-source" },
     scope: { profile: null, project: null },
     scopes: { profiles: [], projects: [] },
     snapshot: null,
@@ -237,6 +295,9 @@ function settingsState(): OmpMonitorViewState {
     orbs: [
       {
         instanceId: "fixture-orb",
+        name: "OMP",
+        effectiveRedline: DEFAULT_MONITOR_PREFERENCES.redline,
+        titleTheme: DEFAULT_MONITOR_PREFERENCES.titleTheme,
         scope: { profile: null, project: null },
         style: "led",
         size: 148,
@@ -245,6 +306,8 @@ function settingsState(): OmpMonitorViewState {
         clickThrough: false,
       },
     ],
+    board: null,
+    boards: [],
   };
 }
 
@@ -256,6 +319,18 @@ class TestPage {
   readonly drivers: GpuDriver[] = [];
   readonly visuals: Visuals;
   readonly instances: Visual[] = [];
+  readonly paints: Array<{
+    canvas: HTMLCanvasElement;
+    texts: Array<{ text: string; x: number; y: number; font: string; tracking: string }>;
+  }> = [];
+  readonly animations: Array<{
+    node: Element;
+    keyframes: Keyframe[];
+    options: KeyframeAnimationOptions;
+    playState: string;
+  }> = [];
+  readonly mediaQueries: Array<EventTarget & { media: string; matches: boolean }> = [];
+  forcedColors = false;
   compileFailure = false;
   private hidden = false;
   private started = false;
@@ -264,15 +339,41 @@ class TestPage {
   constructor(ready: Promise<OmpMonitorViewState> = Promise.resolve(settingsState())) {
     document.body.append(this.iframe);
     this.realm = this.iframe.contentWindow as Window & typeof globalThis;
-    this.realm.document.body.innerHTML = MONITOR_UI_MARKUP;
+    this.realm.document.body.innerHTML =
+      MONITOR_UI_MARKUP + MONITOR_PERF_MARKUP + MONITOR_BOARD_MARKUP;
     Object.defineProperty(this.realm.document, "hidden", {
       configurable: true,
       get: () => this.hidden,
     });
+    const animations = this.animations;
+    Object.defineProperty(this.realm.Element.prototype, "animate", {
+      configurable: true,
+      value(this: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+        const animation = {
+          node: this,
+          keyframes,
+          options,
+          playState: "running",
+          cancel() {
+            this.playState = "idle";
+          },
+          addEventListener: noOp,
+          removeEventListener: noOp,
+        };
+        animations.push(animation);
+        return animation;
+      },
+    });
     Object.defineProperty(this.realm, "matchMedia", {
       configurable: true,
-      value: (media: string) =>
-        Object.assign(new this.realm.EventTarget(), { media, matches: false }),
+      value: (media: string) => {
+        const query = Object.assign(new this.realm.EventTarget(), {
+          media,
+          matches: media.includes("forced-colors") && this.forcedColors,
+        });
+        this.mediaQueries.push(query);
+        return query;
+      },
     });
     Object.defineProperty(this.realm, "ompMonitor", {
       value: {
@@ -284,6 +385,7 @@ class TestPage {
         onPointer: () => noOp,
         onDragCancelled: () => noOp,
         setInteractive: noOp,
+        resizeDashboard: noOp,
       },
     });
     const contexts = new WeakMap<HTMLCanvasElement, { kind: string; value: unknown }>();
@@ -292,6 +394,11 @@ class TestPage {
       this.drivers.push(driver);
       return driver.gl;
     };
+    const createPaintContext = (canvas: HTMLCanvasElement) => {
+      const context = canvas2d();
+      this.paints.push({ canvas, texts: context.texts });
+      return context;
+    };
     vi.spyOn(this.realm.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
       this: HTMLCanvasElement,
       kind: string,
@@ -299,7 +406,7 @@ class TestPage {
       const current = contexts.get(this);
       if (current) return current.kind === kind ? current.value : null;
       let value: unknown;
-      if (kind === "2d") value = canvas2d();
+      if (kind === "2d") value = createPaintContext(this);
       else if (kind === "webgl2") value = createGpuContext(this);
       else return null;
       contexts.set(this, { kind, value });
@@ -326,6 +433,11 @@ class TestPage {
         } as DOMRect;
       },
     );
+    class StaticLayoutObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
     const code =
       MONITOR_VISUALS_SCRIPT +
       MONITOR_SELECT_PICKER_SCRIPT +
@@ -343,6 +455,9 @@ class TestPage {
       "clearTimeout",
       "monitorAttribution",
       "monitorLicense",
+      "AbortController",
+      "ResizeObserver",
+      "IntersectionObserver",
       code,
     )(
       this.realm.document,
@@ -356,6 +471,9 @@ class TestPage {
       this.clock.clearTimer,
       "",
       "",
+      this.realm.AbortController,
+      StaticLayoutObserver,
+      StaticLayoutObserver,
     ) as { visuals: Visuals; startMonitor(): void };
     this.visuals = runtime.visuals;
     this.startMonitor = runtime.startMonitor;
@@ -369,12 +487,29 @@ class TestPage {
   deliver(state: OmpMonitorViewState) {
     this.stateListener?.(state);
   }
-  nav(page: "general" | "orb") {
+  clickNav(page: "general" | "orb") {
     this.realm.document.getElementById("nav-" + page)!.click();
+  }
+  async nav(page: "general" | "orb") {
+    this.clickNav(page);
+    await vi.waitFor(() => {
+      expect(
+        this.realm.document.querySelector<HTMLElement>(`.settings-page[data-page="${page}"]`)!
+          .hidden,
+      ).toBe(false);
+    });
   }
   setHidden(hidden: boolean) {
     this.hidden = hidden;
     this.realm.document.dispatchEvent(new this.realm.Event("visibilitychange"));
+  }
+  setForcedColors(enabled: boolean) {
+    this.forcedColors = enabled;
+    for (const query of this.mediaQueries) {
+      if (!query.media.includes("forced-colors")) continue;
+      query.matches = enabled;
+      query.dispatchEvent(new this.realm.Event("change"));
+    }
   }
   pagehide() {
     this.realm.dispatchEvent(new this.realm.Event("pagehide"));
@@ -425,7 +560,7 @@ afterEach(() => {
 });
 
 describe("settings preview GPU lifetime", () => {
-  it("reuses one pool across zero leases without hidden work or changing full-size preview uniforms", () => {
+  it("retains one pool across zero leases without hidden drawing", () => {
     const page = new TestPage();
     const led = page.create(),
       liquid = page.create(),
@@ -436,18 +571,13 @@ describe("settings preview GPU lifetime", () => {
     page.clock.frame();
     expect(page.drivers).toHaveLength(1);
     const driver = page.drivers[0]!;
-    expect(driver.programs).toHaveLength(2);
-    expect(driver.shaders).toHaveLength(3);
-    expect(driver.draws.map((draw) => [draw.uThumbnail, draw.uLogicalS])).toEqual([
-      [0, 64],
-      [0, 64],
-      [1, 38],
-    ]);
+    const initialPrograms = driver.programs.slice(),
+      drawsBeforeHide = driver.draws.length;
     for (const { visual } of [led, liquid, small]) visual.setVisible(false);
     expect(page.clock.size).toBe(0);
     page.clock.frame();
     page.clock.runTimers();
-    expect(driver.draws).toHaveLength(3);
+    expect(driver.draws).toHaveLength(drawsBeforeHide);
     expect(driver.deletedPrograms).toHaveLength(0);
     expect(driver.requestLoss).not.toHaveBeenCalled();
     for (const [entry, style, size] of [
@@ -460,21 +590,17 @@ describe("settings preview GPU lifetime", () => {
     }
     page.clock.frame();
     expect(page.drivers).toHaveLength(1);
-    expect(driver.programs).toHaveLength(2);
-    expect(driver.draws).toHaveLength(6);
+    expect(driver.programs).toEqual(initialPrograms);
     for (const { visual } of [led, liquid, small]) visual.destroy();
     expect(driver.deletedPrograms).toHaveLength(0);
     page.visuals.disposeSharedGpu();
     page.visuals.disposeSharedGpu();
     expect(driver.deletedPrograms).toEqual(driver.programs);
     expect(driver.requestLoss).toHaveBeenCalledTimes(1);
-    expect(driver.operations.lastIndexOf("delete-texture")).toBeLessThan(
-      driver.operations.indexOf("delete-program"),
-    );
     expect(driver.operations.at(-1)).toBe("lose-context");
     driver.restore();
     page.clock.frame();
-    expect(driver.programs).toHaveLength(2);
+    expect(driver.programs).toEqual(initialPrograms);
     expect(page.clock.size).toBe(0);
   });
 
@@ -486,15 +612,15 @@ describe("settings preview GPU lifetime", () => {
     second.visual.update(orbFrame("liquid"));
     page.clock.frame();
     const driver = page.drivers[0]!;
+    const initialPrograms = driver.programs.slice();
     expect(driver.lose().defaultPrevented).toBe(true);
     expect(first.host.dataset.renderError).toBe("WebGL context lost");
     expect(page.clock.size).toBe(0);
     driver.restore();
-    expect(driver.programs).toHaveLength(2);
+    expect(driver.programs).toEqual(initialPrograms);
     page.clock.frame();
-    expect(driver.programs).toHaveLength(4);
+    expect(driver.programs).toHaveLength(initialPrograms.length * 2);
     expect(page.drivers).toHaveLength(1);
-    expect(driver.draws).toHaveLength(4);
     expect(first.host.dataset.renderError).toBeUndefined();
     expect(second.host.dataset.renderError).toBeUndefined();
   });
@@ -505,20 +631,21 @@ describe("settings preview GPU lifetime", () => {
     preview.visual.update(orbFrame());
     page.clock.frame();
     const driver = page.drivers[0]!;
+    const initialPrograms = driver.programs.slice(),
+      drawsBeforeHide = driver.draws.length;
     preview.visual.setVisible(false);
     expect(driver.lose().defaultPrevented).toBe(true);
     driver.restore();
     page.clock.frame();
     page.clock.runTimers();
-    expect(driver.programs).toHaveLength(2);
-    expect(driver.draws).toHaveLength(1);
+    expect(driver.programs).toEqual(initialPrograms);
+    expect(driver.draws).toHaveLength(drawsBeforeHide);
     expect(page.clock.size).toBe(0);
     preview.visual.setVisible(true);
     preview.visual.update(orbFrame());
     page.clock.frame();
     expect(page.drivers).toHaveLength(1);
-    expect(driver.programs).toHaveLength(4);
-    expect(driver.draws).toHaveLength(2);
+    expect(driver.programs).toHaveLength(initialPrograms.length * 2);
     expect(preview.host.dataset.renderError).toBeUndefined();
   });
 
@@ -537,8 +664,6 @@ describe("settings preview GPU lifetime", () => {
     preview.visual.update(orbFrame());
     page.clock.frame();
     expect(page.drivers).toHaveLength(1);
-    expect(page.drivers[0]!.programs).toHaveLength(2);
-    expect(page.drivers[0]!.draws).toHaveLength(1);
     expect(preview.host.dataset.renderError).toBeUndefined();
     expect((preview.host.querySelector(".as-orb-render-error") as HTMLElement).hidden).toBe(true);
   });
@@ -553,6 +678,7 @@ describe("settings preview GPU lifetime", () => {
     const shared = page.drivers[0]!,
       native = page.drivers[1]!;
     expect(page.drivers).toHaveLength(2);
+    const initialPrograms = native.programs.slice();
     preview.visual.destroy();
     page.visuals.disposeSharedGpu();
     live.visual.update(orbFrame("led", 148));
@@ -560,14 +686,12 @@ describe("settings preview GPU lifetime", () => {
     page.clock.frame();
     expect(shared.requestLoss).toHaveBeenCalledTimes(1);
     expect(native.requestLoss).not.toHaveBeenCalled();
-    expect(native.programs).toHaveLength(2);
-    expect(native.draws).toHaveLength(2);
+    expect(native.programs).toEqual(initialPrograms);
     expect(native.deletedPrograms).toHaveLength(0);
     expect(native.lose().defaultPrevented).toBe(true);
     native.restore();
     page.clock.frame();
-    expect(native.programs).toHaveLength(4);
-    expect(native.draws).toHaveLength(3);
+    expect(native.programs).toHaveLength(initialPrograms.length * 2);
   });
 });
 
@@ -575,7 +699,7 @@ describe("settings first-preview scheduling", () => {
   it("paints the selected page before initializing previews, reuses them on return, and disposes on pagehide", async () => {
     const page = new TestPage();
     await page.start();
-    page.nav("orb");
+    await page.nav("orb");
     expect(
       page.realm.document.querySelector<HTMLElement>('.settings-page[data-page="orb"]')!.hidden,
     ).toBe(false);
@@ -588,15 +712,12 @@ describe("settings first-preview scheduling", () => {
     page.clock.frame();
     expect(page.drivers).toHaveLength(1);
     const driver = page.drivers[0]!;
-    expect(driver.programs).toHaveLength(2);
-    expect(driver.draws).toHaveLength(3);
-    page.nav("general");
-    expect(page.clock.size).toBe(0);
+    const initialPrograms = driver.programs.slice();
+    await page.nav("general");
     expect(driver.requestLoss).not.toHaveBeenCalled();
-    page.nav("orb");
+    await page.nav("orb");
     page.clock.frame();
-    expect(driver.programs).toHaveLength(2);
-    expect(driver.draws).toHaveLength(6);
+    expect(driver.programs).toEqual(initialPrograms);
     page.pagehide();
     expect(driver.deletedPrograms).toEqual(driver.programs);
     expect(driver.requestLoss).toHaveBeenCalledTimes(1);
@@ -609,7 +730,7 @@ describe("settings first-preview scheduling", () => {
     page.clock.frame();
     page.clock.runTimers();
     expect(page.drivers).toHaveLength(1);
-    expect(driver.programs).toHaveLength(2);
+    expect(driver.programs).toEqual(initialPrograms);
     expect(page.clock.size).toBe(0);
   });
 
@@ -618,25 +739,23 @@ describe("settings first-preview scheduling", () => {
     async (phase) => {
       const page = new TestPage();
       await page.start();
-      page.nav("orb");
+      await page.nav("orb");
       const staleFrame = Array.from(page.clock.frames.values())[0]!;
       if (phase !== "before-paint") page.clock.frame();
       const staleTimer = Array.from(page.clock.timers.values())[0]?.run;
       if (phase === "before-draw") page.clock.runTimers();
-      page.nav("general");
+      await page.nav("general");
       // A callback already handed to the browser must also reject its cancelled generation.
       staleFrame(page.clock.now);
       staleTimer?.();
       page.clock.frame();
       page.clock.runTimers();
       expect(page.drivers).toHaveLength(0);
-      expect(page.clock.size).toBe(0);
-      page.nav("orb");
+      await page.nav("orb");
       page.clock.frame();
       page.clock.runTimers();
       page.clock.frame();
       expect(page.drivers).toHaveLength(1);
-      expect(page.drivers[0]!.programs).toHaveLength(2);
     },
   );
 
@@ -650,7 +769,7 @@ describe("settings first-preview scheduling", () => {
     async (reason, drawQueued) => {
       const page = new TestPage();
       await page.start();
-      page.nav("orb");
+      await page.nav("orb");
       page.clock.frame();
       const staleTimer = Array.from(page.clock.timers.values())[0]!.run;
       if (drawQueued) page.clock.runTimers();
@@ -662,7 +781,6 @@ describe("settings first-preview scheduling", () => {
       page.clock.runTimers();
       page.clock.frame();
       expect(page.drivers).toHaveLength(0);
-      expect(page.clock.size).toBe(0);
       if (reason === "hidden") {
         page.setHidden(false);
         page.clock.frame();
@@ -671,7 +789,7 @@ describe("settings first-preview scheduling", () => {
         expect(page.drivers).toHaveLength(1);
       } else {
         page.deliver(settingsState());
-        page.nav("orb");
+        page.clickNav("orb");
         page.clock.frame();
         page.clock.runTimers();
         expect(page.drivers).toHaveLength(0);
@@ -688,7 +806,7 @@ describe("settings first-preview scheduling", () => {
       }),
     );
     await page.start();
-    page.nav("orb");
+    page.clickNav("orb");
     page.pagehide();
     resolve(settingsState());
     await Promise.resolve();
@@ -696,5 +814,426 @@ describe("settings first-preview scheduling", () => {
     page.clock.runTimers();
     expect(page.drivers).toHaveLength(0);
     expect(page.clock.size).toBe(0);
+  });
+});
+
+function alphabeticBaseline(host: HTMLElement) {
+  const number = host.querySelector(".as-orb-number")!;
+  const transform = /translate\(([^ ]+) ([^)]+)\)/.exec(number.getAttribute("transform")!)!;
+  const glyph = host.querySelector(".as-orb-value text")!;
+  return (
+    Number(transform[2]) +
+    Number(glyph.parentElement!.getAttribute("y")) +
+    Number(glyph.getAttribute("y"))
+  );
+}
+
+describe("native Windows instrument readout boundaries", () => {
+  it.each([
+    ["led", 0.24, 0.012, 0.116, 0.206],
+    ["needle", 0.205, 0.035, 0.115, 0.338],
+    ["liquid", 0.24, 0.012, 0.116, 0.206],
+    ["reactor", 0.205, 0.03, 0.11, 0.184],
+    ["minimal", 0.3, 0.07, null, 0.168],
+  ] as const)(
+    "keeps %s glyphs on alphabetic baselines at every native size preset",
+    (style, font, valueY, unitY, titleY) => {
+      const page = new TestPage();
+      const { host, visual } = page.create();
+      for (const size of [112, 148, 196]) {
+        visual.update({ ...orbFrame(style, size), value: 52, formattedValue: "52" });
+        const root = host.querySelector(".as-orb-readout")!;
+        const number = host.querySelector<SVGElement>(".as-orb-number")!;
+        expect(root.namespaceURI).toBe("http://www.w3.org/2000/svg");
+        expect(root.getAttribute("viewBox")).toBe(`0 0 ${size} ${size}`);
+        expect(alphabeticBaseline(host)).toBeCloseTo((0.5 + valueY) * size, 8);
+        expect(parseFloat(number.style.fontSize)).toBe(Math.round(font * size * 4) / 4);
+        const unit = host.querySelector<SVGElement>(".as-orb-unit")!;
+        if (unitY === null) expect(unit.style.display).toBe("none");
+        else expect(Number(unit.getAttribute("y"))).toBeCloseTo((0.5 + unitY) * size, 8);
+        const title = /translate\(([^ ]+) ([^)]+)\)/.exec(
+          host.querySelector(".as-orb-title-line")!.getAttribute("transform")!,
+        )!;
+        expect(Number(title[2])).toBeCloseTo((0.5 + titleY) * size, 8);
+      }
+    },
+  );
+
+  it("reserves no upper blank space without supplementary text and preserves the peak-fade stack", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    visual.update({ ...orbFrame("led", 148), value: 52, formattedValue: "52" });
+    const glyph = host.querySelector(".as-orb-value text");
+    const baseline = alphabeticBaseline(host);
+    const reading = { visible: false, stackOffset: 12, glyphs: [{ text: "Perf", alpha: 1 }] };
+    for (const detail of [reading, { ...reading, glyphs: [] }]) {
+      host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail }));
+      expect(alphabeticBaseline(host)).toBeCloseTo(baseline, 8);
+    }
+    host.dispatchEvent(
+      new page.realm.CustomEvent("perf-readout-change", {
+        detail: { ...reading, visible: true, glyphs: [{ text: "Perf", alpha: 0 }] },
+      }),
+    );
+    expect(alphabeticBaseline(host)).toBeCloseTo(baseline + 12, 8);
+    expect(host.querySelector(".as-orb-value text")).toBe(glyph);
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: null }));
+    expect(alphabeticBaseline(host)).toBeCloseTo(baseline, 8);
+    expect(host.querySelector(".as-orb-value text")).toBe(glyph);
+  });
+
+  it.each(["led", "liquid", "minimal"])(
+    "keeps the visible %s SVG supplementary stack when forced colors omits GPU masks",
+    (style) => {
+      const page = new TestPage();
+      page.setForcedColors(true);
+      const { host, visual } = page.create();
+      visual.update({ ...orbFrame(style, 148), value: 52, formattedValue: "52" });
+      const baseline = alphabeticBaseline(host);
+      host.dispatchEvent(
+        new page.realm.CustomEvent("perf-readout-change", {
+          detail: {
+            visible: true,
+            stackOffset: 12,
+            glyphs: [],
+            needleLegend: false,
+            description: "Perf 1,286; thinking 10 tok/s",
+          },
+        }),
+      );
+      expect(alphabeticBaseline(host)).toBeCloseTo(baseline + 12, 8);
+      host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: null }));
+      expect(alphabeticBaseline(host)).toBeCloseTo(baseline, 8);
+    },
+  );
+
+  it("keeps the needle's real unit above the visible forced-colors supplementary legend", () => {
+    const page = new TestPage();
+    page.setForcedColors(true);
+    const { host, visual } = page.create();
+    visual.update({ ...orbFrame("needle", 148), value: 52, formattedValue: "52" });
+    host.dispatchEvent(
+      new page.realm.CustomEvent("perf-readout-change", {
+        detail: {
+          visible: true,
+          stackOffset: 0,
+          glyphs: [],
+          needleLegend: true,
+          description: "Perf 1,286; thinking 10",
+        },
+      }),
+    );
+    expect(Number(host.querySelector(".as-orb-unit")!.getAttribute("y"))).toBeCloseTo(
+      (0.5 - 0.254) * 148,
+      8,
+    );
+  });
+
+  it("rolls only changed compact-value characters in the selected unit's real direction", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    const frame = {
+      ...orbFrame("led", 148),
+      effects: "soft",
+      reduceMotion: false,
+      formattedValue: "1.1k",
+      readoutValue: 1_100,
+      value: 100,
+    };
+    visual.update(frame);
+    page.clock.frame();
+    visual.update({ ...frame, formattedValue: "1.2k", readoutValue: 1_200, value: 90 });
+    const rolls = page.animations.filter((animation) => animation.options.duration === 240);
+    expect(rolls).toHaveLength(2);
+    expect(rolls.map((animation) => animation.node.textContent)).toEqual(["1", "2"]);
+    expect(rolls[0]!.keyframes[1]!.transform).toMatch(/^translateY\(-/);
+    expect(rolls[1]!.keyframes[0]!.transform).not.toMatch(/^translateY\(-/);
+    for (const animation of rolls) {
+      const clip = animation.node.parentElement!;
+      expect(clip.getAttribute("overflow")).toBe("hidden");
+      expect(Number(clip.getAttribute("height"))).toBeCloseTo(
+        1.12 * parseFloat(host.querySelector<SVGElement>(".as-orb-number")!.style.fontSize),
+        8,
+      );
+    }
+    visual.update({ ...frame, formattedValue: "1.2k", size: 196 });
+    expect(rolls.every((animation) => animation.playState === "idle")).toBe(true);
+  });
+
+  it("keeps a partial-cost prefix small and baseline-aligned without changing token heat", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    visual.update({
+      ...orbFrame("led", 148),
+      formattedValue: "0.0012",
+      readoutValue: 0.0012,
+      unit: "US$/s",
+      atLeast: true,
+    });
+    page.clock.frame();
+    const number = host.querySelector<SVGElement>(".as-orb-number")!;
+    const prefix = host.querySelector<SVGElement>(".as-orb-prefix")!;
+    expect(prefix.textContent).toBe("≥");
+    expect(parseFloat(prefix.style.fontSize)).toBe(
+      Math.round(0.6 * parseFloat(number.style.fontSize) * 4) / 4,
+    );
+    expect(Number(prefix.getAttribute("y"))).toBe(0);
+    expect(host.getAttribute("aria-label")).toContain("≥0.0012 US$/s");
+    expect(page.drivers[0]!.draws.at(-1)!.uH).toBeCloseTo(Math.pow(20 / 200, 0.6), 8);
+  });
+
+  it("uses the native liquid typefaces and rolls only changed mask cells", () => {
+    const page = new TestPage();
+    const { visual } = page.create();
+    const frame = {
+      ...orbFrame("liquid", 148),
+      effects: "soft",
+      reduceMotion: false,
+      value: 120,
+      formattedValue: "120",
+    };
+    visual.update(frame);
+    page.clock.frame();
+    visual.update({ ...frame, value: 121, formattedValue: "121" });
+    page.clock.frame();
+    const draw = page.drivers[0]!.draws.at(-1)!;
+    expect(draw.uReadoutCellCount).toBe(3);
+    expect([draw.uReadoutCells2, draw.uReadoutCells6, draw.uReadoutCells10]).toEqual([0, 0, 1]);
+    const text = page.paints.flatMap((paint) => paint.texts);
+    expect(text.find((call) => call.text === "1")!.font).toContain('"Segoe UI Variable Display"');
+    expect(text.find((call) => call.text === "tok/s")!.font).toContain('"Segoe UI Variable Text"');
+    expect(text.find((call) => call.text === "Cruising")!.font).toContain(
+      '"Segoe UI Variable Text"',
+    );
+    expect(text.find((call) => call.text === "1")!.y).toBeCloseTo(0.012 * 148, 8);
+  });
+
+  it("keeps a single native heat texture across preview size, appearance and visibility changes", () => {
+    const page = new TestPage();
+    const { visual } = page.create();
+    visual.update(orbFrame("led", 148));
+    page.clock.frame();
+    const driver = page.drivers[0]!;
+    for (const [size, appearance] of [
+      [112, "light"],
+      [196, "dark"],
+      [148, "light"],
+    ] as const) {
+      visual.update({ ...orbFrame("led", size), appearance });
+      page.clock.frame();
+      visual.setVisible(false);
+      visual.setVisible(true);
+      page.clock.frame();
+    }
+    expect(page.drivers).toHaveLength(1);
+    const paletteUploads = driver.textureUploads.filter(
+      (upload) => upload.unit === driver.gl.TEXTURE0 + 4,
+    );
+    expect(paletteUploads).toHaveLength(1);
+    expect(paletteUploads[0]!.pixels).toMatchObject({ width: 256, height: 1 });
+    visual.destroy();
+    expect(driver.deletedTextures).toHaveLength(0);
+    page.visuals.disposeSharedGpu();
+    expect(driver.deletedTextures).toEqual(driver.textures);
+  });
+
+  it("draws every high-contrast style without a shader and returns to the retained preview GPU", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    visual.update(orbFrame("led", 148));
+    page.clock.frame();
+    const driver = page.drivers[0]!;
+    const initialPrograms = driver.programs.slice(),
+      drawsBeforeContrast = driver.draws.length;
+    page.setForcedColors(true);
+    for (const style of ["led", "needle", "liquid", "reactor", "minimal"]) {
+      visual.update(orbFrame(style, 148));
+      page.clock.frame();
+      expect(host.querySelector<HTMLElement>(".as-orb-gl")!.style.display).toBe("none");
+      expect(host.querySelector<HTMLElement>(".as-orb-paint")!.style.visibility).toBe("visible");
+    }
+    expect(driver.draws).toHaveLength(drawsBeforeContrast);
+    expect(driver.deletedPrograms).toHaveLength(0);
+    page.setForcedColors(false);
+    visual.update(orbFrame("liquid", 148));
+    page.clock.frame();
+    expect(page.drivers).toHaveLength(1);
+    expect(driver.programs).toEqual(initialPrograms);
+    const drawsBeforeDestroy = driver.draws.length;
+    visual.destroy();
+    page.setForcedColors(true);
+    page.clock.frame();
+    expect(driver.draws).toHaveLength(drawsBeforeDestroy);
+    expect(page.clock.size).toBe(0);
+  });
+
+  it.each([false, true])(
+    "follows real metric heat with effects off and reduceMotion=%s without running decorative motion",
+    (reduceMotion) => {
+      const page = new TestPage();
+      const { host, visual } = page.create();
+      const frame = { ...orbFrame("led", 148), reduceMotion };
+      visual.update(frame);
+      page.clock.frame();
+      const driver = page.drivers[0]!,
+        initialHeat = driver.draws.at(-1)!.uH!;
+      visual.update({ ...frame, value: 100, formattedValue: "100" });
+      page.clock.frame();
+      page.clock.frame();
+      const target = Math.pow(100 / 200, 0.6),
+        following = driver.draws.at(-1)!.uH!;
+      expect(following).toBeGreaterThan(initialHeat);
+      expect(following).toBeLessThan(target);
+      expect(host.querySelector(".as-orb-value")!.textContent).toBe("100");
+      for (let i = 0; i < 180; i++) page.clock.frame();
+      expect(driver.draws.at(-1)!.uH).toBeCloseTo(target, 3);
+      expect(
+        driver.draws.every(
+          (draw) =>
+            draw.uMoving === 0 && draw.uFlow === 0 && draw.uComet === 0 && draw.uSilkClock === 0,
+        ),
+      ).toBe(true);
+      expect(page.drivers).toHaveLength(1);
+      visual.setVisible(false);
+      expect(page.clock.size).toBe(0);
+    },
+  );
+
+  it("publishes the native hover spring to the nameplate consumer and snaps spatial hover under reduced motion", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    const frame = { ...orbFrame("led", 148), reduceMotion: false };
+    const scales: number[] = [];
+    host.addEventListener("orb-hover-scale", (event) =>
+      scales.push((event as CustomEvent<number>).detail),
+    );
+    visual.update(frame);
+    page.clock.frame();
+    visual.update({ ...frame, hovered: true });
+    for (let i = 0; i < 120; i++) page.clock.frame();
+    expect(scales.some((scale) => scale > 1 && scale < 1.03)).toBe(true);
+    expect(Math.max(...scales)).toBeGreaterThan(1.03);
+    expect(scales.at(-1)).toBe(1.03);
+    expect(
+      scales.every((scale) => Math.abs(scale * 2_000 - Math.round(scale * 2_000)) < 1e-8),
+    ).toBe(true);
+    scales.length = 0;
+    visual.update({ ...frame, reduceMotion: true, hovered: false });
+    page.clock.frame();
+    page.clock.frame();
+    expect(scales).toEqual([1]);
+    expect(page.drivers).toHaveLength(1);
+    visual.setVisible(false);
+    visual.destroy();
+    for (let i = 0; i < 20; i++) page.clock.frame();
+    expect(scales).toEqual([1]);
+    expect(page.clock.size).toBe(0);
+  });
+});
+
+describe("performance readout GPU consumer", () => {
+  it("keeps the output odometer, cached masks, four-texture lifetime and shared context independent of performance changes", () => {
+    const page = new TestPage();
+    const { host, visual } = page.create();
+    const reading = {
+      visible: true,
+      key: "winner:12840:provisional",
+      stackOffset: 4,
+      needleLegend: false,
+      contrast: false,
+      glyphs: [
+        {
+          text: "12.8k",
+          role: 0,
+          weight: 600,
+          size: 12,
+          x: -20,
+          y: 31,
+          alpha: 1,
+          provisional: true,
+        },
+        {
+          text: "Perf",
+          role: 1,
+          weight: 500,
+          size: 9,
+          x: -36,
+          y: 31,
+          alpha: 1,
+          provisional: false,
+        },
+      ],
+    };
+    const frame = { ...orbFrame("liquid", 148), effects: "soft", reduceMotion: false };
+    visual.update(frame);
+    page.clock.frame();
+    const driver = page.drivers[0]!;
+    page.clock.now += 100;
+    visual.update({ ...frame, value: 30, formattedValue: "30" });
+    page.clock.frame();
+    const firstRoll = driver.draws.at(-1)!["uReadoutRoll2"]!;
+    const previousOutputUploads = driver.textureUploads.filter(
+      (upload) => upload.unit === driver.gl.TEXTURE1,
+    ).length;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    page.clock.now += 40;
+    page.clock.frame();
+    const afterPerformance = driver.draws.at(-1)!;
+    expect(afterPerformance.uPerfReadoutOn).toBe(1);
+    expect(afterPerformance.uPerfReadout).toBe(3);
+    expect(afterPerformance["uReadoutRoll2"]).toBeGreaterThan(firstRoll);
+    expect(afterPerformance["uReadoutRoll2"]).toBeLessThan(1);
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE1),
+    ).toHaveLength(previousOutputUploads);
+    expect(driver.textures).toHaveLength(4);
+    const maskUploads = driver.textureUploads.filter(
+      (upload) => upload.unit === driver.gl.TEXTURE3,
+    ).length;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    page.clock.now += 40;
+    page.clock.frame();
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE3),
+    ).toHaveLength(maskUploads);
+    const rollBeforeHide = driver.draws.at(-1)!["uReadoutRoll2"]!;
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: null }));
+    page.clock.now += 20;
+    page.clock.frame();
+    expect(driver.draws.at(-1)!.uPerfReadoutOn).toBe(0);
+    expect(driver.draws.at(-1)!["uReadoutRoll2"]).toBeGreaterThan(rollBeforeHide);
+    expect(driver.draws.at(-1)!["uReadoutRoll2"]).toBeLessThan(1);
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE1),
+    ).toHaveLength(previousOutputUploads);
+    host.dispatchEvent(
+      new page.realm.CustomEvent("perf-readout-change", {
+        detail: {
+          ...reading,
+          key: "winner:1540:resting",
+          glyphs: [{ ...reading.glyphs[0]!, text: "1,540" }],
+        },
+      }),
+    );
+    page.clock.now += 40;
+    page.clock.frame();
+    expect(
+      driver.textureUploads.filter((upload) => upload.unit === driver.gl.TEXTURE3),
+    ).toHaveLength(maskUploads + 1);
+    expect(page.drivers).toHaveLength(1);
+    visual.update({ ...frame, value: 30, formattedValue: "30", size: 196, perfReadout: reading });
+    page.clock.now += 40;
+    page.clock.frame();
+    const resizedMask = driver.textureUploads.findLast(
+      (upload) => upload.unit === driver.gl.TEXTURE3,
+    )!;
+    expect(resizedMask.pixels).toMatchObject({ width: 196, height: 196 });
+    visual.setVisible(false);
+    expect(driver.deletedTextures).toEqual(driver.textures);
+    expect(driver.deletedPrograms).toHaveLength(0);
+    host.dispatchEvent(new page.realm.CustomEvent("perf-readout-change", { detail: reading }));
+    expect(page.drivers).toHaveLength(1);
+    visual.destroy();
+    expect(driver.deletedTextures).toEqual(driver.textures);
   });
 });

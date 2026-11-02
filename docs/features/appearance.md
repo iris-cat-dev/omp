@@ -44,7 +44,9 @@ The candidate grid is continuously scrollable and virtualized, not paginated or 
 
 **Manage** selects/removes multiple records, including offscreen candidates, without deleting source files. Removing the active candidate restores theme background rather than choosing another. Re-adding the same file makes a new candidate and does not reactivate the old selection. Missing/undecodable files remain listed: restore and retry or remove the record.
 
-Supported extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `mp4`, `m4v`, `webm`, `mov`, `ogv`. Playback depends on codec; Desktop does not transcode. **URL** accepts HTTP(S) images/videos and detects type from pathname, including signed video URLs with query strings.
+Accepted file extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `mp4`, `m4v`, `webm`, `mov`, `ogv`. Playback depends on the runtime and codec; Desktop does not transcode. **URL** accepts HTTP(S) images/videos and detects type from pathname, including signed video URLs with query strings.
+
+**Windows mini-electron 0.1.28:** its media-player factory is not implemented. Valid MP4 and WebM files fail with “error creating media player” even over HTTP; changing a filename or codec does not repair that missing player. Images remain usable. The current Windows package retains this runtime; video-wallpaper support is deferred.
 
 ### Transparency and loading
 
@@ -52,7 +54,7 @@ Supported extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `mp4`,
 
 Base workspaces become transparent only after media loads, including newly selected tabs. Floating menus, palettes, tooltips, dialogs, and notifications stay opaque. Text still follows theme: match wallpaper/theme or reduce transparency if contrast suffers. Load errors appear in Wallpaper settings and retain normal surfaces. Source switching or load recovery preserves focused inputs and pet-creation drafts. Selected media and committed transparency persist across restarts.
 
-Local media streams via app-scoped opaque IDs instead of whole-file renderer IPC. Windows/Linux native caption controls use a transparent overlay on the HTML titlebar, not an opaque patch; the top resize strip remains inside titlebar bounds and aligned with the right edge when restored/maximized. Model lists and Thinking/Fast/Context window settings remain opaque, theme-matched, and readable over media.
+Local media uses app-scoped opaque IDs rather than whole-file renderer IPC. The mini-electron 0.1.28 protocol adapter buffers each response before delivery, so that runtime does not provide end-to-end media streaming. Windows/Linux native caption controls use a transparent overlay on the HTML titlebar, not an opaque patch; the top resize strip remains inside titlebar bounds and aligned with the right edge when restored/maximized. Model lists and Thinking/Fast/Context window settings remain opaque, theme-matched, and readable over media.
 
 ## Isolated Windows wallpaper trial
 

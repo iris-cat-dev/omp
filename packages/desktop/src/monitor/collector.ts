@@ -6,11 +6,14 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 import { OmpFileDiscovery } from "./discovery.js";
 import { currentDayUsage, OmpMonitorHistory } from "./history.js";
-import { calendarDays, liveMetrics } from "./math.js";
+import { calendarDay, liveMetrics } from "./math.js";
 import { emptyUsage, hashId, object, OmpNumericParser, safeLabel } from "./parser.js";
 import type { NumericResponse, NumericSink } from "./parser.js";
 import { getBundledPricingState } from "./pricing.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
+import { OmpPerformanceMonitor } from "./performance-monitor.js";
+import type { OmpPerformanceSource } from "./performance-reader-file.js";
+import { OmpPerformanceLineReader } from "./performance-reader.js";
 import {
   coverageStatus,
   filterOptions,
@@ -54,6 +57,8 @@ const RESPONSE_FIELDS: ReadonlyArray<keyof NumericResponse> = [
   "model",
   "provider",
   "serviceTier",
+  "speedMode",
+  "effortMode",
   "endMs",
   "startMs",
   "ttftMs",
@@ -74,11 +79,29 @@ function sameCompletionFacts(left: NumericResponse, right: NumericResponse): boo
   );
 }
 
+function sameResponseFacts(left: NumericResponse, right: NumericResponse): boolean {
+  for (const field of RESPONSE_FIELDS) {
+    if (field === "speedMode" || field === "effortMode") {
+      if (
+        left[field]?.value !== right[field]?.value ||
+        left[field]?.provider !== right[field]?.provider ||
+        left[field]?.evidence !== right[field]?.evidence
+      ) {
+        return false;
+      }
+    } else if (left[field] !== right[field]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface OmpLocalMonitorOptions {
   roots?: OmpMonitorRoot[];
   now?: () => number;
   estimateCost?: (usage: OmpMonitorCostInput) => number | null;
   getPricing?: () => OmpMonitorPricing;
+  performanceCacheDir?: string;
 }
 
 /** Read-only OMP session collector. No transcript text survives a complete line's numeric extraction. */
@@ -87,13 +110,15 @@ export class OmpLocalMonitor {
   private readonly clock: () => number;
   private readonly getPricing: () => OmpMonitorPricing;
   private readonly history: OmpMonitorHistory;
+  private readonly performance: OmpPerformanceMonitor;
   private readonly files = new Map<string, FileState>();
   private readonly candidates = new Map<string, Map<string, Candidate>>();
   private readonly canonical = new Map<string, Candidate>();
-  private readonly insertionOrder = new Map<string, { key: string; fileId: string }>();
+  /** Oldest completion first; archive backfill cannot evict newer live facts at the record cap. */
+  private readonly retained: Candidate[] = [];
+  private readonly retainedPositions = new WeakMap<Candidate, number>();
   private readonly snapshots = new Map<string, OmpMonitorSnapshot>();
   private numericRevision = 0;
-  private retainedCutoff: number | null = null;
   private discoveryIssues = new Set<MonitorIssue>();
   private roots: RootState[] = [];
   private pendingBytes = 0;
@@ -102,7 +127,6 @@ export class OmpLocalMonitor {
   private checkCursor = 0;
   private lastDiscovery = -Infinity;
   private currentNow = 0;
-  private cutoff = 0;
   private droppedRecords = false;
   private discoverySkipped = 0;
   private disposed = false;
@@ -115,9 +139,8 @@ export class OmpLocalMonitor {
     this.clock = options.now ?? Date.now;
     this.getPricing = options.getPricing ?? getBundledPricingState;
     this.history = new OmpMonitorHistory(options.estimateCost);
+    this.performance = new OmpPerformanceMonitor({ cacheDir: options.performanceCacheDir });
     this.currentNow = this.readNow();
-    this.cutoff = calendarDays(this.currentNow)[0]!.start;
-    this.retainedCutoff = this.cutoff;
   }
 
   poll(options: { refresh?: boolean } = {}): Promise<OmpMonitorSnapshot> {
@@ -134,9 +157,10 @@ export class OmpLocalMonitor {
     this.files.clear();
     this.candidates.clear();
     this.canonical.clear();
-    this.insertionOrder.clear();
+    this.retained.length = 0;
     this.snapshots.clear();
     this.history.clear();
+    this.performance.dispose();
     this.pendingBytes = 0;
     this.pendingTools = 0;
     this.roots = [];
@@ -155,7 +179,9 @@ export class OmpLocalMonitor {
     const priceVersion = `${pricing.prices.version}:${pricing.prices.fetchedAt ?? ""}:${Math.floor(now / 60_000)}`;
     const files = scopeFiles(this.files.values(), selected);
     const facts = scopeResponses(this.canonical.values(), files.ids, now);
-    const activity = projectActivity(files, facts, now);
+    const activity = projectActivity(files, facts, now, (input) =>
+      this.history.quoteCost(input, priceVersion),
+    );
     const live = liveMetrics(facts.responses, activity.estimates, now);
     const history = this.history.getDays(
       selected,
@@ -165,6 +191,7 @@ export class OmpLocalMonitor {
       priceVersion,
     );
     const currentPeak = history.peaks.at(-1)!;
+    const currentTotalPeak = history.totalPeaks.at(-1)!;
     const coverage = projectCoverage(files.all, this.roots, {
       issues: this.discoveryIssues,
       skipped: this.discoverySkipped,
@@ -172,6 +199,15 @@ export class OmpLocalMonitor {
       visibleCount: activity.visibleCount,
       numericLimited: history.limited,
     });
+    const scanning = coverage.issues.includes("scan_pending");
+    const performance = this.performance.getSnapshot(
+      files.ids,
+      now,
+      new Set(activity.agents.map((agent) => agent.id)),
+    );
+    // Missing numeric ownership cannot certify a complete ordered performance history.
+    performance.scanning ||= scanning;
+    performance.limited ||= coverage.limited;
     const snapshot: OmpMonitorSnapshot = {
       updatedAt: now,
       scope: selected,
@@ -191,14 +227,28 @@ export class OmpLocalMonitor {
         lastResponseAt: history.lastResponseAt,
         peakAt: currentPeak.at,
         peakObservedAt: currentPeak.observedAt,
+        totalPeakAt: currentTotalPeak.at,
+        totalPeakObservedAt: currentTotalPeak.observedAt,
       },
       rate: {
         measuredTps: live.measuredTps,
         estimatedTps: live.estimatedTps,
+        measuredTotalTps: live.measuredTotalTps,
+        estimatedTotalTps: live.estimatedTotalTps,
         estimatedShare: live.estimatedShare,
+        measuredThinkingTps: live.measuredThinkingTps,
+        estimatedThinkingTps: live.estimatedThinkingTps,
       },
       today: currentDayUsage(history.days),
       days: history.days,
+      breakdowns: history.breakdowns,
+      historyRange: {
+        startDate: history.startDate,
+        endDate: history.endDate,
+        limited: coverage.limited,
+        scanning,
+      },
+      performance,
       agents: activity.agents,
       series: live.series,
       coverage,
@@ -215,17 +265,33 @@ export class OmpLocalMonitor {
 
   private async collect(refresh: boolean): Promise<OmpMonitorSnapshot> {
     if (this.disposed) throw new Error("Monitor disposed");
+    const previousNow = this.currentNow;
     this.currentNow = this.readNow();
     this.snapshots.clear();
-    const dates = calendarDays(this.currentNow);
-    this.cutoff = dates[0]!.start;
     await this.refreshDiscovery(refresh);
-    this.pruneRetention(dates.at(-1)!.end + STALE_MS);
+    for (const file of this.files.values())
+      file.performance.advanceFloor(this.currentNow - 30 * 60_000);
+    if (this.currentNow < previousNow) this.pruneFutureRecords(this.currentNow + STALE_MS);
     await this.readScheduled();
     for (const file of this.files.values()) {
       file.parser.discardStaleTools(this.currentNow);
       this.syncToolCount(file);
     }
+    const performanceSources: OmpPerformanceSource[] = [];
+    for (const file of this.files.values()) {
+      const source: OmpPerformanceSource = {
+        id: file.id,
+        path: file.path,
+        phase: this.currentNow - file.parser.lastActivityAt > STALE_MS ? "idle" : file.parser.phase,
+        current: file.performance,
+      };
+      if (file.identity) source.identity = file.identity;
+      performanceSources.push(source);
+    }
+    await this.performance.poll(performanceSources, this.currentNow, {
+      revision: this.numericRevision,
+      owner: (key) => this.canonical.get(key)?.file.id,
+    });
     this.snapshots.clear();
     return this.getSnapshot();
   }
@@ -246,15 +312,12 @@ export class OmpLocalMonitor {
     }
   }
 
-  private pruneRetention(futureLimit: number): void {
-    if (this.retainedCutoff === this.cutoff) return;
+  private pruneFutureRecords(futureLimit: number): void {
     for (const [key, entries] of this.candidates) {
       for (const [fileId, candidate] of entries) {
-        if (candidate.response.endMs < this.cutoff || candidate.response.endMs > futureLimit)
-          this.removeCandidate(key, fileId);
+        if (candidate.response.endMs > futureLimit) this.removeCandidate(key, fileId);
       }
     }
-    this.retainedCutoff = this.cutoff;
   }
 
   private async readScheduled(): Promise<void> {
@@ -343,6 +406,7 @@ export class OmpLocalMonitor {
     this.pendingTools -= file.toolCount;
     file.toolCount = 0;
     file.parser = new OmpNumericParser(file.id);
+    file.performance = new OmpPerformanceLineReader(this.currentNow - 30 * 60_000, "current");
     file.offset = 0;
     file.parts = [];
     file.pendingLength = 0;
@@ -708,6 +772,7 @@ export class OmpLocalMonitor {
 
   private apply(file: FileState, value: unknown, historyOnly = false): void {
     file.parser.apply(value, this.sink(file), historyOnly, file.ingestPosition);
+    file.performance.apply(value, file.ingestPosition);
     this.syncToolCount(file);
   }
 
@@ -737,8 +802,11 @@ export class OmpLocalMonitor {
 
   private upsert(file: FileState, response: NumericResponse): boolean {
     if (this.disposed) return false;
-    if (response.endMs < this.cutoff || response.endMs > this.currentNow + STALE_MS) return true;
-    const composite = `${file.id}:${response.key}`;
+    if (response.endMs > this.currentNow + STALE_MS) return true;
+    if (!calendarDay(response.endMs)) {
+      file.issues.add("record_limit");
+      return true;
+    }
     const existing = this.candidates.get(response.key)?.get(file.id);
     // Tail-first extraction may encounter a newer revision before an older history copy.
     if (existing && existing.position > file.ingestPosition) return false;
@@ -747,37 +815,85 @@ export class OmpLocalMonitor {
     response.feedbackEligible = sameCompletion
       ? existing.response.feedbackEligible
       : file.ingestFeedback;
-    if (existing) {
-      let unchanged = true;
-      for (const field of RESPONSE_FIELDS) {
-        if (existing.response[field] !== response[field]) {
-          unchanged = false;
-          break;
-        }
-      }
-      if (unchanged) {
-        existing.position = file.ingestPosition;
-        return false;
-      }
+    if (existing && sameResponseFacts(existing.response, response)) {
+      existing.position = file.ingestPosition;
+      return false;
     }
-    if (!existing && this.insertionOrder.size >= MONITOR_LIMITS.records) {
-      const oldest = this.insertionOrder.values().next().value;
-      if (oldest) this.removeCandidate(oldest.key, oldest.fileId);
+    if (!existing && this.retained.length >= MONITOR_LIMITS.records) {
       this.droppedRecords = true;
+      const oldest = this.retained[0];
+      if (!oldest || response.endMs < oldest.response.endMs) return true;
+      this.removeCandidate(oldest.response.key, oldest.file.id);
     }
     const entries = this.candidates.get(response.key) ?? new Map<string, Candidate>();
     const candidate = { file, response, position: file.ingestPosition };
     entries.set(file.id, candidate);
     this.candidates.set(response.key, entries);
     file.keys.add(response.key);
-    this.insertionOrder.delete(composite);
-    this.insertionOrder.set(composite, { key: response.key, fileId: file.id });
+    if (existing) this.forgetRetained(existing);
+    this.retainCandidate(candidate);
     const canonical = this.canonical.get(response.key);
     if (!canonical || canonical.file.id === file.id || file.order < canonical.file.order) {
       this.canonical.set(response.key, candidate);
       this.numericRevision++;
     }
     return !sameCompletion;
+  }
+
+  private retainCandidate(candidate: Candidate): void {
+    const index = this.retained.length;
+    this.retained.push(candidate);
+    this.retainedPositions.set(candidate, index);
+    this.siftRetainedUp(index);
+  }
+
+  private forgetRetained(candidate: Candidate): void {
+    const index = this.retainedPositions.get(candidate);
+    if (index === undefined) return;
+    const last = this.retained.pop()!;
+    this.retainedPositions.delete(candidate);
+    if (index >= this.retained.length) return;
+    this.retained[index] = last;
+    this.retainedPositions.set(last, index);
+    const parent = (index - 1) >>> 1;
+    if (index > 0 && last.response.endMs < this.retained[parent]!.response.endMs)
+      this.siftRetainedUp(index);
+    else this.siftRetainedDown(index);
+  }
+
+  private siftRetainedUp(index: number): void {
+    const candidate = this.retained[index]!;
+    while (index > 0) {
+      const parent = (index - 1) >>> 1;
+      const before = this.retained[parent]!;
+      if (before.response.endMs <= candidate.response.endMs) break;
+      this.retained[index] = before;
+      this.retainedPositions.set(before, index);
+      index = parent;
+    }
+    this.retained[index] = candidate;
+    this.retainedPositions.set(candidate, index);
+  }
+
+  private siftRetainedDown(index: number): void {
+    const candidate = this.retained[index]!;
+    for (;;) {
+      const left = index * 2 + 1;
+      if (left >= this.retained.length) break;
+      const right = left + 1;
+      const child =
+        right < this.retained.length &&
+        this.retained[right]!.response.endMs < this.retained[left]!.response.endMs
+          ? right
+          : left;
+      const after = this.retained[child]!;
+      if (after.response.endMs >= candidate.response.endMs) break;
+      this.retained[index] = after;
+      this.retainedPositions.set(after, index);
+      index = child;
+    }
+    this.retained[index] = candidate;
+    this.retainedPositions.set(candidate, index);
   }
 
   private removeCandidate(key: string, fileId: string): void {
@@ -787,7 +903,7 @@ export class OmpLocalMonitor {
     if (owned) this.numericRevision++;
     candidate?.file.keys.delete(key);
     entries?.delete(fileId);
-    this.insertionOrder.delete(`${fileId}:${key}`);
+    if (candidate) this.forgetRetained(candidate);
     if (!entries?.size) {
       this.candidates.delete(key);
       this.canonical.delete(key);

@@ -1,3 +1,5 @@
+import type { OmpMonitorPerformance } from "./performance-types.js";
+
 export type OmpMonitorPhase = "generating" | "tools" | "idle";
 export type OmpMonitorAgentKind = "main" | "subagent" | "advisor";
 
@@ -7,6 +9,11 @@ export interface OmpMonitorUsage {
   failedRequests: number;
   inputTokens: number;
   outputTokens: number;
+  /** Known reasoning subset of output, never additional output or billable tokens. */
+  reasoningTokens: number;
+  /** Native reasoning coverage; an explicit zero is known, absence is not. */
+  reasoningKnownRequests: number;
+  reasoningKnownOutputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   totalTokens: number;
@@ -18,6 +25,13 @@ export interface OmpMonitorUsage {
   measuredOutputTokens: number;
   measuredDurationMs: number;
   peakOutputTps: number;
+  peakTotalTps: number;
+}
+
+export interface OmpMonitorExecutionModeFact {
+  value: string;
+  evidence: "selected" | "recorded";
+  provider: string | null;
 }
 
 export interface OmpMonitorAgent {
@@ -31,6 +45,17 @@ export interface OmpMonitorAgent {
   phase: OmpMonitorPhase;
   lastActivityAt: number;
   outputTps: number | null;
+  /** Same measured-request reference set as outputTps, including native cached input. */
+  totalTps: number | null;
+  /** Own-agent output in the shared three-second live window, not recent request speed. */
+  liveMeasuredTps: number;
+  liveEstimatedTps: number;
+  liveMeasuredTotalTps: number;
+  liveEstimatedTotalTps: number;
+  thinkingTps: number | null;
+  liveCostUsdPerSecond: number | null;
+  speedMode: OmpMonitorExecutionModeFact | null;
+  effortMode: OmpMonitorExecutionModeFact | null;
   ttftMs: number | null;
 }
 
@@ -38,11 +63,58 @@ export interface OmpMonitorPoint {
   timestamp: number;
   measuredTps: number;
   estimatedTps: number;
+  measuredTotalTps: number;
+  estimatedTotalTps: number;
 }
 
 export interface OmpMonitorDay extends OmpMonitorUsage {
   /** Local calendar date, YYYY-MM-DD. History covers currently available logs only. */
   date: string;
+  /** Distinct canonical request agents on this completion date, not the currently visible agent list. */
+  agentCount: number;
+}
+
+/** Pool the raw sums over a date range; never average per-day or per-request speeds. */
+export interface OmpMonitorBreakdownCounts {
+  requests: number;
+  outputTokens: number;
+  measuredOutputTokens: number;
+  measuredDurationMs: number;
+}
+
+export interface OmpMonitorModelBreakdown extends OmpMonitorBreakdownCounts {
+  date: string;
+  source: "omp";
+  model: string | null;
+  costUsd: number;
+  unpricedRequests: number;
+  estimatedCostUsd: number;
+  unestimatedRequests: number;
+}
+
+export interface OmpMonitorModeBreakdown extends OmpMonitorBreakdownCounts {
+  date: string;
+  source: "omp";
+  model: string | null;
+  kind: "effort" | "speed";
+  /** A null attribution is the real unknown bucket, not Standard or reasoning off. */
+  value: string | null;
+  evidence: OmpMonitorExecutionModeFact["evidence"] | null;
+  provider: string | null;
+}
+
+export interface OmpMonitorBreakdowns {
+  models: OmpMonitorModelBreakdown[];
+  modes: OmpMonitorModeBreakdown[];
+}
+
+export interface OmpMonitorHistoryRange {
+  /** Earliest retained usage or positive measured-overlap day in this scope; null without numeric history. */
+  startDate: string | null;
+  /** Current local date. Missing interior dates are empty, not synthetic recovered history. */
+  endDate: string;
+  limited: boolean;
+  scanning: boolean;
 }
 
 export interface OmpMonitorRoot {
@@ -87,6 +159,7 @@ export interface OmpMonitorDataFeed {
 
 export interface OmpMonitorPricing {
   networkEnabled: boolean;
+  autoSyncPrices: boolean;
   currency: string;
   currencies: string[];
   prices: OmpMonitorDataFeed;
@@ -110,14 +183,23 @@ export interface OmpMonitorSnapshot {
     peakAt: number | null;
     /** Latest feedback-eligible measured completion contributing to the peak, never discovery time. */
     peakObservedAt: number | null;
+    totalPeakAt: number | null;
+    totalPeakObservedAt: number | null;
   };
   rate: {
     measuredTps: number;
     estimatedTps: number;
+    measuredTotalTps: number;
+    estimatedTotalTps: number;
     estimatedShare: number;
+    measuredThinkingTps: number | null;
+    estimatedThinkingTps: number | null;
   };
   today: OmpMonitorUsage;
   days: OmpMonitorDay[];
+  breakdowns: OmpMonitorBreakdowns;
+  historyRange: OmpMonitorHistoryRange;
+  performance: OmpMonitorPerformance;
   agents: OmpMonitorAgent[];
   series: OmpMonitorPoint[];
   coverage: OmpMonitorCoverage;
@@ -125,9 +207,16 @@ export interface OmpMonitorSnapshot {
 
 export type OmpMonitorWorkerRequest =
   | { type: "refresh" }
+  | { type: "shutdown"; requestId: number }
   | { type: "visibility"; visible: boolean }
-  | { type: "pricing.configure"; networkEnabled?: boolean; currency?: string }
-  | { type: "pricing.refresh" }
+  | {
+      type: "pricing.configure";
+      requestId: number;
+      networkEnabled?: boolean;
+      autoSyncPrices?: boolean;
+      currency?: string;
+    }
+  | { type: "pricing.refresh"; target?: "prices" | "rates" }
   | { type: "scopes"; scopes: Array<{ id: string; scope: OmpMonitorScope }> };
 
 export type OmpMonitorWorkerResponse =
@@ -135,4 +224,5 @@ export type OmpMonitorWorkerResponse =
       type: "snapshots";
       snapshots: Array<{ scopeId: string; snapshot: OmpMonitorSnapshot }>;
     }
+  | { type: "command-result"; requestId: number; ok: boolean }
   | { type: "error" };

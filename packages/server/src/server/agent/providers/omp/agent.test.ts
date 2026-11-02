@@ -1646,6 +1646,7 @@ describe("OMP agent client and session", () => {
 
     expect(omp.usageUpdates()).toEqual([
       {
+        scope: "session",
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,
@@ -1670,6 +1671,7 @@ describe("OMP agent client and session", () => {
     await waitForImmediate();
     expect(omp.usageUpdates()).toEqual([
       {
+        scope: "session",
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,
@@ -2957,6 +2959,7 @@ describe("OMP agent client and session", () => {
 
     expect(omp.usageUpdates()).toEqual([
       {
+        scope: "session",
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,
@@ -2965,6 +2968,7 @@ describe("OMP agent client and session", () => {
         contextWindowUsedTokens: 55_000,
       },
       {
+        scope: "session",
         inputTokens: 0,
         cachedInputTokens: 0,
         outputTokens: 0,

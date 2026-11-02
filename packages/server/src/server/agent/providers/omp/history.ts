@@ -41,6 +41,7 @@ export async function* streamOmpHistory(input: {
   provider: AgentProvider;
   visitedSessionFiles?: Set<string>;
   blobDir?: string;
+  onOwnAssistant?: (message: Extract<OmpAgentMessage, { role: "assistant" }>) => void;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
     return;
@@ -51,10 +52,15 @@ export async function* streamOmpHistory(input: {
   }
   visitedSessionFiles.add(input.sessionFile);
   let entries: OmpSessionEntry[];
+  let nativeHeaderMs: number | null = null;
   try {
     entries = await readActiveOmpEntryChain(
       input.sessionFile,
       input.runtimeSession?.activeBranchEntryId,
+      (header) => {
+        const stamp = normalizeProviderReplayTimestamp(header.timestamp);
+        nativeHeaderMs = stamp ? new Date(stamp).getTime() : null;
+      },
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -64,14 +70,7 @@ export async function* streamOmpHistory(input: {
   }
   const messages: OmpAgentMessage[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
-  for (const entry of entries) {
-    const mapped = mapEntryMessage(entry);
-    if (!mapped) continue;
-    messages.push(mapped);
-    if (mapped.role === "user") {
-      userEntries.push({ id: entry.id, text: textOf(mapped.content) });
-    }
-  }
+  collectOmpHistoryMessages(entries, messages, userEntries);
   const imageOutputDir =
     input.blobDir ?? join(dirname(resolveOmpDiagnosticPaths().agentDb), "blobs");
   const mapper = new OmpHistoryMapper(input.provider, userEntries, {
@@ -96,14 +95,52 @@ export async function* streamOmpHistory(input: {
     }
     const message = mapEntryMessage(entry);
     if (!message) continue;
+    const ownsNativeUsage = observeNativeHistoryUsage(
+      message,
+      timestamp,
+      nativeHeaderMs,
+      input.onOwnAssistant,
+    );
     await resolveMessageImageBlobs(message, input.blobDir);
-    for (const event of mapper.mapMessages([message])) {
+    for (const event of mapper.mapMessages([message], { countNativeUsage: ownsNativeUsage })) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
   for (const transcript of readSubagentTranscripts(messages, input.sessionFile)) {
     yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles, input.blobDir);
   }
+}
+
+function collectOmpHistoryMessages(
+  entries: readonly OmpSessionEntry[],
+  messages: OmpAgentMessage[],
+  userEntries: OmpCapturedUserMessageEntry[],
+): void {
+  for (const entry of entries) {
+    const mapped = mapEntryMessage(entry);
+    if (!mapped) continue;
+    messages.push(mapped);
+    if (mapped.role === "user") {
+      userEntries.push({ id: entry.id, text: textOf(mapped.content) });
+    }
+  }
+}
+
+function observeNativeHistoryUsage(
+  message: OmpAgentMessage,
+  timestamp: string | null,
+  nativeHeaderMs: number | null,
+  onOwnAssistant?: (message: Extract<OmpAgentMessage, { role: "assistant" }>) => void,
+): boolean {
+  // A copied response can fall inside the replay tolerance, but is not this file's own speed reference.
+  const ownsNativeUsage =
+    nativeHeaderMs !== null &&
+    timestamp !== null &&
+    new Date(timestamp).getTime() >= nativeHeaderMs &&
+    (message.role !== "assistant" ||
+      (typeof message.timestamp === "number" && message.timestamp >= nativeHeaderMs));
+  if (message.role === "assistant" && ownsNativeUsage) onOwnAssistant?.(message);
+  return ownsNativeUsage;
 }
 
 async function resolveMessageImageBlobs(message: OmpAgentMessage, blobDir?: string): Promise<void> {
@@ -322,6 +359,7 @@ function stripExtension(filePath: string): string {
 export async function readActiveOmpEntryChain(
   sessionFile: string,
   activeEntryId?: string,
+  onSessionHeader?: (header: OmpSessionEntry) => void,
 ): Promise<OmpSessionEntry[]> {
   const content = await readFile(sessionFile, "utf8");
   const entries = content.split("\n").flatMap((line) => {
@@ -333,6 +371,8 @@ export async function readActiveOmpEntryChain(
       return [];
     }
   });
+  const header = entries.find((entry) => entry.type === "session");
+  if (header) onSessionHeader?.(header);
   if (entries.length === 0) return [];
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const parentIds = new Set(entries.flatMap((entry) => (entry.parentId ? [entry.parentId] : [])));
@@ -369,7 +409,7 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return {
         ...message,
-        ...(message.role === "custom" ? { entryId: entry.id } : {}),
+        ...(message.role === "custom" || message.role === "assistant" ? { entryId: entry.id } : {}),
       } as unknown as OmpAgentMessage;
     }
     return visibleFallback(message.role, message);

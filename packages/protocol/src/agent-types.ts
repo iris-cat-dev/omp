@@ -179,7 +179,33 @@ export interface AgentRunOptions {
   maxThinkingTokens?: number;
 }
 
+/** Native assistant requests only; reasoning is already part of outputTokens. */
+export interface AgentNativeOutputRequest {
+  startMs: number;
+  endMs: number;
+  outputTokens: number;
+}
+
+export interface AgentNativeOutputMetrics {
+  generation: number;
+  phase: "generating" | "tools" | "idle";
+  inFlightStartMs: number | null;
+  lastActivityMs: number;
+  latestEndMs: number | null;
+  measuredOutputTokens: number;
+  measuredDurationMs: number;
+  /** Completed requests in the live 3-second window, never session/child totals. */
+  recentRequests: AgentNativeOutputRequest[];
+  /** At most three own requests; the client applies the ten-minute cutoff. */
+  agentReferences: AgentNativeOutputRequest[];
+  /** At most ten own requests matching the selected model, within thirty minutes. */
+  modelReferences: AgentNativeOutputRequest[];
+}
+
 export interface AgentUsage {
+  /** Explicitly separates session quota/context counters from one turn's requests. */
+  scope?: "session" | "turn";
+  nativeMetrics?: AgentNativeOutputMetrics;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
@@ -376,6 +402,8 @@ export type AgentTimelineItem =
       presentation?: AssistantMessagePresentation;
       /** Original native custom record metadata; never interpreted as foreground-turn authority. */
       customMessage?: { customType: string; details?: unknown };
+      /** Cumulative own-request usage at this message, retained for timeline replay. */
+      nativeUsage?: AgentUsage;
     }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

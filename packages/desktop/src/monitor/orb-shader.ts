@@ -1,30 +1,25 @@
-// Adapted from zoefix/agent-speed v1.4.1, MIT, a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c.
-// Normative source: spec/prototypes/led-effects.html FS (silk_height/silkCore/noise, corona, warp, 36 LEDs).
-// Application gates/halo bounds follow LedPhases.cs and OrbLed.hlsl, not the prototype's larger 1.9S stage.
+// Adapted from zoefix/agent-speed v1.6.1 Windows, MIT, 384ce020cc655133e95aaad5cc085f3985f0ed99.
+// Sources: OrbLed.hlsl silk/corona/warp/flare and LedDraw/GaugeLayout native segment, tick and comet geometry.
+// The shared 256-entry OKLab heat texture matches GpuDevice.CreatePalette; halo remains bounded to 0.74 S.
 // Simplex noise copyright (C) 2011 Ashima Arts / Stefan Gustavson, MIT; see monitor attribution.
 export const ORB_LED_FRAGMENT_SHADER = String.raw`#version 300 es
 precision highp float;
 out vec4 outColor;
-uniform vec2 uRes; uniform float uS, uTime, uH, uO, uDark, uNew, uLevel, uFlash, uPeak, uSweep, uTier;
-uniform float uComet, uFlow, uPhase, uPhase2, uWarp, uCorona;
+uniform vec2 uRes; uniform float uS, uLogicalS, uTime, uH, uO, uDark, uNew, uLevel, uFlash, uPeak, uSweep, uTier;
+uniform float uComet,uFlow,uPhase,uPhase2,uWarp,uCorona,uSilkNoise,uSilkClock;
 uniform vec4 uWaves[4];
 uniform vec4 uTicks;
-uniform float uFx, uMoving, uEmbedded, uIdleSweep, uThumbnail;
+uniform float uFx, uMoving, uEmbedded, uIdleSweep, uIdleProgress, uThumbnail, uReduced;
+uniform sampler2D uHeatPalette;
+uniform vec2 uReadoutBoxes;
+uniform vec4 uLedColors[36];
+uniform vec4 uCometArcs[2];
+uniform vec3 uAuraColor;uniform float uAuraIntensity;
 
+// OrbLed.hlsl defines both increasing and decreasing ramps; GLSL smoothstep forbids reversed edges.
+float led_smooth(float e0,float e1,float x){float t=clamp((x-e0)/(e1-e0),0.,1.);return t*t*(3.-2.*t);}
 const vec3 HOT = vec3(1.0, 0.969, 0.839);
-vec3 toLin(vec3 c){ return pow(max(c, 0.0), vec3(2.2)); }
-vec3 toSrgb(vec3 c){ return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
-vec3 heat(float h){
-  h = clamp(h, 0.0, 1.0);
-  vec3 c0 = vec3(.486,.529,.596), c1 = vec3(.176,.831,.749), c2 = vec3(.220,.741,.973), c3 = vec3(.506,.549,.973),
-       c4 = vec3(.910,.475,.976), c5 = vec3(.984,.443,.522), c6 = vec3(.984,.573,.235), c7 = vec3(.980,.800,.082);
-  vec3 a; vec3 b; float t0; float t1;
-  if (h < .10) { a = c0; b = c1; t0 = 0.; t1 = .10; } else if (h < .30) { a = c1; b = c2; t0 = .10; t1 = .30; }
-  else if (h < .48) { a = c2; b = c3; t0 = .30; t1 = .48; } else if (h < .64) { a = c3; b = c4; t0 = .48; t1 = .64; }
-  else if (h < .78) { a = c4; b = c5; t0 = .64; t1 = .78; } else if (h < .90) { a = c5; b = c6; t0 = .78; t1 = .90; }
-  else { a = c6; b = c7; t0 = .90; t1 = 1.; }
-  return toSrgb(mix(toLin(a), toLin(b), (h - t0) / (t1 - t0)));
-}
+vec3 heat(float h){return textureLod(uHeatPalette,vec2(clamp(h,0.,1.)*(255./256.)+.5/256.,.5),0.).rgb;}
 // porcelain: deepen without muddying (gold stays gold, not khaki)
 vec3 ink(vec3 c){ return pow(c, vec3(1.55)); }
 
@@ -56,14 +51,13 @@ float fbm(vec3 p){ float a = .5; float s = 0.; for (int i = 0; i < 4; i++) { s +
 float hash11(float n){ return fract(sin(n * 127.1) * 43758.5453); }
 float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 
-vec4 acc;
 // dark glass: light adds up; porcelain: colors are laid on like ink
-void glow(vec3 c, float a){
-  a = clamp(a, 0., 1.);
-  if (uDark > .5) { acc.rgb += c * a; acc.a = max(acc.a, a * .35); }
-  else { acc.rgb = c * a + acc.rgb * (1. - a); acc.a = a + acc.a * (1. - a); }
+void glow(inout vec4 acc,vec3 c,float a){
+  a=clamp(a,0.,1.);
+  if(uDark>.5){acc.rgb+=c*a;acc.a=max(acc.a,a*.35);}
+  else{acc.rgb=c*a+acc.rgb*(1.-a);acc.a=a+acc.a*(1.-a);}
 }
-void paint(vec3 c, float a){ a = clamp(a, 0., 1.); acc.rgb = c * a + acc.rgb * (1. - a); acc.a = a + acc.a * (1. - a); }
+void paint(inout vec4 acc,vec3 c,float a){a=clamp(a,0.,1.);acc.rgb=c*a+acc.rgb*(1.-a);acc.a=a+acc.a*(1.-a);}
 float easeOut(float t){ return 1. - pow(1. - clamp(t, 0., 1.), 3.); }
 
 // Silk core, drawn over the glass body and under the gauge.
@@ -81,20 +75,20 @@ float silk_bell(float x){ return exp(-x * x); }
 float silk_height(vec2 p, float t, float rip, float wave){
   float X = dot(p, vec2(.80, .60));
   float Y = dot(p, vec2(-.60, .80)) * (1. + .45 * X)
-          + .03 * snoise(vec3(p * 1.1, t * .07)) + .025 * sin(X * 5. + t * .3) + .03 * sin(X * 1.6 - t * .17);
+          + .03 * snoise(vec3(p * 1.1, uSilkNoise)) + .025 * sin(X * 5. + t * .3) + .03 * sin(X * 1.6 - t * .17);
   float hgt = .5 * sin(Y * 6. + .25 * sin(X * 3.3 + t * .2) + t * .15)
             + .6 * (.7 + .3 * sin(X * 2.8 + 1. + t * .1)) * silk_fold(Y * 16.5 + .35 * sin(X * 4.1 - t * .35) + t * .6)
             + .22 * (.5 + .5 * sin(X * 3.6 - t * .25 + 2.)) * silk_fold(Y * 27. + .4 * sin(X * 4.7 + t * .4) - t * .8 + 2.);
   if (rip > 0.) {
-    float packet = max(sin(Y * 4. - uTime * 2.6 + 1.3 * sin(X * 2.7)), 0.);
-    hgt += rip * .05 * packet * packet * sin(Y * 44. + X * 6. - uTime * 16.);
+    float packet = max(sin(Y * 4. - uSilkClock * 2.6 + 1.3 * sin(X * 2.7)), 0.);
+    hgt += rip * .05 * packet * packet * sin(Y * 44. + X * 6. - uSilkClock * 16.);
   }
-  hgt += wave * .11 * sin(length(p) * 36. - uTime * 8.);
+  hgt += wave * .11 * sin(length(p) * 36. - uSilkClock * 8.);
   return hgt;
 }
 
-void silkCore(vec2 p, float r, float h, float o, float act, float lvl, bool dark, float waveField){
-  float fade = smoothstep(.475, .385, r);
+void silkCore(inout vec4 acc,vec2 p,float r,float h,float o,float act,float lvl,bool dark,float waveField){
+  float fade = led_smooth(.475, .385, r);
   if (fade <= 0.) return;
   float t = uPhase;
   float rip = uFx >= 2. && uMoving > .5 ? min(1., o * 2.5) : 0.;
@@ -110,7 +104,7 @@ void silkCore(vec2 p, float r, float h, float o, float act, float lvl, bool dark
   // positive where the fold curves over a crest
   float crest = smoothstep(-.15, .75, -(hA - 2. * h0 + hB) / (e * e) * .006);
 
-  float tx = min(silk_box(p - vec2(0., .03), vec2(.27, .07), .07), silk_box(p - vec2(0., -.17), vec2(.13, .06), .06));
+  float tx = min(silk_box(p - vec2(0., uReadoutBoxes.x), vec2(.27, .07), .07), silk_box(p - vec2(0., uReadoutBoxes.y), vec2(.13, .06), .06));
   float textMask = mix(.3, 1., smoothstep(-.02, .1, tx));
 
   float az = 2.2 + .3 * sin(uPhase2 * .35);
@@ -139,24 +133,39 @@ void silkCore(vec2 p, float r, float h, float o, float act, float lvl, bool dark
   vec3 cRim = heat(h + (-.32 - glide) * spread);
 
   if (dark) {
-    paint(vec3(.008, .01, .016), .7 * fade);
-    glow(cBody, body * .32 * k);
-    glow(cSheen, sheen * .75 * k);
-    glow(cGlint, glint * .7 * k);
-    glow(cRim, rim * .35 * k);
-    glow(mix(gold, HOT, .4), sweep * (.12 + .6 * body + .8 * sheen) * fade * textMask);
+    paint(acc,vec3(.008, .01, .016), .7 * fade);
+    glow(acc,cBody, body * .32 * k);
+    glow(acc,cSheen, sheen * .75 * k);
+    glow(acc,cGlint, glint * .7 * k);
+    glow(acc,cRim, rim * .35 * k);
+    glow(acc,mix(gold, HOT, .4), sweep * (.12 + .6 * body + .8 * sheen) * fade * textMask);
   } else {
     float tm = .4 + .6 * textMask;
-    paint(vec3(.99, .985, .978), .55 * fade);
-    paint(vec3(.66, .67, .72), (pow(smoothstep(.15, -.45, sl), 1.3) * .38 + (1. - ao) * .12) * fade * tm);
-    glow(ink(cRim), rim * .22 * k);
-    glow(mix(ink(cSheen0), vec3(.96, .66, .16), hotK), sheen * (.3 + .15 * hotK) * k);
-    paint(vec3(1.), (glint * .75 + sheen * .35) * fade * tm);
-    glow(ink(gold), sweep * (.1 + .4 * body) * fade * tm);
+    paint(acc,vec3(.99, .985, .978), .55 * fade);
+    paint(acc,vec3(.66, .67, .72), (pow(led_smooth(.15, -.45, sl), 1.3) * .38 + (1. - ao) * .12) * fade * tm);
+    glow(acc,ink(cRim), rim * .22 * k);
+    glow(acc,mix(ink(cSheen0), vec3(.96, .66, .16), hotK), sheen * (.3 + .15 * hotK) * k);
+    paint(acc,vec3(1.), (glint * .75 + sheen * .35) * fade * tm);
+    glow(acc,ink(gold), sweep * (.1 + .4 * body) * fade * tm);
   }
 }
 
+// Native arc phase, head position and opacity are per-arc values, not per-fragment work.
+void ledComet(inout vec4 acc,vec2 p,float r,float ang,float h,bool dark,vec3 hc,int index){
+  vec4 arc=uCometArcs[index];float px=1./uS;
+  float behind=mod(arc.x-ang+360.,360.),tail=40.+60.*h,rc=.468;
+  // The caller requires uFx > .5; an Off branch here is unreachable and cycles D3DCompiler's assertion-range analysis.
+  float along=clamp(1.-behind/tail,0.,1.),radialDistance=abs(r-rc),halfWidth=.00625,bloom=uFx>2.5?1.5:1.;
+  float band=led_smooth(halfWidth+px*.5,halfWidth-px*.5,radialDistance),haloDistance=max(0.,radialDistance-halfWidth)/(.012*bloom),halo=exp(-haloDistance*haloDistance);
+  vec3 cc=mix(dark?hc:ink(hc),dark?HOT:ink(hc),along);
+  float arcAlpha=step(behind,tail)*mix(.6,1.,along)*arc.w;glow(acc,cc,halo*arcAlpha*.55);paint(acc,cc,band*arcAlpha);
+  float headDistance=length(p-arc.yz),headGlowDistance=max(0.,headDistance-.0085)/(.022*bloom);
+  glow(acc,dark?HOT:ink(hc),exp(-headGlowDistance*headGlowDistance)*arc.w*.8);
+  paint(acc,dark?HOT:ink(hc),led_smooth(.0085+px*.5,.0085-px*.5,headDistance)*arc.w);
+}
+
 void main(){
+  vec4 acc=vec4(0.);
   float px = 1.0 / uS;
   vec2 p = (gl_FragCoord.xy - uRes * .5) / uS;
   float r = length(p);
@@ -168,7 +177,6 @@ void main(){
   bool dark = uDark > .5; bool fresh = uNew > .5;
   bool thumbnail = uThumbnail > .5;
   bool motion = uFx >= 2. && uMoving > .5 && !thumbnail && uEmbedded < .5;
-  acc = vec4(0.);
   vec3 hc = heat(h);
   vec3 hcI = dark ? hc : ink(hc);
   vec3 hot = mix(hc, HOT, .55 + .45 * o);
@@ -182,13 +190,14 @@ void main(){
   }
 
   // drop shadow
-  float sh = smoothstep(.6, .46, length(p - vec2(0., -.03))) * (dark ? .45 : .16);
-  paint(vec3(0.), sh * smoothstep(.49, .52, r));
+  float shadowSigma=dark?.05:.06,shadowRadius=.5-1.59*shadowSigma;
+  float sh=exp(-pow(max(0.,length(p-vec2(0.,dark?-.03:-.04))-shadowRadius)/(1.91*shadowSigma),2.))*(dark?.45:.16);
+  paint(acc,vec3(0.),sh*clamp((r-.5)/px+1.,0.,1.));
 
   // aura
-  float breathe = 1. + uMoving * .15 * sin(uTime * mix(1.57, 9., h));
-  float aura = smoothstep(.74, .5, r) * smoothstep(.46, .52, r) * (dark ? .55 : .32) * h * breathe * (thumbnail ? 0. : 1.);
-  glow(fresh ? mix(hcI, HOT, .25 * o) : hcI, aura * (1. + .6 * uFlash) * (fresh ? .8 : 1.));
+  float auraT=clamp((r-.5)/.25,0.,1.);
+  float aura=exp(-4.2*auraT*auraT)*(1.-auraT*auraT)*clamp((r-.5)/px+.5,0.,1.)*(dark?.55:.32)*uAuraIntensity*(thumbnail?0.:1.);
+  glow(acc,uAuraColor,aura);
 
   if (fresh && motion) {
     // corona: flame tongues licking off the rim
@@ -202,12 +211,12 @@ void main(){
       float body = .5 + .5 * snoise(vec3(dir * 2.2, uCorona * .35));
       float reach = .02 + (.06 * h + .12 * o) * pow(body, 1.4) * 1.7;
       float d = (r - .499) / reach;
-      float fall = exp(-d * 2.4) * smoothstep(.49, .503, r) * smoothstep(.74, .64, r);
+      float fall = exp(-d * 2.4) * smoothstep(.49, .503, r) * led_smooth(.74, .64, r);
       float tongues = smoothstep(.45, .8, .5 + .5 * snoise(vec3(dir * 4.5, rise * .35)));
       float flame = ridge * fall * mix(.12, 1.25, tongues) * (.45 + .7 * body);
       float base = exp(-max(r - .5, 0.) / .012) * smoothstep(.49, .503, r) * .35;
       vec3 fc = mix(HOT, hc, clamp(d * .9, 0., 1.));
-      glow(dark ? fc : ink(hc), (flame + base) * cAmt * (dark ? .95 : .95));
+      glow(acc,dark ? fc : ink(hc), (flame + base) * cAmt * (dark ? .95 : .95));
     }
     // warp streaks rushing into the orb
     float wAmt = smoothstep(.32, .62, h) * lvl;
@@ -223,72 +232,59 @@ void main(){
         float along = (r - rh) / len;
         float acrossDeg = abs(fract(ang / 360. * bins) - .5) * 360. / bins;
         float across = radians(acrossDeg) * r;
-        float line = smoothstep(.0018 + .001 * h, 0., across) * pow(smoothstep(1., 0., along), 1.6) * step(0., along);
-        float fade = smoothstep(0., .3, head) * smoothstep(1., .82, head);
+        float line = led_smooth(.0018 + .001 * h, 0., across) * pow(led_smooth(1., 0., along), 1.6) * step(0., along);
+        float fade = smoothstep(0., .3, head) * led_smooth(1., .82, head);
         vec3 wc = mix(hc, HOT, .45);
-        glow(dark ? wc : ink(hc), line * fade * wAmt * (dark ? .8 : .75));
+        glow(acc,dark ? wc : ink(hc), line * fade * wAmt * (dark ? .8 : .75));
       }
     }
   }
 
   // body
-  float disc = smoothstep(.5 + px, .5 - px, r);
+  float disc = led_smooth(.5 + px, .5 - px, r);
   if (disc > 0.) {
     vec3 top = dark ? vec3(.106, .125, .188) : vec3(1.);
     vec3 bot = dark ? vec3(.035, .043, .063) : vec3(.906, .922, .953);
-    paint(mix(bot, top, clamp(.5 + p.y, 0., 1.)), disc * (dark ? .88 : .94));
-    paint(vec3(1.), smoothstep(.36, 0., length(p - vec2(-.16, .19))) * (dark ? .06 : .3) * disc);
-
-    if (fresh && r < .475 && uEmbedded < .5) silkCore(p, r, h, o, act, lvl, dark, waveField);
-
-    float rim = smoothstep(.5, .49, r) * smoothstep(.473, .495, r) * clamp(.5 + p.y * 1.4, 0., 1.);
-    paint(vec3(1.), rim * (dark ? .14 : .55));
+    paint(acc,mix(bot, top, clamp(.5 + p.y, 0., 1.)), disc * (dark ? .88 : .94));
+    float inner=exp(-pow(max(.5-r-.0023,0.)/.0573,2.));paint(acc,dark?vec3(0.):vec3(27.,35.,64.)/255.,inner*(dark?.44:.128)*disc);
+    float lens=max(0.,1.-length(p-vec2(-.2,.3))/.55);paint(acc,vec3(1.),lens*(dark?.06:.7)*disc);
+  }
+  if (fresh && r < .475 && uEmbedded < .5) silkCore(acc,p, r, h, o, act, lvl, dark, waveField);
+  if(r<.5+px){
+    float rim=1.-smoothstep(.5/uLogicalS-.5*px,.5/uLogicalS+.5*px,abs(r-(.5-.5/uLogicalS)));
+    paint(acc,vec3(1.),rim*(dark?.14:.95)*clamp((p.y+.375)/.75,0.,1.));
+    if(!dark)paint(acc,vec3(0.),(1.-smoothstep(.5/uLogicalS-.5*px,.5/uLogicalS+.5*px,abs(r-(.5+.5/uLogicalS))))*.08);
   }
 
   // gauge
-  float segR = .41; float segHalfLen = .0225;
+  float segR=.41,segHalfLen=.0225,segSpan=(270.-2.2*35.)/36.,segStep=segSpan+2.2,segHalfWidth=segR*radians(segSpan)*.5,segCorner=min(segHalfLen,segHalfWidth)*.48;
   float lit36 = h * uSweep * 36.;
   if (u <= 1. && abs(r - segR) < .1) {
-    float iNear = clamp(floor(u * 36.), 0., 35.);
-    float best = 1e3; float bi = iNear;
-    for (int k = -1; k <= 1; k++) {
-      float j = clamp(iNear + float(k), 0., 35.);
-      float ca = 135. + (j + .5) * 7.5;
-      float dAng = radians(mod(ang - ca + 540., 360.) - 180.);
-      vec2 lp = vec2(dAng * r, r - segR);
-      vec2 hb = vec2(segR * radians(5.3) * .5, segHalfLen);
-      vec2 dq = abs(lp) - hb + .006;
-      float sdf = length(max(dq, 0.)) + min(max(dq.x, dq.y), 0.) - .006;
+    float iNear=clamp(floor(mod(ang-135.,360.)/segStep),0.,35.);
+    float best=1e3,bi=iNear;
+    for(int k=-1;k<=1;k++){
+      float j=clamp(iNear+float(k),0.,35.),ca=radians(135.+j*segStep+segSpan*.5);
+      vec2 radial=vec2(cos(ca),-sin(ca)),tangent=vec2(sin(ca),cos(ca));
+      vec2 lp=vec2(dot(p,tangent),dot(p,radial)-segR),dq=abs(lp)-vec2(segHalfWidth,segHalfLen)+segCorner;
+      float sdf=length(max(dq,0.))+min(max(dq.x,dq.y),0.)-segCorner;
       if (sdf < best) { best = sdf; bi = j; }
     }
-    float seg = smoothstep(px * 1.2, -px * 1.2, best);
+    float seg = led_smooth(px * 1.2, -px * 1.2, best);
     float litF = clamp(lit36 - bi, 0., 1.);
-    float tipI = floor(max(lit36 - .001, 0.));
-    vec3 sc = heat(bi / 35.);
-    if (!dark) sc = ink(sc);
-    float shimmer = uTier > 3.5 && uFx >= 2. && uMoving > .5 ? .75 + .25 * hash11(bi * 13.1 + floor(uTime * 12.)) : 1.;
-    float flow = 0.;
-    if (fresh && motion) {
-      float ph = fract(bi / 36. * 2.2 - uFlow);
-      flow = pow(1. - ph, 9.) * act * (.5 + .9 * h);
-    }
-    vec3 lit = mix(sc, dark ? HOT : sc * 1.15, flow * .75);
-    if (bi == tipI && litF > .01) lit = dark ? HOT : sc;
-    float bright = litF * shimmer * (1. + .25 * uFlash + flow * .9);
-    float idleBand = uIdleSweep >= 0. && uFx > .5 && uMoving > .5 ? exp(-90. * pow(bi / 35. - uIdleSweep, 2.)) : 0.;
-    paint(dark ? vec3(1.) : vec3(0.), seg * ((dark ? .07 : .08) + idleBand * (dark ? .35 : .25)) * (1. - litF));
-    if (dark) glow(lit, seg * bright); else paint(lit, seg * min(1., bright));
+    float idleGain=uIdleProgress>=0.&&uFx>.5?(uReduced>.5?(dark?.10:.06)*sin(3.14159265*uIdleProgress):(dark?.16:.10)*exp(-90.*pow(bi/35.-uIdleSweep,2.))):0.;
+    paint(acc,dark?vec3(1.):vec3(0.),seg*((dark?.07:.08)+idleGain)*(1.-litF));
+    vec4 lit=uLedColors[int(bi)];paint(acc,lit.rgb,seg*lit.a);
   }
   if (!thumbnail && abs(r - segR) < .17 && act > 0.) {
     float gapA = u > 1. ? min(u - 1., 4. / 3. - u) * 270. : 0.;
     float uu = u > 1. ? (u - 1. < 4. / 3. - u ? 1. : 0.) : u;
-    float inLit = smoothstep(lit36 + .5, lit36 - .5, uu * 36.);
+    float inLit = led_smooth(lit36 + .5, lit36 - .5, uu * 36.);
     float dRad = max(abs(r - segR) - segHalfLen, 0.) + radians(gapA) * r;
-    float g = exp(-dRad / (.014 + .018 * h + .02 * o)) * inLit * act * smoothstep(.17, .1, abs(r - segR));
+    float g = exp(-dRad / (.014 + .018 * h + .02 * o)) * inLit * act * led_smooth(.17, .1, abs(r - segR));
     float gAmt = (.16 + .5 * h + .45 * o) * (fresh ? 1.3 : .8) * lvl;
     if (uTier > 3.5 && uMoving > .5 && uFx >= 2.) gAmt *= .85 + .3 * sin(uTime * (7. + 6. * o));
     vec3 gc = heat(uu);
-    glow(dark ? gc : ink(gc), g * gAmt * (dark ? .55 : .22));
+    glow(acc,dark ? gc : ink(gc), g * gAmt * (dark ? .55 : .22));
   }
 
   // tier tick dots
@@ -296,47 +292,34 @@ void main(){
     if (thumbnail) break;
     float th = uTicks[t];
     float ta = radians(135. + th * 270.);
-    vec2 tp = vec2(cos(ta), -sin(ta)) * .463;
-    float on = step(th, h + .0005);
-    vec3 tc = on > .5 ? (dark ? heat(th) : ink(heat(th))) : (dark ? vec3(1.) : vec3(0.));
-    paint(tc, smoothstep(.0072, .0042, length(p - tp)) * (on > .5 ? .95 : .2));
+    vec2 tp=vec2(cos(ta),-sin(ta))*.452;
+    float on=step(th,h);
+    vec3 tc=on>.5?(dark?heat(max(th,.1)):ink(heat(max(th,.1)))):(dark?vec3(1.):vec3(0.));
+    float distance=length(p-tp),cover=led_smooth(.0085+px*.5,.0085-px*.5,distance);
+    if(on>.5&&dark)glow(acc,tc,exp(-pow(max(0.,distance-.0085)/(.0101),2.))*.475);
+    paint(acc,tc,cover*(on>.5?.95:dark?.26:.22));
   }
 
   // tip flare
-  if (!thumbnail && h > .02) {
+  if(!thumbnail&&motion&&h>.02){
     float ta = radians(135. + min(h * uSweep, 1.) * 270.);
     vec2 tp = vec2(cos(ta), -sin(ta)) * segR;
     vec2 d = p - tp;
     vec2 tang = vec2(-sin(ta), -cos(ta));
     vec2 rad = normalize(tp);
-    float bloom = exp(-length(d) / (.01 + .016 * h));
-    glow(dark ? HOT : hcI, bloom * (.3 + .35 * h) * (dark ? 1. : .5));
+    // Native LedDraw's leading-segment bloom is part of the gauge, not a permanent flare with Off/Soft.
     if (fresh && motion) {
       float star = exp(-abs(dot(d, tang)) / (.05 + .16 * o)) * exp(-abs(dot(d, rad)) / .0032)
                  + exp(-abs(dot(d, rad)) / (.035 + .09 * o)) * exp(-abs(dot(d, tang)) / .0028);
       float fAmt = smoothstep(.5, .85, h) * (.55 + .9 * o) * lvl;
-      glow(dark ? HOT : hcI, star * fAmt * (dark ? .9 : .4));
+      glow(acc,dark ? HOT : hcI, star * fAmt * (dark ? .9 : .4));
     }
   }
 
   // comets
   if (!thumbnail && h > .01 && uFx > .5 && uMoving > .5) {
-    int nC = (fresh && motion && h > .55) ? 2 : 1;
-    for (int c = 0; c < 2; c++) {
-      if (c >= nC) break;
-      float head = mod(uComet * 360. + float(c) * 180., 360.);
-      float behind = mod(head - ang + 360., 360.);
-      float tail = fresh ? 40. + 60. * h : 40.;
-      float rc = .455;
-      float band = exp(-pow((r - rc) / (.0035 + .0045 * h), 2.));
-      float along = clamp(1. - behind / tail, 0., 1.);
-      float cA = step(behind, tail) * along * along * band;
-      float hr = radians(head);
-      float headGlow = exp(-length(p - vec2(cos(hr), -sin(hr)) * rc) / (.01 + .006 * h));
-      float op = (.25 + .6 * h) * (c == 1 ? .7 : 1.);
-      vec3 cc = mix(hc, HOT, along);
-      glow(dark ? cc : ink(hc), (cA + headGlow * .9) * op * (dark ? 1. : .6));
-    }
+    ledComet(acc,p,r,ang,h,dark,hc,0);
+    if(fresh&&motion&&h>.55)ledComet(acc,p,r,ang,h,dark,hc,1);
   }
 
   // shockwaves
@@ -347,21 +330,26 @@ void main(){
     float wid = (.005 + .005 * w.y) * (1. - w.x) + .001;
     float ring = exp(-pow((r - rr) / wid, 2.)) * (1. - w.x) * .7 * w.y;
     vec3 wc = mix(heat(w.z), HOT, .3);
-    glow(dark ? wc : ink(heat(w.z)), ring * (dark ? 1. : .6));
+    glow(acc,dark ? wc : ink(heat(w.z)), ring * (dark ? 1. : .6));
     if (fresh) {
       float rr2 = .5 + .16 * easeOut(w.x * 1.3);
-      glow(dark ? heat(w.z) : ink(heat(w.z)), exp(-pow((r - rr2) / (wid * 3.5), 2.)) * (1. - w.x) * .3 * w.y);
+      glow(acc,dark ? heat(w.z) : ink(heat(w.z)), exp(-pow((r - rr2) / (wid * 3.5), 2.)) * (1. - w.x) * .3 * w.y);
     }
   }
 
   // new peak: the whole disc flashes and a gold ring blows outward
   if (uPeak < 1.4) {
     float f = exp(-uPeak * 4.5);
-    glow(dark ? HOT : vec3(1., .69, .13), f * (dark ? .75 : .35) * smoothstep(.6, .15, r));
+    glow(acc,dark ? HOT : vec3(1., .69, .13), f * (dark ? .75 : .35) * led_smooth(.6, .15, r));
     float ringR = .5 + .24 * easeOut(uPeak / 1.4);
-    glow(vec3(1., .78, .3), exp(-pow((r - ringR) / (.012 + .02 * uPeak), 2.)) * (1. - uPeak / 1.4) * (fresh ? 1. : .5));
+    glow(acc,vec3(1., .78, .3), exp(-pow((r - ringR) / (.012 + .02 * uPeak), 2.)) * (1. - uPeak / 1.4) * (fresh ? 1. : .5));
+    if(uMoving>.5&&uPeak<1.3&&r>.49){
+      float k=uPeak/1.3,slot=6.28318530718/24.,angle=atan(-p.y,p.x)-uPeak*.4,rel=angle-slot*round(angle/slot),across=abs(sin(rel))*r,along=cos(rel)*r,r1=.55+.19*easeOut(min(1.,k*1.4)),halfWidth=.007*(1.-k*.5);
+      float cover=clamp(.5+(halfWidth-across)/px,0.,1.)*clamp(.5+(along-.5)/px,0.,1.)*clamp(.5+(r1-along)/px,0.,1.),u=clamp((along-.5)/max(r1-.5,1e-4),0.,1.),a=u<.3?u/.3:1.-(u-.3)/.7;
+      vec3 ray=u<.3?mix(vec3(1.,.85,.35),vec3(1.,.8,.3),u/.3):mix(vec3(1.,.8,.3),vec3(1.,.7,.2),(u-.3)/.7);glow(acc,ray,cover*a*.75*(1.-k));
+    }
   }
 
-  acc *= smoothstep(.74, .73, r);
+  acc *= led_smooth(.74, .73, r);
   outColor = acc.a < .0005 ? vec4(0.) : acc;
 }`;

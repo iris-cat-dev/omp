@@ -1,4 +1,4 @@
-// Adapted from zoefix/agent-speed v1.4.1 (MIT), a94a67fcc78e5d8eea5f82d8d5e737bccf994e2c.
+// Adapted from zoefix/agent-speed v1.6.1 (MIT), 384ce020cc655133e95aaad5cc085f3985f0ed99.
 // Sources: spec/assets/vehicles.json; spec/DESIGN.md §4c; Presentation/Hero/{HeroStage,HeroRig,HeroMath}.cs;
 // Presentation/Hero/Badge/{BadgeStage.Frame,BadgePalette}.cs; Orb/Hero/HeroPainter{,.Actor,.Scenery}.cs.
 // Original vector paths are compiled once in orb-vehicle-data.ts; rig geometry is generated from its actual limb lengths.
@@ -9,7 +9,8 @@ const VEHICLES=VEHICLE_ART.vehicles.map(v=>{
 });
 const CLOUD_PATHS=VEHICLE_ART.scenery.sky.clouds.map(d=>new Path2D(d));
 const MOTE_ORDER=[0,6,3,9,1,7,4,10,2,8,5,11];
-const HERO_FONT='"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif';
+const HERO_FONT='"Segoe UI Variable Display","Segoe UI","Microsoft JhengHei UI","Microsoft YaHei UI","Yu Gothic UI",sans-serif';
+const HERO_GRAPHEMES=new Intl.Segmenter(undefined,{granularity:'grapheme'});
 const fract=x=>x-Math.floor(x);
 const heroBump=(t,start,peak,end)=>t<start?0:t<peak?smooth(start,peak,t):1-smooth(peak,end,t);
 function heroSpringAt(t,from,to,velocity,response,damping){
@@ -22,27 +23,35 @@ function heroKnee(hx,hy,fx,fy,l1,l2,out){
   const a=Math.atan2(dy,dx)-Math.acos(clamp((l1*l1+d*d-l2*l2)/(2*l1*d),-1,1));
   out[0]=hx+l1*Math.cos(a);out[1]=hy+l1*Math.sin(a);
 }
+function heroMeasureLine(ctx,text,size,tracking,font){
+  ctx.font='700 '+size+'px '+font;ctx.letterSpacing='0px';
+  return ctx.measureText(text).width+tracking*size*Math.max(0,Array.from(HERO_GRAPHEMES.segment(text)).length-1);
+}
 function heroLayout(ctx,text,language){
-  const chars=Array.from(text),han=/^[\p{Script=Han}]+$/u.test(text),cjk=/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text);
-  let size=chars.length===1?34:cjk?28:chars.length===2?26:22,tracking=cjk?.04:.05;
-  if(language==='zh'&&han&&chars.length===4)return {lines:[chars.slice(0,2).join(''),chars.slice(2).join('')],size:21,tracking:.04,advance:1.04,width:43.7,height:43.7};
-  for(;size>9;size-=.5){ctx.font='800 '+size+'px '+HERO_FONT;ctx.letterSpacing=(size<14?0:tracking*size)+'px';if(ctx.measureText(text).width<=72)break;}
-  const s1=size,breaks=[];
-  if(text.includes(' ')){for(let i=0;i<text.length;i++)if(text[i]===' ')breaks.push(i);}
-  else if(han&&chars.length>=5)breaks.push(chars.length===5?2:Math.floor(chars.length/2));
+  const font=language==='zh'||language.startsWith('zh-Hans')?'"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft JhengHei UI","Yu Gothic UI",sans-serif':HERO_FONT;
+  const chars=Array.from(HERO_GRAPHEMES.segment(text),part=>part.segment),han=/^[\p{Script=Han}]+$/u.test(text),cjk=/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text);
+  const trackingFor=size=>cjk?.04:size<14?0:.05;
+  if(language.startsWith('zh')&&han&&chars.length===4)return {lines:[chars.slice(0,2).join(''),chars.slice(2).join('')],size:21,tracking:.04,advance:1.04,width:43.7,height:43.7,font};
+  const maximum=chars.length===1?34:cjk?28:chars.length===2?26:22;
+  let size=9;
+  for(let candidate=maximum;candidate>=9;candidate-=.5)if(heroMeasureLine(ctx,text,candidate,trackingFor(candidate),font)<=72){size=candidate;break;}
+  const oneLine=size,breaks=[];
+  for(let index=1;index<chars.length-1;index++)if(chars[index]===' ')breaks.push(index);
+  if(!breaks.length&&han&&chars.length>=5)breaks.push(chars.length===5?2:Math.floor(chars.length/2));
   let lines=[text],advance=1.1;
-  for(let candidate=cjk?22:20;candidate>=13&&candidate>=1.15*s1;candidate-=.5){
+  for(let candidate=cjk?22:20;candidate>=13;candidate-=.5){
+    if(candidate<1.15*oneLine)continue;
     let best=null,balance=Infinity;
-    ctx.font='800 '+candidate+'px '+HERO_FONT;ctx.letterSpacing=tracking*candidate+'px';
     for(const split of breaks){
-      const a=text.slice(0,split).trim(),b=text.slice(split).trim(),wa=ctx.measureText(a).width,wb=ctx.measureText(b).width;
-      if(Math.max(wa,wb)<=72&&Math.abs(wa-wb)<balance){best=[a,b];balance=Math.abs(wa-wb);}
+      const first=chars.slice(0,split).join('').trim(),second=chars.slice(split).join('').trim();if(!first||!second)continue;
+      const a=heroMeasureLine(ctx,first,candidate,trackingFor(candidate),font),b=heroMeasureLine(ctx,second,candidate,trackingFor(candidate),font);
+      if(Math.max(a,b)<=72&&Math.abs(a-b)<balance){best=[first,second];balance=Math.abs(a-b);}
     }
     if(best){lines=best;size=candidate;break;}
   }
-  ctx.font='800 '+size+'px '+HERO_FONT;ctx.letterSpacing=(size<14?0:tracking*size)+'px';
-  let width=0;for(const l of lines)width=Math.max(width,ctx.measureText(l).width);
-  return {lines,size,tracking:size<14?0:tracking,advance,width,height:size*(1+(lines.length-1)*advance)};
+  const tracking=trackingFor(size);let width=0;
+  for(const line of lines)width=Math.max(width,heroMeasureLine(ctx,line,size,tracking,font));
+  return {lines,size,tracking,advance,width,height:size*(1+(lines.length-1)*advance),font};
 }
 function createHero(){
   const layer=document.createElement('canvas'),mask=document.createElement('canvas'),glyph=document.createElement('canvas'),previousThemeLayer=document.createElement('canvas');
@@ -69,14 +78,24 @@ function createHero(){
     if(layout.glyphPixels===pixels)return;
     const mask=document.createElement('canvas');mask.width=mask.height=pixels;
     const ink=mask.getContext('2d');if(!ink)throw new Error('Badge glyph cache requires Canvas 2D');
-    ink.setTransform(scale,0,0,scale,0,0);ink.font='800 '+layout.size+'px '+HERO_FONT;ink.letterSpacing=layout.size*layout.tracking+'px';ink.textAlign='center';ink.textBaseline='alphabetic';
+    ink.setTransform(scale,0,0,scale,0,0);ink.font='700 '+layout.size+'px '+layout.font;ink.letterSpacing='0px';ink.textAlign='left';ink.textBaseline='alphabetic';
     let top=Infinity,bottom=-Infinity;
     for(let i=0;i<layout.lines.length;i++){
       const metrics=ink.measureText(layout.lines[i]),baseline=(i-(layout.lines.length-1)/2)*layout.size*layout.advance;
       top=Math.min(top,baseline-metrics.actualBoundingBoxAscent);bottom=Math.max(bottom,baseline+metrics.actualBoundingBoxDescent);
     }
     const shift=50-(top+bottom)/2;ink.fillStyle='#fff';
-    for(let i=0;i<layout.lines.length;i++)ink.fillText(layout.lines[i],50,shift+(i-(layout.lines.length-1)/2)*layout.size*layout.advance);
+    for(let index=0;index<layout.lines.length;index++){
+      const line=layout.lines[index],baseline=shift+(index-(layout.lines.length-1)/2)*layout.size*layout.advance;
+      const chars=Array.from(HERO_GRAPHEMES.segment(line),part=>part.segment),left=50-heroMeasureLine(ink,line,layout.size,layout.tracking)/2;
+      if(!layout.tracking||chars.length<2){ink.fillText(line,left,baseline);continue;}
+      let prefix='';
+      for(let character=0;character<chars.length;character++){
+        const x=left+ink.measureText(prefix).width+layout.tracking*layout.size*character;
+        if(chars[character]!==' ')ink.fillText(chars[character],x,baseline);
+        prefix+=chars[character];
+      }
+    }
     layout.inkTop=top+shift;layout.inkBottom=bottom+shift;layout.height=bottom-top;layout.glyphMask=mask;layout.glyphPixels=pixels;
     for(let i=0;i<2;i++){
       const glow=document.createElement('canvas');glow.width=glow.height=pixels;const blurred=glow.getContext('2d');if(!blurred)throw new Error('Badge glow cache requires Canvas 2D');
@@ -163,8 +182,8 @@ function createHero(){
   }
   function update(frame,st,dt){
     fit(st);
-    const lookup=(themes[frame.titleTheme]||themes.vehicles)[frame.language==='zh'?'zh':'en'],index=lookup.indexOf(frame.title);
-    const level=index<0?title(frame.value,frame.titleTheme,frame.language,frame.redline).level:index;
+    const lookup=frame.titleLabels||(themes[frame.titleBase||frame.titleTheme]||themes.vehicles)[frame.language==='zh'?'zh':'en'],index=lookup.indexOf(frame.title);
+    const level=Number.isInteger(frame.titleLevel)?clamp(frame.titleLevel,0,13):index<0?title(frame.value,frame.titleBase||frame.titleTheme,frame.language,frame.redline).level:index;
     if(!initialized){current=Math.max(0,level-1);lastLevel=level;lastTheme=frame.titleTheme;lastTitle=frame.title;distance=VEHICLES[current].motion.rest||0;wake.value=level>0?1:0;stand=level===0?1:0;initialized=true;}
     if(level!==lastLevel||frame.titleTheme!==lastTheme||frame.title!==lastTitle){
       if(frame.titleTheme!==lastTheme){previousThemeCtx.clearRect(0,0,pixels,pixels);previousThemeCtx.drawImage(layer,0,0);themeBlendAt=st.time;}
@@ -174,7 +193,7 @@ function createHero(){
       if(frame.titleTheme!==lastTheme)previous=-1;
       lastLevel=level;lastTheme=frame.titleTheme;lastTitle=frame.title;badgeLayout=null;
     }
-    if(!badgeLayout&&frame.titleTheme!=='vehicles'){
+    if(!badgeLayout&&!(frame.showsVehicleArt??((frame.titleBase||frame.titleTheme)==='vehicles'))){
       const key=frame.language+'|'+frame.title;
       badgeLayout=layouts.get(key);
       if(!badgeLayout){badgeLayout=heroLayout(ctx,frame.title,frame.language);if(layouts.size>=96)layouts.clear();layouts.set(key,badgeLayout);}
@@ -185,14 +204,14 @@ function createHero(){
     const smoothValue=st.h<1?frame.redline*Math.pow(st.h,1/.6):frame.redline*(1+st.o);
     b=current===12?st.o:clamp(Math.log(Math.max(.001,smoothValue)/Math.max(.001,low))/Math.log(Math.max(1.001,high/Math.max(.001,low))));
     coast=clamp(smoothValue/Math.max(.5,low));heading=(v.heading||0)*Math.PI/180;
-    let target=level===0?0:frame.titleTheme==='vehicles'?lerp(v.motion.speed[0],v.motion.speed[1],b)*Math.sqrt(coast):lerp(60,900,st.h)+300*st.o;
+    let target=level===0?0:(frame.showsVehicleArt??((frame.titleBase||frame.titleTheme)==='vehicles'))?lerp(v.motion.speed[0],v.motion.speed[1],b)*Math.sqrt(coast):lerp(60,900,st.h)+300*st.o;
     if(snapNext){speed.value=target;speed.velocity=0;wake.value=level>0?1:0;wake.velocity=0;stand=level===0?1:0;previous=-1;changed=startupAt=themeBlendAt=-99;transitionEvent=false;snapNext=false;}
     if(!st.moving){speed.value=target;speed.velocity=0;wake.value=level>0?1:0;wake.velocity=0;stand=level===0?1:0;return;}
     settle(speed,target,dt,.9);settle(wake,level>0?1:0,dt,.5);distance+=speed.value*dt;
     const bobRate=TAU*(1+.5*b)*dt;bobPhase=(bobPhase+1.7*bobRate)%TAU;bobPhase2=(bobPhase2+3.3*bobRate)%TAU;
     haloPhase=(haloPhase+TAU/lerp(4,.7,st.h)*dt)%TAU;breathPhase=(breathPhase+TAU/4.8*dt)%TAU;sheenPhase=(sheenPhase+dt/Math.max(1.4,5-3.5*st.h))%1000;
     const standTarget=level===0&&speed.value<6?1:0;stand+=(standTarget-stand)*(1-Math.exp(-dt/.18));
-    const badge=frame.titleTheme!=='vehicles';
+    const badge=!(frame.showsVehicleArt??((frame.titleBase||frame.titleTheme)==='vehicles'));
     if(level>0){
       const cap=st.fx===1?5:st.fx===3?14:9;
       const n=Math.min(cap,Math.round((2+8*st.h)*clamp(speed.value/(badge?60:v.motion.speed[0]))*(st.fx===1?.6:st.fx===3?1.4:1)));
@@ -217,6 +236,7 @@ function createHero(){
     for(const p of particles)if(p.age<p.life){p.age+=dt;if(p.kind===2)p.vx=6*Math.sin(p.x+7*p.age);else if(v.key==='raceCar')p.vy+=260*dt;p.vx*=Math.exp(-2.5*dt);p.x+=p.vx*dt;p.y+=p.vy*dt;}
   }
   function scenery(st,v,alpha,ground=v.groundY||70){
+    if(st.highContrast)return;
     const C=resolvePaint(st,false).C,D=st.moving?distance:0,G=st.moving?speed.value:0,g=ground;
     ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=rgba(C,st.dark?.30:.34);ctx.lineWidth=1.1;ctx.lineCap='round';
     const type=v.scenery;
@@ -297,12 +317,13 @@ function createHero(){
     }
     const presence=colors.presence;
     for(let pass=brush?2:0;pass<3;pass++){
-      if(pass<2&&(wake.value<=.01||st.fx===0&&pass===0))continue;
+      if(pass<2&&(st.highContrast||wake.value<=.01||st.fx===0&&pass===0))continue;
       const glow=(st.fx===0?(dark?.30:.12):dark?.30+.45*h+.15*o:.14+.18*h)*(pass===0?.2:.5)*wake.value;
       const extra=pass===2?0:(pass===0?2.6:1.2)*sigma;
       ctx.save();ctx.translate(offset*Math.cos((v.heading||0)*Math.PI/180),offset*Math.sin((v.heading||0)*Math.PI/180));rig(st,v,pass,C,sigma,alpha*presence*(pass===2?1:glow*.8),true,brush);ctx.restore();
       for(const p of v.parts){
         const role=VEHICLE_ART.roles[p.role],flame=p.role==='flame'||p.role==='flameCore';
+        if(st.highContrast&&(p.role==='glow'||p.role==='flameCore'))continue;
         if(flame&&wake.value<.02)continue;
         ctx.save();ctx.translate(offset*Math.cos((v.heading||0)*Math.PI/180)+lurch,offset*Math.sin((v.heading||0)*Math.PI/180));
         const sprung=p.sprung===undefined?role.sprung:p.sprung;
@@ -332,7 +353,7 @@ function createHero(){
       }
       ctx.save();ctx.translate(offset*Math.cos((v.heading||0)*Math.PI/180),offset*Math.sin((v.heading||0)*Math.PI/180));rig(st,v,pass,C,sigma,alpha*presence*(pass===2?1:glow*.8),false,brush);ctx.restore();
     }
-    if(active&&!brush){
+    if(active&&!brush&&!st.highContrast){
       for(const e of v.emitters){
         if(e.type==='trail'){
           const count=st.moving?e.lanes.length:1+(b>=.34?1:0)+(b>=.67?1:0);
@@ -357,6 +378,18 @@ function createHero(){
   }
   function badge(st,frame){
     const layout=badgeLayout;if(!layout)return;
+    if(st.highContrast){
+      const ink=st.contrast.highlight,gray=st.contrast.gray;
+      ctx.save();ctx.beginPath();ctx.rect(-10,-10,120,120);ctx.rect(50-layout.width/2-2.5,50-layout.height/2-2.5,layout.width+5,layout.height+5);ctx.clip('evenodd');ctx.translate(50,50);
+      arc(ctx,33,.8,-90,360,ink);arc(ctx,30.5,.5,-90,360,ink);ctx.restore();
+      for(let index=0;index<13;index++){
+        const pip=badgePips[index],lit=index<lastLevel,r=index+1===lastLevel?1.45:1.05;
+        ctx.beginPath();ctx.arc(pip.x,pip.y,lit?r:.875,0,TAU);
+        if(lit){ctx.fillStyle=ink;ctx.fill();}else{ctx.strokeStyle=gray;ctx.lineWidth=.35;ctx.stroke();}
+      }
+      tintGlyph(layout.glyphMask);glyphCtx.fillStyle=lastLevel===0?gray:ink;glyphCtx.fillRect(0,0,100,100);glyphCtx.globalCompositeOperation='source-over';
+      ctx.drawImage(glyph,0,0,pixels,pixels,0,0,100,100);return;
+    }
     const active=lastLevel>0,colors=resolvePaint(st,true),C=colors.C,H=colors.H,wake=colors.wake;
     const age=st.time-changed,transition=(st.moving||st.reduced)&&age>=0&&age<(st.reduced?.3:.75)&&previousTitle!==frame.title;
     if(active&&st.fx>0){const breath=st.moving?1+.1*Math.sin(haloPhase):1;radial(ctx,50,50,34,C,(st.dark?.10+.22*st.h:.05+.08*st.h)*breath*wake);}
@@ -401,10 +434,11 @@ function createHero(){
   }
   function draw(target,st,frame){
     fit(st);ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,pixels,pixels);ctx.setTransform(scale,0,0,scale,0,0);ctx.lineCap=ctx.lineJoin='round';
-    const v=VEHICLES[current],badgeTheme=frame.titleTheme!=='vehicles',age=st.time-changed;
+    const v=VEHICLES[current],badgeTheme=!(frame.showsVehicleArt??((frame.titleBase||frame.titleTheme)==='vehicles')),age=st.time-changed;
     ctx.save();
-    if(st.fx>=2&&st.moving&&st.tier>=4&&st.value>=.5){const A=(.2+.5*st.o)*(st.fx===3?1.4:1),t=st.time;ctx.translate(A*(.5*Math.sin(TAU*23*t)+.3*Math.sin(TAU*31*t+1)+.2*Math.sin(TAU*41*t+2)),A*(.5*Math.sin(TAU*19*t+.5)+.3*Math.sin(TAU*29*t+2)+.2*Math.sin(TAU*37*t+1)));}
+    if(!st.highContrast&&st.fx>=2&&st.moving&&st.tier>=4&&st.value>=.5){const A=(.2+.5*st.o)*(st.fx===3?1.4:1),t=st.time;ctx.translate(A*(.5*Math.sin(TAU*23*t)+.3*Math.sin(TAU*31*t+1)+.2*Math.sin(TAU*41*t+2)),A*(.5*Math.sin(TAU*19*t+.5)+.3*Math.sin(TAU*29*t+2)+.2*Math.sin(TAU*37*t+1)));}
     if(badgeTheme)badge(st,frame);
+    else if(st.highContrast)actor(st,v,1,0,st.contrast.highlight);
     else{
       if(previous>=0&&previous!==current&&(st.moving||st.reduced)&&age<(st.reduced?.3:.75)){
         const prior=VEHICLES[previous],q=smooth(0,.55,age);
@@ -422,20 +456,20 @@ function createHero(){
       }else{scenery(st,v,1);actor(st,v,1,0);}
     }
     const colors=resolvePaint(st,badgeTheme),C=colors.C,H=colors.H;
-    if(st.moving){
+    if(st.moving&&!st.highContrast){
       for(const l of streaks)if(l.age<l.life){
         const tx=l.x-l.dx*l.length,ty=l.y-l.dy*l.length,alpha=l.alpha*smooth(0,.12,l.age)*smooth(l.life,l.life-.12,l.age),g=ctx.createLinearGradient(tx,ty,l.x,l.y);g.addColorStop(0,rgba(C,0));g.addColorStop(1,rgba(st.tier>=4&&st.dark?H:C,alpha));line(ctx,tx,ty,l.x,l.y,1,g);
       }
       for(const p of particles)if(p.age<p.life)line(ctx,p.x-p.vx*.022,p.y-p.vy*.022,p.x,p.y,p.r,rgba(labMix(H,C,p.age/p.life),1-p.age/p.life));
     }
     // HeroStage.Sweep / HeroPainter.Paint: the parked actor alone receives the gauge-synchronized 18-unit light band.
-    if(!badgeTheme&&lastLevel===0&&st.moving&&1-wake.value>=.05&&st.sweepAge>=.63&&st.sweepAge<1.53){
+    if(!badgeTheme&&!st.highContrast&&lastLevel===0&&st.moving&&1-wake.value>=.05&&st.sweepAge>=.63&&st.sweepAge<1.53){
       const u=(st.sweepAge-.63)/.9,x=-10+120*(.5-.5*Math.cos(Math.PI*u)),color=st.dark?HOT:colors.idle,band=ctx.createLinearGradient(x-9,0,x+9,0),alpha=(st.dark?.75:.6)*(1-wake.value);
       band.addColorStop(0,rgba(color,0));band.addColorStop(.5,rgba(color,alpha));band.addColorStop(1,rgba(color,0));actor(st,v,1,0,band);
     }
     ctx.restore();ctx.setTransform(1,0,0,1,0,0);ctx.globalCompositeOperation='destination-in';ctx.drawImage(mask,0,0);ctx.globalCompositeOperation='source-over';
     target.save();
-    if((st.moving||st.reduced)&&st.time-themeBlendAt<.3){
+    if(!st.highContrast&&(st.moving||st.reduced)&&st.time-themeBlendAt<.3){
       const q=smooth(0,.3,st.time-themeBlendAt);
       target.globalAlpha=1-q;target.drawImage(previousThemeLayer,-.36*st.S,-.36*st.S,.72*st.S,.72*st.S);
       target.globalAlpha=q;target.drawImage(layer,-.36*st.S,-.36*st.S,.72*st.S,.72*st.S);
