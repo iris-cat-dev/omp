@@ -8,6 +8,7 @@ import { isClosedTask } from "@/components/task-list-tree-model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TodoEntry } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
+import { proseLineHeight } from "@/styles/markdown-styles";
 
 const ThemedListTodo = withUnistyles(ListTodo);
 const ThemedPanelRightClose = withUnistyles(PanelRightClose);
@@ -88,8 +89,8 @@ const styles = StyleSheet.create((theme) => ({
   panel: {
     width: { xs: 280, md: AGENT_TASK_PANEL_DESKTOP_WIDTH },
     maxHeight: 560,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -116,7 +117,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   collapsedProgress: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
   tooltipText: {

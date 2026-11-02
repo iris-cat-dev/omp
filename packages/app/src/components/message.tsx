@@ -2330,7 +2330,7 @@ function taskActivityIcon(activity: TaskActivity) {
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
   detailsWrapper: {
-    padding: theme.spacing[2],
+    padding: theme.spacing[3],
   },
 }));
 

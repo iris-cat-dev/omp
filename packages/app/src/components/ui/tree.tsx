@@ -17,6 +17,7 @@ import {
   workspaceTreeRowStyles,
 } from "@/components/tree-primitives";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { proseLineHeight } from "@/styles/markdown-styles";
 
 function treeItems(root: HTMLElement) {
   return Array.from(root.querySelectorAll<HTMLElement>('[role="treeitem"]')).filter(
@@ -156,7 +157,11 @@ export const TreeItem = memo(function TreeItem({
       ]}
       testID={testID}
     >
-      {expanded !== undefined && <TreeChevron expanded={expanded} />}
+      {expanded !== undefined && (
+        <View style={styles.disclosureIcon}>
+          <TreeChevron expanded={expanded} />
+        </View>
+      )}
       <View style={styles.content}>{children}</View>
     </Pressable>
   );
@@ -165,20 +170,25 @@ export const TreeItem = memo(function TreeItem({
 const styles = StyleSheet.create((theme) => ({
   row: {
     minWidth: 0,
-    minHeight: { xs: 32, md: 24 },
+    minHeight: 32,
     alignItems: "flex-start",
     justifyContent: "flex-start",
-    paddingVertical: 2,
+    paddingVertical: theme.spacing[1.5],
     paddingRight: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
   },
   active: { backgroundColor: theme.colors.surface2 },
+  disclosureIcon: {
+    height: proseLineHeight(theme.fontSize.content),
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   content: {
     minWidth: 0,
     flex: 1,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
   },
 }));

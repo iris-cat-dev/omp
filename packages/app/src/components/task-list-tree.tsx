@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
 } from "lucide-react-native";
 import { Tree, TreeItem } from "@/components/ui/tree";
+import { proseLineHeight } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import type { TodoEntry } from "@/types/stream";
 import {
@@ -38,15 +39,15 @@ const blockedIconColor = (theme: Theme) => ({ color: theme.colors.statusWarning 
 function TaskStatusIcon({ status }: { status: TaskStatus }) {
   switch (status) {
     case "in_progress":
-      return <ThemedCircleDot size={14} uniProps={runningIconColor} />;
+      return <ThemedCircleDot size={16} uniProps={runningIconColor} />;
     case "completed":
-      return <ThemedCircleCheck size={14} uniProps={mutedIconColor} />;
+      return <ThemedCircleCheck size={16} uniProps={mutedIconColor} />;
     case "blocked":
-      return <ThemedCirclePause size={14} uniProps={blockedIconColor} />;
+      return <ThemedCirclePause size={16} uniProps={blockedIconColor} />;
     case "abandoned":
-      return <ThemedCircleMinus size={14} uniProps={mutedIconColor} />;
+      return <ThemedCircleMinus size={16} uniProps={mutedIconColor} />;
     default:
-      return <ThemedCircle size={14} uniProps={mutedIconColor} />;
+      return <ThemedCircle size={16} uniProps={mutedIconColor} />;
   }
 }
 
@@ -195,37 +196,43 @@ export const TaskListTree = memo(function TaskListTree({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  tree: { minWidth: 0, minHeight: 0, flexShrink: 1, gap: theme.spacing[1] },
-  header: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: theme.spacing[1] },
+  tree: { minWidth: 0, minHeight: 0, flexShrink: 1, gap: theme.spacing[2] },
+  header: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   headerToggle: {
     minWidth: 0,
-    minHeight: { xs: 28, md: 24 },
+    minHeight: 28,
     flexGrow: 1,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
   },
   title: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     fontWeight: theme.fontWeight.semibold,
   },
   overallProgress: {
     marginLeft: "auto",
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
   scroll: { minHeight: 0, flexShrink: 1 },
   contents: { minWidth: 0 },
-  statusIcon: { marginTop: 2, flexShrink: 0 },
+  statusIcon: {
+    height: proseLineHeight(theme.fontSize.content),
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   taskLabel: {
     minWidth: 0,
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 18,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   runningLabel: { color: theme.colors.foreground },
@@ -234,19 +241,23 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 18,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     fontWeight: theme.fontWeight.medium,
     ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   activePhaseLabel: { color: theme.colors.foreground, fontWeight: theme.fontWeight.semibold },
   phaseProgress: {
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 18,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
-  emptyText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  emptyText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.content,
+    lineHeight: proseLineHeight(theme.fontSize.content),
+  },
   tooltipText: {
     maxWidth: 420,
     color: theme.colors.foreground,
