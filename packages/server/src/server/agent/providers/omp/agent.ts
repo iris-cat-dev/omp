@@ -3670,6 +3670,13 @@ export class OmpAgentSession implements AgentSession {
       return false;
     }
     if (mappedEvent.item) {
+      if (mappedEvent.item.type === "compaction") {
+        this.emitCompactionTimeline({
+          turnId: this.currentTurnIdForEvent(),
+          item: mappedEvent.item,
+        });
+        return true;
+      }
       if (mappedEvent.item.type === "tool_call") {
         if (mappedEvent.item.status === "running") {
           this.activeRuntimeToolCalls.set(mappedEvent.item.callId, mappedEvent.item);
@@ -5365,7 +5372,8 @@ export class OmpAgentClient implements AgentClient {
           ...context.launchContext?.env,
         },
         this.runtimeSettings?.command,
-      )) ?? "ask";
+      )) ??
+      "ask";
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,

@@ -7,6 +7,8 @@ import {
   OmpAutoRetryEndEventSchema,
   OmpAutoRetryStartEventSchema,
   OmpGoalUpdatedEventSchema,
+  OmpManualCompactionEndEventSchema,
+  OmpManualCompactionStartEventSchema,
   OmpNoticeEventSchema,
   OmpRetryFallbackAppliedEventSchema,
   OmpRetryFallbackSucceededEventSchema,
@@ -60,6 +62,10 @@ export function mapOmpRuntimeEventToTimelineItem(event: unknown): OmpRuntimeEven
       return mapAutoCompactionStartEvent(event);
     case "auto_compaction_end":
       return mapAutoCompactionEndEvent(event);
+    case "manual_compaction_start":
+      return mapManualCompactionStartEvent(event);
+    case "manual_compaction_end":
+      return mapManualCompactionEndEvent(event);
     default:
       return { handled: false };
   }
@@ -260,6 +266,34 @@ function mapAutoCompactionEndEvent(event: unknown): OmpRuntimeEventMapping {
       type: "compaction",
       status: "completed",
       trigger: "auto",
+      ...(preTokens !== undefined ? { preTokens } : {}),
+    },
+  };
+}
+
+function mapManualCompactionStartEvent(event: unknown): OmpRuntimeEventMapping {
+  const parsed = OmpManualCompactionStartEventSchema.safeParse(event);
+  if (!parsed.success) {
+    return { handled: true, item: null, logReason: "malformed_omp_manual_compaction_start" };
+  }
+  return {
+    handled: true,
+    item: { type: "compaction", status: "loading", trigger: "manual" },
+  };
+}
+
+function mapManualCompactionEndEvent(event: unknown): OmpRuntimeEventMapping {
+  const parsed = OmpManualCompactionEndEventSchema.safeParse(event);
+  if (!parsed.success) {
+    return { handled: true, item: null, logReason: "malformed_omp_manual_compaction_end" };
+  }
+  const preTokens = readCompactionPreTokens(parsed.data.result);
+  return {
+    handled: true,
+    item: {
+      type: "compaction",
+      status: "completed",
+      trigger: "manual",
       ...(preTokens !== undefined ? { preTokens } : {}),
     },
   };

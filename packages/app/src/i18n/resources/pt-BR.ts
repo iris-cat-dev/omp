@@ -508,6 +508,8 @@ export const ptBR: TranslationResources = {
     },
     compaction: {
       loading: "Compactando...",
+      waitingHint:
+        "Isso pode levar alguns minutos. Novas mensagens aguardam o fim da compactação; não é necessário reenviá-las.",
       auto: "Contexto compactado automaticamente",
       manual: "Contexto compactado manualmente",
       withTokens: "Contexto compactado ({{tokens}}K tokens)",

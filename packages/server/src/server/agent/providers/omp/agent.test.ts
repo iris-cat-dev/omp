@@ -3419,6 +3419,55 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test.each([
+    { aborted: false, result: { tokensBefore: 48_000 } },
+    { aborted: true, errorMessage: "Cancelled" },
+    { aborted: false, skipped: true, errorMessage: "Already compacted" },
+  ])("manual compaction progress works before any model turn: %j", async (outcome) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().emit({ type: "manual_compaction_start" });
+    omp.runtime().emit({ type: "manual_compaction_end", ...outcome });
+    expect(omp.streamEvents().filter((event) => event.type === "timeline")).toEqual([
+      expect.objectContaining({
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      }),
+      expect.objectContaining({
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: "manual",
+          ...("result" in outcome ? { preTokens: 48_000 } : {}),
+        },
+      }),
+    ]);
+  });
+
+  test("manual compact does not duplicate native progress with its synthetic marker or RPC result", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    vi.spyOn(omp.runtime(), "compact").mockImplementation(async () => {
+      omp.runtime().emit({ type: "manual_compaction_start" });
+      omp.runtime().emit({
+        type: "manual_compaction_end",
+        aborted: false,
+        result: { tokensBefore: 48_000 },
+      });
+    });
+    expect(await omp.runOutOfBand("/compact")).toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "compaction", status: "completed", trigger: "manual", preTokens: 48_000 },
+      },
+    ]);
+  });
+
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {
     const omp = new OmpHarness();
     await omp.resume({

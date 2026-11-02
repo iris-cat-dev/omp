@@ -632,14 +632,18 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     const generation = this.inputGeneration;
     await this.refreshImageSettings();
     this.assertInputGeneration(generation);
-    const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
-      // OMP rejects a bare prompt while it is still streaming (for example a queued
-      // message drained after abort). Steering admits it into that live run instead.
-      streamingBehavior: "steer",
-    });
+    // Admission waits for compaction, input hooks, and image preparation. It is
+    // not a short control-plane RPC; a timeout cannot withdraw the pending input.
+    const { id: requestId, promise } = this.process.startRequest(
+      {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+        // Steering admits queued input even while the preceding run is streaming.
+        streamingBehavior: "steer",
+      },
+      JSONL_RPC_NO_TIMEOUT,
+    );
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
   }

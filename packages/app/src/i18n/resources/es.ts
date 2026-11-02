@@ -509,6 +509,8 @@ export const es: TranslationResources = {
     },
     compaction: {
       loading: "Compactando...",
+      waitingHint:
+        "Puede tardar unos minutos. Los mensajes nuevos esperan a que termine la compactación; no hace falta reenviarlos.",
       auto: "Contexto compactado automáticamente",
       manual: "Contexto compactado manualmente",
       withTokens: "Contexto compactado (tokens{{tokens}}K)",

@@ -530,6 +530,8 @@ export const en = {
     },
     compaction: {
       loading: "Compacting...",
+      waitingHint:
+        "This may take a few minutes. New messages wait until compaction finishes; no need to resend.",
       auto: "Context automatically compacted",
       manual: "Context manually compacted",
       withTokens: "Context compacted ({{tokens}}K tokens)",

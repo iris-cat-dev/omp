@@ -529,6 +529,7 @@ export const zhCN: TranslationResources = {
     },
     compaction: {
       loading: "正在压缩...",
+      waitingHint: "可能需要几分钟。此时发送的新消息会等待压缩完成，无需重发。",
       auto: "上下文已自动压缩",
       manual: "上下文已手动压缩",
       withTokens: "上下文已压缩（{{tokens}}K tokens）",

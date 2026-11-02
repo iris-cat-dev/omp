@@ -43,6 +43,8 @@ Main-process code keeps Electron-compatible `electron` imports; the stock `elect
 
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
+OMP `compact` and `prompt` admission RPCs wait for their response, runtime exit, or session close rather than the short control-plane timeout. Prompt admission can wait for compaction, input hooks, and image preparation; a local timeout does not withdraw that input. Native `manual_compaction_start`/`manual_compaction_end` events use the same compaction timeline and deduplication path as Desktop's `/compact` marker.
+
 ### OMP SDK backend
 
 Desktop development, packaged applications, and SSH-managed deployments use the SDK. By default, `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. With an absolute `OMP_DESKTOP_SDK_ARTIFACT` directory, it instead imports the matching **Package release** artifact, checking SDK commit/version, target/profile, and archive integrity without rebuilding native addons. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically. [Mac-to-Windows packaging](packaging.md#mac-to-windows-packaging) sets the target to Windows x64 and consumes the Windows-built SDK.

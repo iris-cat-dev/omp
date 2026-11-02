@@ -504,6 +504,8 @@ export const ar: TranslationResources = {
     },
     compaction: {
       loading: "الضغط...",
+      waitingHint:
+        "قد يستغرق هذا بضع دقائق. تنتظر الرسائل الجديدة حتى يكتمل الضغط؛ لا حاجة لإعادة إرسالها.",
       auto: "يتم ضغط السياق تلقائيًا",
       manual: "تم ضغط السياق يدويًا",
       withTokens: "تم ضغط السياق (رموز{{tokens}}K)",

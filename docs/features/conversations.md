@@ -5,6 +5,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 ## Contents
 
 - [Completion and failures](#completion-and-failures)
+- [Context compaction](#context-compaction)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
 - [Queued messages](#queued-messages)
@@ -23,6 +24,12 @@ The current turn's **Fork** button stays hidden while the conversation is runnin
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.
 
 Provider-request failures after the Agent runtime starts appear as sanitized system errors, including the HTTP status and safe proxy error code when available, never proxy credentials. The existing Agent and provider session remain retryable; a transient network or proxy failure does not require a new conversation.
+
+## Context compaction
+
+`/compact` shows a progress marker and explains that compaction may take a few minutes. New messages submitted during compaction wait for it to finish; they do not need to be resent. Desktop does not apply the short 30-second control-plane deadline to prompt admission, because OMP may still be compacting or preparing that input. Runtime exit and genuine submission errors remain failures.
+
+Native manual-compaction progress updates the marker even before a model turn starts. The completion event or successful RPC result clears the loading state without duplicate markers. The waiting explanation disappears when compaction finishes.
 
 ## Workflow and approval modes
 

@@ -102,7 +102,6 @@ import {
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import { parseSkillInvocationMessage } from "./skill-invocation-message";
 import { SkillInvocationMessageView } from "./skill-invocation-message-view";
@@ -2245,6 +2244,15 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
     fontSize: 13,
     color: theme.colors.foregroundMuted,
   },
+  hint: {
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 12,
+    lineHeight: 18,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[3],
+  },
 }));
 
 export const CompactionMarker = memo(function CompactionMarker({
@@ -2252,20 +2260,37 @@ export const CompactionMarker = memo(function CompactionMarker({
   trigger,
   preTokens,
 }: CompactionMarkerProps) {
-  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  const { t } = useTranslation();
+  const label =
+    status === "loading"
+      ? t("message.compaction.loading")
+      : trigger === "auto"
+        ? t("message.compaction.auto")
+        : trigger === "manual"
+          ? t("message.compaction.manual")
+          : preTokens
+            ? t("message.compaction.withTokens", { tokens: Math.round(preTokens / 1000) })
+            : t("message.compaction.completed");
 
   return (
-    <View style={compactionStylesheet.container}>
-      <View style={compactionStylesheet.line} />
-      <View style={compactionStylesheet.label}>
-        {status === "loading" ? (
-          <LoadingSpinner size="small" color="#a1a1aa" />
-        ) : (
-          <Scissors size={12} color="#a1a1aa" />
-        )}
-        <Text style={compactionStylesheet.text}>{label}</Text>
+    <View testID="compaction-marker">
+      <View style={compactionStylesheet.container}>
+        <View style={compactionStylesheet.line} />
+        <View style={compactionStylesheet.label}>
+          {status === "loading" ? (
+            <LoadingSpinner size="small" color="#a1a1aa" />
+          ) : (
+            <Scissors size={12} color="#a1a1aa" />
+          )}
+          <Text style={compactionStylesheet.text}>{label}</Text>
+        </View>
+        <View style={compactionStylesheet.line} />
       </View>
-      <View style={compactionStylesheet.line} />
+      {status === "loading" && (
+        <Text style={compactionStylesheet.hint} accessibilityLiveRegion="polite">
+          {t("message.compaction.waitingHint")}
+        </Text>
+      )}
     </View>
   );
 });

@@ -508,6 +508,8 @@ export const fr: TranslationResources = {
     },
     compaction: {
       loading: "Compactage...",
+      waitingHint:
+        "Cela peut prendre quelques minutes. Les nouveaux messages attendent la fin du compactage ; inutile de les renvoyer.",
       auto: "Contexte automatiquement compacté",
       manual: "Contexte compacté manuellement",
       withTokens: "Contexte compacté (jetons{{tokens}}K)",

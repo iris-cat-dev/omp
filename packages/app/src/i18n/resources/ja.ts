@@ -508,6 +508,8 @@ export const ja: TranslationResources = {
     },
     compaction: {
       loading: "コンテキストを圧縮中...",
+      waitingHint:
+        "数分かかる場合があります。新しいメッセージは圧縮完了まで待機するため、再送は不要です。",
       auto: "コンテキストが自動的に圧縮されました",
       manual: "コンテキストが手動で圧縮されました",
       withTokens: "コンテキストを圧縮しました（{{tokens}}Kトークン）",

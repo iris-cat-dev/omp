@@ -462,6 +462,18 @@ export const OmpAutoCompactionEndEventSchema = z
     skipped: z.boolean().optional(),
   })
   .passthrough();
+export const OmpManualCompactionStartEventSchema = z
+  .object({ type: z.literal("manual_compaction_start"), mode: z.string().optional() })
+  .passthrough();
+export const OmpManualCompactionEndEventSchema = z
+  .object({
+    type: z.literal("manual_compaction_end"),
+    result: z.unknown().optional(),
+    aborted: z.boolean(),
+    skipped: z.boolean().optional(),
+    errorMessage: z.string().optional(),
+  })
+  .passthrough();
 export const OmpAvailableCommandSchema = z
   .object({
     name: z.string(),
@@ -564,18 +576,8 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
   OmpRetryFallbackSucceededEventSchema,
   OmpAutoCompactionStartEventSchema,
   OmpAutoCompactionEndEventSchema,
-  z
-    .object({ type: z.literal("manual_compaction_start"), mode: z.string().optional() })
-    .passthrough(),
-  z
-    .object({
-      type: z.literal("manual_compaction_end"),
-      result: z.unknown().optional(),
-      aborted: z.boolean(),
-      skipped: z.boolean().optional(),
-      errorMessage: z.string().optional(),
-    })
-    .passthrough(),
+  OmpManualCompactionStartEventSchema,
+  OmpManualCompactionEndEventSchema,
   z.object({ type: z.literal("cache_warming_start") }).passthrough(),
   z.object({ type: z.literal("cache_warming_end") }).passthrough(),
   z.object({ type: z.literal("model_changed") }).passthrough(),

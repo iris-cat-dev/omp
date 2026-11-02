@@ -506,6 +506,8 @@ export const ko: TranslationResources = {
     },
     compaction: {
       loading: "압축하는 중...",
+      waitingHint:
+        "몇 분 정도 걸릴 수 있습니다. 새 메시지는 압축이 끝날 때까지 대기하므로 다시 보내지 않아도 됩니다.",
       auto: "컨텍스트가 자동으로 압축되었습니다",
       manual: "컨텍스트가 수동으로 압축되었습니다",
       withTokens: "컨텍스트가 압축되었습니다 ({{tokens}}K 토큰)",
