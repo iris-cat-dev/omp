@@ -553,12 +553,14 @@ function ModelBrowserRow({
 
 function ModelRowProfileAction({
   hovered,
+  selected,
   onPress,
   label,
   testID,
   children,
 }: {
   hovered: boolean;
+  selected: boolean;
   onPress: () => void;
   label: string;
   testID: string;
@@ -568,7 +570,7 @@ function ModelRowProfileAction({
   const [isFocused, setIsFocused] = useState(false);
   const handleFocus = useCallback(() => setIsFocused(true), []);
   const handleBlur = useCallback(() => setIsFocused(false), []);
-  const visible = hovered || isNative || showPersistentActions || isFocused;
+  const visible = selected || hovered || isNative || showPersistentActions || isFocused;
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
@@ -599,7 +601,11 @@ function ModelRowProfileAction({
           accessibilityLabel={label}
           testID={testID}
         >
-          {children}
+          {selected && !hovered && !isFocused ? (
+            <ThemedCheck size={ICON_SIZE.sm} uniProps={accentMapping} />
+          ) : (
+            children
+          )}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
@@ -666,6 +672,7 @@ function ModelRow({
       return (
         <ModelRowProfileAction
           hovered={isHovered}
+          selected={isSelected}
           onPress={handleCreateProfile}
           label={t("modelSelector.createProfileFromModel")}
           testID={`model-create-profile-${row.provider}-${row.modelId}`}
@@ -681,6 +688,7 @@ function ModelRow({
       return (
         <ModelRowProfileAction
           hovered={isHovered}
+          selected={isSelected}
           onPress={handleEditProfile}
           label={t("modelSelector.editProfileLabel", { name: primary.name })}
           testID={`model-edit-profile-${row.provider}-${row.modelId}`}
@@ -695,6 +703,7 @@ function ModelRow({
     return (
       <ModelRowProfileAction
         hovered={isHovered}
+        selected={isSelected}
         onPress={handleEditProfiles}
         label={t("modelSelector.editProfilesCount", { count: profiledRows.length })}
         testID={`model-edit-profiles-${row.provider}-${row.modelId}`}
@@ -707,6 +716,7 @@ function ModelRow({
     handleEditProfile,
     handleEditProfiles,
     isHovered,
+    isSelected,
     onCreateProfile,
     onEditProfile,
     onEditProfiles,
@@ -739,7 +749,12 @@ function ModelRow({
         accessibilitySelected={isSelected}
         testID={`model-row-${row.provider}-${row.modelId}`}
       >
-        <View style={styles.browserRowContent}>
+        <View
+          style={[
+            styles.browserRowContent,
+            profileAction ? styles.modelRowContentWithProfile : styles.modelRowContent,
+          ]}
+        >
           <View style={[styles.browserRowText, description && styles.browserRowTextInline]}>
             <Text numberOfLines={1} style={styles.browserRowLabel}>
               {row.modelLabel}
@@ -755,9 +770,11 @@ function ModelRow({
               <Text style={styles.modelContextWindow}>{contextWindowLabel}</Text>
             ) : null}
             {profileAction}
-            <View style={styles.browserRowSelection}>
-              {isSelected ? <ThemedCheck size={ICON_SIZE.sm} uniProps={accentMapping} /> : null}
-            </View>
+            {!profileAction ? (
+              <View style={styles.browserRowSelection}>
+                {isSelected ? <ThemedCheck size={ICON_SIZE.sm} uniProps={accentMapping} /> : null}
+              </View>
+            ) : null}
           </View>
         </View>
       </ModelBrowserPressable>
@@ -1584,6 +1601,12 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: 6,
     paddingHorizontal: isWeb ? theme.spacing[3] : theme.spacing[6],
+  },
+  modelRowContent: {
+    paddingLeft: (isWeb ? theme.spacing[3] : theme.spacing[6]) + theme.spacing[1] + 14,
+  },
+  modelRowContentWithProfile: {
+    paddingLeft: (isWeb ? theme.spacing[3] : theme.spacing[6]) + theme.spacing[1] + 24,
   },
   browserRowLeading: {
     width: 14,
