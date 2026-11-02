@@ -135,6 +135,14 @@ Build overrides, shared by development, Desktop packaging, and remote deployment
 
 The Desktop target builds `dist/node-desktop/` and installs it canonically at `dist/node/`, leaving generic source artifacts untouched. Extensions can import package roots and Desktop's SDK/headless/async/host-API aliases, not arbitrary source-file subpaths; select `generic` for extensions requiring those imports. Missing artifacts or stale source/target/profile metadata fail packaging instead of falling back.
 
+The Desktop native addon omits PDF text extraction, Jujutsu (Git remains),
+Snapcompact image-based context compression, recording/playback, local word
+prediction, spelling, and Apple Foundation Models, in addition to SmolLM,
+native WebRTC/Opus, and WASM grammars. Both `core` and `full` enforce this native
+boundary. Saved settings cannot activate omitted engines; explicit requests
+fail before native construction. Existing Snapcompact archives, ordinary images,
+browser PDF screenshots/printing, and caller-owned SDP signaling remain usable.
+
 Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. The installed package records its profile; launch-time environment changes cannot restore excluded capabilities.
 
 SDK native dependencies must match the build host's OS and architecture. Windows x64 applications require Windows x64 builds; macOS arm64 applications require macOS arm64 builds. macOS core packaging resolves both the App resources root and addon to their real paths, rejects addons outside that root, and breaks packager hardlinks before stripping the release copy and signing; source addons remain unchanged.

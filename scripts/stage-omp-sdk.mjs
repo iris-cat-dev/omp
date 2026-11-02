@@ -279,13 +279,35 @@ async function desktopNativeAddons(pkg, target) {
       );
     const capabilities = bindings.nativeCapabilities();
     if (
-      ["smollm", "liveVoice", "wasmGrammars"].some(
-        (name) => capabilities[name] !== false || metadata.capabilities?.[name] !== false,
-      ) ||
-      typeof bindings.LiveWebRtcPeer !== "undefined" ||
-      typeof bindings.AudioCapture !== "function" ||
-      typeof bindings.AudioPlayback !== "function" ||
-      typeof bindings.TextPredictor !== "function"
+      [
+        "smollm",
+        "liveVoice",
+        "wasmGrammars",
+        "pdf",
+        "jujutsu",
+        "snapcompact",
+        "audio",
+        "localAssistance",
+      ].some((name) => capabilities[name] !== false || metadata.capabilities?.[name] !== false) ||
+      [
+        "LiveWebRtcPeer",
+        "AudioCapture",
+        "AudioPlayback",
+        "TextPredictor",
+        "pdfToMarkdown",
+        "VcsJjWorkspace",
+        "vcsJjDiscover",
+        "renderSnapcompactPng",
+        "snapcompactSupportedChars",
+        "macOSCheckSpelling",
+        "macOSSpellCheckerAvailable",
+        "macOSSpellingGuesses",
+        "macOSAutocorrectWord",
+        "appleFmAvailability",
+        "appleFmCancel",
+        "appleFmGenerate",
+      ].some((name) => typeof bindings[name] !== "undefined") ||
+      typeof bindings.VcsRepo?.prototype?.asJj !== "undefined"
     )
       throw new Error(`Desktop native feature set is incompatible: ${file}. ${rebuild}`);
   }
