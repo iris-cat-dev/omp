@@ -43,11 +43,7 @@ import { resolveModelBrowserProviderNamespaceId } from "@/composer/agent-control
 import { resolveOmpAccountFeatureSelection } from "@/components/omp-provider-accounts";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
-import {
-  ENHANCED_WORKFLOW_MODE,
-  WORKFLOW_LOCALE_FEATURE_ID,
-  WORKFLOW_MODE_FEATURE_ID,
-} from "@/hooks/feature-preferences";
+import { WORKFLOW_LOCALE_FEATURE_ID } from "@/hooks/feature-preferences";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
@@ -1372,11 +1368,7 @@ function ComposerContentImpl({
       const session = useSessionStore.getState().sessions[serverId];
       const targetAgent =
         session?.agents.get(targetAgentId) ?? session?.agentDetails.get(targetAgentId);
-      if (
-        targetAgent?.provider === "omp" &&
-        targetAgent.features?.find((feature) => feature.id === WORKFLOW_MODE_FEATURE_ID)?.value ===
-          ENHANCED_WORKFLOW_MODE
-      ) {
+      if (targetAgent?.provider === "omp") {
         await client.setAgentFeature(
           targetAgentId,
           WORKFLOW_LOCALE_FEATURE_ID,

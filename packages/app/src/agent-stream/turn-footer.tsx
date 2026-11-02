@@ -46,6 +46,7 @@ export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
   outputTokenSpeed,
+  workingMessage,
   host,
   strategy,
   supportsTimelineCursor,
@@ -58,6 +59,7 @@ export const TurnFooter = memo(function TurnFooter({
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   outputTokenSpeed: number | null;
+  workingMessage?: string;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
@@ -73,6 +75,7 @@ export const TurnFooter = memo(function TurnFooter({
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
           outputTokenSpeed={outputTokenSpeed}
+          workingMessage={workingMessage}
           onForkInFlightTurn={onForkInFlightTurn}
         />
       </TurnFooterRow>
@@ -150,10 +153,12 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
   outputTokenSpeed,
+  workingMessage,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
   outputTokenSpeed: number | null;
+  workingMessage?: string;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const { t } = useTranslation();
@@ -163,6 +168,17 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {workingMessage ? (
+        <Text
+          style={stylesheet.workingMessage}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          accessibilityLabel={workingMessage}
+          testID="turn-working-message"
+        >
+          {workingMessage}
+        </Text>
+      ) : null}
       {outputTokenSpeed !== null ? (
         <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
           <Text style={stylesheet.tokenOutputSpeedText}>
@@ -173,7 +189,11 @@ const WorkingIndicator = memo(function WorkingIndicator({
         </View>
       ) : null}
       {/* Match the completed-turn footer: actions precede timing metadata. */}
-      {onForkInFlightTurn ? <AssistantForkButton onFork={onForkInFlightTurn} /> : null}
+      {onForkInFlightTurn ? (
+        <View style={stylesheet.workingAction}>
+          <AssistantForkButton onFork={onForkInFlightTurn} />
+        </View>
+      ) : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -189,17 +209,20 @@ const WorkingIndicator = memo(function WorkingIndicator({
 function RunningTurnFooter({
   inFlightTurnStartedAt,
   outputTokenSpeed,
+  workingMessage,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt: Date | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
   outputTokenSpeed: number | null;
+  workingMessage?: string;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
         outputTokenSpeed={outputTokenSpeed}
+        workingMessage={workingMessage}
         onForkInFlightTurn={onForkInFlightTurn}
       />
     </View>
@@ -284,6 +307,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     alignSelf: "flex-start",
     maxWidth: "100%",
+    minWidth: 0,
+    flexShrink: 1,
     minHeight: 24,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
@@ -293,14 +318,29 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "flex-start",
     gap: theme.spacing[3],
+    maxWidth: "100%",
+    minWidth: 0,
+    flexShrink: 1,
   },
   workingElapsed: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
     fontVariant: ["tabular-nums"],
+    flexShrink: 0,
   },
   workingLoader: {
-    marginLeft: -2,
+    marginStart: -2,
+    flexShrink: 0,
+  },
+  workingMessage: {
+    color: theme.colors.foregroundMuted,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    textAlign: "auto",
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  workingAction: {
+    flexShrink: 0,
   },
   tokenOutputSpeed: {
     height: 24,

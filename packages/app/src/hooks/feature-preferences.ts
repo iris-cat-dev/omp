@@ -3,7 +3,6 @@ import type { SupportedLocale } from "@/i18n/locales";
 
 export const WORKFLOW_MODE_FEATURE_ID = "workflow_mode";
 export const WORKFLOW_LOCALE_FEATURE_ID = "workflow_locale";
-export const ENHANCED_WORKFLOW_MODE = "enhanced";
 
 const DRAFT_FEATURE_COMPANION_IDS: Record<string, true> = {
   [WORKFLOW_MODE_FEATURE_ID]: true,
@@ -43,11 +42,11 @@ export function pruneFeatureValues(
   return changed ? next : featureValues;
 }
 
-export function applyEnhancedWorkflowLocale(
+export function applyWorkflowLocale(
   featureValues: Record<string, unknown>,
   locale: SupportedLocale,
 ): Record<string, unknown> {
-  if (featureValues[WORKFLOW_MODE_FEATURE_ID] !== ENHANCED_WORKFLOW_MODE) {
+  if (featureValues[WORKFLOW_LOCALE_FEATURE_ID] === locale) {
     return featureValues;
   }
   return {

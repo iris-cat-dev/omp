@@ -897,6 +897,12 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     turnId: z.string().optional(),
   }),
   z.object({
+    type: z.literal("working_intent"),
+    provider: AgentProviderSchema,
+    turnId: z.string(),
+    intent: z.string().trim().min(1),
+  }),
+  z.object({
     type: z.literal("turn_completed"),
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
@@ -985,6 +991,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
 const AgentActiveTurnPayloadSchema = z.object({
   turnId: z.string(),
   startedAt: z.string().nullable(),
+  workingIntent: z.string().nullable().optional(),
 });
 
 export const AgentSnapshotPayloadSchema = z.object({

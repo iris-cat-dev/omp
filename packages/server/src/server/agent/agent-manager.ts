@@ -422,6 +422,7 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
+  workingIntent?: string;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -2855,6 +2856,7 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    if (agent.activeTurnId !== turnId) agent.workingIntent = undefined;
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -2869,6 +2871,7 @@ export class AgentManager {
     if (turnId && agent.activeTurnId !== turnId) return "stale";
     agent.activeTurnId = null;
     agent.activeTurnStartedAt = null;
+    agent.workingIntent = undefined;
     return "closed_current";
   }
 
@@ -4789,6 +4792,16 @@ export class AgentManager {
       case "turn_started":
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
         return undefined;
+      case "working_intent": {
+        const intent = event.intent.trim();
+        if (options?.fromHistory || agent.activeTurnId !== event.turnId || !intent) {
+          flags.shouldDispatchEvent = false;
+        } else {
+          agent.workingIntent = intent;
+        }
+        flags.shouldNotifyWaiters = false;
+        return undefined;
+      }
       case "permission_requested":
         this.onStreamPermissionRequested(agent, event);
         return undefined;

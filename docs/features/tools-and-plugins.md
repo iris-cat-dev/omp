@@ -5,6 +5,7 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 ## Contents
 
 - [OMP built-in tools](#omp-built-in-tools)
+- [OMP working status](#omp-working-status)
 - [Browser and computer use](#browser-and-computer-use)
 - [Screenshot annotation and text feedback](#screenshot-annotation-and-text-feedback)
 - [Plugin management and native commands](#plugin-management-and-native-commands)
@@ -18,6 +19,14 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 Known releases use their tool catalog; unfamiliar versions use the combined known list, not a version whitelist. Desktop checks native `--tools`/`--no-tools` support rather than rejecting unfamiliar releases. Builds sharing a version may expose different tools, so partial selection briefly starts an ephemeral session to request only tools in that build's active roster. No custom OMP build is needed for supported versions.
 
 **This is not a strict denylist.** OMP may add tools excluded from `--tools`, even under `--no-tools`; child agents may use a different list. OMP's own settings may disable selected tools. These choices do not affect standalone OMP sessions, Desktop-injected tools/extensions, or replace permission/approval enforcement. Custom OMP commands cannot combine these settings with their own `--tools`/`--no-tools` flags.
+
+## OMP working status
+
+During an OMP run, the conversation footer shows the latest tool intent next to the loading indicator, token speed, and elapsed time. The label can update while a tool call is being generated, before execution starts; it does not depend on a visible tool card. Missing or empty intent leaves the existing loading indicator unchanged.
+
+New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering; it does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
+
+The label belongs to the active run, survives reconnect, and clears when the run completes, fails, or stops. Late events from another or closed run cannot replace it. Saved tool history retains its original intent metadata without turning completed history into a live working status.
 
 ## Browser and computer use
 

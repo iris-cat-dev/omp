@@ -1913,6 +1913,8 @@ export function deriveAgentStreamTurnLiveness(
         type: "stream_open",
         turn: { turnId: event.turnId ?? null, startedAt: timestamp },
       });
+    } else if (event.type === "working_intent") {
+      transitions.push({ type: "working_intent", turnId: event.turnId, intent: event.intent });
     } else if (
       event.type === "turn_completed" ||
       event.type === "turn_failed" ||

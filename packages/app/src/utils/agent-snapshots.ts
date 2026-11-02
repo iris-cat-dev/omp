@@ -13,6 +13,9 @@ function normalizeActiveTurn(
     return {
       turnId: snapshot.activeTurn.turnId,
       startedAt: snapshot.activeTurn.startedAt ? new Date(snapshot.activeTurn.startedAt) : null,
+      ...(snapshot.activeTurn.workingIntent !== undefined
+        ? { workingIntent: snapshot.activeTurn.workingIntent }
+        : {}),
     };
   }
   return snapshot.status === "running" ? { turnId: null, startedAt: lastUserMessageAt } : null;
@@ -25,6 +28,9 @@ function projectActiveTurn(agent: Agent): Pick<AgentSnapshotPayload, "activeTurn
     activeTurn: {
       turnId: agent.activeTurn.turnId,
       startedAt: agent.activeTurn.startedAt?.toISOString() ?? null,
+      ...(agent.activeTurn.workingIntent !== undefined
+        ? { workingIntent: agent.activeTurn.workingIntent }
+        : {}),
     },
   };
 }

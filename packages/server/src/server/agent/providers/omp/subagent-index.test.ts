@@ -240,71 +240,357 @@ describe("OMP provider subagent mapper", () => {
   test("keeps parallel tools visible through argument streaming, updates, and independent finishes", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
-    const message: OmpAgentMessage = { role: "assistant", responseId: "tools-1", content: [{ type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "sleep 30" } }] };
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 } })).toMatchObject([{ type: "tool_call", callId: "bash-1", status: "running" }]);
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"command":"sleep 30"}' } })).toMatchObject([{ type: "tool_call", metadata: { streamingArgs: '{"command":"sleep 30"}' }, detail: { type: "shell", command: "sleep 30" } }]);
-    expect(emit({ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "README.md" } })).toMatchObject([{ type: "tool_call", callId: "read-1", status: "running" }]);
-    expect(emit({ type: "tool_execution_update", toolCallId: "bash-1", toolName: "bash", partialResult: { content: [{ type: "text", text: "still running" }] } })).toMatchObject([{ type: "tool_call", callId: "bash-1", status: "running", detail: { output: "still running" } }]);
-    expect(emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: { content: [{ type: "text", text: "file contents" }] } })).toMatchObject([{ type: "tool_call", callId: "read-1", status: "completed" }]);
-    expect(emit({ type: "tool_execution_update", toolCallId: "read-1", toolName: "read", partialResult: "stale" })).toEqual([]);
-    expect(emit({ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: true, result: "execution failed" })).toMatchObject([{ type: "tool_call", callId: "bash-1", status: "failed", error: "execution failed" }]);
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "tools-1",
+      content: [
+        { type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "sleep 30" } },
+      ],
+    };
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+      }),
+    ).toMatchObject([{ type: "tool_call", callId: "bash-1", status: "running" }]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"command":"sleep 30"}',
+        },
+      }),
+    ).toMatchObject([
+      {
+        type: "tool_call",
+        metadata: { streamingArgs: '{"command":"sleep 30"}' },
+        detail: { type: "shell", command: "sleep 30" },
+      },
+    ]);
+    expect(
+      emit({
+        type: "tool_execution_start",
+        toolCallId: "read-1",
+        toolName: "read",
+        args: { path: "README.md" },
+      }),
+    ).toMatchObject([{ type: "tool_call", callId: "read-1", status: "running" }]);
+    expect(
+      emit({
+        type: "tool_execution_update",
+        toolCallId: "bash-1",
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: "still running" }] },
+      }),
+    ).toMatchObject([
+      {
+        type: "tool_call",
+        callId: "bash-1",
+        status: "running",
+        detail: { output: "still running" },
+      },
+    ]);
+    expect(
+      emit({
+        type: "tool_execution_end",
+        toolCallId: "read-1",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "file contents" }] },
+      }),
+    ).toMatchObject([{ type: "tool_call", callId: "read-1", status: "completed" }]);
+    expect(
+      emit({
+        type: "tool_execution_update",
+        toolCallId: "read-1",
+        toolName: "read",
+        partialResult: "stale",
+      }),
+    ).toEqual([]);
+    expect(
+      emit({
+        type: "tool_execution_end",
+        toolCallId: "bash-1",
+        toolName: "bash",
+        isError: true,
+        result: "execution failed",
+      }),
+    ).toMatchObject([
+      { type: "tool_call", callId: "bash-1", status: "failed", error: "execution failed" },
+    ]);
     expect(emit({ type: "message_end", message })).toEqual([]);
   });
 
-  test.each(["completed", "aborted"] as const)("allows a fresh started after %s but blocks stale running progress", (terminal) => {
+  test("retains child native and streamed intent through execution and historical hydration", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const lifecycle = { id: "child", agent: "explore", index: 0 };
-    index.handleLifecycle(parent, { ...lifecycle, status: "started" });
-    index.handleLifecycle(parent, { ...lifecycle, status: terminal });
-    const expected = terminal === "aborted" ? "canceled" : "completed";
-    expect(index.handleProgress(parent, { index: 0, agent: "explore", task: "Explore", progress: { id: "child", status: "running" } })).toMatchObject([{ event: { status: expected } }]);
-    expect(index.handleLifecycle(parent, { ...lifecycle, status: "started" })).toMatchObject([{ event: { status: "running" } }]);
-    expect(index.handleProgress(parent, { index: 0, agent: "explore", task: "Explore again", progress: { id: "child", status: "completed" } })).toMatchObject([{ event: { status: "completed" } }]);
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "intent-child",
+      content: [
+        {
+          type: "toolCall",
+          id: "read",
+          name: "read",
+          arguments: { path: "source.ts", i: "Reading source..." },
+        },
+      ],
+    };
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0 },
+      }),
+    ).toMatchObject([{ type: "tool_call", metadata: { intent: "Reading source" } }]);
+    expect(
+      emit({
+        type: "tool_execution_start",
+        toolCallId: "read",
+        toolName: "read",
+        args: { path: "source.ts", i: "fallback" },
+        intent: "阅读源文件。",
+      }),
+    ).toMatchObject([{ type: "tool_call", metadata: { intent: "阅读源文件" } }]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0 },
+      }),
+    ).toEqual([]);
+    expect(
+      emit({
+        type: "tool_execution_update",
+        toolCallId: "read",
+        toolName: "read",
+        partialResult: "partial",
+      }),
+    ).toMatchObject([{ type: "tool_call", metadata: { intent: "阅读源文件" } }]);
+    expect(
+      emit({ type: "tool_execution_end", toolCallId: "read", toolName: "read", result: "done" }),
+    ).toMatchObject([
+      { type: "tool_call", status: "completed", metadata: { intent: "阅读源文件" } },
+    ]);
+
+    index.seedHistory(
+      parent,
+      [],
+      [
+        {
+          id: "restored",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "saved",
+                  name: "read",
+                  arguments: { path: "saved.ts" },
+                  intent: "Inspecting saved source.",
+                },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "saved",
+              toolName: "read",
+              content: [{ type: "text", text: "source" }],
+            },
+          ],
+        },
+      ],
+    );
+    const restored = childItems(
+      index.handleEvent(parent, {
+        id: "restored",
+        event: {
+          type: "tool_execution_end",
+          toolCallId: "saved",
+          toolName: "read",
+          result: "updated",
+        },
+      }),
+    );
+    expect(restored).toMatchObject([
+      { type: "tool_call", status: "completed", metadata: { intent: "Inspecting saved source" } },
+    ]);
   });
+
+  test.each(["completed", "aborted"] as const)(
+    "allows a fresh started after %s but blocks stale running progress",
+    (terminal) => {
+      const index = new OmpSubagentIndex();
+      const parent = {};
+      const lifecycle = { id: "child", agent: "explore", index: 0 };
+      index.handleLifecycle(parent, { ...lifecycle, status: "started" });
+      index.handleLifecycle(parent, { ...lifecycle, status: terminal });
+      const expected = terminal === "aborted" ? "canceled" : "completed";
+      expect(
+        index.handleProgress(parent, {
+          index: 0,
+          agent: "explore",
+          task: "Explore",
+          progress: { id: "child", status: "running" },
+        }),
+      ).toMatchObject([{ event: { status: expected } }]);
+      expect(index.handleLifecycle(parent, { ...lifecycle, status: "started" })).toMatchObject([
+        { event: { status: "running" } },
+      ]);
+      expect(
+        index.handleProgress(parent, {
+          index: 0,
+          agent: "explore",
+          task: "Explore again",
+          progress: { id: "child", status: "completed" },
+        }),
+      ).toMatchObject([{ event: { status: "completed" } }]);
+    },
+  );
 
   test("metadata-only events cannot reverse a local cancel", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
     index.handleLifecycle(parent, { id: "child", agent: "task", index: 0, status: "started" });
     index.markCanceled(parent, "child");
-    const frames = index.handleEvent(parent, { id: "child", event: { type: "message_start", message: { role: "assistant", content: [], provider: "anthropic", model: "claude-sonnet-5" } } });
-    expect(frames).toMatchObject([{ event: { type: "upsert", model: "anthropic/claude-sonnet-5" } }]);
+    const frames = index.handleEvent(parent, {
+      id: "child",
+      event: {
+        type: "message_start",
+        message: {
+          role: "assistant",
+          content: [],
+          provider: "anthropic",
+          model: "claude-sonnet-5",
+        },
+      },
+    });
+    expect(frames).toMatchObject([
+      { event: { type: "upsert", model: "anthropic/claude-sonnet-5" } },
+    ]);
     expect(frames[0]).not.toHaveProperty("event.status");
-    expect(index.handleLifecycle(parent, { id: "child", agent: "task", index: 0, status: "completed" })).toMatchObject([{ event: { status: "canceled" } }]);
+    expect(
+      index.handleLifecycle(parent, { id: "child", agent: "task", index: 0, status: "completed" }),
+    ).toMatchObject([{ event: { status: "canceled" } }]);
   });
 
   test("recovers exact native block prefixes and finished tools before buffered frames replay", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const message: OmpAgentMessage = { role: "assistant", responseId: "restored", content: [{ type: "thinking", thinking: "Plan" }, { type: "text", text: "Done" }, { type: "toolCall", id: "restored-tool", name: "bash", arguments: { command: "pwd" } }] };
-    const result: OmpAgentMessage = { role: "toolResult", toolCallId: "restored-tool", toolName: "bash", content: [{ type: "text", text: "/project" }] };
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "restored",
+      content: [
+        { type: "thinking", thinking: "Plan" },
+        { type: "text", text: "Done" },
+        { type: "toolCall", id: "restored-tool", name: "bash", arguments: { command: "pwd" } },
+      ],
+    };
+    const result: OmpAgentMessage = {
+      role: "toolResult",
+      toolCallId: "restored-tool",
+      toolName: "bash",
+      content: [{ type: "text", text: "/project" }],
+    };
     index.seedHistory(parent, [], [{ id: "child", messages: [message, result] }]);
-    index.hydrateSnapshot(parent, { id: "child", agent: "task", agentSource: "bundled", index: 0, lastUpdate: 1, status: "completed" });
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Plan" } })).toEqual([]);
-    expect(emit({ type: "message_update", message, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Done" } })).toEqual([]);
+    index.hydrateSnapshot(parent, {
+      id: "child",
+      agent: "task",
+      agentSource: "bundled",
+      index: 0,
+      lastUpdate: 1,
+      status: "completed",
+    });
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Plan" },
+      }),
+    ).toEqual([]);
+    expect(
+      emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Done" },
+      }),
+    ).toEqual([]);
     expect(emit({ type: "message_end", message })).toEqual([]);
-    expect(emit({ type: "tool_execution_start", toolCallId: "restored-tool", toolName: "bash", args: { command: "pwd" } })).toEqual([]);
+    expect(
+      emit({
+        type: "tool_execution_start",
+        toolCallId: "restored-tool",
+        toolName: "bash",
+        args: { command: "pwd" },
+      }),
+    ).toEqual([]);
     expect(emit({ type: "message_end", message: result })).toEqual([]);
   });
 
   test("preserves a tool that arrives before the first lifecycle frame", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    index.handleEvent(parent, { id: "child", event: { type: "tool_execution_start", toolCallId: "early", toolName: "bash", args: { command: "sleep 100" } } });
+    index.handleEvent(parent, {
+      id: "child",
+      event: {
+        type: "tool_execution_start",
+        toolCallId: "early",
+        toolName: "bash",
+        args: { command: "sleep 100" },
+      },
+    });
     index.handleLifecycle(parent, { id: "child", agent: "task", index: 0, status: "started" });
-    expect(childItems(index.handleEvent(parent, { id: "child", event: { type: "tool_execution_update", toolCallId: "early", toolName: "bash", partialResult: "alive" } }))).toMatchObject([{ type: "tool_call", detail: { type: "shell", command: "sleep 100", output: "alive" } }]);
+    expect(
+      childItems(
+        index.handleEvent(parent, {
+          id: "child",
+          event: {
+            type: "tool_execution_update",
+            toolCallId: "early",
+            toolName: "bash",
+            partialResult: "alive",
+          },
+        }),
+      ),
+    ).toMatchObject([
+      { type: "tool_call", detail: { type: "shell", command: "sleep 100", output: "alive" } },
+    ]);
   });
 
   test("shows retry and compaction without pretending an agent_end ends the child", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
-    const emit = (event: OmpSubagentEventPayload["event"]) => childItems(index.handleEvent(parent, { id: "child", event }));
-    expect(emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 100, errorMessage: "busy" })).toMatchObject([{ type: "extension_notification", level: "warning" }]);
-    expect(emit({ type: "auto_compaction_start", reason: "overflow", action: "remote" })).toMatchObject([{ type: "compaction", status: "loading" }, { type: "extension_notification" }]);
-    expect(emit({ type: "auto_compaction_end", aborted: false, willRetry: true })).toMatchObject([{ type: "compaction", status: "completed" }, { type: "extension_notification" }]);
+    const emit = (event: OmpSubagentEventPayload["event"]) =>
+      childItems(index.handleEvent(parent, { id: "child", event }));
+    expect(
+      emit({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 100,
+        errorMessage: "busy",
+      }),
+    ).toMatchObject([{ type: "extension_notification", level: "warning" }]);
+    expect(
+      emit({ type: "auto_compaction_start", reason: "overflow", action: "remote" }),
+    ).toMatchObject([
+      { type: "compaction", status: "loading" },
+      { type: "extension_notification" },
+    ]);
+    expect(emit({ type: "auto_compaction_end", aborted: false, willRetry: true })).toMatchObject([
+      { type: "compaction", status: "completed" },
+      { type: "extension_notification" },
+    ]);
     emit({ type: "agent_end", isTerminal: true, messages: [] });
     expect(index.markCanceled(parent, "child")).toMatchObject([{ event: { status: "canceled" } }]);
   });

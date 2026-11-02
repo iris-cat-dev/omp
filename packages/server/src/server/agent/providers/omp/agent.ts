@@ -118,6 +118,7 @@ import { getUserMessageImages, getUserMessageText } from "./message-history.js";
 import {
   buildOmpPlanTurnPrompt,
   buildOmpStandardTurnPrompt,
+  buildOmpToolIntentPrompt,
   getOmpWorkflowDisplayText,
 } from "./workflow-prompt.js";
 import { mapOmpIrcMessageToToolCall, mapOmpSystemNoticeToToolCall } from "./system-notice.js";
@@ -159,6 +160,7 @@ import type {
 } from "./rpc-types.js";
 import {
   parseToolArgs,
+  normalizeOmpToolIntent,
   parseToolResult,
   resolveToolCallName,
   type OmpToolResult,
@@ -1740,6 +1742,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly blobDir: string | undefined;
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
+  private lastWorkingIntent: { turnId: string; intent: string } | null = null;
   private readonly nativeTaskCalls = new Map<string, OmpNativeTaskCall>();
   private readonly activeRuntimeToolCalls = new Map<
     string,
@@ -2125,6 +2128,9 @@ export class OmpAgentSession implements AgentSession {
       payload.text = buildOmpStandardTurnPrompt(payload.text);
       this.planContextResetPending = false;
     }
+    if (nativeCommand === undefined) {
+      payload.text = this.withToolIntentLocale(payload.text);
+    }
     this.live = true;
     this.activeTurnId = turnId;
     this.activeTurnGeneration += 1;
@@ -2169,6 +2175,7 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
         if (this.activeInterrupt?.turnId === turnId) return;
+        this.terminalizeActiveWork();
         this.cancelModelErrorContinuation();
         this.usagePoller.stopTurn();
         this.stopAutomaticCredentialResolution();
@@ -2211,9 +2218,11 @@ export class OmpAgentSession implements AgentSession {
       return { status: "unavailable", reason: "turn_mismatch" };
     }
     const payload = convertPromptInput(prompt, { model: this.state.model });
+    const displayText = payload.text;
+    payload.text = this.withToolIntentLocale(payload.text);
     const submittedMessage = {
       text: payload.text,
-      displayText: payload.text,
+      displayText,
       clientMessageId: options.clientMessageId ?? null,
       images: payload.images,
     };
@@ -2832,14 +2841,18 @@ export class OmpAgentSession implements AgentSession {
     if (restored.truncated) {
       const unmatched = [...restored.steering];
       for (const pending of this.pendingSteeredUserMessages) {
-        const index = unmatched.findIndex((message) => message.text === pending.text);
+        const index = unmatched.findIndex(
+          (message) =>
+            getOmpWorkflowDisplayText(message.text) === getOmpWorkflowDisplayText(pending.text),
+        );
         if (index >= 0) unmatched.splice(index, 1);
         else queued.push({ text: pending.text, images: pending.images });
       }
     }
     for (const message of queued) {
       const pending = this.pendingSteeredUserMessages.find(
-        (submitted) => submitted.text === message.text,
+        (submitted) =>
+          getOmpWorkflowDisplayText(submitted.text) === getOmpWorkflowDisplayText(message.text),
       );
       // Preserve original attachments and client IDs, without replaying the input.
       this.handleMessageEnd(
@@ -2885,6 +2898,7 @@ export class OmpAgentSession implements AgentSession {
     if (this.closed) {
       return;
     }
+    this.terminalizeActiveWork();
     this.closed = true;
     this.pendingTurnAdmission?.controller.abort();
     this.pendingTurnAdmission = null;
@@ -2903,6 +2917,8 @@ export class OmpAgentSession implements AgentSession {
 
   private clearOmpSessionState(): void {
     this.activeRuntimeToolCalls.clear();
+    this.activeToolCalls.clear();
+    this.lastWorkingIntent = null;
     this.nativeTaskCalls.clear();
     this.queuedSubagentRuntimeEvents.length = 0;
     this.subagentCardTracker.clear();
@@ -2981,9 +2997,9 @@ export class OmpAgentSession implements AgentSession {
       return {
         run: async () => {
           if (commandName === "steer") {
-            this.runtimeSession.steer(message);
+            this.runtimeSession.steer(this.withToolIntentLocale(message));
           } else {
-            this.runtimeSession.followUp(message);
+            this.runtimeSession.followUp(this.withToolIntentLocale(message));
           }
         },
       };
@@ -3967,7 +3983,8 @@ export class OmpAgentSession implements AgentSession {
         this.handleMessageUpdate(event, turnId);
         return;
       case "tool_execution_start": {
-        const toolCall = parseToolArgs(event.toolName, event.args);
+        const toolCall = parseToolArgs(event.toolName, event.args, event.intent);
+        this.emitWorkingIntent(toolCall.intent, turnId);
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
@@ -4073,6 +4090,13 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
+  private withToolIntentLocale(prompt: string): string {
+    return buildOmpToolIntentPrompt(
+      prompt,
+      this.config.featureValues?.[OMP_WORKFLOW_LOCALE_FEATURE_ID],
+    );
+  }
+
   private continueActiveTurn(): void {
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
@@ -4082,7 +4106,7 @@ export class OmpAgentSession implements AgentSession {
       Object.prototype.hasOwnProperty.call(OMP_CONTINUATION_BY_LOCALE, configuredLocale)
         ? (configuredLocale as OmpWorkflowLocale)
         : "en";
-    this.runtimeSession.followUp(OMP_CONTINUATION_BY_LOCALE[locale]);
+    this.runtimeSession.followUp(this.withToolIntentLocale(OMP_CONTINUATION_BY_LOCALE[locale]));
   }
 
   private scheduleModelErrorContinuation(
@@ -4192,6 +4216,13 @@ export class OmpAgentSession implements AgentSession {
       event.assistantMessageEvent.type === "toolcall_delta" ||
       event.assistantMessageEvent.type === "toolcall_end"
     ) {
+      this.emitMessageWorkingIntent(
+        event.message,
+        turnId,
+        event.assistantMessageEvent.type === "toolcall_end"
+          ? event.assistantMessageEvent.toolCall
+          : undefined,
+      );
       for (const block of event.message.content) {
         if (block.type !== "toolCall" || block.name !== "task") continue;
         const task = this.nativeTaskCalls.get(block.id);
@@ -4199,7 +4230,7 @@ export class OmpAgentSession implements AgentSession {
         if (task && task.status !== "running") continue;
         this.emitToolCallEvent(
           block.id,
-          parseToolArgs(block.name, block.arguments),
+          parseToolArgs(block.name, block.arguments, block.intent),
           "running",
           null,
           null,
@@ -4289,6 +4320,9 @@ export class OmpAgentSession implements AgentSession {
     withdrawnFromQueue?: boolean,
   ): void {
     if (event.message.role === "assistant") {
+      if (this.lastWorkingIntent?.turnId !== turnId) {
+        this.emitMessageWorkingIntent(event.message, turnId);
+      }
       this.observeClaudeMessage(event.message);
       this.activeAssistantMessageId = null;
       if (turnId) {
@@ -4305,17 +4339,22 @@ export class OmpAgentSession implements AgentSession {
     if (!text && !images) {
       return;
     }
+    const originalText = getOmpWorkflowDisplayText(text);
+    const matchesSubmittedPrompt =
+      this.lastSubmittedPromptText !== null &&
+      originalText === getOmpWorkflowDisplayText(this.lastSubmittedPromptText);
     const submittedSteer = this.pendingSteeredUserMessages.find(
-      (submitted) => submitted.text === text,
+      (submitted) => getOmpWorkflowDisplayText(submitted.text) === originalText,
     );
     // Image prompts can produce a second, late user message_end frame after the
     // turn has completed. Its native entry id may differ, so id-only
     // deduplication cannot recognize it. Suppress a replay of the last live text
     // unless it matches a submitted prompt that has not been consumed yet.
     if (
-      text === this.lastEmittedLiveUserMessageText &&
+      this.lastEmittedLiveUserMessageText !== null &&
+      originalText === getOmpWorkflowDisplayText(this.lastEmittedLiveUserMessageText) &&
       !submittedSteer &&
-      (!turnId || text !== this.lastSubmittedPromptText)
+      (!turnId || !matchesSubmittedPrompt)
     ) {
       return;
     }
@@ -4326,12 +4365,12 @@ export class OmpAgentSession implements AgentSession {
     const messageId = readNativeMessageId(nativeMessage);
     const clientMessageId =
       submittedSteer?.clientMessageId ??
-      (text === this.lastSubmittedPromptText
+      (matchesSubmittedPrompt
         ? (this.activeClientMessageId ?? this.lastSubmittedPromptClientMessageId)
         : null);
     const displayText =
       submittedSteer?.displayText ??
-      (text === this.lastSubmittedPromptText
+      (matchesSubmittedPrompt
         ? (this.lastSubmittedPromptDisplayText ?? getOmpWorkflowDisplayText(text))
         : getOmpWorkflowDisplayText(text));
     const emitUserMessage = (resolvedMessageId?: string): void => {
@@ -4377,7 +4416,11 @@ export class OmpAgentSession implements AgentSession {
     void this.runtimeSession
       .getBranchMessages()
       .then((messages) =>
-        emitUserMessage(messages.toReversed().find((message) => message.text === text)?.entryId),
+        emitUserMessage(
+          messages
+            .toReversed()
+            .find((message) => getOmpWorkflowDisplayText(message.text) === originalText)?.entryId,
+        ),
       )
       .catch((error: unknown) => {
         this.logger.debug(
@@ -4424,6 +4467,56 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
+  private emitMessageWorkingIntent(
+    message: Extract<OmpAgentMessage, { role: "assistant" }>,
+    turnId: string | undefined,
+    fallbackToolCall?: { id: string; name: string; arguments: unknown; intent?: string },
+  ): void {
+    const fallbackIntent = fallbackToolCall
+      ? parseToolArgs(fallbackToolCall.name, fallbackToolCall.arguments, fallbackToolCall.intent)
+          .intent
+      : undefined;
+    if (
+      fallbackIntent &&
+      !message.content.some(
+        (block) => block.type === "toolCall" && block.id === fallbackToolCall?.id,
+      )
+    ) {
+      this.emitWorkingIntent(fallbackIntent, turnId);
+      return;
+    }
+    for (let index = message.content.length - 1; index >= 0; index -= 1) {
+      const block = message.content[index];
+      if (block?.type !== "toolCall") continue;
+      const args = block.arguments;
+      const intent =
+        (block.id === fallbackToolCall?.id ? fallbackIntent : undefined) ??
+        normalizeOmpToolIntent(block.intent) ??
+        normalizeOmpToolIntent(
+          args !== null && typeof args === "object" && "i" in args ? args.i : undefined,
+        );
+      if (!intent) continue;
+      this.emitWorkingIntent(intent, turnId);
+      return;
+    }
+  }
+
+  private emitWorkingIntent(intent: string | undefined, turnId: string | undefined): void {
+    if (
+      !intent ||
+      !turnId ||
+      turnId !== this.activeTurnId ||
+      this.closed ||
+      this.activeInterrupt ||
+      this.suppressAutonomousEventsAfterInterrupt
+    )
+      return;
+    if (this.lastWorkingIntent?.turnId === turnId && this.lastWorkingIntent.intent === intent)
+      return;
+    this.lastWorkingIntent = { turnId, intent };
+    this.emit({ type: "working_intent", provider: this.provider, turnId, intent });
+  }
+
   private emitToolCallEvent(
     toolCallId: string,
     toolCall: OmpTrackedToolCall,
@@ -4451,6 +4544,7 @@ export class OmpAgentSession implements AgentSession {
       callId: toolCallId,
       name: resolveToolCallName(toolCall, result),
       detail,
+      ...(toolCall.intent ? { metadata: { intent: toolCall.intent } } : {}),
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };

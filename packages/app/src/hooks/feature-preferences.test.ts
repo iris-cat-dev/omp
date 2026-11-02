@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  applyEnhancedWorkflowLocale,
   applyFeatureValues,
   pruneFeatureValues,
   resolveFeatureValues,
@@ -87,18 +86,6 @@ describe("feature-preferences", () => {
         oauth_account_credential: "automatic",
       }),
     ).toEqual([accountFeature]);
-  });
-
-  it("attaches the selected locale only to enhanced workflow drafts", () => {
-    const enhanced = { workflow_mode: "enhanced", fast_mode: true };
-    expect(applyEnhancedWorkflowLocale(enhanced, "ja")).toEqual({
-      workflow_mode: "enhanced",
-      workflow_locale: "ja",
-      fast_mode: true,
-    });
-
-    const standard = { workflow_mode: "standard", fast_mode: true };
-    expect(applyEnhancedWorkflowLocale(standard, "ja")).toBe(standard);
   });
 
   it("keeps transient goal draft values alongside the workflow feature", () => {

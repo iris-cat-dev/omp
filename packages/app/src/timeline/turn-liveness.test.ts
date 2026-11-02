@@ -75,4 +75,71 @@ describe("turn activity", () => {
       turnId: null,
     });
   });
+
+  it("shows the latest nonempty intent only for the active turn", () => {
+    const open = reduceTurnLiveness(TURN_LIVENESS_IDLE, {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt },
+    });
+    const first = reduceTurnLiveness(open, {
+      type: "working_intent",
+      turnId: "turn-1",
+      intent: "Reading files",
+    });
+    const latest = reduceTurnLiveness(first, {
+      type: "working_intent",
+      turnId: "turn-1",
+      intent: "  Updating code  ",
+    });
+    expect(resolveTurnPresentation(latest, false).workingIntent).toBe("Updating code");
+    expect(
+      reduceTurnLiveness(latest, {
+        type: "working_intent",
+        turnId: "turn-2",
+        intent: "Stale work",
+      }),
+    ).toBe(latest);
+    expect(
+      reduceTurnLiveness(latest, {
+        type: "working_intent",
+        turnId: "turn-1",
+        intent: " \n ",
+      }),
+    ).toBe(latest);
+  });
+
+  it("retains intent across same-turn updates but clears it on authoritative reset", () => {
+    const restored = reduceTurnLiveness(TURN_LIVENESS_IDLE, {
+      type: "snapshot",
+      activeTurn: { turnId: "turn-1", startedAt, workingIntent: "Reading files" },
+    });
+    const reopened = reduceTurnLiveness(restored, {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt },
+    });
+    expect(resolveTurnPresentation(reopened, false).workingIntent).toBe("Reading files");
+    const reset = reduceTurnLiveness(reopened, {
+      type: "snapshot",
+      activeTurn: { turnId: "turn-1", startedAt, workingIntent: null },
+    });
+    expect(resolveTurnPresentation(reset, false).workingIntent).toBeUndefined();
+    const next = reduceTurnLiveness(restored, {
+      type: "stream_open",
+      turn: { turnId: "turn-2", startedAt },
+    });
+    expect(resolveTurnPresentation(next, false).workingIntent).toBeUndefined();
+  });
+
+  it("does not revive working intent after cancellation or terminal close", () => {
+    const open = reduceTurnLiveness(TURN_LIVENESS_IDLE, {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt },
+    });
+    const cancelling = reduceTurnLiveness(open, { type: "cancellation_started", requestId: 1 });
+    const update = { type: "working_intent" as const, turnId: "turn-1", intent: "Late work" };
+    expect(reduceTurnLiveness(cancelling, update)).toBe(cancelling);
+    const closed = reduceTurnLiveness(open, { type: "stream_close", turnId: "turn-1" });
+    expect(reduceTurnLiveness(closed, update)).toBe(closed);
+    expect(reduceTurnLiveness(TURN_LIVENESS_IDLE, update)).toBe(TURN_LIVENESS_IDLE);
+  });
 });

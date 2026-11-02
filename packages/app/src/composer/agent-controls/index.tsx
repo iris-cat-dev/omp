@@ -47,7 +47,6 @@ import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { shouldPersistAgentFeatureValue } from "@/create-agent-preferences/preferences";
 import {
-  ENHANCED_WORKFLOW_MODE,
   WORKFLOW_LOCALE_FEATURE_ID,
   WORKFLOW_MODE_FEATURE_ID,
 } from "@/hooks/feature-preferences";
@@ -1858,11 +1857,7 @@ export const AgentControls = memo(function AgentControls({
         return;
       }
       try {
-        if (
-          agentProvider === "omp" &&
-          featureId === WORKFLOW_MODE_FEATURE_ID &&
-          value === ENHANCED_WORKFLOW_MODE
-        ) {
+        if (agentProvider === "omp" && featureId === WORKFLOW_MODE_FEATURE_ID) {
           await client.setAgentFeature(agentId, WORKFLOW_LOCALE_FEATURE_ID, workflowLocale);
         }
         await client.setAgentFeature(agentId, featureId, value);

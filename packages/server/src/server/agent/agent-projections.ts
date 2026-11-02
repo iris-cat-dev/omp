@@ -116,7 +116,9 @@ export function toAgentPayload(
     model: runtimeInfo?.model ?? agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
-    ...(agent.config.proxyPolicy !== undefined ? { proxyPolicy: structuredClone(agent.config.proxyPolicy) } : {}),
+    ...(agent.config.proxyPolicy !== undefined
+      ? { proxyPolicy: structuredClone(agent.config.proxyPolicy) }
+      : {}),
     ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
@@ -126,6 +128,7 @@ export function toAgentPayload(
       ? {
           turnId: agent.activeTurnId,
           startedAt: agent.activeTurnStartedAt?.toISOString() ?? null,
+          ...(agent.workingIntent ? { workingIntent: agent.workingIntent } : {}),
         }
       : null,
     capabilities: cloneCapabilities(agent.capabilities),
@@ -225,7 +228,9 @@ export function buildStoredAgentPayload(
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
     model: runtimeInfo?.model ?? record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
-    ...(record.config?.proxyPolicy !== undefined ? { proxyPolicy: structuredClone(record.config.proxyPolicy) } : {}),
+    ...(record.config?.proxyPolicy !== undefined
+      ? { proxyPolicy: structuredClone(record.config.proxyPolicy) }
+      : {}),
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
       runtimeInfo,
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,

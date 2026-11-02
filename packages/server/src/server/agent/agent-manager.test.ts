@@ -7229,6 +7229,96 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
   });
 });
 
+test("keeps working intent scoped to the live turn without adding timeline rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-working-intent-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: TestAgentSession;
+  class LiveEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new LiveEventClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  async function dispatch(event: AgentStreamEvent): Promise<void> {
+    const { promise: processed, resolve } = Promise.withResolvers<void>();
+    const unsubscribe = manager.subscribe(
+      (update) => {
+        if (update.type === "agent_stream" && update.event.type === "usage_updated") {
+          unsubscribe();
+          resolve();
+        }
+      },
+      { agentId: snapshot.id, replayState: false },
+    );
+    session!.pushEvent(event);
+    session!.pushEvent({ type: "usage_updated", provider: "codex", usage: {} });
+    await processed;
+  }
+  await dispatch({ type: "turn_started", provider: "codex", turnId: "turn-a" });
+  const timelineBefore = manager.getTimeline(snapshot.id);
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-a",
+    intent: "Reading files",
+  });
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-a",
+    intent: "Updating code",
+  });
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-b",
+    intent: "Stale work",
+  });
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).activeTurn).toMatchObject({
+    turnId: "turn-a",
+    workingIntent: "Updating code",
+  });
+  expect(manager.getTimeline(snapshot.id)).toEqual(timelineBefore);
+  await dispatch({ type: "turn_started", provider: "codex", turnId: "turn-b" });
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).activeTurn?.workingIntent).toBeUndefined();
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-a",
+    intent: "Late work",
+  });
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).activeTurn?.workingIntent).toBeUndefined();
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-b",
+    intent: "Running checks",
+  });
+  await dispatch({ type: "turn_completed", provider: "codex", turnId: "turn-a" });
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).activeTurn?.workingIntent).toBe(
+    "Running checks",
+  );
+  await dispatch({ type: "turn_completed", provider: "codex", turnId: "turn-b" });
+  await dispatch({
+    type: "working_intent",
+    provider: "codex",
+    turnId: "turn-b",
+    intent: "Too late",
+  });
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).activeTurn).toBeNull();
+  await manager.closeAgent(snapshot.id);
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("preserves terminal fallback when no active turn identity was observed", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-untracked-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

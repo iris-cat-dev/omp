@@ -9,7 +9,7 @@ import {
   shouldPersistAgentFeatureValue,
 } from "@/create-agent-preferences/preferences";
 import {
-  applyEnhancedWorkflowLocale,
+  applyWorkflowLocale,
   applyFeatureValues,
   pruneFeatureValues,
   retainDraftWorkflowValues,
@@ -125,11 +125,13 @@ export function useDraftAgentFeatures(input: {
 
   const localizedFeatureValues = useMemo(
     () =>
-      applyEnhancedWorkflowLocale(
-        featureValues,
-        (i18n.resolvedLanguage ?? i18n.language) as SupportedLocale,
-      ),
-    [featureValues, i18n.language, i18n.resolvedLanguage],
+      normalizedProvider === "omp"
+        ? applyWorkflowLocale(
+            featureValues,
+            (i18n.resolvedLanguage ?? i18n.language) as SupportedLocale,
+          )
+        : featureValues,
+    [featureValues, i18n.language, i18n.resolvedLanguage, normalizedProvider],
   );
   const effectiveFeatureValues =
     Object.keys(localizedFeatureValues).length > 0 ? localizedFeatureValues : undefined;

@@ -209,7 +209,7 @@ export class OmpHistoryMapper {
         continue;
       }
       if (content.type === "toolCall") {
-        const tracked = parseToolArgs(content.name, content.arguments);
+        const tracked = parseToolArgs(content.name, content.arguments, content.intent);
         this.pendingToolCalls.set(content.id, tracked);
         const detail = this.mapToolDetail(content.id, tracked, null, "running");
         if (!detail) {
@@ -224,6 +224,7 @@ export class OmpHistoryMapper {
             name: resolveToolCallName(tracked),
             status: "running",
             detail,
+            ...(tracked.intent ? { metadata: { intent: tracked.intent } } : {}),
             error: null,
           },
         });
@@ -270,6 +271,7 @@ export class OmpHistoryMapper {
         name: resolveToolCallName(tracked, result),
         isError: Boolean(message.isError),
         detail,
+        intent: tracked.intent,
         errorText: extractTextFromToolResult(result) ?? "Tool call failed",
       }),
     };
@@ -335,6 +337,7 @@ function toToolResultTimelineItem(input: {
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
+  intent?: string;
 }): AgentTimelineItem {
   if (input.isError) {
     return {
@@ -343,6 +346,7 @@ function toToolResultTimelineItem(input: {
       name: input.name,
       status: "failed",
       detail: input.detail,
+      ...(input.intent ? { metadata: { intent: input.intent } } : {}),
       error: input.errorText,
     };
   }
@@ -352,6 +356,7 @@ function toToolResultTimelineItem(input: {
     name: input.name,
     status: "completed",
     detail: input.detail,
+    ...(input.intent ? { metadata: { intent: input.intent } } : {}),
     error: null,
   };
 }

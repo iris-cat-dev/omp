@@ -572,6 +572,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamItems = useRetainedValue(streamItems, isActive);
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
+    const effectiveHasPendingSubmission = useRetainedValue(
+      pendingMessageSubmissions.length > 0,
+      isActive,
+    );
     const isTurnActive = effectiveTurnPresentation.isActive;
     const outputTokenSpeed = useOutputTokenSpeed(
       context.provider,
@@ -651,6 +655,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
       [effectiveStreamHead, effectiveStreamItems],
     );
+    const workingMessage =
+      isTurnActive &&
+      !effectiveTurnPresentation.isCancelling &&
+      !effectiveHasPendingSubmission &&
+      effectiveTurnPresentation.turnId
+        ? effectiveTurnPresentation.workingIntent
+        : undefined;
     const duplicateToolImagePreviewIds = useMemo(
       () => collectDuplicateToolImagePreviewIds(rawStreamItems),
       [rawStreamItems],
@@ -1138,6 +1149,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             outputTokenSpeed={outputTokenSpeed}
+            workingMessage={workingMessage ?? undefined}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
@@ -1157,6 +1169,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         outputTokenSpeed,
+        workingMessage,
         bottomTurnFooterHost,
         bottomTurnTokenStats,
         streamRenderStrategy,

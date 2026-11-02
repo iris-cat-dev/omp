@@ -10,6 +10,14 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
+import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
+
+function workflowDisplayRequests(requests: Array<{ message: string; imageCount: number }>) {
+  return requests.map((request) => ({
+    ...request,
+    message: getOmpWorkflowDisplayText(request.message),
+  }));
+}
 
 const OMP_PLAN_TURN_DIRECTIVE = `<system-directive>
 Plan mode active for this turn. The working tree and system are read-only: NEVER create, edit, delete, or rename files, and NEVER run state-changing commands. You may inspect with read-only tools. Produce or refine the requested plan only.
@@ -1141,7 +1149,9 @@ describe("OMP agent client and session", () => {
     await waitForImmediate();
 
     expect(omp.completedTurnCount()).toBe(0);
-    expect(runtime.followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+    expect(workflowDisplayRequests(runtime.followUpRequests)).toEqual([
+      { message: "继续", imageCount: 0 },
+    ]);
     runtime.beginTurn();
     runtime.streamAssistantText("task completed", "answer");
     runtime.finishTurn({
@@ -1176,7 +1186,7 @@ describe("OMP agent client and session", () => {
     expect(result).toMatchObject({
       finalText: "partial output more output completed output",
     });
-    expect(omp.runtime().followUpRequests).toEqual([
+    expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
       { message: "继续", imageCount: 0 },
       { message: "继续", imageCount: 0 },
     ]);
@@ -1206,7 +1216,12 @@ describe("OMP agent client and session", () => {
 
     await omp.runPromptAfterLengthContinuations("finish the task", ["partial"], "done");
 
-    expect(omp.runtime().followUpRequests).toEqual([{ message: expected, imageCount: 0 }]);
+    expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+      { message: expected, imageCount: 0 },
+    ]);
+    expect(omp.runtime().followUpRequests[0]?.message).toContain(
+      `Desktop tool intent locale: ${locale}`,
+    );
   });
 
   test("surfaces a sanitized proxy rejection and keeps the session retryable", async () => {
@@ -1302,7 +1317,9 @@ describe("OMP agent client and session", () => {
         expect(omp.failedTurnCount()).toBe(0);
         expect(omp.completedTurnCount()).toBe(0);
         await vi.advanceTimersByTimeAsync(1);
-        expect(runtime.followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+        expect(workflowDisplayRequests(runtime.followUpRequests)).toEqual([
+          { message: "继续", imageCount: 0 },
+        ]);
 
         runtime.beginTurn();
         runtime.acceptPrompt("继续", "user-2");
@@ -1346,7 +1363,9 @@ describe("OMP agent client and session", () => {
       });
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+        { message: "继续", imageCount: 0 },
+      ]);
       expect(omp.failedTurnCount()).toBe(0);
       expect(omp.completedTurnCount()).toBe(0);
     });
@@ -1445,7 +1464,9 @@ describe("OMP agent client and session", () => {
       await expect(omp.interrupt()).rejects.toThrow("abort failed");
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+        { message: "继续", imageCount: 0 },
+      ]);
       expect(omp.failedTurnCount()).toBe(0);
       expect(omp.canceledTurnCount()).toBe(0);
     });
@@ -2386,7 +2407,7 @@ describe("OMP agent client and session", () => {
     async (workflow) => {
       const omp = new OmpHarness();
       omp.queueCommands([{ name: "wechat", source: "extension" }]);
-      await omp.start({ featureValues: { workflow_mode: workflow } });
+      await omp.start({ featureValues: { workflow_mode: workflow, workflow_locale: "zh-CN" } });
       await omp.runPromptWithoutTurn("/wechat status");
       expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["/wechat status"]);
       expect(omp.completedTurnCount()).toBe(1);
@@ -2886,6 +2907,332 @@ describe("OMP agent client and session", () => {
       expect.objectContaining({ type: "assistant_message", text: "handled follow-up" }),
     );
   });
+
+  test("publishes todo status/phase changes without losing the full plan on reminders", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("complete the plan");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const publish = (status: "pending" | "in_progress", name: string) => {
+      runtime.emit({
+        type: "tool_execution_end",
+        toolCallId: "todo-plan",
+        toolName: "todo",
+        result: {
+          content: [],
+          details: {
+            phases: [
+              { name, tasks: [{ content: "Shared", status }] },
+              {
+                name: "Tasks",
+                tasks: [
+                  { content: "Shared", status: "pending" },
+                  { content: "Blocked", status: "blocked" },
+                  { content: "Skipped", status: "abandoned" },
+                  { content: "Done", status: "completed" },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    };
+    publish("pending", "Tasks");
+    runtime.emit({
+      type: "todo_reminder",
+      todos: [
+        { content: "Shared", status: "in_progress" },
+        { content: "Shared", status: "pending" },
+      ],
+      attempt: 1,
+      maxAttempts: 3,
+    });
+    const reminded = omp.timeline().filter((item) => item.type === "todo");
+    expect(reminded).toHaveLength(2);
+    expect(reminded.at(-1)?.items).toEqual([
+      {
+        text: "Shared",
+        completed: false,
+        status: "in_progress",
+        phase: { name: "Tasks", index: 0 },
+      },
+      { text: "Shared", completed: false, status: "pending", phase: { name: "Tasks", index: 1 } },
+      { text: "Blocked", completed: false, status: "blocked", phase: { name: "Tasks", index: 1 } },
+      {
+        text: "Skipped",
+        completed: false,
+        status: "abandoned",
+        phase: { name: "Tasks", index: 1 },
+      },
+      { text: "Done", completed: true, status: "completed", phase: { name: "Tasks", index: 1 } },
+    ]);
+    publish("in_progress", "Renamed");
+    publish("pending", "Renamed");
+    const changed = omp.timeline().filter((item) => item.type === "todo");
+    expect(changed).toHaveLength(4);
+    expect(changed.at(-1)?.items[0]).toEqual({
+      text: "Shared",
+      completed: false,
+      status: "pending",
+      phase: { name: "Renamed", index: 0 },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "todo-reset",
+      toolName: "todo",
+      result: { content: [], details: { phases: [] } },
+    });
+    expect(
+      omp
+        .timeline()
+        .filter((item) => item.type === "todo")
+        .at(-1)?.items,
+    ).toEqual([]);
+    await omp.close();
+  });
+
+  test("publishes latest streamed intent before execution without creating cards for hidden todo", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("inspect files");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const message: Extract<OmpAgentMessage, { role: "assistant" }> = {
+      role: "assistant",
+      responseId: "intent-stream",
+      content: [
+        {
+          type: "toolCall",
+          id: "first",
+          name: "read",
+          arguments: { i: "Reading first file", path: "first.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "second",
+          name: "todo",
+          arguments: { i: "  Updating task progress... ", op: "view" },
+        },
+        { type: "toolCall", id: "third", name: "read", arguments: { i: "...  " } },
+      ],
+    };
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_delta" },
+    });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+      { type: "working_intent", provider: "omp", turnId, intent: "Updating task progress" },
+    ]);
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toEqual([]);
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_delta" },
+    });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toHaveLength(1);
+
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "first",
+      toolName: "read",
+      args: { path: "first.ts", i: "fallback" },
+      intent: "Reading authoritative details.",
+    });
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "second",
+      toolName: "todo",
+      args: { op: "view", i: "Updating task progress" },
+    });
+    const beforeEnd = omp.streamEvents().filter((event) => event.type === "working_intent");
+    expect(beforeEnd.map((event) => event.intent)).toEqual([
+      "Updating task progress",
+      "Reading authoritative details",
+      "Updating task progress",
+    ]);
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "second",
+      toolName: "todo",
+      result: "todos",
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "first",
+      toolName: "read",
+      result: "source",
+    });
+    runtime.emit({ type: "message_end", message });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual(
+      beforeEnd,
+    );
+    const tools = omp.timeline().filter((item) => item.type === "tool_call");
+    expect(tools.map((item) => item.callId)).toEqual(["first", "first"]);
+    expect(tools.at(-1)).toMatchObject({
+      status: "completed",
+      detail: { type: "read", filePath: "first.ts", content: "source" },
+      metadata: { intent: "Reading authoritative details" },
+    });
+    await omp.close();
+  });
+
+  test.each(["stop", "failure", "dispose", "terminal"] as const)(
+    "ignores working intent updates after %s",
+    async (ending) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      const runtime = omp.runtime();
+      if (ending === "failure") runtime.holdNextPrompt();
+      const turnId = await omp.requireStartTurn("generate tool args");
+      runtime.beginTurn();
+      const message: OmpAgentMessage = {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "pending",
+            name: "read",
+            arguments: { i: "Reading partial arguments" },
+          },
+        ],
+      };
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta" },
+      });
+      expect(omp.runningToolCallIds()).toEqual([]);
+      if (ending === "stop") await omp.interrupt();
+      else if (ending === "failure")
+        await runtime.failHeldPrompt(new Error("provider rejected prompt"));
+      else if (ending === "dispose") await omp.close();
+      else {
+        runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
+        await waitForImmediate();
+      }
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta" },
+      });
+      runtime.emit({
+        type: "tool_execution_start",
+        toolCallId: "late",
+        toolName: "todo",
+        args: { op: "view" },
+        intent: "Late dispatch must not become working",
+      });
+      expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+        { type: "working_intent", provider: "omp", turnId, intent: "Reading partial arguments" },
+      ]);
+      if (ending !== "dispose") await omp.close();
+    },
+  );
+
+  test("uses final native intent only as initial fallback and re-emits the same intent for a new Desktop turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const firstTurnId = await omp.requireStartTurn("first turn");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "native",
+          name: "todo",
+          arguments: { op: "view" },
+          intent: "Reviewing task status.",
+        },
+      ],
+    };
+    runtime.emit({ type: "message_end", message });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+      {
+        type: "working_intent",
+        provider: "omp",
+        turnId: firstTurnId,
+        intent: "Reviewing task status",
+      },
+    ]);
+    await omp.interrupt();
+    const secondTurnId = await omp.requireStartTurn("second turn");
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        toolCall: {
+          type: "toolCall",
+          id: "new",
+          name: "todo",
+          arguments: { i: "Reviewing task status", op: "view" },
+        },
+      },
+    });
+    expect(
+      omp
+        .streamEvents()
+        .filter((event) => event.type === "working_intent")
+        .at(-1),
+    ).toEqual({
+      type: "working_intent",
+      provider: "omp",
+      turnId: secondTurnId,
+      intent: "Reviewing task status",
+    });
+    await omp.close();
+  });
+
+  test("updates only hidden tool intent locale while preserving live and stop-restored prompt correlation", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_locale: "zh-CN" } });
+    const turnId = await omp.requireStartTurn("Keep this English request", {
+      clientMessageId: "initial-client",
+    });
+    const runtime = omp.runtime();
+    expect(omp.recordedPrompts()[0]?.message).toContain("Simplified Chinese");
+    expect(getOmpWorkflowDisplayText(omp.recordedPrompts()[0]!.message)).toBe(
+      "Keep this English request",
+    );
+    runtime.beginTurn();
+    runtime.acceptPrompt("Keep this English request", "initial-native");
+    await omp.setFeature("workflow_locale", "en");
+    await omp.steerActiveTurn("继续检查", turnId, { clientMessageId: "queued-client" });
+    expect(runtime.steerRequests[0]?.message).toContain("English");
+    expect(getOmpWorkflowDisplayText(runtime.steerRequests[0]!.message)).toBe("继续检查");
+    runtime.restoredQueue = { steering: [{ text: "继续检查" }], followUp: [], truncated: true };
+    await omp.interrupt();
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "Keep this English request",
+        messageId: "initial-native",
+        clientMessageId: "initial-client",
+      },
+      { type: "user_message", text: "继续检查", clientMessageId: "queued-client" },
+    ]);
+    await omp.close();
+  });
+
+  test.each(["/plan inspect the source", "/goal ship the change"])(
+    "keeps %s native dispatch with a localized intent directive",
+    async (prompt) => {
+      const omp = new OmpHarness();
+      await omp.start({ featureValues: { workflow_locale: "zh-CN" } });
+      await omp.requireStartTurn(prompt);
+      const sent = omp.recordedPrompts()[0]?.message;
+      expect(sent?.startsWith(`${prompt.split(" ")[0]} `)).toBe(true);
+      expect(sent).toContain("Simplified Chinese");
+      expect(getOmpWorkflowDisplayText(sent!)).toBe(prompt);
+      await omp.close();
+    },
+  );
 
   test("interrupt does not claim native subagents stopped; native cancellation acknowledges exactly one", async () => {
     const omp = new OmpHarness();

@@ -60,6 +60,7 @@ import {
   applyTurnLivenessTransition,
   resolveTurnPresentation,
   TURN_LIVENESS_IDLE,
+  type ActiveTurnIdentity,
   type TurnLiveness,
   type TurnPresentation,
   type TurnLivenessTransition,
@@ -79,7 +80,7 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
-  activeTurn: { turnId: string | null; startedAt: Date | null } | null;
+  activeTurn: ActiveTurnIdentity | null;
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;
