@@ -80,8 +80,11 @@ native session history, without replaying a prompt or replacing the conversation
 
 Cold OMP conversation history and the Chat outline read the persisted session
 directly instead of waiting for an SDK process to start. Loaded agents keep using
-their live timeline. Persisted pages share an epoch; once a prompt or reload
-creates a runtime timeline, old cursors reset through the existing sync protocol.
+their live timeline. Persisted pages share an epoch distinct from the runtime.
+If resumed live rows arrive in a different epoch above sequence 1, the client
+requests an authoritative catch-up using its existing cursor. The reset response
+replaces the cold window, allowing subsequent replies to display without scrolling
+or restarting the app.
 Subagent lists and paged child timelines also read from disk without loading the
 parent runtime.
 Non-OMP sessions keep their provider-specific loading path. Automatic credential

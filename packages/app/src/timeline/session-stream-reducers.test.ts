@@ -4031,25 +4031,74 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
-  it("drops timeline event with epoch mismatch", () => {
-    const existingCursor: TimelineCursor = {
-      epoch: "epoch-1",
-      startSeq: 1,
-      endSeq: 5,
-    };
-
-    const result = processAgentStreamEvent({
+  it("recovers cold history when the resumed runtime first emits a sequence above one", () => {
+    const coldEpoch = "persisted-omp:agent-1:stored-update";
+    const cold = processTimelineResponse({
+      ...baseTimelineInput,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        epoch: coldEpoch,
+        window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "original prompt", "user_message"),
+          makeTimelineEntry(2, "original reply"),
+        ],
+      },
+    });
+    const resumed = processAgentStreamEvent({
       ...baseStreamInput,
-      event: makeTimelineEvent("wrong epoch"),
-      seq: 6,
-      epoch: "epoch-2",
-      currentCursor: existingCursor,
+      currentTail: cold.tail,
+      currentHead: cold.head,
+      currentCursor: cold.cursor!,
+      event: makeTimelineEvent("continue", "user_message"),
+      epoch: "runtime-epoch",
+      seq: 3,
     });
 
-    expect(result.cursorChanged).toBe(false);
-    expect(result.changedTail).toBe(false);
-    expect(result.changedHead).toBe(false);
-    expect(result.sideEffects).toEqual([]);
+    expect(getAssistantTexts(resumed.tail)).toEqual(["original reply"]);
+    expect(resumed.sideEffects).toEqual([
+      { type: "catch_up", cursor: { epoch: coldEpoch, endSeq: 2 } },
+    ]);
+
+    const recovered = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: resumed.tail,
+      currentHead: resumed.head,
+      currentCursor: cold.cursor!,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        epoch: "runtime-epoch",
+        window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeTimelineEntry(1, "original prompt", "user_message"),
+          makeTimelineEntry(2, "original reply"),
+          makeTimelineEntry(3, "continue", "user_message"),
+          makeTimelineEntry(4, "recovered reply"),
+        ],
+      },
+    });
+    const live = processAgentStreamEvent({
+      ...baseStreamInput,
+      currentTail: recovered.tail,
+      currentHead: recovered.head,
+      currentCursor: recovered.cursor!,
+      event: makeTimelineEvent(" plus live continuation"),
+      epoch: "runtime-epoch",
+      seq: 5,
+    });
+
+    expect(getUserTexts(live.tail)).toEqual(["original prompt", "continue"]);
+    expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
+      "original reply",
+      "recovered reply plus live continuation",
+    ]);
+    expect(live.cursor).toMatchObject({ epoch: "runtime-epoch", endSeq: 5 });
   });
 
   it("resets visible timeline when a new epoch starts at seq 1", () => {

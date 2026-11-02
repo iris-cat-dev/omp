@@ -1656,6 +1656,21 @@ function processTimelineSequencingGate(input: {
       resetLiveTimeline: true,
     };
   }
+  if (decision === "drop_epoch" && currentCursor) {
+    // Cold history has its own epoch; runtime hydration is not broadcast, so
+    // the first live row can start above seq 1. Fetch the authoritative window
+    // before accepting rows from the new epoch.
+    return {
+      ...base,
+      shouldApplyStreamEvent: false,
+      sideEffects: [
+        {
+          type: "catch_up",
+          cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
+        },
+      ],
+    };
+  }
   return {
     ...base,
     shouldApplyStreamEvent: false,
