@@ -91,7 +91,7 @@ CI checks out recursive submodules, uses Node.js from `.tool-versions`, and inst
 
 Commit the root `package-lock.json` together with dependency changes. Both the setup-node npm cache and `npm ci` require it in a fresh checkout; a lockfile present only on the developer's machine is insufficient. Nested/generated lockfiles remain ignored. After fixing a workflow dependency, start a new run on the updated commit: rerunning an older failed run still uses its original commit.
 
-CI sets `ELECTRON_SKIP_BINARY_DOWNLOAD="0"`: stock Electron skips downloads for any nonempty value, while mini-electron treats `"0"` as false. The Mac-to-Windows job additionally sets `MINI_ELECTRON_SKIP_BINARY_DOWNLOAD=1` during `npm ci`, then runs the pinned mini-electron installer separately with Windows x64 selected and both skip flags reset to `"0"`. This avoids installing a host runtime on the cross-build runner and never substitutes stock Electron. Recheck both installer behaviors when upgrading these dependencies.
+CI sets `ELECTRON_SKIP_BINARY_DOWNLOAD="0"`: stock Electron skips downloads for any nonempty value, while mini-electron treats `"0"` as false. Fresh Mac runners must allow mini-electron to install their host runtime; setting `MINI_ELECTRON_SKIP_BINARY_DOWNLOAD=1` fails when no valid runtime is already installed. Mac-to-Windows packaging separately runs the pinned installer with Windows x64 selected and both skip flags reset to `"0"`, preserving the installed Mac runtime. Recheck both installer behaviors when upgrading these dependencies.
 
 ## Native runtime selection
 
@@ -168,8 +168,7 @@ SDK native compilation still requires Windows x64. Installer construction can ru
 
 ```bash
 git submodule update --init --recursive
-# Fresh cross-build-only checkout; do not need a Mac mini-electron runtime:
-MINI_ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+npm ci
 OMP_DESKTOP_SDK_ARTIFACT="$PWD/.tmp/windows-sdk" npm run build:windows
 ```
 

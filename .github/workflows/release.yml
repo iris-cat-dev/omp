@@ -127,8 +127,6 @@ jobs:
           workspaces: omp-sdk -> target/desktop
       - name: Install dependencies
         run: npm ci
-        env:
-          MINI_ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ matrix.target == 'windows-x64' && '1' || '0' }}
       - name: Download native Windows SDK
         if: matrix.target == 'windows-x64'
         uses: actions/download-artifact@v4
