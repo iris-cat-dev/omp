@@ -304,6 +304,8 @@ Both `scripts/packaging/build-windows.ps1` and `scripts/packaging/build-windows.
 
 `npm run build:omp-sdk` builds the pinned submodule and stages `packages/desktop/sdk-dist` for the local application. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
 
+Desktop x64 builds explicitly compile the baseline ISA and ship `pi_natives.<platform>-x64-baseline.node`. A modern-only (AVX2) addon is not a portable Desktop payload: Windows Node embeds can conservatively select baseline when only Windows PowerShell 5.1 is available, even on an AVX2 machine. SDK artifact export/import rejects Desktop x64 archives without the named baseline addon, and the artifact smoke forces `PI_NATIVE_VARIANT=baseline` for both the SDK and its worker. Rebuild older modern-only SDK artifacts and their installers; do not rename a modern binary to baseline or force users onto the modern ISA.
+
 The application contains no standalone `omp`/`omp.exe` and never downloads one during a build. The bundled `omp-desktop` launcher remains: it runs Desktop's CLI and daemon with the application's embedded Node runtime, not the retired OMP executable.
 
 The Node SDK runtime does not ship `@ts-morph/common` or transpile TypeScript/JSX. Executable extensions, custom tools/commands, and eval scripts must be JavaScript; plugin manifests must reference precompiled `.js`, `.mjs`, or `.cjs` entries. Desktop's internal extensions are compiled during the server build. Reading/editing TypeScript files and the standalone Bun CLI are unaffected.

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -175,7 +174,8 @@ const sourcePackage = JSON.parse(
 );
 validateRelease(releaseConfig, releaseIndex, sourcePackage.version);
 
-const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-remote-backend-"));
+// Commit with rename on the output's filesystem, not the system TEMP drive.
+const temporary = await mkdtemp(path.join(path.dirname(outputDir), ".omp-remote-backend-"));
 try {
   const built = path.join(temporary, "output");
   const packageDir = path.join(built, "packages");

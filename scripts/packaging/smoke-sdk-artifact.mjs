@@ -166,6 +166,9 @@ if (process.argv[2] === "--probe") {
           USERPROFILE: temporary,
           NODE_PATH: "",
           NODE_OPTIONS: "",
+          ...(staged.buildTarget === "desktop" && staged.arch === "x64"
+            ? { PI_NATIVE_VARIANT: "baseline" }
+            : {}),
         },
       },
     );

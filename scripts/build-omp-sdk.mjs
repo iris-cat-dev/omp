@@ -56,9 +56,11 @@ if (process.env.OMP_DESKTOP_SDK_ARTIFACT) {
   // The SDK uses its own lockfile and workspace graph, not Desktop's npm workspace.
   run(["install", "--frozen-lockfile"]);
   run([
+    // x64 releases must load on baseline hosts and conservative Node CPU probes.
     `--cwd=${path.join(sdkRepo, "packages", "natives")}`,
     "run",
     buildTarget === "desktop" ? "build:desktop" : "build:bindings",
+    ...(buildTarget === "desktop" && arch === "x64" ? ["--baseline"] : []),
   ]);
   run([
     `--cwd=${sdkRoot}`,

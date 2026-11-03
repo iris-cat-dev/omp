@@ -323,6 +323,15 @@ async function validatePackage(sdk, manifest) {
     throw new Error(
       `SDK archive does not contain only matching pi-natives addons for ${manifest.platform}-${manifest.arch}.`,
     );
+  if (
+    manifest.buildTarget === "desktop" &&
+    manifest.arch === "x64" &&
+    !addons.includes(`${prefix}-baseline.node`)
+  )
+    throw new Error(
+      `Desktop SDK archive is missing the ${manifest.platform}-${manifest.arch} baseline addon. ` +
+        "Rebuild with npm run build:omp-sdk; a modern-only addon cannot run on baseline hosts.",
+    );
 }
 
 async function validateProducerSource(sdk, entries, identity) {

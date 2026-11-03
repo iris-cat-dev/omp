@@ -274,41 +274,46 @@ function deduplicateSdkSharp(resourcesDir, platform, arch) {
   matchPackages(sdkSharp, desktopSharp);
 
   const target = `${platform}-${arch}`;
-  const nativeName = `@img/sharp-${target}`;
-  const libvipsName = `@img/sharp-libvips-${target}`;
-  const replacements = [[sdkSharp, desktopSharp]];
-  for (const name of [nativeName, libvipsName]) {
-    const sdkVersion = sdkSharp.data.optionalDependencies?.[name];
-    const desktopVersion = desktopSharp.data.optionalDependencies?.[name];
-    // Windows packages carry libvips alongside the addon instead of a separate package.
-    if (name === libvipsName && !sdkVersion && !desktopVersion && platform === "win32") continue;
-    if (!sdkVersion || sdkVersion !== desktopVersion) {
-      throw new Error(`Sharp native target declarations do not match for ${name}`);
+  function assertNativeTarget(pkg, version) {
+    if (
+      pkg.data.version !== version ||
+      !pkg.data.os?.includes(platform) ||
+      !pkg.data.cpu?.includes(arch)
+    ) {
+      throw new Error(`Sharp package does not match ${target}: ${pkg.metadata}`);
     }
-    const left = resolvePackage(sdkSharp.metadata, name, sdk, "/package");
-    const right = resolvePackage(desktopSharp.metadata, name, desktop, "/package");
-    matchPackages(left, right);
-    for (const pkg of [left, right]) {
-      if (
-        pkg.data.version !== sdkVersion ||
-        !pkg.data.os?.includes(platform) ||
-        !pkg.data.cpu?.includes(arch)
-      ) {
-        throw new Error(`Sharp package does not match ${target}: ${pkg.metadata}`);
+  }
+  function resolveNativeReplacements() {
+    const nativeName = `@img/sharp-${target}`;
+    const libvipsName = `@img/sharp-libvips-${target}`;
+    const replacements = [[sdkSharp, desktopSharp]];
+    for (const name of [nativeName, libvipsName]) {
+      const sdkVersion = sdkSharp.data.optionalDependencies?.[name];
+      const desktopVersion = desktopSharp.data.optionalDependencies?.[name];
+      // Windows packages carry libvips alongside the addon instead of a separate package.
+      if (name === libvipsName && !sdkVersion && !desktopVersion && platform === "win32") continue;
+      if (!sdkVersion || sdkVersion !== desktopVersion) {
+        throw new Error(`Sharp native target declarations do not match for ${name}`);
       }
+      const left = resolvePackage(sdkSharp.metadata, name, sdk, "/package");
+      const right = resolvePackage(desktopSharp.metadata, name, desktop, "/package");
+      matchPackages(left, right);
+      for (const pkg of [left, right]) assertNativeTarget(pkg, sdkVersion);
+      replacements.push([left, right]);
     }
-    replacements.push([left, right]);
+    const sdkNative = replacements[1][0];
+    const desktopNative = replacements[1][1];
+    if (
+      sdkNative.data.optionalDependencies?.[libvipsName] !==
+        desktopNative.data.optionalDependencies?.[libvipsName] ||
+      (replacements[2] &&
+        sdkNative.data.optionalDependencies?.[libvipsName] !== replacements[2][0].data.version)
+    ) {
+      throw new Error(`Sharp addon/libvips closure does not match ${target}`);
+    }
+    return { replacements, sdkNative };
   }
-  const sdkNative = replacements[1][0];
-  const desktopNative = replacements[1][1];
-  if (
-    sdkNative.data.optionalDependencies?.[libvipsName] !==
-      desktopNative.data.optionalDependencies?.[libvipsName] ||
-    (replacements[2] &&
-      sdkNative.data.optionalDependencies?.[libvipsName] !== replacements[2][0].data.version)
-  ) {
-    throw new Error(`Sharp addon/libvips closure does not match ${target}`);
-  }
+  const { replacements, sdkNative } = resolveNativeReplacements();
 
   function nativeFiles(pkg, owner) {
     const files = new Map();
@@ -341,6 +346,14 @@ function deduplicateSdkSharp(resourcesDir, platform, arch) {
     ) {
       throw new Error(`Sharp native payloads do not match for ${left.data.name}`);
     }
+  }
+  if (platform === "win32") {
+    // Relative directory symlinks require privileges; absolute junctions break
+    // when NSIS installs the app elsewhere. Keep the validated SDK copy instead.
+    console.log(
+      `Kept independent packaged Sharp ${desktopSharp.data.version} runtimes for ${target}.`,
+    );
+    return;
   }
   for (const [left, right] of replacements) {
     // Nested native packages disappear with their Sharp parent; never traverse the new link to edit Desktop.

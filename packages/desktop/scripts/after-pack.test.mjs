@@ -89,17 +89,20 @@ test("an SDK dependency linked outside the App is rejected without modifying its
   }
 });
 
-test("matching Sharp payloads share App-relative links without touching Desktop binaries", () => {
+test("both Sharp runtimes retain their native payload after the App is relocated", () => {
   const f = fixture();
   try {
     deduplicateSdkSharp(f.resources, process.platform, process.arch);
-    const sdkNative = path.join(f.sdk, "node_modules", f.native);
-    expect(fs.lstatSync(sdkNative).isSymbolicLink()).toBe(true);
-    expect(path.isAbsolute(fs.readlinkSync(sdkNative))).toBe(false);
-    expect(fs.realpathSync(sdkNative)).toBe(
-      fs.realpathSync(path.join(f.desktop, "node_modules", f.native)),
-    );
-    expect(fs.readFileSync(path.join(sdkNative, "binding.node"), "utf8")).toBe("native-release-A");
+    const relocated = path.join(f.directory, "installed resources");
+    fs.renameSync(f.resources, relocated);
+    for (const owner of ["app", "omp-sdk"]) {
+      const load = createRequire(path.join(relocated, owner, "package.json"));
+      const sharp = load.resolve("sharp");
+      const native = createRequire(sharp).resolve(`${f.native}/package`);
+      const binding = fs.realpathSync(path.join(path.dirname(native), "binding.node"));
+      expect(path.relative(relocated, binding).startsWith("..")).toBe(false);
+      expect(fs.readFileSync(binding, "utf8")).toBe("native-release-A");
+    }
   } finally {
     fs.rmSync(f.directory, { recursive: true, force: true });
   }

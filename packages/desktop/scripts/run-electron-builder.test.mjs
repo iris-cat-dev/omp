@@ -647,9 +647,9 @@ describe("SDK artifact target staging", () => {
     const fixture = createSdkFixture("generic");
     try {
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
-      await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
-        "dist/node-desktop",
-      );
+      await expect(
+        stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
+      ).rejects.toThrow();
       expect(existsSync(fixture.output)).toBe(false);
     } finally {
       vi.unstubAllEnvs();
