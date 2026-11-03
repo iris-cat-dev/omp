@@ -105,12 +105,10 @@ describe("OMP provider management", () => {
     expect(catalog.models).toMatchObject([
       {
         id: "aime/chat",
-        label: "AIME/Chat",
         metadata: { provider: "aime", providerName: "AIME" },
       },
       {
         id: "llmbox/reasoning",
-        label: "模型实验室/Reasoning",
         metadata: { provider: "llmbox", providerName: "模型实验室" },
       },
     ]);
@@ -1187,7 +1185,6 @@ providers:
     expect(before.models).toMatchObject([
       {
         id: "mintcat/gpt-test",
-        label: "我的模型 / 实验室/GPT Test",
         description: "mintcat/gpt-test",
         metadata: { provider: "mintcat", providerName: "我的模型 / 实验室", modelId: "gpt-test" },
       },
@@ -1213,7 +1210,6 @@ providers:
     expect(after.models).toMatchObject([
       {
         id: "mintcat/gpt-test",
-        label: "重命名的供应商/GPT Test",
         description: "mintcat/gpt-test",
         metadata: { provider: "mintcat", providerName: "重命名的供应商", modelId: "gpt-test" },
       },
@@ -1242,7 +1238,6 @@ providers:
       expect(catalog.models).toMatchObject([
         {
           id: "mintcat/gpt-test",
-          label: "GPT Test",
           description: "mintcat/gpt-test",
           metadata: { provider: "mintcat", modelId: "gpt-test" },
         },

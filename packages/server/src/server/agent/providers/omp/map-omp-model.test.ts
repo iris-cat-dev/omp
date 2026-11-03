@@ -140,14 +140,12 @@ describe("mapOmpModel thinking options", () => {
 
     expect(result.provider).toBe("omp");
     expect(result.id).toBe("pioneer/canada-quant/glm-5.2");
-    expect(result.label).toBe("pioneer/GLM-5.2");
     expect(result.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
   });
 
   test("uses a Unicode provider name only for display", () => {
     expect(mapOmpModel(baseModel(), "omp", "  我的模型 / 实验室  ")).toMatchObject({
       id: "pioneer/canada-quant/glm-5.2",
-      label: "我的模型 / 实验室/GLM-5.2",
       description: "pioneer/canada-quant/glm-5.2",
       metadata: {
         provider: "pioneer",
@@ -157,9 +155,8 @@ describe("mapOmpModel thinking options", () => {
     });
   });
 
-  test.each([undefined, "", "  "])("keeps the technical provider fallback for name %s", (name) => {
+  test.each([undefined, "", "  "])("omits blank provider names from metadata for %s", (name) => {
     const model = mapOmpModel(baseModel(), "omp", name);
-    expect(model.label).toBe("pioneer/GLM-5.2");
     expect(model.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
   });
 

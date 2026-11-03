@@ -66,7 +66,7 @@ Desktop model pickers open above or below their selector according to available 
 
 The conversation's model picker contains model selection and model settings only, on desktop and compact interfaces. Proxy routing is configured separately in **Host Settings → Proxy** and never occupies the model list or its footer.
 
-Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons. Model rows use compact, equal outer insets; only the selected row adds a trailing checkmark. No empty action column is reserved.
+Model rows and the composer’s model selector show native model names without provider-name prefixes, repeated provider icons, or empty icon slots. Within a provider group, rows omit redundant provider/model-ID descriptions; cross-provider search retains provider context in secondary text. Provider browsing and provider headers keep their names and identifying icons. Model IDs and provider metadata remain unchanged, including model names or IDs containing slashes. Model rows use compact, equal outer insets; only the selected row adds a trailing checkmark. No empty action column is reserved.
 
 Host-wide Agent launch presets have been removed from model pickers, Host settings, daemon configuration, and Desktop MCP tools. Loading an older configuration ignores `daemon.agentProfiles` while preserving unrelated settings; retired device-local model favorites are ignored without replacing ordinary model, thinking, or feature preferences. OMP's native profiles and terminal profiles are unchanged.
 

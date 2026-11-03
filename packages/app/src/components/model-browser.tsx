@@ -453,7 +453,7 @@ function ModelRow({
   showProviderLabel?: boolean;
   onPress: () => void;
 }) {
-  const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
+  const description = showProviderLabel ? buildProviderQualifiedDescription(row) : undefined;
   const contextWindowLabel =
     row.contextWindowMaxTokens !== undefined ? formatTokenCount(row.contextWindowMaxTokens) : null;
   const pressableStyle = useCallback(
@@ -847,6 +847,20 @@ function ProviderModelBrowserContent({
     () => (provider ? filterAndRankModelRows(getProviderModelRows(provider), normalizedQuery) : []),
     [normalizedQuery, provider],
   );
+  const errorMessage =
+    provider?.modelSelection.kind === "models" ? provider.modelSelection.error : undefined;
+  const listHeader = useMemo(
+    () =>
+      errorMessage ? (
+        <ProviderErrorNotice
+          providerId={view.providerId}
+          message={errorMessage}
+          onRetryProvider={onRetryProvider}
+          isRetryingProvider={isRetryingProvider}
+        />
+      ) : undefined,
+    [errorMessage, isRetryingProvider, onRetryProvider, view.providerId],
+  );
 
   if (!provider) return <ModelSearchEmptyState />;
   const selection = provider.modelSelection;
@@ -873,14 +887,6 @@ function ProviderModelBrowserContent({
   if (visibleRows.length === 0) {
     return <ModelSearchEmptyState />;
   }
-  const listHeader = selection.error ? (
-    <ProviderErrorNotice
-      providerId={view.providerId}
-      message={selection.error}
-      onRetryProvider={onRetryProvider}
-      isRetryingProvider={isRetryingProvider}
-    />
-  ) : undefined;
   return (
     <ModelRowList
       rows={visibleRows}

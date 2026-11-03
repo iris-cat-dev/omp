@@ -47,7 +47,7 @@ export function mapOmpModel(
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${providerName ?? model.provider}/${model.name ?? model.id}`,
+    label: model.name ?? model.id,
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,

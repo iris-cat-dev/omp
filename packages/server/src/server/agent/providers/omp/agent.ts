@@ -962,39 +962,6 @@ interface OmpProviderLoginFlow {
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
-function normalizeOmpModelLabel(label: string): string {
-  const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
-  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
-  if (vendorSeparatorIndex === -1) {
-    return normalizedLabel;
-  }
-
-  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
-}
-
-export function transformOmpModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
-  return models.map((model) => {
-    if (
-      (typeof model.metadata?.providerName === "string" && model.metadata.providerName.trim()) ||
-      !model.label.includes("/")
-    ) {
-      return model;
-    }
-
-    const segments = model.label.split("/").filter((segment) => segment.length > 0);
-    const rawLabel = segments.at(-1);
-    if (!rawLabel) {
-      return model;
-    }
-
-    return {
-      ...model,
-      label: normalizeOmpModelLabel(rawLabel),
-      description: model.description ?? model.label,
-    };
-  });
-}
-
 function isOmpThinkingLevel(value: string | null | undefined): value is OmpThinkingLevel {
   return (
     value === "off" ||
@@ -1899,6 +1866,7 @@ export class OmpAgentSession implements AgentSession {
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
+    this.live = options.live ?? true;
     this.getDefaultProxyPolicy = options.getDefaultProxyPolicy ?? (() => DIRECT_PROXY_POLICY);
     this.onClosed = options.onClosed;
     this.blobDir = options.blobDir;
@@ -1940,14 +1908,11 @@ export class OmpAgentSession implements AgentSession {
         ? configuredWorkflowMode
         : null;
     this.workflowModePending =
-      (options.live ?? true) && configuredWorkflowMode !== "standard"
-        ? configuredWorkflowMode
-        : null;
+      this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
     this.planContextResetPending =
       options.live === false && !isOmpNativeWorkflowMode(configuredWorkflowMode);
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
-    this.live = options.live ?? true;
     this.resumedSession = options.live === false;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -2208,16 +2173,10 @@ export class OmpAgentSession implements AgentSession {
         this.activeWorkflowMode = workflowMode;
         this.workflowModePending = null;
       }
-    }
-    if (
-      nativeCommand === undefined &&
-      !isOmpNativeWorkflowMode(selectedWorkflowMode) &&
-      this.planContextResetPending
-    ) {
-      payload.text = buildOmpStandardTurnPrompt(payload.text);
-      this.planContextResetPending = false;
-    }
-    if (nativeCommand === undefined) {
+      if (!isOmpNativeWorkflowMode(selectedWorkflowMode) && this.planContextResetPending) {
+        payload.text = buildOmpStandardTurnPrompt(payload.text);
+        this.planContextResetPending = false;
+      }
       payload.text = this.withToolIntentLocale(payload.text);
     }
     this.live = true;
@@ -3774,7 +3733,7 @@ export class OmpAgentSession implements AgentSession {
     this.setActiveWorkflowMode(null);
   }
 
-  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+  private queueDeferredSubagentRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (
       (this.subagentHistoryLoading || this.subscribers.size === 0) &&
       (event.type === "subagent_lifecycle" ||
@@ -3784,6 +3743,11 @@ export class OmpAgentSession implements AgentSession {
       this.queuedSubagentRuntimeEvents.push(event);
       return true;
     }
+    return false;
+  }
+
+  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
     this.updateWorkflowModeFromRuntimeEvent(event);
     if (
       handleOmpHostToolRuntimeEvent(event, {
@@ -4416,6 +4380,27 @@ export class OmpAgentSession implements AgentSession {
     this.emit(event);
   }
 
+  private emitNativeTaskToolCallUpdates(
+    message: Extract<OmpAgentMessage, { role: "assistant" }>,
+    isToolCallEnd: boolean,
+    turnId: string | undefined,
+  ): void {
+    for (const block of message.content) {
+      if (block.type !== "toolCall" || block.name !== "task") continue;
+      const task = this.nativeTaskCalls.get(block.id);
+      if (task && !isToolCallEnd) continue;
+      if (task && task.status !== "running") continue;
+      this.emitToolCallEvent(
+        block.id,
+        parseToolArgs(block.name, block.arguments, block.intent),
+        "running",
+        null,
+        null,
+        turnId,
+      );
+    }
+  }
+
   private handleMessageUpdate(
     event: Extract<OmpAgentSessionEvent, { type: "message_update" }>,
     turnId: string | undefined,
@@ -4435,20 +4420,11 @@ export class OmpAgentSession implements AgentSession {
           ? event.assistantMessageEvent.toolCall
           : undefined,
       );
-      for (const block of event.message.content) {
-        if (block.type !== "toolCall" || block.name !== "task") continue;
-        const task = this.nativeTaskCalls.get(block.id);
-        if (task && event.assistantMessageEvent.type !== "toolcall_end") continue;
-        if (task && task.status !== "running") continue;
-        this.emitToolCallEvent(
-          block.id,
-          parseToolArgs(block.name, block.arguments, block.intent),
-          "running",
-          null,
-          null,
-          turnId,
-        );
-      }
+      this.emitNativeTaskToolCallUpdates(
+        event.message,
+        event.assistantMessageEvent.type === "toolcall_end",
+        turnId,
+      );
       return;
     }
     if (event.assistantMessageEvent.type === "text_delta") {
@@ -4660,7 +4636,8 @@ export class OmpAgentSession implements AgentSession {
         emitUserMessage(
           messages
             .toReversed()
-            .find((message) => getOmpWorkflowDisplayText(message.text) === originalText)?.entryId,
+            .find((branchMessage) => getOmpWorkflowDisplayText(branchMessage.text) === originalText)
+            ?.entryId,
         ),
       )
       .catch((error: unknown) => {
@@ -5512,20 +5489,18 @@ export class OmpAgentClient implements AgentClient {
         const name = optionalString(provider.name)?.trim();
         if (name) providerNames.set(id, name);
       }
-      const models = transformOmpModels(
-        (
-          await runProviderRefreshActivity(context, "get_available_models", () =>
-            catalogSession.getAvailableModels(null),
-          )
+      const models = (
+        await runProviderRefreshActivity(context, "get_available_models", () =>
+          catalogSession.getAvailableModels(null),
         )
-          .map((model) => mapOmpModel(model, this.provider, providerNames.get(model.provider)))
-          .filter(
-            (model) =>
-              !isOmpDesktopRpcBootstrapModel(model) &&
-              (!this.localModelBridge?.isEnabled() ||
-                model.metadata?.provider === LOCAL_MODEL_PROVIDER),
-          ),
-      );
+      )
+        .map((model) => mapOmpModel(model, this.provider, providerNames.get(model.provider)))
+        .filter(
+          (model) =>
+            !isOmpDesktopRpcBootstrapModel(model) &&
+            (!this.localModelBridge?.isEnabled() ||
+              model.metadata?.provider === LOCAL_MODEL_PROVIDER),
+        );
       return { models, modes: [...OMP_MODES] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
