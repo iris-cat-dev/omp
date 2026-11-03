@@ -10,6 +10,11 @@ afterEach(() => {
     descriptors: new Map(),
     timelines: new Map(),
     hiddenFromTrack: new Set(),
+    connectionGenerations: new Map(),
+    listSync: new Map(),
+    timelineSync: new Map(),
+    liveRevisions: new Map(),
+    runVersions: new Map(),
   });
 });
 
@@ -423,6 +428,7 @@ describe("provider subagent client store", () => {
     expect(timeline?.head).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Current output." }),
     ]);
+    expect(timeline?.needsRefresh).toBe(true);
   });
 
   test("replaces cached rows with an authoritative tail page after a reconnect gap", () => {

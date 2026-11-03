@@ -43,6 +43,7 @@ import { resolveModelBrowserProviderNamespaceId } from "@/composer/agent-control
 import { resolveOmpAccountFeatureSelection } from "@/components/omp-provider-accounts";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
+import { WORKFLOW_LOCALE_FEATURE_ID } from "@/hooks/feature-preferences";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
@@ -248,7 +249,8 @@ function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const session = state.sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
     const usage = agent?.lastUsage;
     return {
       status: agent?.status ?? null,
@@ -1095,7 +1097,7 @@ function ComposerContentImpl({
   placeholder,
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1324,13 +1326,6 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
-      if (client) {
-        await assertWorkspaceDirectoryExists({
-          cwd,
-          directoryExists: (path) => client.directoryExists(path),
-          missingDirectoryMessage: t("panels.file.directoryMissing"),
-        });
-      }
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
         await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
@@ -1363,6 +1358,9 @@ function ComposerContentImpl({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      const session = useSessionStore.getState().sessions[serverId];
+      const targetAgent =
+        session?.agents.get(targetAgentId) ?? session?.agentDetails.get(targetAgentId);
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1373,6 +1371,20 @@ function ComposerContentImpl({
         }),
         encodeImages,
         submission: createMessageSubmissionWriter(serverId),
+        prepare: async () => {
+          await assertWorkspaceDirectoryExists({
+            cwd,
+            directoryExists: (path) => client.directoryExists(path),
+            missingDirectoryMessage: t("panels.file.directoryMissing"),
+          });
+          if (targetAgent?.provider === "omp") {
+            await client.setAgentFeature(
+              targetAgentId,
+              WORKFLOW_LOCALE_FEATURE_ID,
+              i18n.resolvedLanguage ?? i18n.language,
+            );
+          }
+        },
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
@@ -1382,7 +1394,16 @@ function ComposerContentImpl({
       });
       onAttentionPromptSend?.();
     };
-  }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [
+    appSettings.sendBehavior,
+    client,
+    cwd,
+    i18n,
+    onAttentionPromptSend,
+    serverId,
+    supportsForgeSearch,
+    t,
+  ]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;

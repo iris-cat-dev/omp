@@ -1,21 +1,31 @@
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import { OmpHistoryMapper } from "./message-history.js";
-import type { OmpAgentMessage, OmpAgentSessionEvent } from "./rpc-types.js";
-import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
-import { readOmpAssistantModel } from "./subagent-model.js";
-import type {
-  OmpSubagentEventPayload,
-  OmpSubagentLifecyclePayload,
-  OmpSubagentProgressPayload,
+import {
+  OmpAgentMessageSchema,
+  type OmpAgentMessage,
+  type OmpSubagentEventPayload,
+  type OmpSubagentLifecyclePayload,
+  type OmpSubagentProgressPayload,
 } from "./rpc-types.js";
+import { readOmpAssistantModel } from "./subagent-model.js";
+import { OmpSubagentLiveMapper } from "./subagent-live-mapper.js";
+import type { OmpSubagentSnapshot } from "./subagent-rpc.js";
 
+export interface OmpSubagentNativeHistory {
+  id: string;
+  messages: readonly OmpAgentMessage[];
+}
+
+type ChildStatus = "running" | "completed" | "failed" | "canceled";
 interface OmpSubagentState {
   title: string;
   description: string | null;
   resolvedModel: string | null;
+  hasProgressModel: boolean;
   toolCallId: string | null;
-  status: "running" | "completed" | "failed" | "canceled";
-  mapper: OmpHistoryMapper;
+  status: ChildStatus;
+  announced: boolean;
+  started: boolean;
+  mapper: OmpSubagentLiveMapper;
 }
 
 export class OmpSubagentIndex {
@@ -26,56 +36,113 @@ export class OmpSubagentIndex {
     state.title = payload.agent || state.title;
     state.description = payload.description ?? state.description;
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
-    if (state.status === "running" || payload.status !== "started") {
-      state.status = mapLifecycleStatus(payload.status);
+    if (payload.status === "started") {
+      if (state.started || state.status !== "running") {
+        state.mapper.beginRun();
+        state.hasProgressModel = false;
+      }
+      state.started = true;
+      state.status = "running";
+    } else if (state.status === "running") {
+      state.status = payload.status === "aborted" ? "canceled" : payload.status;
     }
-    return [this.upsert(payload.id, state.status, state)];
+    const output = [this.upsert(payload.id, state, state.status)];
+    if (state.status === "canceled")
+      output.push(...this.childTimeline(payload.id, state.mapper.cancelRunning()));
+    return output;
   }
 
   handleProgress(parent: object, payload: OmpSubagentProgressPayload): AgentStreamEvent[] {
     const id = payload.progress.id;
     const state = this.stateFor(parent, id, payload.agent);
     state.title = payload.agent || state.title;
-    state.description = payload.progress.description ?? payload.assignment ?? state.description;
-    if (payload.progress.resolvedModel?.trim()) {
-      state.resolvedModel = payload.progress.resolvedModel.trim();
+    state.description =
+      payload.progress.description ?? state.description ?? payload.assignment ?? null;
+    const model = payload.progress.resolvedModel?.trim();
+    if (model) {
+      state.resolvedModel = model;
+      state.hasProgressModel = true;
     }
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
     const status = mapProgressStatus(payload.progress.status);
-    if (status !== "running" || state.status === "running") state.status = status;
-    return [this.upsert(id, state.status, state)];
+    // Progress is not a new-run boundary; stale snapshots cannot revive or replace a terminal state.
+    if (state.status === "running") state.status = status;
+    const output = [this.upsert(id, state, state.status)];
+    if (state.status === "canceled")
+      output.push(...this.childTimeline(id, state.mapper.cancelRunning()));
+    return output;
   }
 
   handleEvent(parent: object, payload: OmpSubagentEventPayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, "OMP subagent");
-    const model = modelFromSessionEvent(payload.event);
+    // Native progress owns the serving selector, including thinking and fallback routing.
+    // Message metadata is a fallback, not a competing per-token source of model labels.
+    const model = state.hasProgressModel ? null : modelFromSessionEvent(payload.event);
+    const firstEvent = !state.announced;
+    const changedModel = model !== null && model !== state.resolvedModel;
+    if (changedModel) state.resolvedModel = model;
     const events: AgentStreamEvent[] = [];
-    if (model !== null && model !== state.resolvedModel) {
-      state.resolvedModel = model;
-      events.push(this.upsert(payload.id, state.status, state));
-    }
-    const messages = messagesFromSessionEvent(payload.event);
-    for (const mapped of state.mapper.mapMessages(messages)) {
-      if (mapped.type !== "timeline") continue;
-      events.push({
-        type: "provider_subagent",
-        provider: "omp",
-        event: {
-          type: "timeline",
-          id: payload.id,
-          item: mapped.item,
-          ...(mapped.timestamp ? { timestamp: mapped.timestamp } : {}),
-        },
-      });
-    }
+    if (firstEvent || changedModel)
+      events.push(this.upsert(payload.id, state, firstEvent ? state.status : undefined));
+    events.push(
+      ...this.childTimeline(
+        payload.id,
+        state.mapper.map(payload.event, state.status !== "running"),
+      ),
+    );
     return events;
   }
 
-  markCanceled(parent: object, id: string): AgentStreamEvent | null {
+  hydrateSnapshot(parent: object, snapshot: OmpSubagentSnapshot): AgentStreamEvent[] {
+    const state = this.stateFor(parent, snapshot.id, snapshot.agent);
+    state.title = snapshot.agent || state.title;
+    state.description =
+      snapshot.description ??
+      snapshot.progress?.description ??
+      state.description ??
+      snapshot.assignment ??
+      null;
+    state.toolCallId = snapshot.parentToolCallId ?? state.toolCallId;
+    const model = snapshot.progress?.resolvedModel?.trim();
+    if (model) {
+      state.resolvedModel = model;
+      state.hasProgressModel = true;
+    }
+    state.status = mapProgressStatus(snapshot.status);
+    return [this.upsert(snapshot.id, state, state.status)];
+  }
+
+  seedHistory(
+    parent: object,
+    events: AgentStreamEvent[],
+    nativeHistory: readonly OmpSubagentNativeHistory[] = [],
+  ): void {
+    for (const event of events) {
+      if (event.type !== "provider_subagent" || event.provider !== "omp") continue;
+      const state = this.stateFor(parent, event.event.id, "OMP subagent");
+      if (event.event.type === "timeline") state.mapper.seed(event.event.item);
+      if (event.event.type === "upsert") {
+        state.title = event.event.title ?? state.title;
+        state.description = event.event.description ?? state.description;
+        state.resolvedModel = event.event.model ?? state.resolvedModel;
+        state.toolCallId = event.event.toolCallId ?? state.toolCallId;
+        state.status = event.event.status ?? state.status;
+        state.announced = true;
+      }
+    }
+    for (const history of nativeHistory) {
+      this.stateFor(parent, history.id, "OMP subagent").mapper.seedMessages(history.messages);
+    }
+  }
+
+  markCanceled(parent: object, id: string): AgentStreamEvent[] {
     const state = this.statesByParent.get(parent)?.get(id);
-    if (!state || state.status !== "running") return null;
+    if (!state || state.status !== "running") return [];
     state.status = "canceled";
-    return this.upsert(id, state.status, state);
+    return [
+      this.upsert(id, state, state.status),
+      ...this.childTimeline(id, state.mapper.cancelRunning()),
+    ];
   }
 
   clear(parent: object): void {
@@ -90,20 +157,20 @@ export class OmpSubagentIndex {
       title,
       description: null,
       resolvedModel: null,
+      hasProgressModel: false,
       toolCallId: null,
       status: "running",
-      mapper: new OmpHistoryMapper("omp", [], OMP_HISTORY_MAPPER_HOOKS),
+      announced: false,
+      started: false,
+      mapper: new OmpSubagentLiveMapper(),
     };
     states.set(id, state);
     this.statesByParent.set(parent, states);
     return state;
   }
 
-  private upsert(
-    id: string,
-    status: "running" | "completed" | "failed" | "canceled",
-    state: OmpSubagentState,
-  ): AgentStreamEvent {
+  private upsert(id: string, state: OmpSubagentState, status?: ChildStatus): AgentStreamEvent {
+    state.announced = true;
     return {
       type: "provider_subagent",
       provider: "omp",
@@ -113,45 +180,52 @@ export class OmpSubagentIndex {
         title: state.title,
         description: state.description,
         model: state.resolvedModel,
-        status,
         toolCallId: state.toolCallId,
+        ...(status ? { status } : {}),
       },
     };
   }
+
+  private childTimeline(id: string, mapped: AgentStreamEvent[]): AgentStreamEvent[] {
+    const output: AgentStreamEvent[] = [];
+    for (const event of mapped) {
+      if (event.type !== "timeline") continue;
+      output.push({
+        type: "provider_subagent",
+        provider: "omp",
+        event: {
+          type: "timeline",
+          id,
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        },
+      });
+    }
+    return output;
+  }
 }
 
-function modelFromSessionEvent(event: OmpAgentSessionEvent): string | null {
+function modelFromSessionEvent(event: OmpSubagentEventPayload["event"]): string | null {
   if (
     event.type === "message_start" ||
     event.type === "message_update" ||
-    event.type === "message_end"
+    event.type === "message_end" ||
+    event.type === "turn_end"
   ) {
-    return readOmpAssistantModel(event.message);
+    const parsed = OmpAgentMessageSchema.safeParse(event.message);
+    return parsed.success ? readOmpAssistantModel(parsed.data) : null;
   }
-  if (event.type === "agent_end" && event.messages) {
+  if (event.type === "agent_end" && Array.isArray(event.messages)) {
     for (let index = event.messages.length - 1; index >= 0; index -= 1) {
-      const model = readOmpAssistantModel(event.messages[index]!);
+      const parsed = OmpAgentMessageSchema.safeParse(event.messages[index]);
+      const model = parsed.success ? readOmpAssistantModel(parsed.data) : null;
       if (model !== null) return model;
     }
   }
   return null;
 }
 
-function messagesFromSessionEvent(event: OmpAgentSessionEvent): OmpAgentMessage[] {
-  if (event.type === "message_end") return [event.message];
-  return [];
-}
-
-function mapLifecycleStatus(
-  status: OmpSubagentLifecyclePayload["status"],
-): "running" | "completed" | "failed" | "canceled" {
-  if (status === "started") return "running";
-  return status === "aborted" ? "canceled" : status;
-}
-
-function mapProgressStatus(
-  status: OmpSubagentProgressPayload["progress"]["status"],
-): "running" | "completed" | "failed" | "canceled" {
+function mapProgressStatus(status: OmpSubagentProgressPayload["progress"]["status"]): ChildStatus {
   if (status === "completed" || status === "failed") return status;
   return status === "aborted" ? "canceled" : "running";
 }

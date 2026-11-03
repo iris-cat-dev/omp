@@ -20,11 +20,15 @@ export interface KeyedLine {
 // monospace text. Generous enough to cover the vast majority of real blocks.
 export const MAX_HIGHLIGHT_CHARS = 100_000;
 
-class LRUCache<K, V> {
-  private readonly map = new Map<K, V>();
-  constructor(private readonly max: number) {}
+class LRUCache<V> {
+  private readonly map = new Map<string, V>();
+  private chars = 0;
+  constructor(
+    private readonly max: number,
+    private readonly maxChars: number,
+  ) {}
 
-  get(key: K): V | undefined {
+  get(key: string): V | undefined {
     const value = this.map.get(key);
     if (value === undefined) return undefined;
     this.map.delete(key);
@@ -32,17 +36,22 @@ class LRUCache<K, V> {
     return value;
   }
 
-  set(key: K, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    else if (this.map.size >= this.max) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
+  set(key: string, value: V): void {
+    if (this.map.delete(key)) this.chars -= key.length;
+    if (key.length > this.maxChars) return;
     this.map.set(key, value);
+    this.chars += key.length;
+    while (this.map.size > this.max || this.chars > this.maxChars) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+      this.chars -= oldest.length;
+    }
   }
 }
 
-const tokenizationCache = new LRUCache<string, HighlightToken[][]>(200);
+// Source-character budget, not a byte-accurate measurement of token heap usage.
+const tokenizationCache = new LRUCache<HighlightToken[][]>(200, 2_000_000);
 
 // Tokenize `code` to per-line tokens, cached. Returns null when the language is
 // unsupported, the input is over the size cap, or parsing throws — callers then

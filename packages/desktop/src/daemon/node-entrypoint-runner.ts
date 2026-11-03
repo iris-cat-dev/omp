@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { readPackagedDesktopDistribution } from "../packaged-distribution.js";
 import { pathToFileURL } from "node:url";
@@ -12,22 +13,23 @@ export async function main(): Promise<void> {
   }
 
   if (process.env.ELECTRON_RUN_AS_NODE === "1" && process.env.PASEO_DESKTOP_MANAGED === "1") {
-    const distribution = readPackagedDesktopDistribution(path.join(__dirname, "..", ".."));
+    const appRoot = path.join(__dirname, "..", "..");
+    const distribution = readPackagedDesktopDistribution(appRoot);
+    const sdkResources = path.join(path.dirname(appRoot), "omp-sdk");
+    if (!existsSync(path.join(sdkResources, "manifest.json"))) {
+      throw new Error(
+        "The packaged OMP SDK manifest is missing. Rebuild the Desktop SDK distribution.",
+      );
+    }
+    process.env.OMP_DESKTOP_SDK_ROOT = path.resolve(
+      sdkResources,
+      "node_modules",
+      "@oh-my-pi",
+      "pi-coding-agent",
+    );
     process.env.PASEO_DESKTOP_DISTRIBUTION_IDENTITY = distribution.identity;
-    if (distribution.bundledPluginsPath) {
-      process.env.OMP_DESKTOP_BUNDLED_PLUGINS = distribution.bundledPluginsPath;
-    } else {
-      delete process.env.OMP_DESKTOP_BUNDLED_PLUGINS;
-    }
-    if (distribution.bundledOmpPath) {
-      process.env.OMP_COMMAND = distribution.bundledOmpPath;
-      const pathKey = Object.hasOwn(process.env, "Path") ? "Path" : "PATH";
-      const binDir = path.dirname(distribution.bundledOmpPath);
-      const previousPath = process.env[pathKey];
-      if (previousPath !== binDir && !previousPath?.startsWith(`${binDir}${path.delimiter}`)) {
-        process.env[pathKey] = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
-      }
-    }
+    delete process.env.OMP_DESKTOP_BUNDLED_PLUGINS;
+    delete process.env.OMP_COMMAND;
   }
 
   process.argv =

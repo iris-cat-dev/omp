@@ -12,7 +12,7 @@
 | [Workspaces, files, and Git](features/workspaces-files-git.md) | Projects, tabs, split panes, file operations, editor shortcuts, and Git changes                           |
 | [Appearance and wallpaper](features/appearance.md)             | Language, themes, window layout, display preferences, and wallpaper                                       |
 | [Desktop pet](features/desktop-pet.md)                         | Companion setup, generated pets, interactions, and platform limitations                                   |
-| [Tools and plugins](features/tools-and-plugins.md)             | OMP tools, browser/computer use, image generation, plugins, and private bundled distributions             |
+| [Tools and plugins](features/tools-and-plugins.md)             | OMP tools, browser/computer use, image generation, plugins, and SDK distribution compatibility            |
 | [Messages and media](features/messages-and-media.md)           | Markdown, links, math, tool activity, image previews, saving images, and touch input                      |
 
 ## Development and operations

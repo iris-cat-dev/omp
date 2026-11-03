@@ -2,6 +2,7 @@ import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@omp-desktop/protocol/error-utils";
 import type { AgentConfigApply } from "@omp-desktop/protocol/messages";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
@@ -28,6 +29,7 @@ export interface AgentConfigOperations {
   ensureLoaded(agentId: string, modelId?: string | null): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
+  setProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
   setGoalObjective(agentId: string, objective: string): Promise<void>;
   controlGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<void>;
@@ -103,6 +105,24 @@ export class AgentConfigSession {
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_model_response", payload }),
+    });
+  }
+
+  handleSetAgentProxyPolicyRequest(
+    msg: Extract<SessionInboundMessage, { type: "set_agent_proxy_policy_request" }>,
+  ): Promise<void> {
+    const { agentId, policy, requestId } = msg;
+    return this.applyConfigChange({
+      agentId,
+      requestId,
+      logLabel: "set_agent_proxy_policy_request",
+      logFields: { agentId, requestId },
+      failureText: "Failed to set agent proxy policy",
+      run: async () => {
+        await this.operations.setProxyPolicy(agentId, policy);
+        return undefined;
+      },
+      emitResponse: (payload) => this.host.emit({ type: "set_agent_proxy_policy_response", payload }),
     });
   }
 

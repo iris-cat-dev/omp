@@ -242,6 +242,7 @@ export const fr: TranslationResources = {
     },
     thinking: {
       title: "Pensée",
+      noOptions: "Ce modèle n'a aucun niveau de pensée",
       unknown: "Inconnu",
       extraHigh: "Très haut",
       options: {
@@ -298,7 +299,7 @@ export const fr: TranslationResources = {
       selectWithValue: "Sélectionnez le mode agent ({{value}})",
       options: {
         alwaysAsk: "Toujours demander",
-        writeApproval: "Approuver les écritures",
+        autoApproval: "Approbation automatique",
         fullAccess: "Accès total",
         auto: "Automatique",
         plan: "Plan",
@@ -459,6 +460,8 @@ export const fr: TranslationResources = {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
+      expandMessage: "Afficher le message complet",
+      collapseMessage: "Afficher moins",
       forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
       forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
       forkFailed: "Impossible de dupliquer le chat",
@@ -518,6 +521,8 @@ export const fr: TranslationResources = {
     },
     compaction: {
       loading: "Compactage...",
+      waitingHint:
+        "Cela peut prendre quelques minutes. Les nouveaux messages attendent la fin du compactage ; inutile de les renvoyer.",
       auto: "Contexte automatiquement compacté",
       manual: "Contexte compacté manuellement",
       withTokens: "Contexte compacté (jetons{{tokens}}K)",
@@ -1600,11 +1605,6 @@ export const fr: TranslationResources = {
         statusFailed: "Impossible de vérifier l'état de l'installation deCLI.",
         installFailed: "Impossible d'installer leOMP DesktopCLI.",
       },
-      ompShortcut: {
-        statusFailed: "Impossible de vérifier l’état du raccourci de commande OMP.",
-        installFailed: "Impossible d’installer le raccourci de commande OMP.",
-        uninstallFailed: "Impossible de désinstaller le raccourci de commande OMP.",
-      },
     },
   },
   rootError: {
@@ -1720,15 +1720,8 @@ export const fr: TranslationResources = {
     loadingSelector: "Chargement du sélecteur de modèle...",
     error: "Erreur",
     defaultModel: "Défaut",
-    profiles: "Profils",
     providers: "Fournisseurs",
     model: "Modèle",
-    editProfiles: "Modifier",
-    editProfilesLabel: "Modifier les profils d'agent",
-    createProfile: "Créer un profil",
-    createProfileFromModel: "Créer un profil à partir de ce modèle",
-    editProfileLabel: "Modifier {{name}}",
-    editProfilesCount: "Modifier les profils ({{count}})",
     modelCount: "{{count}} modèle",
     modelCountPlural: "{{count}} modèles",
     retry: "Réessayer",
@@ -1886,6 +1879,11 @@ export const fr: TranslationResources = {
       save: "Enregistrer l'adresse",
       saving: "Enregistrement...",
       saved: "Le réglage est enregistré et sera appliqué lors du prochain ajout d'hôte.",
+      desktopDescription:
+        "L'application de bureau enregistre cette adresse dans le config.json du daemon local, active le relais et l'applique immédiatement. Saisissez une adresse ws:// ou wss:// non vide. L'application Web doit utiliser le même relais. Le trafic reste chiffré de bout en bout.",
+      desktopSaved:
+        "Enregistré dans le config.json du daemon local et appliqué immédiatement, sans redémarrage. Les nouveaux liens d'appairage utiliseront cette adresse.",
+      desktopUnavailable: "Le daemon local est déconnecté. Sa configuration ne peut pas être enregistrée.",
     },
     device: {
       loadingOffer: "Chargement de l'offre d'association...",
@@ -2499,10 +2497,6 @@ export const fr: TranslationResources = {
         title: "Ligne de commande",
         description: "Agents de contrôle et de script depuis votre terminal",
       },
-      ompShortcut: {
-        title: "Raccourci de commande OMP",
-        description: "Lance OMP intégré avec le proxy actuellement configuré pour cet hôte",
-      },
       actions: {
         install: "Installer",
         installing: "Installation...",
@@ -2663,12 +2657,20 @@ export const fr: TranslationResources = {
         },
         proxy: {
           title: "Proxy",
-          hint: "Utilisé pour les nouveaux processus OMP et les requêtes de quota Codex et Cursor. Effacez la valeur pour le désactiver.",
+          hint: "S’applique immédiatement aux requêtes de modèles, connexion et quotas du SDK. Le trafic shell, git, navigateur et MCP reste inchangé.",
           placeholder: "http://127.0.0.1:7890",
           accessibilityLabel: "URL du proxy",
           save: "Enregistrer",
           saving: "Enregistrement...",
           saveError: "Impossible d’enregistrer le proxy",
+          enabled: "Activer le routage proxy",
+          defaultRoute: "Route par défaut",
+          inherit: "Hériter du défaut (direct si non défini)",
+          direct: "Direct",
+          proxy: "Proxy",
+          noProxy: "Hôtes sans proxy",
+          noProxyHint:
+            "Hôtes ou domaines séparés par des virgules. Les réseaux locaux et privés contournent toujours le proxy.",
         },
         systemPrompt: {
           title: "Invite système",
@@ -2709,45 +2711,6 @@ export const fr: TranslationResources = {
         moveDown: "Move down",
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
-      },
-      agentProfiles: {
-        sectionTitle: "Profils d'agent",
-        unavailable: "Connectez-vous à cet hôte pour gérer les profils d'agent",
-        unsupported:
-          "Cet hôte exécute un daemon qui ne prend pas encore en charge les profils d'agent",
-        emptyState:
-          "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents à partir d'un fournisseur et d'un modèle enregistrés.",
-        addProfileTitle: "Ajouter un profil d'agent",
-        newProfile: "Nouveau profil",
-        editProfile: "Modifier le profil",
-        editProfileTitle: "Modifier le profil d'agent",
-        nameLabel: "Nom",
-        namePlaceholder: "Travail sur l'UI",
-        iconLabel: "Icône",
-        noIcon: "Aucune",
-        providerLabel: "Fournisseur",
-        providerPlaceholder: "Sélectionner un fournisseur",
-        noProviders: "Aucun fournisseur n'est disponible sur cet hôte",
-        modelLabel: "Modèle",
-        noModels: "Ce fournisseur n'a aucun modèle à choisir",
-        modeLabel: "Mode",
-        noModes: "Ce fournisseur n'a aucun mode à choisir",
-        thinkingLabel: "Pensée",
-        noThinkingOptions: "Ce modèle n'a aucun niveau de pensée",
-        featuresLabel: "Caractéristiques",
-        featureCount: "{{count}} caractéristiques",
-        featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Quand l’utiliser",
-        notesPlaceholder:
-          "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
-        save: "Enregistrer",
-        saving: "Enregistrement...",
-        remove: "Supprimer",
-        removeConfirmTitle: "Supprimer le profil ?",
-        removeConfirmMessage: "Supprimer « {{name}} » ?",
-        moveUp: "Déplacer vers le haut",
-        moveDown: "Déplacer vers le bas",
       },
       ompSubagents: {
         ...en.settings.host.ompSubagents,

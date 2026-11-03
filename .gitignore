@@ -87,6 +87,7 @@ packages/protocol/src/generated/validation/*.aot.ts
 /artifacts
 packages/desktop/.cache/
 packages/desktop/remote-backend-dist/
+packages/desktop/sdk-dist/
 packages/desktop/src-tauri/resources/managed-runtime/
 app.json
 

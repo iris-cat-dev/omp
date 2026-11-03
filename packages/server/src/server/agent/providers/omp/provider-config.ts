@@ -13,12 +13,29 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { AgentCapabilityFlags } from "../../agent-sdk-types.js";
+import type { OmpApprovalMode } from "./rpc-types.js";
 
 const OMP_SESSION_DIR = "~/.omp/agent/sessions";
-const DEFAULT_OMP_MODE_ID = "ask";
+const DEFAULT_OMP_MODE_ID = "full";
 
 export const MIN_SUPPORTED_OMP_VERSION = "18.8.7";
 export { OMP_MODES };
+
+export const OMP_AGENT_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsSessionListing: true,
+  supportsProxyPolicy: true,
+  supportsDynamicModes: true,
+  supportsMcpServers: false,
+  supportsReasoningStream: true,
+  supportsToolInvocations: true,
+  supportsNativePaseoTools: true,
+  supportsRewindConversation: true,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
+};
 
 export const OmpAgentShellModeSchema = z.enum(["auto", "git-bash", "omp-default", "custom"]);
 export type OmpAgentShellMode = z.infer<typeof OmpAgentShellModeSchema>;
@@ -41,12 +58,10 @@ export const OmpProviderParamsSchema = z
     planModel: z.string().min(1).optional(),
     agentShell: OmpAgentShellConfigSchema.optional(),
     disabledBuiltInTools: z.array(z.string()).optional(),
-    proxyEnabled: z.boolean().optional(),
   })
   .strict();
 
 export interface OmpRuntimeProviderParams {
-  proxyEnabled: boolean;
   disabledBuiltInTools?: readonly string[];
   sessionDir: string;
   agentShell: {
@@ -61,34 +76,48 @@ export interface OmpModelRoleParams {
   planModel?: string;
 }
 
+export function resolveOmpApprovalMode(modeId: string): OmpApprovalMode {
+  switch (modeId) {
+    case "full":
+      return "yolo";
+    case "ask":
+      return "always-ask";
+    default:
+      throw new Error(`Unsupported OMP mode '${modeId}'`);
+  }
+}
+
+export function mapOmpApprovalMode(mode: OmpApprovalMode): string {
+  switch (mode) {
+    case "yolo":
+      return "full";
+    case "write":
+      return "ask";
+    case "always-ask":
+    case "always-ask-cached":
+      return "ask";
+  }
+}
+
 export function resolveOmpLaunchMode(
   modeId: string | undefined,
   modelRoleParams: OmpModelRoleParams = {},
 ): { modeId: string; extraArgs: string[] } {
-  const modelRoleArgs = resolveOmpModelRoleArgs(modelRoleParams);
   const resolvedModeId = modeId ?? DEFAULT_OMP_MODE_ID;
-  switch (resolvedModeId) {
-    case "full":
-      return { modeId: "full", extraArgs: ["--approval-mode", "yolo", ...modelRoleArgs] };
-    case "write":
-      return {
-        modeId: "write",
-        extraArgs: ["--approval-mode", "write", ...modelRoleArgs],
-      };
-    case "ask":
-      return {
-        modeId: "ask",
-        extraArgs: ["--approval-mode", "always-ask", ...modelRoleArgs],
-      };
-    default:
-      throw new Error(`Unsupported OMP mode '${resolvedModeId}'`);
-  }
+  return {
+    modeId: resolvedModeId,
+    extraArgs: [
+      "--approval-mode",
+      resolveOmpApprovalMode(resolvedModeId),
+      ...resolveOmpModelRoleArgs(modelRoleParams),
+    ],
+  };
 }
 
 /**
  * CLI approval flags are runtime-only and are not recorded in session JSONL.
  * Recover an explicitly configured native default for imports, never the CLI's
- * permissive schema default. Creation keeps its existing desktop default.
+ * permissive schema default. New conversations default to automatic approval.
  */
 export async function readOmpImportMode(
   cwd: string,
@@ -139,7 +168,7 @@ export async function readOmpImportMode(
         modeId = "ask";
         break;
       case "write":
-        modeId = "write";
+        modeId = "ask";
         break;
       case "yolo":
         modeId = "full";
@@ -229,7 +258,6 @@ export function resolveOmpProviderParams(providerParams: unknown): {
   return {
     runtimeProviderParams: {
       sessionDir: params.sessionDir ?? OMP_SESSION_DIR,
-      proxyEnabled: params.proxyEnabled !== false,
       agentShell: params.agentShell ?? { mode: "auto" },
       ...(params.disabledBuiltInTools !== undefined
         ? { disabledBuiltInTools: params.disabledBuiltInTools }
@@ -365,6 +393,9 @@ export function mergeOmpRuntimeSettings(
   if (!base && !override) return undefined;
   return {
     command: override?.command ?? base?.command,
+    ompBackend: override?.ompBackend ?? base?.ompBackend,
+    ompSdkPath: override?.ompSdkPath ?? base?.ompSdkPath,
+    proxyPolicy: override?.proxyPolicy ?? base?.proxyPolicy,
     env: base?.env || override?.env ? { ...base?.env, ...override?.env } : undefined,
     disallowedTools:
       base?.disallowedTools || override?.disallowedTools

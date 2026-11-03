@@ -3,6 +3,25 @@ import path from "node:path";
 import type { RemoteSshTarget } from "./types.js";
 import { RemoteSshTargetSchema } from "./types.js";
 
+export interface RemoteTargetInfo {
+  platform: "linux" | "darwin";
+  arch: "x64" | "arm64";
+  home: string;
+}
+
+export function parseRemoteTargetInfo(value: string): RemoteTargetInfo {
+  const [system, machine, encodedHome, libc] = value.trim().split("|");
+  const platform = system === "Linux" ? "linux" : system === "Darwin" ? "darwin" : null;
+  const arch = machine === "x86_64" ? "x64" : machine === "arm64" || machine === "aarch64" ? "arm64" : null;
+  if (!platform || !arch || !encodedHome) {
+    throw new Error(`Unsupported SSH host platform: ${system || "unknown"} ${machine || "unknown"}`);
+  }
+  if (platform === "linux" && !libc?.startsWith("glibc ")) {
+    throw new Error(`Unsupported SSH host libc: ${libc || "unknown"}. Linux remote hosts require glibc; musl is unsupported.`);
+  }
+  return { platform, arch, home: Buffer.from(encodedHome, "base64").toString("utf8") };
+}
+
 export interface SshArgumentOptions {
   tty?: boolean;
   controlPath?: string;

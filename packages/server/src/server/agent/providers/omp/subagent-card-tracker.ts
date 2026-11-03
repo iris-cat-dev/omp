@@ -22,6 +22,12 @@ interface OmpSubagentLogLine {
 }
 
 interface OmpSubagentCardItem {
+  id: string;
+  run: number;
+  parentToolCallIds: Set<string>;
+  currentToolKey?: string;
+  pendingToolLines: Map<string, { text: string; startMs: number }>;
+  outputSnapshot: string[];
   index: number;
   description?: string;
   agent?: string;
@@ -32,7 +38,7 @@ interface OmpSubagentCardItem {
 }
 
 interface OmpSubagentCardState {
-  items: Map<number, OmpSubagentCardItem>;
+  items: Map<string, OmpSubagentCardItem>;
   emitToolCall: (toolCallId: string) => boolean;
   lastEmitMs: number | null;
   trailingTimer: OmpSubagentCardTimer | null;
@@ -57,6 +63,7 @@ export class OmpSubagentCardTracker {
   private readonly scheduler: OmpSubagentCardScheduler;
   private readonly emitToolCall: (toolCallId: string) => boolean;
   private readonly states = new Map<string, OmpSubagentCardState>();
+  private readonly children = new Map<string, OmpSubagentCardItem>();
 
   constructor(options: OmpSubagentCardTrackerOptions) {
     this.scheduler = options.scheduler ?? createOmpSubagentCardScheduler();
@@ -67,68 +74,113 @@ export class OmpSubagentCardTracker {
     payload: OmpSubagentLifecyclePayload,
     emitToolCall: (toolCallId: string) => boolean = this.emitToolCall,
   ): void {
-    const parentToolCallId = readTrimmedString(payload.parentToolCallId);
-    if (!parentToolCallId) {
-      return;
-    }
-    this.stateFor(parentToolCallId).emitToolCall = emitToolCall;
-    const item = this.upsertItem(parentToolCallId, {
+    const item = this.upsertItem({
+      id: payload.id,
       index: payload.index,
       agent: payload.agent,
       description: payload.description,
-      status: payload.status === "started" ? "running" : payload.status,
       childSessionId: payload.sessionFile,
     });
-    this.appendLine(
-      item,
-      `lifecycle:${payload.status}:${payload.id}`,
-      `${payload.id} ${payload.status}`,
-    );
-    this.requestEmit(parentToolCallId);
+    if (payload.status === "started") {
+      item.run += 1;
+      item.status = "running";
+      item.currentToolKey = undefined;
+      item.pendingToolLines.clear();
+      item.outputSnapshot = [];
+    } else if (!item.status || item.status === "running" || item.status === "pending") {
+      item.status = payload.status;
+    }
+    this.bindParent(item, payload.parentToolCallId, emitToolCall);
+    if (payload.status === "started" || payload.status === item.status) {
+      this.appendLine(item, `${payload.status === "started" ? "lifecycle" : "status"}:${item.run}:${payload.status}`, `${payload.id} ${payload.status}`);
+    }
+    for (const parentId of item.parentToolCallIds) this.requestEmit(parentId);
   }
 
   handleProgress(
     payload: OmpSubagentProgressPayload,
     emitToolCall: (toolCallId: string) => boolean = this.emitToolCall,
   ): void {
-    const parentToolCallId = readTrimmedString(payload.parentToolCallId);
-    if (!parentToolCallId) {
-      return;
-    }
-    this.stateFor(parentToolCallId).emitToolCall = emitToolCall;
-    const item = this.upsertItem(parentToolCallId, {
+    const item = this.upsertItem({
+      id: payload.progress.id,
       index: payload.index,
       agent: payload.agent,
-      description: payload.progress.description,
-      status: payload.progress.status,
+      description: payload.progress.description ?? payload.assignment,
       childSessionId: payload.sessionFile,
     });
-
-    const currentToolLine = summarizeTool(readRecord(payload.progress.currentTool));
+    const terminal = item.status === "completed" || item.status === "failed" || item.status === "aborted";
+    if (!terminal) item.status = payload.progress.status;
+    this.bindParent(item, payload.parentToolCallId, emitToolCall);
+    const currentToolLine = !terminal && payload.progress.status === "running" && payload.progress.currentTool
+      ? summarizeTool({ tool: payload.progress.currentTool, args: payload.progress.currentToolArgs, startMs: payload.progress.currentToolStartMs })
+      : null;
+    const currentToolKey = currentToolLine ? `${payload.progress.currentTool}:${payload.progress.currentToolStartMs ?? ""}` : undefined;
+    const currentToolChanged = currentToolLine !== null && currentToolKey !== item.currentToolKey;
+    item.currentToolKey = currentToolKey;
     if (currentToolLine) {
-      this.appendLine(item, `current:${currentToolLine.key}`, currentToolLine.text);
-    }
-
-    for (const tool of readRecordArray(payload.progress.recentTools)) {
-      const line = summarizeTool(tool);
-      if (line) {
-        this.appendLine(item, `tool:${line.key}`, line.text);
+      const key = `current:${item.run}:${currentToolKey}`;
+      this.appendLine(item, key, currentToolLine.text);
+      if (typeof payload.progress.currentToolStartMs === "number") {
+        item.pendingToolLines.set(key, { text: currentToolLine.text, startMs: payload.progress.currentToolStartMs });
       }
     }
 
-    for (const output of readOutputLines(payload.progress.recentOutput)) {
-      this.appendLine(item, `output:${output}`, output);
+    for (const tool of payload.progress.recentTools ?? []) {
+      const line = summarizeTool(tool);
+      if (line) {
+        const key = `tool:${item.run}:${line.key}`;
+        if (item.lineKeys.has(key)) continue;
+        let matched = false;
+        for (const [pendingKey, pending] of item.pendingToolLines) {
+          if (pending.text !== line.text || typeof tool.endMs !== "number" || tool.endMs < pending.startMs) continue;
+          item.pendingToolLines.delete(pendingKey);
+          const existing = item.lines.find((candidate) => candidate.key === pendingKey);
+          if (!existing) continue;
+          item.lineKeys.delete(pendingKey);
+          existing.key = key;
+          item.lineKeys.add(key);
+          matched = true;
+          break;
+        }
+        if (!matched) this.appendLine(item, key, line.text);
+      }
     }
 
-    if (payload.progress.status !== "running") {
-      this.appendLine(
-        item,
-        `status:${payload.progress.status}:${payload.progress.id}`,
-        `${payload.progress.id} ${payload.progress.status}`,
-      );
+    const outputs = readOutputLines(payload.progress.recentOutput);
+    const previousOutputs = item.outputSnapshot;
+    if (
+      outputs.length > 0 && outputs.length === previousOutputs.length &&
+      outputs.slice(0, -1).every((output, index) => output === previousOutputs[index]) &&
+      outputs.at(-1)!.startsWith(previousOutputs.at(-1)!)
+    ) {
+      const previousKey = `output:${item.run}:${previousOutputs.at(-1)!}`;
+      const existing = item.lines.find((line) => line.key === previousKey);
+      if (existing) {
+        item.lineKeys.delete(previousKey);
+        existing.key = `output:${item.run}:${outputs.at(-1)!}`;
+        existing.text = normalizeLine(outputs.at(-1)!)!;
+        item.lineKeys.add(existing.key);
+      }
     }
+    for (const output of outputs) this.appendLine(item, `output:${item.run}:${output}`, output);
+    if (payload.progress.recentOutput !== undefined) item.outputSnapshot = outputs;
 
-    this.requestEmit(parentToolCallId);
+    if (!terminal && payload.progress.status !== "running") {
+      this.appendLine(item, `status:${item.run}:${payload.progress.status}`, `${payload.progress.id} ${payload.progress.status}`);
+    }
+    for (const parentId of item.parentToolCallIds) {
+      if (currentToolChanged) this.emitNow(parentId, this.stateFor(parentId));
+      else this.requestEmit(parentId);
+    }
+  }
+
+  markCanceled(childId: string): void {
+    const item = this.children.get(childId);
+    if (!item || (item.status !== "running" && item.status !== "pending")) return;
+    item.status = "aborted";
+    item.currentToolKey = undefined;
+    this.appendLine(item, `status:${item.run}:aborted`, `${childId} aborted`);
+    for (const parentId of item.parentToolCallIds) this.emitNow(parentId, this.stateFor(parentId));
   }
 
   detailFor(toolCallId: string, baseDetail: ToolCallDetail): ToolCallDetail {
@@ -173,49 +225,50 @@ export class OmpSubagentCardTracker {
       this.scheduler.clearTimeout(state.trailingTimer);
     }
     this.states.delete(toolCallId);
+    for (const item of state?.items.values() ?? []) item.parentToolCallIds.delete(toolCallId);
   }
 
   clear(): void {
     for (const toolCallId of this.states.keys()) {
       this.delete(toolCallId);
     }
+    this.children.clear();
   }
 
-  private upsertItem(
-    parentToolCallId: string,
-    input: {
-      index: number;
-      agent?: string;
-      status?: "pending" | "running" | "completed" | "failed" | "aborted";
-      description?: string;
-      childSessionId?: string;
-    },
-  ): OmpSubagentCardItem {
-    const state = this.stateFor(parentToolCallId);
-    const existing = state.items.get(input.index);
+  private upsertItem(input: {
+    id: string;
+    index: number;
+    agent?: string;
+    description?: string;
+    childSessionId?: string;
+  }): OmpSubagentCardItem {
+    const existing = this.children.get(input.id);
     if (existing) {
+      existing.index = input.index;
       existing.agent = readTrimmedString(input.agent) ?? existing.agent;
-      existing.status = input.status ?? existing.status;
       existing.description = readTrimmedString(input.description) ?? existing.description;
       existing.childSessionId = readTrimmedString(input.childSessionId) ?? existing.childSessionId;
       return existing;
     }
-
     const item: OmpSubagentCardItem = {
-      index: input.index,
-      lines: [],
-      lineKeys: new Set<string>(),
-      ...(readTrimmedString(input.agent) ? { agent: readTrimmedString(input.agent) } : {}),
-      ...(input.status ? { status: input.status } : {}),
-      ...(readTrimmedString(input.description)
-        ? { description: readTrimmedString(input.description) }
-        : {}),
-      ...(readTrimmedString(input.childSessionId)
-        ? { childSessionId: readTrimmedString(input.childSessionId) }
-        : {}),
+      id: input.id, run: 0, parentToolCallIds: new Set(), index: input.index,
+      lines: [], lineKeys: new Set(), pendingToolLines: new Map(), outputSnapshot: [],
+      agent: readTrimmedString(input.agent),
+      description: readTrimmedString(input.description),
+      childSessionId: readTrimmedString(input.childSessionId),
     };
-    state.items.set(input.index, item);
+    this.children.set(input.id, item);
     return item;
+  }
+
+  private bindParent(item: OmpSubagentCardItem, parentId: string | undefined, emitToolCall: (toolCallId: string) => boolean): void {
+    const id = readTrimmedString(parentId);
+    if (id) item.parentToolCallIds.add(id);
+    for (const toolCallId of item.parentToolCallIds) {
+      const state = this.stateFor(toolCallId);
+      state.items.set(item.id, item);
+      state.emitToolCall = emitToolCall;
+    }
   }
 
   private stateFor(parentToolCallId: string): OmpSubagentCardState {
@@ -236,7 +289,12 @@ export class OmpSubagentCardTracker {
 
   private appendLine(item: OmpSubagentCardItem, key: string, text: string): void {
     const normalizedText = normalizeLine(text);
-    if (!normalizedText || item.lineKeys.has(key)) {
+    if (!normalizedText) {
+      return;
+    }
+    if (item.lineKeys.has(key)) {
+      const existing = item.lines.find((line) => line.key === key);
+      if (existing) existing.text = normalizedText;
       return;
     }
     item.lines.push({ key, text: normalizedText });
@@ -245,6 +303,7 @@ export class OmpSubagentCardTracker {
       const removed = item.lines.shift();
       if (removed) {
         item.lineKeys.delete(removed.key);
+        item.pendingToolLines.delete(removed.key);
       }
     }
   }
@@ -276,8 +335,12 @@ export class OmpSubagentCardTracker {
       state.trailingTimer = null;
     }
     state.dirty = false;
-    state.lastEmitMs = this.scheduler.now();
-    state.emitToolCall(toolCallId);
+    if (state.emitToolCall(toolCallId)) {
+      state.lastEmitMs = this.scheduler.now();
+    } else {
+      // Native frames can beat the parent's argument stream. Keep the record pending for flush.
+      state.dirty = true;
+    }
   }
 }
 
@@ -298,10 +361,11 @@ function summarizeTool(tool: Record<string, unknown> | null): OmpSubagentLogLine
   if (!toolName) {
     return null;
   }
-  const args = readTrimmedString(tool.args) ?? summarizeUnknown(tool.input);
+  const args = summarizeUnknown(tool.args) ?? summarizeUnknown(tool.input);
   const endMs = typeof tool.endMs === "number" ? `:${tool.endMs}` : "";
+  const startMs = typeof tool.startMs === "number" ? `:${tool.startMs}` : "";
   return {
-    key: `${toolName}:${args ?? ""}${endMs}`,
+    key: `${toolName}:${args ?? ""}${startMs}${endMs}`,
     text: args ? `[${toolName}] ${args}` : `[${toolName}]`,
   };
 }
@@ -322,13 +386,6 @@ function readOutputLines(value: unknown): string[] {
   });
 }
 
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return isRecord(value) ? value : null;
-}
-
-function readRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter(isRecord) : [];
-}
 
 function summarizeUnknown(value: unknown): string | undefined {
   if (value === undefined || value === null) {

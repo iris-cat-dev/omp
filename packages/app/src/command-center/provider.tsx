@@ -25,7 +25,11 @@ interface ActiveAgentControlOwner {
 interface ActiveAgentControlRegistry {
   getSnapshot(): ActiveAgentControlSnapshot | null;
   subscribe(listener: () => void): () => void;
-  replace(owner: ActiveAgentControlOwner, controls: AgentControlCommandCenterSource): void;
+  replace(
+    owner: ActiveAgentControlOwner,
+    controls: AgentControlCommandCenterSource,
+    enabled: boolean,
+  ): void;
   remove(owner: ActiveAgentControlOwner): void;
 }
 
@@ -34,18 +38,27 @@ const ActiveAgentControlRegistryContext = createContext<ActiveAgentControlRegist
 function createActiveAgentControlRegistry(): ActiveAgentControlRegistry {
   const registrations = new Map<
     string,
-    { owner: ActiveAgentControlOwner; controls: AgentControlCommandCenterSource }
+    { owner: ActiveAgentControlOwner; controls: AgentControlCommandCenterSource; enabled: boolean }
   >();
   const listeners = new Set<() => void>();
   let snapshot: ActiveAgentControlSnapshot | null = null;
+  let lastFocusedSourceId: string | null = null;
 
   const publish = () => {
     let next: ActiveAgentControlSnapshot | null = null;
     for (const registration of registrations.values()) {
+      if (!registration.enabled) continue;
       next = {
         sourceId: registration.owner.sourceId,
         controls: registration.controls,
       };
+    }
+    if (next) {
+      lastFocusedSourceId = next.sourceId;
+    } else if (lastFocusedSourceId) {
+      // Settings keeps the last workspace visible; retain its live controls, not a frozen copy.
+      const lastFocused = registrations.get(lastFocusedSourceId);
+      if (lastFocused) next = { sourceId: lastFocusedSourceId, controls: lastFocused.controls };
     }
     if (snapshot?.sourceId === next?.sourceId && snapshot?.controls === next?.controls) return;
     snapshot = next;
@@ -58,11 +71,16 @@ function createActiveAgentControlRegistry(): ActiveAgentControlRegistry {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    replace(owner, controls) {
+    replace(owner, controls, enabled) {
       const current = registrations.get(owner.sourceId);
-      if (current?.owner.token === owner.token && current.controls === controls) return;
+      if (
+        current?.owner.token === owner.token &&
+        current.controls === controls &&
+        current.enabled === enabled
+      )
+        return;
       registrations.delete(owner.sourceId);
-      registrations.set(owner.sourceId, { owner, controls });
+      registrations.set(owner.sourceId, { owner, controls, enabled });
       publish();
     },
     remove(owner) {
@@ -126,13 +144,9 @@ export function useActiveAgentControlRegistration(input: {
   const owner = ownerRef.current;
 
   useEffect(() => {
-    if (!input.enabled) {
-      registry.remove(owner);
-      return;
-    }
-    registry.replace(owner, input.controls);
-    return () => registry.remove(owner);
+    registry.replace(owner, input.controls, input.enabled);
   }, [input.controls, input.enabled, owner, registry]);
+  useEffect(() => () => registry.remove(owner), [owner, registry]);
 }
 
 export function useCommandCenterActions(input: {

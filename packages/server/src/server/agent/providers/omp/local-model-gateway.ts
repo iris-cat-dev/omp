@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import {
   LOCAL_MODEL_MAX_REQUEST_BYTES,
   LOCAL_MODEL_PROVIDER,
@@ -11,6 +9,7 @@ import {
   type LocalModelInferenceRequest,
 } from "@omp-desktop/protocol/local-models";
 import type { OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
+import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 
 export interface OmpLocalModelGateway {
   models: LocalModel[];
@@ -48,12 +47,6 @@ const WIRE_OPTIONS: Record<string, true> = {
   anthropicPrefixMismatchBehavior: true,
 };
 
-function extensionPath(): string {
-  const compiled = fileURLToPath(new URL("./local-model-gateway-extension.js", import.meta.url));
-  const source = fileURLToPath(new URL("./local-model-gateway-extension.ts", import.meta.url));
-  return (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
-}
-
 /** One tool-free native host per source connection; closing it cancels every upstream request. */
 export async function startOmpLocalModelGateway(
   startSession: (input: OmpStartSessionInput) => Promise<OmpRuntimeSession>,
@@ -73,7 +66,7 @@ export async function startOmpLocalModelGateway(
       "--no-lsp",
       "--no-title",
       "--extension",
-      extensionPath(),
+      resolveOmpRuntimeHelperPath("local-model-gateway-extension", import.meta.url),
     ],
   });
   try {

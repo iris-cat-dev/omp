@@ -5,7 +5,6 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const nodeUtil = require("node:util");
-const { smokeBundledPlugins } = require("./windows-native-plugins-smoke.js");
 
 // Invoked by packaged-app-smoke.js on Windows. A visible, unlocked desktop is
 // required for the owned-window surface screenshots; no Inspector/CDP is used.
@@ -1196,7 +1195,7 @@ async function navigateChinese(page, route) {
   }, route);
 }
 
-async function smokeInstallation({ command, page, serverId, omp, report, evidence }) {
+async function smokeInstallation({ command, serverId, omp, report, evidence }) {
   const rpc = await command({ action: "installation" });
   assert.equal(
     rpc.serverInfo?.serverId,
@@ -1216,36 +1215,10 @@ async function smokeInstallation({ command, page, serverId, omp, report, evidenc
     omp.version.includes(rpc.installation.version),
     "CLI and installation RPC must identify the same bundled OMP version",
   );
-  const route = `/settings/hosts/${encodeURIComponent(serverId)}/agents`;
-  await navigateChinese(page, route);
-  let snapshot;
-  await until("real host installation card with detected bundled OMP", async () => {
-    snapshot = await page.evaluate(() => {
-      const card = document.querySelector('[data-testid="host-page-omp-install-card"]');
-      const button = document.querySelector('[data-testid="host-page-omp-install-button"]');
-      return {
-        url: location.href,
-        text: card?.textContent || "",
-        body: document.body.textContent,
-        busy: !button || button.getAttribute("aria-disabled") === "true",
-      };
-    });
-    return (
-      !snapshot.busy &&
-      snapshot.text.includes(rpc.installation.version) &&
-      snapshot.text.includes(rpc.installation.installPath)
-    );
-  });
-  assert.equal(
-    snapshot.body.includes("installation.trim is not a function"),
-    false,
-    "The genuine installation renderer must consume the actual native RPC result",
-  );
-  await page.snapshot("omp-installation-renderer.png");
-  report.installation = { rpc, route, snapshot };
+  report.installation = { rpc };
   writeJson(path.join(evidence, "omp-installation.json"), report.installation);
   report.checks.push(
-    "real read-only installation RPC and host Agents card detect the exact bundled OMP path/version; no download/update requested",
+    "real read-only installation RPC detects the exact bundled OMP path/version; no download/update requested",
   );
 }
 
@@ -2003,7 +1976,6 @@ async function smokeWindowsPackagedApp({
     );
     await smokeInstallation({
       command,
-      page,
       serverId: status.serverId,
       omp: report.cli.omp,
       report,
@@ -2034,17 +2006,6 @@ async function smokeWindowsPackagedApp({
         evidence,
         control,
         env,
-      });
-      await smokeBundledPlugins({
-        command,
-        page,
-        stagedApp,
-        profile: env.HOME,
-        serverId: status.serverId,
-        evidence,
-        report,
-        until,
-        navigateChinese,
       });
     } finally {
       await command({ action: "main-surface-topmost", enabled: originalSurfaceTopmost });

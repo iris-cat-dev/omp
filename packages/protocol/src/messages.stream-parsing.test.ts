@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentTimelineListPromptsResponseMessageSchema,
   AgentStreamMessageSchema,
+  AgentTimelineEntryPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
@@ -10,6 +11,44 @@ import {
 } from "./messages.js";
 
 describe("shared messages stream parsing", () => {
+  it("retains same-named phase identity and open/closed statuses on live and history todos", () => {
+    const item = {
+      type: "todo",
+      items: [
+        { text: "Shared", completed: false, status: "blocked", phase: { name: "Tasks", index: 0 } },
+        {
+          text: "Shared",
+          completed: false,
+          status: "abandoned",
+          phase: { name: "Tasks", index: 1 },
+        },
+        { text: "Legacy", completed: true },
+      ],
+    };
+    const timestamp = "2026-11-01T00:00:00Z";
+    expect(
+      AgentStreamMessageSchema.parse({
+        type: "agent_stream",
+        payload: {
+          agentId: "agent_live",
+          timestamp,
+          event: { type: "timeline", provider: "omp", item },
+        },
+      }).payload.event,
+    ).toMatchObject({ item });
+    expect(
+      AgentTimelineEntryPayloadSchema.parse({
+        provider: "omp",
+        item,
+        timestamp,
+        seqStart: 1,
+        seqEnd: 1,
+        sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+        collapsed: [],
+      }).item,
+    ).toEqual(item);
+  });
+
   it("preserves screenshot-only user messages through wire parsing", () => {
     const item = {
       type: "user_message",
@@ -28,6 +67,55 @@ describe("shared messages stream parsing", () => {
     expect(parsed.payload.event).toMatchObject({ item });
   });
 
+  it("preserves structured agent prompt provenance through live and restored wire parsing", () => {
+    const item = {
+      type: "user_message",
+      text: "same text as a direct user prompt",
+      messageId: "native-message",
+      clientMessageId: "submitted-message",
+      sourceAgentId: "sending-agent",
+    };
+    const event = { type: "timeline", provider: "omp", item };
+    expect(
+      AgentStreamMessageSchema.parse({
+        type: "agent_stream",
+        payload: { agentId: "receiving-agent", timestamp: "2026-11-01T00:00:00.000Z", event },
+      }).payload.event,
+    ).toMatchObject({ item });
+    const parsed = FetchAgentTimelineResponseMessageSchema.parse({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "restored-prompts",
+        agentId: "receiving-agent",
+        agent: null,
+        direction: "tail",
+        projection: "canonical",
+        epoch: "restored-epoch",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 3, maxSeq: 3, nextSeq: 4 },
+        startCursor: { epoch: "restored-epoch", seq: 3 },
+        endCursor: { epoch: "restored-epoch", seq: 3 },
+        hasOlder: false,
+        hasNewer: false,
+        entries: [
+          {
+            provider: "omp",
+            item,
+            timestamp: "2026-11-01T00:00:00.000Z",
+            seqStart: 3,
+            seqEnd: 3,
+            sourceSeqRanges: [{ startSeq: 3, endSeq: 3 }],
+            collapsed: [],
+          },
+        ],
+        error: null,
+      },
+    });
+    expect(parsed.payload.entries[0]?.item).toEqual(item);
+  });
+
   it("keeps the selected model id on a model change timeline notice", () => {
     const item = { type: "system_notice", notice: "model_changed", modelId: "openai/gpt-6" };
     const message = {
@@ -44,7 +132,10 @@ describe("shared messages stream parsing", () => {
         ...message,
         payload: {
           ...message.payload,
-          event: { ...message.payload.event, item: { type: "system_notice", notice: "model_changed" } },
+          event: {
+            ...message.payload.event,
+            item: { type: "system_notice", notice: "model_changed" },
+          },
         },
       }).success,
     ).toBe(false);

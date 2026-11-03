@@ -67,8 +67,8 @@ export function RemoteSshHostModal({
         setInteractive(event.enabled);
       } else if (event.type === "phase") {
         const phase =
-          event.phase === "uploading" && event.progress !== undefined
-            ? t("pairing.ssh.phases.uploadingProgress", { percent: event.progress })
+          (event.phase === "uploading" || event.phase === "downloading") && event.progress !== undefined
+            ? t(`pairing.ssh.phases.${event.phase}Progress`, { percent: event.progress })
             : t(`pairing.ssh.phases.${event.phase}`);
         setState({ status: "running", phase });
       } else if (event.type === "failed") {

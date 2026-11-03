@@ -9,11 +9,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
-import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -35,11 +34,6 @@ interface CombinedModelSelectorProps {
   selectionDetail?: string;
   onSelect: (provider: AgentProvider, modelId: string) => void | Promise<void>;
   isLoading: boolean;
-  profiles?: AgentProfilePicker | null;
-  onApplyProfile?: (profileId: string) => void;
-  onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
-  onEditProfile?: (profileId: string) => void;
   renderTrigger?: (input: {
     selectedModelLabel: string;
     onPress: () => void;
@@ -67,7 +61,6 @@ interface CombinedModelSelectorProps {
    */
   triggerFill?: boolean;
   toolbar?: {
-    glyphSize: number;
     showCaret: boolean;
   };
   footer?: ReactNode;
@@ -83,11 +76,6 @@ export function CombinedModelSelector({
   selectionDetail,
   onSelect,
   isLoading,
-  profiles = null,
-  onApplyProfile,
-  onEditProfiles,
-  onCreateProfile,
-  onEditProfile,
   renderTrigger,
   onOpen,
   onClose,
@@ -120,7 +108,6 @@ export function CombinedModelSelector({
     selectedProvider: browserSelectedProvider,
     selectedModel,
     isLoading,
-    profiles,
     browseProviders,
   });
   const { prepareToOpen, reset, showAll } = browser;
@@ -219,43 +206,10 @@ export function CombinedModelSelector({
     [disabled, isOpen, renderTrigger, triggerFill],
   );
 
-  const handleApplyProfile = useCallback(
-    (profileId: string) => {
-      onApplyProfile?.(profileId);
-      handleOpenChange(false);
-    },
-    [handleOpenChange, onApplyProfile],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    handleOpenChange(false);
-    onEditProfiles?.();
-  }, [handleOpenChange, onEditProfiles]);
-
-  const handleCreateProfile = useCallback(
-    (seed: AgentProfileSeed) => {
-      handleOpenChange(false);
-      onCreateProfile?.(seed);
-    },
-    [handleOpenChange, onCreateProfile],
-  );
-
-  const handleEditProfile = useCallback(
-    (profileId: string) => {
-      handleOpenChange(false);
-      onEditProfile?.(profileId);
-    },
-    [handleOpenChange, onEditProfile],
-  );
-
   const browserBody = isContentReady ? (
     <ModelBrowser
       state={browser}
       onSelect={handleSelect}
-      onApplyProfile={handleApplyProfile}
-      onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-      onCreateProfile={onCreateProfile ? handleCreateProfile : undefined}
-      onEditProfile={onEditProfile ? handleEditProfile : undefined}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={isWeb ? "independent" : "sheet"}
@@ -315,12 +269,12 @@ export function CombinedModelSelector({
           testID="combined-model-selector"
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
-          <DefaultModelTriggerContent
-            provider={browserSelectedProvider}
-            label={browser.triggerLabel}
-            glyphSize={toolbar?.glyphSize}
-            accessory={triggerAccessory}
-          />
+          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+            {browser.triggerLabel}
+          </Text>
+          {triggerAccessory ? (
+            <View style={styles.triggerAccessory}>{triggerAccessory}</View>
+          ) : null}
         </ComboboxTrigger>
       )}
       <Combobox
@@ -345,32 +299,6 @@ export function CombinedModelSelector({
   );
 }
 
-function DefaultModelTriggerContent({
-  provider,
-  label,
-  glyphSize,
-  accessory,
-}: {
-  provider: string;
-  label: string;
-  glyphSize?: number;
-  accessory?: ReactNode;
-}) {
-  return (
-    <>
-      {provider.trim().length > 0 ? (
-        <View style={glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
-          <ModelProviderGlyph provider={provider} size={glyphSize ?? ICON_SIZE.md} />
-        </View>
-      ) : null}
-      <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-        {label}
-      </Text>
-      {accessory ? <View style={styles.triggerAccessory}>{accessory}</View> : null}
-    </>
-  );
-}
-
 const styles = StyleSheet.create((theme) => ({
   mobileBrowserContent: {
     paddingHorizontal: 0,
@@ -388,16 +316,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
-  },
-  toolbarGlyph16: {
-    width: 16,
-    height: 16,
-    flexShrink: 0,
-  },
-  toolbarGlyph20: {
-    width: 20,
-    height: 20,
-    flexShrink: 0,
   },
   triggerPressed: {
     backgroundColor: theme.colors.surface0,

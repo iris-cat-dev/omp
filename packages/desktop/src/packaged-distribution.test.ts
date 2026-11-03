@@ -44,36 +44,21 @@ describe("packaged distribution policy", () => {
     const { resources, appRoot } = makeApp(false);
     writeManifest(resources, writeHost(resources, "sealed fixture host"));
     const distribution = readPackagedDesktopDistribution(appRoot);
-    expect(distribution.privatePlugins).toBe(false);
     expect(distribution.identity).toBe("public");
-    expect(distribution.bundledPluginsPath).toBeNull();
   });
 
-  it("keeps a no-OMP public app eligible for its external runtime", () => {
+  it("keeps a public SDK-only app independent of any OMP executable", () => {
     const { appRoot } = makeApp(false);
-    const distribution = readPackagedDesktopDistribution(appRoot);
-    expect(distribution.bundledOmpPath).toBeNull();
-    expect(distribution.bundledPluginsPath).toBeNull();
+    expect(readPackagedDesktopDistribution(appRoot)).toEqual({
+      identity: "public",
+    });
   });
 
-  it("distinguishes private hosts even when the application version is unchanged", () => {
+  it("rejects CLI-bound private mode even with a qualified external host", () => {
     const { resources, appRoot } = makeApp(true);
-    const original = writeHost(resources, "original host");
-    writeManifest(resources, original);
-    const before = readPackagedDesktopDistribution(appRoot).identity;
-    const replacement = writeHost(resources, "replacement host");
-    writeManifest(resources, replacement);
-    const after = readPackagedDesktopDistribution(appRoot).identity;
-    expect(before).toBe(`private-three-plugins:${original}`);
-    expect(after).toBe(`private-three-plugins:${replacement}`);
-    expect(after).not.toBe(before);
-  });
-
-  it("refuses private mode without its host or a valid bound-host identity", () => {
-    const { resources, appRoot } = makeApp(true);
-    expect(() => readPackagedDesktopDistribution(appRoot)).toThrow("qualified OMP host");
-    writeHost(resources, "private fixture host");
-    writeManifest(resources, []);
-    expect(() => readPackagedDesktopDistribution(appRoot)).toThrow("bound-host identity");
+    const error = "CLI-bound private plugin distributions are not supported";
+    expect(() => readPackagedDesktopDistribution(appRoot)).toThrow(error);
+    writeManifest(resources, writeHost(resources, "private fixture host"));
+    expect(() => readPackagedDesktopDistribution(appRoot)).toThrow(error);
   });
 });

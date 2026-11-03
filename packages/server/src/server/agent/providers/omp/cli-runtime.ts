@@ -1,7 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 import { z } from "zod";
 import {
   BackgroundProcessSchema,
@@ -12,12 +13,12 @@ import {
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import {
   JSONL_RPC_DEFAULT_TIMEOUT_MS,
   JsonlRpcProcess,
   JSONL_RPC_NO_TIMEOUT,
   supportsJsonlRpcProtocolV2,
-  type JsonlRpcLaunch,
 } from "../jsonl-rpc-process.js";
 import {
   buildOmpLaunch,
@@ -47,7 +48,11 @@ import {
   type OmpImageSettingsGetter,
 } from "./image-settings.js";
 import {
+  OmpAbortAndRestoreQueueResultSchema,
+  type OmpAbortAndRestoreQueueResult,
   OmpBranchMessagesResultSchema,
+  OmpApprovalModeSchema,
+  type OmpApprovalMode,
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
   OmpFastModeResultSchema,
@@ -79,13 +84,22 @@ import {
   type OmpSessionStats,
   type OmpSubagentSubscriptionLevel,
 } from "./rpc-types.js";
+import {
+  OmpSubagentsResultSchema,
+  OmpSubagentMessagesSelectorSchema,
+  OmpSubagentRpcCommandSchema,
+  parseOmpSubagentMessagesResult,
+  type OmpSubagentSnapshot,
+  type OmpSubagentMessagesSelector,
+  type OmpSubagentMessagesResult,
+} from "./subagent-rpc.js";
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
 /** Allow cold OMP starts the same 30-second budget as other control-plane RPCs. */
 const OMP_READY_TIMEOUT_MS = JSONL_RPC_DEFAULT_TIMEOUT_MS;
 const OMP_CODEX_CATALOG_PRELOAD_URL_ENV = "OMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL";
-const OMP_SERVICE_TIER_TOKEN_ENV = "OMP_DESKTOP_SERVICE_TIER_TOKEN";
+export const OMP_SERVICE_TIER_TOKEN_ENV = "OMP_DESKTOP_SERVICE_TIER_TOKEN";
 const OMP_SERVICE_TIER_TIMEOUT_MS = 5_000;
 const OMP_CODEX_CATALOG_PRELOAD_BRIDGE =
   "data:text/javascript,await%20import(process%2Eenv%2EOMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL)";
@@ -97,28 +111,21 @@ export function resolveOmpBackgroundJobsExtensionPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./background-jobs-extension.js", moduleUrl));
-  const source = fileURLToPath(new URL("./background-jobs-extension.ts", moduleUrl));
-  const extension = pathExists(compiled) ? compiled : source;
-  return extension.replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("background-jobs-extension", moduleUrl, pathExists);
 }
 
 export function resolveOmpImageSettingsExtensionPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./image-settings-extension.js", moduleUrl));
-  const source = fileURLToPath(new URL("./image-settings-extension.ts", moduleUrl));
-  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("image-settings-extension", moduleUrl, pathExists);
 }
 
 export function resolveOmpServiceTierExtensionPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./service-tier-extension.js", moduleUrl));
-  const source = fileURLToPath(new URL("./service-tier-extension.ts", moduleUrl));
-  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("service-tier-extension", moduleUrl, pathExists);
 }
 
 export function hasOmpUltrafastCommand(commands: readonly OmpRpcSlashCommand[]): boolean {
@@ -135,9 +142,7 @@ export function resolveOmpCodexCatalogPreloadPath(
   moduleUrl: string | URL = import.meta.url,
   pathExists: (path: string) => boolean = existsSync,
 ): string {
-  const compiled = fileURLToPath(new URL("./codex-catalog-preload.js", moduleUrl));
-  const source = fileURLToPath(new URL("./codex-catalog-preload.ts", moduleUrl));
-  return (pathExists(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+  return resolveOmpRuntimeHelperPath("codex-catalog-preload", moduleUrl, pathExists);
 }
 
 function installCodexCatalogPreload(launch: OmpRuntimeLaunch): void {
@@ -248,55 +253,16 @@ export class OmpCliRuntime implements OmpRuntime {
     }
   }
 
-  private async prepareLocalModelsLaunch(
-    launch: OmpRuntimeLaunch,
-    input: OmpStartSessionInput,
-  ): Promise<{ bridge: LocalModelBridge | undefined; enabled: boolean }> {
-    const bridge = input.localModelGateway ? undefined : this.options.localModelBridge;
-    const enabled = bridge?.isEnabled() === true;
-    if (enabled) {
-      const configuration = await bridge!.getLaunchConfig();
-      if (!configuration)
-        throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
-      const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
-        ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
-        : input.model;
-      const selected = requested
-        ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
-        : configuration.models[0];
-      if (!selected) throw new Error("Select an available model from this Desktop.");
-      const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
-      // The final CLI selector wins over persisted defaults and resumed remote models.
-      launch.argv.push("--model", reference);
-      launch.model = reference;
-      const compiled = fileURLToPath(new URL("./local-models-extension.js", import.meta.url));
-      const source = fileURLToPath(new URL("./local-models-extension.ts", import.meta.url));
-      launch.argv.push(
-        "--extension",
-        (existsSync(compiled) ? compiled : source).replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked"),
-      );
-      launch.env = {
-        ...launch.env,
-        OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
-          baseUrl: configuration.baseUrl,
-          token: configuration.token,
-        }),
-      };
-    } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
-      throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
-    }
-    return { bridge, enabled };
-  }
-
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     const launch = buildOmpLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    const { bridge, enabled: localModelsEnabled } = await this.prepareLocalModelsLaunch(
+    const { bridge, enabled: localModelsEnabled } = await prepareOmpLocalModelsLaunch(
       launch,
       input,
+      this.options.localModelBridge,
     );
     const effectiveCommand = resolveOmpRuntimeCommand(this.command, this.options.runtimeSettings);
     const providerEnv = createProviderEnv({ overlays: [launch.env] });
@@ -332,59 +298,133 @@ export class OmpCliRuntime implements OmpRuntime {
       }
       if (imageLaunch) launch.argv.push("--extension", resolveOmpImageSettingsExtensionPath());
       const imageToolAllowed = imageToolAllowedByArguments(launch.argv);
-      const [command, ...args] = launch.argv;
-      await hostVerifier(command, providerEnv);
-      const processLaunch: JsonlRpcLaunch = {
-        command,
-        args,
-        cwd: launch.cwd,
-        env: launch.env,
-      };
-      const spawn = this.spawnProcess;
-      const processOptions = {
-        launch: processLaunch,
+      const session = await startOmpRpcSession({
+        launch,
         logger: this.options.logger,
-        diagnosticName: "OMP RPC",
-        ...(spawn ? { spawn: () => spawn(launch) } : {}),
-      };
-      const process = new JsonlRpcProcess(processOptions);
-      const runtimeSession = new OmpCliRuntimeSession(
-        process,
-        this.commandsRpcName,
-        input.getImageGenerationConfig,
-        imageLaunch?.token,
+        commandsRpcName: this.commandsRpcName,
+        spawnProcess: this.spawnProcess,
+        signal: input.signal,
+        getImageGenerationConfig: input.getImageGenerationConfig,
+        imageSettingsToken: imageLaunch?.token,
         imageToolAllowed,
-        bridge,
+        localModelBridge: bridge,
         localModelsEnabled,
         serviceTierToken,
-      );
-      if (imageLaunch)
-        process.onExit(() => {
-          void imageLaunch.cleanup().catch((error: unknown) => {
-            this.options.logger.warn(
-              { error },
-              "Could not remove private OMP image settings overlay",
-            );
-          });
-        });
-      const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
-      input.signal?.addEventListener("abort", handleAbort, { once: true });
-      try {
-        await negotiateOmpProtocolV2(process, this.options.logger);
-        input.signal?.throwIfAborted();
-        await runtimeSession.refreshImageSettings();
-        return runtimeSession;
-      } catch (error) {
-        const startupError = error instanceof Error ? error : new Error(String(error));
-        await process.close(startupError);
-        throw startupError;
-      } finally {
-        input.signal?.removeEventListener("abort", handleAbort);
+        cleanup: imageLaunch?.cleanup,
+      });
+      const proxyPolicy = input.proxyPolicy ?? this.options.runtimeSettings?.proxyPolicy;
+      if (proxyPolicy) {
+        try {
+          await session.setProxyPolicy(proxyPolicy);
+        } catch (error) {
+          await session.close();
+          throw error;
+        }
       }
+      return session;
     } catch (error) {
       await imageLaunch?.cleanup();
       throw error;
     }
+  }
+}
+export async function prepareOmpLocalModelsLaunch(
+  launch: OmpRuntimeLaunch,
+  input: OmpStartSessionInput,
+  configuredBridge?: LocalModelBridge,
+): Promise<{ bridge: LocalModelBridge | undefined; enabled: boolean }> {
+  const bridge = input.localModelGateway ? undefined : configuredBridge;
+  const enabled = bridge?.isEnabled() === true;
+  if (enabled) {
+    const configuration = await bridge!.getLaunchConfig();
+    if (!configuration)
+      throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+    const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
+      ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
+      : input.model;
+    const selected = requested
+      ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
+      : configuration.models[0];
+    if (!selected) throw new Error("Select an available model from this Desktop.");
+    const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
+    // The final CLI selector wins over persisted defaults and resumed remote models.
+    launch.argv.push("--model", reference);
+    launch.model = reference;
+    launch.argv.push(
+      "--extension",
+      resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url),
+    );
+    launch.env = {
+      ...launch.env,
+      OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
+        baseUrl: configuration.baseUrl,
+        token: configuration.token,
+      }),
+    };
+  } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
+    throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
+  }
+  return { bridge, enabled };
+}
+
+export interface OmpRpcSessionOptions {
+  launch: OmpRuntimeLaunch;
+  logger: Logger;
+  commandsRpcName?: "get_available_commands";
+  spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
+  signal?: AbortSignal;
+  getImageGenerationConfig?: OmpImageSettingsGetter;
+  imageSettingsToken?: string;
+  imageToolAllowed?: boolean;
+  localModelBridge?: LocalModelBridge;
+  localModelsEnabled?: boolean;
+  serviceTierToken?: string;
+  cleanup?: () => Promise<void>;
+}
+
+/** Shared transport, validation and UI protocol for CLI and isolated Node SDK hosts. */
+export async function startOmpRpcSession(
+  options: OmpRpcSessionOptions,
+): Promise<OmpRuntimeSession> {
+  options.signal?.throwIfAborted();
+  const { launch, logger, spawnProcess } = options;
+  const [command, ...args] = launch.argv;
+  const process = new JsonlRpcProcess({
+    launch: { command, args, cwd: launch.cwd, env: launch.env },
+    logger,
+    diagnosticName: "OMP RPC",
+    ...(spawnProcess ? { spawn: () => spawnProcess(launch) } : {}),
+  });
+  const session = new OmpCliRuntimeSession(
+    process,
+    options.commandsRpcName ?? DEFAULT_COMMANDS_RPC_NAME,
+    options.getImageGenerationConfig,
+    options.imageSettingsToken,
+    options.imageToolAllowed ?? true,
+    options.localModelBridge,
+    options.localModelsEnabled ?? false,
+    options.serviceTierToken,
+  );
+  if (options.cleanup) {
+    process.onExit(() => {
+      void options.cleanup!().catch((error: unknown) => {
+        logger.warn({ error }, "Could not remove private OMP session overlay");
+      });
+    });
+  }
+  const abort = () => void process.close(options.signal?.reason).catch(() => undefined);
+  options.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await negotiateOmpProtocolV2(process, logger);
+    options.signal?.throwIfAborted();
+    await session.refreshImageSettings();
+    return session;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    await process.close(failure);
+    throw failure;
+  } finally {
+    options.signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -490,6 +530,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   private appliedImageSettings: string | undefined;
   private imageUpdates = Promise.resolve();
   private readonly localModelGatewayEndpoint = Promise.withResolvers<number | Error>();
+  private inputGeneration = 0;
   private serviceTierEndpointPort: number | undefined;
   private ultrafastCommand: Promise<boolean> | undefined;
   private modelControls = Promise.resolve();
@@ -626,15 +667,21 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<OmpPromptAck> {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     await this.refreshImageSettings();
-    const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
-      // OMP rejects a bare prompt while it is still streaming (for example a queued
-      // message drained after abort). Steering admits it into that live run instead.
-      streamingBehavior: "steer",
-    });
+    this.assertInputGeneration(generation);
+    // Admission waits for compaction, input hooks, and image preparation. It is
+    // not a short control-plane RPC; a timeout cannot withdraw the pending input.
+    const { id: requestId, promise } = this.process.startRequest(
+      {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+        // Steering admits queued input even while the preceding run is streaming.
+        streamingBehavior: "steer",
+      },
+      JSONL_RPC_NO_TIMEOUT,
+    );
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
   }
@@ -656,6 +703,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   async abort(): Promise<void> {
     await this.request({ type: "abort" });
+  }
+
+  async abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult> {
+    this.inputGeneration++;
+    return OmpAbortAndRestoreQueueResultSchema.parse(
+      await this.request({ type: "abort_and_restore_queue" }, JSONL_RPC_NO_TIMEOUT),
+    );
   }
 
   async cancelSubagent(subagentId: string): Promise<boolean> {
@@ -687,6 +741,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
           (await this.supportsUltrafastCommand()),
       };
     });
+  }
+
+  async setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode> {
+    const result = await this.request({ type: "set_approval_mode", mode });
+    return z.object({ mode: OmpApprovalModeSchema }).parse(result).mode;
   }
 
   async listBackgroundJobs(): Promise<BackgroundProcess[]> {
@@ -809,9 +868,29 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return result;
   }
 
+  async setProxyPolicy(policy: ProxyPolicy): Promise<void> {
+    await this.request({ type: "set_proxy_policy", policy: ProxyPolicySchema.parse(policy) });
+  }
+
   async getMessages(): Promise<OmpAgentMessage[]> {
     const data = OmpMessagesResultSchema.parse(await this.request({ type: "get_messages" }));
     return data.messages ?? [];
+  }
+
+  async getSubagents(): Promise<OmpSubagentSnapshot[]> {
+    const command = OmpSubagentRpcCommandSchema.parse({ type: "get_subagents" });
+    return OmpSubagentsResultSchema.parse(await this.process.request(command)).subagents;
+  }
+
+  async getSubagentMessages(
+    selector: OmpSubagentMessagesSelector,
+  ): Promise<OmpSubagentMessagesResult> {
+    const validated = OmpSubagentMessagesSelectorSchema.parse(selector);
+    const command = OmpSubagentRpcCommandSchema.parse({
+      type: "get_subagent_messages",
+      ...validated,
+    });
+    return parseOmpSubagentMessagesResult(validated, await this.process.request(command));
   }
 
   async getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]> {
@@ -923,7 +1002,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     await this.refreshImageSettings();
+    this.assertInputGeneration(generation);
     await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
   }
 
@@ -932,15 +1013,22 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void {
     this.assertModelSource();
+    const generation = this.inputGeneration;
     if (!this.getImageGenerationConfig || !this.imageToken) {
       this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
       return;
     }
     void this.refreshImageSettings()
-      .then(() =>
-        this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) }),
-      )
+      .then(() => {
+        if (generation !== this.inputGeneration) return undefined;
+        return this.process.send({
+          type: "follow_up",
+          message,
+          ...(images?.length ? { images } : {}),
+        });
+      })
       .catch((error: unknown) => {
+        if (generation !== this.inputGeneration) return;
         // A queued turn must not continue using stale credentials or silently
         // drop a failed settings update. Process exit is an observable provider error.
         void this.process.close(
@@ -973,6 +1061,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+  }
+
+  private assertInputGeneration(generation: number): void {
+    if (generation !== this.inputGeneration) throw new Error("OMP input canceled by user Stop");
   }
 
   private emit(event: OmpRuntimeEvent): void {

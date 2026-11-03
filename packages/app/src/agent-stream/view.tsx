@@ -78,7 +78,6 @@ import {
   TurnFooter,
   TURN_FOOTER_BOTTOM_SPACING,
   type AssistantTurnForkHandler,
-  type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
 import { useNativeOutputTokenSpeed } from "./token-output-speed";
@@ -549,17 +548,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
     );
 
-    // The in-flight turn forks with no boundary at all: `selectForkContextRows`
-    // projects the whole timeline when neither boundary field is given, so the
-    // fork carries everything up to now, including the response still streaming
-    // in front of the user.
-    const handleForkInFlightTurn: InFlightTurnForkHandler = useStableEvent(async () => {
-      await forkAgent({
-        agentId,
-        agent: context,
-      });
-    });
-
     // Freeze stream presentation while this tab slot is hidden to prevent offscreen
     // cell-window and turn-lifecycle renders from background agents.
     // When isActive flips back to true, the context change triggers a re-render and
@@ -568,6 +556,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamItems = useRetainedValue(streamItems, isActive);
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
+    const effectiveHasPendingSubmission = useRetainedValue(
+      pendingMessageSubmissions.length > 0,
+      isActive,
+    );
     const isTurnActive = effectiveTurnPresentation.isActive;
     const outputTokenSpeed = useTurnOutputTokenSpeed(
       resolvedServerId,
@@ -649,6 +641,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
       [effectiveStreamHead, effectiveStreamItems],
     );
+    const workingMessage =
+      isTurnActive &&
+      !effectiveTurnPresentation.isCancelling &&
+      !effectiveHasPendingSubmission &&
+      effectiveTurnPresentation.turnId
+        ? effectiveTurnPresentation.workingIntent
+        : undefined;
     const duplicateToolImagePreviewIds = useMemo(
       () => collectDuplicateToolImagePreviewIds(rawStreamItems),
       [rawStreamItems],
@@ -1134,6 +1133,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             outputTokenSpeed={outputTokenSpeed}
+            workingMessage={workingMessage ?? undefined}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
@@ -1141,18 +1141,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             onOpenFile={handleFilePreviewOpen}
             onRestoreFile={readOnly ? undefined : handleRestoreDeletedFile}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
         handleForkAssistantTurn,
-        handleForkInFlightTurn,
         handleFilePreviewOpen,
         handleRestoreDeletedFile,
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         outputTokenSpeed,
+        workingMessage,
         bottomTurnFooterHost,
         bottomTurnTokenStats,
         streamRenderStrategy,
@@ -1223,17 +1222,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (item) => renderHistoryRow(item),
       [renderHistoryRow],
     );
-    // useStableEvent keeps the function reference stable across flushes.
-    // layoutLiveHeadItemById and renderStreamItem are read from the ref at call time,
-    // so the live-head render always uses the latest layout without causing renderers
-    // to be a new object on every text-chunk flush.
-    const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
+    const renderLiveHeadRow = useCallback<StreamSegmentRenderers["renderLiveHeadRow"]>(
       (item: StreamItem) =>
         renderLiveHeadStreamItem({
           item,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
         }),
+      [layoutLiveHeadItemById, renderStreamItem],
     );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       const existingTailSpacing =

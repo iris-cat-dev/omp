@@ -8,6 +8,23 @@ import {
 } from "./tool-call-detail.js";
 
 describe("OMP native device dispatch", () => {
+  test("separates normalized intent from business input without changing device dispatch", () => {
+    const args = {
+      i: "  Opening browser... ",
+      path: "xd://browser",
+      content: '{"url":"https://example.com"}',
+    };
+    const tracked = parseToolArgs("write", args);
+    expect(tracked.intent).toBe("Opening browser");
+    expect(tracked.args).toEqual({ path: args.path, content: args.content });
+    expect(args.i).toBe("  Opening browser... ");
+    expect(resolveToolCallName(tracked)).toBe("browser");
+    expect(parseToolArgs("read", { path: "source.ts", i: "fallback" }, "...  ").intent).toBe(
+      "fallback",
+    );
+    expect(parseToolArgs("read", { path: "source.ts", i: 42 }).intent).toBeUndefined();
+  });
+
   test("identifies a pending image device before result metadata exists", () => {
     const args = parseToolArgs("write", {
       path: "xd://generate_image",

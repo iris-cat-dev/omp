@@ -15,9 +15,13 @@ import {
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
-import { AssistantTurnFooter, LiveElapsed, STREAM_METADATA_FONT_SIZE } from "@/components/message";
+import {
+  AssistantTurnFooter,
+  LiveElapsed,
+  ShimmerText,
+  STREAM_METADATA_FONT_SIZE,
+} from "@/components/message";
 import type { TurnFooterHost } from "./layout";
-import { AssistantForkButton } from "@/components/assistant-fork-button";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useSettings } from "@/hooks/use-settings";
@@ -30,22 +34,12 @@ export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
   boundary: AssistantTurnForkBoundary;
 }) => Promise<void> | void;
-/**
- * Fork handler for the turn that is still streaming. It deliberately takes no
- * boundary: `selectForkContextRows` projects the entire timeline when neither
- * boundary field is given, which is what captures the partially streamed text
- * the user is watching. Pinning a boundary here would silently drop the live
- * response — the opposite of what a fork button next to the loader promises.
- *
- * Kept separate from `AssistantTurnForkHandler` (whose `boundary` stays
- * required) so the compiler keeps enforcing that completed turns always pin one.
- */
-export type InFlightTurnForkHandler = () => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
   outputTokenSpeed,
+  workingMessage,
   host,
   strategy,
   supportsTimelineCursor,
@@ -53,11 +47,11 @@ export const TurnFooter = memo(function TurnFooter({
   onOpenFile,
   onRestoreFile,
   onForkAssistantTurn,
-  onForkInFlightTurn,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   outputTokenSpeed: number | null;
+  workingMessage?: string;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
@@ -65,7 +59,6 @@ export const TurnFooter = memo(function TurnFooter({
   onOpenFile?: (path: string) => void;
   onRestoreFile?: (path: string) => void;
   onForkAssistantTurn?: AssistantTurnForkHandler;
-  onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   if (isRunning) {
     return (
@@ -73,7 +66,7 @@ export const TurnFooter = memo(function TurnFooter({
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
           outputTokenSpeed={outputTokenSpeed}
-          onForkInFlightTurn={onForkInFlightTurn}
+          workingMessage={workingMessage}
         />
       </TurnFooterRow>
     );
@@ -150,11 +143,11 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
   outputTokenSpeed,
-  onForkInFlightTurn,
+  workingMessage,
 }: {
   inFlightTurnStartedAt?: Date | null;
   outputTokenSpeed: number | null;
-  onForkInFlightTurn?: InFlightTurnForkHandler;
+  workingMessage?: string;
 }) {
   const { t } = useTranslation();
   const active = useRetainedPanelActive();
@@ -163,6 +156,21 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {workingMessage ? (
+        <ShimmerText
+          label={workingMessage}
+          style={stylesheet.workingMessage}
+          testID="turn-working-message"
+        />
+      ) : null}
+      {inFlightTurnStartedAt ? (
+        <LiveElapsed
+          startedAt={inFlightTurnStartedAt}
+          active={active}
+          style={stylesheet.workingElapsed}
+          testID="turn-working-elapsed"
+        />
+      ) : null}
       {outputTokenSpeed !== null ? (
         <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
           <Text style={stylesheet.tokenOutputSpeedText}>
@@ -172,16 +180,6 @@ const WorkingIndicator = memo(function WorkingIndicator({
           </Text>
         </View>
       ) : null}
-      {/* Match the completed-turn footer: actions precede timing metadata. */}
-      {onForkInFlightTurn ? <AssistantForkButton onFork={onForkInFlightTurn} /> : null}
-      {inFlightTurnStartedAt ? (
-        <LiveElapsed
-          startedAt={inFlightTurnStartedAt}
-          active={active}
-          style={stylesheet.workingElapsed}
-          testID="turn-working-elapsed"
-        />
-      ) : null}
     </View>
   );
 });
@@ -189,18 +187,18 @@ const WorkingIndicator = memo(function WorkingIndicator({
 function RunningTurnFooter({
   inFlightTurnStartedAt,
   outputTokenSpeed,
-  onForkInFlightTurn,
+  workingMessage,
 }: {
   inFlightTurnStartedAt: Date | null;
-  onForkInFlightTurn?: InFlightTurnForkHandler;
   outputTokenSpeed: number | null;
+  workingMessage?: string;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
         outputTokenSpeed={outputTokenSpeed}
-        onForkInFlightTurn={onForkInFlightTurn}
+        workingMessage={workingMessage}
       />
     </View>
   );
@@ -284,6 +282,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     alignSelf: "flex-start",
     maxWidth: "100%",
+    minWidth: 0,
+    flexShrink: 1,
     minHeight: 24,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
@@ -293,14 +293,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "flex-start",
     gap: theme.spacing[3],
+    maxWidth: "100%",
+    minWidth: 0,
+    flexShrink: 1,
   },
   workingElapsed: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
     fontVariant: ["tabular-nums"],
+    flexShrink: 0,
   },
   workingLoader: {
-    marginLeft: -2,
+    marginStart: -2,
+    flexShrink: 0,
+  },
+  workingMessage: {
+    color: theme.colors.foregroundMuted,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    textAlign: "auto",
+    minWidth: 0,
+    flexShrink: 1,
   },
   tokenOutputSpeed: {
     height: 24,

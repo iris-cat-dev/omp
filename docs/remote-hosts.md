@@ -26,13 +26,17 @@ Keep Desktop, its local daemon, and both host connections running while using lo
 
 To intentionally use a server's own credentials instead, turn off **Use models from this Desktop** in that host's settings. Manually paired hosts without an SSH management profile are unchanged. Another Desktop connection cannot take over an attached model source.
 
-Both daemons need model-bridge support. Update an older remote daemon with **Update via SSH** when the app asks for an upgrade. The local OMP host must provide its native model-gateway APIs and the remote OMP host must support native model transport; the integration was exercised with OMP 18.11.3. The remote host still needs an OMP executable for Agent/tool execution, but needs no provider login or model API key in local-model mode.
+Both daemons need model-bridge support. Update an older remote daemon with **Update via SSH** when the app asks. SDK hosts execute the Agent loop and tools directly and require neither an OMP executable nor provider credentials in local-model mode.
 
 Only enable sharing for hosts you trust: while attached, a host can submit inference to the advertised local models and consume their quota. Inference context is still sent to whichever provider you configured locally. The model gateway does not execute the remote host's tools on the local machine.
 
 ## Supported hosts and prerequisites
 
-Supported remote targets are **glibc Linux and macOS on x64 or arm64**. Remote Windows and musl-based Linux distributions such as Alpine are not supported.
+SSH provisioning supports macOS x64/arm64 and glibc Linux x64/arm64, independently of the Desktop machine's platform. The app selects the remote host's native SDK from the pinned public [OMP SDK Release](https://github.com/iris-cat-dev/omp-sdk/releases), verifies its SHA-256 and size, then uploads it over SSH. Remote Windows and musl-based Linux distributions such as Alpine remain unsupported.
+
+The Desktop machine needs HTTPS access to GitHub for the first download of each pinned SDK. Downloads are cached by checksum and reverified before reuse; interrupted or corrupt downloads are not installed. A running managed backend with the same bundle hash is reused without downloading or reinstalling. The app never selects `latest` or falls back to another platform's SDK.
+
+The SSH dialog shows SDK download progress. **Cancel** stops an active download and removes partial files.
 
 The remote account needs:
 
@@ -40,7 +44,7 @@ The remote account needs:
 - outbound HTTPS access to `nodejs.org` and the npm registry;
 - write access to its home directory.
 
-No root access is required. Managed runtime files are installed under `~/.omp-desktop/remote-runtime`, while daemon identity and state remain under `~/.omp-desktop`. OMP itself is installed separately from the paired host's settings.
+No root access is required. Managed runtime files, including the SDK and Node 24.14.0, are installed under `~/.omp-desktop/remote-runtime`; daemon identity and state remain under `~/.omp-desktop`. No separate OMP installation is required.
 
 ## Managed releases and updates
 

@@ -121,9 +121,6 @@ export class OmpHarness {
     this.omp.failNextStart(error);
   }
 
-  failEventSubscription(error: Error): void {
-    this.omp.failNextSubagentSubscription("events", error);
-  }
 
   async start(
     config: Partial<AgentSessionConfig> = {},
@@ -738,11 +735,6 @@ export class OmpHarness {
     return this.omp.latestSession().closed;
   }
 
-  async waitForSubscriptionFallback(): Promise<string[]> {
-    const runtime = this.omp.latestSession();
-    await runtime.waitForSubagentSubscriptions(2);
-    return runtime.subagentSubscriptionRequests;
-  }
 
   private requireSession(): OmpAgentSession {
     if (!this.session) throw new Error("OMP harness has not started");

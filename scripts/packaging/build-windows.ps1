@@ -26,29 +26,19 @@ foreach ($Arch in $Arches) {
     }
 }
 
-$PreviousStaging = $env:OMP_DESKTOP_WINDOWS_KEYRING_STAGING
+$PreviousTarget = $env:OMP_DESKTOP_PACKAGE_TARGET
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "omp-desktop-windows-$([guid]::NewGuid().ToString('N'))"
 Push-Location -LiteralPath $RepositoryRoot
 try {
-    $KeyringStaging = Join-Path $TempDir "keyring-packages"
-    New-Item -ItemType Directory -Path $KeyringStaging -Force | Out-Null
-    $env:OMP_DESKTOP_WINDOWS_KEYRING_STAGING = $KeyringStaging
-
-    # Stage immediately before electron-builder, after npm-driven prerequisite builds.
-    $KeyringVersion = Invoke-CheckedCommand "node" @("-p", "require('./node_modules/@napi-rs/keyring/package.json').version")
-    foreach ($Arch in $Arches) {
-        $PackageName = "keyring-win32-$Arch-msvc"
-        $Archive = Invoke-CheckedCommand "npm.cmd" @("pack", "--silent", "--pack-destination", $TempDir, "@napi-rs/$PackageName@$KeyringVersion")
-        $PackageDir = Join-Path $KeyringStaging $PackageName
-        New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
-        Invoke-CheckedCommand "tar.exe" @("-xzf", (Join-Path $TempDir $Archive), "-C", $PackageDir, "--strip-components=1")
-        $BindingPath = Join-Path $PackageDir "keyring.win32-$Arch-msvc.node"
-        if (-not (Test-Path -LiteralPath $BindingPath -PathType Leaf)) {
-            throw "Windows keyring binding is missing: $BindingPath"
-        }
+    $HostPlatformArch = Invoke-CheckedCommand "node" @("-p", "process.platform + ':' + process.arch")
+    if ($HostPlatformArch -cne "win32:x64") {
+        throw "This PowerShell packaging pipeline requires native Windows x64; use npm run build:windows on macOS with a Windows SDK artifact."
     }
+    $env:OMP_DESKTOP_PACKAGE_TARGET = "win32-x64"
 
-    # Keep private artifacts and update metadata entirely in release-plugins/.
+    # Desktop stages every Windows native dependency after prerequisite builds.
+
+    # Merge release update metadata only after all requested architectures finish.
     $Version = Invoke-CheckedCommand "node" @("-p", "require('./packages/desktop/package.json').version")
     $BuildOutput = (Invoke-CheckedCommand "node" (@("packages/desktop/scripts/windows-build-output.mjs", $Version) + $BuilderArgs)).Split("`t")
     $ReleaseDir = Join-Path $RepositoryRoot $BuildOutput[0]
@@ -74,7 +64,7 @@ try {
 
     Invoke-CheckedCommand "node" (@("scripts/packaging/merge-windows-update-metadata.mjs", $MetadataPath) + $MetadataFiles)
 } finally {
-    $env:OMP_DESKTOP_WINDOWS_KEYRING_STAGING = $PreviousStaging
+    $env:OMP_DESKTOP_PACKAGE_TARGET = $PreviousTarget
     if (Test-Path -LiteralPath $TempDir) {
         Remove-Item -LiteralPath $TempDir -Recurse -Force
     }

@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   createCodexCatalogFetch,
   migrateCodexCatalogCache,
@@ -13,11 +13,24 @@ interface NativeDatabase extends CodexCatalogCacheDatabase {
   prepare(sql: string, params?: unknown): CodexCatalogCacheStatement;
 }
 
-// Bun preloads run before OMP creates its registry or captures fetch. An OMP extension is too late.
+// Install before the SDK or CLI captures fetch or reads its model cache.
 globalThis.fetch = createCodexCatalogFetch(globalThis.fetch);
-const { Database } = createRequire(import.meta.url)("bun:sqlite") as {
-  Database: { prototype: NativeDatabase };
-};
+const load = createRequire(import.meta.url);
+let driver: string;
+if (process.versions.bun) {
+  driver = "bun:sqlite";
+} else {
+  const root = process.env.OMP_DESKTOP_SDK_ROOT;
+  if (!root) throw new Error("Node catalog policy requires an explicit OMP SDK root");
+  const sdkRequire = createRequire(join(root, "package.json"));
+  driver = join(
+    dirname(sdkRequire.resolve("@oh-my-pi/pi-utils/package.json")),
+    "dist",
+    "node",
+    "sqlite-driver.mjs",
+  );
+}
+const { Database }: { Database: { prototype: NativeDatabase } } = load(driver);
 const migratedConnections = new WeakSet<NativeDatabase>();
 function migrateBeforeCacheStatement(database: NativeDatabase, sql: string): void {
   if (

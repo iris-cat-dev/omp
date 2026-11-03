@@ -3,8 +3,10 @@ import * as net from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import pino from "pino";
 
 import { OmpBackgroundDaemons } from "./background-daemons.js";
+import { OmpAgentClient } from "./agent.js";
 
 let root: string;
 let runtime: string;
@@ -100,6 +102,51 @@ afterEach(async () => {
 });
 
 describe("OMP passive daemon inspection", () => {
+  test("cold provider inspection retains owned daemons but excludes other sessions and workspace daemons", async () => {
+    await broker((request, socket) => {
+      socket.end(JSON.stringify({
+        id: request.id,
+        ok: true,
+        result: {
+          op: "list",
+          daemons: [
+            snapshot,
+            { ...snapshot, id: "foreign-id", name: "foreign", owner: "another-session" },
+            { ...snapshot, id: "workspace-id", name: "workspace", owner: null },
+          ],
+        },
+      }) + "\n");
+    });
+    const client = new OmpAgentClient({
+      logger: pino({ level: "silent" }),
+      runtimeSettings: {
+        ompBackend: "sdk",
+        env: Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value ?? ""])),
+      },
+    });
+    expect(
+      await client.listPersistedBackgroundProcesses(
+        { provider: "omp", sessionId: "provider-session:exact" },
+        root,
+      ),
+    ).toEqual([
+      {
+        id: "daemon-id",
+        name: "web",
+        command: "node server.js",
+        cwd: root,
+        ownerAgentId: null,
+        scope: "agent",
+        source: "omp-daemon",
+        status: "ready",
+        startedAt: 100,
+        endedAt: null,
+        exitCode: null,
+        terminalId: null,
+      },
+    ]);
+  });
+
   test("uses authenticated list without completion subscriptions, and never exposes spec env", async () => {
     const requests: Record<string, unknown>[] = [];
     const before = await fs.readFile(path.join(daemonDir, "meta.json"), "utf8");
@@ -241,6 +288,35 @@ describe("OMP passive daemon inspection", () => {
       "2",
     ]);
     expect(requests).toHaveLength(2);
+  });
+
+  test("uses the SDK stop controller instead of a CLI command", async () => {
+    await broker((request, socket) => {
+      socket.end(
+        `${JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: { op: "list", daemons: [snapshot] },
+        })}\n`,
+      );
+    });
+    const stopped: string[] = [];
+    adapter.dispose();
+    adapter = new OmpBackgroundDaemons({
+      cwd: root,
+      env,
+      command: ["must-not-be-executed"],
+      stopDaemon: async (name) => {
+        stopped.push(name);
+        snapshot.state = "exited";
+      },
+    });
+
+    await expect(adapter.stop("daemon-id")).resolves.toBe(true);
+    expect(stopped).toEqual(["web"]);
+    expect((await adapter.list())[0]?.status).toBe("exited");
+    await expect(adapter.stop("unknown-id")).rejects.toThrow("Unknown OMP background process");
+    expect(stopped).toEqual(["web"]);
   });
 
   test("rejects arbitrary paths, unknown IDs, replacement IDs, and symlinked logs", async () => {

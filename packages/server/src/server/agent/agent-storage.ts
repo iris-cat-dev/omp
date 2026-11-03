@@ -1,6 +1,7 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -28,6 +29,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .optional(),
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
+    proxyPolicy: ProxyPolicySchema.optional(),
   })
   .nullable()
   .optional();
@@ -75,6 +77,8 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  /** Provider user-message ID to sending agent, independent of prompt text and native history. */
+  promptSources: z.record(z.string(), z.string().min(1)).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -87,11 +91,21 @@ export type SerializableAgentConfig = Pick<
   | "toolPolicy"
   | "systemPrompt"
   | "mcpServers"
+  | "proxyPolicy"
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
-  return STORED_AGENT_SCHEMA.parse(value);
+  const record = STORED_AGENT_SCHEMA.parse(value);
+  if (record.provider === "omp" || record.persistence?.provider === "omp") {
+    if (record.lastModeId === "write") record.lastModeId = "ask";
+    if (record.config?.modeId === "write") record.config.modeId = "ask";
+    if (record.runtimeInfo?.modeId === "write") record.runtimeInfo.modeId = "ask";
+    if (record.persistence?.metadata?.modeId === "write") {
+      record.persistence.metadata.modeId = "ask";
+    }
+  }
+  return record;
 }
 
 export class AgentStorage {
@@ -280,7 +294,27 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.promptSources) {
+        record.promptSources = existing.promptSources;
+      }
       return record;
+    });
+  }
+
+  async getPromptSources(agentId: string): Promise<Readonly<Record<string, string>> | undefined> {
+    await this.load();
+    await this.waitForPendingWrite(agentId);
+    return this.cache.get(agentId)?.promptSources;
+  }
+
+  async setPromptSource(agentId: string, messageId: string, sourceAgentId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return {
+        ...existing,
+        promptSources: { ...existing.promptSources, [messageId]: sourceAgentId },
+      };
     });
   }
 

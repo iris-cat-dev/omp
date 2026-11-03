@@ -5,11 +5,11 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 ## Contents
 
 - [OMP built-in tools](#omp-built-in-tools)
+- [OMP working status](#omp-working-status)
 - [Browser and computer use](#browser-and-computer-use)
 - [Screenshot annotation and text feedback](#screenshot-annotation-and-text-feedback)
 - [Plugin management and native commands](#plugin-management-and-native-commands)
-- [Bundled-plugin ownership and verification](#bundled-plugin-ownership-and-verification)
-- [Private Windows three-plugin distribution](#private-windows-three-plugin-distribution)
+- [Distribution compatibility](#distribution-compatibility)
 - [Image generation with references](#image-generation-with-references)
 
 ## OMP built-in tools
@@ -19,6 +19,16 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 Known releases use their tool catalog; unfamiliar versions use the combined known list, not a version whitelist. Desktop checks native `--tools`/`--no-tools` support rather than rejecting unfamiliar releases. Builds sharing a version may expose different tools, so partial selection briefly starts an ephemeral session to request only tools in that build's active roster. No custom OMP build is needed for supported versions.
 
 **This is not a strict denylist.** OMP may add tools excluded from `--tools`, even under `--no-tools`; child agents may use a different list. OMP's own settings may disable selected tools. These choices do not affect standalone OMP sessions, Desktop-injected tools/extensions, or replace permission/approval enforcement. Custom OMP commands cannot combine these settings with their own `--tools`/`--no-tools` flags.
+
+## OMP working status
+
+During an OMP run, the conversation footer shows the latest tool intent next to the loading indicator, token speed, and elapsed time. The label can update while a tool call is being generated, before execution starts; it does not depend on a visible tool card. Missing or empty intent leaves the existing loading indicator unchanged.
+
+Intent text uses the same looping shimmer as running tool-call labels, without changing its font size, single-line truncation, token speed, or elapsed-time layout. The shimmer pauses while the conversation pane is inactive and resumes when it becomes visible again.
+
+New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering; it does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
+
+The label belongs to the active run, survives reconnect, and clears when the run completes, fails, or stops. Late events from another or closed run cannot replace it. Saved tool history retains its original intent metadata without turning completed history into a live working status.
 
 ## Browser and computer use
 
@@ -71,61 +81,13 @@ Visible replies retain persisted native entry IDs, original text, and metadata i
 
 Registered native commands are admitted before workflow/stale-plan reset envelopes, including after session restoration. They remain commands rather than model prompts; the next ordinary prompt still receives its workflow reset. Stopping while command discovery is pending cancels that turn: delayed discovery cannot dispatch it or claim a replacement request's identity.
 
-## Bundled-plugin ownership and verification
+## Distribution compatibility
 
-In private bundled distributions, first-run provisioning holds a separate native process-owned OS lease for the resolved profile. It neither blocks ordinary management nor reaps PID files. Interrupted/unknown link outcomes are not automatically retried. A durable seed ledger preserves uninstall choices across restarts/updates.
+Desktop builds now use the Node SDK. The former private Windows three-plugin build depended on a patched standalone OMP executable and is no longer supported: its staging command, packaging flag, executable resources, and native qualification path have been removed. Existing private installations need their own compatible distribution; SDK Desktop does not claim to migrate those private runtimes or accounts.
 
-Namespace ownership is published only after its marker is written and synced in an unpublished sibling directory while the native lease is still held. Interrupted initialization cannot publish a partial namespace. Existing directories with invalid/missing ownership markers are never adopted or automatically cleaned.
+Use the standard SDK plugin-management page for Node-compatible plugins. Marketplace identity, scope, enable/disable state, and native commands retain their normal semantics. Bun-only or executable-bound plugins cannot be made compatible by changing the SDK path.
 
-Subsequent provider launches still resolve native cwd/profile and acquire its lease. Payload hashes may be reused within the daemon only while file identity and nanosecond metadata match. Every check walks the complete inventory; changed files are rehashed, while missing, extra, non-regular, or symlinked paths remain errors. Cache is bounded to one payload/manifest and never persisted.
-
-Host hashes are reused only within one launch/management operation with metadata checked at every boundary; the next operation rehashes the host. Settled ledgers are written only on state change. Conversation loading distinguishes actual verification, preparation, and first-install phases from history loading. Completion clears the phase indicator on success/failure, without claiming successful install or bypassing existing errors/degraded history.
-
-Desktop reuses a managed daemon only when live status reports a matching distribution identity. Private identity includes the sealed native-host digest: equal app versions alone are insufficient. Startup, automatic version replacement, and quit cleanup preserve incompatible/unverified daemons even with **Keep daemon running after quit** off. Let tasks finish and explicitly stop that daemon before switching distributions.
-
-The bundled CLI checks live identity before using an implicit local target. Explicit `--host` and `PASEO_HOST` retain their existing behavior. See [Remote hosts](../remote-hosts.md) for host management.
-
-## Private Windows three-plugin distribution
-
-### Contents and authorization boundaries
-
-The separately named `OMP-Desktop-Plugins-Setup-0.5.2-x64.exe` is a **private build, not an upstream release**. It bundles ChatPro **0.1.0**, WorkBuddy **0.1.0**, and WeChat connector **0.1.2**, all sharing one patched native OMP **18.12.3**. It installs no second plugin SDK or account store. Ordered native patches, compiler/addon provenance, exact host digest, and frozen sources live under the ignored `vendor/omp-plugins` input directory, which must be supplied separately and is not part of a public checkout.
-
-Public source releases are [ChatPro](https://github.com/Charlie-chulong/omp-bridge-chatpro) and [WorkBuddy](https://github.com/Charlie-chulong/omp-workbuddy-plugin). The WeChat connector, history, and provenance remain private, absent from the public Desktop repository/PR. All three authorized source/runtime inputs must be provided before opting into this build mode.
-
-Payload includes required private runtimes/licenses, including CPython 3.12/Tk for WeChat. It excludes developer virtual environments, ambient site-packages, credentials, profiles, chat data, and runtime caches. ChatPro/WorkBuddy retain upstream-disabled defaults. WeChat stays disconnected until separate trusted local authorization: preinstallation grants no read/send permission and approves no message.
-
-Private Windows Python supports long profile/snapshot paths without machine-wide policy changes. WorkBuddy uses extended filesystem paths for full manifest hashes/private-state I/O. WeChat's reviewed package-owned portable startup hook normalizes existing isolated import paths after `_pth`/site initialization; it adds no search directories and adopts no ambient interpreter/site-packages.
-
-### First use, uninstall, and updates
-
-The first plugin-management request or provider session seeds missing plugins into immutable profile-owned snapshots; setup does not block daemon listening. The Plugins loading state covers registration. Existing same-name registration, disabled state, and configuration remain. Normal uninstall creates no reinstall obligation: sessions and app updates retain that choice. Explicit local-path installs use native OMP's normal link route. Later apps do not silently upgrade existing plugins to their bundled versions.
-
-Windows snapshot publication briefly waits out `EPERM` sharing conflicts under the same authoritative native lease. Only a new unpublished owned-directory move is retried, never native writes, failed link intents, or uninstall tombstones.
-
-Public Desktop auto-update and generic native OMP download/replacement are intentionally blocked, including native self-update through packaged `manager.json`. Standalone update ownership comes from the executing binary before reading its marker, not another `omp` on `PATH`. Missing running executables fail closed instead of redirecting updates elsewhere.
-
-Upgrade with a compatible private **whole-app installer**, never stock OMP replacement. Real account-backed consultations, WorkBuddy upstream requests, and WeChat reads/sends need separate authorization; no-account qualification does not establish them.
-
-### Building and qualifying the private package
-
-Commands below assume repository root. Build the exact pinned native host and portable WeChat runtime, then stage with:
-
-```sh
-node packages/desktop/scripts/stage-bundled-plugins.mjs --host <absolute-host>
-```
-
-The [stager](../../packages/desktop/scripts/stage-bundled-plugins.mjs) refuses existing output/binary instead of overwriting. Select the verified mini-electron distribution with `MINI_ELECTRON_DIST_PATH` and run:
-
-```sh
-npm run build:windows -- --with-bundled-plugins
-```
-
-Output is `packages/desktop/release-plugins`, separate from the previously qualified installer. Packaging loads configuration once, retains qualified resource exclusions, and checks the configured private host against its pinned digest before staging and after copy/packaging hooks, rejecting stock replacements. Private builds must package from source: **`--prepackaged` is unsupported** because it bypasses checks. See [Packaging](../packaging.md) and [Development](../development.md).
-
-Qualification must exercise real Python/native extensions and production WeChat HelperClient ready/status/exit at long profile-owned snapshot depth. Use the packaged `scripts/verify-bundled-runtime.py` for complete WeChat inventory/native-import/Tcl checks; disconnected `/wechat status` alone neither launches nor qualifies that helper.
-
-The first private-profile catalog request copies/verifies complete runtimes. Native packaged qualification uses the existing **180-second diagnostic RPC deadline plus CLI startup allowance**, not the ordinary 60-second command limit; real diagnostics/catalog/plugin checks must still finish successfully. Plugin-page mutation qualification waits for completed real UI refresh before one independent native readback, preventing test polling from queueing extra management behind the action.
+Desktop reuses or terminates managed daemons only when their reported distribution identity matches. An incompatible legacy/private daemon is preserved until explicitly stopped. The bundled Desktop CLI also checks live identity before using an implicit local target; explicit `--host` and `PASEO_HOST` remain unchanged.
 
 ## Image generation with references
 

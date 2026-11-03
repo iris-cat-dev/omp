@@ -21,6 +21,7 @@ files:
   - dist/**/*
   - assets/pets/**/*
   - "!**/*.map"
+  - "!sdk-dist{,/**/*}"
   - "!**/*.d.{ts,cts,mts}"
   - "!**/node_modules/zod/src/**"
   - "!**/node_modules/openai/src/**"
@@ -57,8 +58,6 @@ mac:
   hardenedRuntime: true
   notarize: true
   extraResources:
-    - from: ../../bin/omp-darwin-${arch}
-      to: bin/omp
     - from: bin/omp-desktop
       to: bin/omp-desktop
     - from: assets/icon-macos.png
@@ -77,8 +76,6 @@ linux:
   maintainer: "OMP Desktop contributors"
   vendor: "OMP Desktop"
   extraResources:
-    - from: ../../bin/omp-linux-${arch}
-      to: bin/omp
     - from: bin/omp-desktop
       to: bin/omp-desktop
     - from: assets/icon.png
@@ -95,8 +92,6 @@ win:
   icon: assets/icon.ico
   signAndEditExecutable: true
   extraResources:
-    - from: ../../bin/omp-windows-${arch}.exe
-      to: bin/omp.exe
     - from: assets/icon.png
       to: icon.png
     - from: assets/icon.ico

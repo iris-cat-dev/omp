@@ -13,6 +13,44 @@ describe("useDraftAgentCreateFlow", () => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
   });
 
+  it("shows the initial message while creation is pending and restores draft state on failure", async () => {
+    const creation = Promise.withResolvers<{ agentId: string | null; result: { id: string } }>();
+    const failure = new Error("Workspace directory not found");
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-1",
+        getPendingServerId: () => "server-1",
+        buildDraftAgent: (attempt) => ({ attempt }),
+        createRequest: () => creation.promise,
+        onCreateSuccess: () => {},
+      }),
+    );
+    let sending!: Promise<void>;
+    act(() => {
+      sending = result.current.handleCreateFromInput({
+        text: "show the initial message immediately",
+        attachments: [],
+        cwd: "/repo",
+      });
+    });
+    expect(result.current.isSubmitting).toBe(true);
+    expect(result.current.submittedStreamItems).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        text: "show the initial message immediately",
+      }),
+    ]);
+
+    await act(async () => {
+      creation.reject(failure);
+      await expect(sending).rejects.toBe(failure);
+    });
+    expect(result.current.isSubmitting).toBe(false);
+    expect(result.current.submittedStreamItems).toEqual([]);
+    expect(result.current.formErrorMessage).toBe(failure.message);
+    expect(useCreateFlowStore.getState().pendingByDraftId).toEqual({});
+  });
+
   it("renders a prepared new-workspace submission before continuing it", async () => {
     const image: UserMessageImageAttachment = {
       id: "image-1",

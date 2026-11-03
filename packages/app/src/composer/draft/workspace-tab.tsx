@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,6 +20,7 @@ import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/dra
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
+import { assertWorkspaceDirectoryExists } from "@/composer/submit";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -174,6 +176,11 @@ async function submitDraftCreateRequest(input: {
   if (!client) {
     throw new Error(input.hostDisconnectedMessage);
   }
+  await assertWorkspaceDirectoryExists({
+    cwd,
+    directoryExists: (path) => client.directoryExists(path),
+    missingDirectoryMessage: i18n.t("panels.file.directoryMissing"),
+  });
 
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {

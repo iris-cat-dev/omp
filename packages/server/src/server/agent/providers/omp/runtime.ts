@@ -3,6 +3,8 @@ import type {
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
 import type {
+  OmpAbortAndRestoreQueueResult,
+  OmpApprovalMode,
   OmpAgentMessage,
   OmpFastModeResult,
   OmpFastModeSelection,
@@ -19,13 +21,20 @@ import type {
   OmpSubagentSubscriptionLevel,
   OmpThinkingLevel,
 } from "./rpc-types.js";
+import type {
+  OmpSubagentSnapshot,
+  OmpSubagentMessagesSelector,
+  OmpSubagentMessagesResult,
+} from "./subagent-rpc.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
   argv: string[];
   env?: Record<string, string>;
+  proxyPolicy?: ProxyPolicy;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -40,6 +49,7 @@ export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   getImageGenerationConfig?: OmpImageSettingsGetter;
+  proxyPolicy?: ProxyPolicy;
   localModelGateway?: boolean;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
@@ -61,18 +71,24 @@ export interface OmpRuntimeSession {
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
+  /** Withdraw queued input, stop owned execution, and wait for settlement without closing the session. */
+  abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult>;
   cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;
+  setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode>;
   listBackgroundJobs?(): Promise<BackgroundProcess[]>;
   getBackgroundJobOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;
   stopBackgroundJob?(processId: string): Promise<boolean>;
   stopAllBackgroundJobs?(): Promise<number>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
+  setProxyPolicy(policy: ProxyPolicy): Promise<void>;
   setFastModeTier(
     value: OmpFastModeSelection,
     model: { provider: string; id: string },
   ): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
+  getSubagents(): Promise<OmpSubagentSnapshot[]>;
+  getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
   getLocalModelGatewayPort?(): Promise<number>;
   getLoginProviders(): Promise<OmpLoginProvider[]>;
@@ -139,6 +155,7 @@ export function buildOmpLaunch(input: {
             ...input.session.env,
           }
         : undefined,
+    proxyPolicy: input.session.proxyPolicy,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,

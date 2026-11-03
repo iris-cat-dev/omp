@@ -118,6 +118,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { PaseoWebSocketServer } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
+import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { GitHubAuthManager } from "../services/github-auth.js";
@@ -179,7 +180,6 @@ import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import { DEFAULT_OMP_DESKTOP_TOOL_CAPABILITIES } from "@omp-desktop/protocol/messages";
 import type {
-  AgentProfile,
   AgentSkillSelection,
   FirstAgentContext,
   OmpDesktopToolCapabilities,
@@ -396,7 +396,6 @@ export interface PaseoDaemonConfig {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
-  agentProfiles?: AgentProfile[];
   ompProviderAccountNotes?: Record<string, string>;
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
@@ -616,10 +615,6 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
 
   if (config.terminalProfiles !== undefined) {
     initialConfig.terminalProfiles = config.terminalProfiles;
-  }
-
-  if (config.agentProfiles !== undefined) {
-    initialConfig.agentProfiles = config.agentProfiles;
   }
 
   if (config.ompProviderAccountNotes !== undefined) {
@@ -1596,6 +1591,21 @@ export async function createPaseoDaemon(
             }
             if (config.auth?.password) {
               logger.info("Daemon password authentication enabled");
+            }
+            const pluginService = new OmpPluginCliService({
+              logger,
+              getProviderConfig: () => daemonConfigStore.get().providers.omp,
+            });
+            const pluginDirectories = new Set([
+              config.paseoHome,
+              ...(await workspaceRegistry.list())
+                .filter((workspace) => !workspace.archivedAt)
+                .map((workspace) => workspace.cwd),
+            ]);
+            for (const cwd of pluginDirectories) {
+              await pluginService.checkStartup(cwd).catch((error) => {
+                logger.warn({ err: error, cwd }, "OMP plugin startup check failed");
+              });
             }
 
             wsServer = new PaseoWebSocketServer(

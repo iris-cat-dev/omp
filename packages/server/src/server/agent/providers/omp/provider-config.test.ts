@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { resolveOmpBuiltinToolArgs, OmpProviderParamsSchema } from "./provider-config.js";
+import {
+  mergeOmpRuntimeSettings,
+  resolveOmpBuiltinToolArgs,
+  OmpProviderParamsSchema,
+} from "./provider-config.js";
 import {
   OMP_BUILTIN_TOOL_NAMES,
   OMP_LEGACY_BUILTIN_TOOL_NAMES,
@@ -74,5 +78,34 @@ describe("OMP built-in tool policy", () => {
         "conflict",
       );
     }
+  });
+});
+
+describe("OMP backend runtime merge", () => {
+  test("keeps SDK selection and package path through CLI-default runtime setup", () => {
+    expect(
+      mergeOmpRuntimeSettings(
+        { command: { mode: "replace", argv: ["omp"] } },
+        { ompBackend: "sdk", ompSdkPath: "/opt/omp-sdk" },
+      ),
+    ).toMatchObject({
+      command: { mode: "replace", argv: ["omp"] },
+      ompBackend: "sdk",
+      ompSdkPath: "/opt/omp-sdk",
+    });
+  });
+
+  test("honors explicit CLI overrides and inherits unspecified SDK paths", () => {
+    expect(
+      mergeOmpRuntimeSettings(
+        { ompBackend: "sdk", ompSdkPath: "/opt/omp-sdk", env: { KEEP: "yes" } },
+        { ompBackend: "cli", env: { ADDED: "yes" } },
+      ),
+    ).toMatchObject({
+      ompBackend: "cli",
+      ompSdkPath: "/opt/omp-sdk",
+      env: { KEEP: "yes", ADDED: "yes" },
+    });
+    expect(mergeOmpRuntimeSettings(undefined, undefined)).toBeUndefined();
   });
 });

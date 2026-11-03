@@ -12,6 +12,7 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
+import { ProviderRuntimeSettingsSchema, ProxyPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { OmpStatsGetRequestMessageSchema, OmpStatsGetResponseMessageSchema } from "./omp-stats.js";
@@ -118,6 +119,9 @@ const MutableDaemonProviderConfigSchema = z
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
     env: z.record(z.string(), z.string()).optional(),
     params: z.record(z.string(), z.unknown()).optional(),
+    ompBackend: ProviderRuntimeSettingsSchema.shape.ompBackend,
+    ompSdkPath: ProviderRuntimeSettingsSchema.shape.ompSdkPath,
+    proxyPolicy: ProxyPolicySchema.optional(),
   })
   .passthrough();
 
@@ -166,35 +170,6 @@ export const TerminalProfileSchema = z
   .passthrough();
 
 export type TerminalProfile = z.infer<typeof TerminalProfileSchema>;
-
-/**
- * A named launch bundle: a provider plus the agent-config values a client would
- * otherwise set one control at a time. Field names mirror `AgentSessionConfig`
- * so applying a profile is a copy rather than a translation table.
- *
- * There is deliberately no system prompt here. `AgentSessionConfig.systemPrompt`
- * is creation-only, so a profile carrying one would apply when starting a new
- * agent and silently do nothing when applied to a running one.
- */
-export const AgentProfileSchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    /** A key into the client's icon registry, not a glyph. Unknown keys draw the default. */
-    icon: z.string().optional(),
-    /** An identity colour name shared with host badges. Unknown values draw unthemed. */
-    color: z.string().optional(),
-    provider: z.string(),
-    model: z.string().optional(),
-    modeId: z.string().optional(),
-    thinkingOptionId: z.string().optional(),
-    featureValues: z.record(z.string(), z.unknown()).optional(),
-    /** Free text, surfaced to orchestrating agents by the `list_profiles` MCP tool. */
-    notes: z.string().optional(),
-  })
-  .passthrough();
-
-export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 
 const MutableRelayConfigSchema = z
   .object({
@@ -316,7 +291,6 @@ export const MutableDaemonConfigSchema = z
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
-    agentProfiles: z.array(AgentProfileSchema).optional(),
     ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
@@ -345,7 +319,6 @@ export const MutableDaemonConfigPatchSchema = z
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
-    agentProfiles: z.array(AgentProfileSchema).optional(),
     ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
@@ -484,6 +457,7 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
   .object({
     supportsStreaming: z.boolean(),
     supportsSessionPersistence: z.boolean(),
+    supportsProxyPolicy: z.boolean().optional(),
     supportsSessionListing: z.boolean().optional(),
     supportsDynamicModes: z.boolean(),
     supportsMcpServers: z.boolean(),
@@ -594,6 +568,7 @@ const AgentSessionConfigSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
 });
 
 const AgentPermissionUpdateSchema = z.record(z.string(), z.unknown());
@@ -846,6 +821,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    sourceAgentId: z.string().min(1).optional(),
     workingStartedAt: z.string().optional(),
     images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
   }),
@@ -874,8 +850,9 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
         text: z.string(),
         completed: z.boolean(),
         id: z.string().optional(),
-        status: z.enum(["pending", "in_progress", "completed"]).optional(),
+        status: z.enum(["pending", "in_progress", "completed", "blocked", "abandoned"]).optional(),
         activeForm: z.string().optional(),
+        phase: z.object({ name: z.string(), index: z.number().int().nonnegative() }).optional(),
       }),
     ),
   }),
@@ -920,6 +897,12 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     type: z.literal("turn_started"),
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("working_intent"),
+    provider: AgentProviderSchema,
+    turnId: z.string(),
+    intent: z.string().trim().min(1),
   }),
   z.object({
     type: z.literal("turn_completed"),
@@ -1010,6 +993,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
 const AgentActiveTurnPayloadSchema = z.object({
   turnId: z.string(),
   startedAt: z.string().nullable(),
+  workingIntent: z.string().nullable().optional(),
 });
 
 export const AgentSnapshotPayloadSchema = z.object({
@@ -1020,6 +1004,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -1820,6 +1805,17 @@ export const OmpProviderManagementGetRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const OmpCodexResetSettingsGetRequestMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.get.request"),
+  requestId: z.string(),
+});
+
+export const OmpCodexResetSettingsUpdateRequestMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.update.request"),
+  enabled: z.boolean(),
+  requestId: z.string(),
+});
+
 export const OmpCodexResetCreditConsumeRequestMessageSchema = z.object({
   type: z.literal("omp.codex.reset_credit.consume.request"),
   credentialId: z.number().int().positive(),
@@ -2354,6 +2350,18 @@ export const SetAgentModelRequestMessageSchema = z.object({
 
 export const SetAgentModelResponseMessageSchema = z.object({
   type: z.literal("set_agent_model_response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
+export const SetAgentProxyPolicyRequestMessageSchema = z.object({
+  type: z.literal("set_agent_proxy_policy_request"),
+  agentId: z.string(),
+  policy: ProxyPolicySchema.nullable(),
+  requestId: z.string(),
+});
+
+export const SetAgentProxyPolicyResponseMessageSchema = z.object({
+  type: z.literal("set_agent_proxy_policy_response"),
   payload: AgentActionResponsePayloadSchema,
 });
 
@@ -3543,6 +3551,7 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+  proxyPolicy: ProxyPolicySchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
 });
 
@@ -3716,6 +3725,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   OmpProviderManagementGetRequestMessageSchema,
+  OmpCodexResetSettingsGetRequestMessageSchema,
+  OmpCodexResetSettingsUpdateRequestMessageSchema,
   OmpCodexResetCreditConsumeRequestMessageSchema,
   OmpClaudeLimitResetConsumeRequestMessageSchema,
   OmpProviderManagementSaveRequestMessageSchema,
@@ -3766,6 +3777,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
+  SetAgentProxyPolicyRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   SetAgentGoalObjectiveRequestMessageSchema,
@@ -3958,6 +3970,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: z.boolean().optional(),
         ompCodexResetCredits: z.boolean().optional(),
+        // COMPAT(ompCodexResetSettings): added 2026-11-01, remove gate after 2027-05-01.
+        ompCodexResetSettings: z.boolean().optional(),
         ompClaudeLimitResets: z.boolean().optional(),
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
         ompSubagentSettings: z.boolean().optional(),
@@ -4105,11 +4119,6 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutDiscardUnstagedChanges: z.boolean().optional(),
         // COMPAT(checkoutDiffSummary): lightweight file lists and path-scoped diff subscriptions.
         checkoutDiffSummary: z.boolean().optional(),
-        // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
-        // An older daemon parses its persisted config strictly, so writing
-        // agentProfiles to one is silently dropped. The client hides the feature
-        // rather than letting a save appear to succeed.
-        agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
       })
@@ -6812,7 +6821,7 @@ export const OmpInstallationStatusSchema = z.object({
   arch: z.string(),
   supported: z.boolean(),
   installed: z.boolean(),
-  source: z.enum(["bundled", "managed", "configured", "path"]).optional(),
+  source: z.enum(["bundled", "managed", "configured", "path", "sdk"]).optional(),
   version: z.string().optional(),
   latestVersion: z.string().optional(),
   updateAvailable: z.boolean().optional(),
@@ -6829,6 +6838,21 @@ export const OmpInstallationStatusSchema = z.object({
 export const OmpProviderManagementGetResponseMessageSchema = z.object({
   type: z.literal("omp.provider.management.get.response"),
   payload: OmpProviderManagementSchema.extend({ requestId: z.string() }),
+});
+
+export const OmpCodexResetSettingsSchema = z.object({
+  configPath: z.string(),
+  autoRedeem: z.enum(["unset", "yes", "no"]),
+});
+
+export const OmpCodexResetSettingsGetResponseMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.get.response"),
+  payload: OmpCodexResetSettingsSchema.extend({ requestId: z.string() }),
+});
+
+export const OmpCodexResetSettingsUpdateResponseMessageSchema = z.object({
+  type: z.literal("omp.codex.reset_settings.update.response"),
+  payload: OmpCodexResetSettingsSchema.extend({ requestId: z.string() }),
 });
 
 export const OmpCodexResetCreditConsumeResponseMessageSchema = z.object({
@@ -7655,6 +7679,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
+  SetAgentProxyPolicyResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   SetAgentGoalObjectiveResponseMessageSchema,
@@ -7742,6 +7767,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   OmpProviderManagementGetResponseMessageSchema,
+  OmpCodexResetSettingsGetResponseMessageSchema,
+  OmpCodexResetSettingsUpdateResponseMessageSchema,
   OmpCodexResetCreditConsumeResponseMessageSchema,
   OmpClaudeLimitResetConsumeResponseMessageSchema,
   OmpProviderManagementSaveResponseMessageSchema,
@@ -7892,6 +7919,9 @@ export type CancelProviderSubagentResponseMessage = z.infer<
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
+export type SetAgentProxyPolicyResponseMessage = z.infer<
+  typeof SetAgentProxyPolicyResponseMessageSchema
+>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type SetAgentGoalObjectiveResponseMessage = z.infer<
@@ -7965,6 +7995,19 @@ export type OmpClaudeLimitResetConsumeRequestMessage = z.infer<
 >;
 export type OmpClaudeLimitResetConsumeResponseMessage = z.infer<
   typeof OmpClaudeLimitResetConsumeResponseMessageSchema
+>;
+export type OmpCodexResetSettings = z.infer<typeof OmpCodexResetSettingsSchema>;
+export type OmpCodexResetSettingsGetRequestMessage = z.infer<
+  typeof OmpCodexResetSettingsGetRequestMessageSchema
+>;
+export type OmpCodexResetSettingsUpdateRequestMessage = z.infer<
+  typeof OmpCodexResetSettingsUpdateRequestMessageSchema
+>;
+export type OmpCodexResetSettingsGetResponseMessage = z.infer<
+  typeof OmpCodexResetSettingsGetResponseMessageSchema
+>;
+export type OmpCodexResetSettingsUpdateResponseMessage = z.infer<
+  typeof OmpCodexResetSettingsUpdateResponseMessageSchema
 >;
 export type OmpCodexResetCreditConsumeResult = z.infer<
   typeof OmpCodexResetCreditConsumeResultSchema
@@ -8178,6 +8221,9 @@ export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryIn
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
+export type SetAgentProxyPolicyRequestMessage = z.infer<
+  typeof SetAgentProxyPolicyRequestMessageSchema
+>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type SetAgentGoalObjectiveRequestMessage = z.infer<

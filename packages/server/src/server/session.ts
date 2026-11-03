@@ -10,7 +10,6 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
-import { resolveOmpProxyUrl } from "@omp-desktop/protocol/provider-config";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -48,6 +47,7 @@ import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-lo
 import { subscribeBundledOmpInitialization } from "./bundled-omp-initialization.js";
 import {
   isSystemInjectedEnvelope,
+  restorePromptSource,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
@@ -144,7 +144,9 @@ import {
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
 import { inspectOmpSessionHistoryAvailability } from "./agent/providers/omp/session-descriptor.js";
-import { streamOmpHistory } from "./agent/providers/omp/history.js";
+import { streamOmpHistory, streamOmpSubagentHistory } from "./agent/providers/omp/history.js";
+import { ProviderSubagentStore } from "./agent/provider-subagents/store.js";
+import { OMP_AGENT_CAPABILITIES, OMP_MODES } from "./agent/providers/omp/provider-config.js";
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
@@ -936,7 +938,6 @@ export class Session {
     this.ompPluginSession = new OmpPluginSession({
       service: new OmpPluginCliService({
         logger: this.sessionLogger,
-        getProxyUrl: () => resolveOmpProxyUrl(daemonConfigStore.get().providers.omp),
         getProviderConfig: () => daemonConfigStore.get().providers.omp,
       }),
       emit: (msg) => this.emit(msg),
@@ -958,6 +959,7 @@ export class Session {
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
+        setProxyPolicy: (agentId, policy) => agentManager.setAgentProxyPolicy(agentId, policy),
         setFeature: (agentId, featureId, value) =>
           agentManager.setAgentFeature(agentId, featureId, value),
         setGoalObjective: (agentId, objective) =>
@@ -1790,7 +1792,16 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds);
+    const payload = buildStoredAgentPayload(record, registeredProviderIds);
+    if (record.provider !== "omp") {
+      return payload;
+    }
+    return {
+      ...payload,
+      capabilities: { ...OMP_AGENT_CAPABILITIES },
+      availableModes: [...OMP_MODES],
+      ...(record.features ? { features: record.features } : {}),
+    };
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -2288,6 +2299,8 @@ export class Session {
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
       case "set_agent_model_request":
         return this.agentConfigSession.handleSetAgentModelRequest(msg);
+      case "set_agent_proxy_policy_request":
+        return this.agentConfigSession.handleSetAgentProxyPolicyRequest(msg);
       case "set_agent_feature_request":
         return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
       case "set_agent_goal_objective_request":
@@ -2321,16 +2334,13 @@ export class Session {
         return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request": {
         const config = this.daemonConfigStore.patch(msg.config);
-        // Keep this response in the same dispatch as the mutation. Relay rotation
-        // starts at the next dispatch boundary and drains this encrypted send.
-        this.emit({
-          type: "set_daemon_config_response",
-          payload: {
-            requestId: msg.requestId,
-            config,
-          },
+        // Keep the response in this dispatch so relay rotation drains the encrypted send.
+        return this.providerSnapshotManager.waitForProxyPolicyUpdates().then(() => {
+          this.emit({
+            type: "set_daemon_config_response",
+            payload: { requestId: msg.requestId, config },
+          });
         });
-        return undefined;
       }
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
@@ -2649,6 +2659,10 @@ export class Session {
         return this.providerCatalogSession.handleOmpMemorySettingsGetRequest(msg);
       case "omp.memory.settings.update.request":
         return this.providerCatalogSession.handleOmpMemorySettingsUpdateRequest(msg);
+      case "omp.codex.reset_settings.get.request":
+        return this.providerCatalogSession.handleOmpCodexResetSettingsGetRequest(msg);
+      case "omp.codex.reset_settings.update.request":
+        return this.providerCatalogSession.handleOmpCodexResetSettingsUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -4659,6 +4673,7 @@ export class Session {
       epoch: `persisted-omp:${agentId}:${record.updatedAt}`,
       timestamp: record.updatedAt,
     });
+    const promptSources = await this.agentStorage.getPromptSources(agentId);
     for await (const event of streamOmpHistory({
       sessionFile: nativeHandle,
       provider: record.provider,
@@ -4670,10 +4685,15 @@ export class Session {
         continue;
       }
       const turnId = getAgentStreamEventTurnId(event);
-      timeline.append(agentId, limitAgentTimelineItemContent(event.item), {
+      const item = restorePromptSource(event.item, promptSources);
+      timeline.append(agentId, limitAgentTimelineItemContent(item), {
         ...(event.timestamp ? { timestamp: event.timestamp } : {}),
         ...(turnId ? { turnId } : {}),
       });
+    }
+    // A prompt or reload may have resumed the agent while the file was being read.
+    if (this.agentManager.getAgent(agentId)) {
+      return null;
     }
 
     return {
@@ -4690,33 +4710,27 @@ export class Session {
       direction: AgentTimelineFetchDirection;
       cursor?: AgentTimelineCursor;
       limit: number;
-      allowPersistedOmpFallback: boolean;
+      allowPersistedOmpHistory: boolean;
     },
   ): Promise<AgentTimelineLoad> {
-    try {
-      const snapshot = await ensureAgentLoaded(agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      return {
-        agent: await this.buildAgentPayload(snapshot),
-        provider: snapshot.provider,
-        controlTimeline: this.agentManager.fetchTimeline(agentId, options),
-      };
-    } catch (error) {
-      const persistedHistory = options.allowPersistedOmpFallback
-        ? await this.readPersistedOmpHistory(agentId, options)
-        : null;
-      if (!persistedHistory) {
-        throw error;
+    if (options.allowPersistedOmpHistory) {
+      await this.agentManager.waitForAgentClose?.(agentId);
+      const persistedHistory = await this.readPersistedOmpHistory(agentId, options);
+      if (persistedHistory) {
+        return persistedHistory;
       }
-      this.sessionLogger.warn(
-        { err: error, agentId },
-        "Provider resume failed; serving persisted OMP history",
-      );
-      return persistedHistory;
     }
+
+    const snapshot = await ensureAgentLoaded(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    });
+    return {
+      agent: await this.buildAgentPayload(snapshot),
+      provider: snapshot.provider,
+      controlTimeline: this.agentManager.fetchTimeline(agentId, options),
+    };
   }
 
   private async resolveDelegationRootWorkspaceId(agentId: string): Promise<string | null> {
@@ -7452,7 +7466,7 @@ export class Session {
         direction,
         ...(cursor ? { cursor } : {}),
         limit: pageLimit,
-        allowPersistedOmpFallback: supportsDegradedHistory,
+        allowPersistedOmpHistory: supportsDegradedHistory,
       });
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
@@ -7556,17 +7570,14 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
-        limit: 1,
+        limit: 0,
+        allowPersistedOmpHistory: true,
       });
-      const index = buildTimelinePromptIndex(timeline.epoch, rows);
+      const rows =
+        loaded.fullTimeline?.rows ?? (await this.agentManager.getTimelineRows(msg.agentId));
+      const index = buildTimelinePromptIndex(loaded.controlTimeline.epoch, rows);
       this.emitForSource(
         {
           type: "agent.timeline.list_prompts.response",
@@ -7613,13 +7624,23 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      const record =
+        msg.type === "agent.background_processes.list.request"
+          ? await this.agentStorage.get(msg.agentId)
+          : null;
+      const persistedProcesses = record
+        ? await this.agentManager.listPersistedBackgroundProcesses(record)
+        : null;
+      if (persistedProcesses === null) {
+        await ensureUnarchivedAgentLoaded(msg.agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
       if (msg.type === "agent.background_processes.list.request") {
-        const processes = await this.agentManager.listBackgroundProcesses(msg.agentId);
+        const processes =
+          persistedProcesses ?? await this.agentManager.listBackgroundProcesses(msg.agentId);
         if (this.terminalManager)
           processes.push(...listAgentTerminalProcesses(this.terminalManager, msg.agentId));
         this.emitForSource(
@@ -7693,21 +7714,53 @@ export class Session {
     }
   }
 
+  private async readPersistedOmpSubagents(
+    parentAgentId: string,
+  ): Promise<ProviderSubagentStore | null> {
+    await this.agentManager.waitForAgentClose?.(parentAgentId);
+    if (this.agentManager.getAgent(parentAgentId)) return null;
+    const record = await this.agentStorage.get(parentAgentId);
+    const nativeHandle = record?.persistence?.nativeHandle;
+    if (
+      !record || record.internal || record.archivedAt || record.provider !== "omp" ||
+      typeof nativeHandle !== "string" || !nativeHandle.trim()
+    ) return null;
+    if ((await inspectOmpSessionHistoryAvailability(nativeHandle)).status !== "available") return null;
+
+    const subagents = new ProviderSubagentStore(
+      `persisted-omp-subagents:${parentAgentId}:${record.updatedAt}`,
+    );
+    for await (const event of streamOmpSubagentHistory({
+      sessionFile: nativeHandle,
+      provider: record.provider,
+    })) {
+      if (event.type === "provider_subagent") {
+        subagents.apply(parentAgentId, event.provider, event.event);
+      }
+    }
+    return this.agentManager.getAgent(parentAgentId) ? null : subagents;
+  }
+
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      const persistedSubagents = await this.readPersistedOmpSubagents(msg.parentAgentId);
+      if (!persistedSubagents) {
+        await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
-          subagents: this.agentManager.listProviderSubagents(msg.parentAgentId),
+          subagents: persistedSubagents
+            ? persistedSubagents.list(msg.parentAgentId)
+            : this.agentManager.listProviderSubagents(msg.parentAgentId),
           error: null,
         },
       });
@@ -7729,24 +7782,28 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
+      const persistedSubagents = await this.readPersistedOmpSubagents(msg.parentAgentId);
+      if (!persistedSubagents) {
+        await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
+      const descriptor = persistedSubagents
+        ? persistedSubagents.get(msg.parentAgentId, msg.subagentId)
+        : this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
-      const timeline = this.agentManager.fetchProviderSubagentTimeline(
-        msg.parentAgentId,
-        msg.subagentId,
-        {
-          direction,
-          cursor: msg.cursor,
-          limit: msg.limit ?? (direction === "after" ? 0 : 200),
-        },
-      );
+      const options = {
+        direction,
+        cursor: msg.cursor,
+        limit: msg.limit ?? (direction === "after" ? 0 : 200),
+      };
+      const timeline = persistedSubagents
+        ? persistedSubagents.fetchTimeline(msg.parentAgentId, msg.subagentId, options)
+        : this.agentManager.fetchProviderSubagentTimeline(msg.parentAgentId, msg.subagentId, options);
       this.emit({
         type: "agent.provider_subagents.timeline.get.response",
         payload: {
@@ -7797,24 +7854,20 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
+        allowPersistedOmpHistory: true,
       });
+      const timeline = loaded.fullTimeline ?? loaded.controlTimeline;
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
           ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
-        agentTitle: agentPayload.title,
-        cwd: snapshot.cwd,
+        agentTitle: loaded.agent.title,
+        cwd: loaded.agent.cwd,
       });
 
       this.emit({

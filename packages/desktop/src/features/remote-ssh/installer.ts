@@ -1,20 +1,46 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
+import { app, net } from "electron";
 import { parseConnectionOfferFromUrl } from "@omp-desktop/protocol/connection-offer";
 import { buildRemoteInstallScript } from "./bootstrap-script.js";
 import {
-  loadRemoteBackendBundle,
+  loadRemoteBackendManifest,
+  selectRemoteBackendBundle,
   type RemoteBackendBundle,
   type RemoteBackendFile,
 } from "./bundle.js";
-import { SshPtySession } from "./pty-session.js";
+import { SshPtySession, type SshPtySessionOptions } from "./pty-session.js";
+import { downloadRemoteSdk } from "./sdk-download.js";
+import { parseRemoteTargetInfo, type RemoteTargetInfo } from "./target.js";
 import type { RemoteSshDeployResult, RemoteSshEvent, RemoteSshStartInput } from "./types.js";
 const INSTALL_TIMEOUT_MS = 15 * 60_000;
 
-interface RemoteTargetInfo {
-  platform: "linux" | "darwin";
-  arch: "x64" | "arm64";
-  home: string;
+export interface RemoteSshSession {
+  writeInput(input: string): void;
+  close(): void;
+  waitForLine(marker: string, timeoutMs?: number): Promise<string>;
+  finishAuthentication(): void;
+  executeCommand(command: string): Promise<string>;
+  writeCommand(command: string): void;
+  uploadFile(remotePath: string, source: Buffer | Readable, expectedHash: string): Promise<void>;
+}
+
+export interface RemoteSshDeploymentOptions {
+  bundleDirectory?: string;
+  cacheDirectory?: string;
+  fetch?: typeof globalThis.fetch;
+  createSession?: (options: SshPtySessionOptions) => RemoteSshSession;
+}
+
+function resolveBundleDirectory(): string {
+  if (process.env.PASEO_REMOTE_BACKEND_DIR?.trim()) {
+    return path.resolve(process.env.PASEO_REMOTE_BACKEND_DIR.trim());
+  }
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "remote-backend")
+    : path.resolve(__dirname, "..", "..", "..", "remote-backend-dist");
 }
 
 function decodeBase64(value: string): string {
@@ -41,29 +67,15 @@ function parseRemotePairingResult(
   return { offerUrl: pairing.url, hostname: decodeBase64(encodedHostname) };
 }
 
-function parseTargetInfo(value: string): RemoteTargetInfo {
-  const [system, machine, encodedHome] = value.split("|");
-  let platform: RemoteTargetInfo["platform"] | null = null;
-  if (system === "Linux") platform = "linux";
-  if (system === "Darwin") platform = "darwin";
-  let arch: RemoteTargetInfo["arch"] | null = null;
-  if (machine === "x86_64") arch = "x64";
-  if (machine === "arm64" || machine === "aarch64") arch = "arm64";
-  if (!platform || !arch || !encodedHome) {
-    throw new Error(
-      `Unsupported SSH host platform: ${system || "unknown"} ${machine || "unknown"}`,
-    );
-  }
-  return { platform, arch, home: decodeBase64(encodedHome) };
-}
 
 export class RemoteSshDeployment {
-  private session: SshPtySession | null = null;
-  private cancelled = false;
+  private session: RemoteSshSession | null = null;
+  private readonly abortController = new AbortController();
 
   constructor(
     private readonly input: RemoteSshStartInput,
     private readonly emit: (event: RemoteSshEvent) => void,
+    private readonly options: RemoteSshDeploymentOptions = {},
   ) {}
 
   writeInput(input: string): void {
@@ -71,7 +83,7 @@ export class RemoteSshDeployment {
   }
 
   cancel(): void {
-    this.cancelled = true;
+    this.abortController.abort(new Error("SSH deployment was cancelled"));
     this.session?.close();
   }
 
@@ -83,15 +95,18 @@ export class RemoteSshDeployment {
     this.emit({ operationId, type: "interactive", enabled: true });
 
     try {
-      const bootstrapCommand = `stty -echo; umask 077; OMP_ROOT="$HOME/.omp-desktop/remote-runtime"; OMP_UPLOAD="$OMP_ROOT/uploads/${token}"; export OMP_ROOT OMP_UPLOAD; printf '\\n__OMP_READY_%s__%s|%s|%s\\n' '${token}' "$(uname -s)" "$(uname -m)" "$(printf '%s' "$HOME" | base64 | tr -d '\\n')"; exec /bin/sh -i`;
-      const bundle = await loadRemoteBackendBundle();
-      this.session = new SshPtySession({
+      this.assertNotCancelled();
+      const bootstrapCommand = `stty -echo; umask 077; OMP_ROOT="$HOME/.omp-desktop/remote-runtime"; OMP_UPLOAD="$OMP_ROOT/uploads/${token}"; export OMP_ROOT OMP_UPLOAD; printf '\\n__OMP_READY_%s__%s|%s|%s|%s\\n' '${token}' "$(uname -s)" "$(uname -m)" "$(printf '%s' "$HOME" | base64 | tr -d '\\n')" "$(if [ "$(uname -s)" = Linux ]; then getconf GNU_LIBC_VERSION 2>/dev/null || printf unknown; else printf none; fi)"; exec /bin/sh -i`;
+      const manifest = await loadRemoteBackendManifest(this.options.bundleDirectory ?? resolveBundleDirectory());
+      this.assertNotCancelled();
+      const createSession = this.options.createSession ?? ((options) => new SshPtySession(options));
+      this.session = createSession({
         target: this.input.target,
         remoteCommand: bootstrapCommand,
         onTerminal: (data) => this.emit({ operationId, type: "terminal", data }),
       });
       const ready = this.session.waitForLine(readyMarker, 120_000);
-      const target = parseTargetInfo(await ready);
+      const target = parseRemoteTargetInfo(await ready);
       this.session.finishAuthentication();
       this.emit({ operationId, type: "interactive", enabled: false });
       this.emit({
@@ -100,29 +115,37 @@ export class RemoteSshDeployment {
         phase: "inspecting",
         message: `Remote host: ${target.platform}-${target.arch}`,
       });
-      const targetKey = `${target.platform}-${target.arch}`;
-      if (!bundle.supportedTargets.includes(targetKey)) {
-        throw new Error(`The packaged backend does not support ${targetKey}`);
-      }
+      const bundle = await selectRemoteBackendBundle(manifest, `${target.platform}-${target.arch}`);
+      this.assertNotCancelled();
 
       const reused = await this.tryReuseDeployment(bundle, target);
       if (reused) return reused;
 
-      const installScriptFile: RemoteBackendFile = {
-        relativePath: "install.sh",
-        contents: Buffer.from(
-          buildRemoteInstallScript({
-            token,
-            backendVersion: bundle.backendVersion,
-            nodeVersion: bundle.nodeVersion,
-            bundleHash: bundle.bundleHash,
-            relayAddress: this.input.relayAddress,
-          }),
-          "utf8",
-        ),
-      };
-      const uploadFiles = [...bundle.files, installScriptFile];
-      const totalBytes = uploadFiles.reduce((total, file) => total + file.contents.byteLength, 0);
+      this.emit({ operationId, type: "phase", phase: "downloading", message: `Downloading the pinned remote SDK for ${bundle.target}` });
+      const sdkPath = await downloadRemoteSdk(bundle.sdk, {
+        cacheDirectory: this.options.cacheDirectory ?? path.join(app.getPath("userData"), "remote-sdk-cache"),
+        fetch: this.options.fetch ?? net.fetch.bind(net),
+        signal: this.abortController.signal,
+        onProgress: (progress) => this.emit({ operationId, type: "phase", phase: "downloading", message: `Downloading the pinned remote SDK (${progress}%)`, progress }),
+      });
+      this.assertNotCancelled();
+
+      const installScript = Buffer.from(
+        buildRemoteInstallScript({
+          token,
+          backendVersion: bundle.backendVersion,
+          nodeVersion: bundle.nodeVersion,
+          bundleHash: bundle.bundleHash,
+          relayAddress: this.input.relayAddress,
+        }),
+        "utf8",
+      );
+      const uploadFiles: RemoteBackendFile[] = [
+        ...bundle.files,
+        { relativePath: "packages/omp-sdk.tgz", source: sdkPath, size: bundle.sdk.size, sha256: bundle.sdk.sha256 },
+        { relativePath: "install.sh", source: installScript, size: installScript.byteLength, sha256: createHash("sha256").update(installScript).digest("hex") },
+      ];
+      const totalBytes = uploadFiles.reduce((total, file) => total + file.size, 0);
       let completedBytes = 0;
       let lastProgress = -5;
       const reportProgress = (chunkBytes: number): void => {
@@ -185,9 +208,11 @@ export class RemoteSshDeployment {
       this.emit({ operationId, type: "phase", phase: "complete", message: "Remote daemon ready" });
       return this.buildResult(bundle, target, paired);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = this.abortController.signal.aborted
+        ? "SSH deployment was cancelled"
+        : error instanceof Error ? error.message : String(error);
       this.emit({ operationId, type: "failed", message });
-      throw error;
+      throw this.abortController.signal.aborted ? new Error(message, { cause: error }) : error;
     } finally {
       this.session?.close();
       this.session = null;
@@ -250,7 +275,7 @@ export class RemoteSshDeployment {
   }
 
   private assertNotCancelled(): void {
-    if (this.cancelled) throw new Error("SSH deployment was cancelled");
+    this.abortController.signal.throwIfAborted();
   }
 
   private async uploadFile(
@@ -264,9 +289,11 @@ export class RemoteSshDeployment {
     if (relativePath.startsWith("/") || relativePath.split("/").includes("..")) {
       throw new Error(`Unsafe deployment path: ${relativePath}`);
     }
-    const expectedHash = createHash("sha256").update(file.contents).digest("hex");
     const remotePath = path.posix.join(uploadRoot, relativePath);
-    await session.uploadFile(remotePath, file.contents, expectedHash);
-    onProgress(file.contents.length);
+    const source = typeof file.source === "string"
+      ? createReadStream(file.source, { signal: this.abortController.signal })
+      : file.source;
+    await session.uploadFile(remotePath, source, file.sha256);
+    onProgress(file.size);
   }
 }

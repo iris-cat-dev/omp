@@ -10,6 +10,11 @@ import type { OmpAgentMessage } from "./rpc-types.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
 import { streamOmpHistory } from "./history.js";
+import {
+  buildOmpPlanTurnPrompt,
+  buildOmpStandardTurnPrompt,
+  buildOmpToolIntentPrompt,
+} from "./workflow-prompt.js";
 
 async function collectHistory(
   messages: OmpAgentMessage[],
@@ -59,6 +64,79 @@ describe("OMP history mapper", () => {
       { type: "user_message", text: "draft the migration", messageId: "entry-plan" },
       { type: "user_message", text: "implement the migration", messageId: "entry-standard" },
     ]);
+  });
+
+  test("strips only exact Desktop intent directives through workflow wrappers", async () => {
+    const originalDirective =
+      "<system-directive>\nThe user's own instruction.\n</system-directive>\n\nkeep this";
+    const prompts = [
+      buildOmpToolIntentPrompt(buildOmpPlanTurnPrompt("draft the migration"), "zh-CN"),
+      buildOmpStandardTurnPrompt(buildOmpToolIntentPrompt("implement the migration", "en")),
+      buildOmpToolIntentPrompt("/plan inspect only", "zh-CN"),
+      buildOmpToolIntentPrompt("/goal ship safely", "en"),
+      buildOmpToolIntentPrompt(originalDirective, "zh-CN"),
+    ];
+    const events = await collectHistory(prompts.map((content) => ({ role: "user", content })));
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "user_message", text: "draft the migration" },
+      { type: "user_message", text: "implement the migration" },
+      { type: "user_message", text: "/plan inspect only" },
+      { type: "user_message", text: "/goal ship safely" },
+      { type: "user_message", text: originalDirective },
+    ]);
+  });
+
+  test("retains native and fallback intent on completed history without inventing an active turn", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "read",
+            name: "read",
+            intent: "  阅读原始文件。 ",
+            arguments: { i: "ignored fallback", path: "source.ts" },
+          },
+          {
+            type: "toolCall",
+            id: "device",
+            name: "write",
+            arguments: {
+              i: "Opening browser...",
+              path: "xd://browser",
+              content: '{"url":"https://example.com"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "device",
+        toolName: "write",
+        content: [{ type: "text", text: "opened" }],
+        details: {
+          xdev: { mode: "execute", tool: "browser", args: { url: "https://example.com" } },
+        },
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read",
+        toolName: "read",
+        content: [{ type: "text", text: "source" }],
+      },
+    ]);
+    const tools = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+    );
+    expect(tools.map((item) => [item.callId, item.status, item.metadata])).toEqual([
+      ["read", "running", { intent: "阅读原始文件" }],
+      ["device", "running", { intent: "Opening browser" }],
+      ["device", "completed", { intent: "Opening browser" }],
+      ["read", "completed", { intent: "阅读原始文件" }],
+    ]);
+    expect(tools[0]?.detail).toMatchObject({ type: "read", filePath: "source.ts" });
+    expect(tools[2]?.name).toBe("browser");
   });
 
   test("coalesces replayed subagent poll calls by target set", async () => {
@@ -391,11 +469,13 @@ describe("OMP history mapper", () => {
               text: "Locate submit path",
               status: "completed",
               completed: true,
+              phase: { name: "Implementation", index: 0 },
             },
             {
               text: "Add directory check",
               status: "in_progress",
               completed: false,
+              phase: { name: "Implementation", index: 0 },
             },
           ],
         },
@@ -934,7 +1014,8 @@ describe("OMP history mapper", () => {
       const echoFile = join(parentStem, `${echoId}.jsonl`);
       const failedFile = join(parentStem, "FailedChild.jsonl");
       const abortedFile = join(parentStem, "AbortedChild.jsonl");
-      const nestedFile = join(parentStem, echoId, "NestedChild.jsonl");
+      const nestedId = "EchoChild.NestedChild";
+      const nestedFile = join(parentStem, echoId, `${nestedId}.jsonl`);
       mkdirSync(join(parentStem, echoId), { recursive: true });
 
       const writeEntries = (file: string, entries: object[]): void => {
@@ -1024,7 +1105,7 @@ describe("OMP history mapper", () => {
             toolCallId: "nested-task",
             toolName: "task",
             content: [{ type: "text", text: "nested done" }],
-            details: { results: [{ id: "NestedChild", exitCode: 0 }] },
+            details: { results: [{ id: nestedId, exitCode: 0 }] },
           },
         },
       ]);
@@ -1127,7 +1208,7 @@ describe("OMP history mapper", () => {
       expect(subagentEvents).toContainEqual(
         expect.objectContaining({
           type: "timeline",
-          id: "NestedChild",
+          id: nestedId,
           timestamp: "2026-07-07T03:00:01Z",
         }),
       );
@@ -1137,7 +1218,6 @@ describe("OMP history mapper", () => {
             id: echoId,
             title: "task",
             model: "openai-codex/gpt-5.5",
-            status: "running",
             timestamp: "2026-07-07T02:00:00Z",
           }),
           expect.objectContaining({
@@ -1155,7 +1235,7 @@ describe("OMP history mapper", () => {
           }),
           expect.objectContaining({ id: "MissingChild", status: "failed", model: null }),
           expect.objectContaining({
-            id: "NestedChild",
+            id: nestedId,
             status: "completed",
             model: "anthropic/claude-sonnet-5-20260701",
           }),

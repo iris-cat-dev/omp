@@ -69,6 +69,7 @@ export function createStoredZhipuQuotaProviders(
         providers.push(
           new ZhipuQuotaProvider({
             ...options,
+            fetch: options.fetchForProvider?.("zhipu-coding-plan") ?? options.fetch,
             providerId: `zhipu-coding-plan:${credential.id}`,
             displayName: `Zhipu · Key #${credential.id}`,
             baseUrl: "https://open.bigmodel.cn",

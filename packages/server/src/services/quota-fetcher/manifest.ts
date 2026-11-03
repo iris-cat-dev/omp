@@ -17,7 +17,10 @@ export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
   return [
-    ...PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options)),
+    ...PROVIDER_USAGE_FETCHERS.map((entry) => entry.create({
+      ...options,
+      fetch: options.fetchForProvider?.(entry.providerId) ?? options.fetch,
+    })),
     ...createStoredZhipuQuotaProviders(options),
   ];
 }

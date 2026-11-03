@@ -74,6 +74,7 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     toolPolicy: record.config?.toolPolicy ?? undefined,
     systemPrompt: record.config?.systemPrompt ?? undefined,
     mcpServers: record.config?.mcpServers ?? undefined,
+    proxyPolicy: record.config?.proxyPolicy,
   });
 }
 
@@ -96,6 +97,7 @@ export function buildSessionConfig(
     toolPolicy: overrides.toolPolicy,
     systemPrompt: overrides.systemPrompt,
     mcpServers: overrides.mcpServers,
+    proxyPolicy: overrides.proxyPolicy,
   });
 }
 

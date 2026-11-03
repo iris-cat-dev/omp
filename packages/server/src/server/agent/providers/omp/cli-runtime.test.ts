@@ -716,17 +716,59 @@ describe("OMP CLI runtime", () => {
     }
   });
 
-  test("does not arm the short control-plane timeout for LLM-backed compaction", async () => {
+  test("keeps compaction and its waiting prompt pending beyond the control-plane deadline", async () => {
     const child = createOmpChild();
-    replyToCommands(child, () => ({}));
+    const commands: Record<string, unknown>[] = [];
+    child.stdin.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().trim().split("\n")) commands.push(JSON.parse(line));
+    });
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
-
+    const settled: string[] = [];
+    vi.useFakeTimers();
     try {
-      await expect(session.compact()).resolves.toBeUndefined();
-      expect(timeoutSpy).not.toHaveBeenCalled();
+      const compaction = session.compact();
+      const prompt = session.prompt("continue after compaction");
+      void compaction.then(
+        () => settled.push("compact"),
+        () => settled.push("compact failed"),
+      );
+      void prompt.then(
+        () => settled.push("prompt"),
+        () => settled.push("prompt failed"),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toEqual([]);
+      expect(commands.map((command) => command.type)).toEqual(["compact", "prompt"]);
+      for (const command of commands) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "response",
+            id: command.id,
+            command: command.type,
+            success: true,
+            data: command.type === "prompt" ? { agentInvoked: true } : {},
+          })}\n`,
+        );
+      }
+      await expect(compaction).resolves.toBeUndefined();
+      await expect(prompt).resolves.toEqual({ requestId: commands[1]!.id, agentInvoked: true });
     } finally {
-      timeoutSpy.mockRestore();
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("rejects an unacknowledged prompt when its runtime exits", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    try {
+      const prompt = session.prompt("waiting for admission");
+      const failure = expect(prompt).rejects.toThrow("process exited");
+      await waitForImmediate();
+      child.emit("exit", 1, null);
+      await failure;
+    } finally {
+      await session.close();
     }
   });
 

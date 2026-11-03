@@ -59,6 +59,12 @@ node packages/cli/bin/omp-desktop daemon pair --json
 
 In the Web app, open **Settings → Connections → Relay server address**. It defaults to `wss://relay.paseo.sh:443`; replace it with `wss://relay.example.com` for a self-hosted deployment. Leave the setting empty only when the browser should use the relay address advertised by each pairing link. An already connected host can generate another link from **Settings → Host → Pair device**.
 
+In Desktop, **Settings → Connections → Relay server address** reads the local daemon's configuration, regardless of the selected Host. Saving a non-empty address enables Relay and persists both the outbound and advertised public endpoint/TLS settings to that daemon home's `config.json` (`~/.omp-desktop/config.json` by default). The running daemon applies the change immediately; no restart is needed. Saving is unavailable while the local daemon is loading or disconnected.
+
+The Web/mobile setting changes only that client's pairing address; it does not reconfigure the daemon. Configure the daemon on the OMP machine as shown above, or use Desktop's setting. After switching relays, pair with a newly generated offer and remove the old relay connection from that Host's settings; already saved Host connections retain their original addresses.
+
+Desktop may generate an offer URL using its loopback Web shell. Do not open that `127.0.0.1` URL on a phone: paste the offer into the hosted Web client's pairing dialog, or use the same `#offer=...` fragment with your hosted Web origin.
+
 **Treat pairing links like passwords: anyone holding one can access that daemon.** Legacy placeholder identities require re-pairing after upgrading.
 
 The daemon initiates the outbound connection; **do not expose port `6770` to the Internet**. Keep `PASEO_APP_BASE_URL` / `app.baseUrl` pointed at your own Web deployment so generated links open the right client.

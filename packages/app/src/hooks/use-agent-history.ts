@@ -296,6 +296,8 @@ export function useAgentHistory(options: {
   enabled?: boolean;
   search?: string;
 }): AgentHistoryResult {
+  "use no memo";
+  // Runtime versions invalidate mutable-store reads; compiler caching must not drop them.
   const { t } = useTranslation();
   const daemons = useHosts();
   const runtime = getHostRuntimeStore();

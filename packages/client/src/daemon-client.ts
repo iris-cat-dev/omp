@@ -1,3 +1,4 @@
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type {
   VisualFeedbackRequest,
   VisualFeedbackResponse,
@@ -103,6 +104,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   OmpProviderManagementGetResponseMessage,
+  OmpCodexResetSettingsGetResponseMessage,
+  OmpCodexResetSettingsUpdateResponseMessage,
   OmpCodexResetCreditConsumeResult,
   OmpClaudeLimitResetConsumeResult,
   OmpProviderManagementSaveResponseMessage,
@@ -525,6 +528,8 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type OmpProviderManagementGetPayload = OmpProviderManagementGetResponseMessage["payload"];
+type OmpCodexResetSettingsGetPayload = OmpCodexResetSettingsGetResponseMessage["payload"];
+type OmpCodexResetSettingsUpdatePayload = OmpCodexResetSettingsUpdateResponseMessage["payload"];
 type OmpProviderManagementSavePayload = OmpProviderManagementSaveResponseMessage["payload"];
 type OmpSubagentSettingsGetPayload = OmpSubagentSettingsGetResponseMessage["payload"];
 type OmpSubagentSettingsUpdatePayload = OmpSubagentSettingsUpdateResponseMessage["payload"];
@@ -3420,6 +3425,21 @@ export class DaemonClient {
     }
   }
 
+  async setAgentProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_proxy_policy_request", agentId, policy, requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => msg.type === "set_agent_proxy_policy_response" &&
+        msg.payload.requestId === requestId ? msg.payload : null,
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "setAgentProxyPolicy rejected");
+  }
+
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
@@ -5019,6 +5039,29 @@ export class DaemonClient {
       message: { type: "omp.provider.management.get.request" },
       responseType: "omp.provider.management.get.response",
       timeout: 180000,
+    });
+  }
+
+  async getOmpCodexResetSettings(options?: {
+    requestId?: string;
+  }): Promise<OmpCodexResetSettingsGetPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "omp.codex.reset_settings.get.request" },
+      responseType: "omp.codex.reset_settings.get.response",
+      timeout: 30_000,
+    });
+  }
+
+  async updateOmpCodexResetSettings(
+    enabled: boolean,
+    options?: { requestId?: string },
+  ): Promise<OmpCodexResetSettingsUpdatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "omp.codex.reset_settings.update.request", enabled },
+      responseType: "omp.codex.reset_settings.update.response",
+      timeout: 30_000,
     });
   }
 

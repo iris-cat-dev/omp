@@ -14,7 +14,6 @@ import {
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
-import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -38,7 +37,6 @@ import {
   type FormState,
   type ProviderModelsByProvider,
 } from "@/provider-selection/resolve-agent-form";
-import type { MaterializedAgentProfile } from "@/agent-profiles";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
@@ -82,7 +80,6 @@ export interface UseAgentFormStateResult {
   refreshProviderModels: (provider?: AgentProvider) => void;
   refetchProviderModelsIfStale: () => void;
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
-  applyProfileFromUser: (profile: MaterializedAgentProfile) => void;
   clearProviderSelectionFromUser: () => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
@@ -467,60 +464,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     dispatch({ type: "CLEAR_PROVIDER_SELECTION_FROM_USER" });
   }, []);
 
-  const applyProfileFromUser = useCallback(
-    (profile: MaterializedAgentProfile) => {
-      const provider = profile.provider as AgentProvider;
-      if (!selectableProviderDefinitionMap.has(provider)) {
-        return;
-      }
-
-      const previousProvider = formState.provider;
-      const providerDef = selectableProviderDefinitionMap.get(provider);
-      const providerModels = allProviderModels.get(provider) ?? null;
-      const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
-      const action = {
-        type: "APPLY_PROFILE_FROM_USER" as const,
-        provider,
-        modelId: profile.modelId,
-        modeId: profile.modeId,
-        thinkingOptionId: profile.thinkingOptionId,
-        providerDef,
-        providerModels,
-        providerPrefs,
-      };
-      const nextState = resolveAgentForm({ form: formState, userModified, resolution }, action);
-      const previousProviderModeIds = previousProvider
-        ? (providerDefinitionMap.get(previousProvider)?.modes.map((mode) => mode.id) ?? [])
-        : [];
-
-      dispatch(action);
-      void updateCurrentPreferences((current) => {
-        const { model, modeId, thinkingOptionId } = nextState.form;
-        return applyAgentProfilePreferences({
-          preferences: current,
-          previousProvider,
-          previousProviderModeIds,
-          provider,
-          modelId: model,
-          modeId,
-          thinkingOptionId,
-          featureValues: profile.featureValues,
-        });
-      }).catch((error) => {
-        console.warn("[useAgentFormState] persist profile preference failed", error);
-      });
-    },
-    [
-      allProviderModels,
-      formState,
-      providerDefinitionMap,
-      resolution,
-      selectableProviderDefinitionMap,
-      updateCurrentPreferences,
-      userModified,
-    ],
-  );
-
   const setModeFromUser = useCallback(
     (modeId: string) => {
       dispatch({ type: "SET_MODE_FROM_USER", modeId });
@@ -670,7 +613,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       refreshProviderModels,
       refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
-      applyProfileFromUser,
       clearProviderSelectionFromUser,
       workingDirIsEmpty,
       persistFormPreferences,
@@ -705,7 +647,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       refreshProviderModels,
       refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
-      applyProfileFromUser,
       clearProviderSelectionFromUser,
       workingDirIsEmpty,
       persistFormPreferences,

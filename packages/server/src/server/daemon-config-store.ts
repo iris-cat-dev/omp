@@ -6,9 +6,11 @@ import {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import {
   OmpProviderParamsSchema,
+  assertOmpBuiltinToolNames,
   validateOmpBuiltinToolConfigSync,
 } from "./agent/providers/omp/provider-config.js";
 import { ensureManagedOmpOnPath } from "./agent/providers/omp/installer.js";
+import { resolveOmpBackend } from "./agent/providers/omp/sdk-installation.js";
 import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
@@ -43,7 +45,6 @@ interface SupportedMutableConfigPatch {
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
-  agentProfiles?: MutableDaemonConfig["agentProfiles"];
   ompProviderAccountNotes?: MutableDaemonConfig["ompProviderAccountNotes"];
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
@@ -319,7 +320,6 @@ const RELOADABLE_PATHS = [
   "daemon.enableTerminalAgentHooks",
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
-  "daemon.agentProfiles",
   "daemon.ompProviderAccountNotes",
   "app.baseUrl",
   "agents.providers",
@@ -349,7 +349,6 @@ const PERSISTED_TO_MUTABLE_PATH: Record<string, string> = {
   "daemon.enableTerminalAgentHooks": "enableTerminalAgentHooks",
   "daemon.appendSystemPrompt": "appendSystemPrompt",
   "daemon.terminalProfiles": "terminalProfiles",
-  "daemon.agentProfiles": "agentProfiles",
   "daemon.ompProviderAccountNotes": "ompProviderAccountNotes",
   "app.baseUrl": "app.baseUrl",
   "agents.providers": "providers",
@@ -455,7 +454,6 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       ? { appendSystemPrompt: patch.appendSystemPrompt }
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
-    ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.ompProviderAccountNotes !== undefined
       ? { ompProviderAccountNotes: patch.ompProviderAccountNotes }
       : {}),
@@ -609,6 +607,12 @@ export class DaemonConfigStore {
     const { removeProviders = [], imageGeneration, ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    // Policies are complete values: deep-merging routes would retain removed overrides.
+    for (const [providerId, providerPatch] of Object.entries(parsedPatch.providers ?? {})) {
+      if (providerPatch.proxyPolicy !== undefined) {
+        merged.providers[providerId]!.proxyPolicy = structuredClone(providerPatch.proxyPolicy);
+      }
+    }
     const relayAddressChanged =
       parsedPatch.relay !== undefined &&
       Object.keys(parsedPatch.relay).some((field) => field !== "enabled");
@@ -642,13 +646,19 @@ export class DaemonConfigStore {
         next.providers.omp?.params?.disabledBuiltInTools,
       );
       if (disabled) {
-        ensureManagedOmpOnPath(process.platform, this.env);
         const provider = ProviderOverrideSchema.strip().parse(next.providers.omp);
-        validateOmpBuiltinToolConfigSync(
-          disabled,
-          provider.command ?? [this.env.OMP_COMMAND?.trim() || "omp"],
-          { ...this.env, ...provider.env },
-        );
+        if (resolveOmpBackend(provider, this.env) === "sdk") {
+          // The SDK validates its installed registry before starting a session.
+          // Saving a policy must not inspect or install an unrelated CLI binary.
+          assertOmpBuiltinToolNames(disabled);
+        } else {
+          ensureManagedOmpOnPath(process.platform, this.env);
+          validateOmpBuiltinToolConfigSync(
+            disabled,
+            provider.command ?? [this.env.OMP_COMMAND?.trim() || "omp"],
+            { ...this.env, ...provider.env },
+          );
+        }
       }
     }
 
@@ -1034,7 +1044,6 @@ function mergeMutableDaemonPatch(
   }
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
-  if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
   if (patch.ompProviderAccountNotes !== undefined) {
     next.ompProviderAccountNotes = patch.ompProviderAccountNotes;
   }

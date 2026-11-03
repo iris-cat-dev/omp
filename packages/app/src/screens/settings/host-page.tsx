@@ -2,7 +2,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpToLine,
-  Download,
   Globe,
   Monitor,
   Pencil,
@@ -16,13 +15,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import type { OmpInstallationStatus, TerminalProfile } from "@omp-desktop/protocol/messages";
-import { resolveOmpProxyUrl } from "@omp-desktop/protocol/provider-config";
+import type { TerminalProfile } from "@omp-desktop/protocol/messages";
+import { ProxyPolicyEditor } from "@/components/proxy-policy-editor";
 import {
   getTerminalProfileIcon,
   DEFAULT_TERMINAL_PROFILES,
 } from "@omp-desktop/protocol/terminal-profiles";
-import { AgentProfilesSection } from "@/agent-profiles";
 import { OmpSubagentsSection } from "@/omp-subagents";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { RemoteSshHostModal } from "@/components/remote-ssh-host-modal";
@@ -31,7 +29,6 @@ import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
-import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
@@ -232,342 +229,6 @@ function HostConnectionError({ serverId }: { serverId: string }) {
   return <Text style={styles.errorText}>{connectionError}</Text>;
 }
 
-type OmpInstallationAction = "install" | "check" | "update";
-type OmpInstallStrategy = "immediate" | "stop-agents" | "defer";
-
-function resolveOmpInstallationStatusText(
-  t: TFunction,
-  status: OmpInstallationStatus | null,
-  loading: boolean,
-  checking: boolean,
-): string {
-  if (loading) return t("settings.providers.omp.install.detecting");
-  if (checking) return t("settings.providers.omp.install.checking");
-  if (!status) return t("settings.providers.omp.install.notInstalled");
-
-  switch (status.updatePhase) {
-    case "downloading":
-      return t("settings.providers.omp.install.downloading", {
-        progress: status.updateProgress ?? 0,
-      });
-    case "waiting-for-agents":
-      return t("settings.providers.omp.install.waitingForAgents");
-    case "pending-restart":
-      return t("settings.providers.omp.install.pendingRestart");
-    case "verifying":
-      return t("settings.providers.omp.install.verifying");
-    case "installing":
-      return t("settings.providers.omp.install.applying");
-    case "complete":
-      return t("settings.providers.omp.install.updateComplete");
-    case "canceled":
-      return t("settings.providers.omp.install.updateCanceled");
-  }
-
-  if (!status.installed) return t("settings.providers.omp.install.notInstalled");
-  let statusText = status.version ?? t("settings.providers.omp.install.installed");
-  if (status.updateAvailable === true) {
-    statusText += status.latestVersion
-      ? ` · ${t("settings.providers.omp.install.versionAvailable", {
-          version: status.latestVersion,
-        })}`
-      : ` · ${t("settings.providers.omp.install.updateAvailable")}`;
-  } else if (status.updateAvailable === false) {
-    statusText += ` · ${t("settings.providers.omp.install.upToDate")}`;
-  }
-  return statusText;
-}
-
-function resolveOmpRuntimeSourceText(t: TFunction, status: OmpInstallationStatus): string {
-  switch (status.source) {
-    case "bundled":
-      return t("settings.providers.omp.install.sourceBundled");
-    case "managed":
-      return t("settings.providers.omp.install.sourceManaged");
-    case "configured":
-      return t("settings.providers.omp.install.sourceConfigured");
-    case "path":
-      return t("settings.providers.omp.install.sourcePath");
-    default:
-      return t("settings.providers.omp.install.sourceUnknown");
-  }
-}
-
-function resolveOmpInstallationAction(
-  t: TFunction,
-  status: OmpInstallationStatus | null,
-  checking: boolean,
-  installing: boolean,
-) {
-  let action: OmpInstallationAction = "install";
-  if (status?.installed) {
-    action = status.updateAvailable === true ? "update" : "check";
-  }
-  let actionLabel = t("settings.providers.omp.install.install");
-  if (action === "check") actionLabel = t("settings.providers.omp.install.check");
-  if (action === "update") actionLabel = t("settings.providers.omp.install.update");
-  if (checking) actionLabel = t("settings.providers.omp.install.checking");
-  if (installing) actionLabel = t("settings.providers.omp.install.installing");
-  return { action, actionLabel };
-}
-
-function resolveOmpInstallationPresentation(
-  t: TFunction,
-  status: OmpInstallationStatus | null,
-  loading: boolean,
-  checking: boolean,
-  installing: boolean,
-) {
-  const statusText = resolveOmpInstallationStatusText(t, status, loading, checking);
-  const { action, actionLabel } = resolveOmpInstallationAction(t, status, checking, installing);
-  return {
-    action,
-    statusText,
-    sourceText: status ? resolveOmpRuntimeSourceText(t, status) : null,
-    detailText: status
-      ? `${status.platform}/${status.arch} · ${status.installPath}`
-      : t("settings.providers.omp.install.detectingPath"),
-    actionLabel,
-  };
-}
-
-function resolveOmpUpdateActionState(status: OmpInstallationStatus | null, installing: boolean) {
-  return {
-    showBusyUpdateActions:
-      !installing &&
-      status?.platform === "win32" &&
-      status.updateAvailable === true &&
-      (status.activeAgentCount ?? 0) > 0,
-    showCancelDownload: installing && status?.updatePhase === "downloading",
-    updateIsPending: status?.pendingUpdate === true && !installing,
-  };
-}
-
-function OmpInstallationActions({
-  status,
-  loading,
-  checking,
-  installing,
-  canceling,
-  install,
-  cancelDownload,
-  onPrimaryAction,
-}: {
-  status: OmpInstallationStatus | null;
-  loading: boolean;
-  checking: boolean;
-  installing: boolean;
-  canceling: boolean;
-  install: (strategy?: OmpInstallStrategy) => Promise<void>;
-  cancelDownload: () => Promise<void>;
-  onPrimaryAction: () => void;
-}) {
-  const { t } = useTranslation();
-  const { action, actionLabel } = resolveOmpInstallationAction(t, status, checking, installing);
-  let actionIcon: typeof Download | undefined = action === "check" ? RotateCw : Download;
-  if (installing || checking) actionIcon = undefined;
-  const { showBusyUpdateActions, showCancelDownload, updateIsPending } =
-    resolveOmpUpdateActionState(status, installing);
-  const handleStopAgents = useCallback(() => void install("stop-agents"), [install]);
-  const handleDefer = useCallback(() => void install("defer"), [install]);
-  const handleCancelDownload = useCallback(() => void cancelDownload(), [cancelDownload]);
-
-  if (showBusyUpdateActions) {
-    return (
-      <>
-        <Button
-          variant="secondary"
-          onPress={handleStopAgents}
-          testID="host-page-omp-stop-agents-update-button"
-        >
-          {t("settings.providers.omp.install.stopAgentsAndUpdate")}
-        </Button>
-        <Button variant="outline" onPress={handleDefer} testID="host-page-omp-defer-update-button">
-          {t("settings.providers.omp.install.updateAfterRestart")}
-        </Button>
-      </>
-    );
-  }
-  if (showCancelDownload) {
-    return (
-      <Button
-        variant="outline"
-        loading={canceling}
-        onPress={handleCancelDownload}
-        testID="host-page-omp-cancel-download-button"
-      >
-        {t("settings.providers.omp.install.cancelDownload")}
-      </Button>
-    );
-  }
-  if (updateIsPending) return null;
-  return (
-    <Button
-      variant={status?.installed ? "secondary" : "default"}
-      leftIcon={actionIcon}
-      onPress={onPrimaryAction}
-      disabled={loading || checking || installing || status?.supported === false}
-      testID="host-page-omp-install-button"
-    >
-      {actionLabel}
-    </Button>
-  );
-}
-
-function OmpInstallationCard({ serverId }: { serverId: string }) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const client = useHostRuntimeClient(serverId);
-  const supported = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.ompInstall === true,
-  );
-  const [status, setStatus] = useState<OmpInstallationStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [canceling, setCanceling] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const OmpIcon = getProviderIcon("omp");
-
-  const load = useCallback(async () => {
-    if (!client || !supported) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setStatus(await client.getOmpInstallationStatus());
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, supported]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (!client || !installing) return;
-    let disposed = false;
-    let polling = false;
-    const poll = async () => {
-      if (disposed || polling) return;
-      polling = true;
-      try {
-        const next = await client.getOmpInstallationStatus();
-        if (disposed) return;
-        setStatus((current) => ({
-          ...current,
-          ...next,
-          latestVersion: next.latestVersion ?? current?.latestVersion,
-          updateAvailable: next.updateAvailable ?? current?.updateAvailable,
-        }));
-      } catch {
-        // The install request owns the actionable error; polling is progress-only.
-      } finally {
-        polling = false;
-      }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 500);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [client, installing]);
-
-  const checkForUpdates = useCallback(async () => {
-    if (!client) return;
-    setChecking(true);
-    setError(null);
-    try {
-      setStatus(await client.getOmpInstallationStatus({ checkForUpdates: true }));
-    } catch (checkError) {
-      setError(checkError instanceof Error ? checkError.message : String(checkError));
-    } finally {
-      setChecking(false);
-    }
-  }, [client]);
-
-  const install = useCallback(
-    async (strategy: OmpInstallStrategy = "immediate") => {
-      if (!client || installing) return;
-      setInstalling(true);
-      setError(null);
-      try {
-        setStatus(await client.installOmp({ strategy }));
-      } catch (installError) {
-        setError(installError instanceof Error ? installError.message : String(installError));
-      } finally {
-        setInstalling(false);
-      }
-    },
-    [client, installing],
-  );
-
-  const cancelDownload = useCallback(async () => {
-    if (!client || canceling) return;
-    setCanceling(true);
-    setError(null);
-    try {
-      setStatus(await client.cancelOmpInstall());
-    } catch (cancelError) {
-      setError(cancelError instanceof Error ? cancelError.message : String(cancelError));
-    } finally {
-      setCanceling(false);
-    }
-  }, [canceling, client]);
-
-  const handleActionPress = useCallback(() => {
-    if (status?.installed && status.updateAvailable !== true) {
-      void checkForUpdates();
-      return;
-    }
-    void install();
-  }, [checkForUpdates, install, status?.installed, status?.updateAvailable]);
-
-  if (!supported) return null;
-  const { statusText, sourceText, detailText } = resolveOmpInstallationPresentation(
-    t,
-    status,
-    loading,
-    checking,
-    installing,
-  );
-
-  return (
-    <View style={settingsStyles.card} testID="host-page-omp-install-card">
-      <View style={settingsStyles.row}>
-        <OmpIcon size={ICON_SIZE.lg} color={theme.colors.foreground} />
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>
-            {t("settings.providers.omp.install.runtimeTitle")}
-          </Text>
-          <Text style={settingsStyles.rowHint}>{statusText}</Text>
-          {sourceText ? <Text style={settingsStyles.rowHint}>{sourceText}</Text> : null}
-          <Text style={styles.ompInstallPath} selectable>
-            {detailText}
-          </Text>
-          {error || status?.message ? (
-            <Text style={styles.errorText}>{error ?? status?.message}</Text>
-          ) : null}
-        </View>
-        <View style={styles.ompInstallActions}>
-          <OmpInstallationActions
-            status={status}
-            loading={loading}
-            checking={checking}
-            installing={installing}
-            canceling={canceling}
-            install={install}
-            cancelDownload={cancelDownload}
-            onPrimaryAction={handleActionPress}
-          />
-        </View>
-      </View>
-    </View>
-  );
-}
-
 export function HostAgentsPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
@@ -581,7 +242,6 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
     <View>
       {isConnected ? (
         <SettingsSection title={t("settings.hostSections.agents")}>
-          <OmpInstallationCard serverId={serverId} />
           <OmpAgentShellCard serverId={serverId} />
           <OmpBuiltinToolsCard serverId={serverId} />
           <PaseoToolsCard serverId={serverId} />
@@ -592,7 +252,6 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
-      <AgentProfilesSection serverId={serverId} />
       <OmpSubagentsSection serverId={serverId} />
     </View>
   );
@@ -1311,120 +970,19 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
 }
 
 function OmpProxyCard({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const ompConfig = config?.providers.omp;
-  const persistedProxy = ompConfig?.env?.PI_PROXY ?? "";
-  const isProxyEnabled = resolveOmpProxyUrl(ompConfig) !== undefined;
-  const [draft, setDraft] = useState(persistedProxy);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(persistedProxy);
-  }, [persistedProxy]);
-
-  const normalizedDraft = draft.trim();
-  const hasChanges = normalizedDraft !== persistedProxy;
-  const handleSave = useCallback(() => {
-    setIsSaving(true);
-    void patchConfig({
-      providers: {
-        omp: {
-          env: {
-            PI_PROXY: normalizedDraft,
-          },
-        },
-      },
-    })
-      .catch((error) => {
-        console.error("[HostPage] Failed to save OMP proxy", error);
-        Alert.alert(
-          t("settings.host.orchestration.proxy.saveError"),
-          error instanceof Error ? error.message : String(error),
-        );
-      })
-      .finally(() => setIsSaving(false));
-  }, [normalizedDraft, patchConfig, t]);
-
-  const handleEnabledChange = useCallback(
-    (enabled: boolean) => {
-      setIsSaving(true);
-      void patchConfig({
-        providers: {
-          omp: {
-            params: {
-              proxyEnabled: enabled,
-            },
-          },
-        },
-      })
-        .catch((error) => {
-          console.error("[HostPage] Failed to toggle OMP proxy", error);
-          Alert.alert(
-            t("settings.host.orchestration.proxy.saveError"),
-            error instanceof Error ? error.message : String(error),
-          );
-        })
-        .finally(() => setIsSaving(false));
-    },
-    [patchConfig, t],
-  );
-
   if (!isConnected) return null;
-
   return (
-    <View style={settingsStyles.card} testID="host-page-omp-proxy-card">
-      <View style={styles.proxyHeader}>
-        <View style={styles.proxyIcon}>
-          <Globe size={theme.iconSize.md} color={theme.colors.accent} />
-        </View>
-        <View style={styles.proxyHeaderContent}>
-          <Text style={styles.proxyTitle}>{t("settings.host.orchestration.proxy.title")}</Text>
-          <Text style={styles.proxyHint}>{t("settings.host.orchestration.proxy.hint")}</Text>
-        </View>
-        <Switch
-          value={isProxyEnabled}
-          onValueChange={handleEnabledChange}
-          disabled={!persistedProxy.trim() || hasChanges || isSaving}
-          accessibilityLabel={t("settings.host.orchestration.proxy.title")}
-          testID="host-page-omp-proxy-switch"
-        />
-      </View>
-      <View style={styles.proxyForm}>
-        <Field label="PI_PROXY" testID="host-page-omp-proxy-field">
-          <View style={styles.proxyControlRow}>
-            <View style={styles.proxyInput}>
-              <FormTextInput
-                initialValue={persistedProxy}
-                resetKey={persistedProxy}
-                onChangeText={setDraft}
-                onSubmitEditing={handleSave}
-                placeholder={t("settings.host.orchestration.proxy.placeholder")}
-                accessibilityLabel={t("settings.host.orchestration.proxy.accessibilityLabel")}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isSaving}
-                testID="host-page-omp-proxy-input"
-              />
-            </View>
-            <Button
-              variant="default"
-              size="md"
-              style={styles.proxySaveButton}
-              onPress={handleSave}
-              disabled={!hasChanges || isSaving}
-              loading={isSaving}
-              testID="host-page-omp-proxy-save"
-            >
-              {isSaving
-                ? t("settings.host.orchestration.proxy.saving")
-                : t("settings.host.orchestration.proxy.save")}
-            </Button>
-          </View>
-        </Field>
-      </View>
+    <View style={settingsStyles.card}>
+      <ProxyPolicyEditor
+        serverId={serverId}
+        policy={config?.providers.omp?.proxyPolicy}
+        onSave={async (policy) => {
+          await patchConfig({ providers: { omp: { proxyPolicy: policy } } });
+        }}
+        testID="host-page-omp-proxy"
+      />
     </View>
   );
 }
@@ -2170,15 +1728,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
-  ompInstallActions: {
-    alignItems: "stretch",
-    gap: theme.spacing[2],
-  },
-  ompInstallPath: {
-    color: theme.colors.foregroundMuted,
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-  },
   connectionLatency: {
     fontSize: theme.fontSize.base,
     marginRight: theme.spacing[2],
@@ -2192,57 +1741,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     marginTop: theme.spacing[4],
-  },
-  proxyHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-  },
-  proxyIcon: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface3,
-  },
-  proxyHeaderContent: {
-    flex: 1,
-    paddingTop: 1,
-  },
-  proxyTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-  },
-  proxyHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: Math.round(theme.fontSize.sm * 1.5),
-    marginTop: theme.spacing[1],
-  },
-  proxyForm: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-  },
-  proxyControlRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  proxyInput: {
-    flex: 1,
-    minWidth: 0,
-  },
-  proxySaveButton: {
-    minWidth: 88,
   },
   appendPromptActions: {
     flexDirection: "row",

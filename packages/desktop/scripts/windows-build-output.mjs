@@ -2,12 +2,14 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export function windowsBuildOutput(version, args) {
-  const withPlugins = args.includes("--with-bundled-plugins");
+  if (args.includes("--with-bundled-plugins")) {
+    throw new Error("--with-bundled-plugins is not supported by SDK-only packaging.");
+  }
   const channel = version.includes("-") ? version.split("-")[1].split(".")[0] : "latest";
   return {
-    releaseDirectory: `packages/desktop/${withPlugins ? "release-plugins" : "release"}`,
+    releaseDirectory: "packages/desktop/release",
     metadataFilename: `${channel}.yml`,
-    legacyInstaller: `OMP-Desktop${withPlugins ? "-Plugins" : ""}-Setup-${version}.exe`,
+    legacyInstaller: `OMP-Desktop-Setup-${version}.exe`,
   };
 }
 

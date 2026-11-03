@@ -5,6 +5,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 ## Contents
 
 - [Completion and failures](#completion-and-failures)
+- [Context compaction](#context-compaction)
 - [Turn usage and speed](#turn-usage-and-speed)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
@@ -19,9 +20,19 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 
 Desktop completes a turn automatically after OMP finishes its model turn and reports that it is neither streaming nor compacting. **Stop** interrupts work; it is not an acknowledgement button. Internal `developer` messages, including project-rule reminders, are accepted in completion events and RPC history but do not appear as user or assistant messages, including after reopening history.
 
+The current turn's **Fork** button stays hidden while the conversation is running and appears in its completed-turn footer after the turn ends. Fork actions on earlier completed turns remain available.
+
+Forking a completed turn from reopened OMP history reads the same persisted timeline as the chat, without resuming the source runtime or changing its timeline epoch. The copied history stops at the selected response; genuinely stale or missing timeline positions remain errors.
+
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.
 
 Provider-request failures after the Agent runtime starts appear as sanitized system errors, including the HTTP status and safe proxy error code when available, never proxy credentials. The existing Agent and provider session remain retryable; a transient network or proxy failure does not require a new conversation.
+
+## Context compaction
+
+`/compact` shows a progress marker and explains that compaction may take a few minutes. New messages submitted during compaction wait for it to finish; they do not need to be resent. Desktop does not apply the short 30-second control-plane deadline to prompt admission, because OMP may still be compacting or preparing that input. Runtime exit and genuine submission errors remain failures.
+
+Native manual-compaction progress updates the marker even before a model turn starts. The completion event or successful RPC result clears the loading state without duplicate markers. The waiting explanation disappears when compaction finishes.
 
 ## Turn usage and speed
 
@@ -43,13 +54,13 @@ The conversation remains active until continuation succeeds or is stopped. **Sto
 
 ### Approval changes during a session
 
-Select **Full access** in a running conversation to automatically approve pending and subsequent OMP tool requests. The daemon sends native approval responses without restarting the conversation or changing immutable launch-time approval flags. Automatic approval does not require an open client. Questions and plan confirmations still need an explicit answer.
+Desktop offers **Always ask** and **Auto approval**. New conversations default to Auto approval (`yolo` in the SDK); an explicitly selected or saved Always ask preference is retained. The former Full access selection keeps its `full` ID and now displays as Auto approval. Retired Write approval preferences and stored conversations migrate to Always ask, without granting execution permission; imported native `write` settings also select Always ask.
 
-For native prompts that also offer **Approve \<tool\> for this session**, automatic
-approval selects the default **Approve** action for that request only. It does not
-grant a persistent per-tool exemption that would bypass approvals after switching back.
+Both modes can be changed in either direction while an OMP turn is running, including sessions launched with Auto approval. Desktop uses OMP's native `set_approval_mode` command; it does not restart the session, interrupt the turn, or synthesize approval responses. Desktop updates its runtime mode only after OMP accepts the update. A failed update leaves the current mode unchanged.
 
-Switching back to the mode used when the current OMP process launched stops automatic approval and restores native behavior. Other approval-mode changes require a new session. A process launched with Full access cannot gain native prompts by switching to **Always ask** or **Write approval**.
+OMP withdraws pending tool approvals and re-evaluates the waiting calls under the new mode. Desktop removes the withdrawn requests: newly allowed calls continue, while calls that still require approval receive a fresh request. Answers to withdrawn requests are rejected. Questions and plan confirmations still need an explicit answer.
+
+Explicit per-tool `prompt` and `deny` policies remain effective with Auto approval. Switching modes does not grant a persistent per-tool approval exemption.
 
 ## Steering and stopping
 
@@ -61,7 +72,7 @@ Autonomous OMP continuations remain steerable after a foreground turn finishes: 
 
 The conversation's **Stop** interrupts its current run and all running managed descendants, including children still active when the parent finishes during the stop request. Detached agents are independent and are not stopped. The subagent list also offers **Stop** on each running child; stopped children remain listed, unlike archived children.
 
-Individual and parent-initiated OMP-native child cancellation requires OMP **18.4.9+** (`cancel_subagent` RPC). Older binaries report that the child could not be stopped and leave it marked running instead of claiming success. Update OMP in Host Settings, or run `npm run download:omp` before [packaging](../packaging.md). The repository's general minimum remains **OMP 18.8.7**, even when native child cancellation is not needed.
+Individual and parent-initiated OMP-native child cancellation uses `cancel_subagent` RPC, included in Desktop's pinned SDK. Standalone CLI hosts require OMP **18.4.9+** for that operation; older binaries report failure and leave the child marked running rather than claiming it stopped. Update packaged SDKs through Desktop updates. The general standalone CLI minimum remains **OMP 18.8.7**.
 
 ## Queued messages
 
@@ -95,6 +106,10 @@ Sidebar rows always use the conversation title and last-activity time (for examp
 
 Only online hosts contribute project and chat rows. Disconnecting hides cached rows but preserves host profiles, project order, and host filters; reconnecting restores them. See [Remote hosts](../remote-hosts.md) for connection management.
 
+Resuming a reopened conversation displays live output and late-arriving approvals without a wheel-scroll refresh. When already at the bottom, changes to live rows or loaded-message presentation keep the latest content visible. Scrolling upward disengages output following and preserves the reading position.
+
+The chat's left outline excludes prompts sent by another agent through **send_agent_prompt**, while keeping them visible in the transcript. Direct user input, top-level tool input, and self-sent prompts remain eligible. Source metadata survives native-history reloads. Older messages without recorded source metadata remain indexed; Desktop does not guess provenance from their text.
+
 In project grouping, pinned chats stay above unpinned chats. Within each section, task-state order is running, needs input, failed, attention, then done; equal-state chats retain saved order and keyboard shortcuts follow displayed order. Drag pinned conversations to set their saved priority, previewed before release. Manual order persists locally across restarts, project switches, and sidebar collapse/expansion. Reordering does not open the chat or reorder unpinned chats, and is disabled when host or label filters hide part of the pinned list.
 
 Hover a sidebar conversation for **Delete** and **Archive** before its three-dot menu, in both project and status groupings. Delete still asks for confirmation. **Fork** remains in the conversation menu and opens a draft with the source history without changing the source. The right-click and three-dot menus also offer **Copy Agent ID**, which copies that conversation's primary Agent ID, not its workspace ID or the currently selected conversation's ID. It prefers an active primary Agent and can resolve an archived conversation from history. Shortcut clicks do not open, drag, or rename the row. See [Conversation names and navigation](workspaces-files-git.md#conversation-names-and-navigation) for rename behavior.
@@ -127,6 +142,16 @@ A new workspace starts without a conversation. `create_workspace` instructs the 
 Older workspaces with multiple active roots restore each root as a tab and focus the one needing attention. Their workspace menu can open or archive each root without global history. Archiving retains history. A shared workspace does not isolate concurrent file edits.
 
 `notifyOnFinish: true` can notify the creator when an independent agent finishes, fails, or needs permission without creating a parent relationship. It does not revive an archived creator. Ordinary child agents retain parent-owned notifications, which cease if the child is detached.
+
+### OMP-native task subagents
+
+Native `task` workers appear in the parent's subagent track as soon as OMP reports them, without waiting for the parent tool result. They are provider children, not independent Desktop conversations. Opening a child shows a read-only transcript with live text, reasoning, tool arguments, and tool output; nested children retain their dotted native IDs.
+
+The child's native progress owns its displayed model selector, including thinking level and fallback changes. Assistant-message metadata is used only until progress reports a model for that run; streaming text cannot toggle the model label between selector and response-model forms. Missing description fields preserve an existing task label rather than replacing it with the full assignment.
+
+An idle child can resume under the same ID. A new native `started` event begins that run; delayed progress or metadata cannot reopen a completed or canceled run. The existing transcript remains available across continuation and reconnection.
+
+Native snapshots and JSONL history restore child transcripts independently of the parent's conversation history. Retained child lists and paged transcripts can also be read while the parent runtime is unloaded. Ordinary reads preserve the timeline epoch; explicit history replacement, such as a session reload or rewind, can replace it and requires a fresh client snapshot.
 
 ## Schedules
 

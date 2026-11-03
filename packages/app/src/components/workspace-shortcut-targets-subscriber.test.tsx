@@ -6,7 +6,11 @@ import { act } from "@testing-library/react";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  type HostRuntimeController,
+  type HostRuntimeSnapshot,
+} from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { seedSessionWorkspaces } from "@/test/seed-session";
@@ -62,11 +66,21 @@ function hostProfile(serverId = "srv"): HostProfile {
 }
 
 function setHostProfiles(hosts: HostProfile[]): void {
-  (
-    getHostRuntimeStore() as unknown as {
-      setHostsAndSync: (hosts: HostProfile[]) => void;
-    }
-  ).setHostsAndSync(hosts);
+  // Tests control the private registry to publish transport state without connecting to a daemon.
+  const runtime = getHostRuntimeStore() as unknown as {
+    setHostsAndSync: (hosts: HostProfile[]) => void;
+    controllers: Map<string, HostRuntimeController>;
+  };
+  runtime.setHostsAndSync(hosts);
+  for (const host of hosts) {
+    const controller = runtime.controllers.get(host.serverId);
+    if (!controller) throw new Error("Test host controller was not initialized");
+    // The runtime updater is private in TypeScript but belongs to this controlled test fixture.
+    const fixtureController = controller as unknown as {
+      updateSnapshot: (patch: Pick<HostRuntimeSnapshot, "connectionStatus">) => void;
+    };
+    fixtureController.updateSnapshot({ connectionStatus: "online" });
+  }
 }
 
 describe("WorkspaceShortcutTargetsSubscriber", () => {

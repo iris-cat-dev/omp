@@ -46,7 +46,7 @@ const toolsByCapability = {
     "send_terminal_keys",
   ],
   scripts: ["list_workspace_scripts", "start_workspace_script", "stop_workspace_script"],
-  providers: ["list_providers", "list_models", "list_profiles", "inspect_provider"],
+  providers: ["list_providers", "list_models", "inspect_provider"],
   optional: ["present_image"],
 } satisfies Record<keyof OmpDesktopToolCapabilities, string[]>;
 

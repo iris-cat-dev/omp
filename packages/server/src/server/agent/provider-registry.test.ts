@@ -15,7 +15,6 @@ describe("OMP provider registry", () => {
       id: "omp",
       label: "Oh My Pi",
       enabled: true,
-      defaultModeId: "ask",
       derivedFromProviderId: null,
     });
     // Import-only providers expose no creation modes.

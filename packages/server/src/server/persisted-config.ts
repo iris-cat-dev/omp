@@ -10,7 +10,6 @@ import {
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 import {
-  AgentProfileSchema,
   AgentSkillSelectionSchema,
   PluginIdSchema,
   OmpProviderAccountNotesSchema,
@@ -227,7 +226,6 @@ export const PersistedConfigSchema = z
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),
         terminalProfiles: z.array(TerminalProfileSchema).optional(),
-        agentProfiles: z.array(AgentProfileSchema).optional(),
         ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
         cors: z
           .object({
@@ -280,7 +278,19 @@ export const PersistedConfigSchema = z
     worktrees: WorktreesConfigSchema.optional(),
     agents: z
       .object({
-        providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
+        providers: z
+          .preprocess(normalizeAgentProviders, ProviderOverridesSchema)
+          .transform((providers) => {
+            // Removed when routing moved from environment variables to proxyPolicy.
+            // Strip only the retired OMP key; runtime params remain strictly validated.
+            for (const [providerId, provider] of Object.entries(providers)) {
+              if (providerId === "omp" || provider.extends === "omp") {
+                delete provider.params?.proxyEnabled;
+              }
+            }
+            return providers;
+          })
+          .optional(),
         catalogRefreshTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
         quickAsk: AgentQuickAskSchema.optional(),
@@ -338,12 +348,19 @@ function getConfigPath(paseoHome: string): string {
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
 }
-function stripRemovedSpeechConfig(parsed: unknown): unknown {
+function stripRemovedConfig(parsed: unknown): unknown {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return parsed;
   }
 
   const root = { ...(parsed as Record<string, unknown>) };
+  const daemon = root.daemon;
+  if (daemon && typeof daemon === "object" && !Array.isArray(daemon) && "agentProfiles" in daemon) {
+    const daemonConfig = { ...(daemon as Record<string, unknown>) };
+    delete daemonConfig.agentProfiles;
+    root.daemon = daemonConfig;
+  }
+
   const providers = root.providers;
   if (providers && typeof providers === "object" && !Array.isArray(providers)) {
     const providerEntries = { ...(providers as Record<string, unknown>) };
@@ -409,7 +426,7 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     });
   }
 
-  const result = PersistedConfigSchema.safeParse(stripRemovedSpeechConfig(parsed));
+  const result = PersistedConfigSchema.safeParse(stripRemovedConfig(parsed));
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)

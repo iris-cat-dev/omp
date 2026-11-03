@@ -28,7 +28,7 @@ export function buildTimelinePromptIndex(
   return {
     epoch,
     prompts: rows.flatMap((row) =>
-      row.item.type === "user_message"
+      row.item.type === "user_message" && !row.item.sourceAgentId
         ? [
             {
               seq: row.seq,

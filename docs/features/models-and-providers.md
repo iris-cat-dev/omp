@@ -9,7 +9,8 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 - [Catalog refresh and sign-in](#catalog-refresh-and-sign-in)
 - [Thinking and Fast settings](#thinking-and-fast-settings)
 - [Subagent model overrides](#subagent-model-overrides)
-- [Runtime updates and command shortcut](#runtime-updates-and-command-shortcut)
+- [Proxy routing](#proxy-routing)
+- [Runtime updates](#runtime-updates)
 
 ## Getting started and host scope
 
@@ -35,15 +36,23 @@ The sidebar, account choices, usage cards, and ChatGPT image-generation account 
 
 **Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
 
-Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, credentials, or profile references. Different providers may share a display name; their internal IDs remain distinct.
+Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, or credentials. Different providers may share a display name; their internal IDs remain distinct.
 
-Names are stored as `providers.<id>.name` in the host's native `models.yml`. Existing entries without a name keep their previous display fallback; opening **Edit** prefills the old ID as the name so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
+Names are stored as `providers.<id>.name` in the host's native `models.yml`. For existing entries without a name, **Edit** prefills the old ID so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
+
+Model catalogs prefer an explicit `models.yml` display name, then the registered provider name from the same OMP runtime that loads the models, then the existing provider-ID fallback. Registered names such as **AIME** and **LLMBox** retain their exact capitalization.
 
 ## Catalog refresh and sign-in
 
 Updating OMP, saving provider configuration, or signing in/out refreshes the affected provider's global catalog. Open clients receive the refreshed result, or a terminal unavailable/error state, without reopening a picker or reloading the application.
 
+In provider settings, **Refresh** refreshes both provider/account management and the host model catalog. The sidebar continues receiving updates from the last-focused, still-mounted workspace while settings is open. Background workspaces cannot replace that source, and closing it removes its controls rather than leaving a stale snapshot.
+
 Browser OAuth refreshes catalogs as soon as OMP confirms authorization, closes sign-in, and updates signed-in state; **Complete sign-in** need not be pressed again. Providers requesting an OAuth code or redirect URL still accept manual completion. Refresh never changes an existing conversation's selected model.
+
+Signed-in providers reflect active credentials stored by OMP, including API-key login and shared login aliases. Configuration placeholders, environment keys, and external credential availability do not count as signed-in accounts. Sign-out removes OMP's stored credentials only; environment/config keys and external bytedcli grants must be removed at their source.
+
+Provider settings includes sign-in providers even when they have no selectable models. Sidebar groups come only from selectable models, so the lists need not contain the same number of providers. Catalog entries are not removed merely because no stored sign-in account exists; environment credentials, external authentication, and keyless providers remain separate from stored account state.
 
 If a historical conversation's selected model or provider has been removed, choose an available model in the conversation's model picker. Desktop restores the original session directly with that selection instead of trying to start the missing model first, including when a history restore is already failing in parallel. The conversation and its history are retained; catalogs never silently substitute another model. Invalid selections leave the stored model unchanged, and archived conversations must still be unarchived before changing settings.
 
@@ -55,6 +64,12 @@ Official Codex OAuth accepts dynamic models only from the dedicated Codex catalo
 
 Desktop model pickers open above or below their selector according to available space and constrain height so search and the scrollable list stay inside the window. Scroll or search for any available model, including in small windows. The list and its **Thinking**, **Fast**, and **Context window** footer retain opaque theme-matched backing over wallpaper.
 
+The conversation's model picker contains model selection and model settings only, on desktop and compact interfaces. Proxy routing is configured separately in **Host Settings → Proxy** and never occupies the model list or its footer.
+
+Model rows and the composer’s model selector show model names without repeated provider icons or empty icon slots. Provider browsing and provider headers keep their identifying icons. Model rows use compact, equal outer insets; only the selected row adds a trailing checkmark. No empty action column is reserved.
+
+Host-wide Agent launch presets have been removed from model pickers, Host settings, daemon configuration, and Desktop MCP tools. Loading an older configuration ignores `daemon.agentProfiles` while preserving unrelated settings; retired device-local model favorites are ignored without replacing ordinary model, thinking, or feature preferences. OMP's native profiles and terminal profiles are unchanged.
+
 Changing Thinking in an existing conversation updates OMP without restarting. It applies from the next model request, including after a tool call in the same turn, never to generation already in progress. Confirmed changes add a localized inline notice showing the level and effective timing. Failed requests and reselecting the same level add no notice. Notices retain their selected level through history replay and client reload.
 
 Confirmed Fast changes add system notices too. Model switches show the selected model ID only after a conversation has received a user message; selecting a model for a draft adds none. These notices use centered muted text, an information icon, and separator lines, not chat bubbles. They persist in history and are not sent to the model. Failed requests, unchanged settings, and initial preferences produce no switch notices.
@@ -65,9 +80,9 @@ Hover **Fast** for its cost explanation, localized in all nine supported locales
 
 For supported models, the model picker's **Speed** control and command center offer **Standard**, **Fast**, and **Ultrafast**. The three-way selector requires the native service-tier APIs, a built-in `/fast ultra` command, and the current model's advertised `ultrafast` capability. Other supported providers keep the existing boolean Fast switch. Refresh the host's model catalog after account or plan changes; Desktop does not infer eligibility from a model name or subscription label.
 
-Desktop changes the native OpenAI-family service tier through a private authenticated loopback extension and reads it back before confirming the selection. Standard clears the override, Fast selects `priority`, and Ultrafast selects `ultrafast`. Changing speed does not send a chat prompt, create a model request, or reduce thinking effort. Model and tier changes are serialized, and a rejected update does not save the requested value or add a success notice.
+Desktop changes the native OpenAI-family service tier through a private authenticated loopback extension and reads it back before confirming the selection. SDK-backed and CLI-backed sessions share this native control plane. Standard clears the override, Fast selects `priority`, and Ultrafast selects `ultrafast`. Changing speed does not send a chat prompt, create a model request, or reduce thinking effort. Model and tier changes are serialized, and a rejected update does not save the requested value or add a success notice.
 
-Existing boolean Fast preferences remain readable. New selections retain their exact tier in conversation defaults and profiles. A native Ultrafast session is not downgraded merely because an older preference says Fast is enabled. Unsupported models do not silently turn an Ultrafast preference into ordinary Fast; the saved preference remains available when returning to a capable model. Unrelated native tiers such as Flex are not relabeled as Standard.
+Existing boolean Fast preferences remain readable. New selections retain their exact tier in conversation defaults and OMP-native profiles. A native Ultrafast session is not downgraded merely because an older preference says Fast is enabled. Unsupported models do not silently turn an Ultrafast preference into ordinary Fast; the saved preference remains available when returning to a capable model. Unrelated native tiers such as Flex are not relabeled as Standard.
 
 OpenAI currently documents Ultrafast for **GPT-6 Astra** and **GPT-6.1 Sol**, including **Pro $500** and eligible Enterprise/Edu access. It uses included subscription allowances at **8×** the Standard rate and purchased credits at **6×**. API-key billing is separate. The selector requests a tier, not guaranteed account access, capacity, or measured speed. Cost and availability warnings appear with the choices in all nine locales. See [OpenAI's Codex speed guide](https://developers.openai.com/codex/speed) and [Ultrafast API requirements](https://help.openai.com/en/articles/11647665-fast-mode-faq).
 
@@ -87,12 +102,22 @@ Changes are saved in OMP's user configuration and apply to newly spawned task/ev
 
 Choosing inheritance clears the agent's model and speed overrides. Disabling the section removes the model mapping and bundled agents' speed overrides while preserving custom agents' tiers and unrelated settings.
 
-## Runtime updates and command shortcut
+## Proxy routing
 
-**Host Settings → Agents** reports the version, source, and path of the exact OMP executable used for Agent sessions. Update checks/installations target that same binary. Packaged apps distinguish bundled runtimes from standalone, configured, and `PATH` installations.
+**Host Settings → Proxy** configures the host's default proxy policy, including direct connections, an HTTP(S) proxy, and exact model-provider overrides. Existing per-conversation policies remain persisted and are restored automatically; removing proxy controls from the model picker does not change those policies.
 
-Runtime update checks, checksum requests, binary downloads, and release-asset redirects use the enabled OMP `PI_PROXY`, including authenticated HTTP CONNECT proxies. An unset/disabled proxy means direct downloads; no routing or DNS changes are needed. Download timeouts, cancellation, progress, SHA-256 verification, and staged replacement still apply. The [private plugin distribution](tools-and-plugins.md#private-windows-three-plugin-distribution) has stricter update ownership and does not permit generic runtime replacement.
+Saving a policy updates subsequent requests without restarting the conversation or daemon. In-flight requests finish on their existing connection; a reused Codex WebSocket reconnects for its next response when routing changes. Turning the policy off preserves configured addresses but sends requests directly. An omitted provider route uses the policy's default; an omitted default means direct.
 
-**Settings → General → Integrations → OMP command shortcut** installs a managed launcher for the bundled runtime and current proxy configuration. Status checks compare launcher size before reading; ownership checks read only a bounded script header instead of loading a standalone binary as text. Install/uninstall never overwrite or remove commands Desktop does not own.
+Provider routes cover model HTTP/WebSocket traffic, OAuth login/refresh, provider usage and model discovery, remote compaction, and provider media/judgment requests. Host-level usage cards and runtime downloads use the host policy. Ordinary tool/MCP fetches, local/private/metadata destinations, and explicit bypass rules stay direct. `PI_PROXY`, provider-specific proxy variables, and standard proxy environment variables no longer select OMP routes.
 
-Standard Apple Silicon macOS and Windows x64 packages include OMP, without requiring a system installation. Windows `no omp` installers preserve an existing bundled runtime on upgrade; fresh installations need `omp` on `PATH`. See [Packaging](../packaging.md) and [Development](../development.md).
+Upgrades discard the retired `agents.providers.omp.params.proxyEnabled` setting before provider startup, including for custom providers extending OMP. Other parameters and explicit `proxyPolicy` settings remain intact; saving the configuration removes the retired key from disk. The old toggle and proxy environment variables are not converted into a policy: configure **Host Settings → Proxy** to enable routing.
+
+Only HTTP(S) proxy URLs without paths, queries, or fragments are accepted; SOCKS is not supported. Broker-delegated OAuth refresh sends the effective policy to the broker, which must run the updated refresh endpoint and be able to reach that proxy. A desktop-only loopback proxy cannot route refreshes performed on a remote broker.
+
+## Runtime updates
+
+**Host Settings → Agents** reports the version, source, and package path of the SDK used for Agent sessions. Desktop-managed runtimes are updated through the whole application; SDK mode does not offer standalone CLI installation or binary replacement.
+
+Standalone servers can explicitly select an external CLI backend. Its runtime update checks, checksum requests, downloads, and redirects use the enabled host proxy policy; cancellation, SHA-256 verification, and staged replacement remain unchanged.
+
+Standard Apple Silicon macOS and Windows x64 applications include the SDK and embedded Node, without a system Node, Bun, or OMP installation. Legacy CLI-bound private packages and no-OMP installer variants are no longer built. See [Packaging](../packaging.md) and [Development](../development.md).

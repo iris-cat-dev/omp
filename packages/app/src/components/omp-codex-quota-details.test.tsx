@@ -6,18 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type {
   OmpCodexResetCreditConsumeResult,
+  OmpCodexResetSettings,
   OmpProviderManagement,
   OmpProviderManagementGetResponseMessage,
 } from "@omp-desktop/protocol/messages";
 import { OmpCodexQuotaDetails, OmpQuotaServerContext } from "./omp-codex-quota-details";
 import { ompProviderManagementQueryKey } from "@/hooks/use-omp-account-quota";
 import { codexQuotaStrings } from "@/i18n/resources/codex-quota";
+import type { Switch } from "@/components/ui/switch";
 
 type Account = NonNullable<OmpProviderManagement["loginProviders"][number]["accounts"]>[number];
-type Client = Pick<DaemonClient, "getOmpProviderManagement" | "consumeOmpCodexResetCredit">;
+type Client = Pick<DaemonClient, "getOmpProviderManagement" | "consumeOmpCodexResetCredit"> &
+  Partial<Pick<DaemonClient, "getOmpCodexResetSettings" | "updateOmpCodexResetSettings">>;
 const runtime = vi.hoisted(() => ({
   client: null as Client | null,
   language: "en" as keyof typeof codexQuotaStrings,
+  supportsSettings: false,
   confirm: vi.fn<() => Promise<boolean>>(),
 }));
 vi.mock("@/runtime/host-runtime", () => ({ useHostRuntimeClient: () => runtime.client }));
@@ -25,11 +29,39 @@ vi.mock("@/stores/session-store", () => ({
   useSessionStore: (selector: (state: unknown) => unknown) =>
     selector({
       sessions: {
-        test: { client: runtime.client, serverInfo: { features: { ompCodexResetCredits: true } } },
+        test: {
+          client: runtime.client,
+          serverInfo: {
+            features: {
+              ompCodexResetCredits: true,
+              ompCodexResetSettings: runtime.supportsSettings,
+            },
+          },
+        },
       },
     }),
 }));
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: runtime.confirm }));
+// Exercise async policy state independently of native animation; browser smoke uses the real switch.
+vi.mock("@/components/ui/switch", () => ({
+  Switch: ({
+    value,
+    onValueChange,
+    disabled,
+    accessibilityLabel,
+    testID,
+  }: React.ComponentProps<typeof Switch>) => (
+    <button
+      role="switch"
+      aria-checked={value}
+      aria-disabled={Boolean(disabled)}
+      aria-label={accessibilityLabel}
+      disabled={disabled}
+      data-testid={testID}
+      onClick={() => onValueChange?.(!value)}
+    />
+  ),
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     i18n: { language: runtime.language },
@@ -104,6 +136,7 @@ function button(value: Account) {
 beforeEach(() => {
   vi.stubGlobal("React", React);
   runtime.language = "en";
+  runtime.supportsSettings = false;
   runtime.confirm.mockResolvedValue(true);
 });
 afterEach(async () => {
@@ -223,6 +256,69 @@ describe("Codex reset-card interaction", () => {
     fireEvent.click(button(value));
     expect(runtime.confirm).not.toHaveBeenCalled();
     expect(consume).not.toHaveBeenCalled();
+  });
+});
+
+describe("Codex automatic reset setting", () => {
+  it("allows an explicit disable from unset, then enables only after the host acknowledges", async () => {
+    runtime.supportsSettings = true;
+    const value = account();
+    let settings: OmpCodexResetSettings = { configPath: "/tmp/config.yml", autoRedeem: "unset" };
+    const saved = Promise.withResolvers<void>();
+    const consume = vi.fn<Client["consumeOmpCodexResetCredit"]>();
+    mount(value, {
+      consumeOmpCodexResetCredit: consume,
+      getOmpProviderManagement: async () => management(value),
+      getOmpCodexResetSettings: async () => ({ ...settings, requestId: "read" }),
+      updateOmpCodexResetSettings: async (enabled) => {
+        if (enabled) await saved.promise;
+        settings = { ...settings, autoRedeem: enabled ? "yes" : "no" };
+        return { ...settings, requestId: "saved" };
+      },
+    });
+    const toggle = screen.getByRole("switch", { name: "Automatically use reset cards" });
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    expect(screen.getByText(/Not configured: asks first/)).toBeTruthy();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    expect(screen.getByText("Automatic use disabled")).toBeTruthy();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-disabled")).toBe("true"));
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    saved.resolve();
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    expect(screen.getByText("Automatic use enabled")).toBeTruthy();
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it("keeps the acknowledged setting when saving fails and permits a later retry", async () => {
+    runtime.supportsSettings = true;
+    const value = account();
+    let fail = true;
+    mount(value, {
+      consumeOmpCodexResetCredit: vi.fn(),
+      getOmpProviderManagement: async () => management(value),
+      getOmpCodexResetSettings: async () => ({
+        configPath: "/tmp/config.yml",
+        autoRedeem: "no",
+        requestId: "read",
+      }),
+      updateOmpCodexResetSettings: async () => {
+        if (fail) throw new Error("Read-only config");
+        return { configPath: "/tmp/config.yml", autoRedeem: "yes", requestId: "saved" };
+      },
+    });
+    const toggle = screen.getByRole("switch", { name: "Automatically use reset cards" });
+    await waitFor(() => expect(toggle.getAttribute("aria-disabled")).toBe("false"));
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("Read-only config"),
+    );
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fail = false;
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

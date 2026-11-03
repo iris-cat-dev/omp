@@ -2,7 +2,7 @@
 
 A [mini-electron](https://github.com/iris-cat-dev/mini-electron) and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through an end-to-end encrypted relay.
 
-Current source version: **0.5.3**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
+Current source version: **0.6.0**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
 
 ## Features
 
@@ -16,15 +16,16 @@ See the [documentation index](docs/README.md) for feature guides and operational
 
 ## Requirements
 
-- Node.js from [`.tool-versions`](.tool-versions) and npm workspaces for development and source builds.
-- `omp >= 18.8.7` on `PATH` for development and standalone daemon runs.
+- Node.js 24+ from [`.tool-versions`](.tool-versions), npm, Bun, Rustup, and a native compiler toolchain for source builds.
+- The pinned `omp-sdk/` submodule, initialized recursively. Development and packages use its Node SDK, not a system OMP executable.
 - A configured OMP model provider to run conversations; provider settings and sign-in can open without one.
 
-Standard **Apple Silicon macOS** and **Windows x64** packages include OMP and do not require a system OMP installation. A fresh Windows `no omp` installation requires `omp` on `PATH`; upgrades preserve an existing bundled runtime. See [packaging](docs/packaging.md#windows-packages-without-bundled-omp).
+Standard **Apple Silicon macOS** and **Windows x64** packages include the SDK and embedded Node. No external Node, Bun, or OMP installation is required at runtime. See [packaging](docs/packaging.md#bundled-omp-sdk).
 
 ## Quick start
 
 ```bash
+git submodule update --init --recursive
 npm install
 npm run dev:desktop
 ```
@@ -42,7 +43,7 @@ npm run build:windows          # Windows x64: NSIS installer + ZIP
 npm run build:package -- --help
 ```
 
-Installer builds default to `--publish never` and write to `packages/desktop/release/`. Platform packaging scripts live in [`scripts/packaging/`](scripts/packaging). See the [packaging guide](docs/packaging.md) for native runtime selection, signing, Windows cross-build requirements, bundled resources, and updater metadata. A successful build does not replace native application verification.
+Installer builds default to `--publish never` and write to `packages/desktop/release/`. Platform scripts live in [`scripts/packaging/`](scripts/packaging). SDK compilation remains target-native. **Package release** builds the Windows SDK on Windows, then packages Windows installers on Mac; local Mac builds use its extracted `OMP-SDK-win32-x64` artifact via `OMP_DESKTOP_SDK_ARTIFACT`. See [packaging](docs/packaging.md#mac-to-windows-packaging) for the download/build commands, runtime selection, signing, and updater metadata. A successful build does not replace native application verification.
 
 ## Documentation
 

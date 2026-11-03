@@ -210,6 +210,39 @@ afterEach(() => {
 });
 
 describe("ReplicaCache", () => {
+  it("round-trips todo phase identity, blocked/abandoned statuses, and legacy unphased tasks", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    const original: StreamItem = {
+      kind: "todo_list",
+      id: "todo-phases",
+      timestamp: new Date("2026-11-01T00:00:00Z"),
+      provider: "omp",
+      items: [
+        { text: "Shared", completed: false, status: "blocked", phase: { name: "Tasks", index: 0 } },
+        {
+          text: "Shared",
+          completed: false,
+          status: "abandoned",
+          phase: { name: "Tasks", index: 1 },
+        },
+        { text: "Legacy", completed: true },
+      ],
+      activity: { type: "created", count: 3 },
+    };
+    useSessionStore.getState().setAgentStreamTail(SERVER_ID, new Map([["agent-1", [original]]]));
+    await writer.flush();
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1")).toEqual([
+      original,
+    ]);
+  });
+
   it("round-trips complete native custom originals, identity, and metadata without truncation", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);
@@ -491,6 +524,100 @@ describe("ReplicaCache", () => {
       items: [message("message-1", "Cached")],
     });
   });
+
+  it("retains the latest serializable rows when newer presentations cannot be cached", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    const history = Array.from({ length: 60 }, (_, index) => ({
+      ...message(`message-${index}`, `History ${index}`),
+      timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+    }));
+    const transient: StreamItem[] = Array.from({ length: 40 }, (_, index) =>
+      index % 2 === 0
+        ? createUserMessage({
+            clientMessageId: `pending-${index}`,
+            text: "Pending",
+            timestamp: new Date("2026-07-18T08:02:00.000Z"),
+          })
+        : {
+            kind: "tool_call",
+            id: `orchestrator-${index}`,
+            timestamp: new Date("2026-07-18T08:02:00.000Z"),
+            payload: {
+              source: "orchestrator",
+              data: {
+                toolCallId: `call-${index}`,
+                toolName: "task",
+                arguments: {},
+                status: "completed",
+              },
+            },
+          },
+    );
+    const store = useSessionStore.getState();
+    store.setAgentStreamTail(SERVER_ID, new Map([["agent-1", [...history, ...transient]]]));
+    await cache.flush();
+    store.clearSession(SERVER_ID);
+    await cache.restore();
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(session?.agentStreamTail.get("agent-1")).toEqual(history.slice(-50));
+    expect(selectAgentTimelineState(session, "agent-1").status).toBe("painted");
+  });
+
+  it.each([
+    { rows: 50, extraTool: false, authoritative: true },
+    { rows: 51, extraTool: false, authoritative: false },
+    { rows: 50, extraTool: true, authoritative: false },
+  ])(
+    "preserves coverage at the cache boundary: $rows rows, extra tool=$extraTool",
+    async ({ rows, extraTool, authoritative }) => {
+      const storage = new MemoryStorage();
+      const cache = new ReplicaCache(storage);
+      cache.setHosts([SERVER_ID]);
+      seedSession();
+      const pending = createUserMessage({
+        clientMessageId: "pending",
+        text: "Pending",
+        timestamp: new Date("2026-07-18T08:02:00.000Z"),
+      });
+      const omitted: StreamItem = {
+        kind: "tool_call",
+        id: "orchestrator",
+        timestamp: pending.timestamp,
+        payload: {
+          source: "orchestrator",
+          data: { toolCallId: "call", toolName: "task", arguments: {}, status: "completed" },
+        },
+      };
+      const history = Array.from({ length: rows }, (_, index) => ({
+        ...message(`message-${index}`, `History ${index}`),
+        timelineCursor: { epoch: "epoch-1", seq: index + 1 },
+      }));
+      const store = useSessionStore.getState();
+      store.setAgentStreamTail(
+        SERVER_ID,
+        new Map([["agent-1", [pending, ...(extraTool ? [omitted] : []), ...history, pending]]]),
+      );
+      store.setAgentTimelineCursor(
+        SERVER_ID,
+        new Map([["agent-1", { epoch: "epoch-1", startSeq: 1, endSeq: rows }]]),
+      );
+      await cache.flush();
+      store.clearSession(SERVER_ID);
+      await cache.restore();
+
+      const session = useSessionStore.getState().sessions[SERVER_ID];
+      expect(session?.agentTimelineCursor.get("agent-1")).toEqual(
+        authoritative ? { epoch: "epoch-1", startSeq: 1, endSeq: rows } : undefined,
+      );
+      expect(selectAgentTimelineState(session, "agent-1").status).toBe(
+        authoritative ? "synced" : "painted",
+      );
+    },
+  );
 
   it("persists the complete directory with only the focused timeline tail", async () => {
     const storage = new MemoryStorage();

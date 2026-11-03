@@ -39,16 +39,9 @@ export const OMP_MODES: AgentProviderModeDefinition[] = [
     colorTier: "safe",
   },
   {
-    id: "write",
-    label: "Write Approval",
-    description: "Allow reads while prompting before writes.",
-    icon: "ShieldAlert",
-    colorTier: "moderate",
-  },
-  {
     id: "full",
-    label: "Full Access",
-    description: "Run OMP tools without approval prompts.",
+    label: "Auto Approval",
+    description: "Automatically approve OMP tool calls; explicit prompt and deny policies still apply.",
     icon: "ShieldOff",
     colorTier: "dangerous",
     isUnattended: true,
@@ -61,7 +54,7 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     label: "Oh My Pi",
     description: "OMP coding agent with native approvals, host tools, and subagents",
     enabledByDefault: true,
-    defaultModeId: "ask",
+    defaultModeId: "full",
     modes: OMP_MODES,
   },
   // Import-only providers: they run sessions on the OMP runtime but list and

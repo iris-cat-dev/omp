@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Check, Link as LinkIcon, Terminal } from "lucide-react-native";
+import { Check, Terminal } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
-import { useCliInstall, useOmpShortcutInstall } from "@/desktop/hooks/use-install-status";
+import { useCliInstall } from "@/desktop/hooks/use-install-status";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -15,22 +15,13 @@ export function IntegrationsSection() {
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
   const { status, isInstalling, install, refresh } = useCliInstall();
-  const {
-    status: ompShortcutStatus,
-    isInstalling: isOmpShortcutInstalling,
-    isUninstalling: isOmpShortcutUninstalling,
-    install: installOmpShortcut,
-    uninstall: uninstallOmpShortcut,
-    refresh: refreshOmpShortcut,
-  } = useOmpShortcutInstall();
   useFocusEffect(
     useCallback(() => {
       if (showSection) {
         refresh();
-        refreshOmpShortcut();
       }
       return undefined;
-    }, [refresh, refreshOmpShortcut, showSection]),
+    }, [refresh, showSection]),
   );
   if (!showSection) return null;
   return (
@@ -56,42 +47,6 @@ export function IntegrationsSection() {
           ) : (
             <Button variant="outline" size="sm" onPress={install} disabled={isInstalling}>
               {isInstalling
-                ? t("settings.integrations.actions.installing")
-                : t("settings.integrations.actions.install")}
-            </Button>
-          )}
-        </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-          <View style={settingsStyles.rowContent}>
-            <View style={styles.rowTitleRow}>
-              <LinkIcon size={theme.iconSize.md} color={theme.colors.foreground} />
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.integrations.ompShortcut.title")}
-              </Text>
-            </View>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.integrations.ompShortcut.description")}
-            </Text>
-          </View>
-          {ompShortcutStatus?.installed ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onPress={uninstallOmpShortcut}
-              disabled={isOmpShortcutUninstalling}
-            >
-              {isOmpShortcutUninstalling
-                ? t("settings.integrations.actions.uninstalling")
-                : t("settings.integrations.actions.uninstall")}
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onPress={installOmpShortcut}
-              disabled={isOmpShortcutInstalling}
-            >
-              {isOmpShortcutInstalling
                 ? t("settings.integrations.actions.installing")
                 : t("settings.integrations.actions.install")}
             </Button>

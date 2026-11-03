@@ -148,6 +148,7 @@ export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
+  supportsProxyPolicy?: boolean;
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
@@ -380,8 +381,9 @@ export interface AgentTaskItem {
   text: string;
   completed: boolean;
   id?: string;
-  status?: "pending" | "in_progress" | "completed";
+  status?: "pending" | "in_progress" | "completed" | "blocked" | "abandoned";
   activeForm?: string;
+  phase?: { name: string; index: number };
 }
 export type AssistantMessagePresentation = "plan";
 
@@ -391,6 +393,8 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
+      sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;
@@ -421,6 +425,7 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
+  | { type: "working_intent"; provider: AgentProvider; turnId: string; intent: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | { type: "features_changed"; provider: AgentProvider }

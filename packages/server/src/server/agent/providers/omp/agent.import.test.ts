@@ -67,16 +67,18 @@ async function fixture(args?: string[]) {
 describe("OMP imported approval mode", () => {
   test.each([
     ["always-ask", "ask"],
-    ["write", "write"],
+    ["write", "ask"],
     ["yolo", "full"],
-  ])("preserves the explicitly configured native %s mode", async (nativeMode, modeId) => {
+  ])("restores native %s without granting additional capabilities", async (nativeMode, modeId) => {
     const { agentDir, runtime, importSession } = await fixture();
     await writeFile(join(agentDir, "config.yaml"), `tools:\n  approvalMode: ${nativeMode}\n`);
     const imported = await importSession();
     expect(await imported.session.getCurrentMode()).toBe(modeId);
     expect(imported.config.modeId).toBe(modeId);
     expect(imported.persistence.metadata?.modeId).toBe(modeId);
-    expect(runtime.recordedLaunches[0]?.argv).toContain(nativeMode);
+    expect(runtime.recordedLaunches[0]?.argv).toContain(
+      nativeMode === "write" ? "always-ask" : nativeMode,
+    );
   });
 
   test("keeps restrictive project settings ahead of the global default", async () => {
@@ -99,29 +101,22 @@ describe("OMP imported approval mode", () => {
     const overlay = join(cwd, "overlay.yml");
     await writeFile(overlay, "tools:\n  approvalMode: write\n");
     const imported = await importSession({ env: { PI_CONFIG_FILES: overlay } });
-    expect(await imported.session.getCurrentMode()).toBe("write");
-    expect(imported.config.modeId).toBe("write");
+    expect(await imported.session.getCurrentMode()).toBe("ask");
+    expect(imported.config.modeId).toBe("ask");
   });
 
-  test("preserves explicit current and stored choices without reading native defaults", async () => {
+  test("preserves explicit current choices without reading native defaults", async () => {
     const { agentDir, importSession } = await fixture();
     await writeFile(join(agentDir, "config.yml"), "tools:\n  approvalMode: invalid\n");
     const current = await importSession({ modeId: "ask", storedModeId: "full" });
     expect(await current.session.getCurrentMode()).toBe("ask");
     expect(current.config.modeId).toBe("ask");
-    const stored = await importSession({ storedModeId: "write" });
-    expect(await stored.session.getCurrentMode()).toBe("write");
-    expect(stored.config.modeId).toBe("write");
   });
 
-  test("does not infer permission from the native schema default or change creation", async () => {
-    const { cwd, agentDir, client, importSession } = await fixture();
+  test("does not infer imported permissions from the native schema default", async () => {
+    const { importSession } = await fixture();
     const imported = await importSession();
     expect(await imported.session.getCurrentMode()).toBe("ask");
-    await writeFile(join(agentDir, "config.yml"), "tools:\n  approvalMode: yolo\n");
-    const created = await client.createSession({ provider: "omp", cwd });
-    sessions.push(created);
-    expect(await created.getCurrentMode()).toBe("ask");
   });
 
   test("does not infer a permissive default when custom CLI settings may override it", async () => {

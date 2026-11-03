@@ -13,6 +13,9 @@ function normalizeActiveTurn(
     return {
       turnId: snapshot.activeTurn.turnId,
       startedAt: snapshot.activeTurn.startedAt ? new Date(snapshot.activeTurn.startedAt) : null,
+      ...(snapshot.activeTurn.workingIntent !== undefined
+        ? { workingIntent: snapshot.activeTurn.workingIntent }
+        : {}),
     };
   }
   return snapshot.status === "running" ? { turnId: null, startedAt: lastUserMessageAt } : null;
@@ -25,6 +28,9 @@ function projectActiveTurn(agent: Agent): Pick<AgentSnapshotPayload, "activeTurn
     activeTurn: {
       turnId: agent.activeTurn.turnId,
       startedAt: agent.activeTurn.startedAt?.toISOString() ?? null,
+      ...(agent.activeTurn.workingIntent !== undefined
+        ? { workingIntent: agent.activeTurn.workingIntent }
+        : {}),
     },
   };
 }
@@ -52,6 +58,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     model: agent.model,
     ...(agent.features ? { features: agent.features } : {}),
     thinkingOptionId: agent.thinkingOptionId ?? null,
+    proxyPolicy: agent.proxyPolicy,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
@@ -114,6 +121,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     model: snapshot.model ?? null,
     features: snapshot.features,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
+    proxyPolicy: snapshot.proxyPolicy,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,

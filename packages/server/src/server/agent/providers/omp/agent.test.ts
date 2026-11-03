@@ -10,6 +10,14 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
+import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
+
+function workflowDisplayRequests(requests: Array<{ message: string; imageCount: number }>) {
+  return requests.map((request) => ({
+    ...request,
+    message: getOmpWorkflowDisplayText(request.message),
+  }));
+}
 
 const OMP_PLAN_TURN_DIRECTIVE = `<system-directive>
 Plan mode active for this turn. The working tree and system are read-only: NEVER create, edit, delete, or rename files, and NEVER run state-changing commands. You may inspect with read-only tools. Produce or refine the requested plan only.
@@ -1105,6 +1113,146 @@ describe("OMP agent client and session", () => {
     expect(omp.wasAborted()).toBe(false);
   });
 
+  test("explicit Stop withdraws queued steering once and accepts a later continuation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("keep working", "initial-message");
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-client" });
+    runtime.restoredQueue = { steering: [{ text: "继续" }], followUp: [] };
+
+    await omp.interrupt();
+
+    expect(runtime.abortAndRestoreQueueRequested).toBe(true);
+    expect(
+      omp.timeline().filter((item) => item.type === "user_message" && item.text === "继续"),
+    ).toEqual([expect.objectContaining({ clientMessageId: "queued-client" })]);
+    await omp.runPrompt("continue after Stop", "visible answer");
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "visible answer",
+      }),
+    );
+  });
+
+  test("Stop waits for canceled host tool execution to finish before acknowledging", async () => {
+    const started = deferred<AbortSignal>();
+    const cleanup = deferred<void>();
+    const catalog = createToolCatalog();
+    catalog.executeTool = async (_name, _input, context = {}) => {
+      started.resolve(context.signal!);
+      await cleanup.promise;
+      return { content: [] };
+    };
+    const omp = new OmpHarness();
+    await omp.start({}, catalog);
+    await omp.requireStartTurn("perform host operation");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "host_tool_call",
+      id: "host-stop",
+      toolCallId: "host-operation",
+      toolName: "create_agent",
+      arguments: {},
+    });
+    const signal = await started.promise;
+    runtime.onAbort = () => {
+      runtime.emit({
+        type: "host_tool_cancel",
+        id: "cancel-stop",
+        targetId: "host-stop",
+      });
+      runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
+    };
+    let acknowledged = false;
+    const stopped = omp.interrupt().then(() => {
+      acknowledged = true;
+    });
+    try {
+      await waitForImmediate();
+      expect(signal.aborted).toBe(true);
+      expect(acknowledged).toBe(false);
+      expect(omp.canceledTurnCount()).toBe(0);
+      runtime.finishTurnWithEmptyAgentEnd({ role: "assistant", content: [], stopReason: "length" });
+      expect(runtime.followUpRequests).toEqual([]);
+      cleanup.resolve();
+      await stopped;
+      expect(omp.canceledTurnCount()).toBe(1);
+      expect(runtime.hostToolResults).toEqual([]);
+      await omp.runPrompt("continue after cleanup", "continued");
+      expect(omp.timeline()).toContainEqual(
+        expect.objectContaining({
+          type: "assistant_message",
+          text: "continued",
+        }),
+      );
+    } finally {
+      cleanup.resolve();
+      await stopped;
+      await omp.close();
+    }
+  });
+
+  test("retains repeated original steering on a truncated Stop receipt without duplicating consumed input", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    await omp.steerActiveTurn("consumed", turnId, { clientMessageId: "consumed-client" });
+    runtime.acceptPrompt("consumed", "consumed-native");
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-one" });
+    await omp.steerActiveTurn("继续", turnId, { clientMessageId: "queued-two" });
+    runtime.restoredQueue = {
+      steering: [{ text: "继续" }],
+      followUp: [],
+      truncated: true,
+      imagesDropped: true,
+    };
+
+    await omp.interrupt();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({ text: "consumed", clientMessageId: "consumed-client" }),
+      expect.objectContaining({ text: "继续", clientMessageId: "queued-one" }),
+      expect.objectContaining({ text: "继续", clientMessageId: "queued-two" }),
+    ]);
+  });
+
+  test.each(["replacement", "reload", "rewind"] as const)(
+    "%s interrupt preserves ordinary native abort semantics",
+    async (reason) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      await omp.requireStartTurn("keep working");
+      await omp.interrupt(reason);
+      expect(omp.runtime().abortRequested).toBe(true);
+      expect(omp.runtime().abortAndRestoreQueueRequested).toBe(false);
+    },
+  );
+
+  test("does not queue a length continuation while Stop is aborting", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("keep working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.onAbort = () =>
+      runtime.finishTurnWithEmptyAgentEnd({
+        role: "assistant",
+        content: [],
+        stopReason: "length",
+      });
+
+    await omp.interrupt();
+
+    expect(runtime.followUpRequests).toEqual([]);
+  });
+
   test("distinguishes absent and mismatched steering targets", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -1257,7 +1405,9 @@ describe("OMP agent client and session", () => {
     await waitForImmediate();
 
     expect(omp.completedTurnCount()).toBe(0);
-    expect(runtime.followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+    expect(workflowDisplayRequests(runtime.followUpRequests)).toEqual([
+      { message: "继续", imageCount: 0 },
+    ]);
     runtime.beginTurn();
     runtime.streamAssistantText("task completed", "answer");
     runtime.finishTurn({
@@ -1292,7 +1442,7 @@ describe("OMP agent client and session", () => {
     expect(result).toMatchObject({
       finalText: "partial output more output completed output",
     });
-    expect(omp.runtime().followUpRequests).toEqual([
+    expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
       { message: "继续", imageCount: 0 },
       { message: "继续", imageCount: 0 },
     ]);
@@ -1322,7 +1472,12 @@ describe("OMP agent client and session", () => {
 
     await omp.runPromptAfterLengthContinuations("finish the task", ["partial"], "done");
 
-    expect(omp.runtime().followUpRequests).toEqual([{ message: expected, imageCount: 0 }]);
+    expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+      { message: expected, imageCount: 0 },
+    ]);
+    expect(omp.runtime().followUpRequests[0]?.message).toContain(
+      `Desktop tool intent locale: ${locale}`,
+    );
   });
 
   test("surfaces a sanitized proxy rejection and keeps the session retryable", async () => {
@@ -1418,7 +1573,9 @@ describe("OMP agent client and session", () => {
         expect(omp.failedTurnCount()).toBe(0);
         expect(omp.completedTurnCount()).toBe(0);
         await vi.advanceTimersByTimeAsync(1);
-        expect(runtime.followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+        expect(workflowDisplayRequests(runtime.followUpRequests)).toEqual([
+          { message: "继续", imageCount: 0 },
+        ]);
 
         runtime.beginTurn();
         runtime.acceptPrompt("继续", "user-2");
@@ -1462,7 +1619,9 @@ describe("OMP agent client and session", () => {
       });
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+        { message: "继续", imageCount: 0 },
+      ]);
       expect(omp.failedTurnCount()).toBe(0);
       expect(omp.completedTurnCount()).toBe(0);
     });
@@ -1561,7 +1720,9 @@ describe("OMP agent client and session", () => {
       await expect(omp.interrupt()).rejects.toThrow("abort failed");
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([{ message: "继续", imageCount: 0 }]);
+      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
+        { message: "继续", imageCount: 0 },
+      ]);
       expect(omp.failedTurnCount()).toBe(0);
       expect(omp.canceledTurnCount()).toBe(0);
     });
@@ -2504,7 +2665,7 @@ describe("OMP agent client and session", () => {
     async (workflow) => {
       const omp = new OmpHarness();
       omp.queueCommands([{ name: "wechat", source: "extension" }]);
-      await omp.start({ featureValues: { workflow_mode: workflow } });
+      await omp.start({ featureValues: { workflow_mode: workflow, workflow_locale: "zh-CN" } });
       await omp.runPromptWithoutTurn("/wechat status");
       expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["/wechat status"]);
       expect(omp.completedTurnCount()).toBe(1);
@@ -2714,7 +2875,27 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("switching to full access resolves pending tools and approves new tools without prompting", async () => {
+  test("all approval modes can change during a turn without replacing or interrupting it", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    await omp.requireStartTurn("continue working");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.state = { ...runtime.state, isStreaming: true };
+    const sessionId = runtime.state.sessionId;
+
+    for (const modeId of ["ask", "full"]) {
+      await omp.setMode(modeId);
+      expect(await omp.runtimeInfo()).toMatchObject({ modeId, sessionId });
+      expect(runtime.state.isStreaming).toBe(true);
+    }
+    expect(omp.wasAborted()).toBe(false);
+    expect(runtime.closed).toBe(false);
+    runtime.finishTurn();
+    await omp.close();
+  });
+
+  test("native cancellation withdraws obsolete approvals without answering questions or bypassing explicit prompts", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" });
     omp.emitExtensionUiRequest({
@@ -2724,130 +2905,53 @@ describe("OMP agent client and session", () => {
       title: "Which deployment region?",
       options: ["Production", "Staging"],
     });
-    omp.requestToolApproval({
-      id: "pending-bash",
-      tool: "bash",
-      detail: "echo approved",
-    });
+    omp.requestToolApproval({ id: "pending-bash", tool: "bash", detail: "echo approved" });
 
     await omp.setMode("full");
-    expect((await omp.runtimeInfo()).modeId).toBe("full");
-    expect(omp.pendingPermissions()).toEqual([
-      expect.objectContaining({ id: "business-question", kind: "question" }),
-    ]);
-
-    omp.requestToolApproval({ id: "new-edit", tool: "edit", detail: "fixture.txt" });
     omp.emitExtensionUiRequest({
       type: "extension_ui_request",
-      id: "new-write",
-      method: "select",
-      title: "Allow tool: write\nPath: created.txt\nContent:\nhello",
-      options: ["Approve", "Deny"],
+      id: "cancel-message",
+      method: "cancel",
+      targetId: "pending-bash",
     });
-    await omp.setMode("full");
+    omp.requestToolApproval({ id: "explicit-edit", tool: "edit", detail: "fixture.txt" });
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: "business-question", kind: "question" }),
+      expect.objectContaining({ id: "explicit-edit", kind: "tool" }),
+    ]);
+    expect(omp.extensionUiResponses()).toEqual([]);
 
+    await expect(omp.respondToPermission("pending-bash", { behavior: "allow" })).rejects.toThrow(
+      "No pending permission request",
+    );
+    await omp.respondToPermission("explicit-edit", { behavior: "deny" });
     expect(omp.pendingPermissions()).toEqual([
       expect.objectContaining({ id: "business-question", kind: "question" }),
     ]);
-    expect(omp.permissionEvents()).toEqual([
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "explicit-edit", response: { value: "Deny" } },
+    ]);
+    expect(omp.permissionEvents().filter((event) => event.type === "permission_resolved")).toEqual([
       expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "business-question" }),
-      }),
-      expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "pending-bash" }),
-      }),
-      expect.objectContaining({
-        type: "permission_resolved",
         requestId: "pending-bash",
-        resolution: { behavior: "allow" },
+        resolution: { behavior: "deny", message: "Permission request withdrawn by OMP" },
       }),
-      expect.objectContaining({
-        type: "permission_resolved",
-        requestId: "new-edit",
-        resolution: { behavior: "allow" },
-      }),
-      expect.objectContaining({
-        type: "permission_resolved",
-        requestId: "new-write",
-        resolution: { behavior: "allow" },
-      }),
+      expect.objectContaining({ requestId: "explicit-edit", resolution: { behavior: "deny" } }),
     ]);
   });
 
-  test.each([
-    ["bash", "Command: echo approved"],
-    ["edit", "File: fixture.txt"],
-    ["write", "Path: created.txt\nContent:\nhello"],
-  ])(
-    "full access chooses one-time approval for %s with a session-grant option",
-    async (tool, detail) => {
-      const omp = new OmpHarness();
-      await omp.start({ modeId: "ask" });
-      omp.emitExtensionUiRequest({
-        type: "extension_ui_request",
-        id: "business-question",
-        method: "select",
-        title: "Which deployment region?",
-        options: ["Production", "Staging"],
-      });
-      const request = {
-        type: "extension_ui_request" as const,
-        method: "select" as const,
-        title: `Allow tool: ${tool}\n${detail}`,
-        options: ["Approve", `Approve ${tool} for this session`, "Deny"],
-      };
-      omp.emitExtensionUiRequest({ ...request, id: "pending-tool" });
-
-      await omp.setMode("full");
-      omp.emitExtensionUiRequest({ ...request, id: "subsequent-tool" });
-
-      expect(omp.pendingPermissions()).toEqual([
-        expect.objectContaining({ id: "business-question", kind: "question" }),
-      ]);
-      expect(omp.extensionUiResponses()).toEqual([
-        { id: "pending-tool", response: { value: "Approve" } },
-        { id: "subsequent-tool", response: { value: "Approve" } },
-      ]);
-      expect(
-        omp.permissionEvents().filter((event) => event.type === "permission_requested"),
-      ).toEqual([
-        expect.objectContaining({ request: expect.objectContaining({ id: "business-question" }) }),
-        expect.objectContaining({
-          request: expect.objectContaining({ id: "pending-tool", kind: "tool" }),
-        }),
-      ]);
-    },
-  );
-
-  test("restoring the launch mode stops automatic approvals without claiming a stricter native mode", async () => {
+  test("a failed native permission change leaves the current mode and approvals unchanged", async () => {
     const omp = new OmpHarness();
-    await omp.start({ modeId: "write" });
-    await omp.setMode("full");
-    await omp.setMode("write");
-    const notice = await omp.setMode("ask");
-    expect(notice?.type).toBe("warning");
-    expect((await omp.runtimeInfo()).modeId).toBe("write");
+    await omp.start({ modeId: "ask" });
+    omp.requestToolApproval({ id: "pending-bash", tool: "bash", detail: "echo approved" });
+    omp.runtime().setApprovalModeError = new Error("native permission change failed");
 
-    omp.requestToolApproval({ id: "manual-edit", tool: "edit", detail: "fixture.txt" });
+    await expect(omp.setMode("full")).rejects.toThrow("native permission change failed");
+    expect((await omp.runtimeInfo()).modeId).toBe("ask");
     expect(omp.pendingPermissions()).toEqual([
-      expect.objectContaining({ id: "manual-edit", kind: "tool" }),
+      expect.objectContaining({ id: "pending-bash", kind: "tool" }),
     ]);
-    expect(omp.permissionEvents()).toEqual([
-      expect.objectContaining({
-        type: "permission_requested",
-        request: expect.objectContaining({ id: "manual-edit" }),
-      }),
-    ]);
-  });
-
-  test("a session launched with full access cannot pretend to enable native approvals", async () => {
-    const omp = new OmpHarness();
-    await omp.start({ modeId: "full" });
-    const notice = await omp.setMode("ask");
-    expect(notice?.type).toBe("warning");
-    expect((await omp.runtimeInfo()).modeId).toBe("full");
+    expect(omp.extensionUiResponses()).toEqual([]);
   });
 
   test("folds OMP ask custom input into the Other option", async () => {
@@ -2905,11 +3009,6 @@ describe("OMP agent client and session", () => {
     omp.queueCommands([{ name: "review", description: "Review changes", source: "skill" }]);
     await omp.start();
 
-    await expect(omp.availableModes()).resolves.toEqual([
-      expect.objectContaining({ id: "ask" }),
-      expect.objectContaining({ id: "write" }),
-      expect.objectContaining({ id: "full" }),
-    ]);
     expect(omp.features()).toEqual([
       expect.objectContaining({
         id: "workflow_mode",
@@ -3061,6 +3160,332 @@ describe("OMP agent client and session", () => {
       expect.objectContaining({ type: "assistant_message", text: "handled follow-up" }),
     );
   });
+
+  test("publishes todo status/phase changes without losing the full plan on reminders", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("complete the plan");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const publish = (status: "pending" | "in_progress", name: string) => {
+      runtime.emit({
+        type: "tool_execution_end",
+        toolCallId: "todo-plan",
+        toolName: "todo",
+        result: {
+          content: [],
+          details: {
+            phases: [
+              { name, tasks: [{ content: "Shared", status }] },
+              {
+                name: "Tasks",
+                tasks: [
+                  { content: "Shared", status: "pending" },
+                  { content: "Blocked", status: "blocked" },
+                  { content: "Skipped", status: "abandoned" },
+                  { content: "Done", status: "completed" },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    };
+    publish("pending", "Tasks");
+    runtime.emit({
+      type: "todo_reminder",
+      todos: [
+        { content: "Shared", status: "in_progress" },
+        { content: "Shared", status: "pending" },
+      ],
+      attempt: 1,
+      maxAttempts: 3,
+    });
+    const reminded = omp.timeline().filter((item) => item.type === "todo");
+    expect(reminded).toHaveLength(2);
+    expect(reminded.at(-1)?.items).toEqual([
+      {
+        text: "Shared",
+        completed: false,
+        status: "in_progress",
+        phase: { name: "Tasks", index: 0 },
+      },
+      { text: "Shared", completed: false, status: "pending", phase: { name: "Tasks", index: 1 } },
+      { text: "Blocked", completed: false, status: "blocked", phase: { name: "Tasks", index: 1 } },
+      {
+        text: "Skipped",
+        completed: false,
+        status: "abandoned",
+        phase: { name: "Tasks", index: 1 },
+      },
+      { text: "Done", completed: true, status: "completed", phase: { name: "Tasks", index: 1 } },
+    ]);
+    publish("in_progress", "Renamed");
+    publish("pending", "Renamed");
+    const changed = omp.timeline().filter((item) => item.type === "todo");
+    expect(changed).toHaveLength(4);
+    expect(changed.at(-1)?.items[0]).toEqual({
+      text: "Shared",
+      completed: false,
+      status: "pending",
+      phase: { name: "Renamed", index: 0 },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "todo-reset",
+      toolName: "todo",
+      result: { content: [], details: { phases: [] } },
+    });
+    expect(
+      omp
+        .timeline()
+        .filter((item) => item.type === "todo")
+        .at(-1)?.items,
+    ).toEqual([]);
+    await omp.close();
+  });
+
+  test("publishes latest streamed intent before execution without creating cards for hidden todo", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("inspect files");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const message: Extract<OmpAgentMessage, { role: "assistant" }> = {
+      role: "assistant",
+      responseId: "intent-stream",
+      content: [
+        {
+          type: "toolCall",
+          id: "first",
+          name: "read",
+          arguments: { i: "Reading first file", path: "first.ts" },
+        },
+        {
+          type: "toolCall",
+          id: "second",
+          name: "todo",
+          arguments: { i: "  Updating task progress... ", op: "view" },
+        },
+        { type: "toolCall", id: "third", name: "read", arguments: { i: "...  " } },
+      ],
+    };
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_delta" },
+    });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+      { type: "working_intent", provider: "omp", turnId, intent: "Updating task progress" },
+    ]);
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toEqual([]);
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_delta" },
+    });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toHaveLength(1);
+
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "first",
+      toolName: "read",
+      args: { path: "first.ts", i: "fallback" },
+      intent: "Reading authoritative details.",
+    });
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "second",
+      toolName: "todo",
+      args: { op: "view", i: "Updating task progress" },
+    });
+    const beforeEnd = omp.streamEvents().filter((event) => event.type === "working_intent");
+    expect(beforeEnd.map((event) => event.intent)).toEqual([
+      "Updating task progress",
+      "Reading authoritative details",
+      "Updating task progress",
+    ]);
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "second",
+      toolName: "todo",
+      result: "todos",
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "first",
+      toolName: "read",
+      result: "source",
+    });
+    runtime.emit({ type: "message_end", message });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual(
+      beforeEnd,
+    );
+    const tools = omp.timeline().filter((item) => item.type === "tool_call");
+    expect(tools.map((item) => item.callId)).toEqual(["first", "first"]);
+    expect(tools.at(-1)).toMatchObject({
+      status: "completed",
+      detail: { type: "read", filePath: "first.ts", content: "source" },
+      metadata: { intent: "Reading authoritative details" },
+    });
+    await omp.close();
+  });
+
+  test.each(["stop", "failure", "dispose", "terminal"] as const)(
+    "ignores working intent updates after %s",
+    async (ending) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      const runtime = omp.runtime();
+      if (ending === "failure") runtime.holdNextPrompt();
+      const turnId = await omp.requireStartTurn("generate tool args");
+      runtime.beginTurn();
+      const message: OmpAgentMessage = {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "pending",
+            name: "read",
+            arguments: { i: "Reading partial arguments" },
+          },
+        ],
+      };
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta" },
+      });
+      expect(omp.runningToolCallIds()).toEqual([]);
+      if (ending === "stop") await omp.interrupt();
+      else if (ending === "failure")
+        await runtime.failHeldPrompt(new Error("provider rejected prompt"));
+      else if (ending === "dispose") await omp.close();
+      else {
+        runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
+        await waitForImmediate();
+      }
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "toolcall_delta" },
+      });
+      runtime.emit({
+        type: "tool_execution_start",
+        toolCallId: "late",
+        toolName: "todo",
+        args: { op: "view" },
+        intent: "Late dispatch must not become working",
+      });
+      expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+        { type: "working_intent", provider: "omp", turnId, intent: "Reading partial arguments" },
+      ]);
+      if (ending !== "dispose") await omp.close();
+    },
+  );
+
+  test("uses final native intent only as initial fallback and re-emits the same intent for a new Desktop turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const firstTurnId = await omp.requireStartTurn("first turn");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "native",
+          name: "todo",
+          arguments: { op: "view" },
+          intent: "Reviewing task status.",
+        },
+      ],
+    };
+    runtime.emit({ type: "message_end", message });
+    expect(omp.streamEvents().filter((event) => event.type === "working_intent")).toEqual([
+      {
+        type: "working_intent",
+        provider: "omp",
+        turnId: firstTurnId,
+        intent: "Reviewing task status",
+      },
+    ]);
+    await omp.interrupt();
+    const secondTurnId = await omp.requireStartTurn("second turn");
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        toolCall: {
+          type: "toolCall",
+          id: "new",
+          name: "todo",
+          arguments: { i: "Reviewing task status", op: "view" },
+        },
+      },
+    });
+    expect(
+      omp
+        .streamEvents()
+        .filter((event) => event.type === "working_intent")
+        .at(-1),
+    ).toEqual({
+      type: "working_intent",
+      provider: "omp",
+      turnId: secondTurnId,
+      intent: "Reviewing task status",
+    });
+    await omp.close();
+  });
+
+  test("updates only hidden tool intent locale while preserving live and stop-restored prompt correlation", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_locale: "zh-CN" } });
+    const turnId = await omp.requireStartTurn("Keep this English request", {
+      clientMessageId: "initial-client",
+    });
+    const runtime = omp.runtime();
+    expect(omp.recordedPrompts()[0]?.message).toContain("Simplified Chinese");
+    expect(getOmpWorkflowDisplayText(omp.recordedPrompts()[0]!.message)).toBe(
+      "Keep this English request",
+    );
+    runtime.beginTurn();
+    runtime.acceptPrompt("Keep this English request", "initial-native");
+    await omp.setFeature("workflow_locale", "en");
+    await omp.steerActiveTurn("继续检查", turnId, { clientMessageId: "queued-client" });
+    expect(runtime.steerRequests[0]?.message).toContain("English");
+    expect(getOmpWorkflowDisplayText(runtime.steerRequests[0]!.message)).toBe("继续检查");
+    runtime.restoredQueue = { steering: [{ text: "继续检查" }], followUp: [], truncated: true };
+    await omp.interrupt();
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "Keep this English request",
+        messageId: "initial-native",
+        clientMessageId: "initial-client",
+      },
+      { type: "user_message", text: "继续检查", clientMessageId: "queued-client" },
+    ]);
+    await omp.close();
+  });
+
+  test.each(["/plan inspect the source", "/goal ship the change"])(
+    "keeps %s native dispatch with a localized intent directive",
+    async (prompt) => {
+      const omp = new OmpHarness();
+      await omp.start({ featureValues: { workflow_locale: "zh-CN" } });
+      await omp.requireStartTurn(prompt);
+      const sent = omp.recordedPrompts()[0]?.message;
+      expect(sent?.startsWith(`${prompt.split(" ")[0]} `)).toBe(true);
+      expect(sent).toContain("Simplified Chinese");
+      expect(getOmpWorkflowDisplayText(sent!)).toBe(prompt);
+      await omp.close();
+    },
+  );
 
   test("interrupt does not claim native subagents stopped; native cancellation acknowledges exactly one", async () => {
     const omp = new OmpHarness();
@@ -3250,6 +3675,55 @@ describe("OMP agent client and session", () => {
         type: "timeline",
         provider: "omp",
         item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+    ]);
+  });
+
+  test.each([
+    { aborted: false, result: { tokensBefore: 48_000 } },
+    { aborted: true, errorMessage: "Cancelled" },
+    { aborted: false, skipped: true, errorMessage: "Already compacted" },
+  ])("manual compaction progress works before any model turn: %j", async (outcome) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().emit({ type: "manual_compaction_start" });
+    omp.runtime().emit({ type: "manual_compaction_end", ...outcome });
+    expect(omp.streamEvents().filter((event) => event.type === "timeline")).toEqual([
+      expect.objectContaining({
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      }),
+      expect.objectContaining({
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: "manual",
+          ...("result" in outcome ? { preTokens: 48_000 } : {}),
+        },
+      }),
+    ]);
+  });
+
+  test("manual compact does not duplicate native progress with its synthetic marker or RPC result", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    vi.spyOn(omp.runtime(), "compact").mockImplementation(async () => {
+      omp.runtime().emit({ type: "manual_compaction_start" });
+      omp.runtime().emit({
+        type: "manual_compaction_end",
+        aborted: false,
+        result: { tokensBefore: 48_000 },
+      });
+    });
+    expect(await omp.runOutOfBand("/compact")).toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "compaction", status: "completed", trigger: "manual", preTokens: 48_000 },
       },
     ]);
   });

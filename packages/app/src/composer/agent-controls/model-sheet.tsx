@@ -4,15 +4,12 @@ import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } fro
 import { StyleSheet } from "react-native-unistyles";
 import { Bot, Zap } from "lucide-react-native";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { formatAgentFeatureOptionLabel } from "@/agent-controls/labels";
 import { FAST_MODE_FEATURE_ID, type FastModeTier } from "@/agent-controls/policy";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon, type ProviderIconComponent } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
-import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import {
   groupOmpModelsByProviderNamespace,
   resolveModelBrowserProviderId,
@@ -38,17 +35,11 @@ interface CompactModelSheetProps {
   fastModeTier: FastModeTier | null;
   onSelect: (provider: string, modelId: string) => void | Promise<void>;
   isLoading: boolean;
-  profiles?: AgentProfilePicker | null;
-  onApplyProfile?: (profileId: string) => void;
-  onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
-  onEditProfile?: (profileId: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
   disabled?: boolean;
-  glyphSize: number;
   canSwitchProvider: boolean;
   children: ReactNode;
 }
@@ -56,30 +47,6 @@ interface CompactModelSheetProps {
 function shortModelLabel(label: string): string {
   const separatorIndex = label.lastIndexOf("/");
   return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
-}
-
-function resolveModelSheetProfileActions(
-  onCreateProfile: ((seed: AgentProfileSeed) => void) | undefined,
-  onEditProfile: ((profileId: string) => void) | undefined,
-  close: () => void,
-): {
-  create?: (seed: AgentProfileSeed) => void;
-  edit?: (profileId: string) => void;
-} {
-  return {
-    create: onCreateProfile
-      ? (seed: AgentProfileSeed) => {
-          close();
-          onCreateProfile(seed);
-        }
-      : undefined,
-    edit: onEditProfile
-      ? (profileId: string) => {
-          close();
-          onEditProfile(profileId);
-        }
-      : undefined,
-  };
 }
 
 function resolveModelProviderNavigation(input: {
@@ -138,17 +105,11 @@ export function CompactModelSheet({
   fastModeTier,
   onSelect,
   isLoading,
-  profiles = null,
-  onApplyProfile,
-  onEditProfiles,
-  onCreateProfile,
-  onEditProfile,
   onOpen,
   onClose,
   onRetryProvider,
   isRetryingProvider = false,
   disabled = false,
-  glyphSize,
   canSwitchProvider,
   children,
 }: CompactModelSheetProps) {
@@ -170,7 +131,6 @@ export function CompactModelSheet({
     selectedModel,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet && !canBrowseProviders,
-    profiles,
     browseProviders: usesBottomSheet,
   });
   const modelBrowser = useModelBrowser({
@@ -179,12 +139,8 @@ export function CompactModelSheet({
     selectedModel,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet,
-    profiles,
     browseProviders: false,
   });
-  const ProviderIcon =
-    browserSelectedProvider.trim().length > 0 ? getProviderIcon(browserSelectedProvider) : null;
-  const ModelIcon = ProviderIcon ?? Bot;
   const selectedProviderLabel =
     availableProviders.find((provider) => provider.id === browserSelectedProvider)?.label ??
     selectedProvider;
@@ -207,6 +163,7 @@ export function CompactModelSheet({
   const fastModeLabel = fastModeTier
     ? formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: fastModeTier })
     : null;
+  const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
   const selectedModelAccessibilityLabel = t("modelSelector.selectedModel", {
     model: [`${selectedProviderLabel} · ${displayModelLabel}`, thinkingLabel, fastModeLabel]
       .filter(Boolean)
@@ -277,21 +234,6 @@ export function CompactModelSheet({
     [close, onSelect],
   );
 
-  const handleApplyProfile = useCallback(
-    (profileId: string) => {
-      onApplyProfile?.(profileId);
-      close();
-    },
-    [close, onApplyProfile],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    close();
-    onEditProfiles?.();
-  }, [close, onEditProfiles]);
-
-  const profileActions = resolveModelSheetProfileActions(onCreateProfile, onEditProfile, close);
-
   const toggle = useCallback(() => {
     if (isOpen) {
       close();
@@ -314,7 +256,7 @@ export function CompactModelSheet({
       <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
         <View style={styles.controlsContent}>
           <AgentControlTrigger
-            icon={ModelIcon}
+            icon={Bot}
             surface="sheet"
             label={t("modelSelector.model")}
             value={displayModelLabel}
@@ -327,15 +269,7 @@ export function CompactModelSheet({
         </View>
       </View>
     ),
-    [
-      ModelIcon,
-      children,
-      disabled,
-      displayModelLabel,
-      openModelBrowser,
-      selectedModelAccessibilityLabel,
-      t,
-    ],
+    [children, disabled, displayModelLabel, openModelBrowser, selectedModelAccessibilityLabel, t],
   );
 
   return (
@@ -350,14 +284,27 @@ export function CompactModelSheet({
         testID="combined-model-selector"
         chevron={null}
       >
-        <CompactModelTriggerContent
-          providerIcon={ProviderIcon}
-          glyphSize={glyphSize}
-          displayModelLabel={displayModelLabel}
-          thinkingLabel={thinkingLabel}
-          fastModeTier={fastModeTier}
-          fastModeLabel={fastModeLabel}
-        />
+        <View style={styles.triggerLabels}>
+          <Text style={styles.triggerText} numberOfLines={1}>
+            {shortModelLabel(displayModelLabel)}
+          </Text>
+          {thinkingLabel || fastModeActive ? (
+            <View style={styles.triggerSummary}>
+              {thinkingLabel ? (
+                <Text style={styles.triggerThinking} numberOfLines={1}>
+                  {thinkingLabel}
+                </Text>
+              ) : null}
+              {fastModeActive ? (
+                <Zap
+                  size={12}
+                  color={styles.fastModeIcon.color}
+                  accessibilityLabel={fastModeLabel ?? undefined}
+                />
+              ) : null}
+            </View>
+          ) : null}
+        </View>
       </ComboboxTrigger>
 
       <AdaptiveModalSheet
@@ -380,10 +327,6 @@ export function CompactModelSheet({
           <ModelBrowser
             state={rootBrowser}
             onSelect={usesBottomSheet ? handleSearchSelect : handleDesktopSelect}
-            onApplyProfile={handleApplyProfile}
-            onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-            onCreateProfile={profileActions.create}
-            onEditProfile={profileActions.edit}
             onRetryProvider={onRetryProvider}
             isRetryingProvider={isRetryingProvider}
             scrolling={modelBrowserScrolling}
@@ -426,66 +369,14 @@ export function CompactModelSheet({
             <ModelBrowser
               state={modelBrowser}
               onSelect={handleBrowserSelect}
-              onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-              onCreateProfile={profileActions.create}
-              onEditProfile={profileActions.edit}
               onRetryProvider={onRetryProvider}
               isRetryingProvider={isRetryingProvider}
               scrolling={modelBrowserScrolling}
               searchAllOnFocus
-              showProfilesSection={false}
             />
           </View>
         </AdaptiveModalSheet>
       ) : null}
-    </>
-  );
-}
-
-function CompactModelTriggerContent({
-  providerIcon: ProviderIcon,
-  glyphSize,
-  displayModelLabel,
-  thinkingLabel,
-  fastModeTier,
-  fastModeLabel,
-}: {
-  providerIcon: ProviderIconComponent | null;
-  glyphSize: number;
-  displayModelLabel: string;
-  thinkingLabel: string | null;
-  fastModeTier: FastModeTier | null;
-  fastModeLabel: string | null;
-}) {
-  const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
-  return (
-    <>
-      {ProviderIcon ? (
-        <ComposerToolbarGlyph size={glyphSize}>
-          <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
-        </ComposerToolbarGlyph>
-      ) : null}
-      <View style={styles.triggerLabels}>
-        <Text style={styles.triggerText} numberOfLines={1}>
-          {shortModelLabel(displayModelLabel)}
-        </Text>
-        {thinkingLabel || fastModeActive ? (
-          <View style={styles.triggerSummary}>
-            {thinkingLabel ? (
-              <Text style={styles.triggerThinking} numberOfLines={1}>
-                {thinkingLabel}
-              </Text>
-            ) : null}
-            {fastModeActive ? (
-              <Zap
-                size={12}
-                color={styles.fastModeIcon.color}
-                accessibilityLabel={fastModeLabel ?? undefined}
-              />
-            ) : null}
-          </View>
-        ) : null}
-      </View>
     </>
   );
 }
@@ -539,9 +430,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   fastModeIcon: {
     color: theme.colors.palette.yellow[400],
-  },
-  providerIcon: {
-    color: theme.colors.foregroundMuted,
   },
   sheetBody: {
     paddingHorizontal: 0,

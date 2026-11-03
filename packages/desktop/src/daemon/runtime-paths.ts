@@ -31,14 +31,23 @@ export function resolvePackagedNodeEntrypointRunnerPath(): string {
   return path.join(process.resourcesPath, "app", "dist", "daemon", "node-entrypoint-runner.js");
 }
 
-export function resolveBundledOmpPath(): string | null {
-  if (!app.isPackaged) return null;
-  const filePath = path.join(
-    process.resourcesPath,
-    "bin",
-    process.platform === "win32" ? "omp.exe" : "omp",
-  );
-  return existsSync(filePath) ? filePath : null;
+export function resolveDesktopSdkRoot(env: NodeJS.ProcessEnv = process.env): string {
+  if (app.isPackaged) {
+    const resources = path.join(process.resourcesPath, "omp-sdk");
+    assertPathExists({
+      label: "Bundled OMP SDK manifest",
+      filePath: path.join(resources, "manifest.json"),
+    });
+    return assertPathExists({
+      label: "Bundled OMP SDK package",
+      filePath: path.join(resources, "node_modules", "@oh-my-pi", "pi-coding-agent"),
+    });
+  }
+  if (env.OMP_DESKTOP_SDK_ROOT) return env.OMP_DESKTOP_SDK_ROOT;
+  const desktopRoot = path.resolve(__dirname, "..", "..");
+  const staged = path.join(desktopRoot, "sdk-dist", "node_modules", "@oh-my-pi", "pi-coding-agent");
+  if (existsSync(path.join(desktopRoot, "sdk-dist", "manifest.json"))) return staged;
+  return path.resolve(desktopRoot, "..", "..", "omp-sdk", "packages", "coding-agent");
 }
 
 export function resolveBundledRipgrepPath(): string | null {

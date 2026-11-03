@@ -1,6 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { TaskListRow } from "@/components/task-list-row";
+import { TaskListTree } from "@/components/task-list-tree";
 import {
   View,
   Text,
@@ -102,10 +102,10 @@ import {
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import { parseSkillInvocationMessage } from "./skill-invocation-message";
 import { SkillInvocationMessageView } from "./skill-invocation-message-view";
+import { CollapsibleUserMessageText } from "./collapsible-user-message-text";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -519,9 +519,7 @@ export const UserMessage = memo(function UserMessage({
     textContent = skillInvocation ? (
       <SkillInvocationMessageView message={message} invocation={skillInvocation} />
     ) : (
-      <Text selectable style={userMessageStylesheet.text}>
-        {message}
-      </Text>
+      <CollapsibleUserMessageText message={message} style={userMessageStylesheet.text} />
     );
   }
 
@@ -1181,6 +1179,11 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
+  shimmerTextContainer: {
+    minWidth: 0,
+    maxWidth: "100%",
+    flexShrink: 1,
+  },
   spacer: {
     flex: 1,
   },
@@ -1256,6 +1259,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
 interface NativeExpandableBadgeShimmerProps {
   label: string;
   secondaryLabel?: string;
+  labelStyle?: StyleProp<TextStyle>;
   rowWidth: number;
   rowHeight: number;
   peakWidth: number;
@@ -1266,6 +1270,7 @@ interface NativeExpandableBadgeShimmerProps {
 const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer({
   label,
   secondaryLabel,
+  labelStyle,
   rowWidth,
   rowHeight,
   peakWidth,
@@ -1311,8 +1316,8 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
   );
 
   const nativeLabelMaskStyle = useMemo(
-    () => [expandableBadgeStylesheet.label, { color: "#000000", opacity: 1 }],
-    [],
+    () => [labelStyle ?? expandableBadgeStylesheet.label, { color: "#000000", opacity: 1 }],
+    [labelStyle],
   );
 
   const nativeSecondaryMaskStyle = useMemo(
@@ -2239,6 +2244,15 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
     fontSize: 13,
     color: theme.colors.foregroundMuted,
   },
+  hint: {
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 12,
+    lineHeight: 18,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[3],
+  },
 }));
 
 export const CompactionMarker = memo(function CompactionMarker({
@@ -2246,20 +2260,37 @@ export const CompactionMarker = memo(function CompactionMarker({
   trigger,
   preTokens,
 }: CompactionMarkerProps) {
-  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  const { t } = useTranslation();
+  const label =
+    status === "loading"
+      ? t("message.compaction.loading")
+      : trigger === "auto"
+        ? t("message.compaction.auto")
+        : trigger === "manual"
+          ? t("message.compaction.manual")
+          : preTokens
+            ? t("message.compaction.withTokens", { tokens: Math.round(preTokens / 1000) })
+            : t("message.compaction.completed");
 
   return (
-    <View style={compactionStylesheet.container}>
-      <View style={compactionStylesheet.line} />
-      <View style={compactionStylesheet.label}>
-        {status === "loading" ? (
-          <LoadingSpinner size="small" color="#a1a1aa" />
-        ) : (
-          <Scissors size={12} color="#a1a1aa" />
-        )}
-        <Text style={compactionStylesheet.text}>{label}</Text>
+    <View testID="compaction-marker">
+      <View style={compactionStylesheet.container}>
+        <View style={compactionStylesheet.line} />
+        <View style={compactionStylesheet.label}>
+          {status === "loading" ? (
+            <LoadingSpinner size="small" color="#a1a1aa" />
+          ) : (
+            <Scissors size={12} color="#a1a1aa" />
+          )}
+          <Text style={compactionStylesheet.text}>{label}</Text>
+        </View>
+        <View style={compactionStylesheet.line} />
       </View>
-      <View style={compactionStylesheet.line} />
+      {status === "loading" && (
+        <Text style={compactionStylesheet.hint} accessibilityLiveRegion="polite">
+          {t("message.compaction.waitingHint")}
+        </Text>
+      )}
     </View>
   );
 });
@@ -2327,14 +2358,7 @@ function taskActivityIcon(activity: TaskActivity) {
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
   detailsWrapper: {
-    padding: theme.spacing[2],
-  },
-  list: {
-    gap: theme.spacing[1],
-  },
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    padding: theme.spacing[3],
   },
 }));
 
@@ -2365,16 +2389,10 @@ export const TodoListCard = memo(function TodoListCard({
   const renderDetails = useCallback(() => {
     return (
       <View style={todoListCardStylesheet.detailsWrapper}>
-        <View style={todoListCardStylesheet.list}>
-          {items.length === 0 ? (
-            <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
-          ) : (
-            items.map((item) => <TaskListRow key={item.id ?? item.text} task={item} />)
-          )}
-        </View>
+        <TaskListTree items={items} />
       </View>
     );
-  }, [items, t]);
+  }, [items]);
 
   return (
     <ExpandableBadge
@@ -2755,6 +2773,96 @@ function buildShimmerTextStyle(input: {
     "--paseo-shimmer-end": `${input.webShimmerTrackEnd - input.offsetX}px`,
   });
 }
+
+export const ShimmerText = memo(function ShimmerText({
+  label,
+  style,
+  testID,
+}: {
+  label: string;
+  style?: StyleProp<TextStyle>;
+  testID?: string;
+}) {
+  const active = useRetainedPanelActive();
+  const gradientId = React.useId();
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setSize((previous) =>
+      Math.abs(previous.width - width) > 0.5 || Math.abs(previous.height - height) > 0.5
+        ? { width, height }
+        : previous,
+    );
+  }, []);
+  const metrics = computeShimmerMetrics({
+    label,
+    secondaryLabel: undefined,
+    isLoading: active,
+    labelRowWidth: size.width,
+    labelRowHeight: size.height,
+    labelOffsetX: 0,
+    labelWidth: size.width,
+    secondaryOffsetX: 0,
+    secondaryWidth: 0,
+  });
+  useEffect(() => {
+    if (metrics.isWebShimmer) ensureWebToolCallShimmerKeyframes();
+  }, [metrics.isWebShimmer]);
+  const shimmerStyle = useMemo(
+    () => [
+      style,
+      buildShimmerTextStyle({
+        isWebShimmer: metrics.isWebShimmer,
+        webShimmerPeakWidth: metrics.webShimmerPeakWidth,
+        shimmerDuration: metrics.shimmerDuration,
+        webShimmerTrackStart: metrics.webShimmerTrackStart,
+        webShimmerTrackEnd: metrics.webShimmerTrackEnd,
+        offsetX: 0,
+      }),
+    ],
+    [
+      style,
+      metrics.isWebShimmer,
+      metrics.webShimmerPeakWidth,
+      metrics.shimmerDuration,
+      metrics.webShimmerTrackStart,
+      metrics.webShimmerTrackEnd,
+    ],
+  );
+  return (
+    <View style={expandableBadgeStylesheet.shimmerTextContainer}>
+      <Text
+        style={style}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        onLayout={handleLayout}
+        accessibilityLabel={label}
+        testID={testID}
+      >
+        {label}
+      </Text>
+      {metrics.isWebShimmer || metrics.isNativeShimmer ? (
+        <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none" aria-hidden>
+          {metrics.isWebShimmer ? (
+            <Text style={shimmerStyle} numberOfLines={1} ellipsizeMode="tail">
+              {label}
+            </Text>
+          ) : (
+            <NativeExpandableBadgeShimmer
+              label={label}
+              labelStyle={style}
+              rowWidth={size.width}
+              rowHeight={size.height}
+              peakWidth={metrics.nativeShimmerPeakWidth}
+              durationSeconds={metrics.shimmerDuration}
+              gradientId={gradientId}
+            />
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 function shouldShowOpenFileAction(
   onOpenFile: (() => void) | undefined,

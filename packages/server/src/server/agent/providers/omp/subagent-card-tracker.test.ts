@@ -239,4 +239,102 @@ describe("OmpSubagentCardTracker", () => {
       }).log,
     ).toBe("static");
   });
+
+  test("shows the current long-running tool immediately, including its separate native args", () => {
+    const scheduler = new ManualScheduler();
+    const logs: string[] = [];
+    const tracker: OmpSubagentCardTracker = new OmpSubagentCardTracker({ scheduler, emitToolCall: (id) => {
+      logs.push(tracker.detailFor(id, { type: "sub_agent", log: "" }).log);
+      return true;
+    } });
+    tracker.handleLifecycle(LIFECYCLE);
+    scheduler.advance(1);
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", currentTool: "bash", currentToolArgs: "sleep 1000", currentToolStartMs: 1 } });
+    expect(logs).toEqual(["EchoSubagent started", "EchoSubagent started\n[bash] sleep 1000"]);
+  });
+
+  test("keeps frames received before the parent tool card exists available for a later flush", () => {
+    let available = false;
+    const logs: string[] = [];
+    const tracker: OmpSubagentCardTracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler(), emitToolCall: (id) => {
+      if (!available) return false;
+      logs.push(tracker.detailFor(id, { type: "sub_agent", log: "" }).log);
+      return true;
+    } });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleProgress(PROGRESS[0]!);
+    available = true;
+    tracker.flush(PARENT_TOOL_CALL_ID);
+    expect(logs).toEqual(["EchoSubagent started\n[bash] echo subagent-hi"]);
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" })).toMatchObject({ childSessionId: SESSION_FILE, description: "Run echo in subagent" });
+  });
+
+  test("retains unbound early frames and associates them when a parent id arrives", () => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle({ ...LIFECYCLE, parentToolCallId: undefined });
+    tracker.handleProgress(PROGRESS[0]!);
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe("EchoSubagent started\n[bash] echo subagent-hi");
+  });
+
+  test("does not merge different child ids which share a native dispatch index", () => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleLifecycle({ ...LIFECYCLE, id: "OtherChild", sessionFile: "/tmp/other.jsonl" });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: "OtherChild", status: "completed", recentOutput: ["other done"] } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe("EchoSubagent started\nOtherChild started\nother done\nOtherChild completed");
+  });
+
+  test("allows new started after cancel, while late running progress cannot revive canceled summaries", () => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.markCanceled(LIFECYCLE.id);
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", currentTool: "bash", currentToolArgs: "stale" } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe("EchoSubagent started\nEchoSubagent aborted");
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", currentTool: "bash", currentToolArgs: "fresh" } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe("EchoSubagent started\nEchoSubagent aborted\nEchoSubagent started\n[bash] fresh");
+  });
+
+  test("late child updates refresh every originating task card after another dispatch", () => {
+    const emitted: string[] = [];
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler(), emitToolCall: (id) => { emitted.push(id); return true; } });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleLifecycle({ ...LIFECYCLE, status: "completed" });
+    tracker.handleLifecycle({ ...LIFECYCLE, parentToolCallId: "task-2" });
+    emitted.length = 0;
+    tracker.handleProgress({ ...PROGRESS[0]!, parentToolCallId: undefined, progress: { id: LIFECYCLE.id, status: "running", currentTool: "read", currentToolArgs: "target.ts" } });
+    expect(emitted).toEqual([PARENT_TOOL_CALL_ID, "task-2"]);
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toContain("[read] target.ts");
+    expect(tracker.detailFor("task-2", { type: "sub_agent", log: "" }).log).toContain("[read] target.ts");
+  });
+
+  test.each(["completed", "aborted"] as const)("keeps %s summaries terminal until a genuine new started", (status) => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleLifecycle({ ...LIFECYCLE, status });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", currentTool: "bash", currentToolArgs: "stale" } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe(`EchoSubagent started\nEchoSubagent ${status}`);
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", currentTool: "bash", currentToolArgs: "fresh" } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log).toBe(`EchoSubagent started\nEchoSubagent ${status}\nEchoSubagent started\n[bash] fresh`);
+  });
+  test("records a current tool only once when it becomes recent, while retaining a later identical command", () => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle(LIFECYCLE);
+    const first = { tool: "bash", args: "printf native-output", endMs: 20 };
+    const progress = { id: LIFECYCLE.id, status: "running" as const };
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { ...progress, currentTool: "bash", currentToolArgs: first.args, currentToolStartMs: 10 } });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { ...progress, recentTools: [first] } });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { ...progress, currentTool: "bash", currentToolArgs: first.args, currentToolStartMs: 30, recentTools: [first] } });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { ...progress, recentTools: [first, { ...first, endMs: 40 }] } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log.split("\n").filter((line) => line.includes(first.args))).toEqual(["[bash] printf native-output", "[bash] printf native-output"]);
+  });
+
+  test("replaces the growing output tail rather than repeating its prefix", () => {
+    const tracker = new OmpSubagentCardTracker({ scheduler: new ManualScheduler() });
+    tracker.handleLifecycle(LIFECYCLE);
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", recentOutput: ["Earlier answer", "Hello"] } });
+    tracker.handleProgress({ ...PROGRESS[0]!, progress: { id: LIFECYCLE.id, status: "running", recentOutput: ["Earlier answer", "Hello world"] } });
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" }).log.split("\n").filter((line) => line.startsWith("Hello"))).toEqual(["Hello world"]);
+  });
 });

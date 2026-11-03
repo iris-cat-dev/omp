@@ -124,7 +124,7 @@ interface OmpUnknownToolCall {
   args: unknown;
 }
 
-export type OmpTrackedToolCall =
+export type OmpTrackedToolCall = (
   | OmpBashToolCall
   | OmpReadToolCall
   | OmpEditToolCall
@@ -132,7 +132,8 @@ export type OmpTrackedToolCall =
   | OmpFindToolCall
   | OmpGrepToolCall
   | OmpLsToolCall
-  | OmpUnknownToolCall;
+  | OmpUnknownToolCall
+) & { intent?: string };
 
 interface ToolCallOutputSummary {
   output?: string;
@@ -272,7 +273,31 @@ export function extractTextFromToolResult(result: OmpToolResult): string | undef
   return textParts.length > 0 ? textParts.join("\n") : undefined;
 }
 
-export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
+export function normalizeOmpToolIntent(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return (
+    value
+      .trim()
+      .replace(/[.。…]+$/u, "")
+      .trim() || undefined
+  );
+}
+
+export function parseToolArgs(
+  toolName: string,
+  rawArgs: unknown,
+  rawIntent?: unknown,
+): OmpTrackedToolCall {
+  const intent =
+    normalizeOmpToolIntent(rawIntent) ??
+    normalizeOmpToolIntent(
+      rawArgs !== null && typeof rawArgs === "object" && "i" in rawArgs ? rawArgs.i : undefined,
+    );
+  const toolCall = parseBusinessToolArgs(toolName, rawArgs);
+  return intent ? { ...toolCall, intent } : toolCall;
+}
+
+function parseBusinessToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
   if (toolName === "edit") {
     return parseEditToolArgs(rawArgs);
   }

@@ -15,18 +15,30 @@ import {
 import type { Logger } from "pino";
 import { execCommand } from "../utils/spawn.js";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
-import { provisionBundledOmpPlugins, resolveOmpPluginInvocation } from "./bundled-omp-plugins.js";
+import {
+  provisionBundledOmpPlugins,
+  resolveOmpPluginInvocation,
+  type OmpPluginInvocation,
+} from "./bundled-omp-plugins.js";
 import { createBundledOmpHostVerifier, hasBundledOmpPlugins } from "./bundled-omp-host.js";
-import type { ProviderOverride } from "./agent/provider-launch-config.js";
+import {
+  createProviderEnv,
+  toRuntimeSettings,
+  type ProviderOverride,
+} from "./agent/provider-launch-config.js";
+import {
+  resolveOmpBackend,
+  resolveOmpSdkInstallation,
+} from "./agent/providers/omp/sdk-installation.js";
+import { resolveOmpSdkHostCommand } from "./agent/providers/omp/sdk-host-command.js";
+import { OMP_SDK_ROOT_ENV } from "./agent/providers/omp/sdk-host-protocol.js";
 
 /**
- * Thin wrapper around the OMP runtime's own `omp plugin <action>` CLI.
+ * Thin wrapper around the selected OMP runtime's own plugin command.
  *
- * The OMP runtime is the plugin authority: it owns discovery, manifest
- * handling, feature gating and health checks. OMP Desktop only shells out to
- * the CLI, normalizes its JSON output, and reports results. No plugin format,
- * state store, or loader is implemented here — that is the daemon plugin
- * runtime's separate concern (and a different upstream feature area).
+ * The OMP runtime owns discovery, manifests, feature gating and health checks.
+ * Desktop runs its command in a dedicated SDK host or CLI process and normalizes
+ * the output. No plugin format, state store or loader is implemented here.
  */
 
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
@@ -53,14 +65,6 @@ export interface OmpPluginCliServiceOptions {
    * `~/.omp/marketplaces.json` (the runtime's own config root).
    */
   marketplacesRegistryPath?: string;
-  /**
-   * Returns the proxy URL configured via the host settings UI (PI_PROXY).
-   * When set, HTTPS_PROXY/HTTP_PROXY are injected into the spawned omp CLI
-   * process so that plugin marketplace git clones and npm installs respect
-   * the user's proxy — the omp binary's native git clone does not read
-   * PI_PROXY directly.
-   */
-  getProxyUrl?: () => string | undefined;
   /** Live provider settings; management must target the same profile as sessions. */
   getProviderConfig?: () => ProviderOverride | undefined;
 }
@@ -75,6 +79,16 @@ const OmpPluginListJsonSchema = z
   .passthrough();
 
 const OmpPluginDoctorJsonSchema = z.array(OmpPluginDoctorCheckSchema);
+
+const OmpPluginStartupChecksSchema = z.array(
+  z.object({
+    name: z.string(),
+    scope: z.enum(["user", "project"]),
+    path: z.string(),
+    errors: z.array(z.string()),
+    disabled: z.boolean(),
+  }),
+);
 
 /** `~/.omp/marketplaces.json` registry: entries with name + sourceUri + catalogPath. */
 const OmpMarketplaceRegistryJsonSchema = z
@@ -203,13 +217,11 @@ export class OmpPluginCliService {
   private readonly runner: OmpPluginRunner;
   private readonly resolveOmpCommand: () => Promise<string | null>;
   private readonly marketplacesRegistryPath: string | undefined;
-  private readonly getProxyUrl: (() => string | undefined) | undefined;
   private readonly getProviderConfig: (() => ProviderOverride | undefined) | undefined;
   private inFlight: Promise<unknown> | null = null;
 
   constructor(options: OmpPluginCliServiceOptions) {
     this.logger = options.logger.child({ module: "omp-plugin-cli" });
-    this.getProxyUrl = options.getProxyUrl;
     this.getProviderConfig = options.getProviderConfig;
     this.runner =
       options.runner ??
@@ -218,18 +230,12 @@ export class OmpPluginCliService {
           timeout: runnerOptions.timeout,
           cwd: runnerOptions.cwd,
           envMode: "internal",
-          env: { ...runnerOptions.env, ...this.buildProxyEnv() },
+          env: runnerOptions.env,
         }));
     this.resolveOmpCommand =
       options.resolveOmpCommand ??
       (async () => process.env.OMP_COMMAND?.trim() || (await findExecutable("omp")) || null);
     this.marketplacesRegistryPath = options.marketplacesRegistryPath;
-  }
-
-  private buildProxyEnv(): Record<string, string> | undefined {
-    const proxyUrl = this.getProxyUrl?.();
-    if (!proxyUrl) return undefined;
-    return { HTTPS_PROXY: proxyUrl, HTTP_PROXY: proxyUrl };
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -280,23 +286,49 @@ export class OmpPluginCliService {
       }
     }
     const provider = this.getProviderConfig?.();
-    const command = provider?.command?.[0] ?? (await this.resolveOmpCommand());
-    if (!command) throw new OmpPluginUnavailableError();
-    const invocation = await resolveOmpPluginInvocation({
-      provider,
-      env: { ...process.env, OMP_COMMAND: command },
-      cwd: workingDirectory,
-    });
-    const hostVerifier = createBundledOmpHostVerifier();
-    await hostVerifier(invocation.command[0], invocation.env);
-    // First-use setup must finish before native management, not before the
-    // daemon begins listening. Large private runtimes may require file staging.
-    const provisioning = await provisionBundledOmpPlugins({ ...invocation, hostVerifier });
-    for (const plugin of provisioning.plugins) {
-      if (plugin.error)
-        this.logger.error({ plugin: plugin.name, state: plugin.state }, plugin.error);
+    let invocation: OmpPluginInvocation;
+    if (resolveOmpBackend(provider) === "sdk") {
+      const runtimeSettings = toRuntimeSettings(provider);
+      const env = createProviderEnv({
+        runtimeSettings,
+      });
+      if (hasBundledOmpPlugins(env)) {
+        throw new Error(
+          "This plugin-bound CLI distribution cannot use the SDK backend; select CLI or package SDK-compatible plugins separately",
+        );
+      }
+      const installation = await resolveOmpSdkInstallation(runtimeSettings, env);
+      invocation = {
+        command: await resolveOmpSdkHostCommand(),
+        env: {
+          ...env,
+          ELECTRON_RUN_AS_NODE: "1",
+          [OMP_SDK_ROOT_ENV]: installation.root,
+        },
+        cwd: workingDirectory,
+      };
+    } else {
+      const command = provider?.command?.[0] ?? (await this.resolveOmpCommand());
+      if (!command) throw new OmpPluginUnavailableError();
+      invocation = await resolveOmpPluginInvocation({
+        provider,
+        env: { ...process.env, OMP_COMMAND: command },
+        cwd: workingDirectory,
+      });
+      const hostVerifier = createBundledOmpHostVerifier();
+      await hostVerifier(invocation.command[0], invocation.env);
+      // First-use setup must finish before native management, not before the
+      // daemon begins listening. Large private runtimes may require file staging.
+      const provisioning = await provisionBundledOmpPlugins({
+        ...invocation,
+        hostVerifier,
+      });
+      for (const plugin of provisioning.plugins) {
+        if (plugin.error)
+          this.logger.error({ plugin: plugin.name, state: plugin.state }, plugin.error);
+      }
+      await hostVerifier(invocation.command[0], invocation.env);
     }
-    await hostVerifier(invocation.command[0], invocation.env);
     try {
       const result = await this.runner(
         invocation.command[0],
@@ -309,10 +341,31 @@ export class OmpPluginCliService {
       );
       return `${result.stdout}\n${result.stderr}`;
     } catch (error) {
-      const err = error as { stdout?: string; stderr?: string; message?: string };
+      const err = error as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+      };
       const output = [err.stdout, err.stderr, err.message].filter(Boolean).join("\n").trim();
-      throw new Error(output || `omp plugin ${args[0]} failed`, { cause: error });
+      throw new Error(output || `omp plugin ${args[0]} failed`, {
+        cause: error,
+      });
     }
+  }
+
+  async checkStartup(cwd: string): Promise<void> {
+    await this.runExclusive(async () => {
+      const output = await this.runCli(["check", "--fix", "--json"], DOCTOR_TIMEOUT_MS, cwd);
+      const checks = OmpPluginStartupChecksSchema.parse(parseTrailingJson(output));
+      for (const check of checks) {
+        if (check.disabled) {
+          this.logger.warn(
+            { plugin: check.name, scope: check.scope, path: check.path, errors: check.errors },
+            "Disabled OMP plugin after startup load failure",
+          );
+        }
+      }
+    });
   }
 
   async list(cwd?: string): Promise<OmpPluginListResult> {
@@ -336,7 +389,11 @@ export class OmpPluginCliService {
         };
       }
       this.logger.warn({ output: output.slice(0, 500) }, "Unparseable omp plugin list output");
-      return { plugins: [], marketplace: [], rawOutput: truncateOutput(output) };
+      return {
+        plugins: [],
+        marketplace: [],
+        rawOutput: truncateOutput(output),
+      };
     });
   }
 
@@ -366,7 +423,11 @@ export class OmpPluginCliService {
       // Some omp versions print the installed plugin object itself.
       const asPlugin = OmpPluginInfoSchema.safeParse(json);
       if (asPlugin.success) {
-        return { ok: true, plugin: asPlugin.data, output: truncateOutput(output) };
+        return {
+          ok: true,
+          plugin: asPlugin.data,
+          output: truncateOutput(output),
+        };
       }
       return { ok: true, plugin: null, output: truncateOutput(output) };
     });
@@ -428,7 +489,10 @@ export class OmpPluginCliService {
         const output = await this.runCli(["list", "--json"], ACTION_TIMEOUT_MS, cwd, scope);
         const parsed = OmpPluginListJsonSchema.safeParse(parseTrailingJson(output));
         if (!parsed.success) {
-          return { ok: false, output: "Could not verify plugin state: invalid CLI list output" };
+          return {
+            ok: false,
+            output: "Could not verify plugin state: invalid CLI list output",
+          };
         }
         const npmEntry = parsed.data.npm.find((item) => item.name === name);
         const candidates = normalizeMarketplacePlugins(parsed.data.marketplace).filter(
@@ -439,7 +503,10 @@ export class OmpPluginCliService {
         const entry = npmEntry ?? (candidates.length === 1 ? candidates[0] : undefined);
         return entry?.enabled === enabled
           ? { ok: true }
-          : { ok: false, output: "CLI readback did not confirm the requested plugin state" };
+          : {
+              ok: false,
+              output: "CLI readback did not confirm the requested plugin state",
+            };
       } catch (error) {
         return { ok: false, output: truncateOutput((error as Error).message) };
       }
@@ -454,7 +521,10 @@ export class OmpPluginCliService {
       try {
         output = await this.runCli(args, DOCTOR_TIMEOUT_MS, input?.cwd);
       } catch (error) {
-        return { checks: [], rawOutput: truncateOutput((error as Error).message) };
+        return {
+          checks: [],
+          rawOutput: truncateOutput((error as Error).message),
+        };
       }
       const parsed = OmpPluginDoctorJsonSchema.safeParse(parseTrailingJson(output));
       if (parsed.success) {
@@ -498,7 +568,10 @@ export class OmpPluginCliService {
         if (raw) {
           this.logger.warn({ path: registryPath }, "Unparseable marketplaces registry");
         }
-        return { marketplaces: [], rawOutput: raw ? truncateOutput(raw) : undefined };
+        return {
+          marketplaces: [],
+          rawOutput: raw ? truncateOutput(raw) : undefined,
+        };
       }
       const marketplaces = await Promise.all(
         entries.data.marketplaces.map(async (entry) => {

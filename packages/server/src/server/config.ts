@@ -27,6 +27,8 @@ import { hashDaemonPassword } from "./auth.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import { normalizeImageGenerationBaseUrl } from "./image-generation/base-url.js";
+import { resolveOmpBackend } from "./agent/providers/omp/sdk-installation.js";
+import { OMP_SDK_ROOT_ENV } from "./agent/providers/omp/sdk-host-protocol.js";
 
 const DEFAULT_PORT = 6770;
 export { DEFAULT_RELAY_ENDPOINT };
@@ -221,7 +223,14 @@ function extractAgentProviderSettings(
 
   const runtimeSettings = Object.entries(providerOverrides).flatMap(([providerId, provider]) => {
     const parsedProviderId = AgentProviderSchema.safeParse(providerId);
-    if (!parsedProviderId.success || (!provider.command && !provider.env)) {
+    if (
+      !parsedProviderId.success ||
+      (!provider.command &&
+        !provider.env &&
+        provider.ompBackend === undefined &&
+        provider.ompSdkPath === undefined &&
+        provider.proxyPolicy === undefined)
+    ) {
       return [];
     }
 
@@ -236,6 +245,9 @@ function extractAgentProviderSettings(
               }
             : undefined,
           env: provider.env,
+          ompBackend: provider.ompBackend,
+          ompSdkPath: provider.ompSdkPath,
+          proxyPolicy: provider.proxyPolicy,
         },
       ] as const,
     ];
@@ -539,18 +551,6 @@ function resolveGitHubConfig(
   };
 }
 
-/**
- * Both profile lists stay `undefined` when absent rather than defaulting to an
- * empty array: for terminal profiles that is what selects the built-in
- * defaults, so an empty array has to keep meaning "the user removed them all".
- */
-function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) {
-  return {
-    terminalProfiles: persisted.daemon?.terminalProfiles,
-    agentProfiles: persisted.daemon?.agentProfiles,
-  };
-}
-
 function resolveMcpSettings(cli: CliConfigOverrides | undefined, persisted: PersistedConfig) {
   return {
     mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
@@ -569,7 +569,8 @@ function resolveStaticLoadConfigSettings(
     ...resolveMcpSettings(cli, persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
-    ...resolveProfileLists(persisted),
+    // Undefined selects built-in terminal defaults; an empty array removes them all.
+    terminalProfiles: persisted.daemon?.terminalProfiles,
     ompProviderAccountNotes: persisted.daemon?.ompProviderAccountNotes,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
@@ -605,7 +606,6 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
-    agentProfiles,
     ompProviderAccountNotes,
     hostnames,
     trustedProxies,
@@ -624,9 +624,24 @@ export function resolveConfigFromPersisted(
 
   const imageGeneration = resolveImageGenerationConfig(env, persisted);
 
-  const providerOverrides = extractProviderOverrides(
+  let providerOverrides = extractProviderOverrides(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
+  const ompProvider = providerOverrides?.omp;
+  if (resolveOmpBackend(ompProvider, env) === "sdk") {
+    // Legacy Desktop configs may still name the old bundled executable. Desktop
+    // now owns an SDK-only runtime; keep SDK paths, environment and model policy.
+    providerOverrides = {
+      ...providerOverrides,
+      omp: {
+        ...ompProvider,
+        ompBackend: "sdk",
+        ompSdkPath:
+          ompProvider?.ompSdkPath ?? ompProvider?.env?.[OMP_SDK_ROOT_ENV] ?? env[OMP_SDK_ROOT_ENV],
+        ...(env.PASEO_DESKTOP_MANAGED === "1" ? { command: undefined } : {}),
+      },
+    };
+  }
 
   const overrideControlledPaths = resolveOverrideControlledPaths(env, cli);
 
@@ -646,7 +661,6 @@ export function resolveConfigFromPersisted(
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,
-    agentProfiles,
     ompProviderAccountNotes,
     skillSelection: persisted.agents?.skills?.selection,
     pluginsEnabled: persisted.pluginsEnabled ?? false,

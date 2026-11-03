@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import type { MessagePort } from "node:worker_threads";
 import { tmpdir } from "node:os";
@@ -378,7 +378,7 @@ beforeEach(async () => {
   mock.area = { x: 0, y: 0, width: 1920, height: 1040 };
   mock.cursor = { x: 0, y: 0 };
   mock.now = Date.UTC(2026, 9, 24, 12);
-  mock.userData = await mkdtemp(path.join(tmpdir(), "omp-monitor-controller-"));
+  mock.userData = await mkdtemp(path.join(await realpath(tmpdir()), "omp-monitor-controller-"));
   mock.save.mockReset().mockResolvedValue({ canceled: true });
   mock.confirm.mockReset().mockResolvedValue({ response: 0 });
   mock.openFolder.mockReset().mockResolvedValue({ canceled: true, filePaths: [] });

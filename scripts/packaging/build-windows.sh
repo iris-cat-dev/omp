@@ -16,50 +16,41 @@ for arch in "${arches[@]}"; do
   esac
 done
 
-# electron-builder's supported Windows toolchain uses Intel Wine and NSIS on
-# macOS. Apple silicon hosts therefore need Rosetta; do not substitute a native
-# makensis because mixing it with electron-builder's pinned NSIS resources can
-# produce installers that Windows refuses to launch.
+# Windows native SDK compilation stays on Windows; Mac builds import its artifact.
 host_platform_arch="$(node -p "process.platform + ':' + process.arch")"
-if [[ "$host_platform_arch" == "darwin:arm64" ]] &&
-  ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
-  echo "Rosetta 2 is required to build Windows installers on macOS arm64." >&2
-  echo "Install it with: softwareupdate --install-rosetta --agree-to-license" >&2
-  exit 1
+case "$host_platform_arch" in
+  win32:x64) ;;
+  darwin:*)
+    if [[ -z "${OMP_DESKTOP_SDK_ARTIFACT:-}" ]]; then
+      echo "macOS Windows cross-builds require an extracted native Windows x64 SDK artifact at absolute OMP_DESKTOP_SDK_ARTIFACT." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Windows packaging requires native Windows x64 or macOS with a Windows x64 SDK artifact." >&2
+    exit 1
+    ;;
+esac
+if [[ -n "${OMP_DESKTOP_SDK_ARTIFACT:-}" ]]; then
+  node -e 'const fs = require("node:fs"); const path = require("node:path"); const artifact = process.env.OMP_DESKTOP_SDK_ARTIFACT; if (!path.isAbsolute(artifact) || !fs.statSync(artifact).isDirectory()) throw new Error("OMP_DESKTOP_SDK_ARTIFACT must be an absolute extracted artifact directory");'
 fi
+export OMP_DESKTOP_PACKAGE_TARGET=win32-x64
 
-# npm installs only the host platform's optional dependencies. Cross-building on
-# macOS therefore omits the Windows keyring bindings that the packaged daemon
-# loads at runtime. Keep downloaded packages outside node_modules until the
-# desktop build finishes its npm-driven prerequisite builds, then stage them
-# immediately before electron-builder runs.
 tmp_dir="$(mktemp -d)"
 cleanup() {
-  if [[ "$host_platform_arch" != win32:* ]]; then
-    for arch in "${arches[@]}"; do
-      rm -rf "node_modules/@napi-rs/keyring-win32-${arch}-msvc"
-    done
-  fi
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
-keyring_staging="$tmp_dir/keyring-packages"
-mkdir -p "$keyring_staging"
-export OMP_DESKTOP_WINDOWS_KEYRING_STAGING="$keyring_staging"
+# Keep the installed Mac mini-electron distribution untouched. The target
+# installer downloads and validates the genuine Windows runtime in isolation.
+if [[ "$host_platform_arch" == darwin:* && -z "${MINI_ELECTRON_DIST_PATH:-}" ]]; then
+  export MINI_ELECTRON_DIST_PATH
+  MINI_ELECTRON_DIST_PATH="$(node scripts/packaging/prepare-windows-runtime.mjs "$tmp_dir/runtime")"
+fi
 
-keyring_version="$(node -p "require('./node_modules/@napi-rs/keyring/package.json').version")"
+# Desktop stages all target-native optional modules after prerequisite builds.
 
-for arch in "${arches[@]}"; do
-  package_name="keyring-win32-${arch}-msvc"
-  package="@napi-rs/$package_name"
-  archive="$(npm pack --silent --pack-destination "$tmp_dir" "$package@$keyring_version")"
-  package_dir="$keyring_staging/$package_name"
-  mkdir -p "$package_dir"
-  tar -xzf "$tmp_dir/$archive" -C "$package_dir" --strip-components=1
-  test -f "$package_dir/keyring.win32-${arch}-msvc.node"
-done
-
-# Keep private artifacts and update metadata entirely in release-plugins/.
+# Merge release update metadata only after all requested architectures finish.
 version="$(node -p "require('./packages/desktop/package.json').version")"
 build_output="$(node packages/desktop/scripts/windows-build-output.mjs "$version" "$@")"
 IFS=$'\t' read -r release_dir metadata_filename legacy_installer <<<"$build_output"

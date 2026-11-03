@@ -17,10 +17,12 @@ import type {
   OmpCodexResetCreditConsumeResult,
   OmpClaudeLimitResetConsumeResult,
   OmpSubagentSettings,
+  OmpCodexResetSettings,
   OmpMemorySettings,
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
+import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
@@ -200,6 +202,7 @@ export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
+  supportsProxyPolicy?: boolean;
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
@@ -231,6 +234,8 @@ export interface AgentRunOptions {
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+  /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
+  sourceAgentId?: string;
 }
 
 export type AgentInterruptReason = "user" | "replacement" | "reload" | "rewind";
@@ -423,6 +428,7 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;
@@ -452,6 +458,7 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
+  | { type: "working_intent"; provider: AgentProvider; turnId: string; intent: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | { type: "features_changed"; provider: AgentProvider }
@@ -645,6 +652,7 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  proxyPolicy?: ProxyPolicy;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
@@ -696,6 +704,8 @@ export interface AgentSession {
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  /** Restores native children without replaying an already durable parent timeline. */
+  streamSubagentHistory?(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
@@ -722,6 +732,7 @@ export interface AgentSession {
   stopBackgroundProcess?(processId: string): Promise<boolean>;
   stopAllBackgroundProcesses?(): Promise<number>;
   setModel?(modelId: string | null): Promise<void>;
+  setProxyPolicy?(policy: ProxyPolicy | undefined): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   setGoalObjective?(objective: string): Promise<void>;
@@ -809,6 +820,7 @@ export interface OmpProviderLoginStart {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  setDefaultProxyPolicy?(policy: ProxyPolicy): Promise<void>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -842,6 +854,11 @@ export interface AgentClient {
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;
+  /** Read durable background processes without creating a provider session. */
+  listPersistedBackgroundProcesses?(
+    handle: AgentPersistenceHandle,
+    cwd: string,
+  ): Promise<BackgroundProcess[]>;
   importSession?(
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,
@@ -873,6 +890,8 @@ export interface AgentClient {
     options?: { fastMode?: boolean | "ultrafast" | null },
   ): Promise<OmpSubagentSettings>;
   updateOmpSubagentSettingsEnabled?(enabled: boolean): Promise<OmpSubagentSettings>;
+  getOmpCodexResetSettings?(): Promise<OmpCodexResetSettings>;
+  updateOmpCodexResetSettings?(enabled: boolean): Promise<OmpCodexResetSettings>;
   getOmpMemorySettings?(): Promise<OmpMemorySettings>;
   updateOmpMemorySettings?(
     expectedRevision: string,

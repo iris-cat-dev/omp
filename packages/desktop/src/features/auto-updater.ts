@@ -1,6 +1,5 @@
 import log from "electron-log/main";
 import { autoUpdater, type UpdateInfo } from "electron-updater";
-import { PRIVATE_PLUGIN_DISTRIBUTION } from "../distribution.js";
 
 export type AppReleaseChannel = "stable" | "beta";
 export type AppUpdateCheckIntent = "automatic" | "manual";
@@ -31,11 +30,8 @@ let configured = false;
 let operationTail: Promise<void> = Promise.resolve();
 let downloadedUpdateChannel: AppReleaseChannel | null = null;
 const DISABLED_UPDATES_MESSAGE = "Application updates are disabled in this isolated trial.";
-const PRIVATE_UPDATES_MESSAGE =
-  "三插件定制版需使用联合验收后的定制安装包更新；已禁止官方整包更新覆盖补丁宿主。";
 
 function blockedUpdatesMessage(): string | null {
-  if (PRIVATE_PLUGIN_DISTRIBUTION) return PRIVATE_UPDATES_MESSAGE;
   if (process.env.PASEO_DISABLE_APP_UPDATES === "1") return DISABLED_UPDATES_MESSAGE;
   return null;
 }

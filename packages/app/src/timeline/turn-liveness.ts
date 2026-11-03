@@ -1,6 +1,7 @@
 export interface ActiveTurnIdentity {
   turnId: string | null;
   startedAt: Date | null;
+  workingIntent?: string | null;
 }
 
 export type TurnLiveness =
@@ -10,12 +11,14 @@ export type TurnLiveness =
       turnId: string | null;
       startedAt: Date | null;
       cancellationRequestId: number | null;
+      workingIntent?: string;
     };
 
 export type TurnLivenessTransition =
   | { type: "snapshot"; activeTurn: ActiveTurnIdentity | null }
   | { type: "stream_open"; turn: ActiveTurnIdentity }
   | { type: "stream_close"; turnId: string | null }
+  | { type: "working_intent"; turnId: string; intent: string }
   | { type: "cancellation_started"; requestId: number }
   | { type: "cancellation_settled"; requestId: number }
   | { type: "destructive_close" };
@@ -52,6 +55,7 @@ export interface TurnPresentation {
   isCancelling: boolean;
   startedAt: Date | null;
   turnId: string | null;
+  workingIntent?: string;
 }
 
 export function resolveTurnPresentation(
@@ -64,6 +68,7 @@ export function resolveTurnPresentation(
       isCancelling: liveness.cancellationRequestId !== null,
       startedAt: liveness.startedAt,
       turnId: liveness.turnId,
+      ...(liveness.workingIntent ? { workingIntent: liveness.workingIntent } : {}),
     };
   }
   return {
@@ -90,10 +95,17 @@ function openTurn(current: TurnLiveness, activeTurn: ActiveTurnIdentity): TurnLi
     current.phase === "open" &&
     ((activeTurn.turnId !== null && current.turnId === activeTurn.turnId) ||
       (activeTurn.turnId === null && current.turnId === null));
+  const workingIntent =
+    activeTurn.workingIntent === undefined
+      ? sameTurn && current.phase === "open"
+        ? current.workingIntent
+        : undefined
+      : activeTurn.workingIntent || undefined;
   return {
     phase: "open",
     turnId: activeTurn.turnId,
     startedAt: sameTurn ? (current.startedAt ?? activeTurn.startedAt) : activeTurn.startedAt,
+    ...(workingIntent ? { workingIntent } : {}),
     cancellationRequestId:
       sameTurn || current.phase === "idle" ? current.cancellationRequestId : null,
   };
@@ -113,6 +125,20 @@ export function reduceTurnLiveness(
   if (transition.type === "cancellation_settled") {
     if (current.cancellationRequestId !== transition.requestId) return current;
     return { ...current, cancellationRequestId: null };
+  }
+
+  if (transition.type === "working_intent") {
+    if (
+      current.phase !== "open" ||
+      current.turnId !== transition.turnId ||
+      current.cancellationRequestId !== null
+    ) {
+      return current;
+    }
+    const intent = transition.intent.trim();
+    return !intent || current.workingIntent === intent
+      ? current
+      : { ...current, workingIntent: intent };
   }
 
   if (transition.type === "stream_close") {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async";
 import type { AsyncJob } from "@oh-my-pi/pi-coding-agent/async";
 import type {
@@ -168,70 +169,84 @@ export default function desktopBackgroundJobs(pi: ExtensionApi): void {
       list();
       return stopped;
     };
-    // Bun exists only inside the OMP extension host; the desktop Node build
-    // deliberately does not depend on Bun's ambient global types.
-    const host = globalThis as unknown as {
-      Bun: {
-        serve(options: {
-          hostname: string;
-          port: number;
-          fetch(request: Request): Response | Promise<Response>;
-        }): {
-          port: number;
-          stop(): void;
+    const handleRequest = async (request: Request): Promise<Response> => {
+      if (request.headers.get("authorization") !== `Bearer ${token}`)
+        return new Response(null, { status: 401 });
+      const url = new URL(request.url);
+      const processes = list();
+      if (request.method === "GET" && url.pathname === "/list") return Response.json({ processes });
+      if (request.method === "GET" && url.pathname === "/output") {
+        const publicId = url.searchParams.get("id");
+        const id = publicId?.startsWith(processPrefix)
+          ? publicId.slice(processPrefix.length)
+          : null;
+        if (!id || !retained.has(id))
+          return new Response("Background process not found", { status: 404 });
+        const output = outputs.get(id) ?? { text: "", cursor: 0, truncated: false };
+        const unchanged = url.searchParams.get("cursor") === String(output.cursor);
+        const response: BackgroundProcessOutput = {
+          text: unchanged ? "" : output.text,
+          cursor: output.cursor,
+          reset: !unchanged,
+          format: "text",
+          truncated: output.truncated,
         };
-      };
+        return Response.json(response);
+      }
+      if (request.method === "POST" && url.pathname === "/stop") {
+        const publicId = url.searchParams.get("id");
+        const id = publicId?.startsWith(processPrefix)
+          ? publicId.slice(processPrefix.length)
+          : null;
+        if (!id || !retained.has(id))
+          return new Response("Background process not found", { status: 404 });
+        return Response.json({ stopped: (await stopJobs([id])) > 0 });
+      }
+      if (request.method === "POST" && url.pathname === "/stop-all") {
+        const ids = [...retained.entries()]
+          .filter(([, process]) => process.status === "running")
+          .map(([id]) => id);
+        return Response.json({ stopped: await stopJobs(ids) });
+      }
+      return new Response(null, { status: 405 });
     };
-    const bun = host.Bun;
-    const server = bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      async fetch(request) {
-        if (request.headers.get("authorization") !== `Bearer ${token}`)
-          return new Response(null, { status: 401 });
-        const url = new URL(request.url);
-        const processes = list();
-        if (request.method === "GET" && url.pathname === "/list")
-          return Response.json({ processes });
-        if (request.method === "GET" && url.pathname === "/output") {
-          const publicId = url.searchParams.get("id");
-          const id = publicId?.startsWith(processPrefix)
-            ? publicId.slice(processPrefix.length)
-            : null;
-          if (!id || !retained.has(id))
-            return new Response("Background process not found", { status: 404 });
-          const output = outputs.get(id) ?? { text: "", cursor: 0, truncated: false };
-          const unchanged = url.searchParams.get("cursor") === String(output.cursor);
-          const response: BackgroundProcessOutput = {
-            text: unchanged ? "" : output.text,
-            cursor: output.cursor,
-            reset: !unchanged,
-            format: "text",
-            truncated: output.truncated,
-          };
-          return Response.json(response);
-        }
-        if (request.method === "POST" && url.pathname === "/stop") {
-          const publicId = url.searchParams.get("id");
-          const id = publicId?.startsWith(processPrefix)
-            ? publicId.slice(processPrefix.length)
-            : null;
-          if (!id || !retained.has(id))
-            return new Response("Background process not found", { status: 404 });
-          return Response.json({ stopped: (await stopJobs([id])) > 0 });
-        }
-        if (request.method === "POST" && url.pathname === "/stop-all") {
-          const ids = [...retained.entries()]
-            .filter(([, process]) => process.status === "running")
-            .map(([id]) => id);
-          return Response.json({ stopped: await stopJobs(ids) });
-        }
-        return new Response(null, { status: 405 });
-      },
+    const server = createServer((request, response) => {
+      const headers = new Headers();
+      if (request.headers.authorization)
+        headers.set("authorization", request.headers.authorization);
+      void handleRequest(
+        new Request(new URL(request.url ?? "/", "http://127.0.0.1"), {
+          method: request.method,
+          headers,
+        }),
+      )
+        .then(async (result) => {
+          response.writeHead(result.status, Object.fromEntries(result.headers));
+          response.end(Buffer.from(await result.arrayBuffer()));
+        })
+        .catch(() => {
+          if (!response.headersSent) response.writeHead(500);
+          response.end();
+        });
     });
+    const ready = Promise.withResolvers<void>();
+    server.once("error", ready.reject);
+    server.listen(0, "127.0.0.1", ready.resolve);
+    try {
+      await ready.promise;
+    } catch (error) {
+      server.close();
+      if (manager.register === observeRegister) manager.register = originalRegister;
+      throw error;
+    }
+    server.removeListener("error", ready.reject);
+    server.unref();
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Background job bridge did not bind a TCP port");
     cleanup = () => {
       disposed = true;
-      server.stop();
+      server.close();
       if (manager.register === observeRegister) manager.register = originalRegister;
       retained.clear();
       outputs.clear();
@@ -239,7 +254,7 @@ export default function desktopBackgroundJobs(pi: ExtensionApi): void {
     process.stdout.write(
       `${JSON.stringify({
         type: "desktop_background_jobs_ready",
-        port: server.port,
+        port: address.port,
         token,
       })}\n`,
     );

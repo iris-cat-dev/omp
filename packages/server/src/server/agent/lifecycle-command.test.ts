@@ -182,22 +182,6 @@ describe("agent lifecycle commands", () => {
     expect(manager.cancelledAgentIds).toEqual(["agent-1"]);
   });
 
-  test("an idle root still requests cancellation of its running descendants", async () => {
-    const storage = new FakeLifecycleAgentStorage();
-    const manager = new FakeLifecycleAgentManager(storage);
-    manager.liveAgents.set("parent", managedAgent("parent", "idle"));
-    manager.cancelAgentRun = async (agentId) => {
-      manager.cancelledAgentIds.push(agentId);
-      return { status: "settled" } as const;
-    };
-    await expect(
-      cancelAgentRunCommand({ agentManager: manager, logger }, "parent"),
-    ).resolves.toMatchObject({
-      cancelled: true,
-    });
-    expect(manager.cancelledAgentIds).toEqual(["parent"]);
-  });
-
   test("accepts a stop when the run settles during cancellation", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);

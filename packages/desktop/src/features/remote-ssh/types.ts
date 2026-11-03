@@ -68,6 +68,7 @@ export type RemoteSshProfileInput = z.infer<typeof RemoteSshProfileInputSchema>;
 export type RemoteSshPhase =
   | "connecting"
   | "inspecting"
+  | "downloading"
   | "preparing-runtime"
   | "uploading"
   | "installing"

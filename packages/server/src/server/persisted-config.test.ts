@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import type { ProviderOverrides } from "@omp-desktop/protocol/provider-config";
 
 import {
   loadPersistedConfig,
@@ -9,6 +10,7 @@ import {
   savePersistedConfig,
 } from "./persisted-config.js";
 import { PRIVATE_FILE_MODE } from "./private-files.js";
+import { resolveOmpProviderParams } from "./agent/providers/omp/provider-config.js";
 
 const MODE_MASK = 0o777;
 const PERMISSIVE_FILE_MODE = 0o644;
@@ -201,6 +203,68 @@ describe("PersistedConfigSchema daemon append system prompt", () => {
 });
 
 describe("PersistedConfigSchema agent provider runtime settings", () => {
+  test("loads pre-policy OMP settings without crashing provider startup or resetting configuration", () => {
+    const home = createTempHome();
+    const params = { disabledBuiltInTools: ["bash"], smolModel: "provider/smol" };
+    const env = { PI_PROXY: "http://127.0.0.1:7890" };
+    const proxyPolicy = {
+      enabled: false,
+      default: { mode: "proxy", url: "http://127.0.0.1:7891" },
+    };
+    try {
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          version: 1,
+          daemon: { listen: "127.0.0.1:6770" },
+          agents: {
+            providers: {
+              omp: { env, params: { ...params, proxyEnabled: false }, proxyPolicy },
+              custom: {
+                extends: "omp",
+                label: "Custom OMP",
+                params: { ...params, proxyEnabled: true },
+              },
+              other: {
+                extends: "acp",
+                label: "Other agent",
+                command: ["other-agent"],
+                params: { proxyEnabled: true },
+              },
+            },
+          },
+        }),
+      );
+      const config = loadPersistedConfig(home);
+      const providers = config.agents?.providers as ProviderOverrides;
+      expect(providers.omp).toEqual({ env, params, proxyPolicy });
+      expect(providers.custom?.params).toEqual(params);
+      expect(providers.other?.params).toEqual({ proxyEnabled: true });
+      expect(resolveOmpProviderParams(providers.omp?.params)).toMatchObject({
+        runtimeProviderParams: { disabledBuiltInTools: ["bash"] },
+        modelRoleParams: { smolModel: "provider/smol" },
+      });
+      expect(config.daemon?.listen).toBe("127.0.0.1:6770");
+      savePersistedConfig(home, config);
+      expect(loadPersistedConfig(home)).toEqual(config);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("does not discard unknown OMP params along with the retired proxy toggle", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          omp: { params: { proxyEnabled: false, sessionDr: "/sessions" } },
+        },
+      },
+    });
+    expect(() => resolveOmpProviderParams(parsed.agents?.providers?.omp?.params)).toThrow(
+      "sessionDr",
+    );
+  });
+
   test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {
@@ -706,7 +770,7 @@ describe("loadPersistedConfig", () => {
     }
   });
 
-  test("discards speech settings left by older releases", () => {
+  test("preserves supported settings while discarding retired configuration", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");
     try {
@@ -714,6 +778,11 @@ describe("loadPersistedConfig", () => {
         configPath,
         `${JSON.stringify({
           version: 1,
+          daemon: {
+            listen: "127.0.0.1:6767",
+            terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+            agentProfiles: { obsolete: "not a valid launch configuration" },
+          },
           providers: {
             local: { enabled: true },
             openai: {
@@ -732,10 +801,19 @@ describe("loadPersistedConfig", () => {
 
       const config = loadPersistedConfig(home);
 
+      const expectedDaemon = {
+        listen: "127.0.0.1:6767",
+        terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+      };
+      expect(config.daemon).toEqual(expectedDaemon);
       expect(config.providers?.openai).toEqual({ apiKey: "global-key" });
       expect(config.providers).not.toHaveProperty("local");
       expect(config.features).not.toHaveProperty("dictation");
       expect(config.features).not.toHaveProperty("voiceMode");
+      savePersistedConfig(home, config);
+      const saved = loadPersistedConfig(home);
+      expect(saved.daemon).toEqual(expectedDaemon);
+      expect(saved.providers?.openai).toEqual({ apiKey: "global-key" });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

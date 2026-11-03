@@ -1,10 +1,13 @@
 # Development and verification
 
-All shell and PowerShell commands in this guide run from the repository root unless stated otherwise. See [packaging](packaging.md) for supported native runtimes, installer construction, signing, bundled OMP, and release metadata; [remote hosts](remote-hosts.md) and [deployment](deployment.md) cover remote daemon and Web/relay setup.
+All shell and PowerShell commands in this guide run from the repository root unless stated otherwise. See [packaging](packaging.md) for supported native runtimes, installer construction, signing, bundled SDK, and release metadata; [remote hosts](remote-hosts.md) and [deployment](deployment.md) cover remote daemon and Web/relay setup.
 
 ## Start development
 
+Build prerequisites: Node.js 24+, Bun, Rustup with the SDK's pinned Rust toolchain, and a native C/C++ toolchain (Xcode Command Line Tools on macOS; Visual Studio C++ Build Tools on Windows). Bun and Rust are build tools, not installed-application requirements.
+
 ```bash
+git submodule update --init --recursive
 npm install
 npm run dev:desktop
 ```
@@ -16,6 +19,8 @@ Development uses:
 - state: `.dev/omp-desktop-home`.
 
 The packaged app uses `~/.omp-desktop`. OMP keeps its own configuration, credentials, provider subscriptions, and sessions under `~/.omp`.
+
+`omp-sdk/` is a Git submodule of [iris-cat-dev/omp-sdk](https://github.com/iris-cat-dev/omp-sdk), pinned to the commit recorded by Desktop. Use `git clone --recurse-submodules` for a fresh checkout, or rerun `git submodule update --init --recursive` after pulling Desktop changes. Commit SDK changes in `omp-sdk/` and push them to its own remote before committing and pushing an updated submodule pointer here. The SDK package root is `omp-sdk/packages/coding-agent`; initializing the submodule does not install its dependencies or build its Node artifacts.
 
 The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift and Dart stream parsers use the same CodeMirror 6 language types as the application. Keep this pin when updating dependencies; `6.5.5` uses incompatible streamparser types.
 
@@ -38,6 +43,130 @@ Main-process code keeps Electron-compatible `electron` imports; the stock `elect
 
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
+OMP `compact` and `prompt` admission RPCs wait for their response, runtime exit, or session close rather than the short control-plane timeout. Prompt admission can wait for compaction, input hooks, and image preparation; a local timeout does not withdraw that input. Native `manual_compaction_start`/`manual_compaction_end` events use the same compaction timeline and deduplication path as Desktop's `/compact` marker.
+
+### OMP SDK backend
+
+Desktop development, packaged applications, and SSH-managed deployments use the SDK. By default, `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. With an absolute `OMP_DESKTOP_SDK_ARTIFACT` directory, it instead imports the matching **Package release** artifact, checking SDK commit/version, target/profile, and archive integrity without rebuilding native addons. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically. [Mac-to-Windows packaging](packaging.md#mac-to-windows-packaging) sets the target to Windows x64 and consumes the Windows-built SDK.
+
+Desktop-managed configuration ignores legacy `ompBackend: "cli"` and CLI command overrides; model policy, provider environment, and explicit SDK package paths remain. Standalone servers without an SDK retain external CLI support; an installed SDK selects SDK unless that standalone server explicitly selects CLI.
+
+For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package root. Runtime `agents.providers.omp.ompSdkPath` also selects a package root, not a CLI executable or individual module. Installed packages must contain `package.json` and canonical `dist/node/` SDK, RPC, host, plugin-management, and module-registry artifacts.
+
+Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
+
+Browser Relay also uses the embedded runtime: the first loopback relay browser open lazily starts `dist/node/host.mjs browser-relay` through the SDK's machine-global daemon broker. It does not invoke an `omp` executable from `PATH`. Concurrent SDK sessions share the existing relay; broker leases keep it alive while another consumer remains, and externally started relays remain under their owner's control. Remote relay endpoints are never auto-started.
+
+Chrome still needs the OMP Browser Relay extension installed and enabled. Its files can be installed or refreshed without a global CLI using `node <SDK root>/dist/node/host.mjs browser-relay install` (use the embedded Desktop executable with `ELECTRON_RUN_AS_NODE=1` instead of `node` in a packaged app), followed by Chrome's **Load unpacked** or **Reload** action. Rebuild the SDK artifacts and restart the backend after changing this startup path.
+
+User Stop withdraws native steering and follow-up queues atomically before
+aborting the active request. Withdrawn Desktop submissions are echoed once in
+the canonical timeline with their client message IDs and original attachments;
+they are not automatically submitted again. Replacement and other non-user
+interruptions retain ordinary abort semantics. Length continuations are not
+scheduled while interruption is active.
+
+Stop waits for the selected agent and its managed descendants to finish cleanup,
+even when the selected root is idle. This includes accepted host-tool calls,
+background jobs, retained shell subprocesses, and idle JS/Python eval kernels and
+their subprocess groups. Admissions and autonomous continuations are fenced
+during cleanup; independent roots are not stopped. A timeout or unconfirmed
+shutdown returns a failure instead of claiming that live execution is idle.
+
+The conversation remains usable after Stop. A new prompt reopens admission and
+recreates eval kernels lazily; variables, timers, and other retained eval effects
+from before Stop are discarded. Explicit SDK clients requesting the same eval
+namespace for multiple owners receive a strict-Stop error rather than terminating
+another owner's kernel. Ordinary SDK aborts do not dispose retained eval kernels.
+
+Backend code updates require a daemon restart: refreshing one agent cannot
+replace provider classes already loaded by the daemon. Refreshing an agent from
+persistence does close only that agent's runtime and rehydrate its original
+native session history, without replaying a prompt or replacing the conversation.
+
+Cold OMP conversation history and the Chat outline read the persisted session
+directly instead of waiting for an SDK process to start. Loaded agents keep using
+their live timeline. Persisted pages share an epoch distinct from the runtime.
+If resumed live rows arrive in a different epoch above sequence 1, the client
+requests an authoritative catch-up using its existing cursor. The reset response
+replaces the cold window, allowing subsequent replies to display without scrolling
+or restarting the app.
+Subagent lists and paged child timelines also read from disk without loading the
+parent runtime.
+Non-OMP sessions keep their provider-specific loading path. Automatic credential
+lookup skips retry delays when there is no multi-account automatic selection.
+
+Enhanced workflows synchronize the interface language immediately before sending
+a message, not when the composer mounts. Opening cold history therefore stays
+read-only; explicitly changing the workflow still synchronizes the language
+immediately.
+The renderer publishes the local message before asynchronous workspace checks
+and language synchronization; both still finish before the prompt is sent.
+
+Cold background-process lists inspect durable OMP daemon metadata and its broker
+without resuming the conversation. Only the original native session's daemons are
+included; live runtime jobs remain on the loaded-session path.
+
+Persisted OMP runtimes automatically close after five minutes without live
+activity. Running turns, pending permissions, active subagents and unfinished
+background processes prevent retirement; a failed process inventory also keeps
+the runtime alive. Retirement releases the SDK process and daemon-side timeline
+and subagent caches, not the stored conversation, title, settings or unread state.
+History remains readable without starting an SDK process; sending another prompt
+restores the original session through the normal persistence loader. The main
+window, daemon, non-OMP providers and internal agents are unaffected.
+`AgentManagerOptions.idleRuntimeTimeoutMs` controls the timeout for embedded
+managers and deterministic verification; zero disables retirement.
+
+Cold OMP snapshots retain saved workflow features and approval-mode options.
+The composer reads active-directory entries or retained agent details, so
+retirement does not reset controls or skip enhanced-workflow language sync.
+
+Build the staged SDK or an unpacked application:
+
+```bash
+npm run build:omp-sdk
+npm run build -- --dir --publish never
+```
+
+Restart the daemon after changing its backend or SDK. Existing sessions are not switched in place. SDK model/auth and plugin management use the SDK itself; CLI install/update operations are unavailable. SDK statistics read the persisted SQLite index without launching a CLI refresh.
+
+Host Agents settings omit standalone OMP installation and update controls. Update the bundled SDK through Desktop app updates; manage standalone CLI installations outside these settings. Desktop app update controls remain available.
+
+Daemon startup runs `plugin check --fix --json` through the selected OMP runtime before accepting WebSocket clients, checking the user profile and non-archived workspace directories. The check loads enabled manifest entry points without opening a model session or executing tools. Plugins with missing entries, import errors, or factory failures are persistently disabled in their own runtime scope; matching marketplace registry entries are synchronized. Healthy plugins, disabled plugins/features, and plugin settings are preserved. Node RPC hosts also check before session creation, covering newly opened projects. Failures to run the check or write plugin state are logged rather than disabling unrelated plugins. Fix or precompile the plugin, then re-enable it in Host Plugins settings; the next startup checks it again.
+
+Build overrides, shared by development, Desktop packaging, and remote deployment:
+
+| Variable                  | Default                         | Purpose                              |
+| ------------------------- | ------------------------------- | ------------------------------------ |
+| `OMP_DESKTOP_SDK_SOURCE`  | `omp-sdk/packages/coding-agent` | Absolute source package root         |
+| `OMP_DESKTOP_SDK_TARGET`  | `desktop`                       | `desktop` or `generic` Node artifact |
+| `OMP_DESKTOP_SDK_PROFILE` | `core`                          | `core` or `full` capability profile  |
+
+The Desktop target builds `dist/node-desktop/` and installs it canonically at `dist/node/`, leaving generic source artifacts untouched. Extensions can import package roots and Desktop's SDK/headless/async/host-API aliases, not arbitrary source-file subpaths; select `generic` for extensions requiring those imports. Missing artifacts or stale source/target/profile metadata fail packaging instead of falling back.
+
+The Desktop native addon omits PDF text extraction, Jujutsu (Git remains),
+Snapcompact image-based context compression, recording/playback, local word
+prediction, spelling, and Apple Foundation Models, in addition to SmolLM,
+native WebRTC/Opus, and WASM grammars. Both `core` and `full` enforce this native
+boundary. Saved settings cannot activate omitted engines; explicit requests
+fail before native construction. Existing Snapcompact archives, ordinary images,
+browser PDF screenshots/printing, and caller-owned SDP signaling remain usable.
+
+Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. The installed package records its profile; launch-time environment changes cannot restore excluded capabilities.
+
+SDK native dependencies must match the build host's OS and architecture. Windows x64 applications require Windows x64 builds; macOS arm64 applications require macOS arm64 builds. macOS core packaging resolves both the App resources root and addon to their real paths, rejects addons outside that root, and breaks packager hardlinks before stripping the release copy and signing; source addons remain unchanged.
+
+Packaged SDK and Desktop image operations use Sharp 0.35.4 and target-native libvips. Packaging validates dependency versions, target metadata, and native payload hashes. macOS packages share one runtime through App-internal relative links; Windows keeps independent validated SDK and Desktop copies without requiring privileged directory symlinks or non-relocatable absolute junctions. The staged SDK and remote tar retain complete independent dependencies; moving the App requires neither the checkout nor external image libraries.
+
+`npm run build:remote-backend` consumes the fixed public SDK Release configured in `omp-sdk/sdk/node-release.json`, not the locally staged SDK. It verifies all four macOS/glibc Linux x64/arm64 SDK assets and generates a separate npm lockfile for each target. Only workspace archives, target package/lock files and the schema-2 manifest remain in `remote-backend-dist`; SDK tarballs are discarded after lock generation. An unpublished, incomplete or mismatched Release fails the build. See [SDK release construction](../omp-sdk/docs/sdk.md#platform-specific-desktop-core-releases).
+
+Local remote-backend assembly stages beside `remote-backend-dist` before committing with `rename`, so Windows builds work when the system TEMP directory and checkout are on different drives.
+
+The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and exercises JavaScript extension loading plus concurrent RPC sessions and SDK management. Node SDK plugins, custom tools/commands, and eval are JavaScript-only: precompile TS/TSX/JSX sources and dependencies to `.js`, `.mjs`, or `.cjs`. Development selects the server's built JavaScript helpers for internal background-job, image, and local-model extensions instead of asking the SDK to compile their TypeScript sources. CLI command overrides are not SDK entrypoints, and CLI-bound private plugin packages are unsupported. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
+
+Windows Node SDK hosts query `GetConsoleWindow` through the packaged Koffi backend and combine it with TTY evidence, rather than treating Node or redirected stdio as proof that a console exists. MCP servers and eval kernels retain a real inherited console, including fully redirected launches; GUI-hosted background helpers hide their windows. CPU probes, clipboard helpers, dependency installation, and native Git discovery/operations use explicit non-interactive window flags. Interactive editors and PTY tools retain their own terminal behavior.
+
 ### Startup and first-window work
 
 Apple Silicon startup streams local frontend assets in bounded chunks up to 1 MiB, avoiding repeated small-file-read overhead. The main window stays native-hidden until the renderer has painted a branded startup surface and the runtime has copied that frame into the AppKit backing store, avoiding an unpainted first reveal.
@@ -53,6 +182,35 @@ On Windows, the renderer normally reports content readiness after app settings l
 Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster stop scheduling animation while their retained panel or application is inactive. The homepage route supplies its navigation focus to the retained-panel context, so opening Settings also stops the covered poster while the window stays focused. Retained poster resources are reused within the mounted component and released on unmount or when the existing home-effects switch is disabled. Loaders share one timer at the six visible step boundaries per 950 ms cycle, not a permanent display-rate worklet. Reduced-motion preferences remain respected.
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
+
+Replica persistence serializes only the latest 50 serializable canonical timeline
+items. Pending local messages do not count toward that window; omitted canonical
+rows still prevent authoritative coverage. Older rows are inspected only when
+needed to fill the tail or verify coverage. Cache version 6 and restored cursor
+semantics are unchanged. This bounds serialization work, not live timeline retention.
+
+Syntax tokenization keeps a 200-entry LRU with an additional 2,000,000 UTF-16 code
+unit budget across its extension/source keys. This is not a byte-accurate token
+heap limit. Eviction only requires re-tokenization; highlighting output and the
+existing per-block size limit are unchanged.
+
+The task panel and expanded todo activity details share UI tree controls built
+from the directory trees' disclosure chevrons and row presentation, without
+terminal connector glyphs or display-only phase numbering. Every phase remains
+visible and expands independently; the current phase opens by default. The
+header expands or collapses all phases, and explicit disclosure choices survive
+status updates. Web trees support roving focus, arrow-key navigation and
+disclosure, Home and End.
+Desktop task rows use a compact 24px minimum height; narrow screens retain
+32px rows. Leaf rows omit the empty disclosure slot. Tighter panel padding and
+prose-scaled 20px text line heights at the default content size reduce wasted
+space while preserving label wrapping.
+OMP task snapshots retain each non-empty phase's name and zero-based index across
+live updates, history and replica caching. Completed and abandoned tasks count
+as closed progress. Legacy and non-OMP tasks without phase metadata remain an
+ungrouped task tree without a viewport cutoff; long labels wrap. Native partial
+todo reminders merge into the full snapshot instead of discarding closed,
+blocked or subsequent-phase tasks.
 
 ### Changes renderer memory
 
@@ -171,20 +329,6 @@ Remove-Item Env:ELECTRON_PATH
 ```
 
 Choose **Reload window**, then click **Verify interaction** in the replacement. The smoke uses a temporary profile and terminates only its own renderer child; it does not use an existing Desktop process or require Inspector/CDP.
-
-#### Installer switching and OMP preservation
-
-Run the installation-switch regression on a **clean Windows VM**, with standard and `no omp` installers for the same version and architecture:
-
-```powershell
-node packages/desktop/e2e/windows-installer-switch-smoke.js --standard "packages/desktop/release/OMP-Desktop-Setup-<version>-<arch>.exe" --no-omp "packages/desktop/release/OMP-Desktop-No-OMP-Setup-<version>-<arch>.exe"
-```
-
-The smoke refuses to run if the configured application is already registered. It checks fresh installation, switching to `no omp`, repeated installation with a changed directory, switching back, and explicit uninstallation. It verifies the preserved executable's SHA-256 and runs the packaged renderer, daemon, OMP, CLI, and terminal checks after the `no omp` upgrades, including the daemon's actual runtime path. Wine checks do not replace this real Windows installation and startup verification.
-
-Pass `--updated-omp "<path-to-another-omp.exe>"` to replace the initially installed runtime before switching, proving that `no omp` preserves independently updated bytes and that the standard installer restores its own packaged version. The replacement must differ from the standard payload. For disposable installers built with an isolated application identity, pass `--config "<electron-builder.cjs-or-yml>"` describing their `appId` and executable name; the registration safety check then uses that identity instead of the production application.
-
-See [Windows packages without bundled OMP](packaging.md#windows-packages-without-bundled-omp) for the preservation and failure behavior being exercised.
 
 ### Local monitor native regression
 

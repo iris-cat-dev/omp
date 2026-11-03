@@ -275,7 +275,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     features: draftFeatures,
     featureValues: draftFeatureValues,
     setFeatureValue: setDraftFeatureValue,
-    applyProfileFeatureValues,
   } = useDraftAgentFeatures({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
@@ -286,14 +285,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     thinkingOptionId: effectiveThinkingOptionId,
     initialFeatureValues: composerOptions?.initialFeatureValues,
   });
-
-  const applyDraftAgentProfile = useCallback(
-    (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
-      formState.applyProfileFromUser(profile);
-      applyProfileFeatureValues(profile.featureValues);
-    },
-    [applyProfileFeatureValues, formState],
-  );
 
   const commandDraftConfig = useMemo(
     () =>
@@ -331,7 +322,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         formState,
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
-        onApplyAgentProfile: applyDraftAgentProfile,
       }),
       commandDraftConfig,
     };
@@ -342,7 +332,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveThinkingOptionId,
     draftFeatures,
     draftFeatureValues,
-    applyDraftAgentProfile,
     formState,
     setDraftFeatureValue,
     workingDir,

@@ -11,23 +11,6 @@ export function getCliTargetPath(): string {
   return path.join(getLocalBinDir(), filename);
 }
 
-export function getOmpShortcutTargetPath(): string {
-  const filename = process.platform === "win32" ? "omp.cmd" : "omp";
-  return path.join(getLocalBinDir(), filename);
-}
-
-export function getBundledOmpExecutablePath(): string {
-  const filename = process.platform === "win32" ? "omp.exe" : "omp";
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, "bin", filename);
-  }
-
-  const developmentFilename = `omp-${process.platform}-${process.arch}${
-    process.platform === "win32" ? ".exe" : ""
-  }`;
-  return path.resolve(app.getAppPath(), "..", "..", "bin", developmentFilename);
-}
-
 export function getBundledCliShimPath(): string {
   const cliShimFilename = process.platform === "win32" ? "omp-desktop.cmd" : "omp-desktop";
 

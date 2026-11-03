@@ -1,14 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { CreateAgentPreferencesService } from "./service";
-import {
-  applyAgentProfilePreferences,
-  mergeCreateAgentSelectionPreferences,
-  mergeProviderPreferences,
-  parseFormPreferences,
-} from "./preferences";
+import { mergeProviderPreferences, parseFormPreferences } from "./preferences";
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
+  it("migrates retired OMP write approvals without losing durable preferences", () => {
+    expect(
+      parseFormPreferences({
+        provider: "omp",
+        providerPreferences: {
+          omp: {
+            mode: "write",
+            model: "openai/gpt-5.5",
+            featureValues: { workflow_mode: "plan", fast_mode: true },
+          },
+          custom: { mode: "write" },
+        },
+      }),
+    ).toEqual({
+      provider: "omp",
+      providerPreferences: {
+        omp: {
+          mode: "ask",
+          model: "openai/gpt-5.5",
+          featureValues: { fast_mode: true },
+        },
+        custom: { mode: "write" },
+      },
+    });
+  });
+
   it("keeps the selected mode after saving model and thinking", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);
@@ -74,13 +95,15 @@ describe("create agent preferences", () => {
     const preferences = new CreateAgentPreferencesService(storage);
 
     const saveSelection = preferences.update((current) =>
-      mergeCreateAgentSelectionPreferences({
+      mergeProviderPreferences({
         preferences: current,
         provider: "codex",
-        modelId: "gpt-5.5",
-        modeId: "full-access",
-        thinkingOptionId: "high",
-        featureValues: { fast_mode: true },
+        updates: {
+          model: "gpt-5.5",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.5": "high" },
+          featureValues: { fast_mode: true },
+        },
       }),
     );
 
@@ -136,45 +159,17 @@ describe("create agent preferences", () => {
 
   it("erases a saved mode when a complete selection explicitly has no mode", () => {
     expect(
-      mergeCreateAgentSelectionPreferences({
+      mergeProviderPreferences({
         preferences: {
           provider: "pi",
           providerPreferences: { pi: { model: "anthropic/sonnet", mode: "full-access" } },
         },
         provider: "pi",
-        modelId: "anthropic/sonnet",
-        modeId: null,
+        updates: { model: "anthropic/sonnet", mode: null },
       }),
     ).toEqual({
       provider: "pi",
       providerPreferences: { pi: { model: "anthropic/sonnet" } },
-    });
-  });
-
-  it("repairs the previous provider while applying a profile", () => {
-    expect(
-      applyAgentProfilePreferences({
-        preferences: {
-          provider: "pi",
-          providerPreferences: {
-            pi: { model: "anthropic/sonnet", mode: "full-access" },
-            mock: { model: "ten-second-stream", mode: "load-test" },
-          },
-        },
-        previousProvider: "pi",
-        previousProviderModeIds: [],
-        provider: "mock",
-        modelId: "one-minute-stream",
-        modeId: "approval-test",
-        thinkingOptionId: "",
-        featureValues: {},
-      }),
-    ).toEqual({
-      provider: "mock",
-      providerPreferences: {
-        pi: { model: "anthropic/sonnet" },
-        mock: { model: "one-minute-stream", mode: "approval-test", featureValues: {} },
-      },
     });
   });
 
@@ -285,9 +280,14 @@ describe("create agent preferences", () => {
     });
   });
 
-  it("preserves legacy favourites across preference writes until host migration", async () => {
-    const favoriteModels = [{ provider: "claude", modelId: "opus" }];
-    const storage = new FakeCreateAgentPreferenceStorage({ stored: { favoriteModels } });
+  it("discards retired favourites while preserving ordinary selection preferences", async () => {
+    const selection = {
+      provider: "claude",
+      providerPreferences: { claude: { model: "opus", thinkingByModel: { opus: "high" } } },
+    };
+    const storage = new FakeCreateAgentPreferenceStorage({
+      stored: { ...selection, favoriteModels: [{ provider: "claude", modelId: "opus" }] },
+    });
     const preferences = new CreateAgentPreferencesService(storage);
 
     const save = preferences.update({ isolation: "worktree" });
@@ -295,7 +295,7 @@ describe("create agent preferences", () => {
     storage.finishOldestWrite();
     await save;
 
-    expect(storage.savedPreferences()).toEqual({ favoriteModels, isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ ...selection, isolation: "worktree" });
   });
 
   it("treats stored preferences without an isolation choice as undefined", () => {

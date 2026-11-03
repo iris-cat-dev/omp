@@ -38,7 +38,6 @@ export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: str
 export interface FormPreferences {
   provider?: string;
   providerPreferences?: Record<string, ProviderPreferences>;
-  favoriteModels?: Array<{ provider: string; modelId: string }>;
   isolation?: "local" | "worktree";
   launchTarget?: LaunchTarget;
 }
@@ -58,17 +57,6 @@ const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind",
 export const FormPreferencesSchema = z.strictObject({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
-  // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
-  // Keep the legacy payload alive until every capable host has had a chance to
-  // import it; ordinary preference writes must not erase it first.
-  favoriteModels: z
-    .array(
-      z.strictObject({
-        provider: z.string(),
-        modelId: z.string(),
-      }),
-    )
-    .optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
   // Keep previously saved launch targets readable until persisted preferences
   // are migrated; current draft tabs no longer use this setting.
@@ -108,10 +96,17 @@ const LegacyFormPreferencesSchema = z
     };
   });
 
-export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
-  FormPreferencesSchema,
-  LegacyFormPreferencesSchema,
-]);
+export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.preprocess(
+  (value) => {
+    if (typeof value !== "object" || value === null || !("favoriteModels" in value)) {
+      return value;
+    }
+    const preferences: Record<string, unknown> = { ...value };
+    delete preferences.favoriteModels;
+    return preferences;
+  },
+  z.union([FormPreferencesSchema, LegacyFormPreferencesSchema]),
+);
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 
@@ -123,12 +118,16 @@ export function parseFormPreferences(value: unknown): FormPreferences {
 
   let nextProviderPreferences: Record<string, ProviderPreferences> | null = null;
   for (const [provider, providerPreferences] of Object.entries(result.data.providerPreferences)) {
+    if (provider === "omp" && providerPreferences.mode === "write") {
+      nextProviderPreferences ??= { ...result.data.providerPreferences };
+      nextProviderPreferences[provider] = { ...providerPreferences, mode: "ask" };
+    }
     if (!providerPreferences.featureValues) continue;
     const featureValues = sanitizePersistentAgentFeatureValues(providerPreferences.featureValues);
     if (featureValues === providerPreferences.featureValues) continue;
     nextProviderPreferences ??= { ...result.data.providerPreferences };
     nextProviderPreferences[provider] = {
-      ...providerPreferences,
+      ...(nextProviderPreferences[provider] ?? providerPreferences),
       ...(Object.keys(featureValues).length > 0 ? { featureValues } : {}),
     };
     if (Object.keys(featureValues).length === 0) {
@@ -204,69 +203,4 @@ export function mergeProviderPreferences(args: {
       [provider]: applyProviderPreferenceUpdates(existing, updates),
     },
   };
-}
-
-export function mergeCreateAgentSelectionPreferences(args: {
-  preferences: FormPreferences;
-  provider: AgentProvider | null;
-  modelId?: string | null;
-  modeId?: string | null;
-  thinkingOptionId?: string | null;
-  featureValues?: Record<string, unknown>;
-}): FormPreferences {
-  if (!args.provider) {
-    return args.preferences;
-  }
-
-  const modelId = args.modelId?.trim() ?? "";
-  const modeId = args.modeId?.trim() ?? "";
-  const thinkingOptionId = args.thinkingOptionId?.trim() ?? "";
-  const featureValues = featureValuesSchema.safeParse(args.featureValues);
-
-  return mergeProviderPreferences({
-    preferences: args.preferences,
-    provider: args.provider,
-    updates: {
-      model: modelId || undefined,
-      mode: args.modeId === undefined ? undefined : modeId || null,
-      ...(modelId && thinkingOptionId ? { thinkingByModel: { [modelId]: thinkingOptionId } } : {}),
-      ...(featureValues.success ? { featureValues: featureValues.data } : {}),
-    },
-  });
-}
-
-export function applyAgentProfilePreferences(args: {
-  preferences: FormPreferences;
-  previousProvider: AgentProvider | null;
-  previousProviderModeIds: readonly string[];
-  provider: AgentProvider;
-  modelId: string;
-  modeId: string;
-  thinkingOptionId: string;
-  featureValues: Record<string, unknown>;
-}): FormPreferences {
-  let next = args.preferences;
-  if (args.previousProvider) {
-    const previousMode = next.providerPreferences?.[args.previousProvider]?.mode;
-    if (previousMode && !args.previousProviderModeIds.includes(previousMode)) {
-      next = mergeProviderPreferences({
-        preferences: next,
-        provider: args.previousProvider,
-        updates: { mode: null },
-      });
-    }
-  }
-
-  return mergeProviderPreferences({
-    preferences: next,
-    provider: args.provider,
-    updates: {
-      model: args.modelId || undefined,
-      mode: args.modeId || null,
-      ...(args.modelId && args.thinkingOptionId
-        ? { thinkingByModel: { [args.modelId]: args.thinkingOptionId } }
-        : {}),
-      featureValues: args.featureValues,
-    },
-  });
 }

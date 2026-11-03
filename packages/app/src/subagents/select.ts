@@ -36,6 +36,7 @@ export interface ProviderSubagentRow {
   status: ProviderSubagentDescriptorPayload["status"];
   requiresAttention: boolean;
   createdAt: Date;
+  runVersion?: number;
 }
 
 export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
@@ -119,6 +120,7 @@ export function selectProviderSubagentsForParent(
       status: subagent.status,
       requiresAttention: subagent.status === "failed",
       createdAt: new Date(subagent.createdAt),
+      runVersion: state.runVersions.get(key) ?? 0,
     });
   }
   rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());

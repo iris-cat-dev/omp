@@ -5,10 +5,7 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
-import {
-  AgentProfileSchema,
-  type OmpDesktopToolCapabilities,
-} from "@omp-desktop/protocol/messages";
+import type { OmpDesktopToolCapabilities } from "@omp-desktop/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -601,7 +598,6 @@ const TOOL_CAPABILITY_BY_NAME: Readonly<Record<string, OmpDesktopToolCapability>
   stop_workspace_script: "scripts",
   list_providers: "providers",
   list_models: "providers",
-  list_profiles: "providers",
   inspect_provider: "providers",
   present_image: "optional",
   request_visual_feedback: "optional",
@@ -2102,6 +2098,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentStorage,
         agentId,
         prompt,
+        sourceAgentId: callerAgentId,
         sessionMode,
         activeTurnBehavior: "steer",
         replaceOnSteerUnavailable: false,
@@ -3177,30 +3174,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           provider,
           models,
         }),
-      };
-    },
-  );
-
-  registerTool(
-    "list_profiles",
-    {
-      title: "List agent profiles",
-      description:
-        "List agent profiles: named provider/model/mode bundles a human configured for specific " +
-        "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
-        "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
-      inputSchema: {},
-      outputSchema: {
-        profiles: z.array(AgentProfileSchema),
-      },
-    },
-    async () => {
-      const profiles = daemonConfigStore?.get().agentProfiles ?? [];
-      return {
-        content: [],
-        structuredContent: ensureValidJson({ profiles }),
       };
     },
   );
