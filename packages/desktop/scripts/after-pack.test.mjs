@@ -9,7 +9,7 @@ const { deduplicateSdkSharp, stripCoreSdkAddon } = createRequire(import.meta.url
 );
 
 function fixture() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omp-image-package-"));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "omp-image-package-")));
   const resources = path.join(directory, "resources");
   const sdk = path.join(resources, "omp-sdk");
   const desktop = path.join(resources, "app");

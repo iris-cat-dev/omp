@@ -59,6 +59,19 @@ packages/desktop/release/mac-arm64/OMP Desktop.app
 
 For local installer builds, pass `--publish never` to avoid uploading release artifacts.
 
+### Packaging regression checks
+
+Run the targeted packaging tests with Vitest, not Node's built-in test runner:
+
+```bash
+npx vitest run \
+  packages/desktop/scripts/sdk-artifact.test.mjs \
+  packages/desktop/scripts/after-pack.test.mjs \
+  packages/desktop/scripts/run-electron-builder.test.mjs
+```
+
+These checks cover SDK artifact validation, relocated Sharp dependency confinement, and target-runtime selection. They do not replace native packaged-application acceptance.
+
 ## GitHub Actions release packaging
 
 The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 packages** by default: a Windows runner builds and smoke-tests the native SDK, then a Mac runner imports that artifact and produces the Windows NSIS installer, ZIP, blockmaps, and update YAML. It runs on **Release publication** (`release.published`, including pre-releases) or through **Actions → Package release → Run workflow**. Saving a draft or pushing a tag alone does not start packaging.
