@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { getCurrentInterfaceLocale } from "@/i18n/i18next";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Composer } from "@/composer";
 import { assertWorkspaceDirectoryExists } from "@/composer/submit";
@@ -116,6 +117,7 @@ function buildCreateAgentOptions({
     provider,
     cwd: workspaceDirectory,
     workspaceId,
+    locale: getCurrentInterfaceLocale(),
     ...(reconciledMode !== "" ? { modeId: reconciledMode } : {}),
     ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
     ...(composerState.effectiveThinkingOptionId

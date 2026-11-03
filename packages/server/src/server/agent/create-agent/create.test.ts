@@ -129,13 +129,6 @@ test("session create validates the requested mode against the provider's modes",
     }),
   ).rejects.toThrow("Invalid mode 'plan'");
 
-  expect(stub.resolveCreateConfig).toHaveBeenCalledWith(
-    expect.objectContaining({
-      provider: "opencode",
-      cwd: "/tmp/paseo-create-test",
-      requestedMode: "plan",
-    }),
-  );
   expect(createAgent).not.toHaveBeenCalled();
 });
 

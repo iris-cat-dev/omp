@@ -1,6 +1,7 @@
 import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
+import { resolveSupportedLocale, type SupportedLocale } from "./locales";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
@@ -37,5 +38,9 @@ observeI18nInit(
     },
   }),
 );
+
+export function getCurrentInterfaceLocale(): SupportedLocale {
+  return resolveSupportedLocale("system", [i18n.resolvedLanguage ?? i18n.language]);
+}
 
 export { i18n };

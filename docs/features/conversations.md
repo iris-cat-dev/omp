@@ -104,6 +104,8 @@ The indicator stays hidden when no process content exists, including fetch failu
 
 Sidebar rows always use the conversation title and last-activity time (for example `2h` or `2d`); missing timestamps leave the space blank. The former **Title**, **Diff stats**, and **Last activity** display choices are removed without resetting other settings.
 
+Automatically generated conversation/workspace titles use the interface language resolved when the creation request is sent, including **System** language selection. This requirement overrides the language of the prompt, attachments, and project `metadataGeneration.title.instructions`; technical identifiers such as file paths, commands, package names, and PR/issue numbers keep their original form. Git branch naming is unchanged. Changing the interface language does not rewrite existing titles or user-set names.
+
 Only online hosts contribute project and chat rows. Disconnecting hides cached rows but preserves host profiles, project order, and host filters; reconnecting restores them. See [Remote hosts](../remote-hosts.md) for connection management.
 
 Resuming a reopened conversation displays live output and late-arriving approvals without a wheel-scroll refresh. When already at the bottom, changes to live rows or loaded-message presentation keep the latest content visible. Scrolling upward disengages output following and preserves the reading position.

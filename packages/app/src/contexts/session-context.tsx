@@ -1,6 +1,7 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
+import { getCurrentInterfaceLocale } from "@/i18n/i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { startPushNotifications } from "@/push-notifications";
@@ -1010,6 +1011,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       assertLocalModelBridgeReady(client);
       await client.createAgent({
         config,
+        locale: getCurrentInterfaceLocale(),
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),

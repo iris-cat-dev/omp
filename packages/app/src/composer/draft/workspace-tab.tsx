@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { i18n } from "@/i18n/i18next";
+import { getCurrentInterfaceLocale, i18n } from "@/i18n/i18next";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -207,6 +207,7 @@ async function submitDraftCreateRequest(input: {
   const result = await client.createAgent({
     config,
     workspaceId,
+    locale: getCurrentInterfaceLocale(),
     ...(text ? { initialPrompt: text } : {}),
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),

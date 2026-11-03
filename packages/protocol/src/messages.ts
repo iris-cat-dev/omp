@@ -1740,6 +1740,8 @@ export const CreateAgentWorktreeTargetSchema = z.discriminatedUnion("mode", [
 
 export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTargetSchema>;
 
+const InterfaceLocaleSchema = z.enum(["ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   config: AgentSessionConfigSchema,
@@ -1750,6 +1752,8 @@ export const CreateAgentRequestMessageSchema = z.object({
   callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
+  // Resolved interface language for generated conversation/workspace titles.
+  locale: InterfaceLocaleSchema.optional(),
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
@@ -3006,6 +3010,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
 
 export const FirstAgentContextSchema = z.object({
   prompt: z.string().optional(),
+  locale: InterfaceLocaleSchema.optional(),
   attachments: AgentAttachmentsSchema,
 });
 

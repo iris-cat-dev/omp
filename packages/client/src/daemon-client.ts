@@ -429,6 +429,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   workspaceId?: string;
   callerAgentId?: string;
   initialPrompt?: string;
+  locale?: CreateAgentRequestMessage["locale"];
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
@@ -2629,6 +2630,7 @@ export class DaemonClient {
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      ...(options.locale ? { locale: options.locale } : {}),
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.images && options.images.length > 0 ? { images: options.images } : {}),

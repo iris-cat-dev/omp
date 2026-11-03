@@ -1,5 +1,6 @@
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@omp-desktop/protocol/agent-types";
+import { getCurrentInterfaceLocale } from "@/i18n/i18next";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -40,6 +41,7 @@ export async function launchDesktopPetCreation(input: {
   const agent = await client.createAgent({
     config: buildWorkspaceDraftAgentConfig({ ...preferences, cwd }),
     workspaceId: normalizedWorkspace.id,
+    locale: getCurrentInterfaceLocale(),
     initialPrompt: workspace.initialPrompt,
     clientMessageId,
   });

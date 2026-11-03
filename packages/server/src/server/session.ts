@@ -3503,6 +3503,7 @@ export class Session {
 
       const firstAgentContext: FirstAgentContext = {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+        ...(msg.locale ? { locale: msg.locale } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
