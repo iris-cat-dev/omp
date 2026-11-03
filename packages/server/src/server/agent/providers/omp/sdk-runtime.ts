@@ -15,7 +15,11 @@ import {
   startOmpRpcSession,
 } from "./cli-runtime.js";
 import { prepareOmpImageSettingsLaunch, OMP_IMAGE_SETTINGS_TOKEN_ENV } from "./image-settings.js";
-import { resolveOmpSdkInstallation, type OmpSdkInstallation } from "./sdk-installation.js";
+import {
+  resolveOmpSdkInstallation,
+  resolveOmpSdkBrokerEndpoint,
+  type OmpSdkInstallation,
+} from "./sdk-installation.js";
 import { resolveOmpSdkHostCommand } from "./sdk-host-command.js";
 import {
   OMP_SDK_ROOT_ENV,
@@ -44,6 +48,18 @@ export class OmpSdkRuntime implements OmpRuntime {
 
   getInstallation(): Promise<OmpSdkInstallation> {
     return resolveOmpSdkInstallation(this.options.runtimeSettings);
+  }
+
+  async resolveBrokerEndpoint(
+    runtimeDir: string,
+    launchEnv?: Record<string, string>,
+  ): Promise<string> {
+    const env = createProviderEnv({
+      runtimeSettings: this.options.runtimeSettings,
+      overlays: [launchEnv],
+    });
+    const installation = await resolveOmpSdkInstallation(this.options.runtimeSettings, env);
+    return resolveOmpSdkBrokerEndpoint(installation, runtimeDir);
   }
 
   async stopDaemon(input: {

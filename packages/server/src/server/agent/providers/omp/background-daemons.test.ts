@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import * as net from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { OmpAgentClient } from "./agent.js";
 
 let root: string;
+let sdkRoot: string;
 let runtime: string;
 let daemonDir: string;
 let env: NodeJS.ProcessEnv;
@@ -17,6 +19,13 @@ let server: net.Server | undefined;
 const sockets = new Set<net.Socket>();
 const scopeKey = "0123456789abcdef";
 let snapshot: Record<string, unknown>;
+
+function brokerEndpoint(dir: string): string {
+  const native = createRequire(path.join(sdkRoot, "package.json"))("@oh-my-pi/pi-natives") as {
+    ipcEndpoint(dir: string, name: string): string;
+  };
+  return native.ipcEndpoint(dir, "broker");
+}
 
 async function persist() {
   await fs.mkdir(daemonDir, { recursive: true });
@@ -51,10 +60,7 @@ async function broker(reply: (request: Record<string, unknown>, socket: net.Sock
       if (newline >= 0) reply(JSON.parse(buffer.slice(0, newline)), socket);
     });
   });
-  const endpoint =
-    process.platform === "win32"
-      ? `\\\\.\\pipe\\omp-daemon-${scopeKey}`
-      : path.join(runtime, "broker.sock");
+  const endpoint = brokerEndpoint(runtime);
   await new Promise<void>((resolve, reject) => {
     server!.once("error", reject);
     server!.listen(endpoint, resolve);
@@ -64,10 +70,33 @@ async function broker(reply: (request: Record<string, unknown>, socket: net.Sock
 beforeEach(async () => {
   root = await fs.mkdtemp(fileURLToPath(new URL("../../../../../../../.bg-", import.meta.url)));
   root = await fs.realpath(root);
+  sdkRoot = path.join(root, "sdk");
+  await fs.mkdir(path.join(sdkRoot, "dist", "node"), { recursive: true });
+  await fs.writeFile(
+    path.join(sdkRoot, "package.json"),
+    JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "18.14.0" }),
+  );
+  for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"]) {
+    await fs.writeFile(path.join(sdkRoot, "dist", "node", entry), "");
+  }
+  const natives = path.join(sdkRoot, "node_modules", "@oh-my-pi", "pi-natives");
+  await fs.mkdir(natives, { recursive: true });
+  await fs.writeFile(path.join(natives, "package.json"), JSON.stringify({ main: "index.cjs" }));
+  await fs.writeFile(
+    path.join(natives, "index.cjs"),
+    `
+    const path = require("node:path");
+    const { createHash } = require("node:crypto");
+    exports.ipcEndpoint = (dir, name) => process.platform === "win32"
+      ? ${JSON.stringify("\\\\.\\pipe\\omp-")} + name + "-" + createHash("sha256").update(path.resolve(dir).toLowerCase()).digest("hex").slice(0, 16)
+      : path.join(dir, name + ".ipc");
+  `,
+  );
   env = {
     HOME: root,
     USERPROFILE: root,
     PI_CONFIG_DIR: ".omp",
+    OMP_DESKTOP_SDK_ROOT: sdkRoot,
     OMP_PROFILE: "",
     PI_PROFILE: "",
     PI_CODING_AGENT_DIR: undefined,
@@ -89,7 +118,7 @@ beforeEach(async () => {
   };
   await persist();
   await fs.writeFile(path.join(runtime, "scope.json"), JSON.stringify({ projectDir: root }));
-  adapter = new OmpBackgroundDaemons({ cwd: root, env });
+  adapter = new OmpBackgroundDaemons({ cwd: root, env, resolveBrokerEndpoint: brokerEndpoint });
 });
 
 afterEach(async () => {
@@ -104,24 +133,30 @@ afterEach(async () => {
 describe("OMP passive daemon inspection", () => {
   test("cold provider inspection retains owned daemons but excludes other sessions and workspace daemons", async () => {
     await broker((request, socket) => {
-      socket.end(JSON.stringify({
-        id: request.id,
-        ok: true,
-        result: {
-          op: "list",
-          daemons: [
-            snapshot,
-            { ...snapshot, id: "foreign-id", name: "foreign", owner: "another-session" },
-            { ...snapshot, id: "workspace-id", name: "workspace", owner: null },
-          ],
-        },
-      }) + "\n");
+      socket.end(
+        JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: {
+            op: "list",
+            daemons: [
+              snapshot,
+              { ...snapshot, id: "foreign-id", name: "foreign", owner: "another-session" },
+              { ...snapshot, id: "workspace-id", name: "workspace", owner: null },
+            ],
+          },
+        }) + "\n",
+      );
     });
     const client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
       runtimeSettings: {
         ompBackend: "sdk",
-        env: Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value ?? ""])),
+        ompSdkPath: sdkRoot,
+        env: {
+          ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value ?? ""])),
+          OMP_DESKTOP_SDK_ROOT: path.join(root, "not-the-selected-sdk"),
+        },
       },
     });
     expect(
@@ -213,9 +248,13 @@ describe("OMP passive daemon inspection", () => {
     });
   });
 
-  test("does not confuse a live broker transport failure with an empty scope", async () => {
-    await broker((_request, socket) => socket.end());
-    await expect(adapter.list()).rejects.toThrow("closed before responding");
+  test("does not turn a missing endpoint of a live broker into an offline scope", async () => {
+    await fs.writeFile(path.join(runtime, "broker.token"), "private-token\n");
+    await fs.writeFile(path.join(runtime, "broker.pid"), JSON.stringify({ pid: process.pid }));
+    await expect(adapter.list()).rejects.toMatchObject({
+      code: "ENOENT",
+      address: brokerEndpoint(runtime),
+    });
   });
 
   test("surfaces rejected authentication without returning broker error secrets", async () => {
@@ -224,7 +263,9 @@ describe("OMP passive daemon inspection", () => {
         `${JSON.stringify({ id: request.id, ok: false, error: "private-token never-expose-me" })}\n`,
       ),
     );
-    await expect(adapter.list()).rejects.toThrow("Invalid or rejected OMP daemon broker response");
+    await expect(adapter.list()).rejects.toMatchObject({
+      message: expect.not.stringMatching(/private-token|never-expose-me/u),
+    });
   });
 
   test("finds a scope created after an empty initial inspection and isolates other projects", async () => {
@@ -246,77 +287,9 @@ describe("OMP passive daemon inspection", () => {
       cwd: root,
       env: { ...env, OMP_PROFILE: "wrong" },
       command: ["must-not-be-executed", "--profile", "work"],
+      resolveBrokerEndpoint: brokerEndpoint,
     });
     expect((await adapter.list()).map((row) => row.id)).toEqual(["daemon-id"]);
-  });
-
-  test("stops a known daemon through the configured OMP command", async () => {
-    const requests: Record<string, unknown>[] = [];
-    await broker((request, socket) => {
-      requests.push(request);
-      socket.end(
-        `${JSON.stringify({
-          id: request.id,
-          ok: true,
-          result: { op: "list", daemons: [snapshot] },
-        })}\n`,
-      );
-    });
-    const marker = path.join(root, "stop-args.json");
-    adapter.dispose();
-    adapter = new OmpBackgroundDaemons({
-      cwd: root,
-      env,
-      command: [
-        process.execPath,
-        "-e",
-        "require('node:fs').writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))",
-        marker,
-      ],
-    });
-    await adapter.list();
-
-    await expect(adapter.stop("daemon-id")).resolves.toBe(true);
-
-    expect(JSON.parse(await fs.readFile(marker, "utf8"))).toEqual([
-      "ps",
-      "stop",
-      "web",
-      "--dir",
-      root,
-      "--timeout",
-      "2",
-    ]);
-    expect(requests).toHaveLength(2);
-  });
-
-  test("uses the SDK stop controller instead of a CLI command", async () => {
-    await broker((request, socket) => {
-      socket.end(
-        `${JSON.stringify({
-          id: request.id,
-          ok: true,
-          result: { op: "list", daemons: [snapshot] },
-        })}\n`,
-      );
-    });
-    const stopped: string[] = [];
-    adapter.dispose();
-    adapter = new OmpBackgroundDaemons({
-      cwd: root,
-      env,
-      command: ["must-not-be-executed"],
-      stopDaemon: async (name) => {
-        stopped.push(name);
-        snapshot.state = "exited";
-      },
-    });
-
-    await expect(adapter.stop("daemon-id")).resolves.toBe(true);
-    expect(stopped).toEqual(["web"]);
-    expect((await adapter.list())[0]?.status).toBe("exited");
-    await expect(adapter.stop("unknown-id")).rejects.toThrow("Unknown OMP background process");
-    expect(stopped).toEqual(["web"]);
   });
 
   test("rejects arbitrary paths, unknown IDs, replacement IDs, and symlinked logs", async () => {

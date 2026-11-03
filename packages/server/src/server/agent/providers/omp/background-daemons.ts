@@ -12,6 +12,7 @@ import type {
 } from "@omp-desktop/protocol/background-processes";
 
 import { resolveOmpDiagnosticPaths } from "./provider-config.js";
+import { resolveOmpSdkInstallation, resolveOmpSdkBrokerEndpoint } from "./sdk-installation.js";
 
 const OUTPUT_LIMIT = 256 * 1024;
 const RESPONSE_LIMIT = 8 * 1024 * 1024;
@@ -233,11 +234,13 @@ export class OmpBackgroundDaemons {
   private readonly command: string[];
   private readonly env: NodeJS.ProcessEnv;
   private readonly stopDaemon?: (name: string) => Promise<void>;
+  private readonly resolveBrokerEndpoint: (dir: string) => string | Promise<string>;
   private readonly sockets = new Set<net.Socket>();
   private readonly known = new Map<string, Daemon>();
   private readonly positions = new Map<string, Position>();
   private readonly outputQueues = new Map<string, Promise<unknown>>();
   private runtimeDir: string | undefined;
+  private endpoint: string | undefined;
   private listing: Promise<Row[]> | undefined;
   private disposed = false;
   private nextCursor = 1;
@@ -247,6 +250,7 @@ export class OmpBackgroundDaemons {
     env?: NodeJS.ProcessEnv;
     command?: string[];
     stopDaemon?: (name: string) => Promise<void>;
+    resolveBrokerEndpoint?: (dir: string) => string | Promise<string>;
   }) {
     this.cwd = path.resolve(options.cwd);
     this.env = { ...process.env, ...options.env };
@@ -254,6 +258,13 @@ export class OmpBackgroundDaemons {
     const command = options.command ?? [this.env.OMP_COMMAND ?? "omp"];
     this.command = command;
     this.stopDaemon = options.stopDaemon;
+    this.resolveBrokerEndpoint =
+      options.resolveBrokerEndpoint ??
+      (async (dir) => {
+        if (process.platform !== "win32") return path.join(dir, "broker.sock");
+        const installation = await resolveOmpSdkInstallation(undefined, this.env);
+        return resolveOmpSdkBrokerEndpoint(installation, dir);
+      });
     for (let i = 1; i < command.length; i++) {
       const arg = command[i]!;
       if (arg === "--profile") {
@@ -408,11 +419,7 @@ export class OmpBackgroundDaemons {
       throw new Error("Cannot read OMP daemon broker credentials", { cause: error });
     }
     if (!token) throw new Error("Invalid OMP daemon broker credentials");
-    // Project runtime basenames and Windows pipe names use the same canonical-path wyhash.
-    const endpoint =
-      process.platform === "win32"
-        ? `\\\\.\\pipe\\omp-daemon-${path.basename(dir)}`
-        : path.join(dir, "broker.sock");
+    const endpoint = (this.endpoint ??= await this.resolveBrokerEndpoint(dir));
     try {
       this.assertOpen();
       return await new Promise<unknown[]>((resolve, reject) => {

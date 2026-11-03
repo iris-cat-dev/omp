@@ -5247,6 +5247,7 @@ export class OmpAgentClient implements AgentClient {
       return new OmpBackgroundDaemons({
         cwd,
         env,
+        resolveBrokerEndpoint: (dir) => runtime.resolveBrokerEndpoint(dir, env),
         stopDaemon: async (name) => {
           const shellEnv = this.desktopConfigDir
             ? await prepareOmpAgentShellEnv({

@@ -9,6 +9,12 @@ const sdkMetadata = z.object({
   name: z.literal("@oh-my-pi/pi-coding-agent"),
   version: z.string().min(1),
 });
+const sdkIpcModule = z.object({
+  ipcEndpoint: z.custom<(dir: string, name: string) => string>(
+    (value) => typeof value === "function",
+    "The selected SDK native module does not export ipcEndpoint",
+  ),
+});
 
 export interface OmpSdkInstallation {
   root: string;
@@ -85,4 +91,13 @@ export async function resolveOmpSdkInstallation(
     rpcEntry: path.join(root, "dist", "node", "rpc.mjs"),
     workerEntry: path.join(root, "dist", "node", "host.mjs"),
   };
+}
+
+/** Load only the pure IPC helper from the selected SDK's own native dependency. */
+export function resolveOmpSdkBrokerEndpoint(
+  installation: OmpSdkInstallation,
+  runtimeDir: string,
+): string {
+  const native = sdkIpcModule.parse(createRequire(installation.sdkEntry)("@oh-my-pi/pi-natives"));
+  return native.ipcEndpoint(runtimeDir, "broker");
 }
