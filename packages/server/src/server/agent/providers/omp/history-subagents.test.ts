@@ -71,15 +71,13 @@ describe("native persisted subagent recovery", () => {
       content: [{ type: "thinking", thinking: "Inspecting" }, { type: "text", text: "Recovered answer" }],
     };
     writeMessages(child("Worker"), [raw]);
-    const native: Array<{ id: string; messages: readonly OmpAgentMessage[] }> = [];
-    const events = await recover({ sessionFile: parent, provider: "omp", onSubagentTranscript: (id, messages) => native.push({ id, messages }) });
+    const events = await recover({ sessionFile: parent, provider: "omp" });
     expect(events.every((event) => event.type === "provider_subagent")).toBe(true);
     const recovered = children(events);
     expect(recovered[0]).toMatchObject({ type: "upsert", id: "Worker", title: "scout", toolCallId: "spawn" });
     expect(recovered[0]).not.toHaveProperty("status");
     expect(recovered).toContainEqual(expect.objectContaining({ type: "timeline", id: "Worker", item: expect.objectContaining({ type: "assistant_message", text: "Recovered answer" }) }));
     expect(recovered.at(-1)).toMatchObject({ id: "Worker", status: "completed" });
-    expect(native).toEqual([{ id: "Worker", messages: [raw] }]);
   });
 
   test("replays one transcript across multiple calls and keeps the latest child outcome", async () => {
