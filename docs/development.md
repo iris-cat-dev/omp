@@ -199,7 +199,8 @@ status updates. Web trees support roving focus, arrow-key navigation and
 disclosure, Home and End.
 Desktop task rows use a compact 24px minimum height; narrow screens retain
 32px rows. Leaf rows omit the empty disclosure slot. Tighter panel padding and
-18px text line heights reduce wasted space while preserving label wrapping.
+prose-scaled 20px text line heights at the default content size reduce wasted
+space while preserving label wrapping.
 OMP task snapshots retain each non-empty phase's name and zero-based index across
 live updates, history and replica caching. Completed and abandoned tasks count
 as closed progress. Legacy and non-OMP tasks without phase metadata remain an

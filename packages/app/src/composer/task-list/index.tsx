@@ -3,12 +3,11 @@ import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ListTodo, PanelRightClose } from "lucide-react-native";
-import { TaskListTree } from "@/components/task-list-tree";
+import { TaskListTree, taskTextMetrics } from "@/components/task-list-tree";
 import { isClosedTask } from "@/components/task-list-tree-model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TodoEntry } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
-import { proseLineHeight } from "@/styles/markdown-styles";
 
 const ThemedListTodo = withUnistyles(ListTodo);
 const ThemedPanelRightClose = withUnistyles(PanelRightClose);
@@ -117,8 +116,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   collapsedProgress: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
   tooltipText: {

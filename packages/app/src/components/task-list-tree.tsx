@@ -15,7 +15,7 @@ import {
 } from "lucide-react-native";
 import { Tree, TreeItem } from "@/components/ui/tree";
 import { proseLineHeight } from "@/styles/markdown-styles";
-import type { Theme } from "@/styles/theme";
+import { FONT_SIZE, type Theme } from "@/styles/theme";
 import type { TodoEntry } from "@/types/stream";
 import {
   buildTaskTree,
@@ -35,6 +35,15 @@ const ThemedChevronsUpDown = withUnistyles(ChevronsUpDown);
 const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 const runningIconColor = (theme: Theme) => ({ color: theme.colors.statusDotRunning });
 const blockedIconColor = (theme: Theme) => ({ color: theme.colors.statusWarning });
+
+/**
+ * Task text sits one authored ramp step below conversation content so the panel
+ * stays secondary to the prose, while still following the content-size setting.
+ */
+export function taskTextMetrics(contentSize: number) {
+  const fontSize = Math.round(contentSize * (FONT_SIZE.base / FONT_SIZE.content));
+  return { fontSize, lineHeight: proseLineHeight(fontSize) };
+}
 
 function TaskStatusIcon({ status }: { status: TaskStatus }) {
   switch (status) {
@@ -209,21 +218,19 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     fontWeight: theme.fontWeight.medium,
   },
   overallProgress: {
     marginLeft: "auto",
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
   scroll: { minHeight: 0, flexShrink: 1 },
   contents: { minWidth: 0 },
   statusIcon: {
-    height: proseLineHeight(theme.fontSize.content),
+    height: taskTextMetrics(theme.fontSize.content).lineHeight,
     justifyContent: "center",
     flexShrink: 0,
   },
@@ -231,8 +238,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   runningLabel: { color: theme.colors.foreground },
@@ -241,22 +247,19 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     fontWeight: theme.fontWeight.medium,
     ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   activePhaseLabel: { color: theme.colors.foreground },
   phaseProgress: {
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
     fontVariant: ["tabular-nums"],
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.content,
-    lineHeight: proseLineHeight(theme.fontSize.content),
+    ...taskTextMetrics(theme.fontSize.content),
   },
   tooltipText: {
     maxWidth: 420,
