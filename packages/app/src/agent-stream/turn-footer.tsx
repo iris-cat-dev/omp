@@ -163,6 +163,14 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-message"
         />
       ) : null}
+      {inFlightTurnStartedAt ? (
+        <LiveElapsed
+          startedAt={inFlightTurnStartedAt}
+          active={active}
+          style={stylesheet.workingElapsed}
+          testID="turn-working-elapsed"
+        />
+      ) : null}
       {outputTokenSpeed !== null ? (
         <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
           <Text style={stylesheet.tokenOutputSpeedText}>
@@ -171,14 +179,6 @@ const WorkingIndicator = memo(function WorkingIndicator({
             })}
           </Text>
         </View>
-      ) : null}
-      {inFlightTurnStartedAt ? (
-        <LiveElapsed
-          startedAt={inFlightTurnStartedAt}
-          active={active}
-          style={stylesheet.workingElapsed}
-          testID="turn-working-elapsed"
-        />
       ) : null}
     </View>
   );
