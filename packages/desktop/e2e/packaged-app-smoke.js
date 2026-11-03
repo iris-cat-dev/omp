@@ -668,22 +668,17 @@ const runtime = new OmpSdkRuntime({
 });
 const sessions = [];
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sdk-packaged-"));
-const extension = path.join(cwd, "sdk-install-probe.ts");
+const extension = path.join(cwd, "sdk-install-probe.mjs");
 fs.writeFileSync(extension, \`
 import * as fs from "node:fs/promises";
-import * as assert from "node:assert/strict";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { nativeCapabilities } from "@oh-my-pi/pi-natives";
-enum Value { Base = 6 }
-export default function(api: ExtensionAPI) {
+export default function(api) {
   api.on("session_start", async (_event, ctx) => {
-    assert.deepEqual(nativeCapabilities(), ${JSON.stringify(
-      sdkPackage.ompNodeSdk?.target === "desktop"
-        ? { smollm: false, liveVoice: false, wasmGrammars: false }
-        : { smollm: true, liveVoice: true, wasmGrammars: true },
-    )});
-    await fs.writeFile(path.join(ctx.cwd, "sdk-typescript-result.txt"), String(Value.Base * 7));
+    await fs.writeFile(
+      path.join(ctx.cwd, "sdk-native-capabilities.json"),
+      JSON.stringify(nativeCapabilities()),
+    );
   });
 }
 \`);
@@ -701,7 +696,26 @@ export default function(api: ExtensionAPI) {
       assert.deepEqual(await session.listBackgroundJobs(), []);
       assert.ok(state.dumpTools.some(tool => tool.name === "write"));
     }
-    assert.equal(fs.readFileSync(path.join(cwd, "sdk-typescript-result.txt"), "utf8"), "42");
+    const capabilities = JSON.parse(
+      fs.readFileSync(path.join(cwd, "sdk-native-capabilities.json"), "utf8"),
+    );
+    const expectedCapabilities = ${JSON.stringify(
+      sdkPackage.ompNodeSdk?.target === "desktop"
+        ? {
+            smollm: false,
+            liveVoice: false,
+            wasmGrammars: false,
+            pdf: false,
+            jujutsu: false,
+            snapcompact: false,
+            audio: false,
+            localAssistance: false,
+          }
+        : { smollm: true, liveVoice: true, wasmGrammars: true },
+    )};
+    for (const [name, expected] of Object.entries(expectedCapabilities)) {
+      assert.equal(capabilities[name], expected, "Unexpected native capability: " + name);
+    }
     const states = await Promise.all(sessions.map(session => session.getState()));
     assert.equal(new Set(states.map(state => state.sessionId)).size, sessions.length);
     assert.equal(typeof globalThis.Bun, "undefined");

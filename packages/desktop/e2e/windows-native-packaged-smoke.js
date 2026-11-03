@@ -1203,22 +1203,22 @@ async function smokeInstallation({ command, serverId, omp, report, evidence }) {
     "Installation status must come from the isolated daemon",
   );
   assert.equal(rpc.serverInfo?.features?.ompInstall, true);
-  assert.equal(rpc.installation?.installed, true, "The real daemon must detect the bundled OMP");
-  assert.equal(rpc.installation?.source, "bundled");
+  assert.equal(rpc.installation?.installed, true, "The real daemon must detect the packaged SDK");
   assert.equal(
     typeof rpc.installation.version,
     "string",
     "Installation version must cross the real runtime/SDK boundary as a string",
   );
-  assert.equal(path.resolve(rpc.installation.installPath), path.resolve(omp.binaryPath));
-  assert.ok(
-    omp.version.includes(rpc.installation.version),
-    "CLI and installation RPC must identify the same bundled OMP version",
+  assert.equal(path.resolve(rpc.installation.installPath), path.resolve(omp.sdkRoot));
+  assert.equal(
+    rpc.installation.version,
+    omp.version,
+    "SDK runtime and installation RPC must identify the same packaged SDK version",
   );
   report.installation = { rpc };
   writeJson(path.join(evidence, "omp-installation.json"), report.installation);
   report.checks.push(
-    "real read-only installation RPC detects the exact bundled OMP path/version; no download/update requested",
+    "real read-only installation RPC detects the exact packaged SDK path/version; no download/update requested",
   );
 }
 
@@ -1972,7 +1972,7 @@ async function smokeWindowsPackagedApp({
       createTerminal: (input) => command({ action: "terminal-create", ...input }),
     });
     report.checks.push(
-      "bundled OMP --version and exact provider executable detection; CLI daemon status; real interactive terminal echo",
+      "packaged SDK and native tools without external OMP/Bun; CLI daemon status; real interactive terminal echo",
     );
     await smokeInstallation({
       command,
