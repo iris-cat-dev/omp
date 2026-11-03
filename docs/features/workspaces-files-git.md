@@ -90,9 +90,11 @@ These actions add content without sending the draft:
 
 - Desktop/Web: drag a Files-tree entry to the composer in the same workspace for a workspace-file reference or directory attachment, not a move. Directories carry absolute paths, not uploaded contents. The input highlights and gains focus on drop; repeat drops avoid duplicate references. With multiple selected rows, only the row where dragging starts goes to chat (tree-to-tree still moves all). **Escape** cancels.
 - Drop external files onto the input for attachments. On a local Desktop host, folders become directory attachments. macOS Retina and Windows high-DPI use the same visible target; Windows native OLE drops reject access through reparse-point path components.
-- Paste clipboard images, including Windows native PNG and DIB/DIBV5. Windows editable-input context menus provide native Cut/Copy/Paste/Select All.
+- Paste clipboard images, including Windows native PNG and DIB/DIBV5. Windows file-list paste also supports single/multiple Explorer files and mixed images/files with Unicode names when using the [repaired native runtime](../packaging.md#windows-runtime-version-and-local-overrides). Only a native user paste into the focused document authorizes those files; text that happens to contain a path is not uploaded. Windows editable-input context menus provide native Cut/Copy/Paste/Select All.
 
 Drop external UTF-8 text files onto history or ordinary areas to open local read-only file tabs, not a dialog or upload. Each offers **Preview / Source**, rendering Markdown/HTML in Preview. Outside workspaces they use a dedicated tabbed preview page. Mode survives tab switching; closing releases content; reload removes these session-only tabs. Files up to **2 MiB**, including extensionless files, are supported; directories, binary files, and larger files show explanations. Terminal surfaces retain their file-path drop behavior.
+
+Ordinary local Desktop Files-tree HTML/HTM clicks use the selected external browser, matching chat links. Explicit source-line links retain internal source viewing. Dropped read-only content previews are a separate intentional **Preview / Source** surface.
 
 ## File discovery and editing
 

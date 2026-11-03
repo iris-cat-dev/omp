@@ -321,6 +321,18 @@ Pet input waits for genuine, authenticated interactivity IPC to transition from 
 
 Windows runtime 0.1.15 has an observed [electron-log renderer-preload redeclaration issue](https://github.com/iris-cat-dev/mini-electron/issues/5). The native smoke retains this error; passing the application scenarios does not prove that renderer logging initialized successfully.
 
+#### Native Explorer-file clipboard
+
+Windows Explorer file paste requires the mini-electron `nativeClipboardFiles` capability described in [packaging](packaging.md#windows-runtime-version-and-local-overrides). Build that repaired checkout on Windows x64 and run its real native scenarios before selecting it for a Desktop package:
+
+```powershell
+python build.py --package-dist -j 2
+out/windows-x64/runtime-dist/electron.exe --app=test/windows-native-input-smoke.js
+out/windows-x64/runtime-dist/electron.exe --app=test/windows-clipboard-image-smoke.js
+```
+
+Then exercise the real Composer: single/multiple Explorer files, mixed PNG + text, Chinese/spaced names, busy-state paste, and ordinary text. Retain the sandbox, frame/document and clipboard-sequence identity checks; do not substitute reading text paths or enabling Windows Inspector. Native macOS `macos-clipboard-editing-smoke.js` checks the unchanged image/editing path but cannot qualify Windows `CF_HDROP`, a Windows installer, or the Composer's end-to-end behavior.
+
 #### Renderer-loss recovery
 
 To exercise renderer-loss recovery on Windows with a freshly built local runtime:

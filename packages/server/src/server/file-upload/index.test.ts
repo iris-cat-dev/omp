@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -55,6 +55,57 @@ describe("file uploads", () => {
     });
     expect(readFileSync(path, "utf8")).toBe("hello world");
   });
+
+  it.each([
+    ["中文报告.md", "中文报告.md"],
+    ["report-更正版.pdf", "report-更正版.pdf"],
+    ["保留 space-2026.txt", "保留 space-2026.txt"],
+    ["plain.txt", "plain.txt"],
+    [" spaced name.txt ", " spaced name.txt "],
+    ["../../中文报告.md", "中文报告.md"],
+    ["..\\..\\中文报告.md", "中文报告.md"],
+    ["C:\\private\\中文报告.md", "中文报告.md"],
+    ["/private/中文报告.md", "中文报告.md"],
+    ["bad\u0000\n\u007f\u0085name.txt", "bad____name.txt"],
+    ["..", "upload"],
+    [".", "upload"],
+    ["../", "upload"],
+    ["", "upload"],
+    ["   ", "upload"],
+  ])(
+    "returns a safe display basename for %j without using it as the storage name",
+    async (requestedFileName, displayFileName) => {
+      const paseoHome = makePaseoHome();
+      const uploads = new FileUploadStore({ paseoHome });
+      const requestId = "../req-name\\test";
+      uploads.beginUpload({
+        type: "file.upload.request",
+        fileName: requestedFileName,
+        mimeType: "text/plain",
+        size: 11,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        requestId,
+      });
+
+      await expect(uploads.receiveFrame(uploadBegins(requestId))).resolves.toBeNull();
+      await expect(uploads.receiveFrame(uploadChunk(requestId, "hello"))).resolves.toBeNull();
+      await expect(uploads.receiveFrame(uploadChunk(requestId, " world"))).resolves.toBeNull();
+      const response = await uploads.receiveFrame(uploadEnds(requestId));
+      const attachment = response?.payload.file;
+      expect(response?.payload.error).toBeNull();
+      if (!attachment) throw new Error("Expected an uploaded-file attachment");
+      expect(attachment.fileName).toBe(displayFileName);
+      expect(readFileSync(attachment.path, "utf8")).toBe("hello world");
+      const storedRelativePath = relative(
+        realpathSync(join(paseoHome, "uploads")),
+        realpathSync(attachment.path),
+      );
+      expect(isAbsolute(storedRelativePath)).toBe(false);
+      expect(storedRelativePath.startsWith("..")).toBe(false);
+      expect(basename(attachment.path)).toMatch(/^[a-zA-Z0-9._ -]+$/);
+      expect([".", ".."]).not.toContain(basename(attachment.path));
+    },
+  );
 
   it("rejects chunks beyond the declared size and removes the partial file", async () => {
     const paseoHome = makePaseoHome();

@@ -19,6 +19,8 @@ Sending adds the message to the conversation immediately, before workspace valid
 
 If validation or sending fails, the unacknowledged local row is removed, the text and attachments return to the composer, and the error is shown. A message already acknowledged by the host remains in the conversation.
 
+Uploaded-file attachments preserve their Unicode basename in the composer, message, and agent input. Disk storage names are sanitized separately; path prefixes and control characters are not accepted as display names.
+
 ## Long input messages
 
 Sent input text taller than six rendered lines starts collapsed. Choose **Expand full message** to read it and **Collapse** to fold it again. Wrapping follows the available width; short text has no disclosure control. Copy and rewind retain the complete original message, and image/file attachments remain outside the collapsed text. Long skill arguments follow the same rule; expanding the skill still shows its full instructions.
@@ -42,7 +44,7 @@ On mobile Web, long-press an image in chat or fullscreen preview and use the bro
 ## Links and local files
 
 - HTTP(S) links open externally.
-- Text/source links open in the workspace file panel.
+- Text/source links open in the workspace file panel. Ordinary local Desktop `.html` / `.htm` links open in the selected external browser; explicit source-line links still open internally at that line.
 - On a local Desktop host, existing images, documents, archives, and directories inside the workspace open with the OS. Executables are revealed in the file manager, **not executed**.
 - Web conversation headings support native `#heading` navigation.
 
@@ -50,7 +52,7 @@ Unopenable targets appear as plain text, not colored links; clicking reports uns
 
 Desktop HTTP(S) link context menus offer opening in the selected browser and copying the address. Unsupported schemes have no Open action; an unavailable plain **Copy** action is omitted.
 
-For a resolvable workspace file link on the local Desktop host, right-click can reveal it in the system file manager (Explorer on Windows) without opening/executing. Relative paths, encoded names, and line suffixes resolve as on left-click. Remote links have no local reveal; missing targets and paths outside the workspace, including symlink escapes, are rejected with errors. Left-click behavior is unchanged.
+For a resolvable local file link on Desktop, explicit right-click can reveal it in the system file manager (Explorer on Windows), including files outside the workspace such as Downloads. Relative paths, encoded names, and line suffixes resolve as on left-click. The main process requires existing absolute local paths and resolves symlinks, but reveal never opens/executes the target. Remote links have no local reveal. Ordinary OS/browser file opening remains workspace-confined and rejects symlink escapes.
 
 The input's native context menu preserves selection and image-attachment paste behavior with **Cut / Copy / Paste / Select All**. Read-only targets do not offer Paste. See [Attachments and local previews](workspaces-files-git.md#attachments-and-local-previews) for drops and clipboard images.
 
@@ -58,7 +60,7 @@ The input's native context menu preserves selection and image-attachment paste b
 
 Choose **Settings → General → Browser**. **System default** follows the OS; installed Chrome, Edge, Firefox, Brave, Chromium, and Safari appear where supported. If the chosen browser is later removed, Desktop reports unavailable rather than silently switching.
 
-For **Custom executable**, enter an absolute browser/launcher path and ordered arguments, then **Save custom browser**. Each argument is passed literally, preserving spaces, quotes, backslashes, newlines, and empty values. Exactly one argument must equal `{url}`; it is replaced in full with the original HTTP(S) URL. Do not shell-quote paths or embed `{url}` in another argument.
+For **Custom executable**, enter an absolute browser/launcher path and ordered arguments, then **Save custom browser**. Each argument is passed literally, preserving spaces, quotes, backslashes, newlines, and empty values. Exactly one argument must equal `{url}`; it is replaced in full with the original HTTP(S) URL or the validated local webpage's encoded file URL. Do not shell-quote paths or embed `{url}` in another argument.
 
 For example, select executable `C:\Program Files\Google\Chrome\Application\chrome.exe` and two separate arguments:
 
@@ -69,7 +71,7 @@ For example, select executable `C:\Program Files\Google\Chrome\Application\chrom
 
 Windows requires native `.exe` or `.com` launchers; `.cmd`/`.bat` are rejected because they require shell interpretation. On macOS choose the executable inside the app bundle, not the `.app` directory. Custom failure reports an error without fallback. Saved arguments survive changing targets and restarting.
 
-This setting affects only OMP's external HTTP(S) links. It does not change the OS browser default, other apps, or assistant browser relay/CDP settings.
+This setting affects OMP's external HTTP(S) links and ordinary local-workspace HTML/HTM opens. **System default** uses the OS's HTTPS browser even if HTML files are associated with an editor. Local webpage opening checks the existing real path, workspace containment, file type, and executable restrictions; it does not permit arbitrary `file:` URLs through the HTTP(S) opener. It does not change the OS browser default, other apps, or assistant browser relay/CDP settings.
 
 ## Math
 

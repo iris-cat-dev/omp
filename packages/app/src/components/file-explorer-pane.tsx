@@ -110,6 +110,8 @@ import { useExplorerEntryDrag } from "@/file-explorer/use-entry-drag";
 import { moveExplorerSelection } from "@/file-explorer/move-selection";
 import { createDirectoryComposerAttachment } from "@/attachments/directory";
 import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
+import { isHtmlAssistantFile } from "@/assistant-file-links/parse";
+import { getDesktopHost } from "@/desktop/host";
 
 const FILE_EXPLORER_ROW_SELECTOR = '[data-testid^="file-explorer-row-"]';
 const FILE_EXPLORER_ROOT_DROP_BLOCKED_SELECTOR = '[data-explorer-root-drop-blocked="true"]';
@@ -1218,9 +1220,33 @@ export function FileExplorerPane({
       if (!hasWorkspaceScope) {
         return;
       }
+      const desktop = getDesktopHost();
+      if (isLocalDaemon && desktop && isHtmlAssistantFile(entry.path)) {
+        const open = async () => {
+          if (!desktop.opener?.openPath)
+            throw new Error("Local desktop file opening is unavailable.");
+          await desktop.opener.openPath({
+            path: buildAbsoluteExplorerPath({
+              workspaceRoot: normalizedWorkspaceRoot,
+              entryPath: entry.path,
+            }),
+            workspaceRoot: normalizedWorkspaceRoot,
+          });
+        };
+        void open().catch((openError: unknown) => {
+          toast.show(
+            t("common.errors.linkOpenFailed", {
+              token: entry.path,
+              reason: openError instanceof Error ? openError.message : String(openError),
+            }),
+            { variant: "error" },
+          );
+        });
+        return;
+      }
       onOpenFile?.({ path: entry.path });
     },
-    [hasWorkspaceScope, onOpenFile],
+    [hasWorkspaceScope, onOpenFile, isLocalDaemon, normalizedWorkspaceRoot, t, toast],
   );
 
   const handleCollapseDirectory = useCallback(

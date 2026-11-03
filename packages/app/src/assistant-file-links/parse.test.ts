@@ -427,23 +427,36 @@ describe("parseAssistantFileLink", () => {
     ).toBeNull();
   });
 
-  it("does not throw when the input contains a literal '%' that is not a valid percent-escape", () => {
-    // Regressions for tool output strings like ping's "100% packet loss",
-    // Windows "%PATH%" references, and percentages such as "0% off".
-    // decodeURIComponent throws URIError on these; the parser must swallow
-    // it and return null rather than crash the renderer.
-    const cases = [
-      "/tmp/100% packet loss",
-      "/Users/test/project/0% off",
-      "/var/log/%PATH%/x.log",
-      "file:///tmp/100% packet loss",
-    ];
-    for (const value of cases) {
-      expect(() =>
-        parseAssistantFileLink(value, { workspaceRoot: "/Users/test/project" }),
-      ).not.toThrow();
-    }
-    expect(() => parseFileProtocolUrl("file:///tmp/100% packet loss")).not.toThrow();
+  it.each<[string, string, number?]>([
+    ["/workspace/demo%23one.html", "/workspace/demo#one.html"],
+    ["/workspace/demo%2520.html", "/workspace/demo%20.html"],
+    ["./%E4%B8%AD%E6%96%87%20demo.html#L2", "/workspace/中文 demo.html", 2],
+    ["./demo%3Fone.htm", "/workspace/demo?one.htm"],
+    ["C:/workspace/demo%23one.HTML#L3", "C:/workspace/demo#one.HTML", 3],
+    ["./demo%2523.htm:12", "/workspace/demo%23.htm", 12],
+    ["./demo%2Ehtml", "/workspace/demo.html"],
+  ])("decodes the href filename once after separating line syntax: %s", (href, path, lineStart) => {
+    expect(parseAssistantFileLink(href, { workspaceRoot: "/workspace", urlEncoded: true })).toEqual(
+      {
+        raw: href,
+        path,
+        lineStart,
+        lineEnd: undefined,
+      },
+    );
+  });
+
+  it("preserves native percent filenames and the workspace root's literal escapes", () => {
+    expect(parseAssistantFileLink("/workspace/demo%20.html")?.path).toBe("/workspace/demo%20.html");
+    expect(
+      parseAssistantFileLink("./demo%2520.html", {
+        workspaceRoot: "/workspace%20",
+        urlEncoded: true,
+      })?.path,
+    ).toBe("/workspace%20/demo%20.html");
+    expect(parseFileProtocolUrl("file:///workspace/demo%2520.html")?.path).toBe(
+      "/workspace/demo%20.html",
+    );
   });
 });
 

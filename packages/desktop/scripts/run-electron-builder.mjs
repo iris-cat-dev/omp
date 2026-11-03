@@ -139,6 +139,13 @@ async function qualifyRuntime(runtimeDist, runtime, normalized) {
   if (hash.digest("hex") !== expectedHash) {
     throw new Error(`mini-electron executable SHA256 mismatch at ${runtimeDist}/${executable}`);
   }
+  if (runtime.platform === "win32" && runtime.features?.nativeClipboardFiles !== 1) {
+    throw new Error(
+      "Windows packaging requires nativeClipboardFiles=1 in the verified mini-electron " +
+        "version.json. Select the rebuilt clipboard-file runtime with MINI_ELECTRON_DIST_PATH; " +
+        "runtime 0.1.32 and earlier do not implement authorized DOM File paste.",
+    );
+  }
   return target;
 }
 

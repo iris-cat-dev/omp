@@ -47,7 +47,8 @@ export class FileUploadStore {
       void existingUpload.queue.then(() => this.removeUploadDirectory(existingUpload));
     }
 
-    const fileName = sanitizeFileName(request.fileName);
+    const fileName = sanitizeDisplayFileName(request.fileName);
+    const storageFileName = sanitizeStorageFileName(fileName);
     const attempt = existingUpload ? existingUpload.attempt + 1 : 1;
     const id = buildUploadId(request.requestId, attempt);
     const uploadDir = join(this.paseoHome, "uploads", id);
@@ -58,7 +59,7 @@ export class FileUploadStore {
       fileName,
       mimeType: request.mimeType,
       size: request.size,
-      path: join(uploadDir, fileName),
+      path: join(uploadDir, storageFileName),
       receivedBytes: 0,
       started: false,
       staleTimeout: this.createStaleUploadTimeout(request.requestId),
@@ -215,9 +216,13 @@ function buildUploadId(requestId: string, attempt: number): string {
   return attempt === 1 ? baseId : `${baseId}_${attempt}`;
 }
 
-function sanitizeFileName(value: string): string {
-  const name = basename(value)
-    .replace(/[^a-zA-Z0-9._ -]/g, "_")
-    .trim();
+function sanitizeDisplayFileName(value: string): string {
+  // Treat both separator styles as paths, regardless of the server's platform.
+  const name = basename(value.replace(/\\/g, "/")).replace(/\p{Cc}/gu, "_");
+  return name.trim().length > 0 && name !== "." && name !== ".." ? name : "upload";
+}
+
+function sanitizeStorageFileName(value: string): string {
+  const name = value.replace(/[^a-zA-Z0-9._ -]/g, "_").trim();
   return name.length > 0 && name !== "." && name !== ".." ? name : "upload";
 }

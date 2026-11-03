@@ -107,6 +107,8 @@ The npm installer is pinned to official `@iriscat/mini-electron@0.1.12`; native 
 
 Packaging accepts newer native runtime releases without a script update, validating the selected distribution's platform, architecture, installer protocol, Electron API metadata, and executable SHA-256 instead of pinning a release number. Main-process code keeps Electron-compatible `electron` imports; the stock `electron` package is retained only for TypeScript declarations. Project scripts do not download or substitute its runtime.
 
+Windows distributions must also declare `version.json.features.nativeClipboardFiles === 1`, after executable hash verification. This marks the native user-authorized Explorer-file → DOM File implementation, not merely PNG clipboard support. Unmodified Windows runtime 0.1.32 lacks this capability and is rejected; a frontend rebuild or npm-installer update cannot add it.
+
 Packaging uses the installed runtime (or `MINI_ELECTRON_DIST_PATH`) without downloading or downgrading it to a fixed release. Before packaging, refresh an existing installation with:
 
 ```bash
@@ -188,7 +190,7 @@ Cross-builds skip the native packaged-app smoke because Windows executables cann
 
 ### Windows runtime version and local overrides
 
-Windows packages use `@iriscat/mini-electron` installer 0.1.12. Use Windows runtime **0.1.23 or newer** for the screen-coordinate and DPI-position fixes in [mini-electron #7](https://github.com/iris-cat-dev/mini-electron/issues/7); the macOS channel remains independent. Native SQLite, IPC frame identity, clipboard/keyboard/OLE input, selection colors, and IME remain supported.
+Windows packages use `@iriscat/mini-electron` installer 0.1.12. Screen-coordinate and DPI-position fixes require runtime **0.1.23 or newer** ([mini-electron #7](https://github.com/iris-cat-dev/mini-electron/issues/7)), but version alone is insufficient: the selected distribution must carry the native file-clipboard capability above. The macOS channel remains independent. Native SQLite, IPC frame identity, image clipboard/keyboard/OLE input, selection colors, and IME remain supported.
 
 To package an unpublished local runtime instead, build its checkout with `python build.py --package-dist` and select that distribution explicitly (PowerShell):
 
@@ -198,14 +200,9 @@ npm run build:windows
 Remove-Item Env:MINI_ELECTRON_DIST_PATH
 ```
 
-Update the native runtime explicitly before packaging an existing checkout:
+The file-list clipboard repair currently requires rebuilding the repaired mini-electron checkout on Windows x64, then selecting its distribution with the override above. Do not add the capability field by hand to an older runtime. Run the runtime's `test/windows-native-input-smoke.js` and `test/windows-clipboard-image-smoke.js` on an unlocked Windows desktop, then verify actual Composer single/multiple files, mixed PNG + text, Unicode names, busy state, and ordinary text paste. macOS native image smoke and shared-code compilation do not establish Windows file-clipboard or installer qualification.
 
-```bash
-npx mini-electron --update-runtime 0.1.23
-node -p "require('@iriscat/mini-electron/dist/version.json').runtimeVersion"
-```
-
-For a reproducible fresh Windows install, set `MINI_ELECTRON_RUNTIME_VERSION=0.1.23` when running `npm ci`. The npm lockfile pins the installer, not the native runtime; ordinary postinstall reuses an already valid distribution instead of refreshing it.
+The npm lockfile pins the installer, not the native runtime; ordinary postinstall reuses an already valid distribution instead of refreshing it.
 
 ### Unsigned local candidate
 

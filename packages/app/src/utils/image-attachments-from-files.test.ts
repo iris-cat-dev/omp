@@ -106,6 +106,22 @@ describe("collectClipboardAttachmentFiles", () => {
     });
   });
 
+  it("keeps multiple Unicode filenames in mixed native file-list delivery", () => {
+    const image = new File([new Uint8Array([1, 2])], "图片 café 😀.png", { type: "image/png" });
+    const text = new File(["文件内容"], "文本 café.txt", { type: "text/plain" });
+    const files = collectClipboardAttachmentFiles({
+      items: [
+        createClipboardItem({ kind: "file", type: image.type, file: image }),
+        createClipboardItem({ kind: "file", type: text.type, file: text }),
+      ],
+      files: [image, text],
+    });
+    expect(files.imageFiles).toEqual([{ file: image, mimeType: "image/png" }]);
+    expect(files.genericFiles).toEqual([text]);
+    expect(files.imageFiles[0]?.file.name).toBe("图片 café 😀.png");
+    expect(files.genericFiles[0]?.name).toBe("文本 café.txt");
+  });
+
   it("recognizes an image with an empty MIME type by its file name", () => {
     const imagePng = new File([new Uint8Array([0, 1, 2, 3])], "paste.png");
 

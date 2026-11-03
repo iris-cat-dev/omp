@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { shell, ipcMain } from "electron";
 
@@ -7,6 +8,7 @@ import { listBrowserTargets, openBrowserTarget } from "./browser-targets.js";
 import { createExternalAppRuntime, type ExternalAppRuntime } from "./external-app-runtime.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import type { DesktopSettingsStore } from "../settings/desktop-settings.js";
+import { openSystemBrowser } from "./system-browser.js";
 
 const ALLOWED_EXTERNAL_URL_PROTOCOLS: Record<string, true> = { "http:": true, "https:": true };
 // Electron may launch these targets rather than showing their contents.
@@ -73,6 +75,7 @@ function isAbsoluteLocalPath(value: unknown): value is string {
 
 async function resolveWorkspacePath(
   input: unknown,
+  action: "open" | "reveal" = "open",
 ): Promise<{ target: string; revealOnly: boolean }> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new Error("Invalid workspace path");
@@ -85,6 +88,11 @@ async function resolveWorkspacePath(
 
   // realpath requires both paths to exist and resolves symlinks before containment is checked.
   const [root, target] = await Promise.all([realpath(workspaceRoot), realpath(targetPath)]);
+  if (!isAbsoluteLocalPath(root) || !isAbsoluteLocalPath(target)) {
+    throw new Error("Invalid workspace path");
+  }
+  // Explicit reveal never reads or launches the target, including outside the workspace.
+  if (action === "reveal") return { target, revealOnly: true };
   const relative = path.relative(root, target);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error("Path is outside workspace");
@@ -153,6 +161,17 @@ export function registerOpenerHandlers(options: BrowserOpenerOptions = {}): void
       shell.showItemInFolder(target);
       return;
     }
+    if (/\.html?$/i.test(target) && (await stat(target)).isFile()) {
+      const settings = await (options.settingsStore ?? getDesktopSettingsStore()).get();
+      await openBrowserTarget(
+        settings.browser.target,
+        pathToFileURL(target).href,
+        runtime,
+        options.openSystemUrl ?? ((url) => openSystemBrowser(url, runtime)),
+        settings.browser.custom,
+      );
+      return;
+    }
     const error = await shell.openPath(target);
     if (error) {
       throw new Error(error);
@@ -160,7 +179,7 @@ export function registerOpenerHandlers(options: BrowserOpenerOptions = {}): void
   });
 
   ipc.handle("paseo:opener:revealPath", async (_event, input: unknown) => {
-    const { target } = await resolveWorkspacePath(input);
+    const { target } = await resolveWorkspacePath(input, "reveal");
     shell.showItemInFolder(target);
   });
 }

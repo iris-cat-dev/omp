@@ -105,9 +105,16 @@ export function isTextAssistantFile(path: string): boolean {
     ASSISTANT_FILE_EXTENSIONS[fileName.slice(fileName.lastIndexOf(".") + 1).toLowerCase()] === true
   );
 }
+export function isHtmlAssistantFile(path: string): boolean {
+  return /\.html?$/i.test(path);
+}
 
 export function isSystemAssistantPath(target: InlinePathTarget): boolean {
-  return target.raw.endsWith("/") || !isTextAssistantFile(target.path);
+  return (
+    target.raw.endsWith("/") ||
+    (target.lineStart === undefined && isHtmlAssistantFile(target.path)) ||
+    !isTextAssistantFile(target.path)
+  );
 }
 
 export interface AssistantHrefParseOptions {
@@ -326,6 +333,33 @@ export function classifyAssistantFileLink(
   };
 }
 
+function parseEncodedAssistantFileHref(
+  value: string,
+  trimmed: string,
+  workspaceRoot: AssistantHrefParseOptions["workspaceRoot"],
+): InlinePathTarget | null {
+  // Parse href syntax before decoding: encoded '#'/'?' and percent escapes belong to the filename.
+  const hashIndex = trimmed.indexOf("#");
+  const beforeHash = hashIndex < 0 ? trimmed : trimmed.slice(0, hashIndex);
+  const fragment = hashIndex < 0 ? "" : trimmed.slice(hashIndex);
+  const fragmentLines = parseLineFragment(fragment);
+  if (!fragmentLines || beforeHash.includes("?")) return null;
+  const inline = parseInlinePathToken(beforeHash);
+  const decoded = (inline?.path ?? beforeHash).replace(/(?:%[0-9A-Fa-f]{2})+/g, (encoded) =>
+    safeDecodeURIComponent(encoded),
+  );
+  const path = normalizePathToken(decoded);
+  if (!path) return null;
+  const lines = fragment
+    ? fragmentLines
+    : { lineStart: inline?.lineStart, lineEnd: inline?.lineEnd };
+  if (isAbsolutePath(path) || isHomeRelativePath(path)) return { raw: value, path, ...lines };
+  if (!isPlausibleAssistantLocalPath(path)) return null;
+  const root = normalizePathInput(workspaceRoot);
+  const resolved = root && resolveRelativePathUnderRoot(path, root);
+  return resolved ? { raw: value, path: resolved, ...lines } : null;
+}
+
 export function parseAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
@@ -344,17 +378,10 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  let localValue = trimmed;
   if (options.urlEncoded) {
-    // Only explicit Markdown hrefs have URL semantics. Inline-code paths are already native paths,
-    // so decoding those would corrupt valid filenames containing literal percent escapes.
-    const delimiterIndex = trimmed.search(/[?#]/);
-    const pathEnd = delimiterIndex < 0 ? trimmed.length : delimiterIndex;
-    const urlPath = trimmed
-      .slice(0, pathEnd)
-      .replace(/(?:%[0-9A-Fa-f]{2})+/g, (encoded) => safeDecodeURIComponent(encoded));
-    localValue = `${urlPath}${trimmed.slice(pathEnd)}`;
+    return parseEncodedAssistantFileHref(value, trimmed, options.workspaceRoot);
   }
+  const localValue = trimmed;
   const inlinePathTarget = parseAssistantInlinePathLink(localValue);
   if (inlinePathTarget) {
     return { ...inlinePathTarget, raw: value };
@@ -390,28 +417,8 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(localValue, "http://paseo.invalid");
-  } catch {
-    return null;
-  }
-
-  const normalizedPath = normalizePathToken(safeDecodeURIComponent(parsedUrl.pathname));
-  if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
-    return null;
-  }
-
-  const lines = parseLineFragment(parsedUrl.hash);
-  if (!lines) {
-    return null;
-  }
-
-  return {
-    raw: value,
-    path: normalizedPath,
-    ...lines,
-  };
+  const parsed = parseLocalPathParts(localValue);
+  return parsed ? { raw: value, path: parsed.path, ...parsed.lines } : null;
 }
 
 export function isFileLookingAssistantToken(value: string): boolean {

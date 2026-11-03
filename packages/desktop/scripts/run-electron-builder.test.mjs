@@ -115,6 +115,25 @@ describe("packaging runtime compatibility", () => {
     },
   );
 
+  test.each([undefined, {}, { nativeClipboardFiles: true }, { nativeClipboardFiles: 2 }])(
+    "rejects Windows runtimes without the implemented clipboard-file capability (%j)",
+    async (features) => {
+      const fixture = createPackagingFixture("win32", "99.0.0");
+      try {
+        await expect(
+          createQualifiedPackager(
+            fixture.runtimeDist,
+            { ...fixture.runtime, features },
+            fixture.args,
+            fixture.directory,
+          ),
+        ).rejects.toThrow("nativeClipboardFiles=1");
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   test.each([
     {
       name: "installer protocol",
@@ -166,6 +185,7 @@ function createPackagingFixture(
     runtimeVersion,
     electronApiVersion: "41.2.0",
     installerProtocol: 1,
+    features: platform === "win32" ? { nativeClipboardFiles: 1 } : {},
     files: {
       [executable]: createHash("sha256").update(executableBytes).digest("hex"),
     },
@@ -501,7 +521,11 @@ describe("SDK artifact target staging", () => {
         );
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "generic");
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", profile);
-        const result = await stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig());
+        const result = await stageNodeSdk(
+          fixture.source,
+          fixture.output,
+          resolveOmpSdkBuildConfig(),
+        );
         const manifest = JSON.parse(
           readFileSync(path.join(result.directory, "package.json"), "utf8"),
         );
@@ -581,7 +605,9 @@ describe("SDK artifact target staging", () => {
       try {
         rmSync(path.join(fixture.source, fixture.artifact, "plugins.mjs"));
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", buildTarget);
-        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow("plugins.mjs");
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
+        ).rejects.toThrow("plugins.mjs");
         expect(existsSync(fixture.output)).toBe(false);
       } finally {
         vi.unstubAllEnvs();
@@ -633,9 +659,9 @@ describe("SDK artifact target staging", () => {
         writeFileSync(metadataFile, JSON.stringify(metadata));
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", artifactTarget);
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
-          "SDK build target mismatch",
-        );
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
+        ).rejects.toThrow("SDK build target mismatch");
       } finally {
         vi.unstubAllEnvs();
         fixture.dispose();
@@ -705,9 +731,9 @@ describe("SDK artifact target staging", () => {
         }
         vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
         vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-        await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
-          "Desktop SDK has no isolated addon",
-        );
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
+        ).rejects.toThrow("Desktop SDK has no isolated addon");
         expect(existsSync(fixture.output)).toBe(false);
       } finally {
         vi.unstubAllEnvs();
@@ -765,9 +791,9 @@ describe("SDK artifact target staging", () => {
       }
       vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
       vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-      await expect(stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig())).rejects.toThrow(
-        "Desktop native addon metadata is stale or incompatible",
-      );
+      await expect(
+        stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
+      ).rejects.toThrow("Desktop native addon metadata is stale or incompatible");
       expect(existsSync(fixture.output)).toBe(false);
     } finally {
       vi.unstubAllEnvs();
@@ -1132,4 +1158,3 @@ test("rejects CLI-bound private distribution metadata even without its old packa
     fixture.dispose();
   }
 });
-
