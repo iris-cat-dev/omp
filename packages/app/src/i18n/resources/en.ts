@@ -1949,6 +1949,11 @@ export const en = {
       save: "Save relay address",
       saving: "Saving...",
       saved: "Relay setting saved. It will be applied the next time you add a host.",
+      desktopDescription:
+        "Desktop saves this address to the local daemon's config.json, enables Relay, and applies it immediately. Enter a non-empty ws:// or wss:// address. The Web app must use the same Relay. Traffic remains end-to-end encrypted.",
+      desktopSaved:
+        "Saved to the local daemon's config.json and applied immediately; no restart is needed. New pairing links will use this address.",
+      desktopUnavailable: "The local daemon is disconnected. Its configuration cannot be saved.",
     },
     device: {
       loadingOffer: "Loading pairing offer...",

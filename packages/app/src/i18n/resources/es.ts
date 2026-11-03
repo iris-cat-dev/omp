@@ -1879,6 +1879,11 @@ export const es: TranslationResources = {
       save: "Guardar dirección",
       saving: "Guardando...",
       saved: "La configuración se guardó y se aplicará la próxima vez que añadas un host.",
+      desktopDescription:
+        "La aplicación de escritorio guarda esta dirección en el config.json del daemon local, activa la retransmisión y la aplica de inmediato. Introduce una dirección ws:// o wss:// no vacía. La aplicación web debe usar el mismo servidor. El tráfico sigue cifrado de extremo a extremo.",
+      desktopSaved:
+        "Guardado en el config.json del daemon local y aplicado de inmediato, sin reiniciar. Los nuevos enlaces de emparejamiento usarán esta dirección.",
+      desktopUnavailable: "El daemon local está desconectado. No se puede guardar su configuración.",
     },
     device: {
       loadingOffer: "Cargando oferta de maridaje...",

@@ -9,10 +9,17 @@ import { RemoteSshHostModal } from "@/components/remote-ssh-host-modal";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { isElectronRuntime } from "@/desktop/host";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import type { HostProfile } from "@/types/host-connection";
-import { formatRelayServerAddress, parseRelayServerAddress } from "@/utils/daemon-endpoints";
+import {
+  formatRelayServerAddress,
+  parseRelayServerAddress,
+  shouldUseTlsForDefaultHostedRelay,
+} from "@/utils/daemon-endpoints";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
 export function AddRemoteHostSection() {
@@ -20,10 +27,34 @@ export function AddRemoteHostSection() {
   const router = useRouter();
   const { addHost } = useLocalSearchParams<{ addHost?: string }>();
   const { settings, isLoading: areSettingsLoading, updateSettings } = useAppSettings();
+  const isDesktopApp = isElectronRuntime();
+  const localDaemonState = useLocalDaemonServerIdState();
+  const localDaemonServerId =
+    localDaemonState.status === "resolved" ? localDaemonState.serverId : null;
+  const isLocalDaemonConnected = useHostRuntimeIsConnected(localDaemonServerId ?? "");
+  const {
+    config: localDaemonConfig,
+    isLoading: isLocalDaemonConfigLoading,
+    patchConfig,
+  } = useDaemonConfig(localDaemonServerId);
+  const localRelay = localDaemonConfig?.relay;
+  const relayAddress =
+    isDesktopApp && localRelay?.endpoint
+      ? formatRelayServerAddress({
+          endpoint: localRelay.endpoint,
+          useTls: localRelay.useTls ?? shouldUseTlsForDefaultHostedRelay(localRelay.endpoint),
+        })
+      : settings.relayServerAddress;
+  const isRelayLoading =
+    areSettingsLoading ||
+    (isDesktopApp &&
+      (localDaemonState.status === "loading" || isLocalDaemonConfigLoading));
+  const isDaemonUnavailable =
+    isDesktopApp && (!isLocalDaemonConnected || !localRelay?.endpoint);
   const consumedIntent = useRef<string | null>(null);
   const [pairVisible, setPairVisible] = useState(false);
   const [sshVisible, setSshVisible] = useState(false);
-  const [relayDraft, setRelayDraft] = useState(settings.relayServerAddress);
+  const [relayDraft, setRelayDraft] = useState(relayAddress);
   const [relayResetVersion, setRelayResetVersion] = useState(0);
   const [isSavingRelay, setIsSavingRelay] = useState(false);
   const [relaySaveError, setRelaySaveError] = useState("");
@@ -38,12 +69,23 @@ export function AddRemoteHostSection() {
     }
   }, [trimmedRelayDraft]);
   const normalizedRelayDraft = parsedRelayDraft ? formatRelayServerAddress(parsedRelayDraft) : "";
-  const relayDraftInvalid = Boolean(trimmedRelayDraft) && parsedRelayDraft === null;
-  const relayDraftDirty = normalizedRelayDraft !== settings.relayServerAddress;
+  const relayDraftInvalid =
+    (isDesktopApp && !trimmedRelayDraft) ||
+    (Boolean(trimmedRelayDraft) && parsedRelayDraft === null);
+  const desktopRelayDirty =
+    isDesktopApp &&
+    parsedRelayDraft !== null &&
+    (localRelay?.enabled !== true ||
+      localRelay.endpoint !== parsedRelayDraft.endpoint ||
+      localRelay.useTls !== parsedRelayDraft.useTls ||
+      localRelay.publicEndpoint !== parsedRelayDraft.endpoint ||
+      localRelay.publicUseTls !== parsedRelayDraft.useTls);
+  const relayDraftDirty =
+    normalizedRelayDraft !== settings.relayServerAddress || desktopRelayDirty;
   useEffect(() => {
-    setRelayDraft(settings.relayServerAddress);
+    setRelayDraft(relayAddress);
     setRelayResetVersion((version) => version + 1);
-  }, [settings.relayServerAddress]);
+  }, [relayAddress]);
   useEffect(() => {
     if (typeof addHost === "string" && addHost && consumedIntent.current !== addHost) {
       consumedIntent.current = addHost;
@@ -60,17 +102,42 @@ export function AddRemoteHostSection() {
     setRelaySaveError("");
   }, []);
   const handleRelayReset = useCallback(() => {
-    setRelayDraft(settings.relayServerAddress);
+    setRelayDraft(relayAddress);
     setRelayResetVersion((version) => version + 1);
     setRelaySaved(false);
     setRelaySaveError("");
-  }, [settings.relayServerAddress]);
+  }, [relayAddress]);
   const handleRelaySave = useCallback(async () => {
-    if (relayDraftInvalid || !relayDraftDirty || isSavingRelay) return;
+    if (
+      relayDraftInvalid ||
+      !relayDraftDirty ||
+      isSavingRelay ||
+      isRelayLoading ||
+      isDaemonUnavailable
+    ) {
+      return;
+    }
     setIsSavingRelay(true);
     setRelaySaveError("");
     setRelaySaved(false);
     try {
+      if (isDesktopApp) {
+        if (!parsedRelayDraft) {
+          throw new Error(t("pairing.relayAddress.invalid"));
+        }
+        const updated = await patchConfig({
+          relay: {
+            enabled: true,
+            endpoint: parsedRelayDraft.endpoint,
+            useTls: parsedRelayDraft.useTls,
+            publicEndpoint: parsedRelayDraft.endpoint,
+            publicUseTls: parsedRelayDraft.useTls,
+          },
+        });
+        if (!updated) {
+          throw new Error(t("pairing.relayAddress.desktopUnavailable"));
+        }
+      }
       await updateSettings({ relayServerAddress: normalizedRelayDraft });
       setRelayDraft(normalizedRelayDraft);
       setRelayResetVersion((version) => version + 1);
@@ -80,7 +147,19 @@ export function AddRemoteHostSection() {
     } finally {
       setIsSavingRelay(false);
     }
-  }, [isSavingRelay, normalizedRelayDraft, relayDraftDirty, relayDraftInvalid, updateSettings]);
+  }, [
+    isDaemonUnavailable,
+    isDesktopApp,
+    isRelayLoading,
+    isSavingRelay,
+    normalizedRelayDraft,
+    parsedRelayDraft,
+    patchConfig,
+    relayDraftDirty,
+    relayDraftInvalid,
+    t,
+    updateSettings,
+  ]);
   const handleRelaySubmit = useCallback(() => {
     void handleRelaySave();
   }, [handleRelaySave]);
@@ -95,12 +174,18 @@ export function AddRemoteHostSection() {
     <>
       <SettingsSection title={t("pairing.relayAddress.label")}>
         <View style={styles.relayContent} testID="settings-relay-address">
-          <Text style={styles.description}>{t("pairing.relayAddress.description")}</Text>
+          <Text style={styles.description}>
+            {t(
+              isDesktopApp
+                ? "pairing.relayAddress.desktopDescription"
+                : "pairing.relayAddress.description",
+            )}
+          </Text>
           <AdaptiveTextInput
-            initialValue={settings.relayServerAddress}
-            resetKey={`${relayResetVersion}:${settings.relayServerAddress}`}
+            initialValue={relayAddress}
+            resetKey={`${relayResetVersion}:${relayAddress}`}
             onChangeText={handleRelayChange}
-            editable={!areSettingsLoading && !isSavingRelay}
+            editable={!isRelayLoading && !isSavingRelay && !isDaemonUnavailable}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
@@ -116,6 +201,13 @@ export function AddRemoteHostSection() {
               testID="settings-relay-address-invalid"
             />
           ) : null}
+          {isDaemonUnavailable && !isRelayLoading ? (
+            <Alert
+              variant="error"
+              description={t("pairing.relayAddress.desktopUnavailable")}
+              testID="settings-relay-daemon-unavailable"
+            />
+          ) : null}
           {relaySaveError ? (
             <Alert
               variant="error"
@@ -126,7 +218,11 @@ export function AddRemoteHostSection() {
           {relaySaved ? (
             <Alert
               variant="success"
-              description={t("pairing.relayAddress.saved")}
+              description={t(
+                isDesktopApp
+                  ? "pairing.relayAddress.desktopSaved"
+                  : "pairing.relayAddress.saved",
+              )}
               testID="settings-relay-address-success"
             />
           ) : null}
@@ -134,13 +230,17 @@ export function AddRemoteHostSection() {
             <Button
               onPress={handleRelaySubmit}
               disabled={
-                areSettingsLoading || isSavingRelay || relayDraftInvalid || !relayDraftDirty
+                isRelayLoading ||
+                isDaemonUnavailable ||
+                isSavingRelay ||
+                relayDraftInvalid ||
+                !relayDraftDirty
               }
               testID="settings-relay-address-save"
             >
               {t(isSavingRelay ? "pairing.relayAddress.saving" : "pairing.relayAddress.save")}
             </Button>
-            {relayDraft !== settings.relayServerAddress ? (
+            {relayDraft !== relayAddress ? (
               <Button
                 variant="outline"
                 onPress={handleRelayReset}

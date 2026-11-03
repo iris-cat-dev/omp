@@ -1873,6 +1873,11 @@ export const ptBR: TranslationResources = {
       save: "Salvar endereço do relay",
       saving: "Salvando...",
       saved: "A configuração foi salva e será aplicada na próxima vez que você adicionar um host.",
+      desktopDescription:
+        "O aplicativo Desktop salva este endereço no config.json do daemon local, ativa o relay e aplica a configuração imediatamente. Informe um endereço ws:// ou wss:// não vazio. O aplicativo Web deve usar o mesmo relay. O tráfego continua criptografado de ponta a ponta.",
+      desktopSaved:
+        "Salvo no config.json do daemon local e aplicado imediatamente, sem reiniciar. Os novos links de pareamento usarão este endereço.",
+      desktopUnavailable: "O daemon local está desconectado. Não é possível salvar sua configuração.",
     },
     device: {
       loadingOffer: "Carregando oferta de pareamento...",

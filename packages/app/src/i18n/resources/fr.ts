@@ -1879,6 +1879,11 @@ export const fr: TranslationResources = {
       save: "Enregistrer l'adresse",
       saving: "Enregistrement...",
       saved: "Le réglage est enregistré et sera appliqué lors du prochain ajout d'hôte.",
+      desktopDescription:
+        "L'application de bureau enregistre cette adresse dans le config.json du daemon local, active le relais et l'applique immédiatement. Saisissez une adresse ws:// ou wss:// non vide. L'application Web doit utiliser le même relais. Le trafic reste chiffré de bout en bout.",
+      desktopSaved:
+        "Enregistré dans le config.json du daemon local et appliqué immédiatement, sans redémarrage. Les nouveaux liens d'appairage utiliseront cette adresse.",
+      desktopUnavailable: "Le daemon local est déconnecté. Sa configuration ne peut pas être enregistrée.",
     },
     device: {
       loadingOffer: "Chargement de l'offre d'association...",

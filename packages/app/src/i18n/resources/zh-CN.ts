@@ -1916,6 +1916,11 @@ export const zhCN: TranslationResources = {
       save: "保存 Relay 地址",
       saving: "正在保存...",
       saved: "Relay 设置已保存，将在下次添加 Host 时使用。",
+      desktopDescription:
+        "桌面端保存时会写入本机 Daemon 的 config.json，启用 Relay 并立即生效。请输入非空的 ws:// 或 wss:// 地址。Web 应用必须使用同一个 Relay，流量始终端到端加密。",
+      desktopSaved:
+        "已写入本机 Daemon 的 config.json 并立即生效，无需重启。新的配对链接将使用此地址。",
+      desktopUnavailable: "本机 Daemon 未连接，暂时无法保存配置。",
     },
     device: {
       loadingOffer: "正在加载配对 offer...",

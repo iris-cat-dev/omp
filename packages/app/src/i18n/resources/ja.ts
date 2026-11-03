@@ -1848,6 +1848,11 @@ export const ja: TranslationResources = {
       save: "リレーアドレスを保存",
       saving: "保存中...",
       saved: "リレー設定を保存しました。次回ホストを追加するときに適用されます。",
+      desktopDescription:
+        "デスクトップでは、このアドレスをローカルデーモンの config.json に保存し、リレーを有効にして即座に適用します。空でない ws:// または wss:// アドレスを入力してください。Web アプリも同じリレーを使用する必要があります。通信はエンドツーエンドで暗号化されます。",
+      desktopSaved:
+        "ローカルデーモンの config.json に保存し、再起動せずに適用しました。新しいペアリングリンクはこのアドレスを使用します。",
+      desktopUnavailable: "ローカルデーモンが切断されています。設定を保存できません。",
     },
     device: {
       loadingOffer: "ペアリングオファーを読み込み中...",
