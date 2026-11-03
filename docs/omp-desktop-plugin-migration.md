@@ -4,6 +4,13 @@
 
 迁移不是重写成 Electron 插件，也不是在 Desktop 内启动另一套 CLI、模型客户端或工具执行器。本文只描述通用方法，不包含具体项目、内部服务、个人目录、提交记录或凭据实现。
 
+相关 Git 仓库：
+
+- **omp-desktop**（Desktop 宿主）：[https://github.com/iris-cat-dev/omp-desktop.git](https://github.com/iris-cat-dev/omp-desktop.git)
+- **omp-sdk**（Node SDK）：[https://github.com/iris-cat-dev/omp-sdk.git](https://github.com/iris-cat-dev/omp-sdk.git)
+
+Desktop 通过 `omp-sdk/` Git submodule 固定 SDK 版本；核对兼容性时，以 Desktop 记录的 SDK 提交为准。
+
 ## 1. 明确迁移边界
 
 ```text
