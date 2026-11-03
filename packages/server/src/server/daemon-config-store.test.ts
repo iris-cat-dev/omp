@@ -107,7 +107,7 @@ describe("applyMutableProviderConfigToOverrides", () => {
           omp: {
             command: ["omp"],
             params: {
-              agentShell: { mode: "custom", path: "/bin/bash" },
+              sessionDir: "/omp/sessions",
             },
           },
         },
@@ -116,7 +116,7 @@ describe("applyMutableProviderConfigToOverrides", () => {
     ).toMatchObject({
       command: ["omp"],
       params: {
-        agentShell: { mode: "custom", path: "/bin/bash" },
+        sessionDir: "/omp/sessions",
         disabledBuiltInTools: ["bash"],
       },
     });

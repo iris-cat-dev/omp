@@ -75,7 +75,6 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { PaseoToolsCard } from "./paseo-tools-card";
 import { hasDaemonReconnectedAfter, type DaemonConnectionMarker } from "./daemon-reconnect";
 import { restartDaemonFromSettings } from "./daemon-restart";
-import { OmpAgentShellCard } from "./omp-agent-shell-card";
 import { OmpBuiltinToolsCard } from "./omp-builtin-tools-card";
 import { SshModelSourceSection } from "./ssh-model-source-section";
 import { useLocalModelBridgeStatus } from "@/runtime/local-model-bridge-runtime";
@@ -242,7 +241,6 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
     <View>
       {isConnected ? (
         <SettingsSection title={t("settings.hostSections.agents")}>
-          <OmpAgentShellCard serverId={serverId} />
           <OmpBuiltinToolsCard serverId={serverId} />
           <PaseoToolsCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />

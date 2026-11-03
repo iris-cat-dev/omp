@@ -130,25 +130,6 @@ const en = {
     save: "Save YAML",
     saving: "Validating…",
   },
-  shell: {
-    title: "Agent Shell",
-    description:
-      "Controls OMP's external shell for new Agents. Bash Interceptor remains enabled. Auto is recommended and detects Git Bash on Windows.",
-    modeLabel: "Shell",
-    auto: "Auto",
-    autoDescription: "Detect Git Bash on Windows; otherwise use OMP's default.",
-    gitBash: "Git Bash",
-    gitBashDescription: "Require Git Bash from a supported Windows installation.",
-    ompDefault: "OMP Default",
-    ompDefaultDescription: "Do not override OMP's shell selection.",
-    custom: "Custom",
-    customDescription: "Use a specific compatible Bash executable.",
-    pathLabel: "Bash executable",
-    pathHint: "The executable is verified before OMP starts a new Agent.",
-    pathPlaceholder: "C:\\Program Files\\Git\\bin\\bash.exe",
-    save: "Save",
-    saving: "Saving…",
-  },
 } as const;
 
 export const ompProviderSettings = {
@@ -899,25 +880,6 @@ export const ompProviderSettings = {
       hint: "OMP 原生配置。无效修改会自动回滚。",
       save: "保存 YAML",
       saving: "正在验证…",
-    },
-    shell: {
-      title: "Agent Shell",
-      description:
-        "控制新 Agent 使用的 OMP 外部 Shell。Bash Interceptor 会保持开启。推荐使用“自动”，它会在 Windows 上检测 Git Bash。",
-      modeLabel: "Shell",
-      auto: "自动",
-      autoDescription: "在 Windows 上检测 Git Bash，否则使用 OMP 默认设置。",
-      gitBash: "Git Bash",
-      gitBashDescription: "要求使用受支持的 Windows 安装位置中的 Git Bash。",
-      ompDefault: "OMP 默认",
-      ompDefaultDescription: "不覆盖 OMP 的 Shell 选择。",
-      custom: "自定义",
-      customDescription: "使用指定的兼容 Bash 可执行文件。",
-      pathLabel: "Bash 可执行文件",
-      pathHint: "OMP 启动新 Agent 前会验证该可执行文件。",
-      pathPlaceholder: "C:\\Program Files\\Git\\bin\\bash.exe",
-      save: "保存",
-      saving: "正在保存…",
     },
   },
 } as const;

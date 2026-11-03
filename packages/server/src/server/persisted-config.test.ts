@@ -252,6 +252,50 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     }
   });
 
+  test("retires custom Agent Shell settings without resetting OMP or other providers", () => {
+    const home = createTempHome();
+    const params = { sessionDir: "/omp/sessions", disabledBuiltInTools: ["write"] };
+    const agentShell = { mode: "custom", path: "/missing/legacy/bash" };
+    try {
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          version: 1,
+          agents: {
+            providers: {
+              omp: { params: { ...params, agentShell } },
+              custom: {
+                extends: "omp",
+                label: "Custom OMP",
+                params: { ...params, agentShell },
+              },
+              other: {
+                extends: "acp",
+                label: "Other agent",
+                command: ["other-agent"],
+                params: { agentShell },
+              },
+            },
+          },
+        }),
+      );
+
+      const config = loadPersistedConfig(home);
+      const providers = config.agents?.providers;
+      expect(providers?.omp?.params).toEqual(params);
+      expect(providers?.custom?.params).toEqual(params);
+      expect(providers?.other?.params).toEqual({ agentShell });
+      expect(resolveOmpProviderParams(providers?.omp?.params)).toEqual({
+        runtimeProviderParams: params,
+        modelRoleParams: {},
+      });
+      savePersistedConfig(home, config);
+      expect(loadPersistedConfig(home).agents?.providers).toEqual(providers);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("does not discard unknown OMP params along with the retired proxy toggle", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {

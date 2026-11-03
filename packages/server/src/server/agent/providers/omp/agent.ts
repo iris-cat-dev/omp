@@ -104,7 +104,7 @@ import {
   type OmpModelRoleParams,
   type OmpRuntimeProviderParams,
 } from "./provider-config.js";
-import { prepareOmpAgentShellEnv } from "./shell-config.js";
+import { prepareOmpProviderEnv } from "./provider-env.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { mapOmpCustomAssistantMessage, shouldDisplayOmpCustomMessage } from "./custom-message.js";
@@ -5219,8 +5219,7 @@ export class OmpAgentClient implements AgentClient {
 
   private async startOmpRuntimeSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     const env = this.desktopConfigDir
-      ? await prepareOmpAgentShellEnv({
-          config: this.providerParams.agentShell,
+      ? await prepareOmpProviderEnv({
           configDir: this.desktopConfigDir,
           env: { ...this.runtimeSettings?.env, ...input.env },
         })
@@ -5249,14 +5248,13 @@ export class OmpAgentClient implements AgentClient {
         env,
         resolveBrokerEndpoint: (dir) => runtime.resolveBrokerEndpoint(dir, env),
         stopDaemon: async (name) => {
-          const shellEnv = this.desktopConfigDir
-            ? await prepareOmpAgentShellEnv({
-                config: this.providerParams.agentShell,
+          const providerEnv = this.desktopConfigDir
+            ? await prepareOmpProviderEnv({
                 configDir: this.desktopConfigDir,
                 env,
               })
             : env;
-          await runtime.stopDaemon({ cwd, name, env: shellEnv });
+          await runtime.stopDaemon({ cwd, name, env: providerEnv });
         },
       });
     }

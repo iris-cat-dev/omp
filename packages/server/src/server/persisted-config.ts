@@ -281,11 +281,11 @@ export const PersistedConfigSchema = z
         providers: z
           .preprocess(normalizeAgentProviders, ProviderOverridesSchema)
           .transform((providers) => {
-            // Removed when routing moved from environment variables to proxyPolicy.
-            // Strip only the retired OMP key; runtime params remain strictly validated.
+            // Discard retired OMP controls without weakening runtime parameter validation.
             for (const [providerId, provider] of Object.entries(providers)) {
               if (providerId === "omp" || provider.extends === "omp") {
                 delete provider.params?.proxyEnabled;
+                delete provider.params?.agentShell;
               }
             }
             return providers;

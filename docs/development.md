@@ -137,6 +137,12 @@ Standalone CLI inspection keeps direct Unix socket addressing. On Windows it als
 
 Host Agents settings omit standalone OMP installation and update controls. Update the bundled SDK through Desktop app updates; manage standalone CLI installations outside these settings. Desktop app update controls remain available.
 
+Host Agents settings no longer expose Agent Shell selection. Desktop does not
+probe Git Bash or inject a custom `shellPath`; Agent commands use OMP's built-in
+shell behavior. Saved `agentShell` parameters are discarded for OMP providers,
+including profiles extending OMP. The Desktop-owned config overlay is rewritten
+without legacy shell paths and keeps Bash Interceptor enabled.
+
 Daemon startup runs `plugin check --fix --json` through the selected OMP runtime before accepting WebSocket clients, checking the user profile and non-archived workspace directories. The check loads enabled manifest entry points without opening a model session or executing tools. Plugins with missing entries, import errors, or factory failures are persistently disabled in their own runtime scope; matching marketplace registry entries are synchronized. Healthy plugins, disabled plugins/features, and plugin settings are preserved. Node RPC hosts also check before session creation, covering newly opened projects. Failures to run the check or write plugin state are logged rather than disabling unrelated plugins. Fix or precompile the plugin, then re-enable it in Host Plugins settings; the next startup checks it again.
 
 Build overrides, shared by development, Desktop packaging, and remote deployment:
