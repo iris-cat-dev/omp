@@ -135,7 +135,11 @@ function LocalPreviewBody({
   const renderKind = filePreviewRenderKind(name);
   if (entry.mode === "preview" && renderKind === "markdown") {
     return (
-      <ScrollView style={styles.content} showsVerticalScrollIndicator>
+      <ScrollView
+        style={styles.markdownScroll}
+        showsVerticalScrollIndicator
+        testID="local-file-preview-markdown-scroll"
+      >
         <FileMarkdownPreview source={content} />
       </ScrollView>
     );
@@ -161,6 +165,7 @@ function LocalPreviewBody({
 const styles = StyleSheet.create((theme) => ({
   root: { flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface0 },
   content: { flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" },
+  markdownScroll: { flex: 1, minHeight: 0, minWidth: 0 },
   metadata: { padding: theme.spacing[3], gap: theme.spacing[1] },
   fileName: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
   localOnly: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },

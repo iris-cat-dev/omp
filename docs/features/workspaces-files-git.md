@@ -94,6 +94,8 @@ These actions add content without sending the draft:
 
 Drop external UTF-8 text files onto history or ordinary areas to open local read-only file tabs, not a dialog or upload. Each offers **Preview / Source**, rendering Markdown/HTML in Preview. Outside workspaces they use a dedicated tabbed preview page. Mode survives tab switching; closing releases content; reload removes these session-only tabs. Files up to **2 MiB**, including extensionless files, are supported; directories, binary files, and larger files show explanations. Terminal surfaces retain their file-path drop behavior.
 
+Long Markdown previews scroll inside the file pane, keeping the toolbar and file metadata visible while the final paragraph remains reachable.
+
 Ordinary local Desktop Files-tree HTML/HTM clicks use the selected external browser, matching chat links. Explicit source-line links retain internal source viewing. Dropped read-only content previews are a separate intentional **Preview / Source** surface.
 
 ## File discovery and editing
