@@ -61,7 +61,7 @@ For local installer builds, pass `--publish never` to avoid uploading release ar
 
 ## GitHub Actions release packaging
 
-The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 packages** by default: a Windows runner builds and smoke-tests the native SDK, then a Mac runner imports that artifact and produces the Windows NSIS installer, ZIP, blockmaps, and update YAML. It runs when a digit-prefixed tag such as `0.5.3` is pushed or through **Actions → Package release → Run workflow**.
+The [`Package release`](../.github/workflows/release.yml) workflow builds **Windows x64 packages** by default: a Windows runner builds and smoke-tests the native SDK, then a Mac runner imports that artifact and produces the Windows NSIS installer, ZIP, blockmaps, and update YAML. It runs when a digit-prefixed tag such as `0.6.0` is pushed or through **Actions → Package release → Run workflow**.
 
 - The root and desktop package versions must match. A tag build also requires the exact tag `<packages/desktop/package.json version>` without a `v` prefix; the workflow does not bump versions.
 - Each successful build uploads an Actions artifact named `OMP-Desktop-Setup-<version>-x64` or optional `OMP-Desktop-<version>-arm64`, retained for 14 days. Its outer ZIP contains original installers, package ZIPs, blockmaps, and update YAML, not unpacked apps or builder diagnostics. Publish those files, not the Actions wrapper; installer names and update references are unchanged.
@@ -70,11 +70,11 @@ The [`Package release`](../.github/workflows/release.yml) workflow builds **Wind
 - A manual run on a branch only creates Actions artifacts. A manual run with a tag selected also creates or updates its release draft.
 - Review the draft, add release notes, and perform the native packaged-application checks before publishing. Building installers does not verify native application behavior.
 
-For example, after setting matching package versions to `0.5.3` and committing the changes:
+For example, after setting matching package versions to `0.6.0` and committing the changes:
 
 ```bash
-git tag 0.5.3
-git push origin 0.5.3
+git tag 0.6.0
+git push origin 0.6.0
 ```
 
 The workflow uses the repository's `GITHUB_TOKEN`; no personal access token is required. Repository or organization policy must permit the release job's `contents: write` permission. Windows artifacts are unsigned, so Windows may display SmartScreen warnings.
