@@ -195,6 +195,18 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+// A saved active state is not evidence of a surviving runtime after daemon restart.
+const UNLOADED_AGENT_STATUS: Record<
+  StoredAgentRecord["lastStatus"],
+  AgentSnapshotPayload["status"]
+> = {
+  initializing: "closed",
+  idle: "idle",
+  running: "closed",
+  error: "error",
+  closed: "closed",
+};
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -225,7 +237,7 @@ export function buildStoredAgentPayload(
     id: record.id,
     provider: record.provider,
     cwd: record.cwd,
-    ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+    workspaceId: record.workspaceId,
     model: runtimeInfo?.model ?? record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     ...(record.config?.proxyPolicy !== undefined
@@ -235,11 +247,12 @@ export function buildStoredAgentPayload(
       runtimeInfo,
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
     }),
-    ...(runtimeInfo ? { runtimeInfo } : {}),
+    runtimeInfo,
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
-    status: record.lastStatus,
+    status: UNLOADED_AGENT_STATUS[record.lastStatus],
+    activeTurn: null,
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],

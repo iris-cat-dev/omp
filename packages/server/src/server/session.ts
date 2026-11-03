@@ -2311,6 +2311,17 @@ export class Session {
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "agent.config.apply.request":
         return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
+      case "read_project_config_request":
+        return this.projectConfigSession.handleReadProjectConfigRequest(msg);
+      case "write_project_config_request":
+        return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
+      default:
+        return this.dispatchDaemonConfigMessage(msg);
+    }
+  }
+
+  private dispatchDaemonConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -2336,16 +2347,12 @@ export class Session {
         const config = this.daemonConfigStore.patch(msg.config);
         // Keep the response in this dispatch so relay rotation drains the encrypted send.
         return this.providerSnapshotManager.waitForProxyPolicyUpdates().then(() => {
-          this.emit({
+          return this.emit({
             type: "set_daemon_config_response",
             payload: { requestId: msg.requestId, config },
           });
         });
       }
-      case "read_project_config_request":
-        return this.projectConfigSession.handleReadProjectConfigRequest(msg);
-      case "write_project_config_request":
-        return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
         return undefined;
     }
@@ -3942,15 +3949,24 @@ export class Session {
 
     try {
       await cancelAgentRunCommand(
-        { agentManager: this.agentManager, logger: this.sessionLogger },
+        {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        },
         agentId,
       );
       if (this.terminalManager) {
         await stopAllAgentTerminalProcesses(this.terminalManager, agentId);
       }
+      if (!this.agentManager.getAgent(agentId)) {
+        const record = await this.agentStorage.get(agentId);
+        if (record && !this.agentManager.getAgent(agentId)) {
+          await this.agentUpdates.emitStoredRecord(record);
+        }
+      }
       if (requestId) {
-        const agent = this.agentManager.getAgent(agentId);
-        const payload = agent ? await this.buildAgentPayload(agent) : null;
+        const payload = await this.getAgentPayloadById(agentId);
         this.emit({
           type: "cancel_agent_response",
           payload: {
@@ -7641,7 +7657,7 @@ export class Session {
       }
       if (msg.type === "agent.background_processes.list.request") {
         const processes =
-          persistedProcesses ?? await this.agentManager.listBackgroundProcesses(msg.agentId);
+          persistedProcesses ?? (await this.agentManager.listBackgroundProcesses(msg.agentId));
         if (this.terminalManager)
           processes.push(...listAgentTerminalProcesses(this.terminalManager, msg.agentId));
         this.emitForSource(
@@ -7723,10 +7739,16 @@ export class Session {
     const record = await this.agentStorage.get(parentAgentId);
     const nativeHandle = record?.persistence?.nativeHandle;
     if (
-      !record || record.internal || record.archivedAt || record.provider !== "omp" ||
-      typeof nativeHandle !== "string" || !nativeHandle.trim()
-    ) return null;
-    if ((await inspectOmpSessionHistoryAvailability(nativeHandle)).status !== "available") return null;
+      !record ||
+      record.internal ||
+      record.archivedAt ||
+      record.provider !== "omp" ||
+      typeof nativeHandle !== "string" ||
+      !nativeHandle.trim()
+    )
+      return null;
+    if ((await inspectOmpSessionHistoryAvailability(nativeHandle)).status !== "available")
+      return null;
 
     const subagents = new ProviderSubagentStore(
       `persisted-omp-subagents:${parentAgentId}:${record.updatedAt}`,
@@ -7804,7 +7826,11 @@ export class Session {
       };
       const timeline = persistedSubagents
         ? persistedSubagents.fetchTimeline(msg.parentAgentId, msg.subagentId, options)
-        : this.agentManager.fetchProviderSubagentTimeline(msg.parentAgentId, msg.subagentId, options);
+        : this.agentManager.fetchProviderSubagentTimeline(
+            msg.parentAgentId,
+            msg.subagentId,
+            options,
+          );
       this.emit({
         type: "agent.provider_subagents.timeline.get.response",
         payload: {

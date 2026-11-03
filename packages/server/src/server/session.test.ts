@@ -143,6 +143,70 @@ test("cancel_agent_request reports refusal only through its response", async () 
   ]);
 });
 
+test.each(["running", "initializing"] as const)(
+  "cancel_agent_request returns a stopped snapshot for an unloaded %s conversation",
+  async (lastStatus) => {
+    const agentId = "11111111-1111-4111-8111-111111111111";
+    const record: StoredAgentRecord = {
+      id: agentId,
+      provider: "omp",
+      cwd: "/workspace/project",
+      createdAt: "2026-11-03T01:00:00.000Z",
+      updatedAt: "2026-11-03T04:48:54.757Z",
+      labels: {},
+      lastStatus,
+      persistence: { provider: "omp", sessionId: "preserved-session" },
+    };
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { getAgent: () => null },
+      agentStorage: { get: async () => record },
+    });
+
+    await session.handleMessage({
+      type: "cancel_agent_request",
+      agentId,
+      requestId: "cancel-unloaded",
+    });
+
+    expect(messages).toMatchObject([
+      {
+        type: "cancel_agent_response",
+        payload: {
+          agentId,
+          agent: { status: "closed", activeTurn: null },
+          error: null,
+        },
+      },
+    ]);
+    expect(record.lastStatus).toBe(lastStatus);
+    expect(record.persistence).toEqual({ provider: "omp", sessionId: "preserved-session" });
+  },
+);
+
+test("cancel_agent_request reports an unknown agent instead of returning success", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: () => null },
+    agentStorage: { get: async () => null },
+  });
+
+  await session.handleMessage({
+    type: "cancel_agent_request",
+    agentId: "11111111-1111-4111-8111-111111111111",
+    requestId: "cancel-unknown",
+  });
+
+  expect(messages).toMatchObject([
+    {
+      type: "cancel_agent_response",
+      payload: { agent: null, error: expect.stringMatching(/not found/) },
+    },
+  ]);
+});
+
 test("cancel_provider_subagent_request reports native refusal without stopping its parent", async () => {
   const messages: SessionOutboundMessage[] = [];
   const cancelProviderSubagent = vi.fn(async () => {
@@ -947,33 +1011,78 @@ test("reads cold OMP child history across pages without loading its parent runti
     agentManager: {
       getAgent: vi.fn(() => undefined),
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      resumeAgentFromPersistence: vi.fn().mockRejectedValue(new Error("Runtime must stay unloaded")),
+      resumeAgentFromPersistence: vi
+        .fn()
+        .mockRejectedValue(new Error("Runtime must stay unloaded")),
     },
     agentStorage: { get: vi.fn().mockResolvedValue(record) },
   });
   try {
     await fs.mkdir(join(root, "session"));
     writeMessages(sessionFile, [
-      { role: "assistant", content: [{ type: "toolCall", id: "spawn", name: "task", arguments: { tasks: [{ agent: "scout", task: "Inspect" }] } }] },
-      { role: "toolResult", toolName: "task", toolCallId: "spawn", content: [{ type: "text", text: "Completed" }], details: { results: [{ id: "Worker", agent: "scout", exitCode: 0 }] }, isError: false },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "spawn",
+            name: "task",
+            arguments: { tasks: [{ agent: "scout", task: "Inspect" }] },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolName: "task",
+        toolCallId: "spawn",
+        content: [{ type: "text", text: "Completed" }],
+        details: { results: [{ id: "Worker", agent: "scout", exitCode: 0 }] },
+        isError: false,
+      },
     ]);
     writeMessages(join(root, "session", "Worker.jsonl"), [
       { role: "user", content: "Inspect first file" },
       { role: "assistant", content: [{ type: "text", text: "First result" }], responseId: "first" },
       { role: "user", content: "Inspect second file" },
-      { role: "assistant", content: [{ type: "text", text: "Second result" }], responseId: "second" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Second result" }],
+        responseId: "second",
+      },
     ]);
-    await session.handleMessage({ type: "agent.provider_subagents.list.request", parentAgentId: agentId, requestId: "cold-children" });
+    await session.handleMessage({
+      type: "agent.provider_subagents.list.request",
+      parentAgentId: agentId,
+      requestId: "cold-children",
+    });
     const list = messages.at(-1);
-    if (list?.type !== "agent.provider_subagents.list.response") throw new Error("Missing child list");
+    if (list?.type !== "agent.provider_subagents.list.response")
+      throw new Error("Missing child list");
     expect(list.payload.error).toBeNull();
     expect(list.payload.subagents).toEqual([
-      expect.objectContaining({ id: "Worker", parentAgentId: agentId, status: "completed", toolCallId: "spawn" }),
+      expect.objectContaining({
+        id: "Worker",
+        parentAgentId: agentId,
+        status: "completed",
+        toolCallId: "spawn",
+      }),
     ]);
-    const fetchPage = async (direction: "tail" | "before", cursor?: { epoch: string; seq: number }) => {
-      await session.handleMessage({ type: "agent.provider_subagents.timeline.get.request", parentAgentId: agentId, subagentId: "Worker", requestId: `child-${messages.length}`, direction, limit: 2, ...(cursor ? { cursor } : {}) });
+    const fetchPage = async (
+      direction: "tail" | "before",
+      cursor?: { epoch: string; seq: number },
+    ) => {
+      await session.handleMessage({
+        type: "agent.provider_subagents.timeline.get.request",
+        parentAgentId: agentId,
+        subagentId: "Worker",
+        requestId: `child-${messages.length}`,
+        direction,
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
       const page = messages.at(-1);
-      if (page?.type !== "agent.provider_subagents.timeline.get.response") throw new Error("Missing child history");
+      if (page?.type !== "agent.provider_subagents.timeline.get.response")
+        throw new Error("Missing child history");
       expect(page.payload.error).toBeNull();
       return page.payload;
     };

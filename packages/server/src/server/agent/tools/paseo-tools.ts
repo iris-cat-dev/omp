@@ -2285,7 +2285,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
     async ({ agentId }) => {
       const { cancelled } = await cancelAgentRunCommand(
-        { agentManager, logger: childLogger },
+        { agentManager, agentStorage, logger: childLogger },
         agentId,
       );
       return {
@@ -2338,7 +2338,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ agentId }) => {
-      await closeAgentCommand({ agentManager }, agentId);
+      await closeAgentCommand({ agentManager, agentStorage }, agentId);
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),

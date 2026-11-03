@@ -9,6 +9,7 @@ import type { StoredAgentRecord } from "./agent-storage.js";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
+  closeAgentCommand,
   detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
@@ -173,7 +174,10 @@ describe("agent lifecycle commands", () => {
     manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
     manager.inFlightAgentIds.add("agent-1");
 
-    const result = await cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1");
+    const result = await cancelAgentRunCommand(
+      { agentManager: manager, agentStorage: storage, logger },
+      "agent-1",
+    );
 
     expect(result).toEqual({
       agent: manager.liveAgents.get("agent-1"),
@@ -190,11 +194,77 @@ describe("agent lifecycle commands", () => {
     manager.settledDuringCancellationAgentIds.add("agent-1");
 
     await expect(
-      cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1"),
+      cancelAgentRunCommand({ agentManager: manager, agentStorage: storage, logger }, "agent-1"),
     ).resolves.toEqual({
       agent: manager.liveAgents.get("agent-1"),
       cancelled: false,
     });
+  });
+
+  test("accepts repeated stops for an unloaded saved conversation without changing its history", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    const record = { ...storedAgent("agent-1"), lastStatus: "running" as const };
+    storage.records.set(record.id, record);
+    const dependencies = { agentManager: manager, agentStorage: storage, logger };
+
+    expect(await cancelAgentRunCommand(dependencies, record.id)).toEqual({
+      agent: null,
+      cancelled: false,
+    });
+    expect(await cancelAgentRunCommand(dependencies, record.id)).toEqual({
+      agent: null,
+      cancelled: false,
+    });
+    expect(manager.liveAgents.size).toBe(0);
+    expect(manager.cancelledAgentIds).toEqual([]);
+    expect(storage.records.get(record.id)).toEqual(record);
+    expect(storage.upserts).toEqual([]);
+  });
+
+  test("cancels a runtime loaded while the saved conversation is being checked", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    const read = Promise.withResolvers<StoredAgentRecord | null>();
+    storage.get = () => read.promise;
+
+    const cancellation = cancelAgentRunCommand(
+      { agentManager: manager, agentStorage: storage, logger },
+      "agent-1",
+    );
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
+    manager.inFlightAgentIds.add("agent-1");
+    read.resolve(storedAgent("agent-1"));
+
+    expect(await cancellation).toMatchObject({ cancelled: true });
+    expect(manager.hasInFlightRun("agent-1")).toBe(false);
+  });
+
+  test("accepts repeated runtime closes for an unloaded saved conversation", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    const record = storedAgent("agent-1");
+    storage.records.set(record.id, record);
+    const dependencies = { agentManager: manager, agentStorage: storage };
+
+    await closeAgentCommand(dependencies, record.id);
+    await closeAgentCommand(dependencies, record.id);
+
+    expect(manager.liveAgents.size).toBe(0);
+    expect(manager.closedAgentIds).toEqual([]);
+    expect(storage.records.get(record.id)).toEqual(record);
+    expect(storage.upserts).toEqual([]);
+  });
+
+  test("rejects unknown IDs instead of treating them as stopped conversations", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    const dependencies = { agentManager: manager, agentStorage: storage, logger };
+
+    await expect(cancelAgentRunCommand(dependencies, "missing")).rejects.toThrow(/not found/);
+    await expect(closeAgentCommand(dependencies, "missing")).rejects.toThrow(/not found/);
+    expect(manager.cancelledAgentIds).toEqual([]);
+    expect(manager.closedAgentIds).toEqual([]);
   });
 
   test("archives a live agent after canceling and clearing attention", async () => {

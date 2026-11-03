@@ -47,7 +47,7 @@ export interface AgentLifecycleCommandDependencies {
 }
 
 export interface CancelAgentRunResult {
-  agent: LifecycleAgentSnapshot;
+  agent: LifecycleAgentSnapshot | null;
   cancelled: boolean;
 }
 
@@ -56,14 +56,22 @@ interface RequestedAgentRunCancellation extends CancelAgentRunResult {
 }
 
 async function requestAgentRunCancellation(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "logger">,
+  dependencies: AgentLifecycleCommandDependencies,
   agentId: string,
 ): Promise<RequestedAgentRunCancellation> {
-  const { agentManager, logger } = dependencies;
-  const agent = agentManager.getAgent(agentId);
+  const { agentManager, agentStorage, logger } = dependencies;
+  let agent = agentManager.getAgent(agentId);
   if (!agent) {
-    logger.trace({ agentId }, "cancelAgentRunCommand: agent not found");
-    throw new Error(`Agent ${agentId} not found`);
+    const record = await agentStorage.get(agentId);
+    // Another request may have loaded the runtime while storage was being read.
+    agent = agentManager.getAgent(agentId);
+    if (!agent) {
+      if (!record) {
+        logger.trace({ agentId }, "cancelAgentRunCommand: agent not found");
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { agent: null, cancelled: false, cancellation: { status: "not_running" } };
+    }
   }
 
   const hasInFlightRun = agentManager.hasInFlightRun(agentId);
@@ -86,7 +94,7 @@ async function requestAgentRunCancellation(
 }
 
 export async function cancelAgentRunCommand(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "logger">,
+  dependencies: AgentLifecycleCommandDependencies,
   agentId: string,
 ): Promise<CancelAgentRunResult> {
   const result = await requestAgentRunCancellation(dependencies, agentId);
@@ -137,9 +145,18 @@ export async function archiveAgentCommand(
 }
 
 export async function closeAgentCommand(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   agentId: string,
 ): Promise<void> {
+  if (!dependencies.agentManager.getAgent(agentId)) {
+    const record = await dependencies.agentStorage.get(agentId);
+    if (!dependencies.agentManager.getAgent(agentId)) {
+      if (!record) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return;
+    }
+  }
   await dependencies.agentManager.closeAgent(agentId);
 }
 

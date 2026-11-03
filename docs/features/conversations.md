@@ -26,6 +26,8 @@ Forking a completed turn from reopened OMP history reads the same persisted time
 
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.
 
+After a daemon restart, saved `running` or `initializing` snapshots without a loaded runtime appear as `closed`, not as evidence that the interrupted work completed. **Stop**, `cancel_agent`, and `kill_agent` accept an existing unloaded conversation as already stopped without launching a provider or deleting history. Unknown Agent IDs remain errors. Stopping an unloaded conversation returns its inactive snapshot and refreshes the requesting client's subscribed conversation directory.
+
 Provider-request failures after the Agent runtime starts appear as sanitized system errors, including the HTTP status and safe proxy error code when available, never proxy credentials. The existing Agent and provider session remain retryable; a transient network or proxy failure does not require a new conversation.
 
 ## Context compaction

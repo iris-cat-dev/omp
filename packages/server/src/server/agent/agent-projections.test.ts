@@ -113,6 +113,21 @@ it("projects the daemon-owned active turn identity", () => {
   });
 });
 
+it.each(["initializing", "running"] as const)(
+  "does not restore a saved %s state as a live runtime",
+  (lifecycle) => {
+    const agent = createManagedAgent({ lifecycle });
+    const record = toStoredAgentRecord(agent);
+    const payload = buildStoredAgentPayload(record, ["claude"]);
+
+    expect(payload.status).toBe("closed");
+    expect(payload.activeTurn).toBeNull();
+    expect(payload.pendingPermissions).toEqual([]);
+    expect(record.lastStatus).toBe(lifecycle);
+    expect(toAgentPayload(agent).status).toBe(lifecycle);
+  },
+);
+
 function createPermission(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissionRequest {
   const base: AgentPermissionRequest = {
     id: "perm-1",
