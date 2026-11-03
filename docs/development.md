@@ -55,6 +55,10 @@ For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package ro
 
 Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
+Browser Relay also uses the embedded runtime: the first loopback relay browser open lazily starts `dist/node/host.mjs browser-relay` through the SDK's machine-global daemon broker. It does not invoke an `omp` executable from `PATH`. Concurrent SDK sessions share the existing relay; broker leases keep it alive while another consumer remains, and externally started relays remain under their owner's control. Remote relay endpoints are never auto-started.
+
+Chrome still needs the OMP Browser Relay extension installed and enabled. Its files can be installed or refreshed without a global CLI using `node <SDK root>/dist/node/host.mjs browser-relay install` (use the embedded Desktop executable with `ELECTRON_RUN_AS_NODE=1` instead of `node` in a packaged app), followed by Chrome's **Load unpacked** or **Reload** action. Rebuild the SDK artifacts and restart the backend after changing this startup path.
+
 User Stop withdraws native steering and follow-up queues atomically before
 aborting the active request. Withdrawn Desktop submissions are echoed once in
 the canonical timeline with their client message IDs and original attachments;
