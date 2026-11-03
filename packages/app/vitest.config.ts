@@ -14,8 +14,8 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 const dragPointerWithinElement: BrowserCommand<
-  [selector: string, deltaX: number, deltaY: number]
-> = async ({ provider, page, iframe }, selector, deltaX, deltaY) => {
+  [selector: string, deltaX: number, deltaY: number, interrupt?: "blur" | "focus"]
+> = async ({ provider, page, iframe }, selector, deltaX, deltaY, interrupt) => {
   if (provider.name !== "playwright") {
     throw new Error(`dragPointerWithinElement requires Playwright, received ${provider.name}`);
   }
@@ -28,6 +28,13 @@ const dragPointerWithinElement: BrowserCommand<
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 3 });
+  if (interrupt) {
+    await iframe.locator("body").evaluate((body, type) => {
+      body.ownerDocument.defaultView!.dispatchEvent(new Event(type));
+    }, interrupt);
+    // Keep moving without pointerup: an interrupted drag must no longer resize.
+    await page.mouse.move(startX + deltaX * 2, startY + deltaY * 2, { steps: 3 });
+  }
   await page.mouse.up();
 };
 
@@ -93,11 +100,16 @@ export default defineConfig({
       "@dnd-kit/core",
       "@dnd-kit/sortable",
       "@dnd-kit/utilities",
+      "hoist-non-react-statics",
+      "invariant",
+      "fbjs/lib/invariant",
     ],
     exclude: [
       // Real component subpaths must share the React alias with the renderer.
       "react-native-unistyles",
       "react-native-reanimated",
+      // Resolve web entrypoints before scanning the gesture handler's native imports.
+      "react-native-gesture-handler",
       "expo-image",
       "expo-clipboard",
       "expo-modules-core",

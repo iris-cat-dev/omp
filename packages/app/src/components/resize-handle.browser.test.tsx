@@ -2,12 +2,17 @@ import React, { act, useCallback, useMemo, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
 import { commands } from "vitest/browser";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { ResizeHandle } from "./resize-handle";
 
 declare module "vitest/browser" {
   interface BrowserCommands {
-    dragPointerWithinElement(selector: string, deltaX: number, deltaY: number): Promise<void>;
+    dragPointerWithinElement(
+      selector: string,
+      deltaX: number,
+      deltaY: number,
+      interrupt?: "blur" | "focus",
+    ): Promise<void>;
   }
 }
 
@@ -16,6 +21,7 @@ const splitStyles = {
   horizontal: { width: 400, height: 300, flexDirection: "row" as const },
   vertical: { width: 400, height: 300, flexDirection: "column" as const },
 };
+const paneStyle = { flex: 1 };
 
 afterEach(() => {
   for (const { root, container } of mounted.splice(0)) {
@@ -105,6 +111,73 @@ for (const direction of ["horizontal", "vertical"] as const) {
       const delta = pointerEnd - pointerStart;
       expect(delta).toBeGreaterThan(20);
       await expect.poll(() => Math.abs(size() - before - delta)).toBeLessThan(1);
+    },
+  );
+}
+
+for (const direction of ["horizontal", "vertical"] as const) {
+  it.each(["blur", "focus"] as const)(
+    `ends the ${direction} drag on window %s even without pointerup`,
+    async (interrupt) => {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      mounted.push({ root, container });
+      let latestPreview: number[] | undefined;
+      let interruptedSizes: number[] | undefined;
+      const preview = vi.fn((_group: string, sizes: number[]) => {
+        latestPreview = sizes;
+      });
+      const commit = vi.fn();
+      const rememberSize = () => {
+        interruptedSizes = latestPreview;
+      };
+      window.addEventListener(interrupt, rememberSize);
+      const cursorBefore = document.body.style.cursor;
+      act(() =>
+        root.render(
+          <View style={splitStyles[direction]}>
+            <View style={paneStyle} />
+            <ResizeHandle
+              testID="interrupted-divider"
+              direction={direction}
+              groupId="group"
+              index={0}
+              sizes={[0.5, 0.5]}
+              visibleSizeTotal={1}
+              onPreviewResizeSplit={preview}
+              onResizeSplit={commit}
+            />
+            <View style={paneStyle} />
+          </View>,
+        ),
+      );
+      try {
+        await commands.dragPointerWithinElement(
+          '[data-testid="interrupted-divider"] [role="separator"]',
+          direction === "horizontal" ? 40 : 0,
+          direction === "vertical" ? 40 : 0,
+          interrupt,
+        );
+        expect(interruptedSizes?.[0]).toBeGreaterThan(0.5);
+        expect(latestPreview).toEqual(interruptedSizes);
+        expect(commit).toHaveBeenCalledExactlyOnceWith("group", interruptedSizes);
+        expect(document.body.style.cursor).toBe(cursorBefore);
+        // A pending hover timer must not re-highlight after the window transition.
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 180);
+        await promise;
+        expect(container.querySelector('[data-testid="interrupted-divider-highlight"]')).toBeNull();
+        await commands.dragPointerWithinElement(
+          '[data-testid="interrupted-divider"] [role="separator"]',
+          direction === "horizontal" ? -30 : 0,
+          direction === "vertical" ? -30 : 0,
+        );
+        expect(commit).toHaveBeenCalledTimes(2);
+        expect(latestPreview?.[0]).toBeLessThan(0.5);
+      } finally {
+        window.removeEventListener(interrupt, rememberSize);
+      }
     },
   );
 }

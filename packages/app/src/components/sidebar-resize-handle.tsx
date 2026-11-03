@@ -41,6 +41,7 @@ export function SidebarResizeHandle({ edge, gesture, pressed, testID }: SidebarR
 function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
   const [highlighted, setHighlighted] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hitAreaRef = useRef<View | null>(null);
   const geometry = resolveSidebarResizeHandleGeometry(true);
   const hitAreaStyle = [
     styles.hitArea,
@@ -70,9 +71,74 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
 
   useEffect(() => cancelHighlightTimer, [cancelHighlightTimer]);
 
+  useEffect(() => {
+    if (!isWeb) return;
+    const element = hitAreaRef.current as unknown as HTMLElement | null;
+    const view = element?.ownerDocument.defaultView;
+    if (!element || !view) return;
+    const document = element.ownerDocument;
+    const pointers = new Map<number, { target: HTMLElement; awaitingFocus: boolean }>();
+
+    function trackPointer(event: PointerEvent) {
+      pointers.set(event.pointerId, {
+        target: event.target as HTMLElement,
+        awaitingFocus: !document.hasFocus(),
+      });
+    }
+    function forgetPointer(event: PointerEvent) {
+      pointers.delete(event.pointerId);
+    }
+    function handlePointerMove(event: PointerEvent) {
+      const pointer = pointers.get(event.pointerId);
+      if (pointer) pointer.awaitingFocus = false;
+    }
+    function resetInteraction(event?: Event) {
+      let preserveHover = false;
+      // Switching windows need not deliver pointerup or pointerleave. Releasing
+      // capture lets GestureDetector cancel its pan on lostpointercapture.
+      for (const [pointerId, pointer] of pointers) {
+        // Clicking an inactive window can deliver pointerdown before focus.
+        if (event?.type === "focus" && pointer.awaitingFocus) {
+          pointer.awaitingFocus = false;
+          preserveHover = true;
+          continue;
+        }
+        if (pointer.target.hasPointerCapture(pointerId)) {
+          pointer.target.releasePointerCapture(pointerId);
+        }
+        pointers.delete(pointerId);
+      }
+      if (!preserveHover) handleHoverOut();
+    }
+    function handleVisibilityChange() {
+      if (document.hidden) resetInteraction();
+    }
+
+    element.addEventListener("pointerdown", trackPointer);
+    element.addEventListener("pointermove", handlePointerMove);
+    element.addEventListener("pointerup", forgetPointer);
+    element.addEventListener("pointercancel", forgetPointer);
+    element.addEventListener("lostpointercapture", forgetPointer);
+    view.addEventListener("blur", resetInteraction);
+    view.addEventListener("focus", resetInteraction);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      element.removeEventListener("pointerdown", trackPointer);
+      element.removeEventListener("pointermove", handlePointerMove);
+      element.removeEventListener("pointerup", forgetPointer);
+      element.removeEventListener("pointercancel", forgetPointer);
+      element.removeEventListener("lostpointercapture", forgetPointer);
+      view.removeEventListener("blur", resetInteraction);
+      view.removeEventListener("focus", resetInteraction);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      resetInteraction();
+    };
+  }, [handleHoverOut]);
+
   return (
     <GestureDetector gesture={gesture}>
       <Pressable
+        ref={hitAreaRef}
         testID={testID}
         dataSet={RESIZE_HANDLE_DATASET}
         style={hitAreaStyle}

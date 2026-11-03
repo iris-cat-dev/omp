@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
@@ -21,6 +21,8 @@ interface PointerState {
   containerSize: number;
   pointerStart: number;
   drag: ResizeHandleDrag;
+  finish: () => void;
+  awaitingFocus: boolean;
 }
 
 function resetWindowHorizontalScroll() {
@@ -49,6 +51,21 @@ export function ResizeHandle({
   const [dragging, setDragging] = useState(false);
   const highlighted = active || dragging;
 
+  const handlePointerEnter = useCallback(() => {
+    clearTimeout(hoverTimerRef.current ?? undefined);
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null;
+      setActive(true);
+    }, 150);
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setActive(false);
+  }, []);
   const handlePointerDown = useCallback(
     (event: RNPointerEvent) => {
       const hitAreaElement = event.currentTarget as unknown as HTMLElement | null;
@@ -84,6 +101,8 @@ export function ResizeHandle({
           preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
           commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
         }),
+        finish: finishDrag,
+        awaitingFocus: !document.hasFocus(),
       });
 
       if (pointerStatesRef.current.size === 1) {
@@ -98,6 +117,7 @@ export function ResizeHandle({
       resetWindowHorizontalScroll();
 
       function cleanup() {
+        if (!pointerStatesRef.current.has(pointerId)) return;
         pointerStatesRef.current.delete(pointerId);
         setDragging(pointerStatesRef.current.size > 0);
         if (pointerStatesRef.current.size === 0) {
@@ -110,7 +130,15 @@ export function ResizeHandle({
         resetWindowHorizontalScroll();
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
-        window.removeEventListener("pointercancel", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        pointerCaptureElement.removeEventListener("lostpointercapture", handlePointerCancel);
+      }
+
+      function finishDrag() {
+        const pointerState = pointerStatesRef.current.get(pointerId);
+        if (!pointerState) return;
+        cleanup();
+        pointerState.drag.finish();
       }
 
       function handlePointerMove(moveEvent: PointerEvent) {
@@ -120,6 +148,12 @@ export function ResizeHandle({
 
         const pointerState = pointerStatesRef.current.get(pointerId);
         if (!pointerState) {
+          return;
+        }
+        pointerState.awaitingFocus = false;
+        if (moveEvent.pointerType === "mouse" && moveEvent.buttons === 0) {
+          handlePointerLeave();
+          finishDrag();
           return;
         }
 
@@ -139,30 +173,59 @@ export function ResizeHandle({
           return;
         }
 
-        pointerStatesRef.current.get(pointerId)?.drag.finish();
-        cleanup();
+        finishDrag();
+      }
+
+      function handlePointerCancel(cancelEvent: PointerEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        handlePointerLeave();
+        finishDrag();
       }
 
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", handlePointerUp);
-      window.addEventListener("pointercancel", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
+      pointerCaptureElement.addEventListener("lostpointercapture", handlePointerCancel);
     },
-    [direction, groupId, index, onPreviewResizeSplit, onResizeSplit, sizes, visibleSizeTotal],
+    [
+      direction,
+      groupId,
+      index,
+      onPreviewResizeSplit,
+      onResizeSplit,
+      sizes,
+      visibleSizeTotal,
+      handlePointerLeave,
+    ],
   );
-
-  const handlePointerEnter = useCallback(() => {
-    hoverTimerRef.current = setTimeout(() => {
-      setActive(true);
-    }, 150);
-  }, []);
-
-  const handlePointerLeave = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
+  useEffect(() => {
+    if (!isWeb) return;
+    function resetInteraction(event?: Event) {
+      let preserveHover = false;
+      for (const pointerState of pointerStatesRef.current.values()) {
+        // A new click may activate the window after pointerdown has started its drag.
+        if (event?.type === "focus" && pointerState.awaitingFocus) {
+          pointerState.awaitingFocus = false;
+          preserveHover = true;
+        } else {
+          pointerState.finish();
+        }
+      }
+      if (!preserveHover) handlePointerLeave();
     }
-    setActive(false);
-  }, []);
+    function handleVisibilityChange() {
+      if (document.hidden) resetInteraction();
+    }
+    window.addEventListener("blur", resetInteraction);
+    window.addEventListener("focus", resetInteraction);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("blur", resetInteraction);
+      window.removeEventListener("focus", resetInteraction);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      resetInteraction();
+    };
+  }, [handlePointerLeave]);
 
   const handleStyle = useMemo(
     () => [

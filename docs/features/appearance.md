@@ -28,6 +28,8 @@ Workspace tabs sit directly below the titlebar without a duplicate header. Nativ
 
 On macOS, dragging and double-click zoom/restore use native AppKit, including when maximized; there is no Windows/Linux manual restore-and-drag fallback. Double-click respects the macOS titlebar action preference. On Windows, a single click on maximized titlebar leaves it maximized, double-click restores, and only actual drag motion starts restore-and-drag. Interactive buttons/controls stay outside drag regions.
 
+Sidebar and workspace dividers clear hover highlights and release mouse capture when the window loses focus, regains focus, or becomes hidden. Interrupted workspace resizing keeps the last previewed pane sizes; moving the mouse after returning does not continue the old drag.
+
 The document `color-scheme` follows resolved theme so native selection and form controls match light/dark mode. Compact Web headers use a 44px row without extra top padding and retain safe-area insets; native mobile and Desktop-wrapper spacing is unchanged.
 
 **Settings → Connections** lists saved hosts, connection state, and daemon version above relay/pairing controls. **About** shows app version and Desktop app updates, not the host list. Remote hosts offer **Disconnect / Reconnect** in host pickers, this list, and host overviews. Disconnect preserves the saved connection and cached workspace data, stops probing and automatic reconnection, and persists after restart. Reconnect resumes that connection. Neither action stops the remote daemon; **Remove host** is separate. See [Remote hosts](../remote-hosts.md).
