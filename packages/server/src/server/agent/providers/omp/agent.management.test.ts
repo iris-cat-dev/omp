@@ -86,6 +86,36 @@ describe("OMP provider management", () => {
     });
   });
 
+  test("uses registered provider names in catalogs while preserving configured name overrides", async () => {
+    const { agentDir, client, runtime } = await createClient();
+    await writeFile(
+      path.join(agentDir, "models.yml"),
+      "providers:\n  llmbox:\n    name: 模型实验室\n",
+    );
+    runtime.queueModels([
+      { provider: "aime", id: "chat", name: "Chat" },
+      { provider: "llmbox", id: "reasoning", name: "Reasoning" },
+    ]);
+    runtime.queueLoginProviders([
+      { id: "aime", name: "AIME", available: true, authenticated: false },
+      { id: "llmbox", name: "LLMBox", available: true, authenticated: false },
+    ]);
+
+    const catalog = await client.fetchCatalog({ scope: "global", force: true });
+    expect(catalog.models).toMatchObject([
+      {
+        id: "aime/chat",
+        label: "AIME/Chat",
+        metadata: { provider: "aime", providerName: "AIME" },
+      },
+      {
+        id: "llmbox/reasoning",
+        label: "模型实验室/Reasoning",
+        metadata: { provider: "llmbox", providerName: "模型实验室" },
+      },
+    ]);
+  });
+
   test("reads native models and subscription state", async () => {
     const { agentDir, client, runtime } = await createClient();
     runtime.queueModels([

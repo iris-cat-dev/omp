@@ -38,13 +38,21 @@ The sidebar, account choices, usage cards, and ChatGPT image-generation account 
 
 Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, or credentials. Different providers may share a display name; their internal IDs remain distinct.
 
-Names are stored as `providers.<id>.name` in the host's native `models.yml`. Existing entries without a name keep their previous display fallback; opening **Edit** prefills the old ID as the name so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
+Names are stored as `providers.<id>.name` in the host's native `models.yml`. For existing entries without a name, **Edit** prefills the old ID so you can replace it without recreating the provider. The editor preserves additional provider/model configuration such as custom headers and model pricing.
+
+Model catalogs prefer an explicit `models.yml` display name, then the registered provider name from the same OMP runtime that loads the models, then the existing provider-ID fallback. Registered names such as **AIME** and **LLMBox** retain their exact capitalization.
 
 ## Catalog refresh and sign-in
 
 Updating OMP, saving provider configuration, or signing in/out refreshes the affected provider's global catalog. Open clients receive the refreshed result, or a terminal unavailable/error state, without reopening a picker or reloading the application.
 
+In provider settings, **Refresh** refreshes both provider/account management and the host model catalog. The sidebar continues receiving updates from the last-focused, still-mounted workspace while settings is open. Background workspaces cannot replace that source, and closing it removes its controls rather than leaving a stale snapshot.
+
 Browser OAuth refreshes catalogs as soon as OMP confirms authorization, closes sign-in, and updates signed-in state; **Complete sign-in** need not be pressed again. Providers requesting an OAuth code or redirect URL still accept manual completion. Refresh never changes an existing conversation's selected model.
+
+Signed-in providers reflect active credentials stored by OMP, including API-key login and shared login aliases. Configuration placeholders, environment keys, and external credential availability do not count as signed-in accounts. Sign-out removes OMP's stored credentials only; environment/config keys and external bytedcli grants must be removed at their source.
+
+Provider settings includes sign-in providers even when they have no selectable models. Sidebar groups come only from selectable models, so the lists need not contain the same number of providers. Catalog entries are not removed merely because no stored sign-in account exists; environment credentials, external authentication, and keyless providers remain separate from stored account state.
 
 If a historical conversation's selected model or provider has been removed, choose an available model in the conversation's model picker. Desktop restores the original session directly with that selection instead of trying to start the missing model first, including when a history restore is already failing in parallel. The conversation and its history are retained; catalogs never silently substitute another model. Invalid selections leave the stored model unchanged, and archived conversations must still be unarchived before changing settings.
 

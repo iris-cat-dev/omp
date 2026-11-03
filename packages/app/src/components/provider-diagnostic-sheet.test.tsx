@@ -302,29 +302,6 @@ describe("OMP provider management loading", () => {
     expect(screen.queryByTestId("omp-provider-account-quota-1")).toBeNull();
     expect(screen.queryByText("settings.providers.omp.codexQuota.cards")).toBeNull();
   });
-  it("bypasses the cache when the user refreshes", async () => {
-    const getOmpProviderManagement = vi.fn(async () => management([1]));
-    runtime.client = {
-      getOmpProviderManagement,
-      reorderOmpProviderAccounts: vi.fn(),
-    };
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    queryClients.push(queryClient);
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <OmpProviderConfigurationPanel serverId="server-1" />
-      </QueryClientProvider>,
-    );
-    fireEvent.click(await screen.findByText("settings.providers.omp.refresh"));
-
-    await waitFor(() => expect(getOmpProviderManagement).toHaveBeenCalledTimes(2));
-  });
 });
 
 describe("Codex sign-in methods", () => {

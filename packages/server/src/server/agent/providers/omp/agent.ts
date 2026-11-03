@@ -5503,7 +5503,9 @@ export class OmpAgentClient implements AgentClient {
         .catch((error: NodeJS.ErrnoException) =>
           error.code === "ENOENT" ? "providers: {}\n" : Promise.reject(error),
         );
-      const providerNames = new Map<string, string>();
+      const providerNames = new Map(
+        (await catalogSession.getLoginProviders()).map(({ id, name }) => [id, name]),
+      );
       for (const [id, provider] of Object.entries(
         parseOmpModelsDocument(configYaml).providers ?? {},
       )) {

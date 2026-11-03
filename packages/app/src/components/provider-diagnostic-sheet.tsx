@@ -1788,6 +1788,7 @@ function OmpManagementPanel({
               staleTime: OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
               gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
             }));
+        if (force) onSaved();
       } catch (loadError) {
         if (isCancelledError(loadError)) return;
         setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -1795,7 +1796,7 @@ function OmpManagementPanel({
         setLoading(false);
       }
     },
-    [client, managementQueryKey, queryClient, serverId, showManagement, supported],
+    [client, managementQueryKey, onSaved, queryClient, serverId, showManagement, supported],
   );
   const cancelLoginFlow = useCallback(
     async (flow: OmpProviderLoginFlowState) => {
