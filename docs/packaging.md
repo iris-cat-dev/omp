@@ -307,7 +307,9 @@ Both `scripts/packaging/build-windows.ps1` and `scripts/packaging/build-windows.
 
 ## Bundled OMP SDK
 
-`npm run build:omp-sdk` builds the pinned submodule and stages `packages/desktop/sdk-dist` for the local application. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
+`npm run build:omp-sdk:release` builds or content-validates and reuses the pinned submodule's release SDK in `packages/desktop/sdk-dist`; `npm run build:omp-sdk` also defaults to release. Standard application and remote-backend build entrypoints explicitly select release mode, even when the calling environment selects development. Packaging validates source, target, profile, canonical artifacts, and native runtime metadata before copying the runtime closure to `resources/omp-sdk` outside ASAR. Source-path metadata and staging tarballs are excluded from that local SDK directory.
+
+Development builds use `npm run build:omp-sdk:dev` (also selected by `build:server`/`dev:desktop`), Cargo `local`, and an uncompressed runnable stage. Both modes share `sdk-dist`, but their cache keys and native directories are isolated; switching modes restages when necessary. Development manifests/packages and local-profile native sidecars cannot be packaged or exported as release SDK artifacts. Rebuild with `build:omp-sdk:release` before invoking packaging tools directly.
 
 Desktop x64 builds explicitly compile the baseline ISA and ship `pi_natives.<platform>-x64-baseline.node`. A modern-only (AVX2) addon is not a portable Desktop payload: Windows Node embeds can conservatively select baseline when only Windows PowerShell 5.1 is available, even on an AVX2 machine. SDK artifact export/import rejects Desktop x64 archives without the named baseline addon, and the artifact smoke forces `PI_NATIVE_VARIANT=baseline` for both the SDK and its worker. Rebuild older modern-only SDK artifacts and their installers; do not rename a modern binary to baseline or force users onto the modern ISA.
 

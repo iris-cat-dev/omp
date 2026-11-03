@@ -53,7 +53,11 @@ OMP `compact` and `prompt` admission RPCs wait for their response, runtime exit,
 
 ### OMP SDK backend
 
-Desktop development, packaged applications, and SSH-managed deployments use the SDK. By default, `npm run build:omp-sdk` installs the pinned submodule's dependencies with its frozen Bun lockfile, compiles the host-native addon, bundles the selected Node SDK, and stages its complete runtime closure in `packages/desktop/sdk-dist/`. With an absolute `OMP_DESKTOP_SDK_ARTIFACT` directory, it instead imports the matching **Package release** artifact, checking SDK commit/version, target/profile, and archive integrity without rebuilding native addons. `npm run build:server`, `npm run dev:desktop`, and application packaging run this prerequisite automatically. [Mac-to-Windows packaging](packaging.md#mac-to-windows-packaging) sets the target to Windows x64 and consumes the Windows-built SDK.
+Desktop development, packaged applications, and SSH-managed deployments use the SDK. `npm run build:omp-sdk` defaults to a release build and stages its complete runtime closure in `packages/desktop/sdk-dist/`. Unchanged SDK inputs and validated output bytes reuse that directory without installing dependencies, invoking Cargo, bundling, or packing again. Changed inputs run only the necessary native and bundle stages; dependency file lists are cached across staging runs.
+
+`npm run build:server` and `npm run dev:desktop` select the development SDK: the Desktop addon uses Cargo `local` (thin LTO, 16 codegen units, incremental) in `native/desktop/local`, and staging prepares the runnable directory without generating `omp-sdk.tgz`. `npm run build:server:clean`, remote-backend assembly, and application packaging explicitly select release builds. Release addons remain in `native/desktop`, and release staging produces the validated archive. Production packaging and SDK artifact export/import reject development markers and local-profile native sidecars.
+
+With an absolute `OMP_DESKTOP_SDK_ARTIFACT` directory, the build imports the matching **Package release** artifact, checking SDK commit/version, target/profile, and archive integrity without rebuilding native addons. This explicit override uses the artifact's release bytes, not uncommitted SDK changes. [Mac-to-Windows packaging](packaging.md#mac-to-windows-packaging) sets the target to Windows x64 and consumes the Windows-built SDK.
 
 Desktop-managed configuration ignores legacy `ompBackend: "cli"` and CLI command overrides; model policy, provider environment, and explicit SDK package paths remain. Standalone servers without an SDK retain external CLI support; an installed SDK selects SDK unless that standalone server explicitly selects CLI.
 
@@ -128,12 +132,16 @@ Cold OMP snapshots retain saved workflow features and approval-mode options.
 The composer reads active-directory entries or retained agent details, so
 retirement does not reset controls or skip enhanced-workflow language sync.
 
-Build the staged SDK or an unpacked application:
+Build a development SDK/server or a release SDK/unpacked application:
 
 ```bash
-npm run build:omp-sdk
+npm run build:omp-sdk:dev
+npm run build:server
+npm run build:omp-sdk:release
 npm run build -- --dir --publish never
 ```
+
+Build state and package file lists live under `.dev/omp-sdk-build-cache/`. Keys include source file contents (tracked files and non-ignored new files, including uncommitted edits), locks, build scripts, Bun environment files, platform/architecture, build mode, tool versions, relevant build environment, and resolved dependency contents. A TypeScript-only SDK edit reuses an unchanged native addon; a changed Rust input rebuilds it. Missing or altered generated/staged output also invalidates reuse. Removing the cache forces rebuilding; do not clear Cargo's `target` directory for normal iteration. The first use of Cargo `local` needs its own dependency build even if `release` is already warm.
 
 Restart the daemon after changing its backend or SDK. Existing sessions are not switched in place. SDK model/auth and plugin management use the SDK itself; CLI install/update operations are unavailable. SDK statistics read the persisted SQLite index without launching a CLI refresh.
 
@@ -153,11 +161,12 @@ Daemon startup runs `plugin check --fix --json` through the selected OMP runtime
 
 Build overrides, shared by development, Desktop packaging, and remote deployment:
 
-| Variable                  | Default                         | Purpose                              |
-| ------------------------- | ------------------------------- | ------------------------------------ |
-| `OMP_DESKTOP_SDK_SOURCE`  | `omp-sdk/packages/coding-agent` | Absolute source package root         |
-| `OMP_DESKTOP_SDK_TARGET`  | `desktop`                       | `desktop` or `generic` Node artifact |
-| `OMP_DESKTOP_SDK_PROFILE` | `core`                          | `core` or `full` capability profile  |
+| Variable                     | Default                         | Purpose                                                                                           |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `OMP_DESKTOP_SDK_SOURCE`     | `omp-sdk/packages/coding-agent` | Absolute source package root                                                                      |
+| `OMP_DESKTOP_SDK_TARGET`     | `desktop`                       | `desktop` or `generic` Node artifact                                                              |
+| `OMP_DESKTOP_SDK_PROFILE`    | `core`                          | `core` or `full` capability profile                                                               |
+| `OMP_DESKTOP_SDK_BUILD_MODE` | `release` for direct SDK builds | `development` uses local native output and omits compression; release entrypoints force `release` |
 
 The Desktop target builds `dist/node-desktop/` and installs it canonically at `dist/node/`, leaving generic source artifacts untouched. Extensions can import package roots and Desktop's SDK/headless/async/host-API aliases, not arbitrary source-file subpaths; select `generic` for extensions requiring those imports. Missing artifacts or stale source/target/profile metadata fail packaging instead of falling back.
 

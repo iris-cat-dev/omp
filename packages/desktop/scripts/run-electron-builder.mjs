@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, realpathSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,7 @@ function validateSdkStage(projectDir, runtime) {
     );
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  requireRelease(manifest.buildMode, "Required SDK manifest");
   const stagedSource = JSON.parse(readFileSync(path.join(stage, "source.json"), "utf8"));
   if (
     manifest.schemaVersion !== 1 ||
@@ -72,12 +73,39 @@ function validateSdkPackage(stage, manifest, buildTarget, profile) {
   const installed = JSON.parse(
     readFileSync(path.join(stage, manifest.packageRoot, "package.json"), "utf8"),
   );
+  requireRelease(installed.ompNodeSdk?.buildMode, "Required SDK package");
   if (
     (installed.ompNodeSdk?.target ?? "generic") !== buildTarget ||
     (installed.ompNodeSdk?.profile ?? "full") !== profile
   ) {
     throw new Error(
       `Required SDK package does not match OMP_DESKTOP_SDK_TARGET=${buildTarget} and OMP_DESKTOP_SDK_PROFILE=${profile}. Run npm run build:omp-sdk again.`,
+    );
+  }
+  // Staging hoists the native dependency unless the SDK needs a nested copy.
+  const nativeDirectories = [
+    path.join(stage, manifest.packageRoot, "node_modules/@oh-my-pi/pi-natives/native"),
+    path.join(stage, "node_modules/@oh-my-pi/pi-natives/native"),
+  ];
+  for (const directory of nativeDirectories) {
+    if (!existsSync(directory)) continue;
+    for (const filename of readdirSync(directory).filter((name) => name.endsWith(".node.json"))) {
+      const metadata = JSON.parse(readFileSync(path.join(directory, filename), "utf8"));
+      requireRelease(metadata.buildMode, "Required SDK native sidecar");
+      if (metadata.profile !== "release") {
+        throw new Error(
+          "Required SDK native sidecar is not a release profile; local addons cannot be packaged.",
+        );
+      }
+    }
+  }
+}
+
+function requireRelease(buildMode, description) {
+  // Missing buildMode identifies a legacy release stage.
+  if (buildMode !== undefined && buildMode !== "release") {
+    throw new Error(
+      `${description} is not a release build; development SDKs cannot be packaged. Run npm run build:omp-sdk again.`,
     );
   }
 }

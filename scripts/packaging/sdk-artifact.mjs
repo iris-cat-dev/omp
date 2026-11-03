@@ -78,7 +78,30 @@ async function sourceIdentity() {
   return { ...config, source, version: sdk.version, sdkCommit };
 }
 
+function requireRelease(buildMode, description) {
+  // Older release artifacts did not declare a build mode.
+  if (buildMode !== undefined && buildMode !== "release")
+    throw new Error(`${description} is not a release build; development SDKs cannot be published.`);
+}
+
+async function validateNativeSidecars(directory, addons) {
+  for (const filename of addons) {
+    const metadata = await json(path.join(directory, `${filename}.json`)).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    // Keep old release artifacts without sidecars importable.
+    if (metadata === null) continue;
+    requireRelease(metadata.buildMode, "SDK native sidecar");
+    if (metadata.profile !== "release")
+      throw new Error(
+        "SDK native sidecar is not a release profile; local addons cannot be published.",
+      );
+  }
+}
+
 function validateManifest(manifest, identity, { platform, arch }) {
+  requireRelease(manifest.buildMode, "SDK artifact manifest");
   if (!supportedTargets.has(`${platform}-${arch}`))
     throw new Error(`Unsupported SDK artifact target: ${platform}-${arch}.`);
   if (
@@ -243,6 +266,7 @@ async function resolveDependency(name, owner, sdk) {
 
 async function validatePackage(sdk, manifest) {
   const installed = await json(path.join(sdk, "package.json"));
+  requireRelease(installed.ompNodeSdk?.buildMode, "SDK installed package");
   const modules = await json(path.join(sdk, "dist/node/modules.json"));
   const runtime = await json(path.join(sdk, "dist/node/runtime-dependencies.json"));
   if (
@@ -332,9 +356,10 @@ async function validatePackage(sdk, manifest) {
       `Desktop SDK archive is missing the ${manifest.platform}-${manifest.arch} baseline addon. ` +
         "Rebuild with npm run build:omp-sdk; a modern-only addon cannot run on baseline hosts.",
     );
+  await validateNativeSidecars(path.join(natives, "native"), addons);
 }
 
-async function validateProducerSource(sdk, entries, identity) {
+async function validateProducerSource(sdk, entries, identity, stageDirectory) {
   const artifact = identity.buildTarget === "desktop" ? "node-desktop" : "node";
   const sourceRuntime = await json(
     path.join(identity.source, "dist", artifact, "runtime-dependencies.json"),
@@ -363,7 +388,7 @@ async function validateProducerSource(sdk, entries, identity) {
     throw new Error("Staged SDK runtime metadata no longer matches the source build.");
   for (const relative of entries.keys()) {
     if (entries.get(relative).type !== "File") continue;
-    const staged = path.join(stageDir, packageRoot, relative.slice("package/".length));
+    const staged = path.join(stageDirectory, packageRoot, relative.slice("package/".length));
     const extracted = path.join(sdk, relative.slice("package/".length));
     const bytes = await fingerprint(extracted);
     if (!isDeepStrictEqual(bytes, await fingerprint(staged)))
@@ -468,28 +493,29 @@ async function replaceOutput(state) {
 }
 
 /** Export the current native stage's exact npm archive, without restaging or repacking. */
-export async function createSdkArtifact(outputDir) {
+export async function createSdkArtifact(outputDir, { stageDirectory = stageDir } = {}) {
   const identity = await sourceIdentity();
-  const manifest = await json(path.join(stageDir, "manifest.json"));
+  const manifest = await json(path.join(stageDirectory, "manifest.json"));
   validateManifest(manifest, identity, { platform: process.platform, arch: process.arch });
-  const stagedSource = await json(path.join(stageDir, "source.json"));
+  const stagedSource = await json(path.join(stageDirectory, "source.json"));
   if (stagedSource.packageRoot !== identity.source)
     throw new Error(
       "Staged SDK does not match OMP_DESKTOP_SDK_SOURCE; rebuild it before exporting.",
     );
-  const state = await prepareOutput(outputDir, [await realpath(stageDir), identity.source]);
+  await validatePackage(path.join(stageDirectory, packageRoot), manifest);
+  const state = await prepareOutput(outputDir, [await realpath(stageDirectory), identity.source]);
   try {
     await mkdir(state.replacement);
     const archive = path.join(state.replacement, "omp-sdk.tgz");
-    await requireFile(path.join(stageDir, "omp-sdk.tgz"));
-    await copyFile(path.join(stageDir, "omp-sdk.tgz"), archive);
+    await requireFile(path.join(stageDirectory, "omp-sdk.tgz"));
+    await copyFile(path.join(stageDirectory, "omp-sdk.tgz"), archive);
     const bytes = await fingerprint(archive);
     const { sdk, entries } = await extractArchive(
       archive,
       path.join(state.temporary, "extracted"),
       manifest,
     );
-    await validateProducerSource(sdk, entries, identity);
+    await validateProducerSource(sdk, entries, identity, stageDirectory);
     const provenance = {
       schemaVersion: 1,
       archive: "omp-sdk.tgz",

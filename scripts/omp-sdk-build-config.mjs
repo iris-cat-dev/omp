@@ -17,5 +17,11 @@ export function resolveOmpSdkBuildConfig(env = process.env) {
   if (profile !== "core" && profile !== "full") {
     throw new Error(`Unsupported OMP_DESKTOP_SDK_PROFILE: ${profile}. Use core or full.`);
   }
-  return { source, buildTarget, profile };
+  const buildMode = env.OMP_DESKTOP_SDK_BUILD_MODE ?? "release";
+  if (buildMode !== "release" && buildMode !== "development") {
+    throw new Error(
+      `Unsupported OMP_DESKTOP_SDK_BUILD_MODE: ${buildMode}. Use release or development.`,
+    );
+  }
+  return { source, buildTarget, profile, buildMode };
 }

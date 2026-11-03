@@ -5,15 +5,18 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   realpathSync,
   symlinkSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import { createQualifiedPackager } from "./run-electron-builder.mjs";
 import { windowsBuildOutput } from "./windows-build-output.mjs";
@@ -506,6 +509,178 @@ function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "g
 }
 
 describe("SDK artifact target staging", () => {
+  test("development output loads SDK entries, registry modules and resources without a checkout or archive", async () => {
+    const fixture = createSdkFixture("generic");
+    try {
+      writeFileSync(
+        path.join(fixture.source, fixture.artifact, "sdk.mjs"),
+        'import { readFileSync } from "node:fs"; export { marker } from "./chunks/shared.mjs"; export const resource = readFileSync(new URL("../../data/resource.txt", import.meta.url), "utf8");',
+      );
+      const result = await stageNodeSdk(fixture.source, fixture.output, {
+        buildTarget: "generic",
+        buildMode: "development",
+        profile: "core",
+        cacheDir: path.join(fixture.directory, "cache"),
+      });
+      expect(result.archive).toBeNull();
+      expect(existsSync(path.join(fixture.output, "omp-sdk.tgz"))).toBe(false);
+      expect(result.dependencyInputs).toContainEqual({
+        name: "missing-optional-peer",
+        owner: realpathSync(fixture.source),
+        directory: null,
+      });
+      const metadata = JSON.parse(readFileSync(path.join(fixture.output, "manifest.json"), "utf8"));
+      const installed = JSON.parse(
+        readFileSync(path.join(result.directory, "package.json"), "utf8"),
+      );
+      expect(metadata.buildMode).toBe("development");
+      expect(installed.ompNodeSdk.buildMode).toBe("development");
+      rmSync(fixture.source, { recursive: true, force: true });
+      const consumed = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          [
+            `import { marker, resource } from ${JSON.stringify(pathToFileURL(path.join(result.directory, "dist/node/sdk.mjs")).href)};`,
+            `import { marker as plugin } from ${JSON.stringify(pathToFileURL(path.join(result.directory, "dist/node/plugins.mjs")).href)};`,
+            `import { marker as module } from ${JSON.stringify(pathToFileURL(path.join(result.directory, "dist/node/modules/root.mjs")).href)};`,
+            "process.stdout.write(JSON.stringify({ marker, resource, plugin, module }));",
+          ].join("\n"),
+        ],
+        { cwd: fixture.output, encoding: "utf8" },
+      );
+      expect(consumed.error).toBeUndefined();
+      expect(consumed.status, consumed.stderr).toBe(0);
+      expect(JSON.parse(consumed.stdout)).toEqual({
+        marker: "generic",
+        resource: "owned SDK resource",
+        plugin: "generic",
+        module: "generic",
+      });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("persistent package lists preserve local edits, ignore rules, additions and removals at the same package version", async () => {
+    const fixture = createSdkFixture("generic");
+    try {
+      const name = "sdk-local-runtime";
+      const dependency = path.join(fixture.directory, "workspace-runtime");
+      mkdirSync(dependency);
+      symlinkSync(
+        dependency,
+        path.join(fixture.source, "node_modules", name),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const packageFile = path.join(dependency, "package.json");
+      writeFileSync(
+        packageFile,
+        JSON.stringify({
+          name,
+          version: "1.0.0",
+          main: "index.cjs",
+        }),
+      );
+      writeFileSync(path.join(dependency, "index.cjs"), 'module.exports = "first";');
+      writeFileSync(path.join(dependency, "hidden-a.txt"), "first resource");
+      writeFileSync(path.join(dependency, "hidden-b.txt"), "other resource");
+      const ignore = path.join(dependency, ".npmignore");
+      writeFileSync(ignore, "hidden-a.txt\n");
+      const runtimeFile = path.join(fixture.source, fixture.artifact, "runtime-dependencies.json");
+      const runtime = JSON.parse(readFileSync(runtimeFile, "utf8"));
+      runtime.packages["@oh-my-pi/pi-coding-agent"].dependencies.push(name);
+      writeFileSync(runtimeFile, JSON.stringify(runtime));
+      const options = {
+        buildTarget: "generic",
+        buildMode: "development",
+        profile: "core",
+        cacheDir: path.join(fixture.directory, "cache"),
+      };
+      const stage = async () => {
+        const result = await stageNodeSdk(fixture.source, fixture.output, options);
+        return path.join(result.directory, "node_modules", name);
+      };
+      let installed = await stage();
+      expect(existsSync(path.join(installed, "hidden-a.txt"))).toBe(false);
+      expect(readFileSync(path.join(installed, "hidden-b.txt"), "utf8")).toBe("other resource");
+      const times = statSync(ignore);
+      writeFileSync(ignore, "hidden-b.txt\n");
+      utimesSync(ignore, times.atime, times.mtime);
+      const entryTimes = statSync(path.join(dependency, "index.cjs"));
+      writeFileSync(path.join(dependency, "index.cjs"), 'module.exports = "later";');
+      utimesSync(path.join(dependency, "index.cjs"), entryTimes.atime, entryTimes.mtime);
+      installed = await stage();
+      expect(readFileSync(path.join(installed, "index.cjs"), "utf8")).toContain('"later"');
+      expect(readFileSync(path.join(installed, "hidden-a.txt"), "utf8")).toBe("first resource");
+      expect(existsSync(path.join(installed, "hidden-b.txt"))).toBe(false);
+      writeFileSync(path.join(dependency, "added.txt"), "new resource");
+      installed = await stage();
+      expect(readFileSync(path.join(installed, "added.txt"), "utf8")).toBe("new resource");
+      rmSync(path.join(dependency, "added.txt"));
+      installed = await stage();
+      expect(existsSync(path.join(installed, "added.txt"))).toBe(false);
+      writeFileSync(
+        packageFile,
+        JSON.stringify({
+          name,
+          version: "1.0.0",
+          main: "index.cjs",
+          files: ["*.cjs"],
+        }),
+      );
+      installed = await stage();
+      expect(existsSync(path.join(installed, "hidden-a.txt"))).toBe(false);
+      const cachedLists = path.join(options.cacheDir, "npm-pack-files");
+      for (const entry of readdirSync(cachedLists)) {
+        const file = path.join(cachedLists, entry);
+        const cached = JSON.parse(readFileSync(file, "utf8"));
+        cached.files = ["package.json", "../escaped.txt"];
+        writeFileSync(file, JSON.stringify(cached));
+      }
+      installed = await stage();
+      expect(readFileSync(path.join(installed, "index.cjs"), "utf8")).toContain('"later"');
+      expect(existsSync(path.join(fixture.output, "escaped.txt"))).toBe(false);
+      for (const entry of readdirSync(cachedLists)) {
+        const file = path.join(cachedLists, entry);
+        const cached = JSON.parse(readFileSync(file, "utf8"));
+        cached.files = ["package.json"];
+        writeFileSync(file, JSON.stringify(cached));
+      }
+      installed = await stage();
+      expect(readFileSync(path.join(installed, "index.cjs"), "utf8")).toContain('"later"');
+      for (const entry of readdirSync(cachedLists))
+        writeFileSync(path.join(cachedLists, entry), "{");
+      installed = await stage();
+      expect(readFileSync(path.join(installed, "index.cjs"), "utf8")).toContain('"later"');
+    } finally {
+      fixture.dispose();
+    }
+  }, 30_000);
+
+  test.each([
+    "chunks/shared.mjs",
+    "modules/root.mjs",
+    "../../data/resource.txt",
+    `../../node_modules/@oh-my-pi/pi-natives/native/pi_natives.${process.platform}-${process.arch}.node`,
+  ])("development staging rejects missing runtime content %s", async (relative) => {
+    const fixture = createSdkFixture("generic");
+    try {
+      rmSync(path.join(fixture.source, fixture.artifact, relative));
+      await expect(
+        stageNodeSdk(fixture.source, fixture.output, {
+          buildTarget: "generic",
+          buildMode: "development",
+          profile: "core",
+        }),
+      ).rejects.toThrow();
+      expect(existsSync(fixture.output)).toBe(false);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   test.each(["full", "core"])(
     "packs the generic %s package and tar without its source",
     async (profile) => {
@@ -743,63 +918,108 @@ describe("SDK artifact target staging", () => {
   );
 
   test.each([
+    { buildMode: "release", otherDirectory: "native/desktop/local" },
+    { buildMode: "development", otherDirectory: "native/desktop" },
+  ])(
+    "$buildMode staging never borrows the addon from $otherDirectory",
+    async ({ buildMode, otherDirectory }) => {
+      const fixture = createSdkFixture("desktop", { native: true });
+      try {
+        const directory = path.join(
+          fixture.source,
+          "node_modules/@oh-my-pi/pi-natives",
+          otherDirectory,
+        );
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(
+          path.join(directory, `pi_natives.${process.platform}-${process.arch}.node`),
+          "wrong-mode addon must never be loaded",
+        );
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, {
+            buildTarget: "desktop",
+            buildMode,
+            profile: "core",
+          }),
+        ).rejects.toThrow("Desktop SDK has no isolated addon");
+        expect(existsSync(fixture.output)).toBe(false);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  test.each([
+    {
+      name: "release profile in local directory",
+      buildMode: "development",
+      overrides: { profile: "release" },
+    },
     { name: "missing sidecar", sidecar: "missing" },
     { name: "malformed sidecar", sidecar: "malformed" },
     { name: "schema version", overrides: { schemaVersion: 0 } },
     { name: "generic build target", overrides: { buildTarget: "generic" } },
     { name: "debug profile", overrides: { profile: "debug" } },
+    { name: "local profile in release directory", overrides: { profile: "local" } },
     { name: "stale package version", overrides: { version: "0.9.0" } },
     { name: "wrong platform", overrides: { platform: "wrong-platform" } },
     { name: "wrong architecture", overrides: { arch: "wrong-arch" } },
     { name: "wrong filename", overrides: { filename: "other.node" } },
     { name: "stale binary hash", overrides: { sha256: "0".repeat(64) } },
-  ])("rejects desktop native metadata with $name", async ({ sidecar, overrides }) => {
-    const fixture = createSdkFixture("desktop", { native: true });
-    try {
-      const filename = `pi_natives.${process.platform}-${process.arch}.node`;
-      const directory = path.join(
-        fixture.source,
-        "node_modules/@oh-my-pi/pi-natives/native/desktop",
-      );
-      mkdirSync(directory, { recursive: true });
-      // These bytes are deliberately not loadable: every case must reject metadata first.
-      const bytes = Buffer.from("invalid isolated addon for rejection-only fixture");
-      const addon = path.join(directory, filename);
-      writeFileSync(addon, bytes);
-      if (sidecar !== "missing") {
-        writeFileSync(
-          `${addon}.json`,
-          sidecar === "malformed"
-            ? "{"
-            : JSON.stringify({
-                schemaVersion: 1,
-                buildTarget: "desktop",
-                profile: "release",
-                version: "1.0.0",
-                platform: process.platform,
-                arch: process.arch,
-                filename,
-                sha256: createHash("sha256").update(bytes).digest("hex"),
-                capabilities: {
-                  smollm: false,
-                  liveVoice: false,
-                  wasmGrammars: false,
-                },
-                ...overrides,
-              }),
+  ])(
+    "rejects desktop native metadata with $name",
+    async ({ sidecar, overrides, buildMode = "release" }) => {
+      const fixture = createSdkFixture("desktop", { native: true });
+      try {
+        const filename = `pi_natives.${process.platform}-${process.arch}.node`;
+        const directory = path.join(
+          fixture.source,
+          "node_modules/@oh-my-pi/pi-natives/native/desktop",
+          ...(buildMode === "development" ? ["local"] : []),
         );
+        mkdirSync(directory, { recursive: true });
+        // These bytes are deliberately not loadable: every case must reject metadata first.
+        const bytes = Buffer.from("invalid isolated addon for rejection-only fixture");
+        const addon = path.join(directory, filename);
+        writeFileSync(addon, bytes);
+        if (sidecar !== "missing") {
+          writeFileSync(
+            `${addon}.json`,
+            sidecar === "malformed"
+              ? "{"
+              : JSON.stringify({
+                  schemaVersion: 1,
+                  buildTarget: "desktop",
+                  profile: "release",
+                  version: "1.0.0",
+                  platform: process.platform,
+                  arch: process.arch,
+                  filename,
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                  capabilities: {
+                    smollm: false,
+                    liveVoice: false,
+                    wasmGrammars: false,
+                  },
+                  ...overrides,
+                }),
+          );
+        }
+        vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
+        vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, {
+            ...resolveOmpSdkBuildConfig(),
+            buildMode,
+          }),
+        ).rejects.toThrow("Desktop native addon metadata is stale or incompatible");
+        expect(existsSync(fixture.output)).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+        fixture.dispose();
       }
-      vi.stubEnv("OMP_DESKTOP_SDK_TARGET", "desktop");
-      vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", "full");
-      await expect(
-        stageNodeSdk(fixture.source, fixture.output, resolveOmpSdkBuildConfig()),
-      ).rejects.toThrow("Desktop native addon metadata is stale or incompatible");
-      expect(existsSync(fixture.output)).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-      fixture.dispose();
-    }
-  });
+    },
+  );
 });
 
 describe("SDK-only packaging boundaries", () => {
