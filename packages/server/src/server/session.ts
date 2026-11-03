@@ -7854,24 +7854,20 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
+        allowPersistedOmpHistory: true,
       });
+      const timeline = loaded.fullTimeline ?? loaded.controlTimeline;
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
           ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
-        agentTitle: agentPayload.title,
-        cwd: snapshot.cwd,
+        agentTitle: loaded.agent.title,
+        cwd: loaded.agent.cwd,
       });
 
       this.emit({

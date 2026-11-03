@@ -821,6 +821,7 @@ test("pages cold OMP history and indexes prompts without resuming the provider",
     agentManager: {
       getAgent: vi.fn(() => undefined),
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getRegisteredProviderIds: vi.fn(() => ["omp"]),
       resumeAgentFromPersistence: vi
         .fn()
         .mockRejectedValue(new Error("Runtime must stay unloaded")),
@@ -862,6 +863,34 @@ test("pages cold OMP history and indexes prompts without resuming the provider",
       expect.objectContaining({ type: "user_message", text: "question 2" }),
       expect.objectContaining({ type: "assistant_message", text: "answer 2" }),
     ]);
+    await session.handleMessage({
+      type: "agent.fork_context.request",
+      agentId,
+      requestId: "cold-fork",
+      boundaryCursor: older.endCursor!,
+    });
+    const fork = messages.at(-1);
+    if (fork?.type !== "agent.fork_context.response") throw new Error("Missing fork context");
+    expect(fork.payload.error).toBeNull();
+    expect(fork.payload.boundaryCursor).toEqual(older.endCursor);
+    expect(fork.payload.attachment?.text).toContain("[User] question 1");
+    expect(fork.payload.attachment?.text).toContain("[Assistant] answer 1");
+    expect(fork.payload.attachment?.text).toContain("[User] question 2");
+    expect(fork.payload.attachment?.text).toContain("[Assistant] answer 2");
+    expect(fork.payload.attachment?.text).not.toContain("question 3");
+    expect(fork.payload.attachment?.text).not.toContain("answer 3");
+
+    await session.handleMessage({
+      type: "agent.fork_context.request",
+      agentId,
+      requestId: "cold-fork-stale",
+      boundaryCursor: { epoch: "previous-history", seq: older.endCursor!.seq },
+    });
+    const staleFork = messages.at(-1);
+    if (staleFork?.type !== "agent.fork_context.response") throw new Error("Missing fork failure");
+    expect(staleFork.payload.attachment).toBeNull();
+    expect(staleFork.payload.error).toEqual(expect.any(String));
+
     expect((await fetchPage("after", tail.endCursor!)).entries).toEqual([]);
     await session.handleMessage({
       type: "agent.timeline.list_prompts.request",
