@@ -176,9 +176,12 @@ import { terminalSubscriptionKey } from "@omp-desktop/protocol/terminal-subscrip
 import {
   asUint8Array,
   decodeFileTransferFrame,
+  decodeJsonMessageChunk,
   encodeFileTransferFrame,
   decodeTerminalStreamFrame,
   FileTransferOpcode,
+  JSON_MESSAGE_CHUNK_OPCODE,
+  JsonMessageReassembler,
   TerminalStreamOpcode,
   type FileTransferFrame,
 } from "@omp-desktop/protocol/binary-frames/index";
@@ -1138,10 +1141,24 @@ interface PingProbe {
   drivesLivenessFailure: boolean;
 }
 
+interface PendingTransportMessage {
+  data: unknown;
+  byteLength: number;
+  next: PendingTransportMessage | null;
+}
+
+// This bounds only frames waiting for Blob decoding, not a logical JSON message.
+const MAX_PENDING_TRANSPORT_MESSAGE_BYTES = 64 * 1024 * 1024;
+
 export class DaemonClient {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
   private transportValidationEpoch = 0;
+  private readonly jsonMessageReassembler = new JsonMessageReassembler();
+  private readingTransportBlob = false;
+  private pendingTransportMessageHead: PendingTransportMessage | null = null;
+  private pendingTransportMessageTail: PendingTransportMessage | null = null;
+  private pendingTransportMessageBytes = 0;
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
   private messageHandlers: Map<
     SessionOutboundMessage["type"],
@@ -1318,6 +1335,7 @@ export class DaemonClient {
         ...(protocols ? { protocols } : {}),
       });
       this.transport = transport;
+      const transportEpoch = this.transportValidationEpoch;
       this.lastServerInfoMessage = null;
 
       this.updateConnectionState(
@@ -1406,7 +1424,7 @@ export class DaemonClient {
             reasonCode: "transport_error",
           });
         }),
-        transport.onMessage((data) => this.handleTransportMessage(data)),
+        transport.onMessage((data) => this.handleTransportMessage(data, transportEpoch)),
       ];
     } catch (error) {
       this.resetConnectTimeout();
@@ -3430,14 +3448,19 @@ export class DaemonClient {
   async setAgentProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
-      type: "set_agent_proxy_policy_request", agentId, policy, requestId,
+      type: "set_agent_proxy_policy_request",
+      agentId,
+      policy,
+      requestId,
     });
     const payload = await this.sendRequest({
       requestId,
       message,
       options: { skipQueue: true },
-      select: (msg) => msg.type === "set_agent_proxy_policy_response" &&
-        msg.payload.requestId === requestId ? msg.payload : null,
+      select: (msg) =>
+        msg.type === "set_agent_proxy_policy_response" && msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
     });
     if (!payload.accepted) throw new Error(payload.error ?? "setAgentProxyPolicy rejected");
   }
@@ -6295,6 +6318,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.chunkedJsonMessages]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -6338,6 +6362,11 @@ export class DaemonClient {
     }
     this.transportCleanup = [];
     this.transportValidationEpoch += 1;
+    this.jsonMessageReassembler.reset();
+    this.readingTransportBlob = false;
+    this.pendingTransportMessageHead = null;
+    this.pendingTransportMessageTail = null;
+    this.pendingTransportMessageBytes = 0;
   }
 
   private resetConnectTimeout(): void {
@@ -6348,24 +6377,65 @@ export class DaemonClient {
     this.connectTimeout = null;
   }
 
-  private handleTransportMessage(data: unknown): void {
-    const rawData =
-      data && typeof data === "object" && "data" in data ? (data as { data: unknown }).data : data;
+  private handleTransportMessage(data: unknown, transportEpoch: number): void {
+    if (transportEpoch !== this.transportValidationEpoch) return;
+    const rawData = data && typeof data === "object" && "data" in data ? data.data : data;
+    if (this.readingTransportBlob) {
+      const byteLength = Math.max(
+        1,
+        typeof rawData === "string"
+          ? rawData.length * 2
+          : typeof Blob !== "undefined" && rawData instanceof Blob
+            ? rawData.size
+            : (asUint8Array(rawData)?.byteLength ?? 1),
+      );
+      if (this.pendingTransportMessageBytes + byteLength > MAX_PENDING_TRANSPORT_MESSAGE_BYTES) {
+        this.failTransportMessage("WebSocket Blob decoding backlog exceeded", false);
+        return;
+      }
+      const pending: PendingTransportMessage = { data: rawData, byteLength, next: null };
+      if (this.pendingTransportMessageTail) this.pendingTransportMessageTail.next = pending;
+      else this.pendingTransportMessageHead = pending;
+      this.pendingTransportMessageTail = pending;
+      this.pendingTransportMessageBytes += byteLength;
+      return;
+    }
+    this.processTransportMessage(rawData, transportEpoch);
+  }
 
-    if (
-      typeof Blob !== "undefined" &&
-      rawData instanceof Blob &&
-      typeof rawData.arrayBuffer === "function"
-    ) {
-      void rawData
-        .arrayBuffer()
-        .then((buffer) => {
-          this.handleTransportMessage(buffer);
-          return;
-        })
-        .catch(() => {
-          // Ignore failed blob decoding and allow reconnect logic to recover.
-        });
+  private processTransportMessage(rawData: unknown, transportEpoch: number): void {
+    if (transportEpoch !== this.transportValidationEpoch) return;
+    if (typeof Blob !== "undefined" && rawData instanceof Blob) {
+      this.readingTransportBlob = true;
+      let decoded: Promise<ArrayBuffer>;
+      try {
+        decoded = rawData.arrayBuffer();
+      } catch {
+        this.failTransportMessage("Failed to decode WebSocket Blob", false);
+        return;
+      }
+      void decoded.then(
+        (buffer) => {
+          if (transportEpoch !== this.transportValidationEpoch) return;
+          this.readingTransportBlob = false;
+          this.processTransportMessage(buffer, transportEpoch);
+          while (
+            transportEpoch === this.transportValidationEpoch &&
+            !this.readingTransportBlob &&
+            this.pendingTransportMessageHead
+          ) {
+            const pending = this.pendingTransportMessageHead;
+            this.pendingTransportMessageHead = pending.next;
+            if (!pending.next) this.pendingTransportMessageTail = null;
+            this.pendingTransportMessageBytes -= pending.byteLength;
+            this.processTransportMessage(pending.data, transportEpoch);
+          }
+        },
+        () => {
+          if (transportEpoch !== this.transportValidationEpoch) return;
+          this.failTransportMessage("Failed to decode WebSocket Blob", false);
+        },
+      );
       return;
     }
 
@@ -6376,8 +6446,12 @@ export class DaemonClient {
     );
     let traceEndDeferred = false;
     try {
-      if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
-        return;
+      if (rawBytes && typeof rawData !== "string") {
+        const result = this.tryHandleBinaryFrame(rawBytes, () => this.endTraceSection(isOpen));
+        if (result !== null) {
+          traceEndDeferred = result === "deferred";
+          return;
+        }
       }
       const payload = decodeMessageData(rawData);
       if (!payload) {
@@ -6395,6 +6469,7 @@ export class DaemonClient {
     payload: string,
     rawBytesLength: number | undefined,
     completeDeferredTrace: () => void,
+    chunked = false,
   ): boolean {
     const bytes = rawBytesLength ?? payload.length;
     const startMs = perfNow();
@@ -6405,6 +6480,7 @@ export class DaemonClient {
     try {
       parsedJson = JSON.parse(payload);
     } catch {
+      if (chunked) this.failTransportMessage("Invalid chunked JSON payload");
       return false;
     } finally {
       this.endTraceSection(parseTraceOpen);
@@ -6493,7 +6569,32 @@ export class DaemonClient {
     }
   }
 
-  private tryHandleBinaryFrame(rawBytes: Uint8Array): boolean {
+  private tryHandleBinaryFrame(
+    rawBytes: Uint8Array,
+    completeDeferredTrace: () => void,
+  ): "handled" | "deferred" | null {
+    if (rawBytes[0] === JSON_MESSAGE_CHUNK_OPCODE) {
+      let completed: { json: string; byteLength: number } | null;
+      try {
+        const chunk = decodeJsonMessageChunk(rawBytes);
+        if (!chunk) throw new Error("Invalid JSON message chunk");
+        completed = this.jsonMessageReassembler.push(chunk);
+      } catch {
+        this.failTransportMessage("Invalid JSON message chunk sequence or UTF-8");
+        return "handled";
+      }
+      this.consecutiveLivenessFailures = 0;
+      this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
+      if (!completed) return "handled";
+      return this.handleJsonPayload(
+        completed.json,
+        completed.byteLength,
+        completeDeferredTrace,
+        true,
+      )
+        ? "deferred"
+        : "handled";
+    }
     const fileFrame = decodeFileTransferFrame(rawBytes);
     if (fileFrame) {
       this.traceInstant("paseo.ws.message.inbound", {
@@ -6504,12 +6605,12 @@ export class DaemonClient {
       this.consecutiveLivenessFailures = 0;
       this.handleFileTransferFrame(fileFrame);
       this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
-      return true;
+      return "handled";
     }
 
     const frame = decodeTerminalStreamFrame(rawBytes);
     if (!frame) {
-      return false;
+      return null;
     }
     this.traceInstant("paseo.ws.message.inbound", {
       envelopeType: "binary",
@@ -6532,7 +6633,17 @@ export class DaemonClient {
       rawBytes.byteLength,
       perfNow() - binaryStartMs,
     );
-    return true;
+    return "handled";
+  }
+
+  private failTransportMessage(reason: string, protocolError = true): void {
+    this.logger.warn({ reason }, "WebSocket message processing failed");
+    this.disposeTransport(protocolError ? 1002 : 1001, reason);
+    this.scheduleReconnect({
+      reason,
+      event: protocolError ? "PROTOCOL_ERROR" : "TRANSPORT_ERROR",
+      reasonCode: protocolError ? "protocol_error" : "transport_error",
+    });
   }
 
   private handleFileTransferFrame(frame: FileTransferFrame): void {
@@ -6653,6 +6764,7 @@ export class DaemonClient {
     event?: string;
     reasonCode?: string;
   }): void {
+    this.cleanupTransport();
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;

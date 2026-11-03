@@ -43,6 +43,12 @@ Main-process code keeps Electron-compatible `electron` imports; the stock `elect
 
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
+Desktop/daemon WebSocket framing is separate from the SDK's JSONL transport.
+Capable clients receive large history, directory and subagent JSON messages in
+callback-paced 256 KiB chunks without relaxing the 64 MiB physical backlog guard.
+See [chunked daemon messages](../packages/protocol/README.md#chunked-daemon-messages)
+for negotiation, framing, queue limits and reconnect behavior.
+
 OMP `compact` and `prompt` admission RPCs wait for their response, runtime exit, or session close rather than the short control-plane timeout. Prompt admission can wait for compaction, input hooks, and image preparation; a local timeout does not withdraw that input. Native `manual_compaction_start`/`manual_compaction_end` events use the same compaction timeline and deduplication path as Desktop's `/compact` marker.
 
 ### OMP SDK backend

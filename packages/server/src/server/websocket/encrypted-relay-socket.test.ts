@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test, vi } from "vitest";
 import { createEncryptedRelaySocket } from "./encrypted-relay-socket.js";
+import {
+  MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  PhysicalSocketHighWaterError,
+} from "./physical-socket.js";
 
 function pendingSend() {
   let resolve!: () => void;
@@ -67,4 +71,26 @@ describe("encrypted relay socket retirement", () => {
     expect(close).not.toHaveBeenCalled();
     expect(socket.readyState).toBe(3);
   });
+});
+
+test("encrypted high-water rejection reports actual wire bytes and terminates before queuing", async () => {
+  const send = vi.fn();
+  const terminateTransport = vi.fn();
+  const queuedBytes = MAX_PHYSICAL_SOCKET_BUFFERED_BYTES - 10;
+  const socket = createEncryptedRelaySocket({
+    channel: { setState: vi.fn(), send, outboundWireByteLength: () => 20, close: vi.fn() },
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => queuedBytes,
+    terminateTransport,
+  });
+  const sending = socket.send("short text");
+  await expect(sending).rejects.toBeInstanceOf(PhysicalSocketHighWaterError);
+  await expect(sending).rejects.toMatchObject({
+    frameBytes: 20,
+    bufferedAmount: queuedBytes,
+    limit: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  });
+  expect(send).not.toHaveBeenCalled();
+  expect(terminateTransport).toHaveBeenCalledOnce();
+  expect(socket.readyState).toBe(3);
 });

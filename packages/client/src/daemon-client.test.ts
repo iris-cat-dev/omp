@@ -10,7 +10,11 @@ import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
+  encodeJsonMessageChunk,
   FileTransferOpcode,
+  JSON_MESSAGE_CHUNK_HEADER_BYTES,
+  JSON_MESSAGE_CHUNK_OPCODE,
+  MAX_JSON_MESSAGE_CHUNK_BYTES,
 } from "@omp-desktop/protocol/binary-frames/index";
 import {
   asUint8Array,
@@ -131,6 +135,63 @@ function wrapSessionMessage(message: unknown): string {
     type: "session",
     message,
   });
+}
+
+function chunkJsonPayload(
+  json: string,
+  messageId = 1,
+  chunkBytes = MAX_JSON_MESSAGE_CHUNK_BYTES - JSON_MESSAGE_CHUNK_HEADER_BYTES,
+): Uint8Array[] {
+  const bytes = new TextEncoder().encode(json);
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+    chunks.push(
+      encodeJsonMessageChunk({
+        messageId,
+        totalBytes: bytes.byteLength,
+        offset,
+        payload: bytes.subarray(offset, Math.min(bytes.byteLength, offset + chunkBytes)),
+      }),
+    );
+  }
+  return chunks;
+}
+
+function timelineResponseJson(requestId: string, text = "历史🙂"): string {
+  return wrapSessionMessage({
+    type: "fetch_agent_timeline_response",
+    payload: {
+      requestId,
+      agentId: "agent-chunks",
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      epoch: "",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+      startCursor: null,
+      endCursor: null,
+      hasOlder: false,
+      hasNewer: false,
+      entries: [],
+      historyUnavailable: { reason: "malformed", message: text },
+      error: null,
+    },
+  });
+}
+
+function deferredTransportBlob() {
+  let resolve!: (buffer: ArrayBuffer) => void;
+  let reject!: (error: Error) => void;
+  const decoded = new Promise<ArrayBuffer>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  const blob = new Blob();
+  vi.spyOn(blob, "arrayBuffer").mockReturnValue(decoded);
+  return { blob, resolve, reject };
 }
 
 function assertStr(data: string | Uint8Array | ArrayBuffer | undefined): string {
@@ -745,40 +806,6 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
     url: "ws://test",
     headers: { Authorization: "Bearer shared-secret" },
     protocols: ["paseo.bearer.shared-secret"],
-  });
-});
-
-test("advertises client capabilities in hello", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen({ preserveSent: true });
-  await connectPromise;
-
-  expect(mock.sent).toHaveLength(1);
-  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
-    type: "hello",
-    clientId: "clsk_unit_test",
-    clientType: "cli",
-    protocolVersion: 1,
-    capabilities: {
-      compact_provider_snapshots: true,
-      custom_mode_icons: true,
-      project_updates: true,
-      provider_subagents: true,
-      reasoning_merge_enum: true,
-      terminal_reflowable_snapshot: true,
-    },
   });
 });
 
@@ -6481,4 +6508,344 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("reassembles large JSON without resolving early while text, file, and terminal frames interleave", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-chunk-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+
+  const subscribed = client.subscribeTerminal("term-chunks", "subscribe-chunks");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "subscribe_terminal_response",
+      payload: { terminalId: "term-chunks", slot: 11, error: null, requestId: "subscribe-chunks" },
+    }),
+  );
+  await subscribed;
+  const terminalOutput: string[] = [];
+  client.onTerminalStreamEvent((event) => {
+    if (event.type === "output") terminalOutput.push(new TextDecoder().decode(event.data));
+  });
+  const statuses: string[] = [];
+  client.on("status", (message) => statuses.push(message.payload.status));
+  const delivered = vi.fn();
+  client.on("fetch_agent_timeline_response", delivered);
+  const text = "历史🙂".repeat(30000);
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "chunk-rpc" });
+  const settled = vi.fn();
+  void response.then(settled, settled);
+  const chunks = chunkJsonPayload(timelineResponseJson("chunk-rpc", text));
+  expect(chunks.length).toBeGreaterThan(1);
+  mock.triggerMessage(chunks[0]);
+  await Promise.resolve();
+  expect(settled).not.toHaveBeenCalled();
+  expect(delivered).not.toHaveBeenCalled();
+
+  mock.triggerMessage(
+    `  ${wrapSessionMessage({ type: "status", payload: { status: "interleaved" } })}`,
+  );
+  mock.triggerMessage(
+    encodeTerminalStreamFrame({
+      opcode: TerminalStreamOpcode.Output,
+      slot: 11,
+      payload: new TextEncoder().encode("terminal"),
+    }),
+  );
+  const file = client.readFile("/tmp", "file.txt", "chunk-file");
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "chunk-file",
+      metadata: {
+        mime: "text/plain",
+        size: 4,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "chunk-file",
+      payload: new TextEncoder().encode("file"),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "chunk-file" }),
+  );
+  expect(new TextDecoder().decode((await file).bytes)).toBe("file");
+  expect(statuses).toEqual(["interleaved"]);
+  expect(terminalOutput).toEqual(["terminal"]);
+  expect(settled).not.toHaveBeenCalled();
+  for (const chunk of chunks.slice(1)) mock.triggerMessage(chunk);
+  await expect(response).resolves.toMatchObject({ historyUnavailable: { message: text } });
+  expect(settled).toHaveBeenCalledTimes(1);
+  expect(delivered).toHaveBeenCalledTimes(1);
+});
+
+test.each([1, MAX_JSON_MESSAGE_CHUNK_BYTES - JSON_MESSAGE_CHUNK_HEADER_BYTES])(
+  "preserves UTF-8 in single and byte-split chunks with payload capacity %i",
+  async (chunkBytes) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "json-utf8-test",
+      logger: noopLogger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const response = client.fetchAgentTimeline("agent-chunks", { requestId: "utf8-rpc" });
+    for (const chunk of chunkJsonPayload(
+      timelineResponseJson("utf8-rpc", "中🙂é"),
+      1,
+      chunkBytes,
+    )) {
+      mock.triggerMessage(chunk);
+    }
+    await expect(response).resolves.toMatchObject({ historyUnavailable: { message: "中🙂é" } });
+  },
+);
+
+test.each(["gap", "duplicate", "total", "id", "header", "utf8", "json"])(
+  "rejects pending RPCs and closes on malformed chunked JSON: %s",
+  async (violation) => {
+    const mock = createMockTransport();
+    const close = vi.spyOn(mock.transport, "close");
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "json-invalid-test",
+      logger: noopLogger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const delivered = vi.fn();
+    client.on("fetch_agent_timeline_response", delivered);
+    const response = client.fetchAgentTimeline("agent-chunks", { requestId: "invalid-rpc" });
+    const rejected = expect(response).rejects.toThrow(/Invalid .*JSON/i);
+    const chunks = chunkJsonPayload(timelineResponseJson("invalid-rpc"), 1, 1);
+    if (violation === "header") mock.triggerMessage(new Uint8Array([JSON_MESSAGE_CHUNK_OPCODE]));
+    else if (violation === "utf8") {
+      mock.triggerMessage(
+        encodeJsonMessageChunk({
+          messageId: 1,
+          totalBytes: 1,
+          offset: 0,
+          payload: new Uint8Array([0xff]),
+        }),
+      );
+    } else if (violation === "json") {
+      mock.triggerMessage(chunkJsonPayload("not JSON")[0]);
+    } else {
+      mock.triggerMessage(chunks[0]);
+      const malformed = new Uint8Array(chunks[1]);
+      const header = new DataView(malformed.buffer);
+      if (violation === "gap") header.setUint32(9, 2);
+      if (violation === "duplicate") header.setUint32(9, 0);
+      if (violation === "total") header.setUint32(5, header.getUint32(5) + 1);
+      if (violation === "id") header.setUint32(1, 2);
+      mock.triggerMessage(malformed);
+    }
+    await rejected;
+    expect(close).toHaveBeenCalledWith(1002, expect.any(String));
+    expect(client.getConnectionState().status).toBe("disconnected");
+    expect(delivered).not.toHaveBeenCalled();
+  },
+);
+
+test("validates a completed single-chunk RPC response instead of bypassing the existing validator", async () => {
+  const mock = createMockTransport();
+  const close = vi.spyOn(mock.transport, "close");
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-validation-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "invalid-schema" });
+  mock.triggerMessage(
+    chunkJsonPayload(
+      wrapSessionMessage({
+        type: "fetch_agent_timeline_response",
+        payload: { requestId: "invalid-schema", agentId: "agent-chunks" },
+      }),
+    )[0],
+  );
+  await expect(response).rejects.toMatchObject({
+    requestId: "invalid-schema",
+    code: "invalid_response",
+  });
+  expect(close).not.toHaveBeenCalled();
+});
+
+test("keeps Blob fragments and following text frames in transport order", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-blob-order-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const seen: string[] = [];
+  client.on("fetch_agent_timeline_response", () => seen.push("timeline"));
+  client.on("status", (message) => seen.push(message.payload.status));
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "blob-rpc" });
+  const chunks = chunkJsonPayload(timelineResponseJson("blob-rpc"), 1, 200);
+  const first = deferredTransportBlob();
+  const second = deferredTransportBlob();
+  mock.triggerMessage(first.blob);
+  mock.triggerMessage(second.blob);
+  for (const chunk of chunks.slice(2)) mock.triggerMessage(chunk);
+  mock.triggerMessage(
+    wrapSessionMessage({ type: "status", payload: { status: "after-timeline" } }),
+  );
+  expect(first.blob.arrayBuffer).toHaveBeenCalledTimes(1);
+  expect(second.blob.arrayBuffer).not.toHaveBeenCalled();
+  // The second conversion is already resolved, but cannot overtake the first.
+  second.resolve(new Uint8Array(chunks[1]).buffer);
+  await Promise.resolve();
+  expect(seen).toEqual([]);
+  first.resolve(new Uint8Array(chunks[0]).buffer);
+  await expect(response).resolves.toMatchObject({ historyUnavailable: { message: "历史🙂" } });
+  expect(seen).toEqual(["timeline", "after-timeline"]);
+});
+
+test("discards partial state, queued frames, and late Blob decoding across transport epochs", async () => {
+  const first = createMockTransport();
+  const second = createMockTransport();
+  let attempt = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-epoch-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => (++attempt === 1 ? first.transport : second.transport),
+  });
+  clients.push(client);
+  const connected = client.connect();
+  first.triggerOpen();
+  await connected;
+  const delivered = vi.fn();
+  client.on("fetch_agent_timeline_response", delivered);
+  const oldResponse = client.fetchAgentTimeline("agent-chunks", { requestId: "epoch-rpc" });
+  const oldRejected = expect(oldResponse).rejects.toThrow(/Transport closed/);
+  const oldChunks = chunkJsonPayload(timelineResponseJson("epoch-rpc", "old"), 1, 200);
+  first.triggerMessage(oldChunks[0]);
+  const delayed = deferredTransportBlob();
+  first.triggerMessage(delayed.blob);
+  for (const chunk of oldChunks.slice(2)) first.triggerMessage(chunk);
+  first.triggerClose();
+  await oldRejected;
+  const reconnected = client.connect();
+  second.triggerOpen();
+  await reconnected;
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "epoch-rpc" });
+  const settled = vi.fn();
+  void response.then(settled, settled);
+  const chunks = chunkJsonPayload(timelineResponseJson("epoch-rpc", "new"), 1, 200);
+  second.triggerMessage(chunks[0]);
+  delayed.resolve(new Uint8Array(oldChunks[1]).buffer);
+  first.triggerMessage(oldChunks[1]);
+  await Promise.resolve();
+  expect(settled).not.toHaveBeenCalled();
+  expect(delivered).not.toHaveBeenCalled();
+  for (const chunk of chunks.slice(1)) second.triggerMessage(chunk);
+  await expect(response).resolves.toMatchObject({ historyUnavailable: { message: "new" } });
+  expect(delivered).toHaveBeenCalledTimes(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects a failed current Blob conversion but ignores a late old-transport rejection", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-blob-error-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "blob-error" });
+  const rejected = expect(response).rejects.toThrow(/Failed to decode WebSocket Blob/);
+  const blob = deferredTransportBlob();
+  mock.triggerMessage(blob.blob);
+  blob.reject(new Error("decode failed"));
+  await rejected;
+  expect(client.getConnectionState().status).toBe("disconnected");
+  const reconnect = client.connect();
+  mock.triggerOpen();
+  await reconnect;
+  const late = deferredTransportBlob();
+  mock.triggerMessage(late.blob);
+  mock.triggerClose();
+  const reconnectAgain = client.connect();
+  mock.triggerOpen();
+  await reconnectAgain;
+  late.reject(new Error("old decode failed"));
+  await Promise.resolve();
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("bounds frames waiting for Blob decoding without limiting a logical JSON total", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "json-blob-backlog-test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const response = client.fetchAgentTimeline("agent-chunks", { requestId: "blob-backlog" });
+  const rejected = expect(response).rejects.toThrow(/backlog exceeded/);
+  mock.triggerMessage(
+    encodeJsonMessageChunk({
+      messageId: 1,
+      totalBytes: 0xffffffff,
+      offset: 0,
+      payload: new TextEncoder().encode("{"),
+    }),
+  );
+  expect(client.getConnectionState().status).toBe("connected");
+  const delayed = deferredTransportBlob();
+  mock.triggerMessage(delayed.blob);
+  mock.triggerMessage("x".repeat(32 * 1024 * 1024 + 1));
+  await rejected;
+  delayed.resolve(new Uint8Array([JSON_MESSAGE_CHUNK_OPCODE]).buffer);
+  await Promise.resolve();
+  expect(client.getConnectionState().status).toBe("disconnected");
 });

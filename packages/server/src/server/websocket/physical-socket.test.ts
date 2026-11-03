@@ -61,6 +61,9 @@ test("the shared physical send boundary rejects binary above the hard bound", ()
     onHighWater: () => {
       terminated = true;
     },
+    onError: (error) => {
+      throw error;
+    },
   });
 
   expect(accepted).toBe(false);
@@ -70,13 +73,13 @@ test("the shared physical send boundary rejects binary above the hard bound", ()
 
 test("the awaitable physical send resolves only when that frame send completes", async () => {
   const sent: Array<string | Uint8Array | ArrayBuffer> = [];
-  let completeSend: (() => void) | undefined;
+  const sendCallbacks: Array<() => void> = [];
   const socket = {
     readyState: 1,
     bufferedAmount: 0,
     send: (_data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) => {
       sent.push(_data);
-      if (callback) completeSend = () => callback();
+      if (callback) sendCallbacks.push(() => callback());
     },
   };
   let completed = false;
@@ -96,10 +99,13 @@ test("the awaitable physical send resolves only when that frame send completes",
       socket,
       frame: "unrelated",
       onHighWater: () => undefined,
+      onError: (error) => {
+        throw error;
+      },
     }),
   ).toBe(true);
   expect(sent).toEqual([new Uint8Array([1, 2, 3]), "unrelated"]);
-  completeSend?.();
+  sendCallbacks[0]();
   await sending;
   expect(completed).toBe(true);
 });
@@ -119,4 +125,27 @@ test("the awaitable physical send rejects callback errors", async () => {
       onHighWater: () => undefined,
     }),
   ).rejects.toThrow("send failed");
+});
+
+test("cancelling a pending physical callback releases the wait and ignores its late completion", async () => {
+  const abort = new AbortController();
+  let callback: ((error?: Error) => void) | undefined;
+  const socket = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send: (_data: string | Uint8Array | ArrayBuffer, complete?: (error?: Error) => void) => {
+      callback = complete;
+    },
+  };
+  const sending = sendBoundedPhysicalFrameAndWait({
+    socket,
+    frame: "pending",
+    signal: abort.signal,
+    onHighWater: () => undefined,
+  });
+  const cancelled = new Error("socket disconnected");
+  const rejection = expect(sending).rejects.toBe(cancelled);
+  abort.abort(cancelled);
+  await rejection;
+  callback?.(new Error("late callback"));
 });

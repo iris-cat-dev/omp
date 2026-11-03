@@ -98,11 +98,19 @@ import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
   MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  PhysicalSocketHighWaterError,
   outboundFrameByteLength,
-  physicalSocketHasCapacity,
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
+import {
+  JsonOutboundSender,
+  MAX_QUEUED_JSON_BYTES,
+  MAX_QUEUED_JSON_MESSAGES,
+  MAX_QUEUED_JSON_ERROR_BYTES,
+  MAX_QUEUED_JSON_ERRORS,
+  type OutboundJsonMetadata,
+} from "./websocket/json-outbound-sender.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -412,6 +420,32 @@ interface ClosePhysicalSocketParams {
   logFields?: Record<string, unknown>;
 }
 
+function outboundJsonLogFields(metadata: OutboundJsonMetadata): Record<string, unknown> {
+  const { requestId, ...fields } = metadata;
+  if (requestId === undefined) return fields;
+  return {
+    ...fields,
+    requestId: requestId.length <= 256 ? requestId : `${requestId.slice(0, 256)}…`,
+    requestIdLength: requestId.length,
+  };
+}
+
+function outboundSendErrorLogFields(
+  ws: WebSocketLike,
+  err: unknown,
+  metadata: OutboundJsonMetadata,
+  frameBytes?: number,
+): Record<string, unknown> {
+  return {
+    err,
+    ...outboundJsonLogFields(metadata),
+    frameBytes: err instanceof PhysicalSocketHighWaterError ? err.frameBytes : frameBytes,
+    bufferedAmount:
+      err instanceof PhysicalSocketHighWaterError ? err.bufferedAmount : ws.bufferedAmount,
+    limit: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  };
+}
+
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -457,6 +491,7 @@ export class PaseoWebSocketServer {
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
+  private readonly jsonSenders = new Map<WebSocketLike, JsonOutboundSender>();
   private readonly externalSessionsByKey: Map<string, ReconnectableSessionConnection> = new Map();
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
   private readonly pluginSocketCleanup = new WeakMap<WebSocketLike, () => void>();
@@ -943,6 +978,8 @@ export class PaseoWebSocketServer {
       this.applicationSocketLeaseInterval = null;
     }
     this.applicationSocketLease.clear();
+    for (const sender of this.jsonSenders.values()) sender.dispose();
+    this.jsonSenders.clear();
     this.flushRuntimeMetrics({ final: true });
     this.eventLoopDelayMonitor?.disable();
     this.eventLoopDelayMonitor = null;
@@ -1017,7 +1054,7 @@ export class PaseoWebSocketServer {
   }
 
   private sendMessageToSockets(sockets: Iterable<WebSocketLike>, message: WSOutboundMessage): void {
-    const writableSockets = [...sockets].filter((ws) => this.ensureOutboundCapacity(ws, 0));
+    const writableSockets = [...sockets].filter((ws) => ws.readyState === 1);
     if (writableSockets.length === 0) {
       return;
     }
@@ -1031,9 +1068,146 @@ export class PaseoWebSocketServer {
     }
 
     const payloadBytes = outboundFrameByteLength(payload);
+    const innerMessage = message.type === "session" ? message.message : message;
+    const metadata: OutboundJsonMetadata = { messageType: innerMessage.type };
+    if (
+      "payload" in innerMessage &&
+      innerMessage.payload &&
+      typeof innerMessage.payload === "object" &&
+      "requestId" in innerMessage.payload
+    ) {
+      const requestId = innerMessage.payload.requestId;
+      if (typeof requestId === "string") metadata.requestId = requestId;
+    }
+    if (innerMessage.type === "agent_stream") {
+      const { event, agentId } = innerMessage.payload;
+      metadata.agentStreamType =
+        event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
+      metadata.agentStreamAgentId = agentId;
+    }
     for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
-        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+      // Transport heartbeat replies may interleave fragmented business JSON,
+      // just like binary frames, so a long history cannot starve the lease.
+      if (message.type === "pong") {
+        this.sendFrameToClient(
+          ws,
+          payload,
+          payloadBytes,
+          () => this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount),
+          metadata,
+        );
+        continue;
+      }
+      const sender = this.getJsonSender(ws);
+      const result = sender.send(payload, payloadBytes, metadata);
+      if (result !== "accepted" && result !== "closed") {
+        this.handleRejectedJson(ws, sender, result, payloadBytes, metadata);
+      }
+    }
+  }
+
+  private getJsonSender(ws: WebSocketLike): JsonOutboundSender {
+    let sender = this.jsonSenders.get(ws);
+    if (!sender) {
+      sender = new JsonOutboundSender(
+        ws,
+        (frameBytes, metadata) => this.closeAtOutboundHighWater(ws, frameBytes, metadata),
+        (err, metadata) => {
+          const logFields = outboundSendErrorLogFields(ws, err, metadata);
+          this.logger.warn(logFields, "ws_send_failed");
+          this.closePhysicalSocket({
+            ws,
+            logMessage: "Closing physical WebSocket after outbound JSON send failed",
+            logFields,
+          });
+        },
+        (metadata) =>
+          this.runtimeMetrics.recordOutboundMessageSummary(
+            {
+              type: "session",
+              sessionMessageType: metadata.messageType,
+              agentStreamType: metadata.agentStreamType,
+              agentStreamAgentId: metadata.agentStreamAgentId,
+            },
+            ws.bufferedAmount,
+          ),
+      );
+      this.jsonSenders.set(ws, sender);
+    }
+    return sender;
+  }
+
+  private handleRejectedJson(
+    ws: WebSocketLike,
+    sender: JsonOutboundSender,
+    reason: "too_large" | "queue_full",
+    frameBytes: number,
+    metadata: OutboundJsonMetadata,
+  ): void {
+    const logFields = {
+      ...outboundJsonLogFields(metadata),
+      frameBytes,
+      bufferedAmount: ws.bufferedAmount,
+      limit: reason === "too_large" ? sender.maxMessageBytes : MAX_QUEUED_JSON_BYTES,
+      maxQueuedMessages: MAX_QUEUED_JSON_MESSAGES,
+      reason,
+    };
+    this.logger.warn(logFields, "Rejected outbound logical JSON message");
+    if (metadata.requestId === undefined) {
+      this.closePhysicalSocket({
+        ws,
+        logMessage: "Closing physical WebSocket after rejecting an uncorrelated JSON message",
+        logFields,
+      });
+      return;
+    }
+
+    if (outboundFrameByteLength(metadata.requestId) > sender.maxMessageBytes) {
+      this.closePhysicalSocket({
+        ws,
+        logMessage: "Closing physical WebSocket with an unreturnable RPC request identifier",
+        logFields,
+      });
+      return;
+    }
+
+    const errorMessage = wrapSessionMessage({
+      type: "rpc_error",
+      payload: {
+        requestId: metadata.requestId,
+        code: reason === "too_large" ? "outbound_message_too_large" : "outbound_queue_full",
+        error:
+          reason === "too_large"
+            ? "Response exceeds this connection's JSON frame limit; reconnect with a chunk-capable client"
+            : "Outbound response queue is full; retry this request after pending responses finish",
+      },
+    });
+    const errorJson = JSON.stringify(errorMessage);
+    const errorBytes = outboundFrameByteLength(errorJson);
+    const errorMetadata = { messageType: "rpc_error", requestId: metadata.requestId };
+    const result = sender.send(errorJson, errorBytes, errorMetadata, true);
+    if (result === "queue_full") {
+      this.closePhysicalSocket({
+        ws,
+        logMessage: "Closing physical WebSocket with exhausted outbound RPC error reserve",
+        logFields: {
+          ...outboundJsonLogFields(errorMetadata),
+          frameBytes: errorBytes,
+          bufferedAmount: ws.bufferedAmount,
+          limit: MAX_QUEUED_JSON_ERROR_BYTES,
+          maxQueuedErrors: MAX_QUEUED_JSON_ERRORS,
+        },
+      });
+    } else if (result === "too_large") {
+      this.closePhysicalSocket({
+        ws,
+        logMessage: "Closing physical WebSocket with an unreturnable RPC request identifier",
+        logFields: {
+          ...outboundJsonLogFields(errorMetadata),
+          frameBytes: errorBytes,
+          bufferedAmount: ws.bufferedAmount,
+          limit: sender.maxMessageBytes,
+        },
       });
     }
   }
@@ -1049,7 +1223,8 @@ export class PaseoWebSocketServer {
       const sent = await sendBoundedPhysicalFrameAndWait({
         socket: ws,
         frame,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
+        onHighWater: () =>
+          this.closeAtOutboundHighWater(ws, frame.byteLength, { messageType: "binary" }),
       });
       if (!sent) {
         throw new Error("Physical WebSocket is not open");
@@ -1066,33 +1241,42 @@ export class PaseoWebSocketServer {
     frame: string | Uint8Array,
     frameBytes: number,
     recordSent: () => void,
+    metadata: OutboundJsonMetadata = { messageType: "binary" },
   ): void {
     try {
       const sent = sendBoundedPhysicalFrame({
         socket: ws,
         frame,
         frameBytes,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
+        onHighWater: () => this.closeAtOutboundHighWater(ws, frameBytes, metadata),
+        onError: (err) => {
+          const logFields = outboundSendErrorLogFields(ws, err, metadata, frameBytes);
+          this.logger.warn(logFields, "ws_send_failed");
+          this.closePhysicalSocket({
+            ws,
+            logMessage: "Closing physical WebSocket after outbound frame send failed",
+            logFields,
+          });
+        },
       });
       if (sent) recordSent();
     } catch (err) {
-      this.logger.warn({ err }, "ws_send_failed");
+      this.logger.warn(outboundSendErrorLogFields(ws, err, metadata, frameBytes), "ws_send_failed");
     }
   }
 
-  private ensureOutboundCapacity(ws: WebSocketLike, frameBytes: number): boolean {
-    if (ws.readyState !== 1) return false;
-    if (physicalSocketHasCapacity(ws, frameBytes)) return true;
-
-    this.closeAtOutboundHighWater(ws);
-    return false;
-  }
-
-  private closeAtOutboundHighWater(ws: WebSocketLike): void {
+  private closeAtOutboundHighWater(
+    ws: WebSocketLike,
+    frameBytes: number,
+    metadata: OutboundJsonMetadata,
+  ): void {
     this.closePhysicalSocket({
       ws,
       logMessage: "Closing physical WebSocket at outbound high-water mark",
       logFields: {
+        frameBytes,
+        ...outboundJsonLogFields(metadata),
+        limit: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
         bufferedAmount: ws.bufferedAmount,
         maxBufferedBytes: MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
       },
@@ -1102,6 +1286,8 @@ export class PaseoWebSocketServer {
   private closePhysicalSocket(params: ClosePhysicalSocketParams): void {
     const { ws, logMessage, logFields } = params;
     this.applicationSocketLease.release(ws);
+    this.jsonSenders.get(ws)?.dispose();
+    this.jsonSenders.delete(ws);
     if (ws.readyState !== 1) {
       return;
     }
@@ -1164,6 +1350,7 @@ export class PaseoWebSocketServer {
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
+    this.getJsonSender(ws);
     const connectionLogger = this.logger.child(toConnectionLogFields(identity));
 
     const pending: PendingConnection = {
@@ -1407,6 +1594,9 @@ export class PaseoWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
+    this.getJsonSender(ws).setChunkedJsonMessages(
+      message.capabilities?.[CLIENT_CAPS.chunkedJsonMessages] === true,
+    );
     pending.identity.clientId = clientId;
     if (message.appVersion) {
       pending.identity.appVersion = message.appVersion;
@@ -1713,6 +1903,8 @@ export class PaseoWebSocketServer {
     },
   ): Promise<void> {
     this.applicationSocketLease.release(ws);
+    this.jsonSenders.get(ws)?.dispose();
+    this.jsonSenders.delete(ws);
     const identity = this.socketIdentities.get(ws);
     const identityFields = identity ? toConnectionLogFields(identity) : {};
     const pending = this.clearPendingConnection(ws);
@@ -1831,6 +2023,8 @@ export class PaseoWebSocketServer {
     }
 
     for (const socket of connection.sockets) {
+      this.jsonSenders.get(socket)?.dispose();
+      this.jsonSenders.delete(socket);
       this.sessions.delete(socket);
       this.socketIdentities.delete(socket);
     }

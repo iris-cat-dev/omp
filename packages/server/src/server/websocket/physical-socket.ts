@@ -2,6 +2,19 @@
 // 1-10 physical sockets (tens at the outside), so 64 MiB bounds abandoned queues
 // without treating ordinary large frames as a protocol or frame-size violation.
 export const MAX_PHYSICAL_SOCKET_BUFFERED_BYTES = 64 * 1024 * 1024;
+
+export class PhysicalSocketHighWaterError extends Error {
+  readonly limit = MAX_PHYSICAL_SOCKET_BUFFERED_BYTES;
+
+  constructor(
+    readonly frameBytes: number,
+    readonly bufferedAmount: number,
+  ) {
+    super("Physical WebSocket exceeded its outbound high-water mark");
+    this.name = "PhysicalSocketHighWaterError";
+  }
+}
+
 // Current clients ping every 10 seconds. Four delayed cycles fit inside the
 // lease without making an abandoned application socket linger for minutes.
 export const APPLICATION_SOCKET_LEASE_MS = 45_000;
@@ -48,7 +61,7 @@ export function outboundFrameByteLength(data: string | Uint8Array | ArrayBuffer)
   return data.byteLength;
 }
 
-interface BoundedPhysicalSocket {
+export interface BoundedPhysicalSocket {
   readyState: number;
   bufferedAmount?: number;
   send: (
@@ -62,27 +75,47 @@ export async function sendBoundedPhysicalFrameAndWait(params: {
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
   onHighWater: () => void;
+  signal?: AbortSignal;
 }): Promise<boolean> {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const {
+    socket,
+    frame,
+    frameBytes = outboundFrameByteLength(frame),
+    onHighWater,
+    signal,
+  } = params;
+  if (signal?.aborted) throw signal.reason;
   if (socket.readyState !== 1) return false;
   if (!physicalSocketHasCapacity(socket, frameBytes)) {
     onHighWater();
     return false;
   }
 
-  await new Promise<void>((resolve, reject) => {
-    let callbackUsed = false;
-    const result = socket.send(frame, (error) => {
-      callbackUsed = true;
-      if (error) reject(error);
-      else resolve();
-    });
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  let settled = false;
+  const settle = (error?: unknown) => {
+    if (settled) return;
+    settled = true;
+    signal?.removeEventListener("abort", onAbort);
+    if (error) reject(error);
+    else resolve();
+  };
+  const onAbort = () => settle(signal?.reason ?? new Error("Physical WebSocket send cancelled"));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const result = socket.send(frame, (error) => settle(error));
     if (result && typeof result.then === "function") {
-      result.then(resolve, reject);
-    } else if (socket.send.length < 2 && !callbackUsed) {
-      resolve();
+      void result.then(
+        () => settle(),
+        (error: unknown) => settle(error),
+      );
+    } else if (socket.send.length < 2) {
+      settle();
     }
-  });
+  } catch (error) {
+    settle(error);
+  }
+  await promise;
   return true;
 }
 
@@ -99,16 +132,34 @@ export function sendBoundedPhysicalFrame(params: {
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
   onHighWater: () => void;
+  onError: (error: Error) => void;
+  onSent?: () => void;
 }): boolean {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const {
+    socket,
+    frame,
+    frameBytes = outboundFrameByteLength(frame),
+    onHighWater,
+    onError,
+    onSent,
+  } = params;
   if (socket.readyState !== 1) return false;
   if (!physicalSocketHasCapacity(socket, frameBytes)) {
     onHighWater();
     return false;
   }
-  const result = socket.send(frame);
+  let settled = false;
+  const complete = (error?: unknown) => {
+    if (settled) return;
+    settled = true;
+    if (error) onError(error instanceof Error ? error : new Error(String(error)));
+    else onSent?.();
+  };
+  const result = socket.send(frame, complete);
   if (result && typeof result.then === "function") {
-    void result.catch(() => undefined);
+    void result.then(() => complete(), complete);
+  } else if (socket.send.length < 2) {
+    complete();
   }
   return true;
 }

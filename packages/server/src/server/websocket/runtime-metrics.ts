@@ -1,4 +1,4 @@
-import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
+import type { WSOutboundMessage } from "../messages.js";
 import type { ProcessMemoryDiagnostics } from "../process-diagnostics.js";
 
 export interface WebSocketRuntimeCounters {
@@ -71,6 +71,13 @@ export interface WebSocketRuntimeDiagnosticSnapshot<
   git: TGit;
 }
 
+export interface OutboundMessageSummary {
+  type: WSOutboundMessage["type"];
+  sessionMessageType?: string;
+  agentStreamType?: string;
+  agentStreamAgentId?: string;
+}
+
 type Clock = () => number;
 
 export class WebSocketRuntimeMetricsWindow {
@@ -103,19 +110,34 @@ export class WebSocketRuntimeMetricsWindow {
   }
 
   recordOutboundMessage(message: WSOutboundMessage, bufferedAmount?: number): void {
-    if (message.type !== "session") {
-      incrementCount(this.outboundMessageCounts, message.type);
-      this.recordBufferedAmount(bufferedAmount);
-      return;
+    const summary: OutboundMessageSummary = { type: message.type };
+    if (message.type === "session") {
+      summary.sessionMessageType = message.message.type;
+      if (message.message.type === "agent_stream") {
+        const { agentId, event } = message.message.payload;
+        summary.agentStreamType =
+          event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
+        summary.agentStreamAgentId = agentId;
+      }
     }
+    this.recordOutboundMessageSummary(summary, bufferedAmount);
+  }
 
-    incrementCount(this.outboundMessageCounts, "session_message");
-    incrementCount(this.outboundSessionMessageCounts, message.message.type);
-
-    if (message.message.type === "agent_stream") {
-      this.recordOutboundAgentStreamMessage(message.message.payload);
+  recordOutboundMessageSummary(summary: OutboundMessageSummary, bufferedAmount?: number): void {
+    if (summary.type !== "session") {
+      incrementCount(this.outboundMessageCounts, summary.type);
+    } else {
+      incrementCount(this.outboundMessageCounts, "session_message");
+      if (summary.sessionMessageType !== undefined) {
+        incrementCount(this.outboundSessionMessageCounts, summary.sessionMessageType);
+      }
+      if (summary.agentStreamType !== undefined) {
+        incrementCount(this.outboundAgentStreamCounts, summary.agentStreamType);
+      }
+      if (summary.agentStreamAgentId !== undefined) {
+        incrementCount(this.outboundAgentStreamByAgentCounts, summary.agentStreamAgentId);
+      }
     }
-
     this.recordBufferedAmount(bufferedAmount);
   }
 
@@ -151,15 +173,6 @@ export class WebSocketRuntimeMetricsWindow {
 
     this.reset(now);
     return snapshot;
-  }
-
-  private recordOutboundAgentStreamMessage(
-    payload: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"],
-  ): void {
-    const { agentId, event } = payload;
-    const eventType = event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
-    incrementCount(this.outboundAgentStreamCounts, eventType);
-    incrementCount(this.outboundAgentStreamByAgentCounts, agentId);
   }
 
   private recordBufferedAmount(bufferedAmount: number | undefined): void {

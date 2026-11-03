@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
-import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
+import {
+  MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
+  PhysicalSocketHighWaterError,
+} from "./physical-socket.js";
 
 export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
@@ -72,9 +75,7 @@ export function createEncryptedRelaySocket(params: {
       const queuedBytes = getTransportBufferedAmount() ?? 0;
       if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
         terminate();
-        return Promise.reject(
-          new Error("Encrypted relay socket exceeded its outbound high-water mark"),
-        );
+        return Promise.reject(new PhysicalSocketHighWaterError(outboundBytes, queuedBytes));
       }
       const pending = channel.send(outbound).catch((error) => {
         if (emitter.listenerCount("error") > 0) emitter.emit("error", error);
