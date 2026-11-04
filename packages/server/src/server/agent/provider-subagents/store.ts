@@ -100,9 +100,11 @@ export class ProviderSubagentStore {
           this.epochPrefix ? { epoch: `${this.epochPrefix}:${key}` } : undefined,
         );
       }
-      const row = this.timelines.append(key, limitAgentTimelineItemContent(event.item), {
-        timestamp: event.timestamp,
-      });
+      const item = limitAgentTimelineItemContent(event.item);
+      const row =
+        item.type === "tool_call"
+          ? this.timelines.upsertToolCall(key, item, { timestamp: event.timestamp })
+          : this.timelines.append(key, item, { timestamp: event.timestamp });
       return {
         type: "timeline",
         parentAgentId,

@@ -153,12 +153,14 @@ class RecordingTimelineStore implements AgentTimelineStore {
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
     this.writes.push(rows.map((row) => ({ ...row })));
     this.ensure(agentId);
+    const committed = new Map(this.memory.getRows(agentId).map((row) => [row.seq, row]));
     for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
+      if (!committed.has(row.seq)) committed.set(row.seq, row);
     }
+    this.memory.initialize(agentId, {
+      epoch: this.memory.getEpoch(agentId),
+      rows: [...committed.values()].sort((left, right) => left.seq - right.seq),
+    });
   }
 
   async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
@@ -167,7 +169,7 @@ class RecordingTimelineStore implements AgentTimelineStore {
     const index = rows.findIndex((candidate) => candidate.seq === row.seq);
     if (index >= 0) {
       rows[index] = row;
-      this.memory.initialize(agentId, { rows });
+      this.memory.initialize(agentId, { rows, epoch: this.memory.getEpoch(agentId) });
     }
   }
 }
@@ -857,6 +859,115 @@ test("uses an injected timeline store without making it a production requirement
     );
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("serializes delayed durable inserts with tool revisions and recovers the final state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-materialized-tool-"));
+  class DelayedTimelineStore extends RecordingTimelineStore {
+    readonly started = deferred<void>();
+    readonly release = deferred<void>();
+    private firstInsert = true;
+    override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+      if (this.firstInsert) {
+        this.firstInsert = false;
+        this.started.resolve();
+        await this.release.promise;
+      }
+      await super.bulkInsert(agentId, rows);
+    }
+    override async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
+      if (!(await this.getCommittedRows(agentId)).some((entry) => entry.seq === row.seq)) {
+        throw new Error("Cannot update a durable row before its insert");
+      }
+      await super.updateCommittedRow(agentId, row);
+    }
+  }
+  const store = new DelayedTimelineStore();
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: store,
+    logger,
+  });
+  const recovered = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: store,
+    logger,
+  });
+  let agentId: string | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const running = {
+      type: "tool_call" as const,
+      callId: "durable-task",
+      name: "task",
+      status: "running" as const,
+      error: null,
+      detail: { type: "sub_agent" as const, log: "Starting" },
+      metadata: { streamingArgs: "{", intent: "Keep the result" },
+    };
+    await manager.appendTimelineItem(agentId, running);
+    await store.started.promise;
+    await manager.appendTimelineItem(agentId, { type: "assistant_message", text: "Interleaved" });
+    for (let index = 0; index < 64; index += 1) {
+      await manager.appendTimelineItem(agentId, {
+        ...running,
+        detail: { type: "sub_agent", log: `${index}:${"log".repeat(1024)}` },
+      });
+    }
+    await manager.appendTimelineItem(agentId, {
+      ...running,
+      status: "failed",
+      error: { message: "Final failure" },
+      detail: { type: "sub_agent", log: "Final output" },
+      metadata: { result: "Saved" },
+    });
+    const liveRows = manager.fetchTimeline(agentId, { limit: 0 }).rows;
+    expect(liveRows.map((row) => row.seq)).toEqual([1, 2]);
+    expect(liveRows[0].item).toMatchObject({
+      revision: 66,
+      status: "failed",
+      error: { message: "Final failure" },
+      detail: { log: "Final output" },
+      metadata: { result: "Saved", intent: "Keep the result" },
+    });
+    expect(liveRows[0].item).not.toHaveProperty("metadata.streamingArgs");
+    store.release.resolve();
+    await manager.flush();
+    await manager.reloadAgentSession(agentId);
+    expect(manager.fetchTimeline(agentId, { limit: 0 }).rows).toEqual(liveRows);
+    await manager.closeAgent(agentId);
+    await recovered.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "recovered-session", nativeHandle: "recovered-session" },
+      { cwd: workdir },
+      agentId,
+    );
+    expect(recovered.fetchTimeline(agentId, { limit: 0 }).rows).toEqual(liveRows);
+    await recovered.appendTimelineItem(agentId, {
+      ...running,
+      status: "completed",
+      detail: { type: "sub_agent", log: "Recovered result" },
+    });
+    await recovered.flush();
+    const finalRows = await recovered.getTimelineRows(agentId);
+    expect(finalRows.map((row) => row.seq)).toEqual([1, 2]);
+    expect(finalRows[0].item).toMatchObject({
+      revision: 67,
+      status: "completed",
+      error: null,
+      detail: { log: "Recovered result" },
+    });
+  } finally {
+    store.release.resolve();
+    if (agentId) {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await recovered.closeAgent(agentId).catch(() => undefined);
+    }
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -2986,7 +3097,9 @@ test("tree Stop drains native descendants admitted during successive cancellatio
     readonly executing = new Set(["native-a"]);
     async cancelProviderSubagent(id: string): Promise<boolean> {
       this.executing.delete(id);
-      const next = id === "native-a" ? "native-b" : id === "native-b" ? "native-c" : null;
+      let next: string | null = null;
+      if (id === "native-a") next = "native-b";
+      else if (id === "native-b") next = "native-c";
       if (next) {
         this.executing.add(next);
         this.pushEvent({
@@ -4663,6 +4776,7 @@ test("importProviderSession imports the selected session without listing and pub
     { type: "assistant_message", text: "Done" },
     {
       type: "tool_call",
+      revision: 1,
       callId: "large-shell-result",
       name: "shell",
       status: "completed",
@@ -6494,6 +6608,7 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
     { type: "reasoning", text: "internal" },
     {
       type: "tool_call",
+      revision: 1,
       callId: "call-history-1",
       name: "shell",
       status: "completed",

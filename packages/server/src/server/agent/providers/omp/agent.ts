@@ -1762,6 +1762,7 @@ interface OmpNativeTaskCall {
   result: OmpToolResult;
   error: unknown;
   turnId: string | undefined;
+  lastEmission?: string;
 }
 
 export class OmpAgentSession implements AgentSession {
@@ -4746,7 +4747,14 @@ export class OmpAgentSession implements AgentSession {
     const task = this.nativeTaskCalls.get(toolCallId);
     const turnId = task ? task.turnId : (originatingTurnId ?? this.currentTurnIdForEvent());
     if (toolCall.toolName === "task") {
-      this.nativeTaskCalls.set(toolCallId, { toolCall, status, result, error, turnId });
+      this.nativeTaskCalls.set(toolCallId, {
+        toolCall,
+        status,
+        result,
+        error,
+        turnId,
+        lastEmission: task?.lastEmission,
+      });
     }
     const detail = this.mapToolDetail(
       toolCallId,
@@ -4766,6 +4774,12 @@ export class OmpAgentSession implements AgentSession {
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
+    const taskState = this.nativeTaskCalls.get(toolCallId);
+    if (taskState) {
+      const signature = createHash("sha256").update(JSON.stringify(item)).digest("hex");
+      if (signature === taskState.lastEmission) return true;
+      taskState.lastEmission = signature;
+    }
     this.emit({
       type: "timeline",
       provider: this.provider,

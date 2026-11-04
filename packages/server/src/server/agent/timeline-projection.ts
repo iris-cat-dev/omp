@@ -80,10 +80,13 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
   return incoming;
 }
 
-function mergeToolCallItems(
+export function mergeToolCallItems(
   existing: Extract<AgentTimelineItem, { type: "tool_call" }>,
   incoming: Extract<AgentTimelineItem, { type: "tool_call" }>,
 ): Extract<AgentTimelineItem, { type: "tool_call" }> {
+  if (existing.status !== "running" && incoming.status === "running") {
+    return existing;
+  }
   const mergedDetail = mergeToolCallDetail(existing.detail, incoming.detail);
   const mergedMetadata =
     existing.metadata || incoming.metadata
@@ -96,6 +99,10 @@ function mergeToolCallItems(
     detail: mergedDetail,
     metadata: mergedMetadata,
   };
+
+  if (incoming.status !== "running" && merged.metadata) {
+    delete merged.metadata.streamingArgs;
+  }
 
   if (incoming.status === "failed") {
     merged.error = incoming.error;
@@ -130,9 +137,10 @@ function collapseToolLifecycle(entries: readonly WorkingEntry[]): WorkingEntry[]
       continue;
     }
 
-    const existingIndex = toolIndexByCallId.get(entry.item.callId);
+    const key = JSON.stringify([entry.turnId ?? null, entry.item.callId]);
+    const existingIndex = toolIndexByCallId.get(key);
     if (existingIndex === undefined) {
-      toolIndexByCallId.set(entry.item.callId, output.length);
+      toolIndexByCallId.set(key, output.length);
       output.push(entry);
       continue;
     }

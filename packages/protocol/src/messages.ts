@@ -757,6 +757,7 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
 const ToolCallBasePayloadSchema = z.object({
   type: z.literal("tool_call"),
   callId: z.string(),
+  revision: z.number().int().nonnegative().optional(),
   name: z.string(),
   detail: ToolCallDetailPayloadSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),

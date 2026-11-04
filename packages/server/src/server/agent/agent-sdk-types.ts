@@ -382,6 +382,8 @@ interface ToolCallBase {
   [key: string]: unknown;
   type: "tool_call";
   callId: string;
+  /** Monotonic revision of this tool's materialized timeline row, within its epoch. */
+  revision?: number;
   name: string;
   detail: ToolCallDetail;
   metadata?: Record<string, unknown>;

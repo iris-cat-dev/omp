@@ -1335,6 +1335,39 @@ function getTerminalTimelineResponse(
   return null;
 }
 
+function reconcileMaterializedToolRevisions(
+  timelineResult: TimelinePathResult,
+  timelineUnits: TimelineUnit[],
+  epoch: string,
+): void {
+  if (timelineResult.cursor?.epoch !== epoch) return;
+  // A materialized tool can change without advancing the sequence window.
+  // Reconcile visible calls even when the rest of this response is already known.
+  for (const unit of timelineUnits) {
+    if (
+      unit.event.type !== "timeline" ||
+      unit.event.item.type !== "tool_call" ||
+      unit.event.item.revision === undefined
+    )
+      continue;
+    const callId = unit.event.item.callId;
+    const containsCall = (item: StreamItem) =>
+      isAgentToolCallItem(item) && item.payload.data.callId === callId;
+    if (!timelineResult.tail.some(containsCall) && !timelineResult.head.some(containsCall))
+      continue;
+    const revised = applyStreamEvent({
+      tail: timelineResult.tail,
+      head: timelineResult.head,
+      event: unit.event,
+      timestamp: unit.timestamp,
+      source: "canonical",
+      timelineCursor: { epoch, seq: unit.seqEnd },
+    });
+    timelineResult.tail = revised.tail;
+    timelineResult.head = revised.head;
+  }
+}
+
 export function processTimelineResponse(
   input: ProcessTimelineResponseInput,
 ): ProcessTimelineResponseOutput {
@@ -1467,6 +1500,8 @@ export function processTimelineResponse(
       currentCursor,
     });
   }
+
+  reconcileMaterializedToolRevisions(timelineResult, timelineUnits, payload.epoch);
 
   const nextTail = timelineResult.tail;
   const nextHead = timelineResult.head;
@@ -1612,6 +1647,15 @@ function processTimelineSequencingGate(input: {
     epoch,
     seq,
   });
+
+  if (
+    decision === "drop_stale" &&
+    event.item.type === "tool_call" &&
+    event.item.revision !== undefined
+  ) {
+    // seq identifies a tool row; revision orders updates to that same row.
+    return base;
+  }
 
   if (decision === "init") {
     return {

@@ -506,38 +506,51 @@ function attachManagedTurnIdentity(
   if (fromHistory || existingTurnId !== undefined) {
     return { event, turnId: existingTurnId };
   }
+  const turnId = resolveLiveManagedTurnId(agent, event);
+  if (event.type === "turn_started") {
+    return { event: { ...event, turnId }, turnId };
+  }
+  if (
+    event.type === "timeline" ||
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  ) {
+    return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
+  }
+  return { event, turnId };
+}
+
+function resolveLiveManagedTurnId(
+  agent: ActiveManagedAgent,
+  event: AgentStreamEvent,
+): string | undefined {
   switch (event.type) {
-    case "turn_started": {
-      const turnId =
-        agent.activeForegroundTurnId ?? agent.activeTurnId ?? `autonomous-${randomUUID()}`;
-      return { event: { ...event, turnId }, turnId };
-    }
+    case "turn_started":
+      return agent.activeForegroundTurnId ?? agent.activeTurnId ?? `autonomous-${randomUUID()}`;
     case "turn_completed":
     case "turn_failed":
-    case "turn_canceled": {
-      const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
-      return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
-    }
+    case "turn_canceled":
+      return agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
     case "timeline": {
       // Background plugin records carry a separately validated origin (or deliberately none).
       // Never infer ownership from whichever foreground turn happens to be active on delivery.
       if (event.item.type === "assistant_message" && event.item.customMessage) {
-        return { event, turnId: undefined };
+        return undefined;
       }
       if (
         event.item.type === "tool_call" &&
         event.item.detail?.type === "sub_agent" &&
         event.item.status !== "running"
       ) {
-        return { event, turnId: undefined };
+        return undefined;
       }
       // Live provider items belong to the foreground turn that owns their dispatch.
       // Provider history deliberately keeps absent IDs because it has no daemon turn identity.
-      const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
-      return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
+      return agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
     }
     default:
-      return { event, turnId: undefined };
+      return undefined;
   }
 }
 
@@ -746,6 +759,13 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
+  private readonly durableTimelineWrites = new Map<
+    string,
+    {
+      pending: Map<number, { row: AgentTimelineRow; insert: boolean }>;
+      task: Promise<void>;
+    }
+  >();
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Map<Promise<void>, string | undefined>();
@@ -1157,6 +1177,7 @@ export class AgentManager {
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
     if (this.durableTimelineStore) {
+      await this.durableTimelineWrites.get(id)?.task;
       return await this.durableTimelineStore.getCommittedRows(id);
     }
     return this.timelineStore.getRows(id);
@@ -1859,12 +1880,14 @@ export class AgentManager {
       return;
 
     const remaining = this.idleRuntimeTimeoutMs - (Date.now() - agent.updatedAt.getTime());
-    const delay =
-      remaining > 0
-        ? remaining
-        : recheck
-          ? Math.min(this.idleRuntimeTimeoutMs, IDLE_RUNTIME_RECHECK_MS)
-          : 1;
+    let delay: number;
+    if (remaining > 0) {
+      delay = remaining;
+    } else if (recheck) {
+      delay = Math.min(this.idleRuntimeTimeoutMs, IDLE_RUNTIME_RECHECK_MS);
+    } else {
+      delay = 1;
+    }
     const timer = setTimeout(() => {
       this.idleRuntimeTimers.delete(agent.id);
       const task = this.retireIdleRuntime(agent.id)
@@ -2569,12 +2592,16 @@ export class AgentManager {
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
         this.touchUpdatedAt(agent);
-        const row = this.recordTimeline(agent.id, event.item);
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        const row = this.recordTimeline(agent.id, event.item, { turnId: event.turnId });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
         return;
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
@@ -2603,7 +2630,7 @@ export class AgentManager {
       agentId,
       {
         type: "timeline",
-        item,
+        item: row.item,
         provider: agent.provider,
       },
       {
@@ -3607,6 +3634,7 @@ export class AgentManager {
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
+    await this.durableTimelineWrites.get(agentId)?.task;
     await this.durableTimelineStore?.deleteAgent(agentId);
   }
 
@@ -3622,15 +3650,8 @@ export class AgentManager {
   private getLastAssistantMessageFromTimeline(
     timeline: readonly AgentTimelineItem[],
   ): string | null {
-    return this.getLastAssistantMessageSegmentFromTimeline(timeline)?.text ?? null;
-  }
-
-  private getLastAssistantMessageSegmentFromTimeline(
-    timeline: readonly AgentTimelineItem[],
-  ): { text: string; startsAtBeginning: boolean } | null {
     // Collect the last contiguous assistant messages (Claude streams chunks)
     const chunks: string[] = [];
-    let startsAtBeginning = false;
     for (let i = timeline.length - 1; i >= 0; i--) {
       const item = timeline[i];
       if (item.type !== "assistant_message") {
@@ -3640,37 +3661,23 @@ export class AgentManager {
         continue;
       }
       chunks.push(item.text);
-      startsAtBeginning = i === 0;
     }
 
     if (!chunks.length) {
       return null;
     }
 
-    return {
-      text: chunks.toReversed().join(""),
-      startsAtBeginning,
-    };
+    return chunks.toReversed().join("");
   }
 
   private async getLastAssistantMessageFromStores(agentId: string): Promise<string | null> {
-    const liveTimeline = this.timelineStore.getItems(agentId);
-    const liveSegment = this.getLastAssistantMessageSegmentFromTimeline(liveTimeline);
-    if (!this.durableTimelineStore) {
-      return liveSegment?.text ?? null;
-    }
-    if (!liveSegment) {
-      return await this.durableTimelineStore.getLastAssistantMessage(agentId);
-    }
-    if (!liveSegment.startsAtBeginning) {
-      return liveSegment.text;
-    }
-    const lastDurableItem = await this.durableTimelineStore.getLastItem(agentId);
-    if (lastDurableItem?.type !== "assistant_message") {
-      return liveSegment.text;
-    }
-    const durableMessage = await this.durableTimelineStore.getLastAssistantMessage(agentId);
-    return durableMessage ? `${durableMessage}${liveSegment.text}` : liveSegment.text;
+    // Durable history is hydrated into the live store during registration.
+    const liveMessage = this.getLastAssistantMessageFromTimeline(
+      this.timelineStore.getItems(agentId),
+    );
+    return (
+      liveMessage ?? (await this.durableTimelineStore?.getLastAssistantMessage(agentId)) ?? null
+    );
   }
 
   private async getLastItemFromStores(agentId: string): Promise<AgentTimelineItem | null> {
@@ -3918,16 +3925,27 @@ export class AgentManager {
       this.assertRunAdmission(options?.admission, getParentAgentIdFromLabels(managed.labels));
       return { ...managed };
     } catch (error) {
-      if (!registered) {
-        await this.closeUnregisteredSession(session);
-      } else if (
-        error instanceof AgentRunAdmissionCancelledError &&
-        this.agents.get(agentId)?.session === session
-      ) {
-        await this.closeAgent(agentId);
-      }
+      const cleanup = this.cleanupFailedSessionRegistration(session, agentId, registered, error);
+      if (cleanup) await cleanup;
       throw error;
     }
+  }
+
+  private cleanupFailedSessionRegistration(
+    session: AgentSession,
+    agentId: string,
+    registered: boolean,
+    error: unknown,
+  ): Promise<void> | undefined {
+    if (!registered) {
+      return this.closeUnregisteredSession(session);
+    } else if (
+      error instanceof AgentRunAdmissionCancelledError &&
+      this.agents.get(agentId)?.session === session
+    ) {
+      return this.closeAgent(agentId);
+    }
+    return undefined;
   }
 
   private assertAcceptingAgentRegistrations(): void {
@@ -3997,8 +4015,8 @@ export class AgentManager {
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
-    if (options?.timelineRows?.length) {
-      this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
+    if (options?.timelineRows?.length || options?.timeline?.length) {
+      this.enqueueDurableTimelineBulkInsert(agentId, this.timelineStore.getRows(agentId));
     }
     return { durableTimelineHasRows };
   }
@@ -4072,8 +4090,10 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return { timestamp: now.toISOString() };
     }
+    const rows = await this.durableTimelineStore.getCommittedRows(agentId);
     return {
-      nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
+      rows,
+      nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
       timestamp: now.toISOString(),
     };
   }
@@ -4462,17 +4482,20 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        turnId: event.turnId,
+      });
       if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
       }
     }
     this.touchUpdatedAt(agent);
@@ -4514,19 +4537,22 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
+        const row = this.recordTimeline(agent.id, event.item, {
+          timestamp: event.timestamp,
+          turnId: event.turnId,
+        });
         if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
+          timelineEvents.push({ event: { ...event, item: row.item }, row });
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
+          this.dispatchStream(
+            agent.id,
+            { ...event, item: row.item },
+            {
+              seq: row.seq,
+              epoch: this.timelineStore.getEpoch(agent.id),
+              timestamp: row.timestamp,
+            },
+          );
         }
       }
     } catch (error) {
@@ -4543,11 +4569,15 @@ export class AgentManager {
       this.dispatch(event);
     }
     for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+      this.dispatchStream(
+        agent.id,
+        { ...event, item: row.item },
+        {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        },
+      );
     }
   }
 
@@ -4725,40 +4755,10 @@ export class AgentManager {
         this.onStreamUsageUpdated(agent, event);
         return undefined;
       case "features_changed":
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
       case "mode_changed":
-        agent.currentModeId = event.currentModeId;
-        agent.availableModes = event.availableModes;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
       case "model_changed":
-        agent.runtimeInfo = event.runtimeInfo;
-        if (!agent.persistence && event.runtimeInfo.sessionId) {
-          agent.persistence = attachPersistenceCwd(
-            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
-            agent.cwd,
-          );
-        }
-        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
       case "thinking_option_changed":
-        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = {
-            ...agent.runtimeInfo,
-            thinkingOptionId: event.thinkingOptionId,
-          };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.onStreamControlEvent(agent, event, flags);
         return undefined;
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, flags });
@@ -4814,6 +4814,50 @@ export class AgentManager {
     }
   }
 
+  private onStreamControlEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<
+      AgentStreamEvent,
+      {
+        type: "features_changed" | "mode_changed" | "model_changed" | "thinking_option_changed";
+      }
+    >,
+    flags: StreamEventFlags,
+  ): void {
+    switch (event.type) {
+      case "features_changed":
+        break;
+      case "mode_changed":
+        agent.currentModeId = event.currentModeId;
+        agent.availableModes = event.availableModes;
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
+        }
+        break;
+      case "model_changed":
+        agent.runtimeInfo = event.runtimeInfo;
+        if (!agent.persistence && event.runtimeInfo.sessionId) {
+          agent.persistence = attachPersistenceCwd(
+            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
+            agent.cwd,
+          );
+        }
+        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
+        break;
+      case "thinking_option_changed":
+        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = {
+            ...agent.runtimeInfo,
+            thinkingOptionId: event.thinkingOptionId,
+          };
+        }
+        break;
+    }
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {
     const previousSessionId = agent.persistence?.sessionId ?? null;
     const handle = agent.session.describePersistence();
@@ -4860,11 +4904,10 @@ export class AgentManager {
     }
 
     if (options?.fromHistory) {
-      this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        turnId: event.turnId,
+      });
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -5088,7 +5131,7 @@ export class AgentManager {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
       type: "timeline",
-      item,
+      item: row.item,
       provider,
       ...(turnId !== undefined ? { turnId } : {}),
     };
@@ -5268,8 +5311,15 @@ export class AgentManager {
     },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
-    const row = this.timelineStore.append(agentId, item, options);
-    this.enqueueDurableTimelineAppend(agentId, row);
+    const row =
+      item.type === "tool_call"
+        ? this.timelineStore.upsertToolCall(agentId, item, options)
+        : this.timelineStore.append(agentId, item, options);
+    if (row.item.type === "tool_call" && (row.item.revision ?? 0) > 1) {
+      this.enqueueDurableTimelineUpdate(agentId, row);
+    } else {
+      this.enqueueDurableTimelineAppend(agentId, row);
+    }
     return row;
   }
 
@@ -5380,43 +5430,80 @@ export class AgentManager {
   }
 
   private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): void {
-    if (!this.durableTimelineStore) {
-      return;
-    }
-    const task = this.durableTimelineStore.bulkInsert(agentId, [row]).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to append timeline row to durable store",
-      );
-    });
-    this.trackBackgroundTask(task);
+    this.enqueueDurableTimelineRows(agentId, [row], true);
   }
 
   private enqueueDurableTimelineBulkInsert(
     agentId: string,
     rows: readonly AgentTimelineRow[],
   ): void {
-    if (!this.durableTimelineStore || rows.length === 0) {
-      return;
-    }
-    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
-      this.logger.error(
-        { err, agentId, rowCount: rows.length },
-        "Failed to seed durable timeline store",
-      );
-    });
-    this.trackBackgroundTask(task);
+    this.enqueueDurableTimelineRows(agentId, rows, true);
   }
 
   private enqueueDurableTimelineUpdate(agentId: string, row: AgentTimelineRow): void {
-    if (!this.durableTimelineStore) return;
-    const task = this.durableTimelineStore.updateCommittedRow(agentId, row).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to enrich durable timeline row",
+    this.enqueueDurableTimelineRows(agentId, [row], false);
+  }
+
+  private enqueueDurableTimelineRows(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+    insert: boolean,
+  ): void {
+    const store = this.durableTimelineStore;
+    if (!store || rows.length === 0) return;
+    let writer = this.durableTimelineWrites.get(agentId);
+    if (!writer) {
+      const pending = new Map<number, { row: AgentTimelineRow; insert: boolean }>();
+      const task = Promise.resolve().then(() =>
+        this.drainDurableTimelineWrites(agentId, store, pending),
       );
-    });
-    this.trackBackgroundTask(task);
+      writer = { pending, task };
+      this.durableTimelineWrites.set(agentId, writer);
+      this.trackBackgroundTask(task);
+    }
+    for (const row of rows) {
+      const previous = writer.pending.get(row.seq);
+      // Keep only the latest pending snapshot, retaining the first insert.
+      // One writer serializes inserts and updates even when storage is async.
+      writer.pending.set(row.seq, { row, insert: insert || previous?.insert === true });
+    }
+  }
+
+  private async drainDurableTimelineWrites(
+    agentId: string,
+    store: AgentTimelineStore,
+    pending: Map<number, { row: AgentTimelineRow; insert: boolean }>,
+  ): Promise<void> {
+    try {
+      while (pending.size > 0) {
+        const batch = [...pending.values()];
+        pending.clear();
+        for (const write of batch) {
+          await this.persistDurableTimelineWrite(agentId, store, write);
+        }
+      }
+    } finally {
+      this.durableTimelineWrites.delete(agentId);
+    }
+  }
+
+  private async persistDurableTimelineWrite(
+    agentId: string,
+    store: AgentTimelineStore,
+    write: { row: AgentTimelineRow; insert: boolean },
+  ): Promise<void> {
+    try {
+      if (write.insert) {
+        await store.bulkInsert(agentId, [write.row]);
+      } else {
+        await store.updateCommittedRow(agentId, write.row);
+      }
+    } catch (err) {
+      this.logger.error(
+        { err, agentId, seq: write.row.seq, itemType: write.row.item.type },
+        "Failed to persist durable timeline row",
+      );
+    }
   }
 
   private trackBackgroundTask(task: Promise<void>): void {

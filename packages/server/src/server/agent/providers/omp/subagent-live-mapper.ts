@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AgentStreamEvent,
   AgentTimelineItem,
@@ -82,7 +83,7 @@ export class OmpSubagentLiveMapper {
         result: null,
         status: item.status,
         metadata: item.metadata ?? {},
-        lastEmission: JSON.stringify(item),
+        lastEmission: createHash("sha256").update(JSON.stringify(item)).digest("hex"),
       };
       this.tools.set(item.callId, state);
     }
@@ -92,30 +93,7 @@ export class OmpSubagentLiveMapper {
     this.active = null;
     for (const message of messages) {
       if (message.role === "assistant") {
-        const state = this.messageFor(message, true);
-        state.blocks.clear();
-        state.tools.clear();
-        for (const [index, content] of message.content.entries()) {
-          if (content.type === "text" || content.type === "thinking") {
-            const text = content.type === "text" ? content.text : content.thinking;
-            state.blocks.set(index, { streamed: "", sent: text });
-          }
-          if (content.type === "toolCall") {
-            state.tools.set(index, content.id);
-            const tool = this.toolFor(content.id, content.name);
-            tool.args = content.arguments;
-            const intent = parseToolArgs(content.name, content.arguments, content.intent).intent;
-            if (intent) tool.metadata.intent = intent;
-          }
-        }
-        state.ended = true;
-        if (
-          !message.responseId &&
-          typeof message.id !== "string" &&
-          typeof message.timestamp !== "number"
-        ) {
-          this.finalizedMessages.set(JSON.stringify(message), state);
-        }
+        this.seedAssistantMessage(message);
       } else if (message.role === "toolResult") {
         const tool = this.toolFor(message.toolCallId, message.toolName);
         tool.result = parseToolResult(message);
@@ -130,152 +108,222 @@ export class OmpSubagentLiveMapper {
 
   map(event: OmpSubagentEventPayload["event"], terminal = false): AgentStreamEvent[] {
     const output: AgentStreamEvent[] = [];
-    if (
-      event.type === "message_start" ||
-      event.type === "message_update" ||
-      event.type === "message_end" ||
-      event.type === "turn_end" ||
-      event.type === "irc_message"
-    ) {
-      const messageRecord = record(event.message);
-      const projected =
-        event.type === "message_update" &&
-        messageRecord?.role === "assistant" &&
-        messageRecord.content === undefined;
-      const parsed = OmpAgentMessageSchema.safeParse(
-        projected ? { ...messageRecord, content: [] } : event.message,
-      );
-      if (!parsed.success) return output;
-      const message = parsed.data;
-      if (message.role !== "assistant") {
-        if (event.type === "message_end" || event.type === "irc_message")
-          this.mapOther(message, output);
-        return output;
-      }
-      const state = this.messageFor(
-        message,
-        event.type === "message_start",
-        typeof event.messageId === "string" ? event.messageId : undefined,
-      );
-      if (event.type === "message_update") {
-        const update = record(event.assistantMessageEvent);
-        if (update) this.mapUpdate(message, state, update, output, terminal);
-      }
-      if (event.type === "message_end" || event.type === "turn_end") {
-        this.flushMessage(message, state, output, terminal);
-        state.ended = true;
-        if (
-          !message.responseId &&
-          typeof message.id !== "string" &&
-          typeof message.timestamp !== "number"
-        ) {
-          this.finalizedMessages.set(JSON.stringify(message), state);
-        }
-      }
-      return output;
+    switch (event.type) {
+      case "message_start":
+      case "message_update":
+      case "message_end":
+      case "turn_end":
+      case "irc_message":
+        this.mapMessage(event, output, terminal);
+        break;
+      case "tool_execution_start":
+      case "tool_execution_update":
+      case "tool_execution_end":
+      case "tool_stream_update":
+        this.mapToolExecution(event, output, terminal);
+        break;
+      default:
+        this.mapLifecycle(event, output);
+        break;
     }
-    if (
-      event.type === "tool_execution_start" ||
-      event.type === "tool_execution_update" ||
-      event.type === "tool_execution_end" ||
-      event.type === "tool_stream_update"
-    ) {
-      if (terminal && event.type !== "tool_execution_end") return output;
-      if (typeof event.toolCallId !== "string" || typeof event.toolName !== "string") return output;
-      const tool = this.toolFor(event.toolCallId, event.toolName);
-      if (tool.status === "canceled") return output;
-      if (event.type === "tool_execution_end") {
-        tool.result = parseToolResult(event.result);
-        tool.status = event.isError ? "failed" : "completed";
-      } else if (tool.status === "running") {
-        if (event.type === "tool_execution_start") tool.executionStarted = true;
-        if (event.args !== undefined) tool.args = event.args;
-        if (event.type === "tool_execution_update")
-          tool.result = parseToolResult(event.partialResult);
-        if (event.type === "tool_stream_update") tool.metadata.streamUpdate = event.update;
-        const intent =
-          normalizeOmpToolIntent(event.intent) ??
-          normalizeOmpToolIntent(tool.metadata.intent) ??
-          parseToolArgs(event.toolName, tool.args).intent;
+    return output;
+  }
+
+  private seedAssistantMessage(message: AssistantMessage): void {
+    const state = this.messageFor(message, true);
+    state.blocks.clear();
+    state.tools.clear();
+    for (const [index, content] of message.content.entries()) {
+      if (content.type === "text" || content.type === "thinking") {
+        const text = content.type === "text" ? content.text : content.thinking;
+        state.blocks.set(index, { streamed: "", sent: text });
+      }
+      if (content.type === "toolCall") {
+        state.tools.set(index, content.id);
+        const tool = this.toolFor(content.id, content.name);
+        tool.args = content.arguments;
+        const intent = parseToolArgs(content.name, content.arguments, content.intent).intent;
         if (intent) tool.metadata.intent = intent;
-      } else {
-        return output;
       }
-      this.emitTool(event.toolCallId, tool, output);
-      return output;
     }
+    this.finishMessage(message, state);
+  }
+
+  private finishMessage(message: AssistantMessage, state: MessageState): void {
+    state.ended = true;
     if (
-      event.type === "compaction_start" ||
-      event.type === "auto_compaction_start" ||
-      event.type === "manual_compaction_start"
+      !message.responseId &&
+      typeof message.id !== "string" &&
+      typeof message.timestamp !== "number"
     ) {
-      output.push(
-        timeline({
-          type: "compaction",
-          status: "loading",
-          trigger: event.type === "manual_compaction_start" ? "manual" : "auto",
-        }),
-      );
-      if (typeof event.reason === "string")
-        output.push(notification(`Compacting context: ${event.reason}`));
-    } else if (
-      event.type === "compaction_end" ||
-      event.type === "auto_compaction_end" ||
-      event.type === "manual_compaction_end"
-    ) {
-      const result = record(event.result);
-      output.push(
-        timeline({
-          type: "compaction",
-          status: "completed",
-          trigger: event.type === "manual_compaction_end" ? "manual" : "auto",
-          ...(typeof result?.tokensBefore === "number" ? { preTokens: result.tokensBefore } : {}),
-        }),
-      );
-      if (typeof event.errorMessage === "string")
-        output.push(notification(event.errorMessage, "warning"));
-      else if (event.aborted) output.push(notification("Context compaction canceled", "warning"));
-      else if (event.skipped) output.push(notification("Context compaction skipped"));
-      else if (event.willRetry)
-        output.push(notification("Context compacted; continuing the child task"));
-    } else if (event.type === "auto_retry_start") {
-      output.push(
-        notification(
-          `Retrying child request (${event.attempt}/${event.maxAttempts}) in ${event.delayMs} ms: ${event.errorMessage}`,
-          "warning",
-        ),
-      );
-    } else if (event.type === "auto_retry_end") {
-      output.push(
-        notification(
-          event.success
-            ? "Child request recovered after retry"
-            : `Child retries exhausted: ${event.finalError ?? "request failed"}`,
-          event.success ? "info" : "error",
-        ),
-      );
-    } else if (event.type === "retry_fallback_applied") {
-      output.push(notification(`Retry fallback: ${event.from} → ${event.to}`, "warning"));
-    } else if (event.type === "retry_fallback_succeeded") {
-      output.push(notification(`Retry fallback succeeded: ${event.model}`));
-    } else if (event.type === "notice" && typeof event.message === "string") {
-      output.push(
-        notification(
-          event.message,
-          event.level === "error" || event.level === "warning" ? event.level : "info",
-        ),
-      );
-    } else if (event.type === "thinking_level_changed" && typeof event.thinkingLevel === "string") {
-      output.push(
-        timeline({
-          type: "system_notice",
-          notice: "thinking_changed",
-          thinkingOptionId: event.thinkingLevel,
-        }),
-      );
+      this.finalizedMessages.set(JSON.stringify(message), state);
+    }
+  }
+
+  private mapMessage(
+    event: OmpSubagentEventPayload["event"],
+    output: AgentStreamEvent[],
+    terminal: boolean,
+  ): void {
+    const messageRecord = record(event.message);
+    const projected =
+      event.type === "message_update" &&
+      messageRecord?.role === "assistant" &&
+      messageRecord.content === undefined;
+    const parsed = OmpAgentMessageSchema.safeParse(
+      projected ? { ...messageRecord, content: [] } : event.message,
+    );
+    if (!parsed.success) return;
+    const message = parsed.data;
+    if (message.role !== "assistant") {
+      if (event.type === "message_end" || event.type === "irc_message")
+        this.mapOther(message, output);
+      return;
+    }
+    const state = this.messageFor(
+      message,
+      event.type === "message_start",
+      typeof event.messageId === "string" ? event.messageId : undefined,
+    );
+    if (event.type === "message_update") {
+      const update = record(event.assistantMessageEvent);
+      if (update) this.mapUpdate(message, state, update, output, terminal);
+    }
+    if (event.type === "message_end" || event.type === "turn_end") {
+      this.flushMessage(message, state, output, terminal);
+      this.finishMessage(message, state);
+    }
+  }
+
+  private mapToolExecution(
+    event: OmpSubagentEventPayload["event"],
+    output: AgentStreamEvent[],
+    terminal: boolean,
+  ): void {
+    if (terminal && event.type !== "tool_execution_end") return;
+    if (typeof event.toolCallId !== "string" || typeof event.toolName !== "string") return;
+    const tool = this.toolFor(event.toolCallId, event.toolName);
+    if (tool.status === "canceled") return;
+    if (event.type === "tool_execution_end") {
+      tool.result = parseToolResult(event.result);
+      tool.status = event.isError ? "failed" : "completed";
+    } else if (tool.status === "running") {
+      if (event.type === "tool_execution_start") tool.executionStarted = true;
+      if (event.args !== undefined) tool.args = event.args;
+      if (event.type === "tool_execution_start" && event.args !== undefined) {
+        tool.argsJson = "";
+        delete tool.metadata.streamingArgs;
+      }
+      if (event.type === "tool_execution_update")
+        tool.result = parseToolResult(event.partialResult);
+      if (event.type === "tool_stream_update") tool.metadata.streamUpdate = event.update;
+      const intent =
+        normalizeOmpToolIntent(event.intent) ??
+        normalizeOmpToolIntent(tool.metadata.intent) ??
+        parseToolArgs(event.toolName, tool.args).intent;
+      if (intent) tool.metadata.intent = intent;
+    } else {
+      return;
+    }
+    this.emitTool(event.toolCallId, tool, output);
+  }
+
+  private mapLifecycle(event: OmpSubagentEventPayload["event"], output: AgentStreamEvent[]): void {
+    switch (event.type) {
+      case "compaction_start":
+      case "auto_compaction_start":
+      case "manual_compaction_start":
+        output.push(
+          timeline({
+            type: "compaction",
+            status: "loading",
+            trigger: event.type === "manual_compaction_start" ? "manual" : "auto",
+          }),
+        );
+        if (typeof event.reason === "string")
+          output.push(notification(`Compacting context: ${event.reason}`));
+        break;
+      case "compaction_end":
+      case "auto_compaction_end":
+      case "manual_compaction_end":
+        this.mapCompactionEnd(event, output);
+        break;
+      default:
+        this.mapNotice(event, output);
+        break;
     }
     // agent_end can be a temporary settle before an async continuation, not a child lifecycle end.
-    return output;
+  }
+
+  private mapCompactionEnd(
+    event: OmpSubagentEventPayload["event"],
+    output: AgentStreamEvent[],
+  ): void {
+    const result = record(event.result);
+    output.push(
+      timeline({
+        type: "compaction",
+        status: "completed",
+        trigger: event.type === "manual_compaction_end" ? "manual" : "auto",
+        ...(typeof result?.tokensBefore === "number" ? { preTokens: result.tokensBefore } : {}),
+      }),
+    );
+    if (typeof event.errorMessage === "string")
+      output.push(notification(event.errorMessage, "warning"));
+    else if (event.aborted) output.push(notification("Context compaction canceled", "warning"));
+    else if (event.skipped) output.push(notification("Context compaction skipped"));
+    else if (event.willRetry)
+      output.push(notification("Context compacted; continuing the child task"));
+  }
+
+  private mapNotice(event: OmpSubagentEventPayload["event"], output: AgentStreamEvent[]): void {
+    switch (event.type) {
+      case "auto_retry_start":
+        output.push(
+          notification(
+            `Retrying child request (${event.attempt}/${event.maxAttempts}) in ${event.delayMs} ms: ${event.errorMessage}`,
+            "warning",
+          ),
+        );
+        break;
+      case "auto_retry_end":
+        output.push(
+          notification(
+            event.success
+              ? "Child request recovered after retry"
+              : `Child retries exhausted: ${event.finalError ?? "request failed"}`,
+            event.success ? "info" : "error",
+          ),
+        );
+        break;
+      case "retry_fallback_applied":
+        output.push(notification(`Retry fallback: ${event.from} → ${event.to}`, "warning"));
+        break;
+      case "retry_fallback_succeeded":
+        output.push(notification(`Retry fallback succeeded: ${event.model}`));
+        break;
+      case "notice":
+        if (typeof event.message === "string") {
+          output.push(
+            notification(
+              event.message,
+              event.level === "error" || event.level === "warning" ? event.level : "info",
+            ),
+          );
+        }
+        break;
+      case "thinking_level_changed":
+        if (typeof event.thinkingLevel === "string") {
+          output.push(
+            timeline({
+              type: "system_notice",
+              notice: "thinking_changed",
+              thinkingOptionId: event.thinkingLevel,
+            }),
+          );
+        }
+        break;
+    }
   }
 
   cancelRunning(): AgentStreamEvent[] {
@@ -294,10 +342,7 @@ export class OmpSubagentLiveMapper {
       typeof message.timestamp === "number" ? `omp-message-${message.timestamp}` : undefined;
     const identity = wireId ?? messageId ?? message.responseId ?? timestampId;
     const known =
-      (wireId ? this.messages.get(wireId) : undefined) ??
-      (messageId ? this.messages.get(messageId) : undefined) ??
-      (message.responseId ? this.messages.get(message.responseId) : undefined) ??
-      (timestampId ? this.messages.get(timestampId) : undefined) ??
+      this.findMessageByIdentity(wireId, messageId, message.responseId, timestampId) ??
       (!start && !identity && (!this.active || this.active.ended)
         ? this.finalizedMessages.get(JSON.stringify(message))
         : undefined);
@@ -327,6 +372,20 @@ export class OmpSubagentLiveMapper {
     return state;
   }
 
+  private findMessageByIdentity(
+    wireId: string | undefined,
+    messageId: string | undefined,
+    responseId: string | undefined,
+    timestampId: string | undefined,
+  ): MessageState | undefined {
+    return (
+      (wireId ? this.messages.get(wireId) : undefined) ??
+      (messageId ? this.messages.get(messageId) : undefined) ??
+      (responseId ? this.messages.get(responseId) : undefined) ??
+      (timestampId ? this.messages.get(timestampId) : undefined)
+    );
+  }
+
   private rememberMessage(state: MessageState, message: AssistantMessage, wireId?: string): void {
     this.messages.set(state.id, state);
     if (wireId) this.messages.set(wireId, state);
@@ -344,59 +403,17 @@ export class OmpSubagentLiveMapper {
     terminal: boolean,
   ): void {
     const kind = typeof update.type === "string" ? update.type : "";
-    const index =
-      typeof update.contentIndex === "number"
-        ? update.contentIndex
-        : Math.max(
-            0,
-            message.content.findIndex((block) =>
-              kind.startsWith("thinking_")
-                ? block.type === "thinking"
-                : kind.startsWith("toolcall_")
-                  ? block.type === "toolCall"
-                  : block.type === "text",
-            ),
-          );
+    const index = this.updateContentIndex(message, update, kind);
     if (kind === "text_delta" || kind === "thinking_delta") {
       const block = state.blocks.get(index) ?? { streamed: "", sent: "" };
       block.streamed += typeof update.delta === "string" ? update.delta : "";
       state.blocks.set(index, block);
       this.emitText(state, index, kind === "thinking_delta", block.streamed, output);
     } else if (kind === "text_end" || kind === "thinking_end") {
-      const snapshot = message.content[index];
-      const text =
-        typeof update.content === "string"
-          ? update.content
-          : snapshot?.type === "text"
-            ? snapshot.text
-            : snapshot?.type === "thinking"
-              ? snapshot.thinking
-              : "";
-      this.emitText(state, index, kind === "thinking_end", text, output);
+      this.mapTextEnd(message, state, index, kind, update, output);
     } else if (kind.startsWith("toolcall_")) {
       if (terminal) return;
-      const parsed =
-        record(update.toolCall) ?? record(message.content[index]) ?? record(update.block);
-      const existingId = state.tools.get(index);
-      const id = typeof parsed?.id === "string" ? parsed.id : existingId;
-      const name =
-        typeof parsed?.name === "string"
-          ? parsed.name
-          : existingId
-            ? this.tools.get(existingId)?.name
-            : undefined;
-      if (!id || !name) return;
-      state.tools.set(index, id);
-      const tool = this.toolFor(id, name);
-      if (tool.status !== "running" || tool.executionStarted) return;
-      if (kind === "toolcall_delta" && typeof update.delta === "string") {
-        tool.argsJson += update.delta;
-        tool.metadata.streamingArgs = tool.argsJson;
-      }
-      if (parsed?.arguments !== undefined) tool.args = parsed.arguments;
-      const intent = parseToolArgs(name, tool.args, parsed?.intent).intent;
-      if (intent) tool.metadata.intent = intent;
-      this.emitTool(id, tool, output);
+      this.mapToolCallUpdate(message, state, index, kind, update, output);
     } else if (kind === "done" || kind === "error") {
       const final = OmpAgentMessageSchema.safeParse(
         kind === "done" ? update.message : update.error,
@@ -408,6 +425,80 @@ export class OmpSubagentLiveMapper {
         terminal,
       );
     }
+  }
+
+  private updateContentIndex(
+    message: AssistantMessage,
+    update: Record<string, unknown>,
+    kind: string,
+  ): number {
+    if (typeof update.contentIndex === "number") return update.contentIndex;
+    let blockType = "text";
+    if (kind.startsWith("thinking_")) blockType = "thinking";
+    else if (kind.startsWith("toolcall_")) blockType = "toolCall";
+    return Math.max(
+      0,
+      message.content.findIndex((block) => block.type === blockType),
+    );
+  }
+
+  private mapTextEnd(
+    message: AssistantMessage,
+    state: MessageState,
+    index: number,
+    kind: string,
+    update: Record<string, unknown>,
+    output: AgentStreamEvent[],
+  ): void {
+    const snapshot = message.content[index];
+    let text = "";
+    if (typeof update.content === "string") text = update.content;
+    else if (snapshot?.type === "text") text = snapshot.text;
+    else if (snapshot?.type === "thinking") text = snapshot.thinking;
+    this.emitText(state, index, kind === "thinking_end", text, output);
+  }
+
+  private mapToolCallUpdate(
+    message: AssistantMessage,
+    state: MessageState,
+    index: number,
+    kind: string,
+    update: Record<string, unknown>,
+    output: AgentStreamEvent[],
+  ): void {
+    const parsed =
+      record(update.toolCall) ?? record(message.content[index]) ?? record(update.block);
+    const existingId = state.tools.get(index);
+    const id = typeof parsed?.id === "string" ? parsed.id : existingId;
+    let name: string | undefined;
+    if (typeof parsed?.name === "string") name = parsed.name;
+    else if (existingId) name = this.tools.get(existingId)?.name;
+    if (!id || !name) return;
+    state.tools.set(index, id);
+    const tool = this.toolFor(id, name);
+    if (tool.status !== "running" || tool.executionStarted) return;
+    this.updateToolCallArguments(tool, name, parsed, kind, update);
+    this.emitTool(id, tool, output);
+  }
+
+  private updateToolCallArguments(
+    tool: ToolState,
+    name: string,
+    parsed: Record<string, unknown> | null,
+    kind: string,
+    update: Record<string, unknown>,
+  ): void {
+    if (kind === "toolcall_delta" && typeof update.delta === "string") {
+      tool.argsJson += update.delta;
+      tool.metadata.streamingArgs = tool.argsJson;
+    }
+    if (parsed?.arguments !== undefined) tool.args = parsed.arguments;
+    if (kind === "toolcall_end" && parsed?.arguments !== undefined) {
+      tool.argsJson = "";
+      delete tool.metadata.streamingArgs;
+    }
+    const intent = parseToolArgs(name, tool.args, parsed?.intent).intent;
+    if (intent) tool.metadata.intent = intent;
   }
 
   private flushMessage(
@@ -483,6 +574,10 @@ export class OmpSubagentLiveMapper {
   }
 
   private emitTool(id: string, tool: ToolState, output: AgentStreamEvent[]): void {
+    if (tool.status !== "running") {
+      tool.argsJson = "";
+      delete tool.metadata.streamingArgs;
+    }
     const tracked = parseToolArgs(tool.name, tool.args);
     const emittedId = OMP_HISTORY_MAPPER_HOOKS.resolveToolCallId?.(id, tracked) ?? id;
     const specialized = OMP_HISTORY_MAPPER_HOOKS.mapToolResult?.(tracked, tool.result, {
@@ -513,7 +608,7 @@ export class OmpSubagentLiveMapper {
           }
         : null);
     if (!item) return;
-    const signature = JSON.stringify(item);
+    const signature = createHash("sha256").update(JSON.stringify(item)).digest("hex");
     if (signature === tool.lastEmission) return;
     tool.lastEmission = signature;
     output.push(timeline(item));

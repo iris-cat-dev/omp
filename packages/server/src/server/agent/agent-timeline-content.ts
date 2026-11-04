@@ -1,6 +1,13 @@
+import { Buffer } from "node:buffer";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
 const TOOL_CALL_CONTENT_MAX_LENGTH = 64 * 1024;
+
+function copyLimitedContent(content: string): string {
+  // A V8 sliced string can otherwise keep the entire oversized output alive.
+  // UTF-16 preserves the exact code units, including a surrogate at the boundary.
+  return Buffer.from(content.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH), "utf16le").toString("utf16le");
+}
 
 function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
   if (
@@ -19,7 +26,7 @@ function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
     ...item,
     error: {
       ...item.error,
-      content: item.error.content.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      content: copyLimitedContent(item.error.content),
     },
   };
 }
@@ -37,7 +44,7 @@ function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
     ...item,
     detail: {
       ...item.detail,
-      text: item.detail.text.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      text: copyLimitedContent(item.detail.text),
     },
   };
 }
@@ -59,7 +66,7 @@ export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTim
     ...item,
     detail: {
       ...item.detail,
-      output: item.detail.output.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      output: copyLimitedContent(item.detail.output),
     },
   };
 }

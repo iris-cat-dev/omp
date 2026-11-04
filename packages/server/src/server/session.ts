@@ -4664,6 +4664,7 @@ export class Session {
       direction: AgentTimelineFetchDirection;
       cursor?: AgentTimelineCursor;
       limit: number;
+      includeToolContextChanges?: boolean;
     },
   ): Promise<AgentTimelineLoad | null> {
     if (this.agentManager.getAgent(agentId)) {
@@ -4717,7 +4718,11 @@ export class Session {
       agent: this.buildStoredAgentPayload(record),
       provider: record.provider,
       controlTimeline: timeline.fetch(agentId, options),
-      fullTimeline: timeline.fetch(agentId, { direction: "tail", limit: 0 }),
+      fullTimeline: timeline.fetch(agentId, {
+        direction: "tail",
+        limit: 0,
+        includeToolContextChanges: options.includeToolContextChanges,
+      }),
     };
   }
 
@@ -4728,6 +4733,7 @@ export class Session {
       cursor?: AgentTimelineCursor;
       limit: number;
       allowPersistedOmpHistory: boolean;
+      includeToolContextChanges?: boolean;
     },
   ): Promise<AgentTimelineLoad> {
     if (options.allowPersistedOmpHistory) {
@@ -7885,6 +7891,7 @@ export class Session {
         direction: "tail",
         limit: 0,
         allowPersistedOmpHistory: true,
+        includeToolContextChanges: true,
       });
       const timeline = loaded.fullTimeline ?? loaded.controlTimeline;
       const forkContext = buildAgentForkContextAttachment({

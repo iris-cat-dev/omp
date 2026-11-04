@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentTimelineItem, ToolCallTimelineItem } from "./agent-sdk-types.js";
+import { mergeToolCallItems } from "./timeline-projection.js";
+import { formatToolCallEntry } from "./activity-curator.js";
+import {
+  applyToolContextChanges,
+  copyContextText,
+  createToolContextChange,
+  toolContextKey,
+  type ToolContext,
+} from "./tool-context-history.js";
 import type {
   AgentTimelineFetchOptions,
+  AgentToolContextChange,
   AgentTimelineFetchResult,
   AgentTimelineRow,
 } from "./agent-timeline-store-types.js";
@@ -14,16 +24,47 @@ export interface SeedAgentTimelineOptions {
   timestamp?: string;
 }
 
+interface MaterializedToolCall {
+  rowIndex: number;
+  firstSeq: number;
+  item: ToolCallTimelineItem;
+}
+
+function toolForkContext(item: ToolCallTimelineItem): ToolContext {
+  return {
+    summary: copyContextText(formatToolCallEntry(item, { includeExternalToolInput: false }).text),
+    log: item.detail.type === "sub_agent" ? item.detail.log : "",
+  };
+}
+
+function toolCallRow(row: AgentTimelineRow, call: MaterializedToolCall): AgentTimelineRow {
+  return {
+    ...row,
+    get item() {
+      return call.item;
+    },
+  };
+}
+
 interface AgentTimelineState {
   epoch: string;
   rows: AgentTimelineRow[];
   nextSeq: number;
+  toolCalls: Map<string, MaterializedToolCall>;
+  contextsAtBoundary: Map<string, ToolContext>;
+  pendingToolContexts: Map<string, { callId: string; turnId?: string; context: ToolContext }>;
 }
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
+}
+
+function cloneFetchRow(row: AgentTimelineRow): AgentTimelineRow {
+  const copy = cloneRow(row);
+  delete copy.toolContextChanges;
+  return copy;
 }
 
 interface FetchContext {
@@ -35,6 +76,7 @@ interface FetchContext {
   minSeq: number;
   maxSeq: number;
   window: { minSeq: number; maxSeq: number; nextSeq: number };
+  cloneRow: (row: AgentTimelineRow) => AgentTimelineRow;
 }
 
 function fetchTail(ctx: FetchContext): AgentTimelineFetchResult {
@@ -52,7 +94,7 @@ function fetchTail(ctx: FetchContext): AgentTimelineFetchResult {
     window,
     hasOlder: selected.length > 0 && selected[0].seq > minSeq,
     hasNewer: false,
-    rows: selected.map(cloneRow),
+    rows: selected.map(ctx.cloneRow),
   };
 }
 
@@ -87,7 +129,7 @@ function fetchAfter(ctx: FetchContext): AgentTimelineFetchResult {
     window,
     hasOlder: selected[0].seq > minSeq,
     hasNewer: lastSelected !== null && lastSelected !== undefined && lastSelected.seq < maxSeq,
-    rows: selected.map(cloneRow),
+    rows: selected.map(ctx.cloneRow),
   };
 }
 
@@ -109,7 +151,7 @@ function fetchBefore(ctx: FetchContext): AgentTimelineFetchResult {
     window,
     hasOlder: selected.length > 0 && selected[0].seq > minSeq,
     hasNewer: endExclusive >= 0,
-    rows: selected.map(cloneRow),
+    rows: selected.map(ctx.cloneRow),
   };
 }
 
@@ -120,8 +162,8 @@ function fetchReset(
   const { state, direction, limit, selectAll, minSeq, window } = ctx;
   const rows =
     selectAll || limit >= state.rows.length
-      ? state.rows.map(cloneRow)
-      : state.rows.slice(state.rows.length - limit).map(cloneRow);
+      ? state.rows.map(ctx.cloneRow)
+      : state.rows.slice(state.rows.length - limit).map(ctx.cloneRow);
   return {
     epoch: state.epoch,
     direction,
@@ -133,6 +175,96 @@ function fetchReset(
     hasNewer: false,
     rows,
   };
+}
+
+function resolveHydratedToolCall(
+  toolCalls: Map<string, MaterializedToolCall>,
+  key: string,
+  item: ToolCallTimelineItem,
+  rowIndex: number,
+  firstSeq: number,
+): MaterializedToolCall {
+  let call = toolCalls.get(key);
+  if (call) {
+    // Historical sequence numbers remain addressable, but no longer own
+    // superseded argument/log snapshots.
+    if ((item.revision ?? 0) === 0 || (item.revision ?? 0) > (call.item.revision ?? 0)) {
+      call.item = {
+        ...mergeToolCallItems(call.item, item),
+        revision: Math.max((call.item.revision ?? 0) + 1, item.revision ?? 0),
+      };
+    }
+  } else {
+    call = {
+      rowIndex,
+      firstSeq,
+      item: { ...mergeToolCallItems(item, item), revision: Math.max(1, item.revision ?? 0) },
+    };
+    toolCalls.set(key, call);
+  }
+  return call;
+}
+
+function hydrateToolCallState(
+  rows: AgentTimelineRow[],
+): Pick<AgentTimelineState, "toolCalls" | "contextsAtBoundary" | "pendingToolContexts"> {
+  const toolCalls = new Map<string, MaterializedToolCall>();
+  const contextsAtBoundary = new Map<string, ToolContext>();
+  const pendingToolContexts: AgentTimelineState["pendingToolContexts"] = new Map();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row.toolContextChanges) {
+      applyToolContextChanges(contextsAtBoundary, row.toolContextChanges);
+    }
+    if (row.item.type !== "tool_call") continue;
+    const key = toolContextKey(row.item.callId, row.turnId);
+    const call = resolveHydratedToolCall(toolCalls, key, row.item, index, row.seq);
+    if (!row.toolContextChanges) {
+      const context = toolForkContext(call.item);
+      const change = createToolContextChange({
+        callId: row.item.callId,
+        turnId: row.turnId,
+        previous: contextsAtBoundary.get(key),
+        next: context,
+      });
+      row.toolContextChanges = change ? [change] : [];
+      contextsAtBoundary.set(key, context);
+    }
+    call.rowIndex = index;
+    rows[index] = toolCallRow(row, call);
+  }
+  for (const [key, call] of toolCalls) {
+    const context = toolForkContext(call.item);
+    const committed = contextsAtBoundary.get(key);
+    if (context.summary !== committed?.summary || context.log !== (committed?.log ?? "")) {
+      pendingToolContexts.set(key, {
+        callId: call.item.callId,
+        turnId: rows[call.rowIndex].turnId,
+        context,
+      });
+    }
+  }
+  return { toolCalls, contextsAtBoundary, pendingToolContexts };
+}
+
+function fetchCursorReset(ctx: FetchContext): AgentTimelineFetchResult | undefined {
+  const { state, direction, cursor, minSeq } = ctx;
+  if (cursor && typeof cursor.epoch === "string" && cursor.epoch !== state.epoch) {
+    return fetchReset(ctx, { staleCursor: true, gap: false });
+  }
+  if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
+    return fetchReset(ctx, { staleCursor: false, gap: true });
+  }
+  if (direction === "after" && cursor) {
+    for (const call of state.toolCalls.values()) {
+      if ((call.item.revision ?? 0) > 1 && call.firstSeq <= cursor.seq) {
+        // A sequence cursor cannot express updates to already-seen rows.
+        // Reset to an authoritative tail instead of silently skipping them.
+        return fetchReset(ctx, { staleCursor: false, gap: false });
+      }
+    }
+  }
+  return undefined;
 }
 
 export class InMemoryAgentTimelineStore {
@@ -148,10 +280,12 @@ export class InMemoryAgentTimelineStore {
       ? options.rows.map(cloneRow)
       : this.buildRowsFromItems(options?.items ?? [], options?.nextSeq ?? 1, timestamp);
     const nextSeq = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    const toolCallState = hydrateToolCallState(rows);
     this.states.set(agentId, {
       epoch: options?.epoch ?? randomUUID(),
       rows,
       nextSeq,
+      ...toolCallState,
     });
   }
 
@@ -228,15 +362,11 @@ export class InMemoryAgentTimelineStore {
       minSeq,
       maxSeq,
       window,
+      cloneRow: options?.includeToolContextChanges ? cloneRow : cloneFetchRow,
     };
 
-    if (cursor && typeof cursor.epoch === "string" && cursor.epoch !== state.epoch) {
-      return fetchReset(ctx, { staleCursor: true, gap: false });
-    }
-
-    if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
-      return fetchReset(ctx, { staleCursor: false, gap: true });
-    }
+    const reset = fetchCursorReset(ctx);
+    if (reset) return reset;
 
     if (state.rows.length === 0) {
       return {
@@ -267,16 +397,82 @@ export class InMemoryAgentTimelineStore {
     options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
+    if (item.type === "tool_call") {
+      state.pendingToolContexts.set(toolContextKey(item.callId, options?.turnId), {
+        callId: item.callId,
+        turnId: options?.turnId,
+        context: toolForkContext(item),
+      });
+    }
+    const contextChanges: AgentToolContextChange[] = [];
+    for (const [key, pending] of state.pendingToolContexts) {
+      const change = createToolContextChange({
+        callId: pending.callId,
+        turnId: pending.turnId,
+        previous: state.contextsAtBoundary.get(key),
+        next: pending.context,
+      });
+      if (change) contextChanges.push(change);
+      state.contextsAtBoundary.set(key, pending.context);
+    }
+    state.pendingToolContexts.clear();
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
       ...(options?.turnId ? { turnId: options.turnId } : {}),
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+      ...(contextChanges.length || item.type === "tool_call"
+        ? { toolContextChanges: contextChanges }
+        : {}),
     };
     state.nextSeq += 1;
     state.rows.push(row);
     return cloneRow(row);
+  }
+
+  upsertToolCall(
+    agentId: string,
+    item: ToolCallTimelineItem,
+    options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
+  ): AgentTimelineRow {
+    const state = this.requireState(agentId);
+    const key = toolContextKey(item.callId, options?.turnId);
+    const existing = state.toolCalls.get(key);
+    if (existing) {
+      existing.item = {
+        ...mergeToolCallItems(existing.item, item),
+        revision: (existing.item.revision ?? 0) + 1,
+      };
+      const context = toolForkContext(existing.item);
+      const committed = state.contextsAtBoundary.get(key);
+      if (context.summary === committed?.summary && context.log === (committed?.log ?? "")) {
+        state.pendingToolContexts.delete(key);
+      } else {
+        state.pendingToolContexts.set(key, {
+          callId: item.callId,
+          turnId: options?.turnId,
+          context,
+        });
+      }
+      const row = toolCallRow(
+        {
+          ...state.rows[existing.rowIndex],
+          timestamp: options?.timestamp ?? new Date().toISOString(),
+          ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+        },
+        existing,
+      );
+      state.rows[existing.rowIndex] = row;
+      return cloneRow(row);
+    }
+
+    const stored = { ...mergeToolCallItems(item, item), revision: 1 };
+    const row = this.append(agentId, stored, options);
+    const call = { rowIndex: state.rows.length - 1, firstSeq: row.seq, item: stored };
+    state.toolCalls.set(key, call);
+    state.rows[call.rowIndex] = toolCallRow(row, call);
+    return row;
   }
 
   getLastItem(agentId: string): AgentTimelineItem | null {

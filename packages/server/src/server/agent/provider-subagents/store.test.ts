@@ -106,3 +106,62 @@ describe("ProviderSubagentStore", () => {
     expect(page.hasOlder).toBe(false);
   });
 });
+
+test("materializes interleaved child tools and resets after cursors for revised results", () => {
+  const subagents = new ProviderSubagentStore();
+  subagents.apply("parent", "omp", { type: "upsert", id: "child", status: "running" });
+  for (let revision = 1; revision <= 256; revision += 1) {
+    subagents.apply("parent", "omp", {
+      type: "timeline",
+      id: "child",
+      item: {
+        type: "tool_call",
+        callId: "write-1",
+        name: "write",
+        status: "running",
+        error: null,
+        detail: { type: "unknown", input: "x".repeat(revision * 512), output: null },
+        metadata: { streamingArgs: "x".repeat(revision * 512) },
+      },
+    });
+  }
+  const before = subagents.fetchTimeline("parent", "child", { limit: 0 });
+  subagents.apply("parent", "omp", {
+    type: "timeline",
+    id: "child",
+    item: { type: "assistant_message", text: "Saved" },
+  });
+  subagents.apply("parent", "omp", {
+    type: "timeline",
+    id: "child",
+    item: {
+      type: "tool_call",
+      callId: "write-1",
+      name: "write",
+      status: "completed",
+      error: null,
+      detail: { type: "write", filePath: "/work/result.ts", content: "final source" },
+    },
+  });
+  const after = subagents.fetchTimeline("parent", "child", {
+    direction: "after",
+    cursor: { epoch: before.epoch, seq: before.window.maxSeq },
+    limit: 0,
+  });
+  expect(after.reset).toBe(true);
+  expect(after.rows.map((row) => row.seq)).toEqual([1, 2]);
+  expect(after.window.nextSeq).toBe(3);
+  expect(after.rows[0]?.item).toMatchObject({
+    status: "completed",
+    revision: 257,
+    detail: { type: "write", filePath: "/work/result.ts", content: "final source" },
+  });
+  const finalItem = after.rows[0]?.item;
+  if (finalItem?.type !== "tool_call") throw new Error("Expected the completed child tool");
+  expect(finalItem.metadata?.streamingArgs).toBeUndefined();
+  subagents.apply("parent", "omp", { type: "upsert", id: "child", status: "completed" });
+  expect(subagents.fetchTimeline("parent", "child", { limit: 0 }).rows[0]?.item).toMatchObject({
+    status: "completed",
+    detail: { content: "final source" },
+  });
+});

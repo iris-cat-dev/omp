@@ -4,6 +4,11 @@ import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@omp-desktop/protocol/tool-name-normalization";
 import { buildToolCallDisplayModel } from "@omp-desktop/protocol/tool-call-display";
 import { projectTimelineRows } from "./timeline-projection.js";
+import {
+  applyToolContextChanges,
+  toolContextKey,
+  type ToolContext,
+} from "./tool-context-history.js";
 
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
@@ -14,6 +19,7 @@ interface ActivityCuratorOptions {
   labelAssistantMessages?: boolean;
   includeKinds?: readonly AgentTimelineItem["type"][];
   includeExternalToolInput?: boolean;
+  toolContextOverrides?: ReadonlyMap<AgentTimelineItem, ToolContext>;
 }
 
 interface ActivityEntry {
@@ -108,11 +114,14 @@ function shouldIncludeItem(item: AgentTimelineItem, options?: ActivityCuratorOpt
   return options.includeKinds.includes(item.type);
 }
 
-function formatToolCallEntry(
+export function formatToolCallEntry(
   item: Extract<AgentTimelineItem, { type: "tool_call" }>,
   options?: ActivityCuratorOptions,
 ): ActivityEntry {
-  const inputJson = formatToolInputJson(inputFromUnknownDetail(item.detail));
+  const inputJson =
+    options?.includeExternalToolInput === false
+      ? null
+      : formatToolInputJson(inputFromUnknownDetail(item.detail));
   const display = buildToolCallDisplayModel({
     name: item.name,
     status: item.status,
@@ -130,6 +139,19 @@ function formatToolCallEntry(
     return activityEntry(`[${displayName}] ${inputJson}`);
   }
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
+}
+
+function appendToolContext(
+  entries: ActivityEntry[],
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+  options?: ActivityCuratorOptions,
+): void {
+  const context = options?.toolContextOverrides?.get(item);
+  entries.push(context ? activityEntry(context.summary) : formatToolCallEntry(item, options));
+  const log = context?.log ?? (item.detail.type === "sub_agent" ? item.detail.log : "");
+  if (log.trim()) {
+    entries.push(activityEntry(log.trim()));
+  }
 }
 
 function curateProjectedActivityEntries(
@@ -162,14 +184,10 @@ function curateProjectedActivityEntries(
       case "reasoning":
         buffers.thought = appendText(buffers.thought, item.text);
         break;
-      case "tool_call": {
+      case "tool_call":
         flushBuffers(entries, buffers, options);
-        entries.push(formatToolCallEntry(item, options));
-        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
-          entries.push(activityEntry(item.detail.log.trim()));
-        }
+        appendToolContext(entries, item, options);
         break;
-      }
       case "todo":
         flushBuffers(entries, buffers, options);
         entries.push(activityEntry("[Tasks]"));
@@ -235,6 +253,7 @@ function selectForkContextRows(input: {
   items: AgentTimelineItem[];
   boundaryCursor: { epoch: string; seq: number } | null;
   boundaryMessageId: string | null;
+  toolContextOverrides?: ReadonlyMap<AgentTimelineItem, ToolContext>;
 } {
   const boundaryCursor = input.cursorBoundary?.cursor ?? null;
   const boundaryMessageId = input.boundaryMessageId?.trim() || null;
@@ -267,11 +286,22 @@ function selectForkContextRows(input: {
   }
   const selectedRows = input.rows.slice(0, boundaryIndex + 1);
   const projected = projectTimelineRows({ rows: selectedRows, mode: "projected" });
+  const contexts = new Map<string, ToolContext>();
+  for (const row of selectedRows) {
+    if (row.toolContextChanges) applyToolContextChanges(contexts, row.toolContextChanges);
+  }
+  const toolContextOverrides = new Map<AgentTimelineItem, ToolContext>();
+  for (const entry of projected) {
+    if (entry.item.type !== "tool_call") continue;
+    const context = contexts.get(toolContextKey(entry.item.callId, entry.turnId));
+    if (context) toolContextOverrides.set(entry.item, context);
+  }
 
   return {
     items: projected.map((entry) => entry.item),
     boundaryCursor,
     boundaryMessageId,
+    toolContextOverrides,
   };
 }
 
@@ -319,6 +349,7 @@ export function buildAgentForkContextAttachment(input: {
     labelAssistantMessages: true,
     includeKinds: ["user_message", "assistant_message", "tool_call"],
     includeExternalToolInput: false,
+    toolContextOverrides: selected.toolContextOverrides,
   });
   const body =
     entries.length > 0

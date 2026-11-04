@@ -1,11 +1,20 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
+/** Detached, incremental fork-visible tool context, checkpointed at canonical row boundaries. */
+export interface AgentToolContextChange {
+  callId: string;
+  turnId?: string;
+  summary?: string;
+  log?: { prefix: number; deleteCount: number; text: string };
+}
+
 export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
   readonly turnId?: string;
   readonly providerMessageId?: string;
+  toolContextChanges?: readonly AgentToolContextChange[];
 }
 
 export interface AgentTimelineCursor {
@@ -24,6 +33,8 @@ export interface AgentTimelineFetchOptions {
    * - 0: all rows in the selected window
    */
   limit?: number;
+  /** Internal fork-context read; ordinary timeline responses omit these checkpoints. */
+  includeToolContextChanges?: boolean;
 }
 
 export interface AgentTimelineWindow {

@@ -64,6 +64,7 @@ const TOOL_CALL: AgentTimelineItem = {
 
 function toolCall(options?: {
   callId?: string;
+  revision?: number;
   status?: "running" | "completed" | "failed" | "canceled";
   output?: string;
   error?: unknown;
@@ -71,6 +72,7 @@ function toolCall(options?: {
   const status = options?.status ?? "running";
   return {
     type: "tool_call",
+    revision: options?.revision ?? 1,
     callId: options?.callId ?? "tool-1",
     name: "shell",
     status,
@@ -708,6 +710,57 @@ describe("target coalesced behavior", () => {
     }
   });
 
+  test("keeps one tool row across windows and retains failure against late progress", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      for (let index = 0; index < 3; index += 1) {
+        session.pushEvent(timelineEvent(toolCall({ output: `${index}:${"log".repeat(4096)}` })));
+        await waitForSessionEventQueue();
+        await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      }
+      session.pushEvent(assistant("Interleaved text"));
+      session.pushEvent(
+        timelineEvent(
+          toolCall({
+            status: "failed",
+            output: "Final output",
+            error: { message: "Actual failure" },
+          }),
+        ),
+      );
+      await waitForSessionEventQueue();
+      session.pushEvent(timelineEvent(toolCall({ output: "Late progress" })));
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      const rows = await harness.manager.getTimelineRows(agentId);
+      expect(rows.map((row) => row.seq)).toEqual([1, 2]);
+      expect(getTimelineItems(rows)).toEqual([
+        toolCall({
+          revision: 5,
+          status: "failed",
+          output: "Final output",
+          error: { message: "Actual failure" },
+        }),
+        { type: "assistant_message", text: "Interleaved text" },
+      ]);
+      const events = getTimelineStreamEvents(harness.events, agentId);
+      expectContiguousLiveSeqs(events, [1, 1, 1, 2, 1, 1]);
+      const tools = events.flatMap((event) =>
+        event.type === "agent_stream" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call"
+          ? [event.event.item]
+          : [],
+      );
+      expect(tools.map((item) => item.revision)).toEqual([1, 2, 3, 4, 5]);
+      expect(tools.at(-1)).toEqual(rows[0].item);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   test("terminal tool call statuses flush immediately with pending text", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
@@ -1165,12 +1218,20 @@ describe("target coalesced behavior", () => {
 
       expect(getTimelineItems(rows)).toEqual([
         { type: "assistant_message", text: "abc" },
-        TOOL_CALL,
-        TOOL_CALL,
+        { ...TOOL_CALL, revision: 2 },
       ]);
       expect(timelineEvents).toHaveLength(3);
-      expectContiguousRowSeqs(rows, [1, 2, 3]);
-      expectContiguousLiveSeqs(timelineEvents, [1, 2, 3]);
+      expectContiguousRowSeqs(rows, [1, 2]);
+      expectContiguousLiveSeqs(timelineEvents, [1, 2, 2]);
+      expect(
+        timelineEvents
+          .filter((event) => event.type === "agent_stream")
+          .map((event) => (event.event.type === "timeline" ? event.event.item : null)),
+      ).toEqual([
+        { type: "assistant_message", text: "abc" },
+        { ...TOOL_CALL, revision: 1 },
+        { ...TOOL_CALL, revision: 2 },
+      ]);
     } finally {
       idempotencyHarness.cleanup();
     }

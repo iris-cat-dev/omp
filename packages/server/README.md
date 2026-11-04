@@ -97,6 +97,25 @@ npm installation. Management uses OMP's existing stores. Selecting the SDK
 backend does not provision or enable plugins; explicit install/link/enable
 commands retain their existing CLI behavior.
 
+## Timeline memory retention
+
+Tool progress is materialized per call/turn instead of appending every growing
+argument, patch or task-card snapshot. Tool rows keep their sequence number and
+increase their revision. Durable writes coalesce pending revisions and serialize
+the initial insert before later updates. The application accepts newer revisions
+at existing sequence numbers and rejects stale live/fetched snapshots.
+
+Old history retains its sequence numbers but shares superseded tool payloads.
+Fork-visible summaries and task logs use detached text-edit checkpoints at
+canonical row boundaries, preserving earlier fork context without retaining each
+full historical log. Ordinary timeline fetches omit these internal checkpoints.
+Oversized shell/plain-text content is copied after truncation so a short V8
+sliced string cannot retain the full original output.
+
+The daemon and application must be deployed together for revision-aware tool
+updates. These changes do not enlarge mini-electron's compressed V8 heap cage;
+larger Node-only heaps require a separate engine architecture decision.
+
 ## Tech Stack
 
 - **Server**: Express, TypeScript, ws (WebSocket)

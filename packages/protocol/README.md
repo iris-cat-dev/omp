@@ -43,3 +43,24 @@ RPC deadlines are unchanged: sufficiently slow transfers can still time out.
 Diagnostics report rejected byte counts, buffer usage, limits, message types and
 bounded request identifiers, never message content. History and directory
 schemas, cursors and stored data are unchanged.
+
+## Materialized tool timeline rows
+
+Tool items carry an optional nonnegative `revision`. A new call/turn gets one
+canonical row; progress replaces that row with a higher revision without changing
+its `seq`. Other items remain append-only. Legacy rows without revisions remain
+supported; unsequenced live progress neither advances nor erases the committed
+revision.
+Clients must apply newer tool revisions even behind the current sequence cursor,
+reject older revisions within the same epoch, and retain newer live revisions
+when a fetched snapshot races them. A new epoch starts a new revision namespace.
+
+An `after` fetch may return an authoritative `reset` when earlier tool rows have
+changed. Tail refreshes can update tool state even when `window.maxSeq` is
+unchanged. Upgrade the daemon and application together; sequence-only duplicate
+suppression is not sufficient for materialized tool updates.
+
+Imported history keeps its original sequence numbers while superseded tool
+payloads share current state. Server-only detached text-edit checkpoints preserve
+the tool summaries and task logs visible at message/fork boundaries; normal
+timeline responses do not expose those checkpoints.

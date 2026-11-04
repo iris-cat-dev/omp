@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildAgentForkContextAttachment, curateAgentActivity } from "./activity-curator.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
+import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 function toolCallItem(params: {
   callId: string;
@@ -439,4 +440,133 @@ second line'`,
       }),
     ).toThrow("Selected assistant message is no longer available.");
   });
+});
+
+describe("materialized tool fork checkpoints", () => {
+  it("keeps earlier tool labels across later updates and serialized recovery", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent");
+    store.append("agent", { type: "user_message", text: "Run it" });
+    store.upsertToolCall(
+      "agent",
+      toolCallItem({
+        callId: "terminal",
+        name: "terminal",
+        status: "running",
+        detail: { type: "plain_text", label: "before boundary" },
+      }),
+    );
+    store.append("agent", {
+      type: "assistant_message",
+      text: "Partial result.",
+      messageId: "before",
+    });
+    store.upsertToolCall(
+      "agent",
+      toolCallItem({
+        callId: "terminal",
+        name: "terminal",
+        status: "completed",
+        detail: { type: "plain_text", label: "after boundary" },
+      }),
+    );
+    const recovered = new InMemoryAgentTimelineStore();
+    recovered.initialize("agent", { rows: JSON.parse(JSON.stringify(store.getRows("agent"))) });
+    recovered.append("agent", {
+      type: "assistant_message",
+      text: "Finished.",
+      messageId: "after",
+    });
+    for (const timeline of [store, recovered]) {
+      const fork = buildAgentForkContextAttachment({
+        rows: timeline.fetch("agent", { limit: 0, includeToolContextChanges: true }).rows,
+        boundaryMessageId: "before",
+      });
+      expect(fork.attachment.text).toContain("[Terminal] before boundary");
+      expect(fork.attachment.text).not.toContain("after boundary");
+    }
+    const latest = buildAgentForkContextAttachment({
+      rows: recovered.getRows("agent"),
+      boundaryMessageId: "after",
+    });
+    expect(latest.attachment.text).toContain("[Terminal] after boundary");
+  });
+
+  it("replays appended and rolled task logs without leaking future log text into a fork", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent");
+    store.upsertToolCall(
+      "agent",
+      toolCallItem({
+        callId: "task",
+        name: "task",
+        status: "completed",
+        detail: { type: "sub_agent", description: "Inspect", log: "first\\nsecond" },
+      }),
+    );
+    store.append("agent", { type: "assistant_message", text: "Checkpoint.", messageId: "before" });
+    store.upsertToolCall(
+      "agent",
+      toolCallItem({
+        callId: "task",
+        name: "task",
+        status: "completed",
+        detail: { type: "sub_agent", description: "Inspect", log: "second\\nfuture" },
+      }),
+    );
+    store.append("agent", { type: "assistant_message", text: "Updated.", messageId: "after" });
+    const recovered = new InMemoryAgentTimelineStore();
+    recovered.initialize("agent", { rows: JSON.parse(JSON.stringify(store.getRows("agent"))) });
+    const before = buildAgentForkContextAttachment({
+      rows: recovered.getRows("agent"),
+      boundaryMessageId: "before",
+    });
+    expect(before.attachment.text).toContain("first\\nsecond");
+    expect(before.attachment.text).not.toContain("future");
+    const after = buildAgentForkContextAttachment({
+      rows: recovered.getRows("agent"),
+      boundaryMessageId: "after",
+    });
+    expect(after.attachment.text).toContain("second\\nfuture");
+    expect(after.attachment.text).not.toContain("first\\nsecond");
+    expect(
+      store
+        .fetch("agent", { limit: 0 })
+        .rows.every((entry) => entry.toolContextChanges === undefined),
+    ).toBe(true);
+  });
+});
+
+it("keeps effective legacy tool context when normalization ignores late running progress", () => {
+  const legacy = [
+    row(
+      1,
+      toolCallItem({
+        callId: "terminal",
+        name: "terminal",
+        status: "completed",
+        detail: { type: "plain_text", label: "saved result" },
+      }),
+    ),
+    row(2, { type: "assistant_message", text: "First.", messageId: "first" }),
+    row(
+      3,
+      toolCallItem({
+        callId: "terminal",
+        name: "terminal",
+        status: "running",
+        detail: { type: "plain_text", label: "ignored late progress" },
+      }),
+    ),
+    row(4, { type: "assistant_message", text: "Second.", messageId: "second" }),
+  ];
+  const expected = buildAgentForkContextAttachment({ rows: legacy, boundaryMessageId: "second" });
+  const normalized = new InMemoryAgentTimelineStore();
+  normalized.initialize("agent", { rows: legacy });
+  const actual = buildAgentForkContextAttachment({
+    rows: normalized.getRows("agent"),
+    boundaryMessageId: "second",
+  });
+  expect(actual.attachment.text).toBe(expected.attachment.text);
+  expect(actual.attachment.text).not.toContain("ignored late progress");
 });

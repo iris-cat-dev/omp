@@ -642,12 +642,34 @@ function isForegroundAssistantMessage(item: StreamItem | undefined): item is Ass
   return item?.kind === "assistant_message" && item.customMessage === undefined;
 }
 
+function selectCanonicalToolRevision(
+  canonicalItem: StreamItem,
+  previousCalls: ReadonlyMap<string, AgentToolCallItem>,
+): StreamItem {
+  if (!isAgentToolCallItem(canonicalItem)) return canonicalItem;
+  const previous = previousCalls.get(canonicalItem.payload.data.callId);
+  if (
+    previous &&
+    previous.timelineCursor?.epoch === canonicalItem.timelineCursor?.epoch &&
+    previous.payload.data.revision !== undefined &&
+    previous.payload.data.revision >= (canonicalItem.payload.data.revision ?? 0)
+  ) {
+    return previous;
+  }
+  return canonicalItem;
+}
+
 function mergePreservedTailToolCalls(
   input: CanonicalStreamReplacementInput,
   canonicalTail: StreamItem[],
 ): StreamItem[] {
   const canonicalCallIds = new Set(
     input.canonical.filter(isAgentToolCallItem).map((item) => item.payload.data.callId),
+  );
+  const previousCalls = new Map(
+    [...input.previousTail, ...input.previousHead]
+      .filter(isAgentToolCallItem)
+      .map((item) => [item.payload.data.callId, item]),
   );
   const survivingTailToolCalls = input.preserveContinuity
     ? input.previousTail.filter(
@@ -673,7 +695,7 @@ function mergePreservedTailToolCalls(
       continue;
     }
     if (canonicalItem !== undefined) {
-      mergedTail.push(canonicalItem);
+      mergedTail.push(selectCanonicalToolRevision(canonicalItem, previousCalls));
       canonicalIndex += 1;
       continue;
     }
@@ -810,6 +832,7 @@ interface OrchestratorToolCallData {
 export interface AgentToolCallData {
   provider: AgentProvider;
   callId: string;
+  revision?: number;
   name: string;
   status: AgentToolCallStatus;
   error: unknown;
@@ -1299,12 +1322,38 @@ export function mergeAgentToolCallItem(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): AgentToolCallItem {
-  const mergedStatus = mergeAgentToolCallStatus(existing.payload.data.status, data.status);
+  const previousRevision = existing.payload.data.revision ?? 0;
+  const sameEpoch =
+    !timelineCursor ||
+    !existing.timelineCursor ||
+    timelineCursor.epoch === existing.timelineCursor.epoch;
+  if (
+    sameEpoch &&
+    data.revision !== undefined &&
+    previousRevision > 0 &&
+    data.revision <= previousRevision
+  ) {
+    return existing;
+  }
+  if (
+    data.revision === undefined &&
+    existing.payload.data.status !== "running" &&
+    data.status === "running"
+  )
+    return existing;
+  const mergedStatus =
+    data.revision !== undefined
+      ? data.status
+      : mergeAgentToolCallStatus(existing.payload.data.status, data.status);
   const mergedError =
     mergedStatus === "failed"
       ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
       : null;
-  const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
+  let mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
+  if (mergedStatus !== "running" && mergedMetadata && "streamingArgs" in mergedMetadata) {
+    mergedMetadata = { ...mergedMetadata };
+    delete mergedMetadata.streamingArgs;
+  }
   const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
   return {
@@ -1316,6 +1365,7 @@ export function mergeAgentToolCallItem(
       data: {
         ...existing.payload.data,
         ...data,
+        revision: data.revision ?? existing.payload.data.revision,
         status: mergedStatus,
         error: mergedError,
         detail: mergedDetail,
@@ -1343,6 +1393,7 @@ function appendAgentToolCall(
     if (
       merged.payload.data.provider === existing.payload.data.provider &&
       merged.payload.data.callId === existing.payload.data.callId &&
+      merged.payload.data.revision === existing.payload.data.revision &&
       merged.payload.data.name === existing.payload.data.name &&
       merged.payload.data.status === existing.payload.data.status &&
       merged.payload.data.error === existing.payload.data.error &&
@@ -1555,6 +1606,7 @@ function reduceTimelineToolCall(
     {
       provider: event.provider,
       callId: item.callId,
+      revision: item.revision,
       name: item.name,
       status: item.status,
       error: item.error,
