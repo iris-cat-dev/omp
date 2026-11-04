@@ -18,7 +18,7 @@ const hostModule = z.object({
 });
 const daemonHostModule = z.object({
   stopNodeRpcDaemon: z.custom<
-    (input: { cwd: string; name: string }) => Promise<void>
+    (input: { cwd: string; name: string; id?: string }) => Promise<void>
   >(
     (value) => typeof value === "function",
     "The selected SDK does not export stopNodeRpcDaemon; rebuild its Node artifacts",
@@ -42,7 +42,11 @@ export async function runOmpSdkHost(): Promise<void> {
     const sdk = daemonHostModule.parse(
       createRequire(import.meta.url)(installation.rpcEntry),
     );
-    await sdk.stopNodeRpcDaemon({ cwd: process.cwd(), name: process.argv[3]! });
+    await sdk.stopNodeRpcDaemon({
+      cwd: process.cwd(),
+      name: process.argv[3]!,
+      id: process.env.OMP_DESKTOP_STOP_DAEMON_ID,
+    });
     return;
   }
   if (process.argv[2] === "plugin") {

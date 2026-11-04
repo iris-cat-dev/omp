@@ -50,6 +50,7 @@ interface AgentTimelineState {
   epoch: string;
   rows: AgentTimelineRow[];
   nextSeq: number;
+  contentVersion: number;
   toolCalls: Map<string, MaterializedToolCall>;
   contextsAtBoundary: Map<string, ToolContext>;
   pendingToolContexts: Map<string, { callId: string; turnId?: string; context: ToolContext }>;
@@ -64,6 +65,7 @@ function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
 function cloneFetchRow(row: AgentTimelineRow): AgentTimelineRow {
   const copy = cloneRow(row);
   delete copy.toolContextChanges;
+  delete copy.contentVersion;
   return copy;
 }
 
@@ -87,6 +89,7 @@ function fetchTail(ctx: FetchContext): AgentTimelineFetchResult {
       : state.rows.slice(state.rows.length - limit);
   return {
     epoch: state.epoch,
+    contentVersion: state.contentVersion,
     direction,
     reset: false,
     staleCursor: false,
@@ -101,35 +104,34 @@ function fetchTail(ctx: FetchContext): AgentTimelineFetchResult {
 function fetchAfter(ctx: FetchContext): AgentTimelineFetchResult {
   const { state, direction, limit, selectAll, cursor, minSeq, maxSeq, window } = ctx;
   const baseSeq = cursor?.seq ?? 0;
+  const acknowledgedVersion = cursor?.contentVersion ?? 0;
+  const revisions = acknowledgedVersion < state.contentVersion
+    ? state.rows.filter((row) => row.seq <= baseSeq && (row.contentVersion ?? 0) > acknowledgedVersion)
+        .sort((left, right) => (left.contentVersion ?? 0) - (right.contentVersion ?? 0))
+    : [];
+  const revisedRows = selectAll ? revisions : revisions.slice(0, limit);
+  const hasMoreRevisions = revisedRows.length < revisions.length;
+  const contentVersion = hasMoreRevisions
+    ? revisedRows.at(-1)!.contentVersion!
+    : state.contentVersion;
   const startIdx = state.rows.findIndex((row) => row.seq > baseSeq);
-  if (startIdx < 0) {
-    return {
-      epoch: state.epoch,
-      direction,
-      reset: false,
-      staleCursor: false,
-      gap: false,
-      window,
-      hasOlder: baseSeq >= minSeq,
-      hasNewer: false,
-      rows: [],
-    };
-  }
-
-  const selected = selectAll
+  const selected = startIdx < 0 ? [] : selectAll
     ? state.rows.slice(startIdx)
     : state.rows.slice(startIdx, startIdx + limit);
-  const lastSelected = selected[selected.length - 1];
+  const lastSelected = selected.at(-1);
   return {
     epoch: state.epoch,
+    contentVersion,
+    hasMoreRevisions,
     direction,
     reset: false,
     staleCursor: false,
     gap: false,
     window,
-    hasOlder: selected[0].seq > minSeq,
-    hasNewer: lastSelected !== null && lastSelected !== undefined && lastSelected.seq < maxSeq,
+    hasOlder: selected.length > 0 ? selected[0].seq > minSeq : baseSeq >= minSeq,
+    hasNewer: hasMoreRevisions || (lastSelected !== undefined && lastSelected.seq < maxSeq),
     rows: selected.map(ctx.cloneRow),
+    revisedRows: revisedRows.map(ctx.cloneRow),
   };
 }
 
@@ -145,6 +147,7 @@ function fetchBefore(ctx: FetchContext): AgentTimelineFetchResult {
   return {
     epoch: state.epoch,
     direction,
+    contentVersion: state.contentVersion,
     reset: false,
     staleCursor: false,
     gap: false,
@@ -164,15 +167,24 @@ function fetchReset(
     selectAll || limit >= state.rows.length
       ? state.rows.map(ctx.cloneRow)
       : state.rows.slice(state.rows.length - limit).map(ctx.cloneRow);
+  // A bounded reset can retain visible old tool identities in the replica.
+  // Do not acknowledge unseen edits outside this page: after pages drain them.
+  const needsRevisionCatchUp = rows.length < state.rows.length && ctx.cursor?.epoch === state.epoch;
+  const contentVersion = needsRevisionCatchUp
+    ? (ctx.cursor?.contentVersion !== undefined && ctx.cursor.contentVersion <= state.contentVersion
+        ? ctx.cursor.contentVersion : 0)
+    : state.contentVersion;
   return {
     epoch: state.epoch,
+    contentVersion,
     direction,
     reset: true,
     staleCursor: flags.staleCursor,
     gap: flags.gap,
     window,
     hasOlder: rows.length > 0 && rows[0].seq > minSeq,
-    hasNewer: false,
+    hasNewer: contentVersion < state.contentVersion,
+    hasMoreRevisions: contentVersion < state.contentVersion,
     rows,
   };
 }
@@ -255,14 +267,11 @@ function fetchCursorReset(ctx: FetchContext): AgentTimelineFetchResult | undefin
   if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
     return fetchReset(ctx, { staleCursor: false, gap: true });
   }
-  if (direction === "after" && cursor) {
-    for (const call of state.toolCalls.values()) {
-      if ((call.item.revision ?? 0) > 1 && call.firstSeq <= cursor.seq) {
-        // A sequence cursor cannot express updates to already-seen rows.
-        // Reset to an authoritative tail instead of silently skipping them.
-        return fetchReset(ctx, { staleCursor: false, gap: false });
-      }
-    }
+  if (direction === "after" && (!cursor || cursor.contentVersion === undefined ||
+      cursor.contentVersion > state.contentVersion || cursor.seq > ctx.maxSeq)) {
+    // A seq alone cannot acknowledge edits to old rows. Unknown/restarted
+    // replicas receive one authoritative page, then acknowledge its watermark.
+    return fetchReset(ctx, { staleCursor: false, gap: false });
   }
   return undefined;
 }
@@ -280,11 +289,17 @@ export class InMemoryAgentTimelineStore {
       ? options.rows.map(cloneRow)
       : this.buildRowsFromItems(options?.items ?? [], options?.nextSeq ?? 1, timestamp);
     const nextSeq = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    let contentVersion = 0;
+    for (const row of rows) contentVersion = Math.max(contentVersion, row.contentVersion ?? 0);
+    for (const row of rows) {
+      if (row.contentVersion === undefined) row.contentVersion = ++contentVersion;
+    }
     const toolCallState = hydrateToolCallState(rows);
     this.states.set(agentId, {
       epoch: options?.epoch ?? randomUUID(),
       rows,
       nextSeq,
+      contentVersion,
       ...toolCallState,
     });
   }
@@ -325,7 +340,8 @@ export class InMemoryAgentTimelineStore {
     if (!row || row.item.type !== "user_message") {
       return null;
     }
-    const enriched: AgentTimelineRow = { ...row, providerMessageId };
+    if (row.providerMessageId === providerMessageId) return cloneRow(row);
+    const enriched: AgentTimelineRow = { ...row, providerMessageId, contentVersion: ++state.contentVersion };
     state.rows[index] = enriched;
     return cloneRow(enriched);
   }
@@ -333,6 +349,7 @@ export class InMemoryAgentTimelineStore {
   getEpoch(agentId: string): string {
     return this.requireState(agentId).epoch;
   }
+
 
   fetch(agentId: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(agentId);
@@ -371,6 +388,7 @@ export class InMemoryAgentTimelineStore {
     if (state.rows.length === 0) {
       return {
         epoch: state.epoch,
+        contentVersion: state.contentVersion,
         direction,
         reset: false,
         staleCursor: false,
@@ -418,6 +436,7 @@ export class InMemoryAgentTimelineStore {
     state.pendingToolContexts.clear();
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
+      contentVersion: ++state.contentVersion,
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
       ...(options?.turnId ? { turnId: options.turnId } : {}),
@@ -440,8 +459,13 @@ export class InMemoryAgentTimelineStore {
     const key = toolContextKey(item.callId, options?.turnId);
     const existing = state.toolCalls.get(key);
     if (existing) {
+      const merged = mergeToolCallItems(existing.item, item);
+      if (merged === existing.item && (options?.providerMessageId === undefined ||
+          options.providerMessageId === state.rows[existing.rowIndex].providerMessageId)) {
+        return cloneRow(state.rows[existing.rowIndex]);
+      }
       existing.item = {
-        ...mergeToolCallItems(existing.item, item),
+        ...merged,
         revision: (existing.item.revision ?? 0) + 1,
       };
       const context = toolForkContext(existing.item);
@@ -459,6 +483,7 @@ export class InMemoryAgentTimelineStore {
         {
           ...state.rows[existing.rowIndex],
           timestamp: options?.timestamp ?? new Date().toISOString(),
+          contentVersion: ++state.contentVersion,
           ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
         },
         existing,

@@ -24,6 +24,8 @@ The current turn's **Fork** button stays hidden while the conversation is runnin
 
 Forking a completed turn from reopened OMP history reads the same persisted timeline as the chat, without resuming the source runtime or changing its timeline epoch. The copied history stops at the selected response; genuinely stale or missing timeline positions remain errors.
 
+Conversation rewind removes the selected prompt from the new transcript, while preserving earlier messages, images, and outline anchors. Desktop reads the new persisted active tip; the removed checkpoint is not a valid branch leaf and must not turn the retained history into an empty snapshot.
+
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.
 
 After a daemon restart, saved `running` or `initializing` snapshots without a loaded runtime appear as `closed`, not as evidence that the interrupted work completed. **Stop**, `cancel_agent`, and `kill_agent` accept an existing unloaded conversation as already stopped without launching a provider or deleting history. Unknown Agent IDs remain errors. Stopping an unloaded conversation returns its inactive snapshot and refreshes the requesting client's subscribed conversation directory.
@@ -102,6 +104,14 @@ All native background job types share this list, live output, and cancellation. 
 
 The indicator stays hidden when no process content exists, including fetch failures and disconnections. Errors remain visible if retained process entries are available.
 
+Background ownership is stable as `desktop:<agentId>` across rewind: changing the native transcript ID does not orphan or transfer jobs or retained eval variables.
+
+### Runtime retention and safe unload
+
+After five idle minutes Desktop considers unloading the runtime and rechecks retained conversations every 30 seconds. It keeps history and the conversation record. Running or admitted work, queued or unconfirmed input, pending permissions, background dependencies, and retained variables/resources prevent unload; idle does not mean disposable. Runtime retention controls show the actual inventory and retention reasons, not a guessed memory saving.
+
+Explicit resource release permanently discards that resource's variables. Busy or shared resources and resources required by background work cannot be released. Safe unload inventories resources, drains pending persistence, inventories again, then synchronously fences final admission before disposal. `kill_agent` uses this safe unload path rather than bypassing the data and variable gates.
+
 ## Conversation organization and history
 
 Sidebar rows always use the conversation title and last-activity time (for example `2h` or `2d`); missing timestamps leave the space blank. The former **Title**, **Diff stats**, and **Last activity** display choices are removed without resetting other settings.
@@ -128,7 +138,7 @@ Desktop-injected tools distinguish:
 | --------------- | -------------------------------------------------------------------------- |
 | `cancel_agent`  | Stops a run.                                                               |
 | `archive_agent` | Hides the conversation, retaining history.                                 |
-| `kill_agent`    | Terminates a loaded runtime, retaining its record.                         |
+| `kill_agent`    | Safely unloads an eligible runtime, retaining its record; retained work/resources can refuse unload. |
 | `delete_agent`  | Permanently removes the Desktop conversation record and retained timeline. |
 
 Native `archive_agent` updates connected sidebars without a refresh. A workspace whose conversations are all archived is hidden from the project and status lists, including their keyboard shortcuts, but its workspace record, files, and history remain intact. New empty workspaces and workspaces with another unarchived conversation remain visible. Reopening an archived conversation restores its sidebar entry.
@@ -156,6 +166,8 @@ The child's native progress owns its displayed model selector, including thinkin
 An idle child can resume under the same ID. A new native `started` event begins that run; delayed progress or metadata cannot reopen a completed or canceled run. The existing transcript remains available across continuation and reconnection.
 
 Native snapshots and JSONL history restore child transcripts independently of the parent's conversation history. Retained child lists and paged transcripts can also be read while the parent runtime is unloaded. Ordinary reads preserve the timeline epoch; explicit history replacement, such as a session reload or rewind, can replace it and requires a fresh client snapshot.
+
+Reading cold history, focus, attention, or model metadata does not start an SDK host or provider session. Retained snapshots are used when available; dynamic information without a snapshot is explicitly unavailable. Tool-body changes arrive incrementally through `contentVersion` and `revisedEntries`/`revisedRows`, even behind the sequence cursor. An older page cannot roll back a newer revision, and an ordinary tool revision does not reset an `after` history window.
 
 ## Schedules
 

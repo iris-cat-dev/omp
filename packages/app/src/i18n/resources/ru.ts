@@ -11,6 +11,8 @@ export const ru: TranslationResources = {
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ru,
   visualFeedback: en.visualFeedback,
+  runtimeRetention: en.runtimeRetention,
+  runtimeResources: en.runtimeResources,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Назад",

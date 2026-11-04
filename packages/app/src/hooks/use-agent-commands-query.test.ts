@@ -64,4 +64,15 @@ describe("fetchAgentCommands", () => {
 
     expect(client.calls).toEqual([{ agentId: "agent-1", draftConfig: undefined }]);
   });
+
+  it("reports unavailable cold command metadata instead of a successful empty list", async () => {
+    const client = createClient({
+      ...commandsPayload([]),
+      error: "Command metadata is unavailable. Resume explicitly to refresh commands.",
+    });
+    await expect(fetchAgentCommands({ client, agentId: "cold-agent" })).rejects.toThrow(
+      "Command metadata is unavailable",
+    );
+    expect(client.calls).toEqual([{ agentId: "cold-agent", draftConfig: undefined }]);
+  });
 });

@@ -6,6 +6,7 @@ import { streamOmpHistory } from "./history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import { OmpNativeUsageTracker } from "./native-usage.js";
 import { OmpHistoryMapper } from "./message-history.js";
+import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
 type Assistant = Extract<OmpAgentMessage, { role: "assistant" }>;
 const BASE = 1_800_000_000_000;
@@ -249,6 +250,7 @@ test("fork replay exposes only this file's own native requests as speed referenc
     for await (const event of streamOmpHistory({
       sessionFile,
       provider: "omp",
+      runtimeSettings: ompHistoryRuntimeSettings,
       onOwnAssistant: (message) => references.push(message.responseId!),
     })) {
       if (

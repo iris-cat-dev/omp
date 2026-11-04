@@ -35,6 +35,7 @@ export interface ProviderSubagentTimelineState {
   head: StreamItem[];
   epoch: string | null;
   lastSeq: number;
+  contentVersion?: number;
   hasOlder: boolean;
   rows: Map<number, ProviderSubagentTimelineRow>;
   needsRefresh: boolean;
@@ -190,6 +191,8 @@ export function refreshProviderSubagentTimeline(
 
   if (direction === "tail") setSyncStatus("timelineSync", key, "loading");
   const request = (async () => {
+    let requestDirection = direction;
+    let cursor = options.cursor;
     // A new run or epoch observed in flight invalidates that snapshot. Repeat within
     // the same single flight, rather than racing a second request against the first.
     while (generation(serverId) === connectionGeneration) {
@@ -199,7 +202,8 @@ export function refreshProviderSubagentTimeline(
       const payload = await client.fetchProviderSubagentTimeline(parentAgentId, subagentId, {
         limit: TIMELINE_FETCH_PAGE_SIZE,
         ...options,
-        direction,
+        direction: requestDirection,
+        ...(cursor ? { cursor } : {}),
       });
       if (generation(serverId) !== connectionGeneration) return;
       if (payload.error) throw new Error(payload.error);
@@ -216,6 +220,14 @@ export function refreshProviderSubagentTimeline(
         return;
       }
       currentState.replaceTimeline(serverId, payload);
+      if (payload.hasMoreRevisions || (requestDirection === "after" && payload.hasNewer)) {
+        const loaded = useProviderSubagentStore.getState().timelines.get(key);
+        if (!loaded?.epoch) throw new Error("Subagent revision page has no cursor");
+        requestDirection = "after";
+        cursor = { epoch: loaded.epoch, seq: loaded.lastSeq,
+          ...(loaded.contentVersion !== undefined ? { contentVersion: loaded.contentVersion } : {}) };
+        continue;
+      }
       if (direction !== "tail") return;
       setSyncStatus("timelineSync", key, payload.provider ? "ready" : "missing");
       if (
@@ -367,7 +379,9 @@ function isNewerToolRevision(
     incoming.item.type === "tool_call" &&
     existing?.item.type === "tool_call" &&
     incoming.item.callId === existing.item.callId &&
-    (incoming.item.revision ?? 0) > (existing.item.revision ?? 0)
+    (incoming.item.status !== "running" || existing.item.status === "running") &&
+    ((incoming.item.revision ?? 0) > (existing.item.revision ?? 0) ||
+      (incoming.item.status !== "running" && existing.item.status === "running"))
   );
 }
 
@@ -379,6 +393,12 @@ function buildTimelineResponseRows(
   const rows = new Map<number, ProviderSubagentTimelineRow>();
   for (const row of payload.rows) {
     rows.set(row.seq, { provider, item: row.item, timestamp: row.timestamp });
+  }
+  for (const row of payload.revisedRows ?? []) {
+    // Unloaded rows are fetched by seq when viewed; edits only hydrate retained rows.
+    if (existing?.epoch !== payload.epoch || !existing.rows.has(row.seq)) continue;
+    const candidate = { provider, item: row.item, timestamp: row.timestamp };
+    if (!isNewerToolRevision(rows.get(row.seq) ?? candidate, candidate)) rows.set(row.seq, candidate);
   }
   const liveRows =
     existing?.epoch === payload.epoch ? existing.rows : existing?.pendingEpochs.get(payload.epoch);
@@ -688,6 +708,9 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       return {
         timelines: new Map(state.timelines).set(key, {
           ...next,
+          ...(payload.reset || payload.direction === "after" || existing?.epoch !== payload.epoch || existing?.contentVersion === undefined
+            ? { contentVersion: payload.reset ? payload.contentVersion : Math.max(existing?.contentVersion ?? 0, payload.contentVersion ?? 0) }
+            : { contentVersion: existing?.contentVersion }),
           retiredEpochs,
           pendingEpochs:
             payload.direction === "tail" ? new Map() : (existing?.pendingEpochs ?? new Map()),

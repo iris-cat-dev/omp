@@ -311,6 +311,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isAuthoritativeHistoryReady,
     onNearBottomChange,
     onReadingPositionChange,
+    onVisibleHistoryItemsChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -336,6 +337,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return value;
   };
   const lastKnownScrollTopRef = useRef(0);
+  const readingAnchorRef = useRef<{ rowId: string; offset: number } | null>(null);
+  const adjustingResidencyAnchorRef = useRef(false);
+  const previousFirstHistoryIdRef = useRef<string | undefined>(undefined);
   const mouseScrollGestureRef = useRef<
     | { kind: "scrollbar"; pointerId: number }
     | {
@@ -417,6 +421,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
+  const firstHistoryId = segments.historyVirtualized[0]?.id ?? segments.historyMounted[0]?.id;
+  useLayoutEffect(() => {
+    const previous = previousFirstHistoryIdRef.current;
+    previousFirstHistoryIdRef.current = firstHistoryId;
+    const anchor = readingAnchorRef.current;
+    const scrollContainer = scrollContainerRef.current;
+    const content = contentRef.current;
+    if (!isActive || !anchor || !scrollContainer || !content || !previous || previous === firstHistoryId || followOutputRef.current || historyStartPrependAnchorRef.current) return;
+    const virtualIndex = segments.historyVirtualized.findIndex((item) => item.id === anchor.rowId);
+    const mounted = findHistoryRowElement(content, anchor.rowId);
+    if (virtualIndex < 0 && !mounted) return;
+    adjustingResidencyAnchorRef.current = true;
+    if (virtualIndex >= 0) rowVirtualizer.scrollToIndex(virtualIndex, { align: "start" });
+    const frame = window.requestAnimationFrame(() => {
+      const element = findHistoryRowElement(content, anchor.rowId);
+      if (element) {
+        scrollContainer.scrollTop += element.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top - anchor.offset;
+        lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+      }
+      adjustingResidencyAnchorRef.current = false;
+    });
+    return () => { window.cancelAnimationFrame(frame); adjustingResidencyAnchorRef.current = false; };
+  }, [firstHistoryId, isActive, rowVirtualizer, segments.historyVirtualized]);
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput | null => {
     const scrollContainer = scrollContainerRef.current;
     if (!isActiveRef.current || !scrollContainer || !isScrollContainerMeasurable(scrollContainer)) {
@@ -716,7 +743,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   // Rows are laid out in DOM order, virtualized block first, so the first row whose bottom
   // clears the reading line is the one the reader is looking at.
   const reportReadingPosition = useStableEvent(() => {
-    if (!isActiveRef.current) {
+    if (!isActiveRef.current || adjustingResidencyAnchorRef.current) {
       return;
     }
     if (!onReadingPositionChange) {
@@ -736,11 +763,21 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         continue;
       }
       readingRowId = rowId;
+      readingAnchorRef.current = { rowId, offset: element.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top };
       if (element.getBoundingClientRect().bottom > readingLine) {
         break;
       }
     }
     onReadingPositionChange(readingRowId);
+    if (onVisibleHistoryItemsChange) {
+      const viewport = scrollContainer.getBoundingClientRect();
+      const ids: string[] = [];
+      for (const element of contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]")) {
+        const rect = element.getBoundingClientRect();
+        if (rect.bottom > viewport.top && rect.top < viewport.bottom && element.dataset.historyRowId) ids.push(element.dataset.historyRowId);
+      }
+      onVisibleHistoryItemsChange(ids);
+    }
   });
 
   const updateScrollMetrics = useCallback(() => {
@@ -886,6 +923,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     pendingResumeGeometryCheckRef.current = resumedUnchangedLayout;
     wasFollowOutputLayoutActiveRef.current = isActive;
     if (!isActive) {
+      lastActiveFollowOutputLayoutRef.current = null;
+      readingAnchorRef.current = null;
       return;
     }
     lastActiveFollowOutputLayoutRef.current = layout;

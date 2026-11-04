@@ -3,6 +3,7 @@ import type {
   BackgroundProcess,
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
+import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
@@ -71,6 +72,7 @@ import {
 } from "../../agent-sdk-types.js";
 import { writeFileAtomic } from "../../../atomic-file.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import type { AgentTimelineFetchResult } from "../../agent-timeline-store-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
@@ -168,7 +170,7 @@ import {
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
 import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./commands.js";
-import { streamOmpHistory, streamOmpSubagentHistory } from "./history.js";
+import { readOmpHistoryPage, streamOmpHistory, streamOmpSubagentHistory, type OmpHistoryInput, type OmpHistoryPageInput } from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -663,6 +665,8 @@ interface OmpPersistenceMetadata {
   thinkingOptionId?: string;
   modeId?: string;
   systemPrompt?: string;
+  backgroundOwnerId?: string;
+  legacyBackgroundOwnerIds?: string[];
 }
 
 interface StartTurnResult {
@@ -676,6 +680,7 @@ interface OmpAgentSessionOptions {
   observeClaudeCompletion?: (message: OmpAgentMessage, state: OmpSessionState) => void;
   automaticCredentialScheduler?: OmpAutomaticCredentialScheduler;
   runtimeSession: OmpRuntimeSession;
+  historyRuntimeSettings?: OmpHistoryInput["runtimeSettings"];
   config: AgentSessionConfig;
   getDefaultProxyPolicy?: () => ProxyPolicy;
   onClosed?: () => void;
@@ -689,6 +694,8 @@ interface OmpAgentSessionOptions {
   paseoTools?: PaseoToolCatalog;
   blobDir?: string;
   backgroundDaemons?: OmpBackgroundDaemons;
+  backgroundOwnerId?: string;
+  legacyBackgroundOwnerIds?: readonly string[];
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -1125,6 +1132,12 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
       ? { modeId: metadata.modeId === "write" ? "ask" : metadata.modeId }
       : {}),
     ...(typeof metadata.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
+    ...(typeof metadata.backgroundOwnerId === "string" && metadata.backgroundOwnerId
+      ? { backgroundOwnerId: metadata.backgroundOwnerId } : {}),
+    ...(Array.isArray(metadata.legacyBackgroundOwnerIds)
+      ? { legacyBackgroundOwnerIds: metadata.legacyBackgroundOwnerIds.filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        ) } : {}),
   };
 }
 
@@ -1772,6 +1785,7 @@ export class OmpAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly blobDir: string | undefined;
+  private readonly historyRuntimeSettings?: OmpHistoryInput["runtimeSettings"];
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
   private lastWorkingIntent: { turnId: string; intent: string } | null = null;
   private readonly nativeTaskCalls = new Map<string, OmpNativeTaskCall>();
@@ -1857,6 +1871,10 @@ export class OmpAgentSession implements AgentSession {
   }> = [];
   private planContextResetPending: boolean;
   private readonly backgroundDaemons?: OmpBackgroundDaemons;
+  private readonly backgroundOwnerId: string;
+  private readonly legacyBackgroundOwnerIds: readonly string[];
+  private backgroundOwnershipTransition = false;
+  private runtimeUnloading = 0;
   private readonly observeClaudeCompletion?: OmpAgentSessionOptions["observeClaudeCompletion"];
   private streamedClaudeCompletionKey: string | null = null;
   private streamedClaudeCompletionMessage: OmpAgentMessage | null = null;
@@ -1871,7 +1889,10 @@ export class OmpAgentSession implements AgentSession {
     this.getDefaultProxyPolicy = options.getDefaultProxyPolicy ?? (() => DIRECT_PROXY_POLICY);
     this.onClosed = options.onClosed;
     this.blobDir = options.blobDir;
+    this.historyRuntimeSettings = options.historyRuntimeSettings;
     this.backgroundDaemons = options.backgroundDaemons;
+    this.backgroundOwnerId = options.backgroundOwnerId ?? options.initialState.sessionId;
+    this.legacyBackgroundOwnerIds = options.legacyBackgroundOwnerIds ?? [];
     this.oauthAccounts = [...(options.oauthAccounts ?? [])];
     this.automaticCredentialId = options.automaticCredentialId;
     this.automaticCredentialResolver = options.automaticCredentialResolver;
@@ -1994,29 +2015,34 @@ export class OmpAgentSession implements AgentSession {
 
   async listBackgroundProcesses(): Promise<BackgroundProcess[]> {
     const [daemons, jobs] = await Promise.all([
-      this.backgroundDaemons?.list() ?? [],
+      this.backgroundDaemons?.listOwned({
+        ownerId: this.backgroundOwnerId,
+        legacyOwnerIds: this.legacyBackgroundOwnerIds,
+      }) ?? [],
       this.runtimeSession.listBackgroundJobs?.() ?? [],
     ]);
-    const ownedDaemons: BackgroundProcess[] = [];
-    for (const entry of daemons) {
-      if (entry.providerOwnerId === null || entry.providerOwnerId !== this.state.sessionId)
-        continue;
-      ownedDaemons.push({
-        id: entry.id,
-        name: entry.name,
-        command: entry.command,
-        cwd: entry.cwd,
-        ownerAgentId: entry.ownerAgentId,
-        scope: "agent",
-        source: entry.source,
-        status: entry.status,
-        startedAt: entry.startedAt,
-        endedAt: entry.endedAt,
-        exitCode: entry.exitCode,
-        terminalId: entry.terminalId,
-      });
-    }
-    return ownedDaemons.concat(jobs);
+    return [...daemons, ...jobs];
+  }
+
+  hasBackgroundOwnershipTransition(): boolean {
+    return this.backgroundOwnershipTransition;
+  }
+
+  beginRuntimeUnload(): () => void {
+    if (this.closed || this.backgroundOwnershipTransition)
+      throw new Error("OMP runtime cannot unload during another lifecycle transition");
+    this.runtimeUnloading++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.runtimeUnloading--;
+    };
+  }
+
+  private assertRuntimeWorkAllowed(): void {
+    if (this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition)
+      throw new Error("The OMP session is closed or changing lifecycle");
   }
 
   async getBackgroundProcessOutput(
@@ -2112,8 +2138,8 @@ export class OmpAgentSession implements AgentSession {
     if (this.activeTurnId || this.pendingTurnAdmission) {
       throw new Error("An OMP turn is already active");
     }
-    if (this.closed) {
-      throw new Error("The OMP session is closed");
+    if (this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition) {
+      throw new Error("The OMP session is closed or changing lifecycle");
     }
     const turnId = randomUUID();
     const controller = new AbortController();
@@ -2262,7 +2288,7 @@ export class OmpAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
-    if (!this.activeTurnId || this.closed) {
+    if (!this.activeTurnId || this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition) {
       return { status: "unavailable", reason: "no_active_turn" };
     }
     if (this.activeTurnId !== options.expectedTurnId) {
@@ -2351,6 +2377,7 @@ export class OmpAgentSession implements AgentSession {
       for await (const event of source({
         sessionFile: this.state.sessionFile,
         runtimeSession: this.runtimeSession,
+        runtimeSettings: this.historyRuntimeSettings,
         provider: this.provider,
         blobDir: this.blobDir,
         subagentSnapshots: snapshots,
@@ -2400,6 +2427,38 @@ export class OmpAgentSession implements AgentSession {
       ),
       modeId: this.currentModeId,
     };
+  }
+
+  async getRuntimeResources(): Promise<RuntimeResource[]> {
+    if (!this.runtimeSession.getRuntimeResources)
+      throw new Error("OMP runtime does not support resource ownership inspection");
+    const resources = await this.runtimeSession.getRuntimeResources();
+    const background = (await this.listBackgroundProcesses()).some((item) =>
+      ["starting", "running", "ready", "restarting", "stopping"].includes(item.status));
+    const busy = this.activeTurnId !== null || this.pendingTurnAdmission !== null || this.activeRuntimeToolCalls.size > 0;
+    for (const resource of resources) {
+      if (this.backgroundOwnerId.startsWith("desktop:"))
+        resource.ownerAgentId = this.backgroundOwnerId.slice("desktop:".length);
+      if (busy) {
+        resource.releasable = false;
+        if (!resource.retentionReasons.includes("pending_tool")) resource.retentionReasons.push("pending_tool");
+      }
+      if (background) {
+        resource.releasable = false;
+        if (!resource.retentionReasons.includes("background_dependency"))
+          resource.retentionReasons.push("background_dependency");
+      }
+    }
+    return resources;
+  }
+
+  async releaseRuntimeResource(resourceId: string): Promise<void> {
+    if (!this.runtimeSession.releaseRuntimeResource)
+      throw new Error("OMP runtime does not support explicit resource release");
+    const resource = (await this.getRuntimeResources()).find((item) => item.id === resourceId);
+    if (!resource?.releasable || this.backgroundOwnershipTransition || this.runtimeUnloading || this.closed)
+      throw new Error("Resource is busy, unavailable, or has live background dependencies; stop them before releasing variables");
+    await this.runtimeSession.releaseRuntimeResource(resourceId);
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
@@ -2674,9 +2733,15 @@ export class OmpAgentSession implements AgentSession {
     await this.subagentSubscription;
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
+    // Capture dynamic metadata while activation is already explicit. Cold UI reads
+    // subsequently use this durable snapshot without starting another runtime.
+    await this.listCommands().catch((error) => {
+      this.logger.debug({ err: error }, "Command snapshot unavailable after explicit activation");
+    });
   }
 
   async setGoalObjective(objective: string): Promise<void> {
+    this.assertRuntimeWorkAllowed();
     const normalizedObjective = objective.trim();
     if (!normalizedObjective) {
       throw new Error("OMP goal objective is required");
@@ -2692,6 +2757,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async controlGoal(action: "start" | "pause" | "delete"): Promise<void> {
+    this.assertRuntimeWorkAllowed();
     const objective = optionalString(this.config.featureValues?.goal_objective)?.trim();
     if (action === "start" && !objective) {
       throw new Error("OMP goal objective is required before starting");
@@ -2851,9 +2917,13 @@ export class OmpAgentSession implements AgentSession {
       nativeHandle: this.state.sessionFile,
       metadata: {
         cwd: this.config.cwd,
+        backgroundOwnerId: this.backgroundOwnerId,
+        ...(this.legacyBackgroundOwnerIds.length > 0
+          ? { legacyBackgroundOwnerIds: [...this.legacyBackgroundOwnerIds] } : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.config.thinkingOptionId ? { thinkingOptionId: this.config.thinkingOptionId } : {}),
         ...(this.currentModeId ? { modeId: this.currentModeId } : {}),
+        ...(this.commandCache ? { commands: this.commandCache } : {}),
       },
     };
   }
@@ -2983,21 +3053,30 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
-    if (this.activeTurnId) {
+    if (this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition)
+      throw new Error("OMP conversation cannot rewind during another lifecycle transition");
+    if (this.activeTurnId || this.pendingTurnAdmission) {
       throw new Error("Cannot rewind the OMP conversation while a turn is active");
     }
     const target = input.messageId.trim();
     if (!target) {
       throw new Error("OMP rewind requires a user message id");
     }
-    await this.runtimeSession.branch(target);
-    await this.refreshState();
-    const currentTodo = mapOmpTodoState(this.state)[0];
-    this.lastTodoItem = currentTodo?.type === "todo" ? currentTodo : null;
-    this.activeToolCalls.clear();
-    this.nativeTaskCalls.clear();
-    this.subagentCardTracker.clear();
-    this.subagentIndex.clear(this.runtimeSession);
+    this.backgroundOwnershipTransition = true;
+    try {
+      // The supervisor owner and its broker subscription never change. Only the
+      // native transcript association moves, while retirement stays fenced.
+      await this.runtimeSession.branch(target);
+      await this.refreshState();
+      const currentTodo = mapOmpTodoState(this.state)[0];
+      this.lastTodoItem = currentTodo?.type === "todo" ? currentTodo : null;
+      this.activeToolCalls.clear();
+      this.nativeTaskCalls.clear();
+      this.subagentCardTracker.clear();
+      this.subagentIndex.clear(this.runtimeSession);
+    } finally {
+      this.backgroundOwnershipTransition = false;
+    }
   }
 
   async close(): Promise<void> {
@@ -3066,12 +3145,14 @@ export class OmpAgentSession implements AgentSession {
       return this.commandCache;
     }
     const commands = await this.runtimeSession.getCommands();
-    return mapOmpRuntimeSlashCommands(commands);
+    this.commandCache = mapOmpRuntimeSlashCommands(commands);
+    return this.commandCache;
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null {
+    this.assertRuntimeWorkAllowed();
     const promptText = readPlainTextPromptInput(prompt);
     if (promptText === null) {
       return null;
@@ -3085,6 +3166,7 @@ export class OmpAgentSession implements AgentSession {
     if (commandName === "compact") {
       return {
         run: async ({ emit }) => {
+          this.assertRuntimeWorkAllowed();
           await this.executeCompactCommand(parsed.args, emit);
         },
       };
@@ -3092,6 +3174,7 @@ export class OmpAgentSession implements AgentSession {
     if (commandName === "autocompact") {
       return {
         run: async ({ emit }) => {
+          this.assertRuntimeWorkAllowed();
           await this.executeAutoCompactCommand(parsed.args, emit);
         },
       };
@@ -3103,6 +3186,7 @@ export class OmpAgentSession implements AgentSession {
       }
       return {
         run: async () => {
+          this.assertRuntimeWorkAllowed();
           if (commandName === "steer") {
             this.runtimeSession.steer(this.withToolIntentLocale(message));
           } else {
@@ -3114,6 +3198,7 @@ export class OmpAgentSession implements AgentSession {
     if (commandName === "handoff") {
       return {
         run: async ({ emit }) => {
+          this.assertRuntimeWorkAllowed();
           await this.executeHandoffCommand(parsed.args, emit);
         },
       };
@@ -3140,10 +3225,12 @@ export class OmpAgentSession implements AgentSession {
     if (toolUseCommand) {
       return {
         run: async ({ emit }) => {
+          this.assertRuntimeWorkAllowed();
           const commands = await this.listCommands();
           if (!commands.some((command) => command.name.toLowerCase() === toolUseCommand.name)) {
             throw new Error(`OMP command /${toolUseCommand.name} is unavailable`);
           }
+          this.assertRuntimeWorkAllowed();
           const acknowledgement = await this.runtimeSession.prompt(toolUseCommand.prompt);
           if (acknowledgement.agentInvoked === true) {
             await this.runtimeSession.abort();
@@ -3502,6 +3589,7 @@ export class OmpAgentSession implements AgentSession {
       }
       enabled = !state.autoCompactionEnabled;
     }
+    this.assertRuntimeWorkAllowed();
 
     try {
       await this.runtimeSession.setAutoCompaction(enabled);
@@ -5028,6 +5116,15 @@ export class OmpAgentClient implements AgentClient {
     this.oauthAccountsOverride = options.oauthAccounts;
   }
 
+  /** Read the selected SDK's pure journal without creating or waking a runtime session. */
+  readHistoryPage(input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">): Promise<AgentTimelineFetchResult> {
+    return readOmpHistoryPage({ ...input, runtimeSettings: this.runtimeSettings });
+  }
+
+  streamPersistedSubagentHistory(input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">): AsyncGenerator<AgentStreamEvent> {
+    return streamOmpSubagentHistory({ ...input, runtimeSettings: this.runtimeSettings });
+  }
+
   async setDefaultProxyPolicy(policy: ProxyPolicy): Promise<void> {
     this.defaultProxyPolicy = ProxyPolicySchema.parse(policy);
     await Promise.all([
@@ -5178,6 +5275,7 @@ export class OmpAgentClient implements AgentClient {
       config,
       oauthAccounts,
       ...options,
+      historyRuntimeSettings: this.runtimeSettings,
       getDefaultProxyPolicy: () => this.defaultProxyPolicy,
       onClosed: () => this.proxySessions.delete(session),
     });
@@ -5238,14 +5336,14 @@ export class OmpAgentClient implements AgentClient {
         cwd,
         env,
         resolveBrokerEndpoint: (dir) => runtime.resolveBrokerEndpoint(dir, env),
-        stopDaemon: async (name) => {
+        stopDaemon: async (name, id) => {
           const providerEnv = this.desktopConfigDir
             ? await prepareOmpProviderEnv({
                 configDir: this.desktopConfigDir,
                 env,
               })
             : env;
-          await runtime.stopDaemon({ cwd, name, env: providerEnv });
+          await runtime.stopDaemon({ cwd, name, id, env: providerEnv });
         },
       });
     }
@@ -5289,7 +5387,12 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
-    const launchEnv = launchContext?.env;
+    const backgroundOwnerId = launchContext?.agentId
+      ? `desktop:${launchContext.agentId}` : undefined;
+    const launchEnv = {
+      ...launchContext?.env,
+      OMP_DESKTOP_SERVICE_OWNER: backgroundOwnerId ?? "",
+    };
     const runtimeSession = await this.startConversationRuntimeSession({
       cwd: config.cwd,
       proxyPolicy: config.proxyPolicy,
@@ -5326,6 +5429,7 @@ export class OmpAgentClient implements AgentClient {
         config,
         {
           initialState,
+          backgroundOwnerId,
           automaticCredentialId,
           automaticCredentialResolver,
           observeClaudeCompletion: this.createClaudeCompletionObserver(launchEnv),
@@ -5363,9 +5467,11 @@ export class OmpAgentClient implements AgentClient {
   ): Promise<BackgroundProcess[]> {
     const daemons = this.createBackgroundDaemons(cwd);
     try {
-      return (await daemons.list())
-        .filter((entry) => entry.providerOwnerId === handle.sessionId)
-        .map(({ providerOwnerId: _owner, ...entry }) => entry);
+      const metadata = parsePersistenceMetadata(handle.metadata);
+      return await daemons.listOwned({
+        ownerId: metadata.backgroundOwnerId ?? handle.sessionId,
+        legacyOwnerIds: metadata.legacyBackgroundOwnerIds,
+      });
     } finally {
       daemons.dispose();
     }
@@ -5393,12 +5499,19 @@ export class OmpAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
-    const launchEnv = launchContext?.env;
+    const backgroundOwnerId = launchContext?.agentId
+      ? `desktop:${launchContext.agentId}` : persistenceMetadata.backgroundOwnerId;
+    const legacyBackgroundOwnerIds = persistenceMetadata.legacyBackgroundOwnerIds ??
+      (persistenceMetadata.backgroundOwnerId ? [] : [handle.sessionId]);
+    const launchEnv = {
+      ...launchContext?.env,
+      OMP_DESKTOP_SERVICE_OWNER: backgroundOwnerId ?? "",
+    };
     const runtimeSession = await this.startConversationRuntimeSession(
       buildResumeStartInput({
         resumeConfig,
         sessionFile,
-        launchContext,
+        launchContext: { ...launchContext, env: launchEnv },
         launchMode,
       }),
     );
@@ -5422,6 +5535,8 @@ export class OmpAgentClient implements AgentClient {
         resumeConfig.config,
         {
           initialState,
+          backgroundOwnerId,
+          legacyBackgroundOwnerIds,
           automaticCredentialId,
           automaticCredentialResolver,
           observeClaudeCompletion: this.createClaudeCompletionObserver(launchEnv),
@@ -5523,63 +5638,9 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const oauthAccounts = this.readOAuthAccounts();
-    const fallbackFeatures = createOmpFeatures(config, oauthAccounts);
-    const launchMode = this.resolveLaunchMode(config.modeId);
-    let runtimeSession: OmpRuntimeSession | undefined;
-    try {
-      runtimeSession = await this.startOmpRuntimeSession({
-        cwd: config.cwd,
-        protocolMode: "rpc-ui",
-        model: config.model,
-        thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
-        noSession: true,
-        modeId: launchMode.modeId,
-        extraArgs: launchMode.extraArgs,
-      });
-      const state = await runtimeSession.getState();
-      const configuredFastMode = normalizeOmpFastMode(
-        config.featureValues?.[OMP_FAST_MODE_FEATURE_ID],
-      );
-      const automaticCredentialId = await this.resolveAutomaticCredentialId(
-        config,
-        state,
-        oauthAccounts,
-      );
-      const modelProvider =
-        state.model?.provider ?? parseModelReference(config.model ?? null)?.provider;
-      const configuredCredentialId = configuredOmpOAuthCredentialId(
-        config.featureValues?.[OMP_OAUTH_ACCOUNT_FEATURE_ID],
-      );
-      const activeCredential = configuredCredentialId
-        ? undefined
-        : (state.activeCredential ??
-          (automaticCredentialId && modelProvider
-            ? { provider: modelProvider, credentialId: automaticCredentialId }
-            : undefined));
-      return createOmpFeatures(
-        config,
-        oauthAccounts,
-        {
-          supported: typeof state.fastModeEnabled === "boolean",
-          eligible:
-            state.ultrafastSupported === true ||
-            isOmpFastModeEligibleModel(state.model, config.model),
-          selection:
-            state.fastModeTier === "ultrafast"
-              ? "ultrafast"
-              : (configuredFastMode ?? readOmpFastMode(state)),
-          ultrafastSupported: state.ultrafastSupported === true,
-          nativeTier: state.fastModeTier,
-        },
-        activeCredential,
-      );
-    } catch (error) {
-      this.logger.debug({ err: error }, "OMP draft fast-mode capability probe failed");
-      return fallbackFeatures;
-    } finally {
-      await runtimeSession?.close().catch(() => undefined);
-    }
+    throw new Error(
+      `Feature metadata is unavailable for ${config.provider} without an active session. Resume explicitly to refresh capabilities.`,
+    );
   }
 
   async listImportableSessions(

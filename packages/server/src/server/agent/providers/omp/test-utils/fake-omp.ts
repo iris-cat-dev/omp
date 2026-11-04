@@ -485,7 +485,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (typeof this.branchResponse.text !== "string") {
       throw new Error("FakeOmp branch response requires text");
     }
-    this.activeBranchEntryId = entryId;
+    this.activeBranchEntryId = undefined;
     return { text: this.branchResponse.text };
   }
 

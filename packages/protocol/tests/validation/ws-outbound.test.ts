@@ -440,4 +440,28 @@ const SourceSchema = z.object({
     });
     expect(result.success).toBe(true);
   });
+
+  it("preserves acknowledged same-seq revisions in the generated timeline decoder", () => {
+    const envelope = { type: "session", message: { type: "fetch_agent_timeline_response", payload: {
+      requestId: "revised", agentId: "agent", agent: null, direction: "after", projection: "projected",
+      epoch: "epoch", reset: false, staleCursor: false, gap: false, contentVersion: 9, hasMoreRevisions: true,
+      window: { minSeq: 1, maxSeq: 42, nextSeq: 43 }, startCursor: null,
+      endCursor: { epoch: "epoch", seq: 42, contentVersion: 9 }, hasOlder: true, hasNewer: true,
+      entries: [], revisedEntries: [{ provider: "omp", timestamp: "2026-11-04T00:00:00.000Z",
+        seqStart: 1, seqEnd: 1, sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }], collapsed: [],
+        item: { type: "tool_call", callId: "write", revision: 4, name: "write", status: "completed",
+          error: null, detail: { type: "unknown", input: "saved", output: "done" } } }], error: null,
+    } } };
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({ success: true, data: envelope });
+  });
+
+  it("decodes retained helper resources and rejects invalid handle counts", () => {
+    const resource = { id: "helper:1", kind: "helper", ownerSessionId: "session", ownerAgentId: "agent",
+      state: "running", retentionReasons: ["completion pending"], liveHandles: 1, releasable: false };
+    const envelope = { type: "session", message: { type: "agent_runtime_resources_response",
+      payload: { requestId: "resources", agentId: "agent", resources: [resource], error: null } } };
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({ success: true, data: envelope });
+    expect(GeneratedWSOutboundMessageSchema.safeParse({ ...envelope, message: { ...envelope.message,
+      payload: { ...envelope.message.payload, resources: [{ ...resource, liveHandles: -1 }] } } }).success).toBe(false);
+  });
 });

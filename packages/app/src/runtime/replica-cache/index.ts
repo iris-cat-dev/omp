@@ -22,6 +22,7 @@ import {
 } from "@/stores/session-store";
 import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { containsTimelineImageAsset } from "@/assistant-image/timeline-assets";
 
 const STORAGE_KEY = "@omp-desktop:replica-cache";
 const CACHE_VERSION = 6;
@@ -290,6 +291,7 @@ const StoredTimelineSchema = z.strictObject({
       epoch: z.string(),
       startSeq: z.number().int().nonnegative(),
       endSeq: z.number().int().nonnegative(),
+      contentVersion: z.number().int().nonnegative().optional(),
     })
     .nullable(),
   hasOlder: z.boolean(),
@@ -654,6 +656,9 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
 }
 
 function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
+  // A renderer-local preview may have been GC'd while its timeline was cold.
+  // Never let a replica's coverage suppress canonical image rehydration.
+  if (containsTimelineImageAsset(item)) return false;
   switch (item.kind) {
     case "user_message":
       return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
@@ -742,7 +747,7 @@ function serializeHost(serverId: string, input: ReplicaInput, directorySync?: un
             items,
             range:
               canPersistCoverage && range !== null
-                ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+                ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq, contentVersion: range.contentVersion }
                 : null,
             hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
           }

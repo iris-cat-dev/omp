@@ -55,12 +55,31 @@ Clients must apply newer tool revisions even behind the current sequence cursor,
 reject older revisions within the same epoch, and retain newer live revisions
 when a fetched snapshot races them. A new epoch starts a new revision namespace.
 
-An `after` fetch may return an authoritative `reset` when earlier tool rows have
-changed. Tail refreshes can update tool state even when `window.maxSeq` is
-unchanged. Upgrade the daemon and application together; sequence-only duplicate
-suppression is not sufficient for materialized tool updates.
+`contentVersion` is a content-edit watermark independent of `seq`. Incremental
+fetches return `revisedEntries` or `revisedRows` for changes behind an `after`
+cursor, with `hasMoreRevisions` when another revision page is needed. Ordinary
+tool-body revisions do not reset the history window. Tail refreshes can update
+tool state with unchanged `window.maxSeq`; older same-sequence pages must never
+roll back a newer revision. Epoch replacement still requires a fresh snapshot.
+Upgrade daemon and application together; sequence-only deduplication is insufficient.
 
 Imported history keeps its original sequence numbers while superseded tool
 payloads share current state. Server-only detached text-edit checkpoints preserve
 the tool summaries and task logs visible at message/fork boundaries; normal
 timeline responses do not expose those checkpoints.
+
+## Runtime resource lifecycle
+
+Clients use `getAgentRuntimeResources`, `releaseAgentRuntimeResource`, and
+`unloadAgentRuntime`. Resource inventory includes `id`, `kind`
+(`python_kernel`, `javascript_kernel`, `shell`, or `helper`), `ownerSessionId`,
+optional `ownerAgentId` and `pid`, `state`, `retentionReasons`, `liveHandles`, and
+`releasable`. Cold inventory reads retained state without waking the runtime;
+dynamic state without a retained snapshot is explicitly unavailable.
+
+Release is explicit and destructive to resource variables. Busy/shared resources
+and background dependencies refuse release. Safe unload preserves active and
+admitted work, unconfirmed content, permissions, background work and variables:
+inventory → persistence drain → inventory → synchronous final admission guard.
+The stable Desktop owner is `desktop:<agentId>`, independent of rewind's native
+transcript ID. Unload retains history; deletion is a separate operation.

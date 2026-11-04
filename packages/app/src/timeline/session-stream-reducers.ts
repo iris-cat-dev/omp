@@ -34,6 +34,7 @@ export interface TimelineCursor {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  contentVersion?: number;
   retainedRanges?: TimelineLoadedRange[];
 }
 
@@ -100,6 +101,7 @@ function mergeTimelineCoverage(
     epoch: current.epoch,
     startSeq: contiguous.startSeq,
     endSeq: contiguous.endSeq,
+    ...(current.contentVersion !== undefined ? { contentVersion: current.contentVersion } : {}),
     ...(retainedRanges.length > 0 ? { retainedRanges } : {}),
   };
 }
@@ -108,7 +110,8 @@ function timelineCursorEquals(left: TimelineCursor, right: TimelineCursor): bool
   if (
     left.epoch !== right.epoch ||
     left.startSeq !== right.startSeq ||
-    left.endSeq !== right.endSeq
+    left.endSeq !== right.endSeq ||
+    left.contentVersion !== right.contentVersion
   ) {
     return false;
   }
@@ -147,6 +150,8 @@ export interface ProcessTimelineResponseInput {
     startCursor: { seq: number } | null;
     endCursor: { seq: number } | null;
     entries: TimelineResponseEntry[];
+    contentVersion?: number;
+    revisedEntries?: TimelineResponseEntry[];
     error: string | null;
     hasNewer: boolean;
     hasOlder: boolean;
@@ -196,7 +201,8 @@ interface TimelinePathResult {
 
 function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolean {
   if (isAgentToolCallItem(existing) && isAgentToolCallItem(incoming)) {
-    return existing.payload.data.callId === incoming.payload.data.callId;
+    return existing.payload.data.callId === incoming.payload.data.callId &&
+      (!existing.turnId || !incoming.turnId || existing.turnId === incoming.turnId);
   }
   if (existing.kind === "assistant_message" && incoming.kind === "assistant_message") {
     return (
@@ -439,35 +445,21 @@ function mergeTimelineWindow(args: {
     epoch: payload.epoch,
     currentEndSeq: currentCursor.endSeq,
   });
-  // Items inside the window are expected to be re-provided by the page. When
-  // the page's entries omit a live-painted agent tool call (pages are captured
-  // server-side and can lag the stream), dropping it here would erase the only
-  // record of that file change — so out-of-window retention is extended to
-  // window-covering tool calls the page does not carry.
-  const pageCallIds = new Set(
-    timelineUnits
-      .filter(
-        (
-          unit,
-        ): unit is TimelineUnit & {
-          event: Extract<AgentStreamEventPayload, { type: "timeline" }>;
-        } => unit.event.type === "timeline" && unit.event.item.type === "tool_call",
-      )
-      .map((unit) => (unit.event.item as { callId: string }).callId),
-  );
+  // Tool rows are materialized identities, not replaceable page snapshots.
+  // Keep the reconciled live revision even when an older page covers its seq.
   const retainedTail = projected.tail.filter((item) => {
     const cursor = item.timelineCursor;
     if (cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq) {
       return true;
     }
-    return isAgentToolCallItem(item) && !pageCallIds.has(item.payload.data.callId);
+    return isAgentToolCallItem(item);
   });
   const retainedHead = projected.head.filter((item) => {
     const cursor = item.timelineCursor;
     if (cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq) {
       return true;
     }
-    return isAgentToolCallItem(item) && !pageCallIds.has(item.payload.data.callId);
+    return isAgentToolCallItem(item);
   });
   const reservedItemIds = new Set(
     [...retainedTail, ...retainedHead].flatMap((item) =>
@@ -785,7 +777,7 @@ function mergeOlderTimelinePage(input: {
       currentAtOrAfterPage.push(item);
     } else if (cursor.seq < input.startSeq) {
       retainedBefore.push(item);
-    } else if (cursor.seq > input.endSeq) {
+    } else if (cursor.seq > input.endSeq || isAgentToolCallItem(item)) {
       currentAtOrAfterPage.push(item);
     }
   }
@@ -971,6 +963,23 @@ function reconcileOverlappingProjectedStreamItems(params: {
   if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
 
   for (const unit of params.units) {
+    if (unit.event.type === "timeline" && unit.event.item.type === "tool_call") {
+      const callId = unit.event.item.callId;
+      const turnId = unit.event.turnId;
+      const matches = (item: StreamItem) => isAgentToolCallItem(item) &&
+        item.payload.data.callId === callId &&
+        (!turnId || !item.turnId || item.turnId === turnId) &&
+        (!item.timelineCursor || item.timelineCursor.epoch === params.epoch);
+      if (tail.some(matches) || head.some(matches)) {
+        const updated = applyStreamEvent({ tail, head, event: unit.event,
+          timestamp: unit.timestamp, source: "canonical",
+          timelineCursor: { epoch: params.epoch, seq: unit.seqEnd } });
+        tail = updated.tail;
+        head = updated.head;
+        reconciledUnits.add(unit);
+        continue;
+      }
+    }
     let reconciled = reconcileOverlappingProjectedAssistant({
       tail,
       head,
@@ -1193,8 +1202,12 @@ function applyAcceptedTimelinePage(input: {
       currentEndSeq: currentCursor?.endSeq,
     });
   }
+  const projected = reconcileOverlappingProjectedStreamItems({
+    tail: currentTail, head: currentHead, units: acceptedUnits,
+    epoch: payload.epoch, currentEndSeq: currentCursor?.endSeq,
+  });
   const olderTail = hydrateStreamState(
-    acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
+    acceptedUnits.filter((unit) => !projected.reconciledUnits.has(unit)).map(({ event, timestamp, seqEnd }) => ({
       event,
       timestamp,
       timelineCursor: { epoch: payload.epoch, seq: seqEnd },
@@ -1213,12 +1226,12 @@ function applyAcceptedTimelinePage(input: {
   return {
     tail: mergeOlderTimelinePage({
       page: olderTail,
-      currentTail,
+      currentTail: projected.tail,
       epoch: payload.epoch,
       startSeq: payload.startCursor?.seq ?? acceptedUnits[0]?.seq ?? 0,
       endSeq: payload.endCursor?.seq ?? acceptedUnits.at(-1)?.seqEnd ?? 0,
     }),
-    head: currentHead,
+    head: projected.head,
     acknowledgedClientMessageIds: [],
   };
 }
@@ -1351,8 +1364,11 @@ function reconcileMaterializedToolRevisions(
     )
       continue;
     const callId = unit.event.item.callId;
+    const turnId = unit.event.turnId;
     const containsCall = (item: StreamItem) =>
-      isAgentToolCallItem(item) && item.payload.data.callId === callId;
+      isAgentToolCallItem(item) && item.payload.data.callId === callId &&
+      (!turnId || !item.turnId || item.turnId === turnId) &&
+      (!item.timelineCursor || item.timelineCursor.epoch === epoch);
     if (!timelineResult.tail.some(containsCall) && !timelineResult.head.some(containsCall))
       continue;
     const revised = applyStreamEvent({
@@ -1390,7 +1406,7 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Convert entries to timeline units
   // ------------------------------------------------------------------
-  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+  const toTimelineUnit = (entry: TimelineResponseEntry): TimelineUnit => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1404,7 +1420,9 @@ export function processTimelineResponse(
       ...(entry.turnId ? { turnId: entry.turnId } : {}),
     } as AgentStreamEventPayload,
     timestamp: new Date(entry.timestamp),
-  }));
+  });
+  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map(toTimelineUnit);
+  const revisedUnits = (payload.revisedEntries ?? []).map(toTimelineUnit);
 
   const toHydratedEvents = (
     units: TimelineUnit[],
@@ -1458,7 +1476,7 @@ export function processTimelineResponse(
         currentHead,
       }).filter((clientMessageId) => sendingClientMessageIds.includes(clientMessageId)),
     };
-  } else if (payload.mergeWindow === true) {
+  } else if (payload.mergeWindow === true && !payload.reset) {
     timelineResult = mergeTimelineWindow({
       timelineUnits,
       payload,
@@ -1501,7 +1519,16 @@ export function processTimelineResponse(
     });
   }
 
-  reconcileMaterializedToolRevisions(timelineResult, timelineUnits, payload.epoch);
+  reconcileMaterializedToolRevisions(timelineResult, [...timelineUnits, ...revisedUnits], payload.epoch);
+  if (timelineResult.cursor?.epoch === payload.epoch && payload.contentVersion !== undefined &&
+      (payload.reset || (payload.direction === "after" && payload.mergeWindow !== true) || !currentCursor)) {
+    const contentVersion = payload.reset ? payload.contentVersion
+      : Math.max(timelineResult.cursor.contentVersion ?? 0, payload.contentVersion);
+    if (contentVersion !== timelineResult.cursor.contentVersion) {
+      timelineResult.cursor = { ...timelineResult.cursor, contentVersion };
+      timelineResult.cursorChanged = true;
+    }
+  }
 
   const nextTail = timelineResult.tail;
   const nextHead = timelineResult.head;
@@ -1531,7 +1558,8 @@ export function processTimelineResponse(
     timelineResponseComplete;
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
-  const commit = discard ? "discard" : "apply";
+  const commit = currentCursor && nextTail === currentTail && nextHead === currentHead &&
+    !cursorChanged && timelineResult.older === "unchanged" ? "discard" : "apply";
 
   return {
     commit,
@@ -1546,6 +1574,56 @@ export function processTimelineResponse(
     sideEffects,
     acknowledgedClientMessageIds: timelineResult.acknowledgedClientMessageIds,
   };
+}
+type CommitTimelineStoreActions = Pick<
+  ReturnType<typeof useSessionStore.getState>,
+  | "setAgentStreamState"
+  | "setAgentTimelineHasNewer"
+  | "markAgentHistorySynchronized"
+  | "applyAgentTimelineResponseState"
+>;
+
+// Applies the reducer output's commit decision to the store: a discarded
+// page only acknowledges client messages and refreshes has-newer, an applied
+// page writes the new timeline slice. Extracted from applyTimelineResponse to
+// keep its complexity bounded.
+export function commitTimelineResponseResult(input: {
+  result: ProcessTimelineResponseOutput;
+  payload: Pick<ProcessTimelineResponseInput["payload"], "direction" | "hasNewer">;
+  currentNewerAvailable: boolean;
+  currentCursor: TimelineCursor | undefined;
+  shouldMarkAuthoritativeHistoryApplied: boolean;
+  serverId: string;
+  agentId: string;
+  store: CommitTimelineStoreActions;
+}): void {
+  const { result, payload } = input;
+  const store = input.store;
+  if (result.commit === "discard") {
+    if (result.acknowledgedClientMessageIds.length > 0) {
+      store.setAgentStreamState(input.serverId, input.agentId, {
+        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+      });
+    }
+    if (payload.direction !== "before") {
+      store.setAgentTimelineHasNewer(input.serverId, (current) => {
+        const next = new Map(current);
+        next.set(input.agentId, payload.hasNewer);
+        return next;
+      });
+    }
+    store.markAgentHistorySynchronized(input.serverId, input.agentId);
+    return;
+  }
+  store.applyAgentTimelineResponseState(input.serverId, input.agentId, {
+    items: result.tail,
+    head: result.head,
+    range: result.cursorChanged ? (result.cursor ?? null) : (input.currentCursor ?? null),
+    older: result.older,
+    newer: payload.direction === "before" ? input.currentNewerAvailable : payload.hasNewer,
+    synchronized: input.shouldMarkAuthoritativeHistoryApplied,
+    acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+  });
 }
 
 // ---------------------------------------------------------------------------

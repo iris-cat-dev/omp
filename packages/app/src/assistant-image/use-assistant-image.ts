@@ -17,8 +17,6 @@ import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention
 import {
   persistAttachmentFromBytes,
   persistAttachmentFromDataUrl,
-  releaseAttachmentPreviewUrl,
-  resolveAttachmentPreviewUrl,
 } from "@/attachments/service";
 import { createPreviewAttachmentId, parseImageDataUrl } from "@/attachments/utils";
 import {
@@ -43,12 +41,16 @@ import {
   resolveAssistantImageLoadDimensions,
 } from "./load-dimensions";
 import { runAssistantImageOperationWithRetry } from "./retry";
+import { acquireAttachmentPreviewResource, getImagePreviewResidencyStats, type AttachmentPreviewResource } from "@/attachments/preview-resource";
+import { parseTimelineImageAsset } from "./timeline-assets";
+import { estimateResidentJsBytes, TIMELINE_RESIDENCY_BUDGET } from "@/timeline/timeline-residency";
 
 interface AssistantImageRenderBinding {
   uri: string;
   onRef: (instance: unknown) => void;
   onLoad: (event: ImageLoadEvent) => void;
   onError: () => void;
+  attachment?: AttachmentMetadata;
 }
 
 const renderedDimensions: AssistantImageRenderedDimensionsReader = {
@@ -82,6 +84,8 @@ interface UseAssistantImageInput {
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
+  visible?: boolean;
+  retryKey?: number;
 }
 
 type PreviewUrlState =
@@ -104,25 +108,29 @@ interface DataImage {
 
 const attachmentAcquisitionCache = createAssistantImageAcquisitionCache<AttachmentMetadata>({
   capacity: 500,
+  maxBytes: 1024 * 1024,
+  estimateBytes: estimateResidentJsBytes,
   onRetain: (attachment) => retainAttachmentForGarbageCollection(attachment.id),
 });
 
-interface CachedPreviewUrl {
+interface CachedPreviewUrl extends AttachmentPreviewResource {
   attachment: AttachmentMetadata;
-  uri: string;
 }
 
 const previewUrlCache = createAssistantImageAcquisitionCache<CachedPreviewUrl>({
   capacity: 500,
-  onRetain:
-    ({ attachment, uri }) =>
-    () => {
-      void releaseAttachmentPreviewUrl({ attachment, url: uri });
-    },
+  maxBytes: TIMELINE_RESIDENCY_BUDGET.imageDecodedBytes,
+  estimateBytes: (preview) => Math.max(preview.encodedBytes * 2, preview.decodedBytes),
+  releaseWhenUnused: true,
+  onRetain: (preview) => preview.release,
 });
 
 const LOADED_IMAGE_CACHE_CAPACITY = 500;
 const loadedImageCache = new Map<string, number>();
+
+export function getAssistantImageResidencyStats() {
+  return { acquisitions: attachmentAcquisitionCache.stats(), previewCache: previewUrlCache.stats(), resources: getImagePreviewResidencyStats() };
+}
 
 function getLoadedImageAspectRatio(uri: string): number | null {
   const aspectRatio = loadedImageCache.get(uri);
@@ -148,8 +156,9 @@ function rememberLoadedImage(uri: string, aspectRatio: number): void {
 
 function useAttachmentAcquisition(
   acquisition: AssistantImageAcquisition | null,
+  retryKey: number,
 ): AttachmentAcquisitionState {
-  const acquisitionKey = acquisition?.key ?? null;
+  const acquisitionKey = acquisition ? `${acquisition.key}:attempt:${retryKey}` : null;
   const [entry, setEntry] = useState<{
     key: string | null;
     state: AttachmentAcquisitionState;
@@ -247,14 +256,14 @@ function createDataImageAcquisition(input: {
   };
 }
 
-function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): PreviewUrlState {
+function usePreviewUrl(attachment: AttachmentMetadata | null | undefined, retryKey: number): PreviewUrlState {
   const id = attachment?.id;
   const storageType = attachment?.storageType;
   const storageKey = attachment?.storageKey;
   const mimeType = attachment?.mimeType;
   const previewKey =
     id && storageType && storageKey && mimeType
-      ? `${id}:${storageType}:${storageKey}:${mimeType}`
+      ? `${id}:${storageType}:${storageKey}:${mimeType}:attempt:${retryKey}`
       : null;
   const [entry, setEntry] = useState<{ key: string | null; state: PreviewUrlState }>(() => {
     return {
@@ -278,7 +287,7 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined): Previ
       releaseCurrent?.();
       const retained = previewUrlCache.acquireRetained(previewKey, async () => ({
         attachment: current,
-        uri: await resolveAttachmentPreviewUrl(current),
+        ...await acquireAttachmentPreviewResource(current, 512),
       }));
       releaseCurrent = retained.release;
       return retained;
@@ -377,11 +386,14 @@ export function useAssistantImage({
   client,
   workspaceRoot,
   serverId,
+  visible = true,
+  retryKey = 0,
 }: UseAssistantImageInput): AssistantImageResult {
   const { t } = useTranslation();
+  const persistedAsset = useMemo(() => parseTimelineImageAsset(source), [source]);
   const resolution = useMemo(
-    () => resolveAssistantImageSource({ source, workspaceRoot }),
-    [source, workspaceRoot],
+    () => persistedAsset ? null : resolveAssistantImageSource({ source, workspaceRoot }),
+    [source, workspaceRoot, persistedAsset],
   );
   const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
   const fileAcquisition = useMemo(() => {
@@ -403,16 +415,18 @@ export function useAssistantImage({
     () => createDataImageAcquisition({ source, dataImage }),
     [dataImage, source],
   );
-  const fileAttachment = useAttachmentAcquisition(fileAcquisition);
-  const dataImageAttachment = useAttachmentAcquisition(dataImageAcquisition);
+  const fileAttachment = useAttachmentAcquisition(visible ? fileAcquisition : null, retryKey);
+  const dataImageAttachment = useAttachmentAcquisition(visible ? dataImageAcquisition : null, retryKey);
   const filePreview = usePreviewUrl(
-    fileAttachment.status === "loaded" ? fileAttachment.attachment : null,
+    visible && fileAttachment.status === "loaded" ? fileAttachment.attachment : null,
+    retryKey,
   );
   const dataImagePreview = usePreviewUrl(
-    dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : null,
+    visible ? persistedAsset ?? (dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : null) : null,
+    retryKey,
   );
-  const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
-  const preview = dataImage ? dataImagePreview : filePreview;
+  const directUri = visible && resolution?.kind === "direct" && !dataImage && !persistedAsset ? resolution.uri : null;
+  const preview = dataImage || persistedAsset ? dataImagePreview : filePreview;
   const previewUri = preview.status === "loaded" ? preview.uri : null;
   const uri = directUri ?? previewUri;
   const cachedMetadata = useMemo(
@@ -456,7 +470,7 @@ export function useAssistantImage({
       uri,
       aspectRatio: cachedMetadata?.aspectRatio ?? null,
     });
-  }, [cachedMetadata, dispatch, uri]);
+  }, [cachedMetadata, dispatch, uri, retryKey]);
 
   const handleImageError = useCallback(() => {
     if (uri) {
@@ -497,9 +511,12 @@ export function useAssistantImage({
     },
     [cachedMetadata, dispatch, serverId, source, t, uri, workspaceRoot],
   );
+  if (!visible) {
+    return { status: "loading", binding: null, aspectRatio: cachedMetadata?.aspectRatio ?? null };
+  }
 
   const acquisitionFailure = getAcquisitionFailure({
-    hasResolution: resolution !== null,
+    hasResolution: resolution !== null || persistedAsset !== null,
     isFileSource: resolution?.kind === "file_rpc",
     isDataImage: dataImage !== null,
     fileAttachment,
@@ -519,6 +536,7 @@ export function useAssistantImage({
       onRef: handleImageRef,
       onLoad: handleImageLoad,
       onError: handleImageError,
+      attachment: persistedAsset ?? (dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : fileAttachment.status === "loaded" ? fileAttachment.attachment : undefined),
     };
   }
   if (lifecycle.status === "loaded" && lifecycle.uri === uri) {
@@ -529,6 +547,7 @@ export function useAssistantImage({
         onRef: handleImageRef,
         onLoad: handleImageLoad,
         onError: handleImageError,
+        attachment: persistedAsset ?? (dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : fileAttachment.status === "loaded" ? fileAttachment.attachment : undefined),
       },
       aspectRatio: lifecycle.aspectRatio,
     };

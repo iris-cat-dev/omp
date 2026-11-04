@@ -1553,6 +1553,7 @@ function ResolvedDesktopTabChip({
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
+        serverId,
         tab: item.tab,
         index,
         tabCount,
@@ -1571,6 +1572,7 @@ function ResolvedDesktopTabChip({
         labels,
       }),
     [
+      serverId,
       index,
       item.tab,
       onCloseOtherTabs,

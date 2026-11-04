@@ -9,6 +9,7 @@ dotenv.config({ path: path.resolve(serverRoot, "../.env") });
 
 process.env.PASEO_SUPERVISED = "0";
 delete process.env.PASEO_DESKTOP_MANAGED;
+// Journal tests pass OMP_DESKTOP_TEST_SDK_ROOT explicitly; never select production SDK globally.
 delete process.env.OMP_DESKTOP_SDK_ROOT;
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes";

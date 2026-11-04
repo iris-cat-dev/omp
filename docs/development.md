@@ -94,15 +94,38 @@ replace provider classes already loaded by the daemon. Refreshing an agent from
 persistence does close only that agent's runtime and rehydrate its original
 native session history, without replaying a prompt or replacing the conversation.
 
-Cold OMP conversation history and the Chat outline read the persisted session
-directly instead of waiting for an SDK process to start. Loaded agents keep using
-their live timeline. Persisted pages share an epoch distinct from the runtime.
+Cold OMP conversation history and the Chat outline reuse the selected SDK's
+`dist/node/modules.json` export
+`@oh-my-pi/pi-coding-agent/session/indexed-session-journal` without starting an
+SDK host or creating a parallel scanner. First-scan index/catalog cost is
+separate from warm small-page I/O. Loaded agents keep their live timeline.
+Persisted pages share an epoch distinct from the runtime.
+Cold reads require that real built Node SDK even when a standalone server runs
+agents through CLI. Missing packages/artifacts report the cold-history
+prerequisite, with no scanner fallback or host startup. Tests may select their
+independent built stage through `OMP_DESKTOP_TEST_SDK_ROOT`; production environment
+sanitization remains unchanged.
 If resumed live rows arrive in a different epoch above sequence 1, the client
 requests an authoritative catch-up using its existing cursor. The reset response
 replaces the cold window, allowing subsequent replies to display without scrolling
 or restarting the app.
 Subagent lists and paged child timelines also read from disk without loading the
 parent runtime.
+Cold focus, attention, model metadata and resource inventory also stay read-only;
+dynamic state with no retained snapshot is explicitly unavailable.
+`contentVersion` and `revisedEntries`/`revisedRows` carry tool-body revisions
+behind the sequence cursor without resetting ordinary `after` windows. Old
+same-sequence pages cannot overwrite newer revisions.
+
+Desktop's background owner stays `desktop:<agentId>` across rewind, independent
+of native transcript IDs. Idle unload eligibility begins at five minutes with a
+30-second recheck. Safe unload is inventory → persistence drain → inventory →
+synchronous final admission guard; active/admitted work, unconfirmed input,
+permissions, background dependencies and retained variables/resources block it.
+`getAgentRuntimeResources`, `releaseAgentRuntimeResource`, and
+`unloadAgentRuntime` expose inventory, explicit destructive resource release and
+safe unload. Busy/shared resources and background dependencies reject release.
+`agent unload` and `kill_agent` preserve these gates and retained history.
 Non-OMP sessions keep their provider-specific loading path. Automatic credential
 lookup skips retry delays when there is no multi-account automatic selection.
 
@@ -146,6 +169,8 @@ Build state and package file lists live under `.dev/omp-sdk-build-cache/`. Keys 
 Restart the daemon after changing its backend or SDK. Existing sessions are not switched in place. SDK model/auth and plugin management use the SDK itself; CLI install/update operations are unavailable. SDK statistics read the persisted SQLite index without launching a CLI refresh.
 
 Passive background-daemon inspection calls `ipcEndpoint(runtimeDir, "broker")` from the selected SDK's own `@oh-my-pi/pi-natives` dependency and caches the endpoint for that runtime scope. Explicit `ompSdkPath` takes precedence over provider/launch SDK-root environment settings, as it does for session startup. Windows `omp-broker-*` pipe names and relocated Unix sockets therefore follow the listener's rules instead of deriving an address from the runtime directory basename. Resolving the endpoint does not initialize an SDK agent session, acquire a broker lease, or revive a broker; transport/authentication failures from a live broker remain errors, not an empty background list.
+
+The runtime directory passed to the native IPC helper retains the SDK configuration's lexical path. Do not `realpath` it before endpoint selection: aliases such as macOS `/var` versus `/private/var` hash to different relocated sockets. Canonical project paths are used only to match scope metadata; output inspection still rejects symlinked daemon records and logs. SDK 18's separate `spec.json` supplies the command, working directory and PTY format alongside `meta.json`; legacy embedded specs remain readable without exposing their environment.
 
 Standalone CLI inspection keeps direct Unix socket addressing. On Windows it also needs an accessible Node SDK helper, selected through `OMP_DESKTOP_SDK_ROOT` or the installed SDK package; it no longer guesses a legacy named-pipe address.
 
@@ -250,6 +275,19 @@ Query collects the snapshot on its next GC turn (`gcTime: 0`), including old key
 from workspace, comparison, and expanded-path changes. Mounted retained panels,
 even when disabled, still own their snapshots. Resubscribing receives a fresh
 daemon snapshot; other replica domains keep their existing cache lifetime.
+
+Renderer history budgets use conservative UTF-16 body accounting: visible
+24 MiB and background 32 MiB. Encoded image data (12 MiB) and decoded image
+estimates (24 MiB) are separate budgets. Active pinned content may exceed them;
+diagnostics report retained over-budget bytes instead of claiming eviction.
+SDK history uses bounded lazy facades with 8 MiB hot bodies plus an 8 MiB body
+LRU and source rereads. Complete `File` bodies remain persisted without generic
+500,000-character truncation; image externalization/private stripping remain.
+
+Accounting bytes are not JavaScript heap, macOS `phys_footprint`, or Windows
+process commit. Each measurement must name its category and process scope;
+none increases the 4 GiB compressed V8 cage or substitutes for real Native UI
+and platform-specific qualification.
 
 Run the targeted regressions from the repository root:
 

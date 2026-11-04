@@ -190,4 +190,39 @@ describe("assistant image acquisition cache", () => {
     ).rejects.toThrow("cleanup");
     expect(collectRetainedAttachmentIds()).toEqual(new Set());
   });
+
+  it("evicts by resolved bytes even when entry count remains below capacity", async () => {
+    const released: string[] = [];
+    const cache = createAssistantImageAcquisitionCache<string>({
+      capacity: 500,
+      maxBytes: 1000,
+      estimateBytes: (value) => value.length,
+      onRetain: (value) => () => released.push(value),
+    });
+    await cache.acquire("a", async () => "a".repeat(500));
+    await cache.acquire("b", async () => "b".repeat(500));
+    expect(cache.stats().bytes).toBeLessThanOrEqual(1000);
+    expect(cache.peek("a")).toBeUndefined();
+    expect(released).toEqual(["a".repeat(500)]);
+    expect(cache.peek("b")).toBe("b".repeat(500));
+  });
+
+  it("releases an offscreen preview immediately and recreates it when revisited", async () => {
+    const released: string[] = [];
+    const cache = createAssistantImageAcquisitionCache<string>({
+      capacity: 500, maxBytes: 1000, releaseWhenUnused: true,
+      estimateBytes: (value) => value.length,
+      onRetain: (value) => () => released.push(value),
+    });
+    const first = cache.acquireRetained("image", async () => "blob:first");
+    await first.promise;
+    first.release();
+    first.release();
+    expect(cache.stats().bytes).toBe(0);
+    expect(released).toEqual(["blob:first"]);
+    const revisited = cache.acquireRetained("image", async () => "blob:reloaded");
+    expect(await revisited.promise).toBe("blob:reloaded");
+    revisited.release();
+    expect(released).toEqual(["blob:first", "blob:reloaded"]);
+  });
 });

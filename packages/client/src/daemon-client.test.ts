@@ -1389,6 +1389,37 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2000ms)");
 });
 
+test("round-trips content revision cursors and same-seq revised entries", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({ url: "ws://test", clientId: "clsk_unit_test", logger,
+    reconnect: { enabled: false }, transportFactory: () => mock.transport });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const revised = client.fetchAgentTimeline("agent-1", { requestId: "revisions-1", direction: "after",
+    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 }, limit: 40 });
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({ type: "fetch_agent_timeline_request",
+    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 } });
+  const payload = { requestId: "revisions-1", agentId: "agent-1", agent: null, direction: "after", projection: "projected",
+    epoch: "epoch-1", reset: false, staleCursor: false, gap: false, contentVersion: 4, hasMoreRevisions: false,
+    window: { minSeq: 1, maxSeq: 42, nextSeq: 43 }, startCursor: null,
+    endCursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 }, hasOlder: true, hasNewer: false, entries: [],
+    revisedEntries: [{ provider: "omp", timestamp: "2026-11-04T00:00:00.000Z", seqStart: 1, seqEnd: 1,
+      sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }], collapsed: [], item: { type: "tool_call", callId: "write-1", name: "write",
+        revision: 4, status: "completed", error: null, detail: { type: "unknown", input: "saved", output: "done" } } }], error: null };
+  mock.triggerMessage(wrapSessionMessage({ type: "fetch_agent_timeline_response", payload }));
+  const response = await revised;
+  expect(response.revisedEntries?.[0]?.item).toMatchObject({ revision: 4, status: "completed" });
+  expect(response.endCursor).toEqual({ epoch: "epoch-1", seq: 42, contentVersion: 4 });
+  const unchanged = client.fetchAgentTimeline("agent-1", { requestId: "revisions-2", direction: "after", cursor: response.endCursor! });
+  expect(parseSentFrame(mock.sent[1])).toMatchObject({ cursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 } });
+  mock.triggerMessage(wrapSessionMessage({ type: "fetch_agent_timeline_response", payload: { ...payload, requestId: "revisions-2", revisedEntries: [] } }));
+  expect(await unchanged).toMatchObject({ reset: false, entries: [], revisedEntries: [], hasNewer: false });
+  expect(logger.warn).not.toHaveBeenCalled();
+});
+
 test("lists the full agent prompt index", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

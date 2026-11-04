@@ -11,6 +11,11 @@ export default defineConfig({
     // Fake-timer suites freeze p-throttle's clock, so a real per-second cap deadlocks them.
     env: {
       PASEO_GIT_MAX_PROCESSES_PER_SECOND: "10000",
+      // Keep the journal SDK selection separate from the sanitized provider launch environment.
+      OMP_DESKTOP_TEST_SDK_ROOT:
+        process.env.OMP_DESKTOP_TEST_SDK_ROOT ??
+        process.env.OMP_DESKTOP_SDK_ROOT ??
+        path.resolve(__dirname, "../desktop/sdk-dist/node_modules/@oh-my-pi/pi-coding-agent"),
     },
     testTimeout: 30000,
     hookTimeout: 60000,

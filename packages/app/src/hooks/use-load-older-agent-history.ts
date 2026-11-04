@@ -54,7 +54,7 @@ export async function loadOlderAgentHistory(
   try {
     await client.fetchAgentTimeline(
       agentId,
-      planTimelineOlderFetch({ epoch: cursor.epoch, seq: cursor.startSeq }),
+      planTimelineOlderFetch({ epoch: cursor.epoch, seq: Math.min(cursor.startSeq, ...(cursor.retainedRanges ?? []).map((range) => range.startSeq)) }),
     );
   } catch (error) {
     (logger ?? console).warn("[Timeline] failed to load older agent history", agentId, error);
@@ -89,7 +89,7 @@ export function useLoadOlderAgentHistory({
   const progressKey = useSessionStore((state) => {
     const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
     const cursor = timeline.status === "synced" ? timeline.range : null;
-    return cursor ? `${cursor.epoch}:${cursor.startSeq}` : null;
+    return cursor ? `${cursor.epoch}:${Math.min(cursor.startSeq, ...(cursor.retainedRanges ?? []).map((range) => range.startSeq))}` : null;
   });
   const setOlderFetchInFlight = useSessionStore(
     (state) => state.setAgentTimelineOlderFetchInFlight,

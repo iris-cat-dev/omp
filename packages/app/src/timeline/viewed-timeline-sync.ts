@@ -6,13 +6,15 @@ import {
 
 interface TimelinePageResult {
   hasNewer: boolean;
-  endCursor: { epoch: string; seq: number } | null;
+  hasMoreRevisions?: boolean;
+  revisedEntries?: unknown[];
+  endCursor: { epoch: string; seq: number; contentVersion?: number } | null;
 }
 
 interface ViewedTimelineSyncPorts {
   initialDeliveryMode: TimelineDeliveryMode;
   setSubscription(agentIds: string[]): Promise<void>;
-  readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
+  readCursor(agentId: string): { epoch: string; endSeq: number; contentVersion?: number } | undefined;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
@@ -36,7 +38,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
   setActive(active: boolean): void;
   setConnected(connected: boolean): void;
   setDeliveryMode(mode: TimelineDeliveryMode): void;
-  recoverGap(agentId: string, cursor: { epoch: string; endSeq: number }): void;
+  recoverGap(agentId: string, cursor: { epoch: string; endSeq: number; contentVersion?: number }): void;
   dispose(): void;
 }
 
@@ -67,7 +69,8 @@ function isSameCatchUpRequest(
 ): boolean {
   if (!left || !right || left.direction !== right.direction) return false;
   if (left.direction !== "after" || right.direction !== "after") return true;
-  return left.cursor.epoch === right.cursor.epoch && left.cursor.seq === right.cursor.seq;
+  return left.cursor.epoch === right.cursor.epoch && left.cursor.seq === right.cursor.seq &&
+    left.cursor.contentVersion === right.cursor.contentVersion;
 }
 
 type CatchUpDecision = "keep" | "keep-and-park" | "replace";
@@ -200,7 +203,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       const page = await ports.fetchPage(agentId, request);
       if (!ownsCatchUp(agentId, generation)) return;
       if (page.hasNewer && page.endCursor) {
-        if (fallbackToLatestTailOnOverflow) {
+        if (fallbackToLatestTailOnOverflow && !page.hasMoreRevisions && !page.revisedEntries?.length) {
           await ports.fetchLatestTail(agentId);
           catchUps.set(agentId, { generation, status: "complete" });
           setVisibilityCatchUpReady(agentId);
@@ -513,7 +516,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     recoverGap(agentId, cursor) {
       if (!isDesired(agentId)) return;
       startCatchUp(agentId, {
-        request: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq }),
+        request: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq,
+          ...(cursor.contentVersion !== undefined ? { contentVersion: cursor.contentVersion } : {}) }),
         supersede: true,
       });
     },

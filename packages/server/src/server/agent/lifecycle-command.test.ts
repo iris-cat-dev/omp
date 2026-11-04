@@ -103,7 +103,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return archived;
   }
 
-  async closeAgent(agentId: string): Promise<void> {
+  async unloadAgentRuntime(agentId: string): Promise<void> {
     this.closedAgentIds.push(agentId);
     this.liveAgents.delete(agentId);
   }

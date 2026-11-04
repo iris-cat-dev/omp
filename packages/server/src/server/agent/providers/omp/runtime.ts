@@ -2,6 +2,7 @@ import type {
   BackgroundProcess,
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
+import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import type {
   OmpAbortAndRestoreQueueResult,
   OmpApprovalMode,
@@ -80,6 +81,8 @@ export interface OmpRuntimeSession {
   getBackgroundJobOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;
   stopBackgroundJob?(processId: string): Promise<boolean>;
   stopAllBackgroundJobs?(): Promise<number>;
+  getRuntimeResources?(): Promise<RuntimeResource[]>;
+  releaseRuntimeResource?(resourceId: string): Promise<void>;
   setFastMode(enabled: boolean): Promise<OmpFastModeResult>;
   setProxyPolicy(policy: ProxyPolicy): Promise<void>;
   setFastModeTier(

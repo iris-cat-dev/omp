@@ -27,13 +27,13 @@ interface MembershipRequest {
 interface TimelineFetch {
   agentId: string;
   request: ProjectedTimelineForwardFetchPlan;
-  respond(input: { hasNewer: boolean; seq?: number }): void;
+  respond(input: { hasNewer: boolean; seq?: number; contentVersion?: number; hasMoreRevisions?: boolean }): void;
   fail(message: string): void;
 }
 
 class TimelineWorld {
   readonly errors: string[] = [];
-  readonly cursors = new Map<string, { epoch: string; endSeq: number }>();
+  readonly cursors = new Map<string, { epoch: string; endSeq: number; contentVersion?: number }>();
   readonly sync = createViewedTimelineSync({
     initialDeliveryMode: "selective",
     setSubscription: async (agentIds) => {
@@ -50,15 +50,18 @@ class TimelineWorld {
     fetchPage: async (agentId, request) => {
       const result = deferred<{
         hasNewer: boolean;
-        endCursor: { epoch: string; seq: number } | null;
+        hasMoreRevisions?: boolean;
+        endCursor: { epoch: string; seq: number; contentVersion?: number } | null;
       }>();
       this.fetches.push({
         agentId,
         request,
-        respond: ({ hasNewer, seq = 1 }) =>
+        respond: ({ hasNewer, seq = 1, contentVersion, hasMoreRevisions }) =>
           result.resolve({
             hasNewer,
-            endCursor: { epoch: `epoch-${agentId}`, seq },
+            hasMoreRevisions,
+            endCursor: { epoch: `epoch-${agentId}`, seq,
+              ...(contentVersion !== undefined ? { contentVersion } : {}) },
           }),
         fail: (message) => result.reject(new Error(message)),
       });
@@ -531,6 +534,22 @@ test("gap recovery supersedes completed catch-up and pages through the current t
       projection: "projected",
     },
   ]);
+});
+
+test("drains revision pages at the same seq instead of replacing them with a tail", async () => {
+  const world = new TimelineWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42, contentVersion: 3 });
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const first = await world.nextFetch("agent-a");
+  expect(first.request).toMatchObject({ direction: "after", cursor: { seq: 42, contentVersion: 3 } });
+  first.respond({ hasNewer: true, hasMoreRevisions: true, seq: 42, contentVersion: 4 });
+  const second = await world.nextFetch("agent-a");
+  expect(second.request).toMatchObject({ direction: "after", cursor: { seq: 42, contentVersion: 4 } });
+  second.respond({ hasNewer: false, hasMoreRevisions: false, seq: 42, contentVersion: 5 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.expectNoPendingFetch();
 });
 
 test("repeated recovery for the same running gap reuses the in-flight fetch", async () => {

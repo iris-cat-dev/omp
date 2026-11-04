@@ -1,9 +1,15 @@
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import { randomUUID } from "node:crypto";
+import equal from "fast-deep-equal";
+import { ListCommandsResponseSchema } from "@omp-desktop/protocol/messages";
 import type {
   BackgroundProcess,
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
+import {
+  RUNTIME_KEEP_LABEL,
+  type AgentRuntimeRetention,
+} from "@omp-desktop/protocol/runtime-resources";
 import { resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -139,6 +145,13 @@ class AgentRunAdmissionCancelledError extends Error {
   constructor(agentId: string) {
     super(`Agent ${agentId} stopped before work could be admitted`);
     this.name = "AgentRunAdmissionCancelledError";
+  }
+}
+
+export class AgentRuntimeRetainedError extends Error {
+  constructor(public readonly retention: AgentRuntimeRetention) {
+    super(`Runtime cannot be unloaded: ${retention.reasons.map((reason) => reason.detail ?? reason.code).join(", ")}`);
+    this.name = "AgentRuntimeRetainedError";
   }
 }
 
@@ -405,6 +418,7 @@ interface ManagedAgentBase {
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
+  runtimeRetention?: AgentRuntimeRetention;
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
@@ -773,6 +787,8 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly idleRuntimeTimers = new Map<string, NodeJS.Timeout>();
   private readonly idleRuntimeTimeoutMs: number;
+  private readonly runtimeInventoryReasons = new Map<string, AgentRuntimeRetention["reasons"]>();
+  private readonly runtimeInventoryRefreshes = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private readonly workspaceRootCreationTails = new Map<string, Promise<void>>();
   private mcpBaseUrl: string | null;
@@ -830,6 +846,11 @@ export class AgentManager {
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.clients.set(provider, client);
+  }
+
+  /** Return only the selected client; inspection must not discover or activate a runtime. */
+  getRegisteredClient(provider: AgentProvider): AgentClient | undefined {
+    return this.clients.get(provider);
   }
 
   updateProviderRegistry(input: {
@@ -1006,7 +1027,7 @@ export class AgentManager {
   listAgents(options: { includeInternal?: boolean } = {}): ManagedAgent[] {
     return Array.from(this.agents.values())
       .filter((agent) => options.includeInternal === true || !agent.internal)
-      .map((agent) => Object.assign({}, agent));
+      .map((agent) => ({ ...agent, runtimeRetention: this.buildRuntimeRetention(agent) }));
   }
 
   async listImportableSessions(
@@ -1094,75 +1115,59 @@ export class AgentManager {
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model) {
-      return [];
-    }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
+    const stored = await this.findStoredInspection(normalizedConfig, "commands");
+    if (stored) {
+      return ListCommandsResponseSchema.shape.payload.shape.commands.parse(
+        stored.persistence?.metadata?.commands,
       );
     }
-
-    if (client.listCommands) {
-      return await client.listCommands(normalizedConfig);
-    }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      if (!session.listCommands) {
-        throw new Error(
-          `Provider '${normalizedConfig.provider}' does not support listing commands`,
-        );
-      }
-      return await session.listCommands();
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft command listing session",
-        );
-      }
-    }
+    if (client.listCommands) return client.listCommands(normalizedConfig);
+    throw new Error(
+      `Command metadata is unavailable for ${normalizedConfig.provider}. Start or resume a session explicitly to refresh commands.`,
+    );
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model && !client.listFeatures) {
-      return [];
-    }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
+    const stored = await this.findStoredInspection(normalizedConfig, "features");
+    if (stored?.features) return stored.features;
+    if (client.listFeatures) return client.listFeatures(normalizedConfig);
+    throw new Error(
+      `Feature metadata is unavailable for ${normalizedConfig.provider}. Start or resume a session explicitly to refresh capabilities.`,
+    );
+  }
 
-    if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
+  private async findStoredInspection(
+    config: AgentSessionConfig,
+    kind: "commands" | "features",
+  ): Promise<StoredAgentRecord | null> {
+    if (!this.registry) return null;
+    let latest: StoredAgentRecord | null = null;
+    for (const record of await this.registry.list()) {
+      if (
+        record.internal ||
+        record.provider !== config.provider ||
+        record.cwd !== config.cwd ||
+        (record.config?.model ?? null) !== (config.model ?? null) ||
+        (record.config?.modeId ?? record.lastModeId ?? null) !== (config.modeId ?? null) ||
+        (record.config?.thinkingOptionId ?? null) !== (config.thinkingOptionId ?? null) ||
+        (kind === "features" && config.featureValues !== undefined &&
+          !equal(record.config?.featureValues ?? {}, config.featureValues))
+      ) continue;
+      const available = kind === "features"
+        ? record.features !== undefined
+        : ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
+            record.persistence?.metadata?.commands,
+          ).success;
+      if (available && (!latest || record.updatedAt > latest.updatedAt)) latest = record;
     }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      return session.features ?? [];
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft feature listing session",
-        );
-      }
-    }
+    return latest;
   }
 
   getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
-    return agent ? { ...agent } : null;
+    return agent ? { ...agent, runtimeRetention: this.buildRuntimeRetention(agent) } : null;
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
@@ -1791,74 +1796,85 @@ export class AgentManager {
   }
 
   closeAgent(agentId: string): Promise<void> {
-    return this.beginAgentClose(agentId);
+    return this.beginAgentClose(agentId, "close");
   }
 
-  private beginAgentClose(agentId: string, retireIdle = false): Promise<void> {
-    const existing = this.inFlightAgentCloses.get(agentId);
-    if (existing) {
-      return existing;
-    }
+  unloadAgentRuntime(agentId: string): Promise<void> {
+    return this.beginAgentClose(agentId, "unload");
+  }
 
-    const close = this.closeAgentRuntime(agentId, retireIdle);
+  private beginAgentClose(agentId: string, mode: "close" | "unload" | "idle"): Promise<void> {
+    const existing = this.inFlightAgentCloses.get(agentId);
+    if (existing) return existing;
+    // Publish the admission fence before running any async provider operation.
+    const close = Promise.resolve().then(() => this.closeAgentRuntime(agentId, mode));
     this.inFlightAgentCloses.set(agentId, close);
+    const current = this.agents.get(agentId);
+    if (current) {
+      current.runtimeRetention = this.buildRuntimeRetention(current);
+      this.dispatch({ type: "agent_state", agent: { ...current } });
+    }
     const clearClose = () => {
-      if (this.inFlightAgentCloses.get(agentId) === close) {
-        this.inFlightAgentCloses.delete(agentId);
-      }
+      if (this.inFlightAgentCloses.get(agentId) !== close) return;
+      this.inFlightAgentCloses.delete(agentId);
+      const current = this.agents.get(agentId);
+      if (current) this.emitState(current, { persist: false });
     };
     void close.then(clearClose, clearClose);
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string, retireIdle: boolean): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    this.logger.trace(
-      {
-        agentId,
-        provider: agent.provider,
-        sessionId: agent.persistence?.sessionId ?? undefined,
-        turnId: agent.activeForegroundTurnId ?? undefined,
-        lifecycle: agent.lifecycle,
-        activeForegroundTurnId: agent.activeForegroundTurnId,
-        pendingPermissions: agent.pendingPermissions.size,
-      },
-      "agent.manager.close.start",
-    );
-    // Retirement drains and rechecks before entering this synchronous close boundary.
-    if (!retireIdle) await this.drainSessionEvents(agentId);
-    this.cancelRunningProviderSubagents(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
-    let closeError: unknown;
+  private async closeAgentRuntime(
+    agentId: string,
+    mode: "close" | "unload" | "idle",
+  ): Promise<void> {
+    const agent = this.requireAgent(agentId, true);
+    const cancelUnloads: Array<() => void> = [];
     try {
-      await agent.session.close();
-    } catch (error) {
-      closeError = error;
+      for (const candidate of this.agents.values()) {
+        if (!candidate.session || !this.isAgentInRunTree(candidate.id, agentId)) continue;
+        const cancelUnload = candidate.session.beginRuntimeUnload?.();
+        if (cancelUnload) cancelUnloads.push(cancelUnload);
+      }
+      if (mode !== "close") {
+        await this.readRuntimeInventory(agent);
+        await this.drainSessionEvents(agentId);
+        // The drain can deliver a background start or ownership transition. Re-read
+        // authoritative inventories while provider and manager admission are fenced.
+        await this.readRuntimeInventory(agent);
+        const retention = this.buildRuntimeRetention(agent, agentId);
+        if (
+          this.agents.get(agentId) !== agent ||
+          !retention.canUnload ||
+          (mode === "idle" && Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs)
+        ) {
+          throw new AgentRuntimeRetainedError(retention);
+        }
+      } else {
+        await this.drainSessionEvents(agentId);
+      }
+      // No await between the final local/inventory checks and detaching the session.
+      this.cancelRunningProviderSubagents(agentId);
+      const closedAgent = this.prepareAgentForClosure(agent, "agent unloaded");
+      let closeError: unknown;
+      try {
+        await agent.session.close();
+      } catch (error) {
+        closeError = error;
+      }
+      let persistError: unknown;
+      try {
+        await this.persistSnapshot(closedAgent);
+      } catch (error) {
+        persistError = error;
+      }
+      this.emitClosedAgent(closedAgent, { persist: false });
+      if (closeError !== undefined) throw closeError;
+      if (persistError !== undefined) throw persistError;
+      if (mode !== "close") this.discardRetainedAgentState(agentId);
+    } finally {
+      for (let index = cancelUnloads.length - 1; index >= 0; index--) cancelUnloads[index]!();
     }
-
-    let persistError: unknown;
-    try {
-      await this.persistSnapshot(closedAgent);
-    } catch (error) {
-      persistError = error;
-    }
-    this.emitClosedAgent(closedAgent, { persist: false });
-    this.logger.trace(
-      {
-        agentId,
-        provider: closedAgent.provider,
-        sessionId: closedAgent.persistence?.sessionId ?? undefined,
-      },
-      "agent.manager.close.complete",
-    );
-
-    if (closeError !== undefined) {
-      throw closeError;
-    }
-    if (persistError !== undefined) {
-      throw persistError;
-    }
-    if (retireIdle) this.discardRetainedAgentState(agentId);
   }
 
   private clearIdleRuntimeTimer(agentId: string): void {
@@ -1904,44 +1920,123 @@ export class AgentManager {
     this.idleRuntimeTimers.set(agent.id, timer);
   }
 
-  private canRetireIdleRuntime(agent: LiveManagedAgent): boolean {
-    if (
-      !this.acceptingAgentRegistrations ||
-      this.agents.get(agent.id) !== agent ||
-      Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs ||
-      this.inFlightAgentCloses.has(agent.id)
-    )
-      return false;
-
+  private buildRuntimeRetention(
+    agent: ManagedAgent,
+    ignoredCloseId?: string,
+  ): AgentRuntimeRetention {
+    const recoverable = Boolean(this.registry && agent.persistence);
+    if (!agent.session) {
+      return { state: "unloaded", reasons: [], canUnload: false, recoverable, idleSince: null };
+    }
+    const reasons: AgentRuntimeRetention["reasons"] = [];
     for (const candidate of this.agents.values()) {
       if (!this.isAgentInRunTree(candidate.id, agent.id)) continue;
+      const detail = candidate.id === agent.id ? undefined : `Agent ${candidate.id}`;
+      if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
       if (
-        (candidate.lifecycle !== "idle" && candidate.lifecycle !== "error") ||
+        candidate.lifecycle === "running" ||
         this.hasInFlightRun(candidate.id) ||
         candidate.activeTurnId ||
+        this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
+      ) reasons.push({ code: "running", detail });
+      if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
+        reasons.push({ code: "permission", detail });
+      }
+      if (
         candidate.pendingReplacement ||
-        candidate.pendingPermissions.size > 0 ||
         this.stoppingAgentIds.has(candidate.id) ||
         this.foregroundMutationTails.has(candidate.id) ||
         this.lifecycleMutationTails.has(candidate.id) ||
         this.sessionEventTails.has(candidate.id) ||
-        this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
-      )
-        return false;
+        this.durableTimelineWrites.has(candidate.id) ||
+        candidate.session?.hasBackgroundOwnershipTransition?.() ||
+        (candidate.id !== ignoredCloseId && this.inFlightAgentCloses.has(candidate.id))
+      ) reasons.push({ code: "submission", detail });
+      if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
+        reasons.push({ code: "user_keep", detail });
+      }
+      const inventory = this.runtimeInventoryReasons.get(candidate.id);
+      if (inventory) reasons.push(...inventory);
+      else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
     }
-    return true;
+    if (!recoverable) reasons.push({ code: "unrecoverable" });
+    return {
+      state: this.inFlightAgentCloses.has(agent.id) && agent.id !== ignoredCloseId
+        ? "unloading"
+        : "resident",
+      reasons,
+      canUnload: reasons.length === 0,
+      recoverable,
+      idleSince: agent.lifecycle === "idle" || agent.lifecycle === "error"
+        ? agent.updatedAt.toISOString()
+        : null,
+    };
+  }
+
+  private async readRuntimeInventory(agent: LiveManagedAgent): Promise<void> {
+    for (const candidate of this.agents.values()) {
+      if (!candidate.session || !this.isAgentInRunTree(candidate.id, agent.id)) continue;
+      const reasons: AgentRuntimeRetention["reasons"] = [];
+      try {
+        const processes = (await candidate.session.listBackgroundProcesses?.()) ?? [];
+        for (const process of processes) {
+          if (["exited", "failed", "cancelled"].includes(process.status)) continue;
+          reasons.push({ code: "background", detail: `${process.id} (${process.status})` });
+        }
+        const resources = (await candidate.session.getRuntimeResources?.()) ?? [];
+        for (const resource of resources) {
+          reasons.push({
+            code: "kernel",
+            resourceId: resource.id,
+            detail: `${resource.kind}: ${resource.retentionReasons.join(", ") || resource.state}`,
+          });
+        }
+        this.runtimeInventoryReasons.set(candidate.id, reasons);
+      } catch (error) {
+        this.runtimeInventoryReasons.set(candidate.id, [{ code: "checking", detail: "Runtime inventory unavailable" }]);
+        throw error;
+      }
+    }
+  }
+
+  private refreshRuntimeRetention(agent: ManagedAgent): void {
+    agent.runtimeRetention = this.buildRuntimeRetention(agent);
+    if (!agent.session || this.inFlightAgentCloses.has(agent.id) || this.runtimeInventoryRefreshes.has(agent.id)) return;
+    const refresh = this.readRuntimeInventory(agent)
+      .catch((err) => this.logger.debug({ err, agentId: agent.id }, "Runtime inventory refresh failed"))
+      .then(() => {
+        if (this.agents.get(agent.id) !== agent) return;
+        const retention = this.buildRuntimeRetention(agent);
+        if (JSON.stringify(retention) === JSON.stringify(agent.runtimeRetention)) return;
+        agent.runtimeRetention = retention;
+        this.dispatch({ type: "agent_state", agent: { ...agent } });
+      })
+      .finally(() => {
+        if (this.runtimeInventoryRefreshes.get(agent.id) === refresh) {
+          this.runtimeInventoryRefreshes.delete(agent.id);
+        }
+      });
+    this.runtimeInventoryRefreshes.set(agent.id, refresh);
+    this.trackBackgroundTask(refresh);
   }
 
   private async retireIdleRuntime(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
-    if (!agent || !this.canRetireIdleRuntime(agent)) return;
-    const processes = (await agent.session.listBackgroundProcesses?.()) ?? [];
-    if (processes.some((process) => !["exited", "failed", "cancelled"].includes(process.status)))
+    if (
+      !agent || !this.acceptingAgentRegistrations ||
+      Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs ||
+      this.inFlightAgentCloses.has(agentId)
+    ) return;
+    const retention = this.buildRuntimeRetention(agent);
+    if (retention.reasons.some((reason) => reason.code !== "checking")) {
+      this.refreshRuntimeRetention(agent);
       return;
-    await this.drainSessionEvents(agentId);
-    if (!this.canRetireIdleRuntime(agent)) return;
-    // No await between the final liveness check and removing the live runtime.
-    await this.beginAgentClose(agentId, true);
+    }
+    try {
+      await this.beginAgentClose(agentId, "idle");
+    } catch (error) {
+      if (!(error instanceof AgentRuntimeRetainedError)) throw error;
+    }
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -2476,8 +2571,8 @@ export class AgentManager {
   private captureRunAdmission(agentId: string | null): ReadonlyMap<string, number> {
     const epochs = new Map<string, number>();
     while (agentId && !epochs.has(agentId)) {
-      if (this.stoppingAgentIds.has(agentId)) {
-        throw new Error(`Agent ${agentId} is stopping`);
+      if (this.stoppingAgentIds.has(agentId) || this.inFlightAgentCloses.has(agentId)) {
+        throw new Error(`Agent ${agentId} is stopping or unloading`);
       }
       epochs.set(agentId, this.stopEpochs.get(agentId) ?? 0);
       agentId = getParentAgentIdFromLabels(this.agents.get(agentId)?.labels);
@@ -2492,7 +2587,7 @@ export class AgentManager {
     if (!epochs) return;
     for (const [agentId, epoch] of epochs) {
       if (ownerId && !this.isAgentInRunTree(ownerId, agentId)) continue;
-      if (this.stoppingAgentIds.has(agentId) || (this.stopEpochs.get(agentId) ?? 0) !== epoch) {
+      if (this.stoppingAgentIds.has(agentId) || this.inFlightAgentCloses.has(agentId) || (this.stopEpochs.get(agentId) ?? 0) !== epoch) {
         throw new AgentRunAdmissionCancelledError(agentId);
       }
     }
@@ -2511,10 +2606,14 @@ export class AgentManager {
   }
 
   private async runLifecycleMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
+    if (this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
     // Parent cascade classifies a child inside the same lane used by open-tab
     // label writes, so a received ownership update cannot be overtaken.
     const previous = this.lifecycleMutationTails.get(agentId) ?? Promise.resolve();
-    const result = previous.catch(() => undefined).then(mutation);
+    const result = previous.catch(() => undefined).then(() => {
+      if (this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
+      return mutation();
+    });
     const tail = result.then(
       () => undefined,
       () => undefined,
@@ -4102,10 +4201,12 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    agent.persistence = agent.session.describePersistence() ?? agent.persistence;
     this.clearIdleRuntimeTimer(agent.id);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.runtimeInventoryReasons.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4121,6 +4222,13 @@ export class AgentManager {
       ...agent,
       lifecycle: "closed",
       session: null,
+      runtimeRetention: {
+        state: "unloaded",
+        reasons: [],
+        canUnload: false,
+        recoverable: Boolean(this.registry && agent.persistence),
+        idleSince: null,
+      },
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
@@ -4297,6 +4405,8 @@ export class AgentManager {
     if (agent.internal) {
       return;
     }
+    const persistence = agent.session?.describePersistence();
+    if (persistence) agent.persistence = attachPersistenceCwd(persistence, agent.cwd);
     await this.registry.applySnapshot(agent, options);
   }
 
@@ -5327,6 +5437,7 @@ export class AgentManager {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
     this.syncFeaturesFromSession(agent);
+    this.refreshRuntimeRetention(agent);
     this.scheduleIdleRuntimeRetirement(agent);
     if (options?.persist !== false) {
       this.enqueueBackgroundPersist(agent);
@@ -5885,11 +5996,14 @@ export class AgentManager {
     await client.unarchiveNativeSession(persistence);
   }
 
-  private requireAgent(id: string): LiveManagedAgent {
+  private requireAgent(id: string, allowClosing = false): LiveManagedAgent {
     const normalizedId = validateAgentId(id, "requireAgent");
     const agent = this.agents.get(normalizedId);
     if (!agent) {
       throw new Error(`Unknown agent '${normalizedId}'`);
+    }
+    if (!allowClosing && this.inFlightAgentCloses.has(normalizedId)) {
+      throw new Error(`Agent ${normalizedId} is unloading`);
     }
     return agent;
   }

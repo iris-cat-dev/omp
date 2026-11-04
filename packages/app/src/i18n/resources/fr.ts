@@ -11,6 +11,8 @@ export const fr: TranslationResources = {
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.fr,
   visualFeedback: en.visualFeedback,
+  runtimeRetention: en.runtimeRetention,
+  runtimeResources: en.runtimeResources,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Dos",

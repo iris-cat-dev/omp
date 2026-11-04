@@ -10,6 +10,7 @@ import {
   type BackgroundProcess,
   type BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
+import { RuntimeResourceSchema, type RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -743,6 +744,16 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
   }
 
+  async getRuntimeResources(): Promise<RuntimeResource[]> {
+    const result = await this.request({ type: "get_runtime_resources" });
+    return z.object({ resources: z.array(RuntimeResourceSchema) }).parse(result).resources;
+  }
+
+  async releaseRuntimeResource(resourceId: string): Promise<void> {
+    const result = await this.request({ type: "release_runtime_resource", resourceId });
+    z.object({ released: z.literal(true) }).parse(result);
+  }
+
   async setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode> {
     const result = await this.request({ type: "set_approval_mode", mode });
     return z.object({ mode: OmpApprovalModeSchema }).parse(result).mode;
@@ -986,7 +997,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     if (typeof data.text !== "string") {
       throw new Error("OMP branch response did not include restored prompt text");
     }
-    this.activeBranchEntryId = entryId;
+    // Branch restores and removes the selected user prompt. Its entry is no
+    // longer a valid leaf in the new transcript; follow the persisted active tip.
+    this.activeBranchEntryId = undefined;
     return { text: data.text };
   }
 

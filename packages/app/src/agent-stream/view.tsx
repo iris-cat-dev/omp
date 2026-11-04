@@ -44,7 +44,7 @@ import type {
   AgentUsage,
 } from "@omp-desktop/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, setAgentTimelineReadingPosition, setAgentTimelineVisibleItems } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { useSettings } from "@/hooks/use-settings";
@@ -73,6 +73,7 @@ import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import {
   CompletedTurnFooterRow,
   TurnFooter,
@@ -548,13 +549,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
     );
 
-    // Freeze stream presentation while this tab slot is hidden to prevent offscreen
-    // cell-window and turn-lifecycle renders from background agents.
-    // When isActive flips back to true, the context change triggers a re-render and
-    // the component reads the current (fresh) streamItems/streamHead from props.
+    // Inactive panels retain only lightweight UI state, never a frozen copy of
+    // the previous transcript or its derived markdown/tool/image trees.
     const isActive = useRetainedPanelActive();
-    const effectiveStreamItems = useRetainedValue(streamItems, isActive);
-    const effectiveStreamHead = useRetainedValue(streamHead, isActive);
+    const effectiveStreamItems = isActive ? streamItems : EMPTY_STREAM_HEAD;
+    const effectiveStreamHead = isActive ? streamHead : EMPTY_STREAM_HEAD;
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const effectiveHasPendingSubmission = useRetainedValue(
       pendingMessageSubmissions.length > 0,
@@ -693,6 +692,39 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       onJumpError: handleTimelineHistoryLoadError,
       visibleItemIds: visibleHistoryItemIds,
       revealLoadedItem: revealLoadedHistory,
+    });
+    const newerFetchInFlight = useRef(false);
+    const previousReadingIndex = useRef(-1);
+    const reportReadingPosition = useStableEvent((rowId: string | null) => {
+      chatOutline.reportReadingPosition(rowId);
+      if (!isActive) return;
+      setAgentTimelineReadingPosition(resolvedServerId, agentId, rowId);
+      const index = rowId ? effectiveStreamItems.findIndex((item) => item.id === rowId) : -1;
+      const movingForward = index > previousReadingIndex.current;
+      previousReadingIndex.current = index;
+      if (!movingForward || newerFetchInFlight.current || remoteIsLoadingOlder) return;
+      const cursor = useSessionStore.getState().sessions[resolvedServerId]?.agentTimelineCursor.get(agentId);
+      if (!cursor) return;
+      const position = effectiveStreamItems[index]?.timelineCursor;
+      const island = position ? cursor.retainedRanges?.find((range) => position.seq >= range.startSeq && position.seq <= range.endSeq) : undefined;
+      const islandEnd = island ? effectiveStreamItems.findLastIndex((item) => item.timelineCursor?.epoch === cursor.epoch && item.timelineCursor.seq <= island.endSeq) : -1;
+      const fillingGap = island !== undefined && index >= islandEnd - 8;
+      if (!fillingGap && (index < effectiveStreamItems.length - 8 || !isTimelineDetached)) return;
+      newerFetchInFlight.current = true;
+      void getHostRuntimeStore().fetchAgentTimeline(resolvedServerId, agentId, {
+        direction: "after", cursor: { epoch: cursor.epoch, seq: fillingGap ? island!.endSeq : cursor.endSeq, contentVersion: cursor.contentVersion },
+        limit: TIMELINE_FETCH_PAGE_SIZE, projection: "projected", ...(fillingGap ? { mergeWindow: true } : {}),
+      }).catch(handleTimelineHistoryLoadError).finally(() => { newerFetchInFlight.current = false; });
+    });
+    const reportVisibleHistoryItems = useStableEvent((rowIds: readonly string[]) => {
+      const ids = new Set(rowIds);
+      for (const id of rowIds) {
+        const tools = projectedToolCalls.groupsByHostId.get(id);
+        if (tools) for (const call of tools.run.calls) ids.add(call.id);
+        const activities = projectedActivity.groupsByHostId.get(id);
+        if (activities) for (const item of activities.items) ids.add(item.id);
+      }
+      setAgentTimelineVisibleItems(resolvedServerId, agentId, [...ids]);
     });
 
     useImperativeHandle(
@@ -1303,7 +1335,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               routeBottomAnchorRequest,
               isAuthoritativeHistoryReady,
               onNearBottomChange: setIsNearBottom,
-              onReadingPositionChange: chatOutline.reportReadingPosition,
+              onReadingPositionChange: reportReadingPosition,
+              onVisibleHistoryItemsChange: reportVisibleHistoryItems,
               onNearHistoryStart: loadOlder,
               isLoadingOlderHistory: isLoadingOlder,
               hasOlderHistory: hasOlder,

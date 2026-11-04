@@ -7,6 +7,15 @@ import {
   BackgroundProcessOutputResponseSchema,
   BackgroundProcessStopResponseSchema,
 } from "./background-processes.js";
+import {
+  AgentRuntimeRetentionSchema,
+  AgentRuntimeResourcesRequestSchema,
+  AgentRuntimeResourcesResponseSchema,
+  AgentRuntimeResourceReleaseRequestSchema,
+  AgentRuntimeResourceReleaseResponseSchema,
+  UnloadAgentRuntimeRequestSchema,
+  UnloadAgentRuntimeResponseSchema,
+} from "./runtime-resources.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -1018,6 +1027,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
+  runtimeRetention: AgentRuntimeRetentionSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
@@ -1050,6 +1060,7 @@ export const AgentListItemPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   providerUnavailable: z.boolean().optional(),
+  runtimeRetention: AgentRuntimeRetentionSchema.optional(),
 });
 
 export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
@@ -2274,6 +2285,8 @@ export const DaemonUpdateRequestMessageSchema = z.object({
 export const AgentTimelineCursorSchema = z.object({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
+  // Acknowledges content edits independently from the canonical seq position.
+  contentVersion: z.number().int().nonnegative().optional(),
 });
 
 export const FetchAgentTimelineRequestMessageSchema = z.object({
@@ -3773,6 +3786,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RestartServerRequestMessageSchema,
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
+  AgentRuntimeResourcesRequestSchema,
+  AgentRuntimeResourceReleaseRequestSchema,
+  UnloadAgentRuntimeRequestSchema,
   AgentTimelineListPromptsRequestMessageSchema,
   BackgroundProcessListRequestSchema,
   BackgroundProcessOutputRequestSchema,
@@ -4999,6 +5015,9 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    contentVersion: z.number().int().nonnegative().optional(),
+    revisedEntries: z.array(AgentTimelineEntryPayloadSchema).optional(),
+    hasMoreRevisions: z.boolean().optional(),
     historyUnavailable: AgentHistoryUnavailableSchema.optional(),
     error: z.string().nullable(),
   }),
@@ -5061,6 +5080,8 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
     provider: AgentProviderSchema.nullable(),
     direction: z.enum(["tail", "before", "after"]),
     epoch: z.string(),
+    contentVersion: z.number().int().nonnegative().optional(),
+    hasMoreRevisions: z.boolean().optional(),
     reset: z.boolean(),
     staleCursor: z.boolean(),
     gap: z.boolean(),
@@ -5078,6 +5099,11 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
         seq: z.number().int().nonnegative(),
       }),
     ),
+    revisedRows: z.array(z.object({
+      item: AgentTimelineItemPayloadSchema,
+      timestamp: z.string(),
+      seq: z.number().int().nonnegative(),
+    })).optional(),
     error: z.string().nullable(),
   }),
 });
@@ -7656,6 +7682,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DeleteWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  AgentRuntimeResourcesResponseSchema,
+  AgentRuntimeResourceReleaseResponseSchema,
+  UnloadAgentRuntimeResponseSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   BackgroundProcessListResponseSchema,
   BackgroundProcessOutputResponseSchema,

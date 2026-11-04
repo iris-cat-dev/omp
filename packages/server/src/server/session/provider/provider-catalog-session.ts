@@ -234,7 +234,9 @@ export class ProviderCatalogSession {
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
 
-    const entry = await this.getProviderSnapshotEntryForRead(msg.provider);
+    const entry = this.providerSnapshotManager.getSnapshot().find(
+      (candidate) => candidate.provider === msg.provider,
+    );
 
     if (!entry) {
       this.host.emit({
@@ -271,7 +273,7 @@ export class ProviderCatalogSession {
     const errorMessage =
       entry.status === "error"
         ? (entry.error ?? `Failed to list models for ${msg.provider}`)
-        : `Provider ${msg.provider} is not available`;
+        : `Provider ${msg.provider} metadata is still loading. Refresh providers explicitly to retry.`;
 
     this.host.emit({
       type: "list_provider_models_response",
@@ -288,7 +290,9 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "list_provider_modes_request" }>,
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
-    const entry = await this.getProviderSnapshotEntryForRead(msg.provider);
+    const entry = this.providerSnapshotManager.getSnapshot().find(
+      (candidate) => candidate.provider === msg.provider,
+    );
 
     if (!entry) {
       this.host.emit({
@@ -325,7 +329,7 @@ export class ProviderCatalogSession {
     const errorMessage =
       entry.status === "error"
         ? (entry.error ?? `Failed to list modes for ${msg.provider}`)
-        : `Provider ${msg.provider} is not available`;
+        : `Provider ${msg.provider} metadata is still loading. Refresh providers explicitly to retry.`;
 
     this.host.emit({
       type: "list_provider_modes_response",
@@ -338,25 +342,6 @@ export class ProviderCatalogSession {
     });
   }
 
-  private async getProviderSnapshotEntryForRead(
-    provider: AgentProvider,
-  ): Promise<ProviderSnapshotEntry | undefined> {
-    const manager = this.providerSnapshotManager;
-    const findEntry = () =>
-      manager.getSnapshot().find((candidate) => candidate.provider === provider);
-
-    let entry = findEntry();
-    if (entry && !entry.enabled) {
-      return entry;
-    }
-    if (!entry || entry.status === "loading") {
-      // Awaits the shared in-flight warmup so old clients still get
-      // a resolved answer rather than a loading placeholder.
-      await manager.warmUpSnapshot({ providers: [provider] });
-      entry = findEntry();
-    }
-    return entry;
-  }
 
   private buildDraftAgentSessionConfig(draftConfig: {
     provider: AgentProvider;
@@ -394,7 +379,7 @@ export class ProviderCatalogSession {
         },
       });
     } catch (error) {
-      this.logger.error(
+      this.logger.debug(
         { err: error, provider: msg.draftConfig.provider, draftConfig: msg.draftConfig },
         `Failed to list features for ${msg.draftConfig.provider}`,
       );

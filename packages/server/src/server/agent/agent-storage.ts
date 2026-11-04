@@ -5,7 +5,11 @@ import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentSnapshotPayloadSchema,
+  AgentStatusSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -69,6 +73,8 @@ const STORED_AGENT_SCHEMA = z.object({
     })
     .optional(),
   features: z.array(AgentFeatureSchema).optional(),
+  capabilities: AgentSnapshotPayloadSchema.shape.capabilities.optional(),
+  availableModes: AgentSnapshotPayloadSchema.shape.availableModes.optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
@@ -298,6 +304,19 @@ export class AgentStorage {
         record.promptSources = existing.promptSources;
       }
       return record;
+    });
+  }
+
+  async clearAttention(agentId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      return {
+        ...existing,
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      };
     });
   }
 

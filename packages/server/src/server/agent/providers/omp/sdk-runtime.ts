@@ -65,6 +65,7 @@ export class OmpSdkRuntime implements OmpRuntime {
   async stopDaemon(input: {
     cwd: string;
     name: string;
+    id: string;
     env?: Record<string, string>;
   }): Promise<void> {
     const env = createProviderEnv({
@@ -79,6 +80,7 @@ export class OmpSdkRuntime implements OmpRuntime {
         ...env,
         ELECTRON_RUN_AS_NODE: "1",
         [OMP_SDK_ROOT_ENV]: installation.root,
+        OMP_DESKTOP_STOP_DAEMON_ID: input.id,
       },
       envMode: "internal",
     });

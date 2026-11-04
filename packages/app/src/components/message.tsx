@@ -103,6 +103,7 @@ import {
   useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { useImageVisibility } from "@/assistant-image/use-image-visibility";
 import { parseSkillInvocationMessage } from "./skill-invocation-message";
 import { SkillInvocationMessageView } from "./skill-invocation-message-view";
 import { CollapsibleUserMessageText } from "./collapsible-user-message-text";
@@ -170,6 +171,7 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
   "data:image/png;base64",
   "data:image/gif;base64",
   "data:image/jpeg;base64",
+  "omp-attachment:",
   "https://",
   "http://",
 ] as const;
@@ -535,9 +537,9 @@ export const UserMessage = memo(function UserMessage({
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
+              {images.map((image, index) => (
                 <UserMessageImagePill
-                  key={image.id}
+                  key={`${image.id}:${index}`}
                   image={image}
                   onOpen={setLightboxMetadata}
                   accessibilityLabel={t("composer.attachments.openImage")}
@@ -837,6 +839,10 @@ export function AssistantMarkdownImage({
   const [viewerOpen, setViewerOpen] = useState(false);
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
+  const imageVisibility = useImageVisibility();
+  const panelActive = useRetainedPanelActive();
+  const [imageRetryKey, setImageRetryKey] = useState(0);
+  useEffect(() => { if (!panelActive) setViewerOpen(false); }, [panelActive]);
 
   useEffect(() => {
     setViewerOpen(false);
@@ -855,6 +861,8 @@ export function AssistantMarkdownImage({
     client,
     workspaceRoot,
     serverId,
+    visible: imageVisibility.visible || viewerOpen,
+    retryKey: imageRetryKey,
   });
   const binding = image.status === "failed" ? null : image.binding;
   const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
@@ -879,30 +887,33 @@ export function AssistantMarkdownImage({
     () => [
       assistantMessageStylesheet.imageFrame,
       containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      aspectRatio ? { aspectRatio } : { height: ASSISTANT_IMAGE_MIN_HEIGHT },
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [containerStyle, aspectRatio],
   );
 
   if (image.status === "failed") {
     return (
-      <View style={stateFrameStyle}>
+      <View ref={imageVisibility.ref} style={stateFrameStyle}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
+        <Pressable accessibilityRole="button" onPress={() => setImageRetryKey((attempt) => attempt + 1)}>
+          <Text>{t("common.actions.retry")}</Text>
+        </Pressable>
       </View>
     );
   }
 
   if (!binding) {
     return (
-      <View style={stateFrameStyle}>
+      <View ref={imageVisibility.ref} style={stateFrameStyle}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
 
   return (
-    <View style={frameStyle}>
+    <View ref={imageVisibility.ref} style={frameStyle}>
       <View style={surfaceStyle}>
         <Image
           ref={binding.onRef}
@@ -932,7 +943,7 @@ export function AssistantMarkdownImage({
         ) : null}
       </View>
       {viewerOpen && image.status === "loaded" ? (
-        <ImageLightbox uri={imageUri} alt={alt} onClose={closeViewer} />
+        binding?.attachment ? <AttachmentLightbox metadata={binding.attachment} onClose={closeViewer} /> : <ImageLightbox uri={imageUri} alt={alt} onClose={closeViewer} />
       ) : null}
     </View>
   );

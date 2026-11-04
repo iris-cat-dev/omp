@@ -20,6 +20,15 @@ import { collectDesktopDiagnosticSections } from "@/diagnostics/desktop-diagnost
 import { getHostRuntimeStore, useHosts, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
+import { getRendererTimelineResidencyStats } from "@/stores/session-store";
+import { getAssistantImageResidencyStats } from "@/assistant-image/use-assistant-image";
+
+// Read-only sampling alongside the existing render-profile diagnostic globals.
+// No history, image contents, periodic logging, or telemetry leave the renderer.
+Reflect.set(globalThis, "__PASEO_RENDERER_RESIDENCY__", () => ({
+  timeline: getRendererTimelineResidencyStats(),
+  images: getAssistantImageResidencyStats(),
+}));
 
 interface AppDiagnosticSheetProps {
   visible: boolean;
@@ -98,6 +107,10 @@ export function AppDiagnosticSheet({
           hostCount: hosts.length,
         }),
       );
+      sections.push(formatDiagnosticSection("Renderer residency (estimated bytes)", [
+        { label: "Timeline", value: JSON.stringify(getRendererTimelineResidencyStats()) },
+        { label: "Images", value: JSON.stringify(getAssistantImageResidencyStats()) },
+      ]));
       updateRunProgress("client", t("settings.diagnostics.app.progress.client"), "done");
 
       if (isDesktopApp) {

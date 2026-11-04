@@ -1,5 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -19,6 +22,8 @@ import type { OmpRuntimeLaunch } from "./runtime.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import * as bundledPlugins from "../../../bundled-omp-plugins.js";
 import { subscribeBundledOmpInitialization } from "../../../bundled-omp-initialization.js";
+import { streamOmpHistory } from "./history.js";
+import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
 type OmpChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
@@ -114,6 +119,41 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test("replays the retained ancestry after branch removes its selected user checkpoint", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-branch-replay-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const prefix = [
+      { type: "session", id: "root", cwd: dir },
+      { type: "message", id: "kept", parentId: "root", message: { role: "user", content: "Kept prompt" } },
+      { type: "message", id: "answer", parentId: "kept", message: { role: "assistant", content: [{ type: "text", text: "Kept answer" }] } },
+    ];
+    const serialize = (entries: unknown[]) => entries.map(entry => JSON.stringify(entry)).join("\n") + "\n";
+    writeFileSync(sessionFile, serialize([...prefix,
+      { type: "message", id: "revoked", parentId: "answer", message: { role: "user", content: "Revoked checkpoint" } },
+    ]));
+    const child = createOmpChild();
+    replyToCommands(child, command => {
+      if (command.type === "branch") {
+        const replacement = join(dir, "replacement.jsonl");
+        writeFileSync(replacement, serialize(prefix));
+        renameSync(replacement, sessionFile);
+        return { text: "Revoked checkpoint" };
+      }
+      return { model: null, isStreaming: false, isCompacting: false, sessionId: "root", sessionFile, messageCount: 3, queuedMessageCount: 0 };
+    });
+    const session = await createRuntime(child).startSession({ cwd: dir });
+    try {
+      await session.branch("revoked");
+      const items: AgentStreamEvent[] = [];
+      for await (const event of streamOmpHistory({ sessionFile, runtimeSession: session, runtimeSettings: ompHistoryRuntimeSettings, provider: "omp" })) items.push(event);
+      expect(items.flatMap(event => event.type === "timeline" && event.item.type === "user_message" ? [event.item.text] : [])).toEqual(["Kept prompt"]);
+      expect(items.flatMap(event => event.type === "timeline" && event.item.type === "assistant_message" ? [event.item.text] : [])).toEqual(["Kept answer"]);
+    } finally {
+      await session.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("chat initialization ends after provisioning, before RPC spawn", async () => {
     const phases: Array<string | null> = [];
     const unsubscribe = subscribeBundledOmpInitialization("runtime-progress-agent", (phase) =>

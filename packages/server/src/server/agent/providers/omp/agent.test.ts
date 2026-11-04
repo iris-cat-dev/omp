@@ -324,52 +324,23 @@ describe("OMP agent client and session", () => {
     expect(omp.eventTypes()).toContain("features_changed");
   });
 
-  test("reports the OMP-selected OAuth account during the draft feature probe", async () => {
+  test("does not discover OAuth account state while inspecting an unstarted draft", async () => {
     let credentialReadCount = 0;
     const omp = new OmpHarness({
       oauthAccounts: [
         { credentialId: 41, provider: "openai-codex" },
         { credentialId: 42, provider: "openai-codex" },
       ],
-      initialActiveCredential: { provider: "openai-codex", credentialId: 42 },
-      sessionCredentialReader: (providerId, sessionId) => {
-        expect(providerId).toBe("openai-codex");
-        expect(sessionId).toBe("omp-session-1");
+      sessionCredentialReader: () => {
         credentialReadCount += 1;
         return 42;
       },
     });
-
-    const automaticFeatures = await omp.listFeatures({
-      model: "openai-codex/gpt-5.6",
-    });
-
-    expect(automaticFeatures).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "oauth_account_credential",
-          value: "automatic",
-          effectiveValue: "42",
-        }),
-      ]),
+    await expect(omp.listFeatures({ model: "openai-codex/gpt-5.6" })).rejects.toThrow(
+      "Feature metadata is unavailable",
     );
-    expect(credentialReadCount).toBe(1);
-
-    const pinnedFeatures = await omp.listFeatures({
-      model: "openai-codex/gpt-5.6",
-      featureValues: { oauth_account_credential: "41" },
-    });
-
-    expect(pinnedFeatures).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "oauth_account_credential",
-          value: "41",
-          effectiveValue: null,
-        }),
-      ]),
-    );
-    expect(credentialReadCount).toBe(1);
+    expect(credentialReadCount).toBe(0);
+    expect(omp.launchCount()).toBe(0);
   });
 
   test("reports the effective OAuth account selected by the runtime", async () => {
@@ -468,41 +439,20 @@ describe("OMP agent client and session", () => {
     expect(omp.recordedPrompts()).toEqual([]);
   });
 
-  test("probes fast-mode capability once for an eligible draft model", async () => {
-    const omp = new OmpHarness();
-
-    const features = await omp.listFeatures({
-      model: "openai-codex/gpt-5.6",
-      featureValues: { fast_mode: true },
-    });
-
-    expect(features).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "fast_mode",
-          type: "toggle",
-          value: true,
-        }),
-      ]),
-    );
-    expect(omp.launchCount()).toBe(1);
-    expect(omp.latestRuntimeClosed()).toBe(true);
-  });
-
-  test("keeps fast mode hidden when the draft capability probe reports it unsupported", async () => {
-    const omp = new OmpHarness({ fastModeSupported: false });
-
-    const features = await omp.listFeatures({ model: "openai-codex/gpt-5.6" });
-
-    expect(features).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
-    );
-    expect(omp.launchCount()).toBe(1);
-    expect(omp.latestRuntimeClosed()).toBe(true);
-  });
+  test.each([true, false])(
+    "reports missing draft metadata without launching a fast-mode probe (supported=%s)",
+    async (fastModeSupported) => {
+      const omp = new OmpHarness({ fastModeSupported });
+      await expect(omp.listFeatures({
+        model: "openai-codex/gpt-5.6",
+        featureValues: { fast_mode: true },
+      })).rejects.toThrow("Feature metadata is unavailable");
+      expect(omp.launchCount()).toBe(0);
+    },
+  );
 
   test.each(["claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"])(
-    "offers fast mode for direct Anthropic %s in drafts and sessions",
+    "offers fast mode for direct Anthropic %s after explicit session activation",
     async (id) => {
       const omp = new OmpHarness({
         initialModel: { provider: "anthropic", id, api: "anthropic-messages" },
@@ -510,7 +460,8 @@ describe("OMP agent client and session", () => {
       const model = `anthropic/${id}`;
       const feature = expect.objectContaining({ id: "fast_mode", type: "toggle", value: false });
 
-      expect(await omp.listFeatures({ model })).toEqual(expect.arrayContaining([feature]));
+      await expect(omp.listFeatures({ model })).rejects.toThrow("Feature metadata is unavailable");
+      expect(omp.launchCount()).toBe(0);
       await omp.start({ model });
       expect(omp.features()).toEqual(expect.arrayContaining([feature]));
       await omp.setFeature("fast_mode", true);
@@ -538,9 +489,8 @@ describe("OMP agent client and session", () => {
       featureValues: { fast_mode: true },
     };
 
-    expect(await omp.listFeatures(config)).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
-    );
+    await expect(omp.listFeatures(config)).rejects.toThrow("Feature metadata is unavailable");
+    expect(omp.launchCount()).toBe(0);
     await omp.start(config);
     expect(omp.features()).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
@@ -720,7 +670,7 @@ describe("OMP agent client and session", () => {
   };
 
   test.each([false, true])(
-    "normalizes legacy Fast %s for an Ultrafast-capable draft and session",
+    "normalizes legacy Fast %s for an explicitly activated Ultrafast-capable session",
     async (enabled) => {
       const omp = new OmpHarness({ initialModel: ultrafastModel, ultrafastSupported: true });
       const config = {
@@ -737,7 +687,8 @@ describe("OMP agent client and session", () => {
           expect.objectContaining({ id: "ultrafast" }),
         ],
       });
-      expect(await omp.listFeatures(config)).toEqual(expect.arrayContaining([feature]));
+      await expect(omp.listFeatures(config)).rejects.toThrow("Feature metadata is unavailable");
+      expect(omp.launchCount()).toBe(0);
       await omp.start(config);
       expect(omp.features()).toEqual(expect.arrayContaining([feature]));
       expect(omp.fastModeRequests()).toEqual([]);
@@ -826,9 +777,8 @@ describe("OMP agent client and session", () => {
         model: "openai-codex/gpt-6.1-sol",
         featureValues: { fast_mode: "ultrafast" },
       };
-      expect(await omp.listFeatures(config)).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),
-      );
+      await expect(omp.listFeatures(config)).rejects.toThrow("Feature metadata is unavailable");
+      expect(omp.launchCount()).toBe(0);
       await omp.start(config);
       expect(omp.features()).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ id: "fast_mode" })]),

@@ -37,6 +37,7 @@ describe("InMemoryAgentTimelineStore", () => {
 
     expect(result).toEqual({
       epoch: "epoch-1",
+      contentVersion: 3,
       direction: "before",
       reset: false,
       staleCursor: false,
@@ -91,13 +92,15 @@ describe("InMemoryAgentTimelineStore", () => {
 
     expect(result).toEqual({
       epoch: "epoch-1",
+      contentVersion: 0,
       direction: "after",
       reset: true,
       staleCursor: false,
       gap: true,
       window: { minSeq: 5, maxSeq: 7, nextSeq: 8 },
       hasOlder: true,
-      hasNewer: false,
+      hasNewer: true,
+      hasMoreRevisions: true,
       rows: [
         {
           seq: 7,
@@ -313,5 +316,52 @@ describe("InMemoryAgentTimelineStore", () => {
         detail: expect.objectContaining({ output: "second" }),
       }),
     ]);
+  });
+
+  it("acknowledges old-seq revisions independently, including bounded pages and reconnects", () => {
+    const store = new InMemoryAgentTimelineStore();
+    const running: ToolCallTimelineItem = { type: "tool_call", callId: "one", name: "write",
+      status: "running", error: null, detail: { type: "unknown", input: "initial", output: null } };
+    store.initialize("agent", { epoch: "epoch-1" });
+    store.upsertToolCall("agent", running);
+    store.upsertToolCall("agent", { ...running, callId: "two" });
+    store.append("agent", { type: "assistant_message", text: "Still streaming" });
+    const initial = store.fetch("agent", { direction: "tail", limit: 0 });
+    const cursor = { epoch: initial.epoch, seq: initial.window.maxSeq, contentVersion: initial.contentVersion };
+    store.upsertToolCall("agent", { ...running, callId: "two", status: "completed",
+      detail: { type: "unknown", input: "second result", output: "saved" } });
+    store.upsertToolCall("agent", { ...running, status: "completed",
+      detail: { type: "unknown", input: "first result", output: "saved" } });
+    const first = store.fetch("agent", { direction: "after", cursor, limit: 1 });
+    expect(first.reset).toBe(false);
+    expect(first.rows).toEqual([]);
+    expect(first.revisedRows?.map((row) => row.seq)).toEqual([2]);
+    expect(first.hasNewer).toBe(true);
+    const second = store.fetch("agent", { direction: "after", cursor: { ...cursor, contentVersion: first.contentVersion }, limit: 1 });
+    expect(second.reset).toBe(false);
+    expect(second.revisedRows?.map((row) => row.seq)).toEqual([1]);
+    expect(second.hasNewer).toBe(false);
+    const acknowledged = { ...cursor, contentVersion: second.contentVersion };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const unchanged = store.fetch("agent", { direction: "after", cursor: acknowledged, limit: 1 });
+      expect(unchanged).toMatchObject({ reset: false, rows: [], revisedRows: [], hasNewer: false });
+    }
+    const missed = store.fetch("agent", { direction: "after", cursor, limit: 0 });
+    expect(missed.revisedRows?.map((row) => row.seq)).toEqual([2, 1]);
+    const restored = new InMemoryAgentTimelineStore();
+    restored.initialize("agent", { epoch: "epoch-1", rows: store.getRows("agent") });
+    expect(restored.fetch("agent", { direction: "after", cursor: acknowledged })).toMatchObject({ reset: false, rows: [], revisedRows: [] });
+    expect(store.fetch("agent", { direction: "after", cursor: { epoch: cursor.epoch, seq: cursor.seq } }).reset).toBe(true);
+    store.initialize("agent", { epoch: "epoch-2", items: [running] });
+    expect(store.fetch("agent", { direction: "after", cursor: acknowledged })).toMatchObject({ reset: true, epoch: "epoch-2", window: { minSeq: 1, maxSeq: 1 } });
+  });
+
+  it("acknowledges an empty epoch at sequence zero", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("empty", { epoch: "empty-epoch" });
+    const initial = store.fetch("empty", { direction: "after" });
+    expect(initial).toMatchObject({ reset: true, contentVersion: 0, rows: [] });
+    expect(store.fetch("empty", { direction: "after", cursor: { epoch: initial.epoch, seq: 0, contentVersion: 0 } }))
+      .toMatchObject({ reset: false, rows: [], hasNewer: false });
   });
 });

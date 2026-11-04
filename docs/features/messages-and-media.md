@@ -25,6 +25,10 @@ Uploaded-file attachments preserve their Unicode basename in the composer, messa
 
 Sent input text taller than six rendered lines starts collapsed. Choose **Expand full message** to read it and **Collapse** to fold it again. Wrapping follows the available width; short text has no disclosure control. Copy and rewind retain the complete original message, and image/file attachments remain outside the collapsed text. Long skill arguments follow the same rule; expanding the skill still shows its full instructions.
 
+History bodies are reloadable rather than retained without bound: the renderer uses conservative UTF-16 accounting with a 24 MiB visible-history budget and a 32 MiB background-history budget. Encoded image data has a separate 12 MiB budget; decoded image estimates have a 24 MiB budget. Active/pinned content can exceed a budget and is reported as retained over-budget rather than silently dropped. These accounting bytes are not a measured JavaScript heap or physical process-memory limit.
+
+Complete `File` attachment bodies remain persisted and available for source rereads; they do not use the generic 500,000-character tool-text truncation. Image bodies remain externalized to private storage and private transport fields are stripped from public history.
+
 ## Images and previews
 
 Click an image attachment or generated image to open a full-window preview. Loaded assistant images, including `generate_image` and `present_image`, also show **View full screen** at the upper-right; loading/failed images do not. Use mouse wheel or **Zoom in / Zoom out**, drag an enlarged image to pan, and choose **Fit to window** or **Actual size (100%)**. Close or **Esc** returns to chat. Desktop's window-close-choice dialog stays above the preview; canceling leaves the image open.

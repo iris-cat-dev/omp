@@ -11,6 +11,8 @@ export const ptBR: TranslationResources = {
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules["pt-BR"],
   visualFeedback: en.visualFeedback,
+  runtimeRetention: en.runtimeRetention,
+  runtimeResources: en.runtimeResources,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Voltar",

@@ -104,6 +104,10 @@ argument, patch or task-card snapshot. Tool rows keep their sequence number and
 increase their revision. Durable writes coalesce pending revisions and serialize
 the initial insert before later updates. The application accepts newer revisions
 at existing sequence numbers and rejects stale live/fetched snapshots.
+`contentVersion` acknowledges edits independently of sequence position;
+`revisedEntries`/`revisedRows` deliver changed earlier rows incrementally. Ordinary
+tool-body changes do not reset `after` windows. Older same-sequence pages cannot
+roll back newer revisions.
 
 Old history retains its sequence numbers but shares superseded tool payloads.
 Fork-visible summaries and task logs use detached text-edit checkpoints at
@@ -111,10 +115,75 @@ canonical row boundaries, preserving earlier fork context without retaining each
 full historical log. Ordinary timeline fetches omit these internal checkpoints.
 Oversized shell/plain-text content is copied after truncation so a short V8
 sliced string cannot retain the full original output.
+Complete `File` bodies are persisted without the generic 500,000-character
+tool-text truncation; image externalization and private-field stripping remain.
+
+Cold history uses the selected SDK's `dist/node/modules.json` export
+`@oh-my-pi/pi-coding-agent/session/indexed-session-journal`, not a second scanner
+or an SDK host. First-scan index/catalog work is separate from warm small-page
+I/O. SDK file-backed history uses bounded lazy entry facades with an 8 MiB hot
+body budget and an 8 MiB body LRU, rereading evicted bodies from source.
+
+Standalone CLI execution remains optional, but cold history still requires a
+real built Node SDK containing that module manifest/export. Missing packages or
+artifacts report a cold-history prerequisite error, with no scanner fallback or
+host startup.
+
+`readActiveOmpSubagentMessages(sessionFile, provider, activeEntryId?, runtimeSettings?)`
+reads compact task-discovery messages from the selected indexed journal;
+`streamOmpSubagentHistory` uses this read-only path instead of loading the full
+parent chain. The `desktop-timeline-v3` catalog stores compact `subagentMessages`;
+older catalogs missing that field upgrade with sparse journal reads, not a full
+catalog rebuild. The `desktop-subagent-discovery-v1` fallback validates generation,
+source size, branch IDs and checksums. Its cache retains only task-call identity,
+name and agent selection, task result/progress/async discovery fields or legacy
+session paths, and async-result ownership/status—not parent text, prompts, full
+arguments or images. `getOmpColdHistoryStats()` separates `discoveryBytesRead` and
+`discoveryEntriesParsed` from other history I/O; initial scan/catalog costs must
+not be reported as warm discovery-page costs.
+Child replay uses the journal session header's normalized timestamp for its
+initial upsert and sticky creation-time/list ordering; only a missing header
+timestamp falls back to the first branch entry. The header is separate from
+branch entries, so compact discovery does not replace creation time with a later
+message timestamp.
+
+For targeted verification from the repository root (not a claim of execution):
+
+```sh
+OMP_DESKTOP_TEST_SDK_ROOT="$PWD/packages/desktop/sdk-dist/node_modules/@oh-my-pi/pi-coding-agent" node_modules/.bin/vitest run --config packages/server/vitest.config.ts packages/server/src/server/agent/providers/omp/history-subagents.test.ts packages/server/src/server/agent/providers/omp/history-mapper.test.ts
+```
+
+For native cold-history qualification, compare same-process `coldHistoryStats`
+after the first small page/discovery and again after warm fetch/recovery while
+the SDK session remains unloaded. A seeded catalog should need no discovery
+parsing; warm deltas should show no catalog/discovery reads and journal entry
+bytes matching page bytes. Keep initial indexing separate and report observed
+results rather than treating these expectations as a passed native check.
+
+Cold history, focus, attention, model metadata and resource inventory do not wake
+sessions; dynamic state without a retained snapshot is explicitly unavailable.
+Runtime APIs are `getAgentRuntimeResources`, `releaseAgentRuntimeResource`, and
+`unloadAgentRuntime`, backed by SDK RPC `get_runtime_resources` and
+`release_runtime_resource(resourceId)`. Inventory reports resource identity,
+kind, ownership, optional PID, state, retention reasons, live handles and whether
+release is allowed. Busy/shared resources and background dependencies reject
+release; eligible explicit release permanently discards variables.
+
+Idle unload starts considering sessions after five minutes, rechecking every
+30 seconds. Both `agent unload` and `kill_agent` use safe unload: inventory,
+persistence drain, inventory again, then a synchronous final admission guard.
+Active/admitted work, unconfirmed input, permissions, background dependencies and
+retained variables/resources prevent unload. The background owner stays
+`desktop:<agentId>` across rewind. `releaseRetainedEntries` is a terminal release
+only after disposal, never a way to unload a still-usable session.
 
 The daemon and application must be deployed together for revision-aware tool
-updates. These changes do not enlarge mini-electron's compressed V8 heap cage;
-larger Node-only heaps require a separate engine architecture decision.
+updates. Renderer budgets separately account conservative UTF-16 history bodies
+(visible 24 MiB, background 32 MiB), encoded images (12 MiB), and decoded image
+estimates (24 MiB); active pins can exceed them and diagnostics report that fact.
+Accounting bytes, live JavaScript heap, macOS `phys_footprint`, and Windows process
+commit are distinct measurements. These budgets do not enlarge mini-electron's
+4 GiB compressed V8 heap cage or establish native-platform memory qualification.
 
 ## Tech Stack
 

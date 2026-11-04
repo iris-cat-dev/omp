@@ -17,6 +17,8 @@ import { Maximize, Scan, X, ZoomIn, ZoomOut } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { recordImagePreviewDimensions } from "@/attachments/preview-resource";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { isWeb } from "@/constants/platform";
 import {
   getOverlayRoot,
@@ -45,8 +47,9 @@ interface ImageLightboxProps {
 }
 
 export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
-  const uri = useAttachmentPreviewUrl(metadata);
-  return metadata ? <ImageLightbox uri={uri} onClose={onClose} /> : null;
+  const active = useRetainedPanelActive();
+  const uri = useAttachmentPreviewUrl(active ? metadata : null);
+  return active && metadata ? <ImageLightbox uri={uri} onClose={onClose} /> : null;
 }
 
 export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
@@ -103,9 +106,10 @@ export function ImageLightbox({ uri, alt, onClose }: ImageLightboxProps) {
   const handleImageLoad = useCallback((event: ImageLoadEventData) => {
     const { width, height } = event.source;
     if (width > 0 && height > 0) {
+      if (uri) recordImagePreviewDimensions(uri, width, height);
       dispatchView({ type: "loaded", natural: { width, height } });
     }
-  }, []);
+  }, [uri]);
   const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     dispatchView({ type: "layout", viewport: { width, height } });

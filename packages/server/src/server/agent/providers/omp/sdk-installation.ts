@@ -69,7 +69,7 @@ export async function resolveOmpSdkInstallation(
   root ??= resolveInstalledSdkRoot();
   if (!root) {
     throw new Error(
-      "OMP SDK backend is selected but no Node SDK is installed. Build the project SDK, set agents.providers.omp.ompSdkPath to a built SDK package root, or package it with OMP_DESKTOP_SDK_SOURCE.",
+      "No built OMP Node SDK is installed. The SDK backend and cold-history reads (including standalone CLI history) require a built SDK package with an indexed journal module. Set agents.providers.omp.ompSdkPath to that package root, build the project SDK, or package it with OMP_DESKTOP_SDK_SOURCE.",
     );
   }
   if (!path.isAbsolute(root)) throw new Error("OMP SDK package root must be absolute");

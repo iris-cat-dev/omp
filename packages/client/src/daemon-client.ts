@@ -632,6 +632,9 @@ type ScheduleUpdatePayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
+export type AgentRuntimeResourcesPayload = Extract<SessionOutboundMessage, { type: "agent_runtime_resources_response" }>["payload"];
+export type AgentRuntimeResourceReleasePayload = Extract<SessionOutboundMessage, { type: "agent_runtime_resource_release_response" }>["payload"];
+export type UnloadAgentRuntimePayload = Extract<SessionOutboundMessage, { type: "unload_agent_runtime_response" }>["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -2998,6 +3001,42 @@ export class DaemonClient {
         return null;
       },
     });
+  }
+
+  async getAgentRuntimeResources(agentId: string): Promise<AgentRuntimeResourcesPayload> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({ type: "agent_runtime_resources_request", requestId, agentId }),
+      options: { skipQueue: true },
+      select: (msg) => msg.type === "agent_runtime_resources_response" && msg.payload.requestId === requestId ? msg.payload : null,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  }
+
+  async releaseAgentRuntimeResource(agentId: string, resourceId: string): Promise<AgentRuntimeResourceReleasePayload> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({ type: "agent_runtime_resource_release_request", requestId, agentId, resourceId }),
+      options: { skipQueue: true },
+      select: (msg) => msg.type === "agent_runtime_resource_release_response" && msg.payload.requestId === requestId ? msg.payload : null,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  }
+
+  async unloadAgentRuntime(agentId: string): Promise<UnloadAgentRuntimePayload> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({ type: "unload_agent_runtime_request", requestId, agentId }),
+      options: { skipQueue: true },
+      select: (msg) => msg.type === "unload_agent_runtime_response" && msg.payload.requestId === requestId ? msg.payload : null,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload;
   }
 
   async fetchAgentTimeline(

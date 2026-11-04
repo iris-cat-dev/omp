@@ -2327,9 +2327,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   registerTool(
     "kill_agent",
     {
-      title: "Kill agent",
+      title: "Safely unload agent runtime",
       description:
-        "Terminate the loaded agent runtime. Persistent conversation records and history are retained; this does not delete an agent. Use delete_agent for explicitly authorized permanent history deletion.",
+        "Safely unload a recoverable idle agent runtime, retaining persistent conversation records and history. Refuses running turns, background jobs, unreleased kernels, pending permissions or submissions, and explicit runtime retention. Stop work or explicitly release kernel state first; this command never kills that work or deletes history.",
       inputSchema: {
         agentId: z.string(),
       },

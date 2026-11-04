@@ -15,6 +15,7 @@ import { addImportOptions, runImportCommand } from "./import.js";
 import { runUpdateCommand } from "./update.js";
 import { runDetachCommand } from "./detach.js";
 import { addOpenOptions, runOpenCommand } from "./open.js";
+import { runUnloadCommand } from "./unload.js";
 import { withOutput } from "../../output/index.js";
 import {
   addDaemonHostOption,
@@ -81,6 +82,13 @@ export function createAgentCommand(): Command {
   addJsonAndDaemonHostOptions(addReloadOptions(agent.command("reload"))).action(
     withOutput(runReloadCommand),
   );
+
+  addJsonAndDaemonHostOptions(
+    agent
+      .command("unload")
+      .description("Safely unload an idle recoverable runtime without stopping work or deleting history")
+      .argument("<id>", "Agent ID (or prefix)"),
+  ).action(withOutput(runUnloadCommand));
 
   addJsonAndDaemonHostOptions(
     agent

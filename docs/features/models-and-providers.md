@@ -118,6 +118,10 @@ Only HTTP(S) proxy URLs without paths, queries, or fragments are accepted; SOCKS
 
 **Host Settings → Agents** reports the version, source, and package path of the SDK used for Agent sessions. Desktop-managed runtimes are updated through the whole application; SDK mode does not offer standalone CLI installation or binary replacement.
 
+Reading a cold conversation's model metadata, focus, attention, or history does not wake its SDK runtime. Desktop uses retained metadata; dynamic state with no snapshot is explicitly unavailable rather than launching a provider to fill it in. Sending work or explicitly changing runtime settings remains a separate action.
+
+Runtime retention displays actual resource inventory and reasons a session must stay loaded. Safe idle unload is considered after five minutes and rechecked every 30 seconds, preserving active/admitted work, unconfirmed input, permissions, background dependencies, and variables. Explicit release of an eligible resource discards its variables; busy, shared, or background-dependent resources refuse release. Unload keeps conversation history and does not imply deletion or a measured physical-memory reduction.
+
 Standalone servers can explicitly select an external CLI backend. Its runtime update checks, checksum requests, downloads, and redirects use the enabled host proxy policy; cancellation, SHA-256 verification, and staged replacement remain unchanged.
 
 Standard Apple Silicon macOS and Windows x64 applications include the SDK and embedded Node, without a system Node, Bun, or OMP installation. Legacy CLI-bound private packages and no-OMP installer variants are no longer built. See [Packaging](../packaging.md) and [Development](../development.md).

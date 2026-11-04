@@ -182,6 +182,7 @@ export interface DraftAgentControlsProps {
   onSelectThinkingOption: (thinkingOptionId: string) => void;
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
+  featureMetadataError?: string;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -1908,6 +1909,7 @@ export function DraftAgentControls({
   selectedThinkingOptionId,
   onSelectThinkingOption,
   features,
+  featureMetadataError,
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
@@ -1918,6 +1920,7 @@ export function DraftAgentControls({
   isCompactLayout,
 }: DraftAgentControlsProps) {
   const activeControlSourceId = useId();
+  const { t } = useTranslation();
   const { isActiveComposer } = useComposerKeyboardScope();
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(
     () => toThinkingControlOptions(thinkingOptions),
@@ -2031,6 +2034,20 @@ export function DraftAgentControls({
         workflowQuotaAccounts={workflowQuotaAccounts}
         isCompactLayout={isCompactLayout}
       />
+      {featureMetadataError ? (
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+          <TooltipTrigger asChild>
+            <View accessibilityLabel={featureMetadataError} testID="draft-feature-metadata-unavailable">
+              <Text style={styles.modeBadgeText}>
+                {t("agentControls.features.title")}: {t("providerSelection.unavailable")}
+              </Text>
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" offset={8}>
+            <Text style={styles.tooltipText}>{featureMetadataError}</Text>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
     </>
   );
 }

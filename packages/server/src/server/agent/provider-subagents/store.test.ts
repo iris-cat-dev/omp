@@ -107,7 +107,7 @@ describe("ProviderSubagentStore", () => {
   });
 });
 
-test("materializes interleaved child tools and resets after cursors for revised results", () => {
+test("materializes interleaved child tools and acknowledges revised results without resetting", () => {
   const subagents = new ProviderSubagentStore();
   subagents.apply("parent", "omp", { type: "upsert", id: "child", status: "running" });
   for (let revision = 1; revision <= 256; revision += 1) {
@@ -145,20 +145,24 @@ test("materializes interleaved child tools and resets after cursors for revised 
   });
   const after = subagents.fetchTimeline("parent", "child", {
     direction: "after",
-    cursor: { epoch: before.epoch, seq: before.window.maxSeq },
+    cursor: { epoch: before.epoch, seq: before.window.maxSeq, contentVersion: before.contentVersion },
     limit: 0,
   });
-  expect(after.reset).toBe(true);
-  expect(after.rows.map((row) => row.seq)).toEqual([1, 2]);
+  expect(after.reset).toBe(false);
+  expect(after.rows.map((row) => row.seq)).toEqual([2]);
+  expect(after.revisedRows?.map((row) => row.seq)).toEqual([1]);
   expect(after.window.nextSeq).toBe(3);
-  expect(after.rows[0]?.item).toMatchObject({
+  expect(after.revisedRows?.[0]?.item).toMatchObject({
     status: "completed",
     revision: 257,
     detail: { type: "write", filePath: "/work/result.ts", content: "final source" },
   });
-  const finalItem = after.rows[0]?.item;
+  const finalItem = after.revisedRows?.[0]?.item;
   if (finalItem?.type !== "tool_call") throw new Error("Expected the completed child tool");
   expect(finalItem.metadata?.streamingArgs).toBeUndefined();
+  const unchanged = subagents.fetchTimeline("parent", "child", { direction: "after",
+    cursor: { epoch: after.epoch, seq: after.window.maxSeq, contentVersion: after.contentVersion }, limit: 1 });
+  expect(unchanged).toMatchObject({ reset: false, rows: [], revisedRows: [], hasNewer: false });
   subagents.apply("parent", "omp", { type: "upsert", id: "child", status: "completed" });
   expect(subagents.fetchTimeline("parent", "child", { limit: 0 }).rows[0]?.item).toMatchObject({
     status: "completed",

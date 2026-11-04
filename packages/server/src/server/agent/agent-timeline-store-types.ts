@@ -15,11 +15,14 @@ export interface AgentTimelineRow {
   readonly turnId?: string;
   readonly providerMessageId?: string;
   toolContextChanges?: readonly AgentToolContextChange[];
+  /** Epoch-scoped monotonic content watermark, persisted with the row. */
+  contentVersion?: number;
 }
 
 export interface AgentTimelineCursor {
   epoch: string;
   seq: number;
+  contentVersion?: number;
 }
 
 export type AgentTimelineFetchDirection = "tail" | "before" | "after";
@@ -53,6 +56,9 @@ export interface AgentTimelineFetchResult {
   hasOlder: boolean;
   hasNewer: boolean;
   rows: AgentTimelineRow[];
+  contentVersion?: number;
+  revisedRows?: AgentTimelineRow[];
+  hasMoreRevisions?: boolean;
 }
 
 export interface AgentTimelineStore {

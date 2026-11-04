@@ -75,6 +75,8 @@ export function useDraftAgentFeatures(input: {
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
     staleTime: 5 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -90,12 +92,14 @@ export function useDraftAgentFeatures(input: {
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const featureValues = useMemo(
     () =>
-      resolveFeatureValues({
-        features: availableFeatures,
-        persistedFeatureValues,
-        localFeatureValues,
-      }),
-    [availableFeatures, localFeatureValues, persistedFeatureValues],
+      availableFeaturesRaw === undefined
+        ? { ...persistedFeatureValues, ...localFeatureValues }
+        : resolveFeatureValues({
+            features: availableFeatures,
+            persistedFeatureValues,
+            localFeatureValues,
+          }),
+    [availableFeatures, availableFeaturesRaw, localFeatureValues, persistedFeatureValues],
   );
 
   const features = useMemo(() => {
@@ -172,6 +176,7 @@ export function useDraftAgentFeatures(input: {
     features,
     featureValues: effectiveFeatureValues,
     isLoading: featuresQuery.isLoading,
+    metadataError: featuresQuery.error?.message,
     setFeatureValue,
   };
 }

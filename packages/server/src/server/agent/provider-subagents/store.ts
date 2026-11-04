@@ -162,15 +162,17 @@ export class ProviderSubagentStore {
   ): AgentTimelineFetchResult {
     const direction = options?.direction ?? "tail";
     const limit = options?.limit === undefined ? 200 : Math.max(0, Math.floor(options.limit));
-    const timeline = this.timelines.fetch(storeKey(parentAgentId, subagentId), {
-      ...options,
-      limit: 0,
-    });
-    if (limit === 0 || timeline.rows.length === 0) {
-      return timeline;
-    }
+    const key = storeKey(parentAgentId, subagentId);
+    const timeline = this.timelines.fetch(key, { ...options, limit });
+    if (limit === 0) return timeline;
+    const fullRows = this.timelines.fetch(key, { direction: "tail", limit: 0 }).rows;
+    const eligible = timeline.reset || direction === "tail" ? fullRows
+      : fullRows.filter((row) => direction === "after"
+        ? row.seq > (options?.cursor?.seq ?? 0)
+        : row.seq < (options?.cursor?.seq ?? timeline.window.nextSeq));
+    if (eligible.length === 0) return timeline;
     const selected = selectTimelineWindowByProjectedLimit({
-      rows: timeline.rows,
+      rows: eligible,
       direction: timeline.reset ? "tail" : direction,
       limit,
     });

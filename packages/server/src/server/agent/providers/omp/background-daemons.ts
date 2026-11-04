@@ -233,7 +233,7 @@ export class OmpBackgroundDaemons {
   private readonly cwd: string;
   private readonly command: string[];
   private readonly env: NodeJS.ProcessEnv;
-  private readonly stopDaemon?: (name: string) => Promise<void>;
+  private readonly stopDaemon?: (name: string, id: string) => Promise<void>;
   private readonly resolveBrokerEndpoint: (dir: string) => string | Promise<string>;
   private readonly sockets = new Set<net.Socket>();
   private readonly known = new Map<string, Daemon>();
@@ -249,7 +249,7 @@ export class OmpBackgroundDaemons {
     cwd: string;
     env?: NodeJS.ProcessEnv;
     command?: string[];
-    stopDaemon?: (name: string) => Promise<void>;
+    stopDaemon?: (name: string, id: string) => Promise<void>;
     resolveBrokerEndpoint?: (dir: string) => string | Promise<string>;
   }) {
     this.cwd = path.resolve(options.cwd);
@@ -298,6 +298,22 @@ export class OmpBackgroundDaemons {
     return this.listing;
   }
 
+  async listOwned(options: {
+    ownerId: string;
+    legacyOwnerIds?: readonly string[];
+  }): Promise<BackgroundProcess[]> {
+    return (await this.list())
+      .filter((entry) => entry.providerOwnerId !== null && (
+        entry.providerOwnerId === options.ownerId ||
+        options.legacyOwnerIds?.includes(entry.providerOwnerId) === true
+      ))
+      .map<BackgroundProcess>(({ providerOwnerId: _owner, ...entry }) => ({
+        ...entry,
+        ownerAgentId: options.ownerId.startsWith("desktop:") ? options.ownerId.slice(8) : null,
+        scope: "agent",
+      }));
+  }
+
   output(processId: string, cursor?: number): Promise<BackgroundProcessOutput> {
     if (this.disposed)
       return Promise.reject(new Error("OMP background daemon adapter is disposed"));
@@ -319,7 +335,7 @@ export class OmpBackgroundDaemons {
     const entry = this.known.get(processId);
     if (!entry) throw new Error("Unknown OMP background process");
     if (this.stopDaemon) {
-      await this.stopDaemon(String(entry.snapshot.name));
+      await this.stopDaemon(String(entry.snapshot.name), processId);
     } else {
       const [executable, ...baseArgs] = this.command;
       if (!executable) throw new Error("OMP command is unavailable");
@@ -334,6 +350,8 @@ export class OmpBackgroundDaemons {
           this.cwd,
           "--timeout",
           "2",
+          "--id",
+          processId,
         ],
         {
           env: this.env,
@@ -390,7 +408,9 @@ export class OmpBackgroundDaemons {
         typeof scope?.projectDir === "string" &&
         (await canonical(scope.projectDir)) === project
       ) {
-        this.runtimeDir = await canonical(dir);
+        // Native IPC hashes the SDK's lexical config path, not its realpath.
+        // Canonicalizing a /var or other symlink alias selects a different socket.
+        this.runtimeDir = dir;
         return this.runtimeDir;
       }
     }
@@ -492,10 +512,14 @@ export class OmpBackgroundDaemons {
     const persisted = new Map<string, { daemon: Daemon; spec: unknown }>();
     for (const entry of await entries(path.join(dir, "daemons"))) {
       if (!entry.isDirectory() || !safeName(entry.name)) continue;
-      const metadata = await jsonFile(path.join(dir, "daemons", entry.name, "meta.json"));
-      const decoded = daemon(metadata?.daemon, metadata?.spec, this.cwd);
+      const recordDir = path.join(dir, "daemons", entry.name);
+      const metadata = await jsonFile(path.join(recordDir, "meta.json"));
+      const spec = metadata && ("spec" in metadata
+        ? metadata.spec
+        : await jsonFile(path.join(recordDir, "spec.json")));
+      const decoded = daemon(metadata?.daemon, spec, this.cwd);
       if (decoded?.snapshot.name === entry.name)
-        persisted.set(entry.name, { daemon: decoded, spec: metadata?.spec });
+        persisted.set(entry.name, { daemon: decoded, spec });
     }
     const live = await this.brokerList(dir);
     const daemons =
@@ -569,11 +593,17 @@ export class OmpBackgroundDaemons {
     const known = this.known.get(processId);
     if (!known || !this.runtimeDir) throw new Error("Unknown OMP background process");
     const dir = path.join(this.runtimeDir, "daemons", known.snapshot.name as string);
-    if ((await canonical(dir)) !== dir) throw new Error("Invalid OMP daemon log directory");
+    const canonicalDir = path.join(await canonical(this.runtimeDir), "daemons", known.snapshot.name as string);
+    if ((await canonical(dir)) !== canonicalDir) throw new Error("Invalid OMP daemon log directory");
     const metadata = await jsonFile(path.join(dir, "meta.json"));
-    const latest = daemon(metadata?.daemon, metadata?.spec, this.cwd);
+    const spec = metadata && ("spec" in metadata
+      ? metadata.spec
+      : await jsonFile(path.join(dir, "spec.json")));
+    const latest = daemon(metadata?.daemon, spec, this.cwd);
     if (!latest) throw new Error("OMP background process metadata is unavailable");
     if (latest.snapshot.id !== processId) throw new Error("OMP background process was replaced");
+    if (latest.snapshot.owner !== known.snapshot.owner)
+      throw new Error("OMP background process ownership changed");
     const generation = latest.generation;
     const files: LogFile[] = [];
     try {

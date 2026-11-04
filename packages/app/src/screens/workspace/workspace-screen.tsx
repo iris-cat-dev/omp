@@ -101,6 +101,7 @@ import {
 } from "@/runtime/host-runtime";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useBackgroundProcessTerminalTabs } from "@/background-processes/terminal-tabs";
+import { RuntimeResourceSheet } from "@/panels/runtime-resource-list";
 import {
   shouldSeedWorkspaceSetupTab,
   useWorkspaceSetupStore,
@@ -550,6 +551,7 @@ function MobileWorkspaceTabOption({
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
+    serverId: normalizedServerId,
     tab,
     index: tabIndex,
     tabCount,
@@ -3927,6 +3929,7 @@ function WorkspaceScreenContent({
           onSubmit={handleRenameModalSubmit}
           onClose={handleRenameModalClose}
         />
+        <RuntimeResourceSheet serverId={normalizedServerId} active={isRouteFocused} />
       </View>
     </RenderProfile>
   );

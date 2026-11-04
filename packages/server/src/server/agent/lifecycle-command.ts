@@ -17,7 +17,7 @@ export interface LifecycleAgentManager {
   clearAgentAttention(agentId: string): Promise<void>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
-  closeAgent(agentId: string): Promise<void>;
+  unloadAgentRuntime(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
   detachAgent(agentId: string): Promise<{
     record: StoredAgentRecord;
@@ -157,7 +157,7 @@ export async function closeAgentCommand(
       return;
     }
   }
-  await dependencies.agentManager.closeAgent(agentId);
+  await dependencies.agentManager.unloadAgentRuntime(agentId);
 }
 
 export interface UpdateAgentResult {

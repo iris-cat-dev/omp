@@ -84,6 +84,10 @@ export function mergeToolCallItems(
   existing: Extract<AgentTimelineItem, { type: "tool_call" }>,
   incoming: Extract<AgentTimelineItem, { type: "tool_call" }>,
 ): Extract<AgentTimelineItem, { type: "tool_call" }> {
+  if (incoming.revision !== undefined && existing.revision !== undefined &&
+      incoming.revision < existing.revision) {
+    return existing;
+  }
   if (existing.status !== "running" && incoming.status === "running") {
     return existing;
   }

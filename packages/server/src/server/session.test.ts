@@ -26,6 +26,8 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { OmpAgentClient } from "./agent/providers/omp/agent.js";
+import { ompHistoryRuntimeSettings } from "./agent/providers/omp/test-utils/history-sdk.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -414,6 +416,7 @@ interface SessionForTestOptions {
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const logger = pino({ level: "silent" });
+  let coldHistoryClient: OmpAgentClient | undefined;
   const github = options.github ?? {
     invalidate: vi.fn(),
     searchIssuesAndPrs: vi.fn(),
@@ -462,6 +465,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
+      getRegisteredClient: vi.fn(() => coldHistoryClient ??= new OmpAgentClient({ logger, runtimeSettings: ompHistoryRuntimeSettings })),
       ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
@@ -515,6 +519,93 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("focus-entry attention and command reads keep fifteen persisted sessions unloaded", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-passive-ui-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(join(root, "agents"), logger);
+  const manager = new AgentManager({ clients: {}, registry: storage, logger });
+  const resume = vi.spyOn(manager, "resumeAgentFromPersistence");
+  const messages: SessionOutboundMessage[] = [];
+  const commands = [
+    { name: "custom-plugin", description: "Installed plugin command", argumentHint: "<input>", kind: "command" as const },
+    { name: "custom-skill", description: "Installed skill", argumentHint: "arguments", kind: "skill" as const },
+  ];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: manager.getAgent.bind(manager),
+      clearAgentAttention: manager.clearAgentAttention.bind(manager),
+      resumeAgentFromPersistence: manager.resumeAgentFromPersistence.bind(manager),
+    },
+    agentStorage: {
+      get: storage.get.bind(storage),
+      list: storage.list.bind(storage),
+      clearAttention: storage.clearAttention.bind(storage),
+    },
+  });
+  try {
+    for (let index = 0; index < 15; index += 1) {
+      const id = `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`;
+      const archivedAt = index % 2 === 0 ? null : "2026-11-03T00:00:00.000Z";
+      await storage.upsert(createStoredAgentRecord({
+        id,
+        provider: "omp",
+        cwd: root,
+        archivedAt,
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: "2026-11-03T00:00:00.000Z",
+        persistence: { provider: "omp", sessionId: id, metadata: { commands } },
+      }));
+      await session.handleMessage({ type: "clear_agent_attention", agentId: id, requestId: `focus-${index}` });
+      await session.handleMessage({ type: "list_commands_request", agentId: id, requestId: `commands-${index}` });
+      expect(await storage.get(id)).toMatchObject({
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+        archivedAt,
+        persistence: { metadata: { commands } },
+      });
+      expect(messages).toContainEqual({
+        type: "list_commands_response",
+        payload: { requestId: `commands-${index}`, agentId: id, commands, error: null },
+      });
+    }
+    expect(resume).not.toHaveBeenCalled();
+    expect(manager.listAgents()).toEqual([]);
+    expect(messages.filter((message) => message.type === "clear_agent_attention_response")).toHaveLength(15);
+    const reopened = new AgentStorage(join(root, "agents"), logger);
+    expect((await reopened.list()).every((record) => !record.requiresAttention)).toBe(true);
+  } finally {
+    session.cleanup();
+    await storage.flush();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cold commands without a snapshot report unavailability without resuming", async () => {
+  const resume = vi.fn();
+  const messages: SessionOutboundMessage[] = [];
+  const record = createStoredAgentRecord({ id: "cold-no-commands", provider: "omp" });
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: () => null, resumeAgentFromPersistence: resume },
+    agentStorage: { get: async () => record },
+  });
+  await session.handleMessage({ type: "list_commands_request", agentId: record.id, requestId: "missing-commands" });
+  expect(messages).toContainEqual({
+    type: "list_commands_response",
+    payload: {
+      requestId: "missing-commands",
+      agentId: record.id,
+      commands: [],
+      error: "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
+    },
+  });
+  expect(resume).not.toHaveBeenCalled();
+  session.cleanup();
+});
 
 test("timeline requests replay progress per request and detach observers without cancelling shared work", async () => {
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
@@ -3060,56 +3151,24 @@ describe("session provider catalog reads", () => {
     });
   });
 
-  test("list_provider_models_request awaits warmup and emits ready models", async () => {
+  test("list_provider_models_request reports pending metadata without warming a runtime", async () => {
     const messages: unknown[] = [];
-    const warmupDeferred = deferred<void>();
-    const {
-      manager: providerSnapshotManager,
-      getSnapshot,
-      warmUpSnapshot,
-    } = createProviderSnapshotManagerStub();
-    getSnapshot.mockReturnValueOnce([
-      {
-        provider: "codex",
-        status: "loading",
-        enabled: true,
-      },
-    ]);
-    getSnapshot.mockReturnValue([
-      {
-        provider: "codex",
-        status: "ready",
-        enabled: true,
-        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4" }],
-        modes: [],
-        fetchedAt: "2026-05-28T00:00:00.000Z",
-      },
-    ]);
-    warmUpSnapshot.mockReturnValue(warmupDeferred.promise);
+    const { manager: providerSnapshotManager, getSnapshot, warmUpSnapshot } =
+      createProviderSnapshotManagerStub();
+    getSnapshot.mockReturnValue([{ provider: "codex", status: "loading", enabled: true }]);
     const session = createSessionForTest({ messages, providerSnapshotManager });
-
-    const responsePromise = session.handleMessage({
+    await session.handleMessage({
       type: "list_provider_models_request",
       provider: "codex",
       requestId: "models-loading-home",
     });
-
-    warmupDeferred.resolve();
-    await responsePromise;
-
+    expect(warmUpSnapshot).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "list_provider_models_response",
       payload: {
         provider: "codex",
-        models: [
-          {
-            provider: "codex",
-            id: "gpt-5.4",
-            label: "GPT-5.4",
-          },
-        ],
-        error: null,
-        fetchedAt: "2026-05-28T00:00:00.000Z",
+        error: "Provider codex metadata is still loading. Refresh providers explicitly to retry.",
+        fetchedAt: expect.any(String),
         requestId: "models-loading-home",
       },
     });

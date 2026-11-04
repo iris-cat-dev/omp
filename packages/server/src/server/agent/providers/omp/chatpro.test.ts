@@ -9,6 +9,7 @@ import { CHATPRO_CUSTOM_TYPE, ChatProDeliveries, prepareChatProCommand } from ".
 import type { ChatProDetails } from "./chatpro.js";
 import { streamOmpHistory } from "./history.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
 const harnesses: OmpHarness[] = [];
 afterEach(async () => {
@@ -520,7 +521,7 @@ test("native JSONL restores full top-level and role:custom records, preserves de
         .join("\n"),
     );
     const events: AgentStreamEvent[] = [];
-    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp", runtimeSettings: ompHistoryRuntimeSettings }))
       events.push(event);
     const items = events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
     expect(items).toHaveLength(5);

@@ -3,6 +3,7 @@ import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 export interface TimelineSyncCursor {
   epoch: string;
   seq: number;
+  contentVersion?: number;
 }
 
 export interface ProjectedTimelineTailFetchPlan {
@@ -52,10 +53,11 @@ export function planTimelineTailFetch() {
 }
 
 export function planTimelineResumeFetch(
-  range: { epoch: string; endSeq: number } | null | undefined,
+  range: { epoch: string; endSeq: number; contentVersion?: number } | null | undefined,
 ): ProjectedTimelineForwardFetchPlan {
   return range
-    ? planTimelineCatchUpAfter({ epoch: range.epoch, seq: range.endSeq })
+    ? planTimelineCatchUpAfter({ epoch: range.epoch, seq: range.endSeq,
+        ...(range.contentVersion !== undefined ? { contentVersion: range.contentVersion } : {}) })
     : planTimelineTailFetch();
 }
 

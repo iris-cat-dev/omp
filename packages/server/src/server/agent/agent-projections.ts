@@ -85,6 +85,8 @@ export function toStoredAgentRecord(
     config: config ?? null,
     runtimeInfo,
     features: normalizeFeatures(agent.features),
+    capabilities: agent.capabilities,
+    availableModes: agent.availableModes,
     persistence,
     lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
@@ -120,6 +122,7 @@ export function toAgentPayload(
       ? { proxyPolicy: structuredClone(agent.config.proxyPolicy) }
       : {}),
     ...(runtimeInfo ? { runtimeInfo } : {}),
+    ...(agent.runtimeRetention ? { runtimeRetention: structuredClone(agent.runtimeRetention) } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
@@ -248,14 +251,21 @@ export function buildStoredAgentPayload(
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
     }),
     runtimeInfo,
+    runtimeRetention: {
+      state: "unloaded",
+      reasons: [],
+      canUnload: false,
+      recoverable: Boolean(persistence),
+      idleSince: null,
+    },
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: UNLOADED_AGENT_STATUS[record.lastStatus],
     activeTurn: null,
-    capabilities: defaultCapabilities,
+    capabilities: record.capabilities ?? defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
-    availableModes: [],
+    availableModes: record.availableModes ?? [],
     pendingPermissions: [],
     persistence,
     title: record.title ?? null,
@@ -287,6 +297,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
     labels: agent.labels,
+    ...(agent.runtimeRetention ? { runtimeRetention: agent.runtimeRetention } : {}),
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
 }
@@ -405,6 +416,7 @@ function projectPersistenceHandleForWire(
     return projected;
   }
   delete projected.metadata.mcpServers;
+  delete projected.metadata.commands;
   if (Object.keys(projected.metadata).length === 0) {
     delete projected.metadata;
   }

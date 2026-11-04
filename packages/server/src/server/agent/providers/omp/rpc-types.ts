@@ -727,6 +727,8 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("abort_and_restore_queue") }),
   z.object({ ...OmpCommandBase, type: z.literal("cancel_subagent"), subagentId: z.string() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({ ...OmpCommandBase, type: z.literal("get_runtime_resources") }),
+  z.object({ ...OmpCommandBase, type: z.literal("release_runtime_resource"), resourceId: z.string().min(1) }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("set_approval_mode"),

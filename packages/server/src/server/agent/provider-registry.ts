@@ -392,11 +392,14 @@ function wrapClientProvider(
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
+  const listCommands = inner.listCommands?.bind(inner);
 
   return {
     provider,
     capabilities: inner.capabilities,
     setDefaultProxyPolicy: inner.setDefaultProxyPolicy?.bind(inner),
+    readHistoryPage: inner.readHistoryPage?.bind(inner),
+    streamPersistedSubagentHistory: inner.streamPersistedSubagentHistory?.bind(inner),
     createSession: async (config, launchContext) =>
       wrapSessionProvider(
         provider,
@@ -447,6 +450,9 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listCommands: listCommands
+      ? async (config) => await listCommands({ ...config, provider: inner.provider })
+      : undefined,
     listFeatures: listFeatures
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,

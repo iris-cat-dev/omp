@@ -26,6 +26,9 @@ import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
+import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import type { OmpHistoryInput, OmpHistoryPageInput } from "./providers/omp/history.js";
+import type { AgentTimelineFetchResult } from "./agent-timeline-store-types.js";
 
 export type { AgentProviderNotice, AgentTaskItem, AgentUsage };
 
@@ -733,6 +736,10 @@ export interface AgentSession {
   getBackgroundProcessOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;
   stopBackgroundProcess?(processId: string): Promise<boolean>;
   stopAllBackgroundProcesses?(): Promise<number>;
+  getRuntimeResources?(): Promise<RuntimeResource[]>;
+  releaseRuntimeResource?(resourceId: string): Promise<void>;
+  hasBackgroundOwnershipTransition?(): boolean;
+  beginRuntimeUnload?(): () => void;
   setModel?(modelId: string | null): Promise<void>;
   setProxyPolicy?(policy: ProxyPolicy | undefined): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
@@ -823,6 +830,9 @@ export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
   setDefaultProxyPolicy?(policy: ProxyPolicy): Promise<void>;
+  /** Read persisted native history through the selected provider without activating a session. */
+  readHistoryPage?(input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">): Promise<AgentTimelineFetchResult>;
+  streamPersistedSubagentHistory?(input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">): AsyncGenerator<AgentStreamEvent>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,

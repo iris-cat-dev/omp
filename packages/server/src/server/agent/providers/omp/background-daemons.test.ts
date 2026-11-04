@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import pino from "pino";
 
 import { OmpBackgroundDaemons } from "./background-daemons.js";
-import { OmpAgentClient } from "./agent.js";
+import { OmpAgentClient, OmpAgentSession } from "./agent.js";
+import { FakeOmp } from "./test-utils/fake-omp.js";
 
 let root: string;
 let sdkRoot: string;
@@ -87,9 +88,12 @@ beforeEach(async () => {
     `
     const path = require("node:path");
     const { createHash } = require("node:crypto");
-    exports.ipcEndpoint = (dir, name) => process.platform === "win32"
-      ? ${JSON.stringify("\\\\.\\pipe\\omp-")} + name + "-" + createHash("sha256").update(path.resolve(dir).toLowerCase()).digest("hex").slice(0, 16)
-      : path.join(dir, name + ".ipc");
+    exports.ipcEndpoint = (dir, name) => {
+      const key = createHash("sha256").update(path.resolve(dir).toLowerCase()).digest("hex").slice(0, 16);
+      if (process.platform === "win32") return ${JSON.stringify("\\\\.\\pipe\\omp-")} + name + "-" + key;
+      const direct = path.join(dir, name + ".ipc");
+      return Buffer.byteLength(direct) < 104 ? direct : path.join(${JSON.stringify(root)}, name + "-" + key + ".ipc");
+    };
   `,
   );
   env = {
@@ -182,6 +186,82 @@ describe("OMP passive daemon inspection", () => {
     ]);
   });
 
+  test("rewind retains the Desktop owner, fences unload and rejects another agent's output", async () => {
+    const desktopId = "98bb372d-92c5-4fe9-a590-29ba96018f3c";
+    snapshot.owner = `desktop:${desktopId}`;
+    await persist();
+    await fs.writeFile(path.join(daemonDir, "output.log"), "still-running\n");
+    await broker((request, socket) => {
+      socket.end(JSON.stringify({ id: request.id, ok: true, result: {
+        op: "list", daemons: [snapshot,
+          { ...snapshot, id: "foreign-id", owner: "desktop:foreign-agent" },
+        ],
+      } }) + "\n");
+    });
+    const runtime = await new FakeOmp().startSession({ cwd: root });
+    const gate = Promise.withResolvers<void>();
+    runtime.branch = async () => {
+      await gate.promise;
+      runtime.state = { ...runtime.state, sessionId: "after-rewind" };
+      return { text: "" };
+    };
+    const session = new OmpAgentSession({
+      runtimeSession: runtime,
+      initialState: runtime.state,
+      config: { provider: "omp", cwd: root },
+      logger: pino({ level: "silent" }),
+      backgroundDaemons: adapter,
+      backgroundOwnerId: `desktop:${desktopId}`,
+    });
+    try {
+      const rewind = session.revertConversation({ messageId: "user-before-rewind" });
+      expect(session.hasBackgroundOwnershipTransition()).toBe(true);
+      expect(() => session.beginRuntimeUnload()).toThrow("lifecycle transition");
+      await expect(session.startTurn("must not start")).rejects.toThrow("changing lifecycle");
+      gate.resolve();
+      await rewind;
+      expect(session.id).toBe("after-rewind");
+      expect(session.hasBackgroundOwnershipTransition()).toBe(false);
+      expect(await session.listBackgroundProcesses()).toMatchObject([
+        { id: "daemon-id", ownerAgentId: desktopId, status: "ready" },
+      ]);
+      expect(await session.getBackgroundProcessOutput("daemon-id")).toMatchObject({ text: "still-running\n" });
+      await expect(session.getBackgroundProcessOutput("foreign-id")).rejects.toThrow("not found");
+      await expect(session.stopBackgroundProcess("foreign-id")).rejects.toThrow("not found");
+      const handle = session.describePersistence()!;
+      const client = new OmpAgentClient({
+        logger: pino({ level: "silent" }),
+        runtimeSettings: { ompBackend: "sdk", ompSdkPath: sdkRoot,
+          env: Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value ?? ""])),
+        },
+      });
+      expect(await client.listPersistedBackgroundProcesses(handle, root)).toMatchObject([
+        { id: "daemon-id", ownerAgentId: desktopId, status: "ready" },
+      ]);
+      const compact = session.tryHandleOutOfBand("/compact")!;
+      const releaseParent = session.beginRuntimeUnload();
+      const releaseChild = session.beginRuntimeUnload();
+      releaseParent();
+      releaseParent();
+      expect(() => session.tryHandleOutOfBand("/compact")).toThrow("changing lifecycle");
+      await expect(compact.run({ emit: () => undefined })).rejects.toThrow("changing lifecycle");
+      await expect(session.setGoalObjective("new work")).rejects.toThrow("changing lifecycle");
+      await expect(session.controlGoal("start")).rejects.toThrow("changing lifecycle");
+      releaseChild();
+      expect(session.tryHandleOutOfBand("/compact")).not.toBeNull();
+    } finally {
+      gate.resolve();
+      await session.close();
+    }
+  });
+
+  test("refuses output if a daemon id changes owner between list and reading metadata", async () => {
+    await adapter.list();
+    snapshot.owner = "another-session";
+    await persist();
+    await expect(adapter.output("daemon-id")).rejects.toThrow("ownership changed");
+  });
+
   test("uses authenticated list without completion subscriptions, and never exposes spec env", async () => {
     const requests: Record<string, unknown>[] = [];
     const before = await fs.readFile(path.join(daemonDir, "meta.json"), "utf8");
@@ -215,6 +295,53 @@ describe("OMP passive daemon inspection", () => {
     expect(Object.keys(requests[0]!).sort()).toEqual(["id", "operation", "token"]);
     expect(requests[0]).toMatchObject({ token: "private-token", operation: { op: "list" } });
     expect(await fs.readFile(path.join(daemonDir, "meta.json"), "utf8")).toBe(before);
+  });
+
+  test("preserves aliased SDK config paths for relocated sockets and split launch specs", async () => {
+    adapter.dispose();
+    const alias = path.join(root, "config-alias");
+    await fs.symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+    env.HOME = path.join(alias, "long-config-".repeat(10));
+    runtime = path.join(env.HOME, ".omp", "run", "daemons", scopeKey);
+    daemonDir = path.join(runtime, "daemons", "web");
+    await fs.mkdir(daemonDir, { recursive: true });
+    await fs.writeFile(path.join(runtime, "scope.json"), JSON.stringify({ projectDir: root }));
+    snapshot.owner = "desktop:stable-owner";
+    await fs.writeFile(path.join(daemonDir, "meta.json"), JSON.stringify({ daemon: snapshot }));
+    await fs.writeFile(path.join(daemonDir, "spec.json"), JSON.stringify({
+      application: "node", args: ["server.js"], cwd: root, pty: true,
+      env: { SECRET: "never-expose-me" },
+    }));
+    await fs.writeFile(path.join(daemonDir, "output.log"), "tick\n");
+    await broker((request, socket) => socket.end(JSON.stringify({
+      id: request.id, ok: true, result: { op: "list", daemons: [snapshot] },
+    }) + "\n"));
+    expect(brokerEndpoint(runtime)).not.toBe(brokerEndpoint(await fs.realpath(runtime)));
+    adapter = new OmpBackgroundDaemons({
+      cwd: root, env, resolveBrokerEndpoint: brokerEndpoint,
+      stopDaemon: async (name, id) => {
+        expect({ name, id }).toEqual({ name: "web", id: "daemon-id" });
+        snapshot.state = "exited";
+        await fs.writeFile(path.join(daemonDir, "meta.json"), JSON.stringify({ daemon: snapshot }));
+      },
+    });
+    expect(await adapter.listOwned({ ownerId: "desktop:stable-owner" })).toMatchObject([
+      { id: "daemon-id", command: "node server.js", ownerAgentId: "stable-owner", status: "ready" },
+    ]);
+    expect(await adapter.listOwned({ ownerId: "desktop:another-owner" })).toEqual([]);
+    expect(await adapter.output("daemon-id")).toMatchObject({ text: "tick\n", format: "terminal" });
+    expect(await adapter.stop("daemon-id")).toBe(true);
+    expect(await adapter.listOwned({ ownerId: "desktop:stable-owner" })).toMatchObject([
+      { id: "daemon-id", status: "exited" },
+    ]);
+  });
+
+  test("rejects a daemon record symlink even when the config root is trusted", async () => {
+    await adapter.list();
+    const relocated = path.join(root, "replacement-daemon");
+    await fs.rename(daemonDir, relocated);
+    await fs.symlink(relocated, daemonDir, process.platform === "win32" ? "junction" : "dir");
+    await expect(adapter.output("daemon-id")).rejects.toThrow("Invalid OMP daemon log directory");
   });
 
   test("retains offline terminal logs without inventing exits for unsupervised active daemons", async () => {

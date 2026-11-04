@@ -2,6 +2,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
+import { openRuntimeResourceSheet } from "@/stores/runtime-resource-sheet-store";
 
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 
@@ -69,6 +70,7 @@ export type WorkspaceTabMenuEntry =
 
 interface BuildWorkspaceTabMenuEntriesInput {
   surface: WorkspaceTabMenuSurface;
+  serverId?: string;
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
@@ -90,6 +92,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
 
 interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
+  serverId?: string;
   index: number;
   tabCount: number;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
@@ -229,6 +232,11 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
+    if (input.serverId) entries.push({
+      kind: "item", key: "runtime-resources", label: i18n.t("runtimeResources.title"),
+      testID: `${menuTestIDBase}-runtime-resources`,
+      onSelect: () => openRuntimeResourceSheet(input.serverId!, agentId),
+    });
   }
 
   if (tab.target.kind === "terminal") {
@@ -359,6 +367,7 @@ export function buildWorkspaceDesktopTabActions(
     contextMenuTestId,
     menuEntries: buildWorkspaceTabMenuEntries({
       surface: "desktop",
+      serverId: input.serverId,
       tab: input.tab,
       index: input.index,
       tabCount: input.tabCount,

@@ -34,6 +34,7 @@ import type {
   OmpSessionState,
 } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
+import { ompHistoryRuntimeSettings } from "./history-sdk.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
 
@@ -105,6 +106,7 @@ export class OmpHarness {
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
       runtime: this.omp,
+      runtimeSettings: { ...ompHistoryRuntimeSettings, ompBackend: "cli" },
       oauthAccounts: options.oauthAccounts ?? [],
       sessionCredentialReader: options.sessionCredentialReader,
       providerIdleScheduler: options.providerIdleScheduler,

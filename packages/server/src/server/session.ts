@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
 import {
   serializeAgentStreamEvent,
+  ListCommandsResponseSchema,
   type AgentSnapshotPayload,
   type FirstAgentContext,
   type SessionInboundMessage,
@@ -46,7 +47,6 @@ import {
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import { subscribeBundledOmpInitialization } from "./bundled-omp-initialization.js";
 import {
-  isSystemInjectedEnvelope,
   restorePromptSource,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -102,6 +102,7 @@ import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
+  closeAgentCommand,
   detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
@@ -111,7 +112,6 @@ import {
   resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
 } from "./agent/agent-projections.js";
-import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent/agent-timeline-content.js";
 import {
   appendTimelineItemIfAgentKnown,
@@ -144,7 +144,6 @@ import {
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
 import { inspectOmpSessionHistoryAvailability } from "./agent/providers/omp/session-descriptor.js";
-import { streamOmpHistory, streamOmpSubagentHistory } from "./agent/providers/omp/history.js";
 import { ProviderSubagentStore } from "./agent/provider-subagents/store.js";
 import { OMP_AGENT_CAPABILITIES, OMP_MODES } from "./agent/providers/omp/provider-config.js";
 import {
@@ -1798,8 +1797,8 @@ export class Session {
     }
     return {
       ...payload,
-      capabilities: { ...OMP_AGENT_CAPABILITIES },
-      availableModes: [...OMP_MODES],
+      capabilities: record.capabilities ?? { ...OMP_AGENT_CAPABILITIES },
+      availableModes: record.availableModes ?? [...OMP_MODES],
       ...(record.features ? { features: record.features } : {}),
     };
   }
@@ -2203,6 +2202,9 @@ export class Session {
       case "agent.background_processes.output.request":
       case "agent.background_processes.stop.request":
         return this.handleBackgroundProcessRequest(msg, source);
+      case "agent_runtime_resources_request":
+      case "agent_runtime_resource_release_request":
+        return this.handleRuntimeResourceRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
@@ -2258,6 +2260,8 @@ export class Session {
         return this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
       case "archive_agent_request":
         return this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
+      case "unload_agent_runtime_request":
+        return this.handleUnloadAgentRuntimeRequest(msg.agentId, msg.requestId);
       case "close_items_request":
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
@@ -2806,6 +2810,32 @@ export class Session {
     } catch (error) {
       this.sessionLogger.error({ err: error, intent }, "Lifecycle intent handler failed");
     }
+  }
+
+  private async handleUnloadAgentRuntimeRequest(agentId: string, requestId: string): Promise<void> {
+    let error: string | null = null;
+    try {
+      await closeAgentCommand(
+        { agentManager: this.agentManager, agentStorage: this.agentStorage },
+        agentId,
+      );
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    const live = this.agentManager.getAgent(agentId);
+    const record = live ? null : await this.agentStorage.get(agentId);
+    const runtimeRetention = live?.runtimeRetention ??
+      (record ? this.buildStoredAgentPayload(record).runtimeRetention : undefined);
+    this.emit({
+      type: "unload_agent_runtime_response",
+      payload: {
+        agentId,
+        requestId,
+        success: error === null,
+        error,
+        ...(runtimeRetention ? { runtimeRetention } : {}),
+      },
+    });
   }
 
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
@@ -4095,22 +4125,25 @@ export class Session {
 
     try {
       await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
+        agentIds.map(async (id) => {
+          if (this.agentManager.getAgent(id)) {
+            await this.agentManager.clearAgentAttention(id);
+            return;
+          }
+          await this.agentStorage.clearAttention(id);
+          // An explicit prompt may have activated this agent during the disk write.
+          if (this.agentManager.getAgent(id)) {
+            await this.agentManager.clearAgentAttention(id);
+          } else {
+            const record = await this.agentStorage.get(id);
+            if (record) await this.agentUpdates.emitStoredRecord(record);
+          }
+        }),
       );
-      await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
           await Promise.all(
-            agentIds.map(async (id) => {
-              const agent = this.agentManager.getAgent(id);
-              return agent ? this.buildAgentPayload(agent) : null;
-            }),
+            agentIds.map((id) => this.getAgentPayloadById(id)),
           )
         ).filter((payload): payload is NonNullable<typeof payload> => payload !== null);
         this.emit({
@@ -4193,16 +4226,8 @@ export class Session {
     );
 
     try {
-      const existing = this.agentManager.getAgent(agentId);
-      const stored = existing ? null : await this.agentStorage.get(agentId);
-      const agent =
-        existing || (stored && !stored.archivedAt)
-          ? await ensureAgentLoaded(agentId, {
-              agentManager: this.agentManager,
-              agentStorage: this.agentStorage,
-              logger: this.sessionLogger,
-            })
-          : null;
+      const agent = this.agentManager.getAgent(agentId);
+      const stored = agent ? null : await this.agentStorage.get(agentId);
 
       if (agent?.session?.listCommands) {
         const commands = await agent.session.listCommands();
@@ -4214,6 +4239,22 @@ export class Session {
             error: null,
             requestId,
           },
+        });
+        return;
+      }
+
+      if (stored) {
+        const cached = ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
+          stored.persistence?.metadata?.commands,
+        );
+        if (!cached.success) {
+          throw new Error(
+            "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
+          );
+        }
+        this.emit({
+          type: "list_commands_response",
+          payload: { agentId, commands: cached.data, error: null, requestId },
         });
         return;
       }
@@ -4252,7 +4293,7 @@ export class Session {
         },
       });
     } catch (error) {
-      this.sessionLogger.error({ err: error, agentId, draftConfig }, "Failed to list commands");
+      this.sessionLogger.debug({ err: error, agentId, draftConfig }, "Command metadata read unavailable");
       this.emit({
         type: "list_commands_response",
         payload: {
@@ -4638,7 +4679,7 @@ export class Session {
     if (
       !record ||
       record.internal ||
-      record.provider !== "omp" ||
+      (record.provider !== "omp" && record.provider !== "pi" && record.provider !== "codex") ||
       typeof nativeHandle !== "string" ||
       !nativeHandle.trim()
     ) {
@@ -4665,6 +4706,8 @@ export class Session {
       cursor?: AgentTimelineCursor;
       limit: number;
       includeToolContextChanges?: boolean;
+      projection?: TimelineProjectionMode;
+      onlyUserMessages?: boolean;
     },
   ): Promise<AgentTimelineLoad | null> {
     if (this.agentManager.getAgent(agentId)) {
@@ -4675,7 +4718,7 @@ export class Session {
     if (
       !record ||
       record.internal ||
-      record.provider !== "omp" ||
+      !["omp", "pi", "codex"].includes(record.provider) ||
       typeof nativeHandle !== "string" ||
       !nativeHandle.trim()
     ) {
@@ -4686,29 +4729,24 @@ export class Session {
       return null;
     }
 
-    const timeline = new InMemoryAgentTimelineStore();
-    timeline.initialize(agentId, {
-      epoch: `persisted-omp:${agentId}:${record.updatedAt}`,
-      timestamp: record.updatedAt,
-    });
-    const promptSources = await this.agentStorage.getPromptSources(agentId);
-    for await (const event of streamOmpHistory({
+    const client = this.agentManager.getRegisteredClient(record.provider);
+    if (!client?.readHistoryPage) {
+      throw new Error(`Provider '${record.provider}' has no selected cold-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`);
+    }
+    const timeline = await client.readHistoryPage({
       sessionFile: nativeHandle,
       provider: record.provider,
-    })) {
-      if (event.type !== "timeline") {
-        continue;
-      }
-      if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-        continue;
-      }
-      const turnId = getAgentStreamEventTurnId(event);
-      const item = restorePromptSource(event.item, promptSources);
-      timeline.append(agentId, limitAgentTimelineItemContent(item), {
-        ...(event.timestamp ? { timestamp: event.timestamp } : {}),
-        ...(turnId ? { turnId } : {}),
-      });
-    }
+      epoch: `persisted-omp:${agentId}`,
+      timestamp: record.updatedAt,
+      projection: options.projection,
+      onlyUserMessages: options.onlyUserMessages,
+      options,
+    });
+    const promptSources = await this.agentStorage.getPromptSources(agentId);
+    timeline.rows = timeline.rows.map((row) => ({
+      ...row,
+      item: limitAgentTimelineItemContent(restorePromptSource(row.item, promptSources)),
+    }));
     // A prompt or reload may have resumed the agent while the file was being read.
     if (this.agentManager.getAgent(agentId)) {
       return null;
@@ -4717,12 +4755,8 @@ export class Session {
     return {
       agent: this.buildStoredAgentPayload(record),
       provider: record.provider,
-      controlTimeline: timeline.fetch(agentId, options),
-      fullTimeline: timeline.fetch(agentId, {
-        direction: "tail",
-        limit: 0,
-        includeToolContextChanges: options.includeToolContextChanges,
-      }),
+      controlTimeline: timeline,
+      fullTimeline: timeline,
     };
   }
 
@@ -4732,23 +4766,24 @@ export class Session {
       direction: AgentTimelineFetchDirection;
       cursor?: AgentTimelineCursor;
       limit: number;
-      allowPersistedOmpHistory: boolean;
       includeToolContextChanges?: boolean;
+      projection?: TimelineProjectionMode;
+      onlyUserMessages?: boolean;
     },
   ): Promise<AgentTimelineLoad> {
-    if (options.allowPersistedOmpHistory) {
-      await this.agentManager.waitForAgentClose?.(agentId);
-      const persistedHistory = await this.readPersistedOmpHistory(agentId, options);
-      if (persistedHistory) {
-        return persistedHistory;
-      }
+    await this.agentManager.waitForAgentClose?.(agentId);
+    const persistedHistory = await this.readPersistedOmpHistory(agentId, options);
+    if (persistedHistory) {
+      return persistedHistory;
     }
-
-    const snapshot = await ensureAgentLoaded(agentId, {
-      agentManager: this.agentManager,
-      agentStorage: this.agentStorage,
-      logger: this.sessionLogger,
-    });
+    const snapshot = this.agentManager.getAgent(agentId);
+    if (!snapshot) {
+      const record = await this.agentStorage.get(agentId);
+      if (!record || record.internal) throw new Error(`Agent not found: ${agentId}`);
+      throw new Error(
+        "History is unavailable without activating this session. Resume it explicitly to refresh history.",
+      );
+    }
     return {
       agent: await this.buildAgentPayload(snapshot),
       provider: snapshot.provider,
@@ -7370,13 +7405,17 @@ export class Session {
     });
 
     return {
-      timeline: selectedTimeline,
+      timeline: {
+        ...selectedTimeline,
+        contentVersion: input.controlTimeline.contentVersion,
+        revisedRows: input.controlTimeline.revisedRows,
+      },
       entries: page.entries,
       startSeq: page.startSeq,
       endSeq: page.endSeq,
       hasOlder:
         page.hasOlder || (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
-      hasNewer: page.hasNewer,
+      hasNewer: page.hasNewer || input.controlTimeline.hasNewer,
     };
   }
 
@@ -7436,6 +7475,7 @@ export class Session {
       ? {
           epoch: msg.cursor.epoch,
           seq: msg.cursor.seq,
+          ...(msg.cursor.contentVersion !== undefined ? { contentVersion: msg.cursor.contentVersion } : {}),
         }
       : undefined;
     const unsubscribeInitialization = this.observeBundledOmpInitialization(
@@ -7489,7 +7529,7 @@ export class Session {
         direction,
         ...(cursor ? { cursor } : {}),
         limit: pageLimit,
-        allowPersistedOmpHistory: supportsDegradedHistory,
+        projection,
       });
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
@@ -7500,14 +7540,21 @@ export class Session {
         pageLimit,
         ...(loadedTimeline.fullTimeline ? { fullTimeline: loadedTimeline.fullTimeline } : {}),
       });
+      const contentVersion = loadedTimeline.controlTimeline.contentVersion;
       const startCursor =
         selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
+          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq, contentVersion }
+          : selectedTimeline.timeline.window.maxSeq === 0
+            ? { epoch: selectedTimeline.timeline.epoch, seq: 0, contentVersion }
+            : null;
       const endCursor =
         selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
+          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq, contentVersion }
+          : direction === "after" && cursor && !loadedTimeline.controlTimeline.reset
+            ? { epoch: selectedTimeline.timeline.epoch, seq: cursor.seq, contentVersion }
+            : selectedTimeline.timeline.window.maxSeq === 0
+              ? { epoch: selectedTimeline.timeline.epoch, seq: 0, contentVersion }
+              : null;
 
       this.emitForSource(
         {
@@ -7519,6 +7566,8 @@ export class Session {
             direction,
             projection,
             epoch: selectedTimeline.timeline.epoch,
+            contentVersion,
+            hasMoreRevisions: loadedTimeline.controlTimeline.hasMoreRevisions,
             reset: loadedTimeline.controlTimeline.reset,
             staleCursor: loadedTimeline.controlTimeline.staleCursor,
             gap: loadedTimeline.controlTimeline.gap,
@@ -7548,6 +7597,10 @@ export class Session {
               payloadEntry.turnId = entry.turnId;
               return payloadEntry;
             }),
+            revisedEntries: projectTimelineRows({
+              rows: loadedTimeline.controlTimeline.revisedRows ?? [],
+              mode: "canonical",
+            }).map((entry) => ({ ...entry, provider: loadedTimeline.provider })),
             error: null,
           },
         },
@@ -7596,7 +7649,7 @@ export class Session {
       const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
-        allowPersistedOmpHistory: true,
+        onlyUserMessages: true,
       });
       const rows =
         loaded.fullTimeline?.rows ?? (await this.agentManager.getTimelineRows(msg.agentId));
@@ -7631,6 +7684,42 @@ export class Session {
         },
         source,
       );
+    }
+  }
+
+  private async handleRuntimeResourceRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent_runtime_resources_request" | "agent_runtime_resource_release_request" }>,
+    source?: object,
+  ): Promise<void> {
+    try {
+      const agent = this.agentManager.getAgent(msg.agentId);
+      if (!agent && !(await this.agentStorage.get(msg.agentId)))
+        throw new Error("Agent not found");
+      // Inspection of a cold session must never create an SDK host or fresh kernel.
+      if (msg.type === "agent_runtime_resources_request") {
+        const resources = await agent?.session?.getRuntimeResources?.() ?? [];
+        this.emitForSource({ type: "agent_runtime_resources_response", payload: {
+          requestId: msg.requestId, agentId: msg.agentId, resources, error: null,
+        } }, source);
+      } else {
+        if (!agent?.session?.releaseRuntimeResource)
+          throw new Error("Resource is no longer resident or explicit release is unsupported");
+        await agent.session.releaseRuntimeResource(msg.resourceId);
+        this.agentManager.notifyAgentState(msg.agentId);
+        this.emitForSource({ type: "agent_runtime_resource_release_response", payload: {
+          requestId: msg.requestId, agentId: msg.agentId, resourceId: msg.resourceId, released: true, error: null,
+        } }, source);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (msg.type === "agent_runtime_resources_request")
+        this.emitForSource({ type: "agent_runtime_resources_response", payload: {
+          requestId: msg.requestId, agentId: msg.agentId, resources: [], error: message,
+        } }, source);
+      else
+        this.emitForSource({ type: "agent_runtime_resource_release_response", payload: {
+          requestId: msg.requestId, agentId: msg.agentId, resourceId: msg.resourceId, released: false, error: message,
+        } }, source);
     }
   }
 
@@ -7759,7 +7848,11 @@ export class Session {
     const subagents = new ProviderSubagentStore(
       `persisted-omp-subagents:${parentAgentId}:${record.updatedAt}`,
     );
-    for await (const event of streamOmpSubagentHistory({
+    const client = this.agentManager.getRegisteredClient(record.provider);
+    if (!client?.streamPersistedSubagentHistory) {
+      throw new Error(`Provider '${record.provider}' has no selected cold subagent-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`);
+    }
+    for await (const event of client.streamPersistedSubagentHistory({
       sessionFile: nativeHandle,
       provider: record.provider,
     })) {
@@ -7846,6 +7939,8 @@ export class Session {
           provider: descriptor.provider,
           direction,
           epoch: timeline.epoch,
+          contentVersion: timeline.contentVersion,
+          hasMoreRevisions: timeline.hasMoreRevisions,
           reset: timeline.reset,
           staleCursor: timeline.staleCursor,
           gap: timeline.gap,
@@ -7856,6 +7951,9 @@ export class Session {
             item: row.item,
             timestamp: row.timestamp,
             seq: row.seq,
+          })),
+          revisedRows: (timeline.revisedRows ?? []).map((row) => ({
+            item: row.item, timestamp: row.timestamp, seq: row.seq,
           })),
           error: null,
         },
@@ -7890,7 +7988,6 @@ export class Session {
       const loaded = await this.loadAgentTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
-        allowPersistedOmpHistory: true,
         includeToolContextChanges: true,
       });
       const timeline = loaded.fullTimeline ?? loaded.controlTimeline;

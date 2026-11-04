@@ -180,6 +180,8 @@ export class PiImportClientFacade implements AgentClient {
       ...ompClient.capabilities,
       supportsSessionListing: true,
     };
+    this.readHistoryPage = ompClient.readHistoryPage?.bind(ompClient);
+    this.streamPersistedSubagentHistory = ompClient.streamPersistedSubagentHistory?.bind(ompClient);
   }
 
   async listImportableSessions(
@@ -213,6 +215,8 @@ export class PiImportClientFacade implements AgentClient {
   // Everything below delegates 1:1 to the OMP client: same binary, same
   // catalog, same session runtime.
   createSession: AgentClient["createSession"] = (...args) => this.ompClient.createSession(...args);
+  readHistoryPage: AgentClient["readHistoryPage"];
+  streamPersistedSubagentHistory: AgentClient["streamPersistedSubagentHistory"];
   resumeSession: AgentClient["resumeSession"] = (...args) => this.ompClient.resumeSession(...args);
   fetchCatalog: AgentClient["fetchCatalog"] = (...args) => this.ompClient.fetchCatalog(...args);
   isAvailable: AgentClient["isAvailable"] = (...args) => this.ompClient.isAvailable(...args);

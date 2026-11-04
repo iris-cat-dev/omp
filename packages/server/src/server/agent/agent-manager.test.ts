@@ -18,6 +18,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@omp-desktop/protocol/agent-labels";
+import { RUNTIME_KEEP_LABEL, type RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -2285,7 +2286,7 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
-test("listDraftCommands returns no commands without guessing a missing model", async () => {
+test("listDraftCommands reports missing metadata without guessing a missing model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-commands-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2318,7 +2319,9 @@ test("listDraftCommands returns no commands without guessing a missing model", a
     logger,
   });
 
-  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).rejects.toThrow(
+    "Command metadata is unavailable",
+  );
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
@@ -2335,11 +2338,6 @@ test("listDraftCommands uses explicit model config without default model fetchin
     argumentHint: "",
     kind: "command",
   };
-  class DraftCommandSession extends TestAgentSession {
-    override async listCommands(): Promise<AgentSlashCommand[]> {
-      return [draftCommand];
-    }
-  }
   class DraftCommandClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -2352,8 +2350,12 @@ test("listDraftCommands uses explicit model config without default model fetchin
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+
+    async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
       this.commandConfigs.push(config);
-      return new DraftCommandSession(config);
+      return [draftCommand];
     }
   }
   const client = new DraftCommandClient();
@@ -2373,7 +2375,7 @@ test("listDraftCommands uses explicit model config without default model fetchin
 
   expect(commands).toEqual([draftCommand]);
   expect(client.fetchCatalogCalls).toBe(0);
-  expect(client.createSessionCalls).toBe(1);
+  expect(client.createSessionCalls).toBe(0);
   expect(client.commandConfigs).toEqual([
     {
       provider: "codex",
@@ -2416,11 +2418,47 @@ test("listDraftFeatures does not start a fallback session without a model", asyn
     logger,
   });
 
-  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).rejects.toThrow(
+    "Feature metadata is unavailable",
+  );
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
   expect(client.availabilityCalls).toBe(0);
+});
+
+test("draft inspection reads complete persisted command and feature snapshots without a runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-passive-draft-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const commands: AgentSlashCommand[] = [{ name: "review", description: "Plugin review", argumentHint: "<input>", kind: "command" }];
+  const features: AgentFeature[] = [{ id: "fast_mode", label: "Fast mode", type: "select", value: "ultrafast", options: [
+    { id: "off", label: "Standard" }, { id: "on", label: "Fast" }, { id: "ultrafast", label: "Ultrafast" },
+  ] }];
+  const client = new TestAgentClient();
+  const create = vi.spyOn(client, "createSession");
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir, model: "gpt-5.4", modeId: "ask" };
+  await storage.upsert({
+    id: "passive-draft-snapshot",
+    provider: config.provider,
+    cwd: workdir,
+    createdAt: "2026-11-03T00:00:00.000Z",
+    updatedAt: "2026-11-03T00:00:00.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: { model: config.model, modeId: config.modeId, featureValues: { fast_mode: "ultrafast" } },
+    features,
+    persistence: { provider: config.provider, sessionId: "passive-draft", metadata: { commands } },
+  });
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    await expect(manager.listDraftCommands(config)).resolves.toEqual(commands);
+    await expect(manager.listDraftFeatures(config)).resolves.toEqual(features);
+    expect(create).not.toHaveBeenCalled();
+    expect(manager.listAgents()).toEqual([]);
+  } finally {
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("listDraftFeatures uses client feature listing without a model", async () => {
@@ -10598,7 +10636,7 @@ test.each([
   }
 });
 
-test("does not retire a turn accepted during the background-process check", async () => {
+test("rejects new work once idle retirement enters its background-process check", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-race-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -10622,19 +10660,98 @@ test("does not retire a turn accepted during the background-process check", asyn
       inventoryStarted.resolve();
       return releaseInventory.promise;
     };
-    contract.startTurn = async () => ({ turnId: "accepted-turn" });
     await vi.advanceTimersByTimeAsync(1010);
     await inventoryStarted.promise;
-    const stream = manager.streamAgent(agent.id, "Do not interrupt this new turn");
-    await stream.next();
+    expect(manager.getAgent(agent.id)?.runtimeRetention?.state).toBe("unloading");
+    expect(() => manager.streamAgent(agent.id, "Do not admit work into a closing runtime")).toThrow(/unloading/);
     releaseInventory.resolve([]);
     await manager.flush();
-    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
-    expect(manager.hasInFlightRun(agent.id)).toBe(true);
-    session.pushEvent({ type: "turn_completed", provider: "omp", turnId: "accepted-turn" });
-    await stream.return(undefined);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
   } finally {
     releaseInventory.resolve([]);
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("safe manual unload rechecks background ownership after draining and retains late jobs", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unload-background-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new IdleOmpTestClient();
+  const manager = new AgentManager({ clients: { omp: client }, registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, { workspaceId: undefined });
+    await manager.flush();
+    const session: AgentSession = client.sessions[0]!;
+    const close = vi.fn(async () => {});
+    session.close = close;
+    let checks = 0;
+    session.listBackgroundProcesses = async () => ++checks === 1 ? [] : [{
+      id: "late-job", name: "Late job", command: "build", cwd: workdir,
+      ownerAgentId: agent.id, scope: "agent", source: "omp-job", status: "running",
+      startedAt: Date.now(), endedAt: null, exitCode: null, terminalId: null,
+    }];
+    await expect(manager.unloadAgentRuntime(agent.id)).rejects.toThrow(/late-job/);
+    await manager.flush();
+    expect(checks).toBeGreaterThanOrEqual(2);
+    expect(close).not.toHaveBeenCalled();
+    expect(manager.getAgent(agent.id)?.runtimeRetention).toMatchObject({
+      state: "resident", canUnload: false,
+      reasons: expect.arrayContaining([expect.objectContaining({ code: "background" })]),
+    });
+    session.listBackgroundProcesses = async () => [];
+    await manager.unloadAgentRuntime(agent.id);
+    expect(close).toHaveBeenCalledOnce();
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect((await storage.get(agent.id))?.archivedAt).toBeUndefined();
+  } finally {
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["kernel", "user_keep", "ownership"] as const)("retains %s dependencies without implicitly releasing them", async (dependency) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-dependency-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new IdleOmpTestClient();
+  const manager = new AgentManager({ clients: { omp: client }, registry: storage, idleRuntimeTimeoutMs: 1000, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, { workspaceId: undefined });
+    await manager.flush();
+    const session: AgentSession = client.sessions[0]!;
+    const resource: RuntimeResource = {
+      id: "variables", kind: "javascript_kernel", ownerSessionId: session.id!,
+      state: "retained", retentionReasons: ["variables"], liveHandles: 0, releasable: true,
+    };
+    let resources = dependency === "kernel" ? [resource] : [];
+    let transitioning = dependency === "ownership";
+    session.getRuntimeResources = async () => resources;
+    const release = vi.fn(async () => { resources = []; });
+    session.releaseRuntimeResource = release;
+    session.hasBackgroundOwnershipTransition = () => transitioning;
+    if (dependency === "user_keep") await manager.setLabels(agent.id, { [RUNTIME_KEEP_LABEL]: "true" });
+    await vi.advanceTimersByTimeAsync(4000);
+    await manager.flush();
+    await expect(manager.unloadAgentRuntime(agent.id)).rejects.toThrow(/cannot be unloaded/);
+    expect(release).not.toHaveBeenCalled();
+    expect(manager.getAgent(agent.id)?.runtimeRetention).toMatchObject({ state: "resident", canUnload: false });
+    if (dependency === "kernel") await session.releaseRuntimeResource!(resource.id);
+    if (dependency === "user_keep") await manager.setLabels(agent.id, { [RUNTIME_KEEP_LABEL]: "false" });
+    transitioning = false;
+    await manager.flush();
+    await manager.unloadAgentRuntime(agent.id);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect((await storage.get(agent.id))?.lastStatus).toBe("closed");
+  } finally {
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flush();

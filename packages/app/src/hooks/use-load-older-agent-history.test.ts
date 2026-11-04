@@ -80,6 +80,18 @@ function createLogger(): FakeLogger {
 const someCursor: AgentTimelineCursorState = { epoch: "epoch-1", startSeq: 10, endSeq: 20 };
 
 describe("loadOlderAgentHistory", () => {
+  it("loads before the reading island while a newer live range remains pinned", async () => {
+    const client = createClient();
+    const inFlight = createInFlight();
+    await loadOlderAgentHistory(agentId, {
+      client,
+      cursor: { epoch: "epoch-1", startSeq: 90, endSeq: 100, retainedRanges: [{ startSeq: 10, endSeq: 20, hasOlder: true }] },
+      hasOlder: true, isLoadingOlder: false, setInFlight: inFlight.setInFlight,
+    });
+    expect(client.calls[0]?.request.cursor).toEqual({ epoch: "epoch-1", seq: 10 });
+    expect(inFlight.values).toEqual([false, true, false]);
+  });
+
   it("no-ops without a cursor", async () => {
     const client = createClient();
     const inFlight = createInFlight();

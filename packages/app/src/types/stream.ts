@@ -470,7 +470,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     return null;
   }
   if (isAgentToolCallItem(retained)) {
-    const tailIndex = findExistingAgentToolCallIndex(tail, retained.payload.data.callId);
+    const tailIndex = findExistingAgentToolCallIndex(tail, retained.payload.data.callId, retained.turnId);
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
       return null;
@@ -651,6 +651,7 @@ function selectCanonicalToolRevision(
   if (
     previous &&
     previous.timelineCursor?.epoch === canonicalItem.timelineCursor?.epoch &&
+    (!previous.turnId || !canonicalItem.turnId || previous.turnId === canonicalItem.turnId) &&
     previous.payload.data.revision !== undefined &&
     previous.payload.data.revision >= (canonicalItem.payload.data.revision ?? 0)
   ) {
@@ -1205,12 +1206,13 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
   return mutated ? nextState : state;
 }
 
-function findExistingAgentToolCallIndex(state: StreamItem[], callId: string): number {
+function findExistingAgentToolCallIndex(state: StreamItem[], callId: string, turnId?: string): number {
   return state.findIndex(
     (entry) =>
       entry.kind === "tool_call" &&
       entry.payload.source === "agent" &&
-      entry.payload.data.callId === callId,
+      entry.payload.data.callId === callId &&
+      (!turnId || !entry.turnId || entry.turnId === turnId),
   );
 }
 
@@ -1327,6 +1329,10 @@ export function mergeAgentToolCallItem(
     !timelineCursor ||
     !existing.timelineCursor ||
     timelineCursor.epoch === existing.timelineCursor.epoch;
+  if (!sameEpoch) {
+    return { ...existing, timelineCursor, timestamp,
+      payload: { source: "agent", data: { ...data, error: data.status === "failed" ? data.error : null } } };
+  }
   if (
     sameEpoch &&
     data.revision !== undefined &&
@@ -1336,7 +1342,6 @@ export function mergeAgentToolCallItem(
     return existing;
   }
   if (
-    data.revision === undefined &&
     existing.payload.data.status !== "running" &&
     data.status === "running"
   )
@@ -1380,15 +1385,17 @@ function appendAgentToolCall(
   data: AgentToolCallData,
   timestamp: Date,
   timelineCursor?: TimelinePosition,
+  turnId?: string,
 ): StreamItem[] {
-  const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
+  const existingIndex = findExistingAgentToolCallIndex(state, data.callId, turnId);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
     if (!existing || !isAgentToolCallItem(existing)) {
       return state;
     }
-    const merged = mergeAgentToolCallItem(existing, data, timestamp, timelineCursor);
+    const revision = mergeAgentToolCallItem(existing, data, timestamp, timelineCursor);
+    const merged = turnId && !revision.turnId ? { ...revision, turnId } : revision;
 
     if (
       merged.payload.data.provider === existing.payload.data.provider &&
@@ -1399,7 +1406,8 @@ function appendAgentToolCall(
       merged.payload.data.error === existing.payload.data.error &&
       merged.payload.data.detail === existing.payload.data.detail &&
       merged.payload.data.metadata === existing.payload.data.metadata &&
-      merged.timelineCursor === existing.timelineCursor
+      merged.timelineCursor === existing.timelineCursor &&
+      merged.turnId === existing.turnId
     ) {
       return state;
     }
@@ -1411,8 +1419,9 @@ function appendAgentToolCall(
 
   const item: ToolCallItem = {
     kind: "tool_call",
-    id: `agent_tool_${data.callId}`,
+    id: `agent_tool_${data.callId}${turnId ? `_${turnId}` : ""}`,
     ...(timelineCursor ? { timelineCursor } : {}),
+    ...(turnId ? { turnId } : {}),
     timestamp,
     payload: {
       source: "agent",
@@ -1615,6 +1624,7 @@ function reduceTimelineToolCall(
     },
     timestamp,
     timelineCursor,
+    event.turnId,
   );
 }
 
@@ -2305,6 +2315,25 @@ export function applyStreamEvent(params: {
     unmatchedInsert: params.unmatchedUserMessageInsert,
   });
   if (canonicalUserResult) return canonicalUserResult;
+  if (event.type === "timeline" && event.item.type === "tool_call") {
+    const turnId = event.turnId;
+    const callId = event.item.callId;
+    // An edit to an existing tool is not a new foreground lane. In particular,
+    // stale pages must not flush an assistant response that is still streaming.
+    const matches = (item: StreamItem) => isAgentToolCallItem(item) &&
+      item.payload.data.callId === callId &&
+      (!turnId || !item.turnId || item.turnId === turnId) &&
+      (!params.timelineCursor || !item.timelineCursor ||
+        params.timelineCursor.epoch === item.timelineCursor.epoch);
+    if (tail.some(matches)) {
+      const nextTail = reduceTimelineToolCall(tail, event, event.item, timestamp, params.timelineCursor);
+      return { tail: nextTail, head, changedTail: nextTail !== tail, changedHead: false };
+    }
+    if (head.some(matches)) {
+      const nextHead = reduceTimelineToolCall(head, event, event.item, timestamp, params.timelineCursor);
+      return { tail, head: nextHead, changedTail: false, changedHead: nextHead !== head };
+    }
+  }
   const source = params.source ?? "live";
   let nextTail = tail;
   let nextHead = head;

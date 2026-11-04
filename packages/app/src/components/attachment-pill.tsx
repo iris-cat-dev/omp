@@ -6,6 +6,7 @@ import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { useImageVisibility } from "@/assistant-image/use-image-visibility";
 import type { Theme } from "@/styles/theme";
 
 // Every attachment pill body — image thumbnail or labelled — renders at this
@@ -133,12 +134,12 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
 
 /** Square image preview pill body. */
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
-  const uri = useAttachmentPreviewUrl(metadata);
+  const visibility = useImageVisibility();
+  const uri = useAttachmentPreviewUrl(visibility.visible ? metadata : null, 96);
   const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
-  if (!uri) {
-    return <View style={styles.thumbnailPlaceholder} />;
-  }
-  return <Image source={source} style={styles.thumbnail} />;
+  return <View ref={visibility.ref} style={styles.thumbnail}>
+    {uri ? <Image source={source} style={styles.thumbnail} /> : <View style={styles.thumbnailPlaceholder} />}
+  </View>;
 }
 
 const ThemedX = withUnistyles(X);

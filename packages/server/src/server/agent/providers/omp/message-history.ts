@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import { mapOmpCustomAssistantMessage, shouldDisplayOmpCustomMessage } from "./custom-message.js";
@@ -14,6 +15,12 @@ import {
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
+
+export interface OmpHistoryIdentityState {
+  userIndex: number;
+  assistantIndex: number;
+  customDeliveries: Array<[string, string[]]>;
+}
 
 export interface OmpCapturedUserMessageEntry {
   id: string;
@@ -99,6 +106,21 @@ export class OmpHistoryMapper {
   ) {
     this.nativeUsage.startTurn(this.nativeTurnId, 0);
   }
+  /** Restore native replay identities without retaining preceding message bodies. */
+  restoreHistoryPosition(userIndex: number, assistantIndex: number, resetUsage = true): void {
+    this.userIndex = userIndex;
+    this.assistantIndex = assistantIndex;
+    this.nativeTurnId = `history:${userIndex}`;
+    if (resetUsage) this.nativeUsage.startTurn(this.nativeTurnId, 0);
+  }
+  getHistoryIdentityState(): OmpHistoryIdentityState {
+    return { userIndex: this.userIndex, assistantIndex: this.assistantIndex, customDeliveries: [...this.customDeliveries].map(([key, values]): [string, string[]] => [key, [...values]]) };
+  }
+  restoreHistoryIdentityState(state: OmpHistoryIdentityState): void {
+    this.restoreHistoryPosition(state.userIndex, state.assistantIndex);
+    this.customDeliveries.clear();
+    for (const [key, values] of state.customDeliveries) this.customDeliveries.set(key, new Set(values));
+  }
 
   mapMessages(
     messages: readonly OmpAgentMessage[],
@@ -169,11 +191,12 @@ export class OmpHistoryMapper {
     if (message.customType === CHATPRO_CUSTOM_TYPE) {
       const parsed = ChatProDetailsSchema.safeParse(message.details);
       if (parsed.success) {
-        const key = JSON.stringify(parsed.data);
+        const key = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
+        const textKey = createHash("sha256").update(text).digest("hex");
         const originals = this.customDeliveries.get(key);
-        if (originals?.has(text)) return [];
-        if (originals) originals.add(text);
-        else this.customDeliveries.set(key, new Set([text]));
+        if (originals?.has(textKey)) return [];
+        if (originals) originals.add(textKey);
+        else this.customDeliveries.set(key, new Set([textKey]));
       }
     }
     const mappedEvent =

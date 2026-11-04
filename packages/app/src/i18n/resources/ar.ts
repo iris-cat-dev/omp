@@ -11,6 +11,8 @@ export const ar: TranslationResources = {
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ar,
   visualFeedback: en.visualFeedback,
+  runtimeRetention: en.runtimeRetention,
+  runtimeResources: en.runtimeResources,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "خلف",

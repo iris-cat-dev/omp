@@ -11,6 +11,8 @@ export const ja: TranslationResources = {
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ja,
   visualFeedback: en.visualFeedback,
+  runtimeRetention: en.runtimeRetention,
+  runtimeResources: en.runtimeResources,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "戻る",

@@ -27,6 +27,7 @@ import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { QuotedSelectionContextMenu } from "@/components/quoted-selection-context-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { RuntimeRetention } from "@/panels/runtime-retention";
 import { Composer } from "@/composer";
 import { GoalBar, findLatestGoalSnapshot } from "@/composer/goal-bar";
 import { useWorkspaceHasBranch } from "@/composer/workspace-branch";
@@ -101,6 +102,7 @@ import {
   selectAgentTurnPresentation,
   type Agent,
   useSessionStore,
+  retainAgentTimelineVisibility,
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { resolveProjectLayoutKey } from "@/workspace-tabs/project-scope";
@@ -1411,6 +1413,12 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </View>
   ) : (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
+      {!agentState.archivedAt ? (
+        <RuntimeRetention
+          serverId={serverId}
+          agentId={agentId}
+        />
+      ) : null}
       <AgentComposerSection
         agentId={agentId}
         serverId={serverId}
@@ -1612,6 +1620,11 @@ const AgentStreamSection = memo(function AgentStreamSection({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
+  const isTimelineVisible = useRetainedPanelActive();
+  useEffect(() => {
+    if (!agentId || !isTimelineVisible) return;
+    return retainAgentTimelineVisibility(serverId, agentId);
+  }, [serverId, agentId, isTimelineVisible]);
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasWorkspaceBranch = useWorkspaceHasBranch(serverId, workspaceId);
   const hasVisibleComposerTracks =

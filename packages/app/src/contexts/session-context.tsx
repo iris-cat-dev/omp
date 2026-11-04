@@ -14,12 +14,12 @@ import type { StreamItem } from "@/types/stream";
 import {
   createSessionAgentStreamReducerQueue,
   deriveAgentStreamTurnLiveness,
+  commitTimelineResponseResult,
   processTimelineResponse,
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { AgentTimelineCursorState } from "@/stores/session-store";
 import {
   isTimelineResumeSnapshotAuthoritative,
   planTimelineTailFetch,
@@ -209,56 +209,6 @@ function handleTimelineError(input: {
   }
 }
 
-type CommitTimelineStoreActions = Pick<
-  ReturnType<typeof useSessionStore.getState>,
-  | "setAgentStreamState"
-  | "setAgentTimelineHasNewer"
-  | "markAgentHistorySynchronized"
-  | "applyAgentTimelineResponseState"
->;
-
-// Applies the reducer output's commit decision to the store: a discarded
-// page only acknowledges client messages and refreshes has-newer, an applied
-// page writes the new timeline slice. Extracted from applyTimelineResponse to
-// keep its complexity bounded.
-function commitTimelineResponseResult(input: {
-  result: ProcessTimelineResponseOutput;
-  payload: TimelineResponsePayload;
-  currentNewerAvailable: boolean;
-  currentCursor: AgentTimelineCursorState | undefined;
-  shouldMarkAuthoritativeHistoryApplied: boolean;
-  serverId: string;
-  agentId: string;
-  store: CommitTimelineStoreActions;
-}): void {
-  const { result, payload } = input;
-  const store = input.store;
-  if (result.commit === "discard") {
-    if (result.acknowledgedClientMessageIds.length > 0) {
-      store.setAgentStreamState(input.serverId, input.agentId, {
-        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-      });
-    }
-    if (payload.direction !== "before") {
-      store.setAgentTimelineHasNewer(input.serverId, (current) => {
-        const next = new Map(current);
-        next.set(input.agentId, payload.hasNewer);
-        return next;
-      });
-    }
-    store.markAgentHistorySynchronized(input.serverId, input.agentId);
-    return;
-  }
-  store.applyAgentTimelineResponseState(input.serverId, input.agentId, {
-    items: result.tail,
-    head: result.head,
-    range: result.cursorChanged ? (result.cursor ?? null) : (input.currentCursor ?? null),
-    older: result.older,
-    newer: payload.direction === "before" ? input.currentNewerAvailable : payload.hasNewer,
-    synchronized: input.shouldMarkAuthoritativeHistoryApplied,
-    acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-  });
-}
 
 function executeTimelineSideEffects(input: {
   sideEffects: TimelineReducerSideEffect[];
@@ -392,9 +342,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const recoverTimelineGap = useCallback(
     (agentId: string, cursor: { epoch: string; endSeq: number }) => {
-      viewedTimelineSyncRef.current?.recoverGap(agentId, cursor);
+      const retained = useSessionStore.getState().sessions[serverId]?.agentTimelineCursor.get(agentId);
+      viewedTimelineSyncRef.current?.recoverGap(agentId, {
+        ...cursor,
+        ...(retained?.epoch === cursor.epoch && retained.contentVersion !== undefined
+          ? { contentVersion: retained.contentVersion } : {}),
+      });
     },
-    [],
+    [serverId],
   );
 
   const handleAppResumed = useCallback(
@@ -647,7 +602,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           agentId,
         );
         return timeline.status === "synced" && timeline.range
-          ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+          ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq,
+              ...(timeline.range.contentVersion !== undefined ? { contentVersion: timeline.range.contentVersion } : {}) }
           : undefined;
       },
       fetchPage: async (agentId, request) => {
