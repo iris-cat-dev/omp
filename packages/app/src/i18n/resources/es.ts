@@ -167,8 +167,14 @@ export const es: TranslationResources = {
       interrupt: "Interrumpir",
       recoverTitle: "La detención no se confirmó",
       recoverRuntime: "Recuperar entorno",
+      waitingForCleanup: "Deteniendo la tarea; esperando la limpieza de las subtareas…",
+      messageRetained:
+        "La tarea no se ha detenido, por lo que el nuevo mensaje no se ha enviado. Tu mensaje está guardado; espera a que termine la tarea y vuelve a intentarlo.",
+      taskNotStopped:
+        "La tarea no se ha detenido. Espera a que termine la limpieza o recupera su entorno.",
+      runtimeRecovered: "Entorno recuperado. Los mensajes no se han reenviado.",
       recoverMessage:
-        "¿Recuperar solo el entorno de esta conversación? Se terminará por la fuerza el proceso del proveedor y se esperará a las herramientas del host. Se conserva el historial. Las escrituras y otros efectos ya realizados no se revierten: revísalos antes de reintentar. No se reinician otras conversaciones ni el daemon.",
+        "¿Recuperar solo el entorno de esta conversación? Se terminará por la fuerza el proceso del proveedor y se esperará a las herramientas del host. Se conserva el historial. Las escrituras y otros efectos ya realizados no se revierten: revísalos antes de reintentar. Las subtareas administradas pueden seguir ejecutándose. No se reinician otras conversaciones ni el daemon.",
     },
     attachments: {
       addImage: "Agregar imagen",

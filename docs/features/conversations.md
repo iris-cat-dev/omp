@@ -76,6 +76,8 @@ Autonomous OMP continuations remain steerable after a foreground turn finishes: 
 
 The conversation's **Stop** interrupts its current run and all running managed descendants, including children still active when the parent finishes during the stop request. Detached agents are independent and are not stopped. The subagent list also offers **Stop** on each running child; stopped children remain listed, unlike archived children.
 
+Interrupt-and-send and Stop share a 15-second cleanup budget for the selected agent and its managed descendants. The composer shows cleanup progress, prevents duplicate sends or recovery, and remains editable. A refusal does not start the replacement or pretend that the old run stopped. The message and attachments remain available; **Recover runtime** appears inline with the existing dangerous-operation confirmation. Recovery preserves history, does not undo completed side effects, and never automatically resends input. Switching conversations does not redirect delayed feedback or recovery to another agent.
+
 Individual and parent-initiated OMP-native child cancellation uses `cancel_subagent` RPC, included in Desktop's pinned SDK. Standalone CLI hosts require OMP **18.4.9+** for that operation; older binaries report failure and leave the child marked running rather than claiming it stopped. Update packaged SDKs through Desktop updates. The general standalone CLI minimum remains **OMP 18.8.7**.
 
 ## Queued messages
@@ -92,7 +94,7 @@ Hold and drag a queued message's handle; the highlighted row and moving gap prev
 
 Edits and additions during a drag retain their latest contents and order. A drop moves only the chosen message relative to a current queue neighbor; if either has been sent or removed, the drop is ignored and cannot restore it. Text, attachments, identity, and enqueue order are preserved unless explicitly moved. Submitted or executing messages are not sortable, and reordering does not send or interrupt a turn.
 
-After normal completion, the next queued message starts automatically, even if completion precedes the previous submission acknowledgement. Each message is submitted once in queue order. Failed submission retains its original text and attachments for retry.
+After normal completion, the next queued message starts automatically, even if completion precedes the previous submission acknowledgement. Each message is submitted once in queue order. Failed submission retains its original text and attachments for retry. A cancellation-refused item pauses automatic dispatch at its position, including after runtime recovery; use its existing send arrow or edit action to retry. The arrow's tooltip names the selected steering, interrupt-and-send, or ordinary-send action. Automatic dispatch also waits for cancellation and pending submission acknowledgements to settle.
 
 ## Questions and background processes
 
@@ -136,12 +138,12 @@ OMP `model_usage` records, including background-memory usage, are metadata rathe
 
 Desktop-injected tools distinguish:
 
-| Tool            | Effect                                                                     |
-| --------------- | -------------------------------------------------------------------------- |
-| `cancel_agent`  | Stops a run.                                                               |
-| `archive_agent` | Hides the conversation, retaining history.                                 |
+| Tool            | Effect                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `cancel_agent`  | Stops a run.                                                                                                                    |
+| `archive_agent` | Hides the conversation, retaining history.                                                                                      |
 | `kill_agent`    | Requests acknowledged cancellation, then safely unloads an eligible runtime; explicit `force` recovers only its target runtime. |
-| `delete_agent`  | Permanently removes the Desktop conversation record and retained timeline. |
+| `delete_agent`  | Permanently removes the Desktop conversation record and retained timeline.                                                      |
 
 Native `archive_agent` updates connected sidebars without a refresh. A workspace whose conversations are all archived is hidden from the project and status lists, including their keyboard shortcuts, but its workspace record, files, and history remain intact. New empty workspaces and workspaces with another unarchived conversation remain visible. Reopening an archived conversation restores its sidebar entry.
 

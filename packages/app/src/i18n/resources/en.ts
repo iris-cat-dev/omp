@@ -13,11 +13,17 @@ export const en = {
   visualFeedback: visualFeedback.en,
   runtimeResources: {
     title: "Runtime resources",
-    empty: "No retained kernels, helpers or shell handles. Browsing this list does not start a runtime.",
+    empty:
+      "No retained kernels, helpers or shell handles. Browsing this list does not start a runtime.",
     owner: "Session {{session}} · Agent {{agent}}",
     refresh: "Refresh resources",
     releaseFailed: "The resource did not confirm release.",
-    kinds: { python_kernel: "Python kernel", javascript_kernel: "JavaScript kernel", shell: "Shell", helper: "Eval helper" },
+    kinds: {
+      python_kernel: "Python kernel",
+      javascript_kernel: "JavaScript kernel",
+      shell: "Shell",
+      helper: "Eval helper",
+    },
     reasons: {
       kernel_variables: "Retained kernel variables (not recoverable from history)",
       shell_variables: "Retained shell variables and functions",
@@ -32,7 +38,8 @@ export const en = {
     handles: "live handles",
     release: "Release resource",
     releaseTitle: "Release kernel state?",
-    releaseWarning: "This permanently discards this resource's in-memory variables and handles. They cannot be restored from history. Running resources cannot be released.",
+    releaseWarning:
+      "This permanently discards this resource's in-memory variables and handles. They cannot be restored from history. Running resources cannot be released.",
   },
   externalFilePreview: {
     title: "Local file preview",
@@ -203,8 +210,13 @@ export const en = {
       interrupt: "Interrupt",
       recoverTitle: "Stop was not acknowledged",
       recoverRuntime: "Recover runtime",
+      waitingForCleanup: "Stopping the task, waiting for child tasks to clean up…",
+      messageRetained:
+        "The task has not stopped, so the new message was not sent. Your message is saved; wait for the task to finish, then retry.",
+      taskNotStopped: "The task has not stopped. Wait for cleanup, or recover its runtime.",
+      runtimeRecovered: "Runtime recovered. Messages have not been resent.",
       recoverMessage:
-        "Recover only this conversation's runtime? This force-terminates its provider process and waits for host tools to settle. History is kept. Completed file writes and other side effects are not rolled back: inspect them before retrying. Other conversations and the daemon are not restarted.",
+        "Recover only this conversation's runtime? This force-terminates its provider process and waits for host tools to settle. History is kept. Completed file writes and other side effects are not rolled back: inspect them before retrying. Managed child tasks may still be running. Other conversations and the daemon are not restarted.",
     },
     attachments: {
       addImage: "Add image",

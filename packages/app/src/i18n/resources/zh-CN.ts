@@ -19,7 +19,12 @@ export const zhCN: TranslationResources = {
     owner: "会话 {{session}} · Agent {{agent}}",
     refresh: "刷新资源",
     releaseFailed: "资源未确认释放。",
-    kinds: { python_kernel: "Python 内核", javascript_kernel: "JavaScript 内核", shell: "Shell", helper: "Eval 辅助任务" },
+    kinds: {
+      python_kernel: "Python 内核",
+      javascript_kernel: "JavaScript 内核",
+      shell: "Shell",
+      helper: "Eval 辅助任务",
+    },
     reasons: {
       kernel_variables: "保留内核变量（无法从历史恢复）",
       shell_variables: "保留 Shell 变量和函数",
@@ -204,8 +209,12 @@ export const zhCN: TranslationResources = {
       interrupt: "中断",
       recoverTitle: "停止未获确认",
       recoverRuntime: "恢复运行时",
+      waitingForCleanup: "正在停止任务，等待子任务清理…",
+      messageRetained: "任务尚未停止，新消息未发送。消息已保留，可等待任务结束后重试。",
+      taskNotStopped: "任务尚未停止，可等待清理完成，或恢复运行时。",
+      runtimeRecovered: "运行时已恢复，消息未自动重发。",
       recoverMessage:
-        "仅恢复此对话的运行时？这会强制终止其提供方进程，并等待宿主工具结算。历史记录会保留。已完成的文件写入及其他副作用不会回滚，请在重试前检查。不会重启其他对话或守护进程。",
+        "仅恢复此对话的运行时？这会强制终止其提供方进程，并等待宿主工具结算。历史记录会保留。已完成的文件写入及其他副作用不会回滚，请在重试前检查。受管理的子任务可能仍在运行。不会重启其他对话或守护进程。",
     },
     attachments: {
       addImage: "添加图片",

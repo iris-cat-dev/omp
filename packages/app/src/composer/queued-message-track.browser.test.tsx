@@ -128,6 +128,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("queued message submission controls", () => {
+  it("blocks sending while a request is pending without blocking editing", () => {
+    act(() => setMessages("A"));
+    const onEdit = vi.fn();
+    const onSendNow = vi.fn();
+    act(() =>
+      root.render(
+        <QueuedMessageTrack
+          agentId={agentId}
+          messages={queue.read(agentId)}
+          queue={queue}
+          onEdit={onEdit}
+          onSendNow={onSendNow}
+          sendDisabled
+        />,
+      ),
+    );
+    const actions = element("queued-message-A").querySelectorAll<HTMLElement>('[role="button"]');
+    expect(actions).toHaveLength(2);
+    act(() => {
+      actions[1]!.click();
+      actions[0]!.click();
+    });
+    expect(onSendNow).not.toHaveBeenCalled();
+    expect(onEdit).toHaveBeenCalledWith("A");
+    expect(queue.read(agentId)[0]?.text).toBe("Pending A");
+
+    act(() =>
+      root.render(
+        <QueuedMessageTrack
+          agentId={agentId}
+          messages={queue.read(agentId)}
+          queue={queue}
+          onEdit={onEdit}
+          onSendNow={onSendNow}
+          sendDisabled={false}
+        />,
+      ),
+    );
+    act(() =>
+      element("queued-message-A").querySelectorAll<HTMLElement>('[role="button"]')[1]!.click(),
+    );
+    expect(onSendNow).toHaveBeenCalledOnce();
+  });
+});
+
 describe("queued message order on a touch-sized screen", () => {
   it("moves a pending message from last to first by touch", async () => {
     act(() => setMessages("A", "B", "C"));

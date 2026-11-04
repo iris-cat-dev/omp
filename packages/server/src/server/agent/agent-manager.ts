@@ -98,7 +98,7 @@ import {
 } from "./provider-subagents/store.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
-const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const INTERRUPT_SESSION_TIMEOUT_MS = 15_000;
 const IDLE_RUNTIME_TIMEOUT_MS = 5 * 60_000;
 const IDLE_RUNTIME_RECHECK_MS = 30_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
@@ -133,9 +133,11 @@ export class AgentManagerShuttingDownError extends Error {
 }
 
 export class AgentRunCancellationError extends Error {
-  constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
+  readonly code = "agent_cancellation_unacknowledged";
+
+  constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop", detail?: string) {
     super(
-      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged. Use the Stop failure dialog's Recover runtime action, or kill_agent with force: true, to terminate only this runtime without deleting history. Completed side effects are not rolled back; inspect them before retrying.`,
+      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged.${detail ? ` ${detail}.` : ""} Use the conversation's Recover runtime action, or kill_agent with force: true, to terminate only this runtime without deleting history. Completed side effects are not rolled back; inspect them before retrying.`,
     );
     this.name = "AgentRunCancellationError";
   }
@@ -150,7 +152,9 @@ class AgentRunAdmissionCancelledError extends Error {
 
 export class AgentRuntimeRetainedError extends Error {
   constructor(public readonly retention: AgentRuntimeRetention) {
-    super(`Runtime cannot be unloaded: ${retention.reasons.map((reason) => reason.detail ?? reason.code).join(", ")}`);
+    super(
+      `Runtime cannot be unloaded: ${retention.reasons.map((reason) => reason.detail ?? reason.code).join(", ")}`,
+    );
     this.name = "AgentRuntimeRetainedError";
   }
 }
@@ -1026,9 +1030,14 @@ export class AgentManager {
   }
 
   listAgents(options: { includeInternal?: boolean } = {}): ManagedAgent[] {
-    return Array.from(this.agents.values())
-      .filter((agent) => options.includeInternal === true || !agent.internal)
-      .map((agent) => ({ ...agent, runtimeRetention: this.buildRuntimeRetention(agent) }));
+    const agents: ManagedAgent[] = [];
+    for (const agent of this.agents.values()) {
+      if (options.includeInternal !== true && agent.internal) continue;
+      const snapshot = { ...agent };
+      snapshot.runtimeRetention = this.buildRuntimeRetention(agent);
+      agents.push(snapshot);
+    }
+    return agents;
   }
 
   async listImportableSessions(
@@ -1146,24 +1155,36 @@ export class AgentManager {
     if (!this.registry) return null;
     let latest: StoredAgentRecord | null = null;
     for (const record of await this.registry.list()) {
+      if (!this.matchesStoredInspectionConfig(record, config)) continue;
       if (
-        record.internal ||
-        record.provider !== config.provider ||
-        record.cwd !== config.cwd ||
-        (record.config?.model ?? null) !== (config.model ?? null) ||
-        (record.config?.modeId ?? record.lastModeId ?? null) !== (config.modeId ?? null) ||
-        (record.config?.thinkingOptionId ?? null) !== (config.thinkingOptionId ?? null) ||
-        (kind === "features" && config.featureValues !== undefined &&
-          !equal(record.config?.featureValues ?? {}, config.featureValues))
-      ) continue;
-      const available = kind === "features"
-        ? record.features !== undefined
-        : ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
-            record.persistence?.metadata?.commands,
-          ).success;
+        kind === "features" &&
+        config.featureValues !== undefined &&
+        !equal(record.config?.featureValues ?? {}, config.featureValues)
+      )
+        continue;
+      const available =
+        kind === "features"
+          ? record.features !== undefined
+          : ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
+              record.persistence?.metadata?.commands,
+            ).success;
       if (available && (!latest || record.updatedAt > latest.updatedAt)) latest = record;
     }
     return latest;
+  }
+
+  private matchesStoredInspectionConfig(
+    record: StoredAgentRecord,
+    config: AgentSessionConfig,
+  ): boolean {
+    if (record.internal || record.provider !== config.provider || record.cwd !== config.cwd) {
+      return false;
+    }
+    return (
+      (record.config?.model ?? null) === (config.model ?? null) &&
+      (record.config?.modeId ?? record.lastModeId ?? null) === (config.modeId ?? null) &&
+      (record.config?.thinkingOptionId ?? null) === (config.thinkingOptionId ?? null)
+    );
   }
 
   getAgent(id: string): ManagedAgent | null {
@@ -1269,6 +1290,18 @@ export class AgentManager {
   }
 
   async cancelProviderSubagent(parentAgentId: string, subagentId: string): Promise<void> {
+    await this.cancelProviderSubagentBeforeDeadline(
+      parentAgentId,
+      subagentId,
+      Date.now() + this.rescueTimeouts.interruptSessionMs,
+    );
+  }
+
+  private async cancelProviderSubagentBeforeDeadline(
+    parentAgentId: string,
+    subagentId: string,
+    deadline: number,
+  ): Promise<void> {
     const parent = this.requirePublicAgent(parentAgentId, true);
     const child = this.providerSubagents.get(parentAgentId, subagentId);
     if (!child) throw new Error(`Subagent ${subagentId} does not belong to agent ${parentAgentId}`);
@@ -1281,7 +1314,7 @@ export class AgentManager {
       operation: (async () => {
         cancelled = await parent.session!.cancelProviderSubagent!(subagentId);
       })(),
-      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: Math.max(0, deadline - Date.now()),
       onLateError: (error) => {
         this.logger.warn(
           { err: error, parentAgentId, subagentId },
@@ -1290,7 +1323,11 @@ export class AgentManager {
       },
     });
     if (cancellation === "timed_out") {
-      throw new Error(`Subagent ${subagentId} cancellation was not acknowledged`);
+      throw new AgentRunCancellationError(
+        parentAgentId,
+        "stop",
+        `Subagent ${subagentId} cancellation was not acknowledged`,
+      );
     }
     if (cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
       const update = this.providerSubagents.apply(parentAgentId, child.provider, {
@@ -1300,9 +1337,23 @@ export class AgentManager {
       });
       this.dispatch({ type: "provider_subagent", event: update });
     }
-    await this.drainSessionEvents(parentAgentId);
+    const drained = await this.waitWithTimeout({
+      operation: this.drainSessionEvents(parentAgentId),
+      timeoutMs: Math.max(0, deadline - Date.now()),
+    });
+    if (drained === "timed_out") {
+      throw new AgentRunCancellationError(
+        parentAgentId,
+        "stop",
+        `Subagent ${subagentId} cancellation events did not settle`,
+      );
+    }
     if (!cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
-      throw new Error(`Subagent ${subagentId} is still running after cancellation`);
+      throw new AgentRunCancellationError(
+        parentAgentId,
+        "stop",
+        `Subagent ${subagentId} is still running after cancellation`,
+      );
     }
   }
 
@@ -1858,8 +1909,8 @@ export class AgentManager {
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) !== close) return;
       this.inFlightAgentCloses.delete(agentId);
-      const current = this.agents.get(agentId);
-      if (current) this.emitState(current, { persist: false });
+      const remainingAgent = this.agents.get(agentId);
+      if (remainingAgent) this.emitState(remainingAgent, { persist: false });
     };
     void close.then(clearClose, clearClose);
     return close;
@@ -1891,25 +1942,14 @@ export class AgentManager {
     );
     const cancelUnloads: Array<() => void> = [];
     try {
-      for (const candidate of this.agents.values()) {
-        if (!candidate.session || !this.isAgentInRunTree(candidate.id, agentId)) continue;
-        const cancelUnload = candidate.session.beginRuntimeUnload?.();
-        if (cancelUnload) cancelUnloads.push(cancelUnload);
-      }
+      this.beginRunTreeRuntimeUnload(agentId, cancelUnloads);
       if (mode !== "close") {
         await this.readRuntimeInventory(agent);
         await this.drainSessionEvents(agentId);
         // The drain can deliver a background start or ownership transition. Re-read
         // authoritative inventories while provider and manager admission are fenced.
         await this.readRuntimeInventory(agent);
-        const retention = this.buildRuntimeRetention(agent, agentId);
-        if (
-          this.agents.get(agentId) !== agent ||
-          !retention.canUnload ||
-          (mode === "idle" && Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs)
-        ) {
-          throw new AgentRuntimeRetainedError(retention);
-        }
+        this.assertRuntimeCanUnload(agent, mode);
       } else {
         await this.drainSessionEvents(agentId);
       }
@@ -1943,6 +1983,25 @@ export class AgentManager {
       if (mode !== "close") this.discardRetainedAgentState(agentId);
     } finally {
       for (let index = cancelUnloads.length - 1; index >= 0; index--) cancelUnloads[index]!();
+    }
+  }
+
+  private beginRunTreeRuntimeUnload(agentId: string, cancelUnloads: Array<() => void>): void {
+    for (const candidate of this.agents.values()) {
+      if (!candidate.session || !this.isAgentInRunTree(candidate.id, agentId)) continue;
+      const cancelUnload = candidate.session.beginRuntimeUnload?.();
+      if (cancelUnload) cancelUnloads.push(cancelUnload);
+    }
+  }
+
+  private assertRuntimeCanUnload(agent: LiveManagedAgent, mode: "unload" | "idle"): void {
+    const retention = this.buildRuntimeRetention(agent, agent.id);
+    if (
+      this.agents.get(agent.id) !== agent ||
+      !retention.canUnload ||
+      (mode === "idle" && Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs)
+    ) {
+      throw new AgentRuntimeRetainedError(retention);
     }
   }
 
@@ -2001,46 +2060,67 @@ export class AgentManager {
     for (const candidate of this.agents.values()) {
       if (!this.isAgentInRunTree(candidate.id, agent.id)) continue;
       const detail = candidate.id === agent.id ? undefined : `Agent ${candidate.id}`;
-      if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
-      if (
-        candidate.lifecycle === "running" ||
-        this.hasInFlightRun(candidate.id) ||
-        candidate.activeTurnId ||
-        this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
-      ) reasons.push({ code: "running", detail });
-      if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
-        reasons.push({ code: "permission", detail });
-      }
-      if (
-        candidate.pendingReplacement ||
-        this.stoppingAgentIds.has(candidate.id) ||
-        this.recoveryBlockedAgentIds.has(candidate.id) ||
-        this.foregroundMutationTails.has(candidate.id) ||
-        this.lifecycleMutationTails.has(candidate.id) ||
-        this.sessionEventTails.has(candidate.id) ||
-        this.durableTimelineWrites.has(candidate.id) ||
-        candidate.session?.hasBackgroundOwnershipTransition?.() ||
-        (candidate.id !== ignoredCloseId && this.inFlightAgentCloses.has(candidate.id))
-      ) reasons.push({ code: "submission", detail });
-      if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
-        reasons.push({ code: "user_keep", detail });
-      }
-      const inventory = this.runtimeInventoryReasons.get(candidate.id);
-      if (inventory) reasons.push(...inventory);
-      else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
+      this.appendRuntimeRetentionReasons(reasons, candidate, detail, ignoredCloseId);
     }
     if (!recoverable) reasons.push({ code: "unrecoverable" });
     return {
-      state: this.inFlightAgentCloses.has(agent.id) && agent.id !== ignoredCloseId
-        ? "unloading"
-        : "resident",
+      state:
+        this.inFlightAgentCloses.has(agent.id) && agent.id !== ignoredCloseId
+          ? "unloading"
+          : "resident",
       reasons,
       canUnload: reasons.length === 0,
       recoverable,
-      idleSince: agent.lifecycle === "idle" || agent.lifecycle === "error"
-        ? agent.updatedAt.toISOString()
-        : null,
+      idleSince:
+        agent.lifecycle === "idle" || agent.lifecycle === "error"
+          ? agent.updatedAt.toISOString()
+          : null,
     };
+  }
+
+  private appendRuntimeRetentionReasons(
+    reasons: AgentRuntimeRetention["reasons"],
+    candidate: ManagedAgent,
+    detail: string | undefined,
+    ignoredCloseId: string | undefined,
+  ): void {
+    if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
+    if (
+      candidate.lifecycle === "running" ||
+      this.hasInFlightRun(candidate.id) ||
+      candidate.activeTurnId ||
+      this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
+    )
+      reasons.push({ code: "running", detail });
+    if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
+      reasons.push({ code: "permission", detail });
+    }
+    if (this.hasRuntimeSubmission(candidate, ignoredCloseId)) {
+      reasons.push({ code: "submission", detail });
+    }
+    if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
+      reasons.push({ code: "user_keep", detail });
+    }
+    const inventory = this.runtimeInventoryReasons.get(candidate.id);
+    if (inventory) reasons.push(...inventory);
+    else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
+  }
+
+  private hasRuntimeSubmission(
+    candidate: ManagedAgent,
+    ignoredCloseId: string | undefined,
+  ): boolean {
+    return Boolean(
+      candidate.pendingReplacement ||
+      this.stoppingAgentIds.has(candidate.id) ||
+      this.recoveryBlockedAgentIds.has(candidate.id) ||
+      this.foregroundMutationTails.has(candidate.id) ||
+      this.lifecycleMutationTails.has(candidate.id) ||
+      this.sessionEventTails.has(candidate.id) ||
+      this.durableTimelineWrites.has(candidate.id) ||
+      candidate.session?.hasBackgroundOwnershipTransition?.() ||
+      (candidate.id !== ignoredCloseId && this.inFlightAgentCloses.has(candidate.id)),
+    );
   }
 
   private async readRuntimeInventory(agent: LiveManagedAgent): Promise<void> {
@@ -2063,7 +2143,9 @@ export class AgentManager {
         }
         this.runtimeInventoryReasons.set(candidate.id, reasons);
       } catch (error) {
-        this.runtimeInventoryReasons.set(candidate.id, [{ code: "checking", detail: "Runtime inventory unavailable" }]);
+        this.runtimeInventoryReasons.set(candidate.id, [
+          { code: "checking", detail: "Runtime inventory unavailable" },
+        ]);
         throw error;
       }
     }
@@ -2071,15 +2153,23 @@ export class AgentManager {
 
   private refreshRuntimeRetention(agent: ManagedAgent): void {
     agent.runtimeRetention = this.buildRuntimeRetention(agent);
-    if (!agent.session || this.inFlightAgentCloses.has(agent.id) || this.runtimeInventoryRefreshes.has(agent.id)) return;
+    if (
+      !agent.session ||
+      this.inFlightAgentCloses.has(agent.id) ||
+      this.runtimeInventoryRefreshes.has(agent.id)
+    )
+      return;
     const refresh = this.readRuntimeInventory(agent)
-      .catch((err) => this.logger.debug({ err, agentId: agent.id }, "Runtime inventory refresh failed"))
+      .catch((err) =>
+        this.logger.debug({ err, agentId: agent.id }, "Runtime inventory refresh failed"),
+      )
       .then(() => {
-        if (this.agents.get(agent.id) !== agent) return;
+        if (this.agents.get(agent.id) !== agent) return undefined;
         const retention = this.buildRuntimeRetention(agent);
-        if (JSON.stringify(retention) === JSON.stringify(agent.runtimeRetention)) return;
+        if (JSON.stringify(retention) === JSON.stringify(agent.runtimeRetention)) return undefined;
         agent.runtimeRetention = retention;
         this.dispatch({ type: "agent_state", agent: { ...agent } });
+        return undefined;
       })
       .finally(() => {
         if (this.runtimeInventoryRefreshes.get(agent.id) === refresh) {
@@ -2093,10 +2183,12 @@ export class AgentManager {
   private async retireIdleRuntime(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
     if (
-      !agent || !this.acceptingAgentRegistrations ||
+      !agent ||
+      !this.acceptingAgentRegistrations ||
       Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs ||
       this.inFlightAgentCloses.has(agentId)
-    ) return;
+    )
+      return;
     const retention = this.buildRuntimeRetention(agent);
     if (retention.reasons.some((reason) => reason.code !== "checking")) {
       this.refreshRuntimeRetention(agent);
@@ -2689,14 +2781,18 @@ export class AgentManager {
     mutation: () => Promise<T>,
     allowClosing = false,
   ): Promise<T> {
-    if (!allowClosing && this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
+    if (!allowClosing && this.inFlightAgentCloses.has(agentId))
+      throw new Error(`Agent ${agentId} is unloading`);
     // Parent cascade classifies a child inside the same lane used by open-tab
     // label writes, so a received ownership update cannot be overtaken.
     const previous = this.lifecycleMutationTails.get(agentId) ?? Promise.resolve();
-    const result = previous.catch(() => undefined).then(() => {
-      if (!allowClosing && this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
-      return mutation();
-    });
+    const result = previous
+      .catch(() => undefined)
+      .then(() => {
+        if (!allowClosing && this.inFlightAgentCloses.has(agentId))
+          throw new Error(`Agent ${agentId} is unloading`);
+        return mutation();
+      });
     const tail = result.then(
       () => undefined,
       () => undefined,
@@ -3480,9 +3576,11 @@ export class AgentManager {
     rootAgentId: string,
     reason: AgentInterruptReason,
   ): Promise<AgentRunCancellationResult> {
+    const deadline = Date.now() + this.rescueTimeouts.interruptSessionMs;
     const attemptedAgents = new Map<string, { session: AgentSession; token: string | null }>();
     const attemptedNativeChildren = new Map<AgentSession, Set<string>>();
     const outcomes: PromiseSettledResult<AgentRunCancellationResult>[] = [];
+    const refusal = { status: "fulfilled", value: { status: "refused" } } as const;
 
     // Ownership classification and cancellation admission share the label lane.
     // Release it before awaiting cleanup: an interrupted tool may itself need
@@ -3506,59 +3604,97 @@ export class AgentManager {
         );
       });
       if (candidates.length === 0) break;
+      if (Date.now() >= deadline) {
+        outcomes.push(refusal);
+        break;
+      }
 
       const batches = await Promise.allSettled(
-        candidates.map((snapshot) => {
+        candidates.map(async (snapshot) => {
           const expectedParentId = getParentAgentIdFromLabels(snapshot.labels);
-          return this.runLifecycleMutation(snapshot.id, async () => {
-            const agent = this.agents.get(snapshot.id);
-            if (
-              !agent?.session ||
-              getParentAgentIdFromLabels(agent.labels) !== expectedParentId ||
-              !this.isAgentInRunTree(agent.id, rootAgentId)
-            ) {
-              return { completion: Promise.resolve([]) };
-            }
-            await this.drainSessionEvents(agent.id);
-            const run =
-              this.runs.getRun(agent.id) ??
-              (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agent.id, null) : null);
-            const attempted = attemptedAgents.get(agent.id);
-            const cancelOwn =
-              !attempted ||
-              attempted.session !== agent.session ||
-              (run !== null && attempted.token !== run.token);
-            attemptedAgents.set(agent.id, { session: agent.session, token: run?.token ?? null });
-            let nativeIds = attemptedNativeChildren.get(agent.session);
-            if (!nativeIds) {
-              nativeIds = new Set();
-              attemptedNativeChildren.set(agent.session, nativeIds);
-            }
-            const nativeChildren = this.providerSubagents
-              .list(agent.id)
-              .filter((child) => child.status === "running" && !nativeIds.has(child.id));
-            for (const child of nativeChildren) nativeIds.add(child.id);
-            // Interrupt the parent concurrently, so it cannot keep admitting work
-            // while child cancellation waits for its execution to wind down.
-            const expectedSession = agent.session;
-            const operations: Promise<AgentRunCancellationResult>[] = [
-              ...(cancelOwn
-                ? [
-                    this.runForegroundMutation(agent.id, () => {
-                      if (this.agents.get(agent.id)?.session !== expectedSession) {
-                        return Promise.resolve({ status: "not_running" } as const);
-                      }
-                      return this.cancelAgentRunNow(agent.id, reason);
-                    }),
-                  ]
-                : []),
-              ...nativeChildren.map(async (child) => {
-                await this.cancelProviderSubagent(agent.id, child.id);
-                return { status: "settled" } as const;
-              }),
-            ];
-            return { completion: Promise.allSettled(operations) };
-          }, true);
+          let completion: Promise<PromiseSettledResult<AgentRunCancellationResult>[]> =
+            Promise.resolve([]);
+          const admission = this.runLifecycleMutation(
+            snapshot.id,
+            async () => {
+              if (Date.now() >= deadline) {
+                return { completion: Promise.resolve([refusal]) };
+              }
+              const agent = this.agents.get(snapshot.id);
+              if (
+                !agent?.session ||
+                getParentAgentIdFromLabels(agent.labels) !== expectedParentId ||
+                !this.isAgentInRunTree(agent.id, rootAgentId)
+              ) {
+                return { completion: Promise.resolve([]) };
+              }
+              const drained = await this.waitWithTimeout({
+                operation: this.drainSessionEvents(agent.id),
+                timeoutMs: Math.max(0, deadline - Date.now()),
+              });
+              if (drained === "timed_out" || Date.now() >= deadline) {
+                return { completion: Promise.resolve([refusal]) };
+              }
+              const run =
+                this.runs.getRun(agent.id) ??
+                (agent.lifecycle === "running"
+                  ? this.runs.trackAutonomousRun(agent.id, null)
+                  : null);
+              const attempted = attemptedAgents.get(agent.id);
+              const cancelOwn =
+                !attempted ||
+                attempted.session !== agent.session ||
+                (run !== null && attempted.token !== run.token);
+              attemptedAgents.set(agent.id, { session: agent.session, token: run?.token ?? null });
+              let nativeIds = attemptedNativeChildren.get(agent.session);
+              if (!nativeIds) {
+                nativeIds = new Set();
+                attemptedNativeChildren.set(agent.session, nativeIds);
+              }
+              const nativeChildren = this.providerSubagents
+                .list(agent.id)
+                .filter((child) => child.status === "running" && !nativeIds.has(child.id));
+              for (const child of nativeChildren) nativeIds.add(child.id);
+              // Interrupt the parent concurrently, so it cannot keep admitting work
+              // while child cancellation waits for its execution to wind down.
+              const expectedSession = agent.session;
+              const operations: Promise<AgentRunCancellationResult>[] = [
+                ...(cancelOwn
+                  ? [
+                      this.cancelAgentRunInForegroundLane(
+                        agent.id,
+                        reason,
+                        expectedSession,
+                        deadline,
+                      ),
+                    ]
+                  : []),
+                ...nativeChildren.map(async (child) => {
+                  await this.cancelProviderSubagentBeforeDeadline(agent.id, child.id, deadline);
+                  return { status: "settled" } as const;
+                }),
+              ];
+              return { completion: Promise.allSettled(operations) };
+            },
+            true,
+          ).then((batch) => {
+            completion = batch.completion;
+            return undefined;
+          });
+          const admitted = await this.waitWithTimeout({
+            operation: admission,
+            timeoutMs: Math.max(0, deadline - Date.now()),
+            onLateError: (error) => {
+              this.logger.warn(
+                { err: error, agentId: snapshot.id },
+                "Cancellation admission failed after timeout",
+              );
+            },
+          });
+          if (admitted === "timed_out") {
+            return { completion: Promise.resolve([refusal]) };
+          }
+          return { completion };
         }),
       );
       for (const batch of batches) {
@@ -3567,7 +3703,16 @@ export class AgentManager {
       }
       // A cancellation may itself publish another child or an autonomous turn.
       // Drain every visited owner and repeat until no new work is left to attempt.
-      await Promise.all(Array.from(attemptedAgents.keys(), (id) => this.drainSessionEvents(id)));
+      const drained = await this.waitWithTimeout({
+        operation: Promise.all(
+          Array.from(attemptedAgents.keys(), (id) => this.drainSessionEvents(id)),
+        ).then(() => undefined),
+        timeoutMs: Math.max(0, deadline - Date.now()),
+      });
+      if (drained === "timed_out") {
+        outcomes.push(refusal);
+        break;
+      }
     }
 
     const failure = outcomes.find((result) => result.status === "rejected");
@@ -3580,9 +3725,40 @@ export class AgentManager {
     return { status: "not_running" };
   }
 
+  private async cancelAgentRunInForegroundLane(
+    agentId: string,
+    reason: AgentInterruptReason,
+    expectedSession: AgentSession,
+    deadline: number,
+  ): Promise<AgentRunCancellationResult> {
+    let result: AgentRunCancellationResult = { status: "refused" };
+    const cancellation = this.runForegroundMutation(agentId, async () => {
+      if (Date.now() >= deadline) return { status: "refused" } as const;
+      if (this.agents.get(agentId)?.session !== expectedSession) {
+        return { status: "not_running" } as const;
+      }
+      return this.cancelAgentRunNow(agentId, reason, deadline);
+    }).then((outcome) => {
+      result = outcome;
+      return undefined;
+    });
+    const settlement = await this.waitWithTimeout({
+      operation: cancellation,
+      timeoutMs: Math.max(0, deadline - Date.now()),
+      onLateError: (error) => {
+        this.logger.warn(
+          { err: error, agentId },
+          "Cancellation failed after foreground lane timeout",
+        );
+      },
+    });
+    return settlement === "completed" ? result : { status: "refused" };
+  }
+
   private async cancelAgentRunNow(
     agentId: string,
     reason: AgentInterruptReason,
+    deadline: number,
   ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId, true);
     const run =
@@ -3599,18 +3775,29 @@ export class AgentManager {
       this.runs.settleForegroundRun(agentId, run.token);
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId, reason);
+    const interruptAcknowledged = await this.interruptSession(
+      agent.session,
+      agentId,
+      reason,
+      deadline,
+    );
     // Idle sessions can still own detached-from-turn tools and background jobs.
     // Attempt these even if interrupt failed, and propagate failures to the caller.
-    const stoppedBackgroundProcesses = await this.stopBackgroundProcessesForCancellation(agent);
+    const stoppedBackgroundProcesses = await this.stopBackgroundProcessesForCancellation(
+      agent,
+      deadline,
+    );
     if (stoppedBackgroundProcesses === null) return { status: "refused" };
-    await this.drainSessionEvents(agentId);
-    if (reason === "user" && !interruptAcknowledged) return { status: "refused" };
+    const drained = await this.waitWithTimeout({
+      operation: this.drainSessionEvents(agentId),
+      timeoutMs: Math.max(0, deadline - Date.now()),
+    });
+    if (drained === "timed_out") return { status: "refused" };
+    if (!interruptAcknowledged) return { status: "refused" };
     if (!run) {
-      if (!interruptAcknowledged) return { status: "refused" };
       return { status: stoppedBackgroundProcesses > 0 ? "settled" : "not_running" };
     }
-    if (!(await this.waitForCancelledRun(agent, run, interruptAcknowledged))) {
+    if (!(await this.waitForCancelledRun(agent, run, interruptAcknowledged, deadline))) {
       return { status: "refused" };
     }
 
@@ -3626,13 +3813,18 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     run: TrackedAgentRun,
     interruptAcknowledged: boolean,
+    deadline: number,
   ): Promise<boolean> {
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: Math.max(0, deadline - Date.now()),
     });
-    await this.drainSessionEvents(agent.id);
+    const drained = await this.waitWithTimeout({
+      operation: this.drainSessionEvents(agent.id),
+      timeoutMs: Math.max(0, deadline - Date.now()),
+    });
     if (
+      drained === "timed_out" ||
       (settlement === "timed_out" && !run.settled) ||
       (run.turnId !== null && agent.activeForegroundTurnId === run.turnId) ||
       (run.kind === "autonomous" &&
@@ -3650,13 +3842,14 @@ export class AgentManager {
 
   private async stopBackgroundProcessesForCancellation(
     agent: ActiveManagedAgent,
+    deadline: number,
   ): Promise<number | null> {
     let stopped = 0;
     const settlement = await this.waitWithTimeout({
       operation: (async () => {
         stopped = (await agent.session.stopAllBackgroundProcesses?.()) ?? 0;
       })(),
-      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: Math.max(0, deadline - Date.now()),
       onLateError: (error) => {
         this.logger.warn(
           { err: error, agentId: agent.id },
@@ -3685,11 +3878,12 @@ export class AgentManager {
     session: AgentSession,
     agentId: string,
     reason: AgentInterruptReason,
+    deadline: number,
   ): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.interrupt(reason),
-        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        timeoutMs: Math.max(0, deadline - Date.now()),
         onLateError: (error) => {
           this.logger.warn(
             { err: error, agentId },
@@ -4819,7 +5013,7 @@ export class AgentManager {
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
       eventTurnId &&
-      isTurnTerminalEvent(event) &&
+      (event.type === "turn_started" || isTurnTerminalEvent(event)) &&
       this.runs.hasFinalizedTurn(agent, eventTurnId)
     ) {
       return false;

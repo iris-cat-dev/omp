@@ -168,8 +168,14 @@ export const fr: TranslationResources = {
       interrupt: "Interrompre",
       recoverTitle: "Arrêt non confirmé",
       recoverRuntime: "Rétablir l’environnement",
+      waitingForCleanup: "Arrêt de la tâche, en attente du nettoyage des sous-tâches…",
+      messageRetained:
+        "La tâche ne s’est pas arrêtée, le nouveau message n’a donc pas été envoyé. Votre message est conservé ; attendez la fin de la tâche, puis réessayez.",
+      taskNotStopped:
+        "La tâche ne s’est pas arrêtée. Attendez la fin du nettoyage ou rétablissez son environnement.",
+      runtimeRecovered: "Environnement rétabli. Les messages n’ont pas été renvoyés.",
       recoverMessage:
-        "Rétablir uniquement l’environnement de cette conversation ? Le processus du fournisseur sera arrêté de force et les outils hôtes devront se terminer. L’historique est conservé. Les écritures et autres effets déjà réalisés ne sont pas annulés : vérifiez-les avant de réessayer. Les autres conversations et le daemon ne sont pas redémarrés.",
+        "Rétablir uniquement l’environnement de cette conversation ? Le processus du fournisseur sera arrêté de force et les outils hôtes devront se terminer. L’historique est conservé. Les écritures et autres effets déjà réalisés ne sont pas annulés : vérifiez-les avant de réessayer. Les sous-tâches gérées peuvent encore être en cours d’exécution. Les autres conversations et le daemon ne sont pas redémarrés.",
     },
     attachments: {
       addImage: "Ajouter une image",

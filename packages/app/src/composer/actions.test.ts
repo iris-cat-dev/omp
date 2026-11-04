@@ -23,6 +23,7 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
+  isAgentCancellationUnacknowledged,
   findGithubItemByOption,
   isAttachmentSelectedForGithubItem,
   moveQueuedComposerMessageTo,
@@ -306,6 +307,31 @@ function createFakeQueue(
 
 const passthroughEncodeImages = async (images: AttachmentMetadata[]) =>
   images.map((image) => ({ data: image.id, mimeType: image.mimeType }));
+
+describe("structured cancellation failures", () => {
+  it("classifies by code without relying on English diagnostics", () => {
+    expect(
+      isAgentCancellationUnacknowledged(
+        Object.assign(new Error("子任务清理超时"), {
+          code: "agent_cancellation_unacknowledged",
+        }),
+      ),
+    ).toBe(true);
+    expect(isAgentCancellationUnacknowledged(new Error("cancellation was not acknowledged"))).toBe(
+      false,
+    );
+    expect(
+      isAgentCancellationUnacknowledged(
+        Object.assign(new Error("cancellation was not acknowledged"), {
+          code: "another_failure",
+        }),
+      ),
+    ).toBe(false);
+    expect(isAgentCancellationUnacknowledged({ code: "agent_cancellation_unacknowledged" })).toBe(
+      false,
+    );
+  });
+});
 
 describe("cancelComposerAgent", () => {
   function baseInput(): {
@@ -1135,17 +1161,64 @@ describe("sendQueuedComposerMessageNow", () => {
         ],
       ]),
     );
+    const error = new Error("network down");
     const result = await sendQueuedComposerMessageNow({
       agentId: "agent",
       messageId: "msg-1",
       queue,
       submitMessage: async () => {
-        throw new Error("network down");
+        throw error;
       },
     });
-    expect(result).toEqual({ status: "failed", errorMessage: "network down" });
+    expect(result).toEqual({ status: "failed", error, errorMessage: "network down" });
     const state = queue.state.get("agent");
     expect(state?.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
+  });
+
+  it("retains a cancellation-rejected message and attachments for manual retry without touching another agent", async () => {
+    const image = { kind: "image" as const, metadata: imageMetadata };
+    const first = { id: "msg-1", text: "interrupt", attachments: [image] };
+    const second = { id: "msg-2", text: "next", attachments: [] };
+    const independent = { id: "root-message", text: "other root", attachments: [] };
+    const queue = createFakeQueue(
+      new Map([
+        ["agent", [first, second]],
+        ["other-root", [independent]],
+      ]),
+    );
+    const failure = Object.assign(new Error("Subtasks are still cleaning up"), {
+      code: "agent_cancellation_unacknowledged",
+    });
+    const pending = Promise.withResolvers<void>();
+    const sending = sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: first.id,
+      queue,
+      submitMessage: () => pending.promise,
+    });
+    expect(queue.read("agent")).toEqual([second]);
+    pending.reject(failure);
+    await expect(sending).resolves.toEqual({
+      status: "failed",
+      error: failure,
+      errorMessage: failure.message,
+    });
+    expect(queue.read("agent")).toEqual([{ ...first, requiresManualRetry: true }, second]);
+    expect(queue.read("agent")[0]?.attachments[0]).toBe(image);
+    expect(queue.read("other-root")).toEqual([independent]);
+
+    const retry = vi.fn(async () => {});
+    await expect(
+      sendQueuedComposerMessageNow({
+        agentId: "agent",
+        messageId: first.id,
+        queue,
+        submitMessage: retry,
+      }),
+    ).resolves.toEqual({ status: "submitted" });
+    expect(retry).toHaveBeenCalledOnce();
+    expect(queue.read("agent")).toEqual([second]);
+    expect(queue.read("other-root")).toEqual([independent]);
   });
 });
 

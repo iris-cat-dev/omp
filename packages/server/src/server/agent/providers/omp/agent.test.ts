@@ -443,10 +443,12 @@ describe("OMP agent client and session", () => {
     "reports missing draft metadata without launching a fast-mode probe (supported=%s)",
     async (fastModeSupported) => {
       const omp = new OmpHarness({ fastModeSupported });
-      await expect(omp.listFeatures({
-        model: "openai-codex/gpt-5.6",
-        featureValues: { fast_mode: true },
-      })).rejects.toThrow("Feature metadata is unavailable");
+      await expect(
+        omp.listFeatures({
+          model: "openai-codex/gpt-5.6",
+          featureValues: { fast_mode: true },
+        }),
+      ).rejects.toThrow("Feature metadata is unavailable");
       expect(omp.launchCount()).toBe(0);
     },
   );
@@ -1156,65 +1158,72 @@ describe("OMP agent client and session", () => {
     await expect(omp.terminate()).resolves.toBeUndefined();
   });
 
-  test("Stop waits for canceled host tool execution to finish before acknowledging", async () => {
-    const started = deferred<AbortSignal>();
-    const cleanup = deferred<void>();
-    const catalog = createToolCatalog();
-    catalog.executeTool = async (_name, _input, context = {}) => {
-      started.resolve(context.signal!);
-      await cleanup.promise;
-      return { content: [] };
-    };
-    const omp = new OmpHarness();
-    await omp.start({}, catalog);
-    await omp.requireStartTurn("perform host operation");
-    const runtime = omp.runtime();
-    runtime.beginTurn();
-    runtime.emit({
-      type: "host_tool_call",
-      id: "host-stop",
-      toolCallId: "host-operation",
-      toolName: "create_agent",
-      arguments: {},
-    });
-    const signal = await started.promise;
-    runtime.onAbort = () => {
+  test.each(["user", "replacement"] as const)(
+    "%s cancellation waits for canceled host tool execution to finish before acknowledging",
+    async (reason) => {
+      const started = deferred<AbortSignal>();
+      const cleanup = deferred<void>();
+      const catalog = createToolCatalog();
+      catalog.executeTool = async (_name, _input, context = {}) => {
+        started.resolve(context.signal!);
+        await cleanup.promise;
+        return { content: [] };
+      };
+      const omp = new OmpHarness();
+      await omp.start({}, catalog);
+      await omp.requireStartTurn("perform host operation");
+      const runtime = omp.runtime();
+      runtime.beginTurn();
       runtime.emit({
-        type: "host_tool_cancel",
-        id: "cancel-stop",
-        targetId: "host-stop",
+        type: "host_tool_call",
+        id: "host-stop",
+        toolCallId: "host-operation",
+        toolName: "create_agent",
+        arguments: {},
       });
-      runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
-    };
-    let acknowledged = false;
-    const stopped = omp.interrupt().then(() => {
-      acknowledged = true;
-      return undefined;
-    });
-    try {
-      await waitForImmediate();
-      expect(signal.aborted).toBe(true);
-      expect(acknowledged).toBe(false);
-      expect(omp.canceledTurnCount()).toBe(0);
-      runtime.finishTurnWithEmptyAgentEnd({ role: "assistant", content: [], stopReason: "length" });
-      expect(runtime.followUpRequests).toEqual([]);
-      cleanup.resolve();
-      await stopped;
-      expect(omp.canceledTurnCount()).toBe(1);
-      expect(runtime.hostToolResults).toEqual([]);
-      await omp.runPrompt("continue after cleanup", "continued");
-      expect(omp.timeline()).toContainEqual(
-        expect.objectContaining({
-          type: "assistant_message",
-          text: "continued",
-        }),
-      );
-    } finally {
-      cleanup.resolve();
-      await stopped;
-      await omp.close();
-    }
-  });
+      const signal = await started.promise;
+      runtime.onAbort = () => {
+        runtime.emit({
+          type: "host_tool_cancel",
+          id: "cancel-stop",
+          targetId: "host-stop",
+        });
+        runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
+      };
+      let acknowledged = false;
+      const stopped = omp.interrupt(reason).then(() => {
+        acknowledged = true;
+        return undefined;
+      });
+      try {
+        await waitForImmediate();
+        expect(signal.aborted).toBe(true);
+        expect(acknowledged).toBe(false);
+        expect(omp.canceledTurnCount()).toBe(0);
+        runtime.finishTurnWithEmptyAgentEnd({
+          role: "assistant",
+          content: [],
+          stopReason: "length",
+        });
+        expect(runtime.followUpRequests).toEqual([]);
+        cleanup.resolve();
+        await stopped;
+        expect(omp.canceledTurnCount()).toBe(1);
+        expect(runtime.hostToolResults).toEqual([]);
+        await omp.runPrompt("continue after cleanup", "continued");
+        expect(omp.timeline()).toContainEqual(
+          expect.objectContaining({
+            type: "assistant_message",
+            text: "continued",
+          }),
+        );
+      } finally {
+        cleanup.resolve();
+        await stopped;
+        await omp.close();
+      }
+    },
+  );
 
   test("retains repeated original steering on a truncated Stop receipt without duplicating consumed input", async () => {
     const omp = new OmpHarness();

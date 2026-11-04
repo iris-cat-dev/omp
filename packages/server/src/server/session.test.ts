@@ -103,9 +103,9 @@ test("interruptAgentIfRunning rejects when graceful cancellation is refused", as
     },
   });
 
-  await expect(asSessionInternals(session).interruptAgentIfRunning(agentId)).rejects.toThrow(
-    "active run cancellation was not acknowledged",
-  );
+  await expect(asSessionInternals(session).interruptAgentIfRunning(agentId)).rejects.toMatchObject({
+    code: "agent_cancellation_unacknowledged",
+  });
 });
 
 test("cancel_agent_request reports refusal only through its response", async () => {
@@ -137,9 +137,8 @@ test("cancel_agent_request reports refusal only through its response", async () 
         requestId: "cancel-refused",
         agentId,
         agent: null,
-        error: expect.stringContaining(
-          "Cannot stop agent 11111111-1111-4111-8111-111111111111 because its active run cancellation was not acknowledged",
-        ),
+        error: expect.any(String),
+        errorCode: "agent_cancellation_unacknowledged",
       },
     },
   ]);
@@ -514,7 +513,13 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
-      getRegisteredClient: vi.fn(() => coldHistoryClient ??= new OmpAgentClient({ logger, runtimeSettings: ompHistoryRuntimeSettings })),
+      getRegisteredClient: vi.fn(
+        () =>
+          (coldHistoryClient ??= new OmpAgentClient({
+            logger,
+            runtimeSettings: ompHistoryRuntimeSettings,
+          })),
+      ),
       ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
@@ -577,8 +582,18 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
   const resume = vi.spyOn(manager, "resumeAgentFromPersistence");
   const messages: SessionOutboundMessage[] = [];
   const commands = [
-    { name: "custom-plugin", description: "Installed plugin command", argumentHint: "<input>", kind: "command" as const },
-    { name: "custom-skill", description: "Installed skill", argumentHint: "arguments", kind: "skill" as const },
+    {
+      name: "custom-plugin",
+      description: "Installed plugin command",
+      argumentHint: "<input>",
+      kind: "command" as const,
+    },
+    {
+      name: "custom-skill",
+      description: "Installed skill",
+      argumentHint: "arguments",
+      kind: "skill" as const,
+    },
   ];
   const session = createSessionForTest({
     messages,
@@ -597,18 +612,28 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
     for (let index = 0; index < 15; index += 1) {
       const id = `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`;
       const archivedAt = index % 2 === 0 ? null : "2026-11-03T00:00:00.000Z";
-      await storage.upsert(createStoredAgentRecord({
-        id,
-        provider: "omp",
-        cwd: root,
-        archivedAt,
-        requiresAttention: true,
-        attentionReason: "finished",
-        attentionTimestamp: "2026-11-03T00:00:00.000Z",
-        persistence: { provider: "omp", sessionId: id, metadata: { commands } },
-      }));
-      await session.handleMessage({ type: "clear_agent_attention", agentId: id, requestId: `focus-${index}` });
-      await session.handleMessage({ type: "list_commands_request", agentId: id, requestId: `commands-${index}` });
+      await storage.upsert(
+        createStoredAgentRecord({
+          id,
+          provider: "omp",
+          cwd: root,
+          archivedAt,
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: "2026-11-03T00:00:00.000Z",
+          persistence: { provider: "omp", sessionId: id, metadata: { commands } },
+        }),
+      );
+      await session.handleMessage({
+        type: "clear_agent_attention",
+        agentId: id,
+        requestId: `focus-${index}`,
+      });
+      await session.handleMessage({
+        type: "list_commands_request",
+        agentId: id,
+        requestId: `commands-${index}`,
+      });
       expect(await storage.get(id)).toMatchObject({
         requiresAttention: false,
         attentionReason: null,
@@ -623,7 +648,9 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
     }
     expect(resume).not.toHaveBeenCalled();
     expect(manager.listAgents()).toEqual([]);
-    expect(messages.filter((message) => message.type === "clear_agent_attention_response")).toHaveLength(15);
+    expect(
+      messages.filter((message) => message.type === "clear_agent_attention_response"),
+    ).toHaveLength(15);
     const reopened = new AgentStorage(join(root, "agents"), logger);
     expect((await reopened.list()).every((record) => !record.requiresAttention)).toBe(true);
   } finally {
@@ -642,14 +669,19 @@ test("cold commands without a snapshot report unavailability without resuming", 
     agentManager: { getAgent: () => null, resumeAgentFromPersistence: resume },
     agentStorage: { get: async () => record },
   });
-  await session.handleMessage({ type: "list_commands_request", agentId: record.id, requestId: "missing-commands" });
+  await session.handleMessage({
+    type: "list_commands_request",
+    agentId: record.id,
+    requestId: "missing-commands",
+  });
   expect(messages).toContainEqual({
     type: "list_commands_response",
     payload: {
       requestId: "missing-commands",
       agentId: record.id,
       commands: [],
-      error: "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
+      error:
+        "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
     },
   });
   expect(resume).not.toHaveBeenCalled();
@@ -3073,8 +3105,11 @@ describe("session provider catalog reads", () => {
 
   test("list_provider_models_request reports pending metadata without warming a runtime", async () => {
     const messages: unknown[] = [];
-    const { manager: providerSnapshotManager, getSnapshot, warmUpSnapshot } =
-      createProviderSnapshotManagerStub();
+    const {
+      manager: providerSnapshotManager,
+      getSnapshot,
+      warmUpSnapshot,
+    } = createProviderSnapshotManagerStub();
     getSnapshot.mockReturnValue([{ provider: "codex", status: "loading", enabled: true }]);
     const session = createSessionForTest({ messages, providerSnapshotManager });
     await session.handleMessage({

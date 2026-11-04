@@ -170,7 +170,13 @@ import {
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
 import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./commands.js";
-import { readOmpHistoryPage, streamOmpHistory, streamOmpSubagentHistory, type OmpHistoryInput, type OmpHistoryPageInput } from "./history.js";
+import {
+  readOmpHistoryPage,
+  streamOmpHistory,
+  streamOmpSubagentHistory,
+  type OmpHistoryInput,
+  type OmpHistoryPageInput,
+} from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -705,6 +711,15 @@ interface OmpAgentSessionOptions {
   live?: boolean;
 }
 
+function initialOmpNativeWorkflowMode(
+  selection: OmpWorkflowSelection,
+  live: boolean | undefined,
+): OmpWorkflowMode | null {
+  if (live !== false) return null;
+  if (isOmpNativeWorkflowMode(selection)) return selection;
+  return null;
+}
+
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
     waitForRetry: async () => {
@@ -1134,11 +1149,15 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
       : {}),
     ...(typeof metadata.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
     ...(typeof metadata.backgroundOwnerId === "string" && metadata.backgroundOwnerId
-      ? { backgroundOwnerId: metadata.backgroundOwnerId } : {}),
+      ? { backgroundOwnerId: metadata.backgroundOwnerId }
+      : {}),
     ...(Array.isArray(metadata.legacyBackgroundOwnerIds)
-      ? { legacyBackgroundOwnerIds: metadata.legacyBackgroundOwnerIds.filter(
-          (id): id is string => typeof id === "string" && id.length > 0,
-        ) } : {}),
+      ? {
+          legacyBackgroundOwnerIds: metadata.legacyBackgroundOwnerIds.filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -1927,10 +1946,7 @@ export class OmpAgentSession implements AgentSession {
       },
       options.initialState.activeCredential,
     );
-    this.activeWorkflowMode =
-      options.live === false && isOmpNativeWorkflowMode(configuredWorkflowMode)
-        ? configuredWorkflowMode
-        : null;
+    this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options.live);
     this.workflowModePending =
       this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
     this.planContextResetPending =
@@ -2290,7 +2306,12 @@ export class OmpAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
-    if (!this.activeTurnId || this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition) {
+    if (
+      !this.activeTurnId ||
+      this.closed ||
+      this.runtimeUnloading ||
+      this.backgroundOwnershipTransition
+    ) {
       return { status: "unavailable", reason: "no_active_turn" };
     }
     if (this.activeTurnId !== options.expectedTurnId) {
@@ -2436,14 +2457,19 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("OMP runtime does not support resource ownership inspection");
     const resources = await this.runtimeSession.getRuntimeResources();
     const background = (await this.listBackgroundProcesses()).some((item) =>
-      ["starting", "running", "ready", "restarting", "stopping"].includes(item.status));
-    const busy = this.activeTurnId !== null || this.pendingTurnAdmission !== null || this.activeRuntimeToolCalls.size > 0;
+      ["starting", "running", "ready", "restarting", "stopping"].includes(item.status),
+    );
+    const busy =
+      this.activeTurnId !== null ||
+      this.pendingTurnAdmission !== null ||
+      this.activeRuntimeToolCalls.size > 0;
     for (const resource of resources) {
       if (this.backgroundOwnerId.startsWith("desktop:"))
         resource.ownerAgentId = this.backgroundOwnerId.slice("desktop:".length);
       if (busy) {
         resource.releasable = false;
-        if (!resource.retentionReasons.includes("pending_tool")) resource.retentionReasons.push("pending_tool");
+        if (!resource.retentionReasons.includes("pending_tool"))
+          resource.retentionReasons.push("pending_tool");
       }
       if (background) {
         resource.releasable = false;
@@ -2458,8 +2484,15 @@ export class OmpAgentSession implements AgentSession {
     if (!this.runtimeSession.releaseRuntimeResource)
       throw new Error("OMP runtime does not support explicit resource release");
     const resource = (await this.getRuntimeResources()).find((item) => item.id === resourceId);
-    if (!resource?.releasable || this.backgroundOwnershipTransition || this.runtimeUnloading || this.closed)
-      throw new Error("Resource is busy, unavailable, or has live background dependencies; stop them before releasing variables");
+    if (
+      !resource?.releasable ||
+      this.backgroundOwnershipTransition ||
+      this.runtimeUnloading ||
+      this.closed
+    )
+      throw new Error(
+        "Resource is busy, unavailable, or has live background dependencies; stop them before releasing variables",
+      );
     await this.runtimeSession.releaseRuntimeResource(resourceId);
   }
 
@@ -2921,7 +2954,8 @@ export class OmpAgentSession implements AgentSession {
         cwd: this.config.cwd,
         backgroundOwnerId: this.backgroundOwnerId,
         ...(this.legacyBackgroundOwnerIds.length > 0
-          ? { legacyBackgroundOwnerIds: [...this.legacyBackgroundOwnerIds] } : {}),
+          ? { legacyBackgroundOwnerIds: [...this.legacyBackgroundOwnerIds] }
+          : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.config.thinkingOptionId ? { thinkingOptionId: this.config.thinkingOptionId } : {}),
         ...(this.currentModeId ? { modeId: this.currentModeId } : {}),
@@ -2974,6 +3008,9 @@ export class OmpAgentSession implements AgentSession {
         this.echoWithdrawnQueue(restored, turnId);
       } else {
         await this.runtimeSession.abort();
+        if (reason === "replacement") {
+          await waitForOmpHostToolsIdle(this.runtimeSession);
+        }
       }
     } catch (error) {
       if (this.activeInterrupt === interrupt) {
@@ -5181,11 +5218,15 @@ export class OmpAgentClient implements AgentClient {
   }
 
   /** Read the selected SDK's pure journal without creating or waking a runtime session. */
-  readHistoryPage(input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">): Promise<AgentTimelineFetchResult> {
+  readHistoryPage(
+    input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">,
+  ): Promise<AgentTimelineFetchResult> {
     return readOmpHistoryPage({ ...input, runtimeSettings: this.runtimeSettings });
   }
 
-  streamPersistedSubagentHistory(input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">): AsyncGenerator<AgentStreamEvent> {
+  streamPersistedSubagentHistory(
+    input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">,
+  ): AsyncGenerator<AgentStreamEvent> {
     return streamOmpSubagentHistory({ ...input, runtimeSettings: this.runtimeSettings });
   }
 
@@ -5452,7 +5493,8 @@ export class OmpAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
     const backgroundOwnerId = launchContext?.agentId
-      ? `desktop:${launchContext.agentId}` : undefined;
+      ? `desktop:${launchContext.agentId}`
+      : undefined;
     const launchEnv = {
       ...launchContext?.env,
       OMP_DESKTOP_SERVICE_OWNER: backgroundOwnerId ?? "",
@@ -5564,8 +5606,10 @@ export class OmpAgentClient implements AgentClient {
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
     const backgroundOwnerId = launchContext?.agentId
-      ? `desktop:${launchContext.agentId}` : persistenceMetadata.backgroundOwnerId;
-    const legacyBackgroundOwnerIds = persistenceMetadata.legacyBackgroundOwnerIds ??
+      ? `desktop:${launchContext.agentId}`
+      : persistenceMetadata.backgroundOwnerId;
+    const legacyBackgroundOwnerIds =
+      persistenceMetadata.legacyBackgroundOwnerIds ??
       (persistenceMetadata.backgroundOwnerId ? [] : [handle.sessionId]);
     const launchEnv = {
       ...launchContext?.env,

@@ -9,6 +9,11 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   allowEmptySubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
   forceSend?: boolean;
+  /** An editable, target-bound snapshot is cleared only after acceptance. */
+  snapshot?: {
+    isCurrentTarget: () => boolean;
+    isInputUnchanged: () => boolean;
+  };
   isAgentRunning: boolean;
   canSubmit: boolean;
   queueMessage: (input: { message: string; attachments: TAttachment[] }) => void;
@@ -16,7 +21,7 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   setUserInput: (text: string) => void;
   setAttachments: (attachments: TAttachment[]) => void;
-  setSendError: (message: string | null) => void;
+  setSendError: (error: unknown | null) => void;
   setIsProcessing: (isProcessing: boolean) => void;
   onSubmitError?: (error: unknown) => void;
   failedToSendMessage?: string;
@@ -35,12 +40,34 @@ export async function assertWorkspaceDirectoryExists(input: {
   }
 }
 
+function handleAgentInputRejection<TAttachment>(
+  input: AgentInputSubmitActionInput<TAttachment>,
+  error: unknown,
+  message: string,
+  attachments: TAttachment[],
+  restoreDraft: boolean,
+): void {
+  input.onSubmitError?.(error);
+  if (!(input.snapshot?.isCurrentTarget() ?? true)) return;
+  if (restoreDraft) {
+    input.setUserInput(message);
+    input.setAttachments(attachments);
+  }
+  input.setSendError(
+    error instanceof Error
+      ? error
+      : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
+  );
+  input.setIsProcessing(false);
+}
+
 export async function submitAgentInput<TAttachment>(
   input: AgentInputSubmitActionInput<TAttachment>,
 ): Promise<AgentInputSubmitResult> {
   const trimmedMessage = input.message.trim();
   const attachments = input.attachments;
   const shouldClearOnSubmit = input.submitBehavior !== "preserve-and-lock";
+  const deferClear = shouldClearOnSubmit && input.snapshot !== undefined;
 
   if (
     !trimmedMessage &&
@@ -64,8 +91,9 @@ export async function submitAgentInput<TAttachment>(
     return "queued";
   }
 
-  // Clear immediately so the submitted timeline row and composer state stay in sync.
-  if (shouldClearOnSubmit) {
+  const clearImmediately = shouldClearOnSubmit && !deferClear;
+  // Keep the existing immediate-clear behavior unless acceptance owns the clear.
+  if (clearImmediately) {
     input.setUserInput("");
     input.setAttachments([]);
   }
@@ -74,21 +102,20 @@ export async function submitAgentInput<TAttachment>(
 
   try {
     await input.submitMessage({ message: trimmedMessage, attachments });
-    input.clearDraft("sent");
-    input.setIsProcessing(false);
+    const snapshot = input.snapshot;
+    if (!snapshot || snapshot.isCurrentTarget()) {
+      if (!deferClear || (input.snapshot?.isInputUnchanged() ?? true)) {
+        input.clearDraft("sent");
+        if (deferClear) {
+          input.setUserInput("");
+          input.setAttachments([]);
+        }
+      }
+      input.setIsProcessing(false);
+    }
     return "submitted";
   } catch (error) {
-    input.onSubmitError?.(error);
-    if (shouldClearOnSubmit) {
-      input.setUserInput(trimmedMessage);
-      input.setAttachments(attachments);
-    }
-    input.setSendError(
-      error instanceof Error
-        ? error.message
-        : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
-    );
-    input.setIsProcessing(false);
+    handleAgentInputRejection(input, error, trimmedMessage, attachments, clearImmediately);
     return "failed";
   }
 }

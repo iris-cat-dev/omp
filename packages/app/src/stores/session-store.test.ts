@@ -9,6 +9,9 @@ import {
   selectAgentTurnPresentation,
   selectAgentTimelineState,
   useSessionStore,
+  retainAgentTimelineVisibility,
+  setAgentTimelineReadingPosition,
+  setAgentTimelineVisibleItems,
   type AgentFileExplorerState,
   type WorkspaceDescriptor,
 } from "./session-store";
@@ -1153,5 +1156,129 @@ describe("native per-turn usage isolation", () => {
     expect(turns.get("one")?.outputTokens).toBe(1_000);
     expect(turns.get("two")?.outputTokens).toBe(1_000);
     expect(turns.get("two")?.nativeMetrics?.generation).toBe(2);
+  });
+});
+
+describe("renderer timeline residency", () => {
+  const text = "x".repeat(9 * 1024 * 1024);
+  function canonicalMessage(
+    agentId: string,
+    seq: number,
+  ): Extract<StreamItem, { kind: "user_message" }> {
+    return {
+      kind: "user_message",
+      id: `${agentId}-${seq}`,
+      text,
+      timestamp: new Date(0),
+      timelineCursor: { epoch: "residency", seq },
+    };
+  }
+  function populateTimelines(agentIds: string[], rows: number) {
+    initializeTestSession();
+    const current = useSessionStore.getState().sessions["test-server"]!;
+    const session = {
+      ...current,
+      agentStreamTail: new Map(
+        agentIds.map((id) => [
+          id,
+          Array.from({ length: rows }, (_, index) => canonicalMessage(id, index + 1)),
+        ]),
+      ),
+      agentTimelineCursor: new Map(
+        agentIds.map((id) => [id, { epoch: "residency", startSeq: 1, endSeq: rows }]),
+      ),
+      agentAuthoritativeHistoryApplied: new Map(agentIds.map((id) => [id, true])),
+      agentHistorySyncGeneration: new Map(agentIds.map((id) => [id, 7])),
+    };
+    useSessionStore.setState((state) => ({
+      sessions: { ...state.sessions, "test-server": session },
+    }));
+    return session;
+  }
+
+  it("clips windows and unloads oldest background timelines without changing published snapshots", async () => {
+    const original = populateTimelines(["oldest", "middle", "newest"], 2);
+    await expect
+      .poll(() => [...useSessionStore.getState().sessions["test-server"]!.agentStreamTail.keys()], {
+        timeout: 3000,
+      })
+      .toEqual(["newest"]);
+    const retained = useSessionStore.getState().sessions["test-server"]!;
+    expect(retained.agentStreamTail.get("newest")?.map((item) => item.id)).toEqual(["newest-2"]);
+    expect(retained.agentTimelineCursor.get("newest")?.startSeq).toBe(2);
+    expect(retained.agentTimelineHasOlder.get("newest")).toBe(true);
+    expect([...retained.agentAuthoritativeHistoryApplied.keys()]).toEqual(["newest"]);
+    expect([...retained.agentHistorySyncGeneration.keys()]).toEqual(["newest"]);
+    expect(retained.agentHistorySyncGeneration.get("newest")).toBe(7);
+    expect([...original.agentStreamTail.keys()]).toEqual(["oldest", "middle", "newest"]);
+    expect(original.agentStreamTail.get("newest")?.map((item) => item.id)).toEqual([
+      "newest-1",
+      "newest-2",
+    ]);
+    expect(original.agentTimelineCursor.get("newest")?.startSeq).toBe(1);
+    expect(original.agentAuthoritativeHistoryApplied.get("oldest")).toBe(true);
+  });
+
+  it("keeps visible anchors and pinned rows even when their combined bytes exceed the window budget", async () => {
+    const original = populateTimelines(["visible"], 3);
+    const release = retainAgentTimelineVisibility("test-server", "visible");
+    try {
+      setAgentTimelineReadingPosition("test-server", "visible", "visible-2");
+      setAgentTimelineVisibleItems("test-server", "visible", ["visible-1"]);
+      await expect
+        .poll(
+          () =>
+            useSessionStore
+              .getState()
+              .sessions["test-server"]!.agentStreamTail.get("visible")
+              ?.map((item) => item.id),
+          { timeout: 3000 },
+        )
+        .toEqual(["visible-1", "visible-2"]);
+      const retained = useSessionStore.getState().sessions["test-server"]!;
+      expect(retained.agentTimelineHasNewer.get("visible")).toBe(true);
+      expect(original.agentStreamTail.get("visible")?.map((item) => item.id)).toEqual([
+        "visible-1",
+        "visible-2",
+        "visible-3",
+      ]);
+    } finally {
+      release();
+    }
+  });
+
+  it("retains head pages, unacknowledged messages and active history fetches during background eviction", async () => {
+    const original = populateTimelines(
+      ["head", "submission", "fetch", "evict-old", "evict-new"],
+      1,
+    );
+    const store = useSessionStore.getState();
+    store.setAgentStreamHead(
+      "test-server",
+      new Map([["head", [canonicalMessage("head-page", 1)]]]),
+    );
+    store.setAgentTimelineOlderFetchInFlight("test-server", new Map([["fetch", true]]));
+    store.beginAgentMessageSubmission("test-server", "submission", {
+      kind: "user_message",
+      id: "pending",
+      clientMessageId: "pending",
+      text: "not acknowledged",
+      timestamp: new Date(),
+    });
+    await expect
+      .poll(() => [...useSessionStore.getState().sessions["test-server"]!.agentStreamTail.keys()], {
+        timeout: 3000,
+      })
+      .toEqual(["head", "submission", "fetch", "evict-new"]);
+    const retained = useSessionStore.getState().sessions["test-server"]!;
+    expect(retained.agentStreamTail.get("evict-new")?.[0]?.id).toBe("evict-new-1");
+    expect(retained.agentStreamHead.get("head")?.[0]?.id).toBe("head-page-1");
+    expect(retained.agentTimelineOlderFetchInFlight.get("fetch")).toBe(true);
+    expect(
+      retained.messageSubmissions
+        .get("submission")
+        ?.some((submission) => submission.clientMessageId === "pending" && !submission.rpcSettled),
+    ).toBe(true);
+    expect(original.agentStreamTail.has("evict-old")).toBe(true);
   });
 });

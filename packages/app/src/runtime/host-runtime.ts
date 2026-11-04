@@ -46,7 +46,7 @@ import {
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, selectAgentTurnPresentation, type Agent } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/data/query-client";
@@ -2344,6 +2344,9 @@ export class HostRuntimeStore {
     const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
     if (
       !next ||
+      next.requiresManualRetry === true ||
+      selectAgentTurnPresentation(session, agentId).isCancelling ||
+      session.messageSubmissions.get(agentId)?.some((submission) => !submission.rpcSettled) ||
       session.initializingAgents.get(agentId) === true ||
       agent?.status === "initializing" ||
       agent?.status === "running"
