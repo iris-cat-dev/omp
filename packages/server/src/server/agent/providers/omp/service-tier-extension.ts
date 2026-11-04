@@ -36,6 +36,14 @@ function isOpenAIFamily(model: ServiceTierModel | undefined): boolean {
   );
 }
 
+export function isOmpUltrafastModel(model: ServiceTierModel | undefined): boolean {
+  return (
+    isOpenAIFamily(model) &&
+    model?.serviceTiers?.includes("ultrafast") === true &&
+    (model.provider === "openai" || model.api === "openai-codex-responses")
+  );
+}
+
 /** Read the native session override, not the boolean Fast RPC's lossy projection. */
 export function readNativeServiceTier(
   pi: NativeServiceTierApi,
@@ -50,11 +58,7 @@ export function readNativeServiceTier(
     openaiFamily,
     tier: available && openaiFamily ? (pi.getServiceTiers!().openai ?? null) : null,
     // Advertising the tier is capability evidence, not account entitlement.
-    ultrafastAvailable:
-      available &&
-      openaiFamily &&
-      model?.serviceTiers?.includes("ultrafast") === true &&
-      (model.provider === "openai" || model.api === "openai-codex-responses"),
+    ultrafastAvailable: available && isOmpUltrafastModel(model),
   };
 }
 

@@ -931,6 +931,14 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     );
     return data.models ?? [];
   }
+  async getServiceTierCapabilities() {
+    const state = OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+    const native = this.serviceTierEndpointPort ? await this.requestServiceTier() : undefined;
+    return {
+      fastMode: typeof state.fastModeEnabled === "boolean",
+      ultrafast: native?.available === true && (await this.supportsUltrafastCommand()),
+    };
+  }
   async getLoginProviders(): Promise<OmpLoginProvider[]> {
     const data = OmpLoginProvidersResultSchema.parse(
       await this.request({ type: "get_login_providers" }),

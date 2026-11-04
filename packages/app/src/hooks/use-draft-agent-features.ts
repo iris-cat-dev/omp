@@ -20,6 +20,8 @@ import {
   resolveFeatureValues,
 } from "./feature-preferences";
 import type { SupportedLocale } from "@/i18n/locales";
+import { useProvidersSnapshot } from "./use-providers-snapshot";
+import { findModelByReference, getModelDraftFeatures } from "@/provider-selection/model-catalog";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
 
 type DraftFeatureConfig = Pick<
@@ -102,6 +104,19 @@ export function useDraftAgentFeatures(input: {
     };
   }, [account, modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
 
+  // Subscribe to the form's existing catalog without initiating a refresh.
+  const { entries: providerEntries } = useProvidersSnapshot(serverId ?? null, { enabled: false });
+  const selectedModel = useMemo(
+    () =>
+      modelId
+        ? findModelByReference(
+            providerEntries?.find((entry) => entry.provider === provider)?.models ?? null,
+            modelId,
+          )
+        : null,
+    [modelId, provider, providerEntries],
+  );
+
   const featuresQuery = useQuery({
     queryKey: [
       "providerFeatures",
@@ -131,7 +146,13 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
-  const availableFeaturesRaw = featuresQuery.data;
+  const availableFeaturesRaw = useMemo(
+    () =>
+      featuresQuery.isSuccess
+        ? featuresQuery.data
+        : getModelDraftFeatures(selectedModel, featuresQuery.data),
+    [featuresQuery.data, featuresQuery.isSuccess, selectedModel],
+  );
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const featureValues = useMemo(
     () =>
