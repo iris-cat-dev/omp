@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Zap } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentSelectOption } from "@omp-desktop/protocol/agent-types";
-import { ThinkingIcon } from "@/agent-controls/icons";
+import { ThinkingIcon, getAgentFeatureOptionIcon } from "@/agent-controls/icons";
 import {
   formatAgentFeatureOptionDescription,
   formatAgentFeatureOptionLabel,
@@ -290,7 +290,7 @@ function FastModeSelectSetting({
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
             ref={anchorRef}
-            icon={Zap}
+            icon={getAgentFeatureOptionIcon(fastMode.id, selectedId, fastMode.icon)}
             iconColor={
               selectedId && selectedId !== "off" ? styles.fastIcon.color : styles.mutedIcon.color
             }

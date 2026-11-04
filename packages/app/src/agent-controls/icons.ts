@@ -1,5 +1,6 @@
-import type { ComponentType } from "react";
+import { createElement, type ComponentType } from "react";
 import {
+  createLucideIcon,
   Bot,
   Brain,
   ListTodo,
@@ -24,12 +25,22 @@ import {
 export interface AgentControlIconProps {
   size: number;
   color: string;
+  accessibilityLabel?: string;
 }
 
 export type AgentControlIcon = ComponentType<AgentControlIconProps>;
 
 export const ThinkingIcon = Brain;
 export const PlanModeIcon = ListTodo;
+
+const UltrafastGlyph = createLucideIcon("Ultrafast", [
+  ["path", { d: "m16 3 1-1v7h6L13 22", fill: "none", key: "rear-bolt" }],
+  ["path", { d: "m13 2-11 12h7l-2 8L19 9h-7l1-7Z", key: "front-bolt" }],
+]);
+
+function UltrafastIcon({ size, color, accessibilityLabel }: AgentControlIconProps) {
+  return createElement(UltrafastGlyph, { size, color, fill: color, accessibilityLabel });
+}
 
 const MODE_ICONS: Record<string, AgentControlIcon> = {
   Bot,
@@ -76,6 +87,9 @@ export function getAgentFeatureOptionIcon(
   optionId: string | null,
   icon?: string,
 ): AgentControlIcon {
+  if (featureId === "fast_mode" && optionId === "ultrafast") {
+    return UltrafastIcon;
+  }
   if (featureId !== "workflow_mode") {
     return getAgentFeatureIcon(icon);
   }

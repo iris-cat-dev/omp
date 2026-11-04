@@ -24,7 +24,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
-import { Settings2, Zap } from "lucide-react-native";
+import { Settings2 } from "lucide-react-native";
 import { getAgentFeatureIcon, getAgentFeatureOptionIcon } from "@/agent-controls/icons";
 import {
   formatAgentFeatureLabel,
@@ -966,12 +966,19 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
         <DesktopModelTriggerAccessory
           thinkingLabel={displayThinking}
           showThinkingLabel={presentation.showThinkingLabel}
-          fastModeActive={fastModeActive}
+          fastModeTier={fastModeTier}
           fastModeLabel={fastModeLabel}
           fastModeColor={fastModeColor}
         />
       ) : null,
-    [displayThinking, presentation.showThinkingLabel, fastModeActive, fastModeLabel, fastModeColor],
+    [
+      displayThinking,
+      presentation.showThinkingLabel,
+      fastModeActive,
+      fastModeTier,
+      fastModeLabel,
+      fastModeColor,
+    ],
   );
   return (
     <>
@@ -1096,23 +1103,31 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 function DesktopModelTriggerAccessory({
   thinkingLabel,
   showThinkingLabel,
-  fastModeActive,
+  fastModeTier,
   fastModeLabel,
   fastModeColor,
 }: {
   thinkingLabel: string | null;
   showThinkingLabel: boolean;
-  fastModeActive: boolean;
+  fastModeTier: FastModeTier | null;
   fastModeLabel: string | null;
   fastModeColor: string;
 }) {
+  const FastModeIcon =
+    fastModeTier === "on" || fastModeTier === "ultrafast"
+      ? getAgentFeatureOptionIcon(FAST_MODE_FEATURE_ID, fastModeTier, "zap")
+      : null;
   return (
     <>
       {thinkingLabel && showThinkingLabel ? (
         <Text style={styles.modelAccessoryText}>{thinkingLabel}</Text>
       ) : null}
-      {fastModeActive ? (
-        <Zap size={14} color={fastModeColor} accessibilityLabel={fastModeLabel ?? undefined} />
+      {FastModeIcon ? (
+        <FastModeIcon
+          size={14}
+          color={fastModeColor}
+          accessibilityLabel={fastModeLabel ?? undefined}
+        />
       ) : null}
     </>
   );
