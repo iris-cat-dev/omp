@@ -164,6 +164,10 @@ export const fr: TranslationResources = {
       cancelingAgent: "Agent d'annulation",
       stopAgent: "Agent d'arrêt",
       interrupt: "Interrompre",
+      recoverTitle: "Arrêt non confirmé",
+      recoverRuntime: "Rétablir l’environnement",
+      recoverMessage:
+        "Rétablir uniquement l’environnement de cette conversation ? Le processus du fournisseur sera arrêté de force et les outils hôtes devront se terminer. L’historique est conservé. Les écritures et autres effets déjà réalisés ne sont pas annulés : vérifiez-les avant de réessayer. Les autres conversations et le daemon ne sont pas redémarrés.",
     },
     attachments: {
       addImage: "Ajouter une image",
@@ -1883,7 +1887,8 @@ export const fr: TranslationResources = {
         "L'application de bureau enregistre cette adresse dans le config.json du daemon local, active le relais et l'applique immédiatement. Saisissez une adresse ws:// ou wss:// non vide. L'application Web doit utiliser le même relais. Le trafic reste chiffré de bout en bout.",
       desktopSaved:
         "Enregistré dans le config.json du daemon local et appliqué immédiatement, sans redémarrage. Les nouveaux liens d'appairage utiliseront cette adresse.",
-      desktopUnavailable: "Le daemon local est déconnecté. Sa configuration ne peut pas être enregistrée.",
+      desktopUnavailable:
+        "Le daemon local est déconnecté. Sa configuration ne peut pas être enregistrée.",
     },
     device: {
       loadingOffer: "Chargement de l'offre d'association...",

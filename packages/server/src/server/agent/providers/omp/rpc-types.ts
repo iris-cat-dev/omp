@@ -683,6 +683,12 @@ const OmpSubagentEventSchema = z
 export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   ...OmpAgentSessionEventSchema.options,
   OmpExtensionUiRequestSchema,
+  z.object({
+    type: z.literal("extension_error"),
+    extensionPath: z.string(),
+    event: z.string(),
+    error: z.string(),
+  }),
   z.object({ type: z.literal("command_output"), text: z.string().optional() }).passthrough(),
   z
     .object({

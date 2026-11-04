@@ -1827,6 +1827,22 @@ async function smokeWindowsPackagedApp({
     const staging = stageApplication(appPath, stagedApp, earlyProfile);
     report.staging = staging;
     const { originalMain, originalAppName } = staging;
+    const asyncContext = spawnSync(
+      path.join(stagedApp, `${executableName}.exe`),
+      [path.resolve(__dirname, "../../../scripts/packaging/runtime-async-context-probe.cjs")],
+      {
+        cwd: root,
+        env: { ...env, ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "" },
+        encoding: "utf8",
+        timeout: COMMAND_TIMEOUT_MS,
+        windowsHide: true,
+      },
+    );
+    assert.ifError(asyncContext.error);
+    assert.equal(asyncContext.status, 0, asyncContext.stderr || asyncContext.stdout);
+    report.asyncContext = JSON.parse(asyncContext.stdout);
+    assert.equal(report.asyncContext.asyncContextPropagation, 1);
+    report.checks.push("packaged EXE AsyncLocalStorage isolation across await, realms and Workers");
     configureIsolatedDaemonHome(daemonHome, listen);
     const fixture = seedStatsFixture(env.HOME);
     report.statsFixture = {

@@ -38,6 +38,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   readonly clearedAttentionAgentIds: string[] = [];
   readonly archivedAgentIds: string[] = [];
   readonly closedAgentIds: string[] = [];
+  readonly recoveredAgentIds: string[] = [];
   readonly metadataUpdates: Array<{
     agentId: string;
     updates: { title?: string; labels?: Record<string, string> };
@@ -108,6 +109,11 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     this.liveAgents.delete(agentId);
   }
 
+  async recoverAgentRuntime(agentId: string): Promise<void> {
+    this.recoveredAgentIds.push(agentId);
+    this.liveAgents.delete(agentId);
+  }
+
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     this.labelUpdates.push({ agentId, labels });
   }
@@ -168,6 +174,20 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 const logger = createTestLogger();
 
 describe("agent lifecycle commands", () => {
+  test("forced kill selects controlled recovery rather than safe unload and retains stored history", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    const record = storedAgent("recover-target");
+    storage.records.set(record.id, record);
+    manager.liveAgents.set(record.id, managedAgent(record.id, "running"));
+    await closeAgentCommand({ agentManager: manager, agentStorage: storage }, record.id, {
+      force: true,
+    });
+    expect(manager.recoveredAgentIds).toEqual([record.id]);
+    expect(manager.closedAgentIds).toEqual([]);
+    expect(await storage.get(record.id)).toEqual(record);
+  });
+
   test("cancels an agent with an in-flight run", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);

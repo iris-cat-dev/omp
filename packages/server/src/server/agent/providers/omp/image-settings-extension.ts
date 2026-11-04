@@ -65,9 +65,8 @@ export interface NativeImageExtensionApi {
       input: Record<string, unknown>;
     }) => unknown,
   ): void;
-  getActiveTools(): string[];
+  setToolEnabled(name: string, enabled: boolean): Promise<void>;
   getAllTools(): Array<{ name: string }>;
-  setActiveTools(names: string[]): Promise<void>;
   registerProvider(name: string, config: Record<string, unknown>): void;
   unregisterProvider(name: string): void;
 }
@@ -130,7 +129,7 @@ export class NativeImagePreferences {
     this.config = config;
     this.allowed = allowed;
     this.error = "Desktop image generation is disabled";
-    await this.pi.setActiveTools(this.pi.getActiveTools().filter((name) => name !== IMAGE_TOOL));
+    await this.pi.setToolEnabled(IMAGE_TOOL, false);
     this.provider = null;
     if (!config?.enabled || !allowed) return;
     if (!this.pi.getAllTools().some((tool) => tool.name === IMAGE_TOOL)) {
@@ -235,10 +234,7 @@ export class NativeImagePreferences {
       this.pi.registerProvider(provider, route.definition);
       this.projectImageModel(provider);
       this.error = null;
-      await this.pi.setActiveTools([
-        ...this.pi.getActiveTools().filter((name) => name !== IMAGE_TOOL),
-        IMAGE_TOOL,
-      ]);
+      await this.pi.setToolEnabled(IMAGE_TOOL, true);
     } catch (error) {
       // Never surface provider config/key material via native extension error events.
       this.error =
@@ -328,6 +324,11 @@ export default function desktopNativeImageSettings(pi: NativeImageExtensionApi):
     preferences = new NativeImagePreferences(pi, context);
     await preferences.apply(null, false);
     let updates = Promise.resolve();
+    const applyPreferences = (config: ImageGenerationRuntimeConfig | null, allowed: boolean) => {
+      const apply = updates.then(() => preferences!.apply(config, allowed));
+      updates = apply.catch(() => undefined);
+      return apply;
+    };
     const server = createServer((request, response) => {
       response.setHeader("Content-Type", "application/json");
       if (request.headers.authorization !== `Bearer ${token}` || request.headers.origin) {
@@ -359,9 +360,7 @@ export default function desktopNativeImageSettings(pi: NativeImageExtensionApi):
               !["openai-api", "chatgpt-subscription"].includes(body.config.backend)))
         )
           throw new Error("Invalid Desktop image settings");
-        const apply = updates.then(() => preferences!.apply(body.config, body.allowed));
-        updates = apply.catch(() => undefined);
-        await apply;
+        await applyPreferences(body.config, body.allowed);
         response.writeHead(200).end('{"applied":true}');
       })().catch((error: unknown) => {
         const message =

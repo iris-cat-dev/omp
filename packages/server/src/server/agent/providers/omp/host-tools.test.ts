@@ -211,4 +211,23 @@ describe("OMP host tools", () => {
     expect(omp.updates()).toEqual([]);
     omp.close();
   });
+
+  test("session cleanup cannot report host idle while an aborted side effect is still running", async () => {
+    const omp = await OmpHostToolHarness.cancellable();
+    omp.startControlledCall();
+    await omp.waitForControlledCall();
+    omp.close();
+    let idle = false;
+    const settled = omp.waitForIdle().then(() => {
+      idle = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(omp.wasControlledCallAborted()).toBe(true);
+    expect(idle).toBe(false);
+    omp.completeControlledCall({ content: [{ type: "text", text: "late" }] });
+    await settled;
+    expect(idle).toBe(true);
+    expect(omp.results()).toEqual([]);
+  });
 });

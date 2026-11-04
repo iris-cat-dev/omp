@@ -174,6 +174,13 @@ async function qualifyRuntime(runtimeDist, runtime, normalized) {
         "runtime 0.1.32 and earlier do not implement authorized DOM File paste.",
     );
   }
+  if (runtime.platform === "win32" && runtime.features?.asyncContextPropagation !== 1) {
+    throw new Error(
+      "Windows packaging requires asyncContextPropagation=1 in the verified mini-electron " +
+        "version.json. Select a runtime that passed the native AsyncLocalStorage/Promise-hook " +
+        "main-thread and Worker smoke; a runtime version bump alone is not sufficient.",
+    );
+  }
   return target;
 }
 

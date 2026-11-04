@@ -163,6 +163,10 @@ export const ptBR: TranslationResources = {
       cancelingAgent: "Cancelando agente",
       stopAgent: "Parar agente",
       interrupt: "Interromper",
+      recoverTitle: "A parada não foi confirmada",
+      recoverRuntime: "Recuperar ambiente",
+      recoverMessage:
+        "Recuperar apenas o ambiente desta conversa? O processo do provedor será encerrado à força e as ferramentas do host deverão concluir. O histórico será mantido. Gravações e outros efeitos já realizados não serão desfeitos: verifique-os antes de tentar novamente. Outras conversas e o daemon não serão reiniciados.",
     },
     attachments: {
       addImage: "Adicionar imagem",
@@ -1877,7 +1881,8 @@ export const ptBR: TranslationResources = {
         "O aplicativo Desktop salva este endereço no config.json do daemon local, ativa o relay e aplica a configuração imediatamente. Informe um endereço ws:// ou wss:// não vazio. O aplicativo Web deve usar o mesmo relay. O tráfego continua criptografado de ponta a ponta.",
       desktopSaved:
         "Salvo no config.json do daemon local e aplicado imediatamente, sem reiniciar. Os novos links de pareamento usarão este endereço.",
-      desktopUnavailable: "O daemon local está desconectado. Não é possível salvar sua configuração.",
+      desktopUnavailable:
+        "O daemon local está desconectado. Não é possível salvar sua configuração.",
     },
     device: {
       loadingOffer: "Carregando oferta de pareamento...",

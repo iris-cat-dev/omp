@@ -17,7 +17,8 @@ export interface LifecycleAgentManager {
   clearAgentAttention(agentId: string): Promise<void>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
-  closeAgent(agentId: string): Promise<void>;
+  closeAgent(agentId: string, options?: { requireCancellation?: boolean }): Promise<void>;
+  recoverAgentRuntime(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
   detachAgent(agentId: string): Promise<{
     record: StoredAgentRecord;
@@ -147,6 +148,7 @@ export async function archiveAgentCommand(
 export async function closeAgentCommand(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   agentId: string,
+  options?: { force?: boolean },
 ): Promise<void> {
   if (!dependencies.agentManager.getAgent(agentId)) {
     const record = await dependencies.agentStorage.get(agentId);
@@ -157,7 +159,11 @@ export async function closeAgentCommand(
       return;
     }
   }
-  await dependencies.agentManager.closeAgent(agentId);
+  if (options?.force) {
+    await dependencies.agentManager.recoverAgentRuntime(agentId);
+  } else {
+    await dependencies.agentManager.closeAgent(agentId, { requireCancellation: true });
+  }
 }
 
 export interface UpdateAgentResult {

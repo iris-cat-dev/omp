@@ -178,6 +178,10 @@ export const en = {
       cancelingAgent: "Canceling agent",
       stopAgent: "Stop agent",
       interrupt: "Interrupt",
+      recoverTitle: "Stop was not acknowledged",
+      recoverRuntime: "Recover runtime",
+      recoverMessage:
+        "Recover only this conversation's runtime? This force-terminates its provider process and waits for host tools to settle. History is kept. Completed file writes and other side effects are not rolled back: inspect them before retrying. Other conversations and the daemon are not restarted.",
     },
     attachments: {
       addImage: "Add image",

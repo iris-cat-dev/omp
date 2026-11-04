@@ -163,6 +163,10 @@ export const ja: TranslationResources = {
       cancelingAgent: "エージェントをキャンセル中",
       stopAgent: "エージェントを停止",
       interrupt: "中断",
+      recoverTitle: "停止を確認できませんでした",
+      recoverRuntime: "ランタイムを復旧",
+      recoverMessage:
+        "この会話のランタイムだけを復旧しますか？プロバイダーのプロセスを強制終了し、ホストツールの処理完了を待ちます。履歴は保持されます。完了済みのファイル書き込みなどの副作用は元に戻らないため、再試行前に確認してください。他の会話やデーモンは再起動しません。",
     },
     attachments: {
       addImage: "画像を追加",

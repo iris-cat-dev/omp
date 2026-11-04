@@ -173,6 +173,7 @@ import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
 import {
+  abortOmpHostTools,
   clearOmpHostToolState,
   handleOmpHostToolRuntimeEvent,
   setOmpHostTools,
@@ -1841,6 +1842,7 @@ export class OmpAgentSession implements AgentSession {
   private automaticCredentialRetryIndex = 0;
   private automaticCredentialGeneration = 0;
   private closed = false;
+  private terminationConfirmed = false;
   private live: boolean;
   private readonly chatProDeliveries = new ChatProDeliveries();
   private initialUsageProbeStarted = false;
@@ -3000,26 +3002,56 @@ export class OmpAgentSession implements AgentSession {
     this.subagentIndex.clear(this.runtimeSession);
   }
 
-  async close(): Promise<void> {
-    if (this.closed) {
-      return;
-    }
-    this.terminalizeActiveWork();
+  async terminate(): Promise<void> {
+    if (this.terminationConfirmed) return;
+    // Fence before awaiting anything: neither late runtime frames nor unfinished
+    // prompt admission may start new host work while process death is checked.
     this.closed = true;
     this.pendingTurnAdmission?.controller.abort();
     this.pendingTurnAdmission = null;
     this.cancelModelErrorContinuation();
-    this.backgroundDaemons?.dispose();
     this.stopAutomaticCredentialResolution();
     this.usagePoller.close();
-    this.nativeUsage.finish(Date.now());
     this.cancelNoTurnPromptCompletion();
+    abortOmpHostTools(this.runtimeSession);
+    await this.runtimeSession.close();
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () =>
+        timeout.reject(
+          new Error(
+            "Target runtime exited, but host tool work has not settled; recovery remains blocked",
+          ),
+        ),
+      2_000,
+    );
     try {
-      await this.runtimeSession.close();
+      await Promise.race([waitForOmpHostToolsIdle(this.runtimeSession), timeout.promise]);
     } finally {
-      this.clearOmpSessionState();
-      this.onClosed?.();
+      clearTimeout(timer);
     }
+    this.terminalizeActiveWork();
+    this.backgroundDaemons?.dispose();
+    this.nativeUsage.finish(Date.now());
+    this.clearOmpSessionState();
+    this.activeTurnId = null;
+    this.activeClientMessageId = null;
+    this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
+    this.activeTurnStarted = false;
+    this.activeTurnHasUserMessage = false;
+    this.activeInterrupt = null;
+    this.activeTurnGeneration += 1;
+    this.pendingExtensionUiRequests.clear();
+    this.activeAskUserDialog = null;
+    this.pendingAskUserFollowUpResponse = null;
+    this.clearNoTurnBuffers();
+    this.terminationConfirmed = true;
+    this.onClosed?.();
+  }
+
+  close(): Promise<void> {
+    return this.terminate();
   }
 
   private clearOmpSessionState(): void {
@@ -4022,6 +4054,38 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
+    if (this.closed) return;
+    if (event.type === "extension_error") {
+      const source = event.extensionPath.replaceAll("\\", "/").split("/").pop() ?? "extension";
+      const safeSource = source.replace(/[^a-z\d_.-]/giu, "_");
+      const category = event.event.replace(/[^a-z\d_.:-]/giu, "_");
+      const message = stripAnsi(event.error)
+        .replace(/\b[a-z][a-z\d+.-]*:\/\/[^\s<>"']+/giu, "[url]")
+        .replace(/\b(?:Bearer|Basic)\s+[^\s,;"']+/giu, "[credential]")
+        .replace(
+          /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)\s*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}]+)/giu,
+          "$1[redacted]",
+        )
+        .replace(
+          /\b(?:sk-[a-z\d_-]+|gh[pousr]_[a-z\d_]+|xox[baprs]-[a-z\d-]+)\b/giu,
+          "[credential]",
+        )
+        .replace(
+          /(?:[a-z]:[\\/]|\\\\|(?:^|[\s("'])(?:~\/|\/|\.\.?\/))[^\r\n]*/gimu,
+          "[local path]",
+        );
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: this.currentTurnIdForEvent(),
+        item: {
+          type: "extension_notification",
+          level: "error",
+          message: `[${safeSource}: ${category}] ${message}`,
+        },
+      });
+      return;
+    }
     // Visible plugin originals are observable without any model-turn lifecycle,
     // including before the first agent_start in a resumed process.
     if (event.type === "message_end" && event.message.role === "custom") {

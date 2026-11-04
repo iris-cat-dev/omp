@@ -129,7 +129,7 @@ export class AgentManagerShuttingDownError extends Error {
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
-      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
+      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged. Use the Stop failure dialog's Recover runtime action, or kill_agent with force: true, to terminate only this runtime without deleting history. Completed side effects are not rolled back; inspect them before retrying.`,
     );
     this.name = "AgentRunCancellationError";
   }
@@ -754,6 +754,7 @@ export class AgentManager {
   private readonly runs = new AgentRunState();
   private readonly startingForegroundRunTokens = new Set<string>();
   private readonly stoppingAgentIds = new Map<string, number>();
+  private readonly recoveryBlockedAgentIds = new Set<string>();
   private readonly stopEpochs = new Map<string, number>();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1790,17 +1791,51 @@ export class AgentManager {
     }
   }
 
-  closeAgent(agentId: string): Promise<void> {
-    return this.beginAgentClose(agentId);
+  closeAgent(agentId: string, options?: { requireCancellation?: boolean }): Promise<void> {
+    return this.beginAgentClose(agentId, false, options?.requireCancellation);
   }
 
-  private beginAgentClose(agentId: string, retireIdle = false): Promise<void> {
+  recoverAgentRuntime(agentId: string): Promise<void> {
+    const existing = this.inFlightAgentCloses.get(agentId);
+    if (existing) return existing;
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.terminate) {
+      throw new Error(`Controlled target-runtime recovery is not supported by ${agent.provider}`);
+    }
+    // Retain the stop fence on failure. A subsequent explicit recovery can retry,
+    // but new input must not race a process or host side effect of uncertain ownership.
+    this.recoveryBlockedAgentIds.add(agentId);
+    this.stopEpochs.set(agentId, (this.stopEpochs.get(agentId) ?? 0) + 1);
+    const recovery = (async () => {
+      await agent.session.terminate!();
+      await this.drainSessionEvents(agentId);
+      this.cancelRunningProviderSubagents(agentId);
+      const closed = this.prepareAgentForClosure(agent, "target runtime recovered");
+      await this.persistSnapshot(closed);
+      this.emitClosedAgent(closed, { persist: false });
+      this.recoveryBlockedAgentIds.delete(agentId);
+    })();
+    this.inFlightAgentCloses.set(agentId, recovery);
+    const settled = () => {
+      if (this.inFlightAgentCloses.get(agentId) === recovery) {
+        this.inFlightAgentCloses.delete(agentId);
+      }
+    };
+    void recovery.then(settled, settled);
+    return recovery;
+  }
+
+  private beginAgentClose(
+    agentId: string,
+    retireIdle = false,
+    requireCancellation = false,
+  ): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId, retireIdle);
+    const close = this.closeAgentRuntime(agentId, retireIdle, requireCancellation);
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -1811,8 +1846,18 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string, retireIdle: boolean): Promise<void> {
+  private async closeAgentRuntime(
+    agentId: string,
+    retireIdle: boolean,
+    requireCancellation: boolean,
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
+    if (requireCancellation) {
+      if (this.recoveryBlockedAgentIds.has(agentId)) {
+        throw new Error("Target runtime recovery is not confirmed; retry explicit forced recovery");
+      }
+      if (this.hasInFlightRun(agentId)) await this.cancelAgentRunBefore(agentId, "stop");
+    }
     this.logger.trace(
       {
         agentId,
@@ -1828,13 +1873,14 @@ export class AgentManager {
     // Retirement drains and rechecks before entering this synchronous close boundary.
     if (!retireIdle) await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
-    let closeError: unknown;
     try {
       await agent.session.close();
     } catch (error) {
-      closeError = error;
+      this.recoveryBlockedAgentIds.add(agentId);
+      throw error;
     }
+    await this.drainSessionEvents(agentId);
+    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
 
     let persistError: unknown;
     try {
@@ -1852,12 +1898,10 @@ export class AgentManager {
       "agent.manager.close.complete",
     );
 
-    if (closeError !== undefined) {
-      throw closeError;
-    }
     if (persistError !== undefined) {
       throw persistError;
     }
+    this.recoveryBlockedAgentIds.delete(agentId);
     if (retireIdle) this.discardRetainedAgentState(agentId);
   }
 
@@ -2476,7 +2520,11 @@ export class AgentManager {
   private captureRunAdmission(agentId: string | null): ReadonlyMap<string, number> {
     const epochs = new Map<string, number>();
     while (agentId && !epochs.has(agentId)) {
-      if (this.stoppingAgentIds.has(agentId)) {
+      if (
+        this.stoppingAgentIds.has(agentId) ||
+        this.recoveryBlockedAgentIds.has(agentId) ||
+        this.inFlightAgentCloses.has(agentId)
+      ) {
         throw new Error(`Agent ${agentId} is stopping`);
       }
       epochs.set(agentId, this.stopEpochs.get(agentId) ?? 0);
@@ -2492,7 +2540,11 @@ export class AgentManager {
     if (!epochs) return;
     for (const [agentId, epoch] of epochs) {
       if (ownerId && !this.isAgentInRunTree(ownerId, agentId)) continue;
-      if (this.stoppingAgentIds.has(agentId) || (this.stopEpochs.get(agentId) ?? 0) !== epoch) {
+      if (
+        this.stoppingAgentIds.has(agentId) ||
+        this.recoveryBlockedAgentIds.has(agentId) ||
+        (this.stopEpochs.get(agentId) ?? 0) !== epoch
+      ) {
         throw new AgentRunAdmissionCancelledError(agentId);
       }
     }
@@ -3487,9 +3539,12 @@ export class AgentManager {
 
   private async cancelAgentRunBefore(
     agentId: string,
-    action: "reload" | "replace" | "rewind",
+    action: "reload" | "replace" | "rewind" | "stop",
   ): Promise<void> {
-    const reason: AgentInterruptReason = action === "replace" ? "replacement" : action;
+    let reason: AgentInterruptReason;
+    if (action === "stop") reason = "user";
+    else if (action === "replace") reason = "replacement";
+    else reason = action;
     const result = await this.cancelAgentRun(agentId, reason);
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
@@ -4151,6 +4206,7 @@ export class AgentManager {
     }
     const agentId = agent.id;
     const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
+      if (this.agents.get(agentId) !== agent || this.recoveryBlockedAgentIds.has(agentId)) return;
       this.enqueueSessionEvent(agentId, event);
     });
     agent.unsubscribeSession = unsubscribe;
@@ -4183,11 +4239,12 @@ export class AgentManager {
       return;
     }
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
+    const sourceAgent = this.agents.get(agentId);
     const next = previous
       .catch(() => undefined)
       .then(async () => {
         const current = this.agents.get(agentId);
-        if (!current) {
+        if (!current || current !== sourceAgent || this.recoveryBlockedAgentIds.has(agentId)) {
           return;
         }
         if (current.session == null) {

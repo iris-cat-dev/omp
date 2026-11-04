@@ -141,6 +141,99 @@ async function smoke(staged, temporary) {
       await exited;
     }
   }
+  await smokeEval(staged, temporary, work);
+}
+
+async function smokeEval(staged, temporary, work) {
+  const worker = fork(
+    path.join(staged.directory, "dist/node/host.mjs"),
+    ["__omp_worker_js_eval_process"],
+    {
+      cwd: work,
+      execPath: process.execPath,
+      execArgv: ["--experimental-vm-modules"],
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+      env: {
+        ...process.env,
+        HOME: temporary,
+        USERPROFILE: temporary,
+        PI_CODING_AGENT_DIR: path.join(temporary, "agent"),
+        NODE_PATH: "",
+        NODE_OPTIONS: "",
+      },
+    },
+  );
+  function request(message, expectedType) {
+    const pending = Promise.withResolvers();
+    let output = "";
+    const timer = setTimeout(() => fail(new Error("SDK artifact Eval timed out")), 30_000);
+    function cleanup() {
+      clearTimeout(timer);
+      worker.off("message", onMessage);
+      worker.off("error", fail);
+      worker.off("exit", onExit);
+    }
+    function fail(error) {
+      cleanup();
+      pending.reject(error);
+    }
+    function onExit(code, signal) {
+      fail(new Error(`SDK artifact Eval exited: ${code}/${signal}`));
+    }
+    function onMessage(reply) {
+      if (reply.type === "init-failed") return fail(new Error(reply.error.message));
+      if (reply.type === "text") output += reply.chunk;
+      if (reply.type !== expectedType) return;
+      cleanup();
+      pending.resolve({ ...reply, output });
+    }
+    worker.on("message", onMessage);
+    worker.once("error", fail);
+    worker.once("exit", onExit);
+    worker.send(message, (error) => {
+      if (error) fail(error);
+    });
+    return pending.promise;
+  }
+  const snapshot = { cwd: work, sessionId: "artifact-async-context", localRoots: {} };
+  try {
+    await request({ type: "init", snapshot }, "ready");
+    const printed = await request(
+      {
+        type: "run",
+        runId: "artifact-output",
+        code: "print('before-await'); await Promise.resolve(); console.log('after-await'); ({ fromAwait: true })",
+        filename: "artifact-cell.js",
+        snapshot,
+      },
+      "result",
+    );
+    assert.equal(printed.ok, true, printed.error?.message);
+    assert.match(printed.output, /before-await\nafter-await\n/);
+    assert.match(printed.output, /fromAwait: true/);
+    const failed = await request(
+      {
+        type: "run",
+        runId: "artifact-error",
+        code: "throw new Error('artifact-eval-error')",
+        filename: "artifact-cell.js",
+        snapshot,
+      },
+      "result",
+    );
+    assert.equal(failed.ok, false);
+    assert.match(failed.error.message, /artifact-eval-error/);
+    await request({ type: "close" }, "closed");
+    console.log(
+      "SDK artifact Eval passed sync/await output, object final expression and explicit errors",
+    );
+  } finally {
+    if (worker.exitCode === null && worker.signalCode === null) {
+      const exited = once(worker, "exit");
+      worker.kill("SIGKILL");
+      await exited;
+    }
+  }
 }
 
 if (process.argv[2] === "--probe") {

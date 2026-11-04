@@ -121,7 +121,6 @@ export class OmpHarness {
     this.omp.failNextStart(error);
   }
 
-
   async start(
     config: Partial<AgentSessionConfig> = {},
     paseoTools?: PaseoToolCatalog,
@@ -726,6 +725,10 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "turn_canceled" ? [event.reason] : []));
   }
 
+  async terminate(): Promise<void> {
+    await this.requireSession().terminate();
+  }
+
   async close(): Promise<void> {
     await this.requireSession().close();
     await waitForImmediate();
@@ -734,7 +737,6 @@ export class OmpHarness {
   isClosed(): boolean {
     return this.omp.latestSession().closed;
   }
-
 
   private requireSession(): OmpAgentSession {
     if (!this.session) throw new Error("OMP harness has not started");

@@ -78,6 +78,7 @@ import {
   type QueuedComposerMessage,
 } from "@/composer/actions";
 import { useToast } from "@/contexts/toast-context";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -1341,7 +1342,7 @@ function ComposerContentImpl({
         appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
       );
     },
-    [appSettings.sendBehavior, client, cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onMessageSent, t],
   );
 
   useEffect(() => {
@@ -1793,10 +1794,25 @@ function ComposerContentImpl({
     if (!cancellation) return;
     const requestId = beginAgentCancellation(serverId, targetAgentId);
     void cancellation
-      .catch((error) => {
+      .catch(async (error) => {
         const message = resolveErrorMessage(error);
         if (message && message.trim().length > 0) {
           toastErrorRef.current(message);
+        }
+        if (!client || !targetAgentId || !message?.includes("cancellation was not acknowledged"))
+          return;
+        const confirmed = await confirmDialog({
+          title: t("composer.cancel.recoverTitle"),
+          message: t("composer.cancel.recoverMessage"),
+          confirmLabel: t("composer.cancel.recoverRuntime"),
+          cancelLabel: t("common.actions.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) return;
+        try {
+          await client.cancelAgent(targetAgentId, { force: true });
+        } catch (recoveryError) {
+          toastErrorRef.current(resolveErrorMessage(recoveryError) ?? String(recoveryError));
         }
       })
       .finally(() => {
@@ -1811,6 +1827,7 @@ function ComposerContentImpl({
     isConnected,
     serverId,
     settleAgentCancellation,
+    t,
   ]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {

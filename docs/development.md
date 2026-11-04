@@ -67,7 +67,13 @@ Each top-level agent runs in a separate Node process with the existing RPC sessi
 
 Browser Relay also uses the embedded runtime: the first loopback relay browser open lazily starts `dist/node/host.mjs browser-relay` through the SDK's machine-global daemon broker. It does not invoke an `omp` executable from `PATH`. Concurrent SDK sessions share the existing relay; broker leases keep it alive while another consumer remains, and externally started relays remain under their owner's control. Remote relay endpoints are never auto-started.
 
-Chrome still needs the OMP Browser Relay extension installed and enabled. Its files can be installed or refreshed without a global CLI using `node <SDK root>/dist/node/host.mjs browser-relay install` (use the embedded Desktop executable with `ELECTRON_RUN_AS_NODE=1` instead of `node` in a packaged app), followed by Chrome's **Load unpacked** or **Reload** action. Rebuild the SDK artifacts and restart the backend after changing this startup path.
+Chrome still needs the OMP Browser Relay extension installed and enabled. Desktop ships `omp-desktop browser-relay status --json`, `omp-desktop browser-relay serve --no-group`, and `omp-desktop browser-relay install`; no global `omp` or Bun is needed. Use `--sdk-root <package root>` only for an explicit SDK override. After installation, use Chrome's **Load unpacked** or **Reload** action. Status distinguishes an absent service, an unrelated listener, a missing/disconnected extension, incompatible protocols, and a ready relay. Existing relays are never automatically replaced, even when incompatible: their owner must arrange a safe restart. Rebuild the SDK artifacts and restart the backend after changing this startup path.
+
+Windows SDK hosts and Eval workers require the native async-context repair described in [packaging](packaging.md#windows-runtime-version-and-local-overrides). Eval fails explicitly if its run context is unavailable; it must not report successful empty output or route output through a global current run. Code may already have produced side effects before a context error, so inspect those effects before retrying.
+
+Single-tool extension preferences use `setToolEnabled(name, enabled)`, not a read/modify/write snapshot of `getActiveTools()` and `setActiveTools()`. The SDK waits for pending registrations, then changes only that name inside the registry queue, retaining unrelated tools and their mounted/top-level presentation. Desktop image settings apply this only to `generate_image`. SDK `extension_error` events become error-level extension notifications with their event/source category preserved and credentials/local paths redacted. A plugin's discovered tool count is not proof that every tool was registered, enabled, or mounted.
+
+`manage_skill` passes its cancellation signal through file-operation boundaries, discovery and prompt preparation. Skill/prompt candidates are committed only while the session and signal remain current; refresh does not re-enter its own registry queue. Tool results distinguish a persisted file change from a cancelled or failed refresh. Such a result is not an instruction to repeat the write/delete.
 
 User Stop withdraws native steering and follow-up queues atomically before
 aborting the active request. Withdrawn Desktop submissions are echoed once in
@@ -88,6 +94,8 @@ recreates eval kernels lazily; variables, timers, and other retained eval effect
 from before Stop are discarded. Explicit SDK clients requesting the same eval
 namespace for multiple owners receive a strict-Stop error rather than terminating
 another owner's kernel. Ordinary SDK aborts do not dispose retained eval kernels.
+
+An unacknowledged cancellation still blocks replacement input. The Stop-failure dialog offers an explicit **Recover runtime** confirmation; `kill_agent({ agentId, force: true })` exposes the same targeted recovery to host tools. Default `kill_agent` remains safe unload. Recovery keeps persisted history, but does not roll back completed writes or other side effects. New input is admitted only after the target runtime's exit and accepted host work are confirmed settled; failed recovery retains the admission fence and can be retried. Other independent agents are not terminated.
 
 Backend code updates require a daemon restart: refreshing one agent cannot
 replace provider classes already loaded by the daemon. Refreshing an agent from

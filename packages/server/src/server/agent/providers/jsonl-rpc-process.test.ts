@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { JsonlRpcProcess, type JsonlRpcExit } from "./jsonl-rpc-process.js";
 
@@ -103,6 +103,29 @@ function nextExit(transport: JsonlRpcProcess): Promise<JsonlRpcExit> {
 }
 
 describe("JsonlRpcProcess", () => {
+  test("refuses successful closure without process exit and fences late frames even on failure", async () => {
+    vi.useFakeTimers();
+    const child = createInMemoryChildProcess();
+    child.kill = () => true;
+    const transport = startProcess({ child });
+    const messages: Record<string, unknown>[] = [];
+    transport.onMessage((message) => messages.push(message));
+    try {
+      const closed = expect(transport.close()).rejects.toThrow(
+        "process exit could not be confirmed",
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      await closed;
+      child.stdout.write('{"type":"notice","message":"late"}\n');
+      expect(messages).toEqual([]);
+      await expect(transport.request({ type: "echo" })).rejects.toThrow("process is closed");
+      Object.assign(child, { exitCode: 0 });
+      await expect(transport.close()).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("spawns a resolved command and correlates concurrent requests", async () => {
     const transport = startProcess();
 
