@@ -1227,14 +1227,10 @@ describe("renderer timeline residency", () => {
       setAgentTimelineVisibleItems("test-server", "visible", ["visible-1"]);
       await expect
         .poll(
-          () =>
-            useSessionStore
-              .getState()
-              .sessions["test-server"]!.agentStreamTail.get("visible")
-              ?.map((item) => item.id),
+          () => useSessionStore.getState().sessions["test-server"]!.agentStreamTail.get("visible"),
           { timeout: 3000 },
         )
-        .toEqual(["visible-1", "visible-2"]);
+        .toMatchObject([{ id: "visible-1" }, { id: "visible-2" }]);
       const retained = useSessionStore.getState().sessions["test-server"]!;
       expect(retained.agentTimelineHasNewer.get("visible")).toBe(true);
       expect(original.agentStreamTail.get("visible")?.map((item) => item.id)).toEqual([
