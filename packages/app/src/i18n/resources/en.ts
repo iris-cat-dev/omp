@@ -35,34 +35,11 @@ export const en = {
     },
   },
   runtimeRetention: {
-    retained: "Runtime retained",
-    recoverable: "Runtime idle · safely unloadable",
-    unloaded: "Runtime unloaded · history recoverable",
-    historyOnly: "History only · runtime unavailable",
-    unloading: "Runtime unloading",
-    historyHint:
-      "Browsing history does not start a runtime. Sending a message restores the session.",
-    idleHint:
-      "An unneeded recoverable runtime unloads after 5 minutes idle; dependencies are rechecked every 30 seconds. Hiding a panel never stops work.",
-    keep: "Keep runtime",
-    stopKeeping: "Stop keeping",
-    unload: "Safely unload",
     handles: "live handles",
     release: "Release resource",
     releaseTitle: "Release kernel state?",
     releaseWarning:
       "This permanently discards this resource's in-memory variables and handles. They cannot be restored from history. Running resources cannot be released.",
-    reasons: {
-      initializing: "Session initializing",
-      running: "Active turn or subagent",
-      background: "Background work retained",
-      kernel: "Non-recoverable kernel state",
-      permission: "Permission response pending",
-      submission: "Work admission or persistence pending",
-      user_keep: "Explicitly kept by you",
-      unrecoverable: "Session cannot be safely restored",
-      checking: "Runtime inventory not confirmed",
-    },
   },
   externalFilePreview: {
     title: "Local file preview",
@@ -233,8 +210,13 @@ export const en = {
       interrupt: "Interrupt",
       recoverTitle: "Stop was not acknowledged",
       recoverRuntime: "Recover runtime",
+      waitingForCleanup: "Stopping the task, waiting for child tasks to clean up…",
+      messageRetained:
+        "The task has not stopped, so the new message was not sent. Your message is saved; wait for the task to finish, then retry.",
+      taskNotStopped: "The task has not stopped. Wait for cleanup, or recover its runtime.",
+      runtimeRecovered: "Runtime recovered. Messages have not been resent.",
       recoverMessage:
-        "Recover only this conversation's runtime? This force-terminates its provider process and waits for host tools to settle. History is kept. Completed file writes and other side effects are not rolled back: inspect them before retrying. Other conversations and the daemon are not restarted.",
+        "Recover only this conversation's runtime? This force-terminates its provider process and waits for host tools to settle. History is kept. Completed file writes and other side effects are not rolled back: inspect them before retrying. Managed child tasks may still be running. Other conversations and the daemon are not restarted.",
     },
     attachments: {
       addImage: "Add image",

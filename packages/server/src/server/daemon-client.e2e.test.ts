@@ -8,8 +8,8 @@ import { randomUUID } from "node:crypto";
 import {
   createDaemonTestContext,
   type DaemonTestContext,
-  DaemonClient,
-} from "./test-utils/index.js";
+} from "./test-utils/daemon-test-context.js";
+import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
@@ -21,7 +21,6 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
-
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-"));
@@ -414,9 +413,13 @@ test("DaemonClient rejects a replacement prompt when cancellation is not acknowl
     const agent = await client.createAgent({ provider: "codex", cwd });
     await client.sendMessage(agent.id, "Keep working on the first prompt.");
 
-    await expect(client.sendMessage(agent.id, "Replace it with this prompt.")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
-    );
+    await expect(
+      client.sendMessage(agent.id, "Replace it with this prompt."),
+    ).rejects.toMatchObject({
+      code: "agent_cancellation_unacknowledged",
+    });
+    const after = await client.fetchAgent(agent.id);
+    expect(after?.agent.status).toBe("running");
   } finally {
     await client.close();
     await daemon.close();
@@ -436,9 +439,11 @@ test("DaemonClient rejects Stop when cancellation is not acknowledged", async ()
     const agent = await client.createAgent({ provider: "codex", cwd });
     await client.sendMessage(agent.id, "Keep working until stopped.");
 
-    await expect(client.cancelAgent(agent.id)).rejects.toThrow(
-      `Cannot stop agent ${agent.id} because its active run cancellation was not acknowledged`,
-    );
+    await expect(client.cancelAgent(agent.id)).rejects.toMatchObject({
+      code: "agent_cancellation_unacknowledged",
+    });
+    const after = await client.fetchAgent(agent.id);
+    expect(after?.agent.status).toBe("running");
   } finally {
     await client.close();
     await daemon.close();
@@ -620,7 +625,6 @@ class FailingResumeClient extends NonPersistentReloadClient {
   }
 }
 
-
 let ctx: DaemonTestContext;
 
 beforeAll(async () => {
@@ -638,13 +642,12 @@ test("handles session actions", async () => {
   expect(Array.isArray(agents.entries)).toBe(true);
 
   const cwd = tmpCwd();
-  const created = await ctx.client.createAgent({
+  await ctx.client.createAgent({
     config: {
       ...getFullAccessConfig("codex"),
       cwd,
     },
   });
-
 
   await ctx.client.deleteAgent(randomUUID());
   rmSync(cwd, { recursive: true, force: true });
@@ -1177,7 +1180,6 @@ test("a Desktop-managed daemon does not advertise npm self-update", async () => 
   }
 }, 15000);
 
-
 test("handles concurrent filtered agent fetch requests", async () => {
   const firstRequestId = `fetch-${Date.now()}-a`;
   const secondRequestId = `fetch-${Date.now()}-b`;
@@ -1555,8 +1557,6 @@ test("exposes raw session events for reachable screens", async () => {
   await ctx.client.deleteAgent(agent.id);
   rmSync(cwd, { recursive: true, force: true });
 }, 120000);
-
-
 
 test("supports git and file operations", async () => {
   const cwd = tmpCwd();

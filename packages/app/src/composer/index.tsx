@@ -63,6 +63,7 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
+  isAgentCancellationUnacknowledged,
   findGithubItemByOption,
   isAttachmentSelectedForGithubItem,
   openComposerAttachment,
@@ -79,6 +80,7 @@ import {
 } from "@/composer/actions";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -1132,7 +1134,6 @@ function ComposerContentImpl({
     buildOutgoingAttachments,
     removeAttachment,
     openAttachment,
-    beginSubmit,
     clearSentAttachments,
     completeSubmit,
     resetSuppression,
@@ -1161,10 +1162,50 @@ function ComposerContentImpl({
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const cursorPublication = useMemo(() => new AfterPaintPublication<number>(setCursorIndex), []);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const composerTarget = useMemo(() => ({ agentId, serverId }), [agentId, serverId]);
+  const currentTargetRef = useRef<typeof composerTarget | null>(composerTarget);
+  currentTargetRef.current = composerTarget;
+  useEffect(() => {
+    currentTargetRef.current = composerTarget;
+    return () => {
+      if (currentTargetRef.current === composerTarget) currentTargetRef.current = null;
+    };
+  }, [composerTarget]);
+  const processingTargetRef = useRef<typeof composerTarget | null>(null);
+  const [processingTarget, setProcessingTarget] = useState<typeof composerTarget | null>(null);
+  const isProcessing = processingTarget === composerTarget;
+  const setIsProcessing = useCallback(
+    (processing: boolean) => {
+      if (currentTargetRef.current !== composerTarget) return;
+      if (processing) {
+        processingTargetRef.current = composerTarget;
+        setProcessingTarget(composerTarget);
+      } else if (processingTargetRef.current === composerTarget) {
+        processingTargetRef.current = null;
+        setProcessingTarget(null);
+      }
+    },
+    [composerTarget],
+  );
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendFailure, setSendFailure] = useState<{
+    target: typeof composerTarget;
+    error: unknown;
+    source: "send" | "stop";
+  } | null>(null);
+  const [recoveredTarget, setRecoveredTarget] = useState<typeof composerTarget | null>(null);
+  const sendError = sendFailure?.target === composerTarget ? sendFailure.error : null;
+  const setSendError = useCallback(
+    (error: unknown | null, source: "send" | "stop" = "send") => {
+      if (currentTargetRef.current !== composerTarget) return;
+      setRecoveredTarget(null);
+      setSendFailure(error === null ? null : { target: composerTarget, error, source });
+    },
+    [composerTarget],
+  );
+  const draftContentRef = useRef({ text: userInput, attachments });
+  draftContentRef.current = { text: userInput, attachments };
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
@@ -1191,6 +1232,7 @@ function ComposerContentImpl({
 
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {
+      if (processingTargetRef.current === composerTarget) return false;
       if (command.execution !== "immediate" || !onClientSlashCommand) {
         return false;
       }
@@ -1207,7 +1249,7 @@ function ComposerContentImpl({
       void onClientSlashCommand(command)
         .catch((error) => {
           console.error("[Composer] Failed to run client slash command:", error);
-          setSendError(error instanceof Error ? error.message : String(error));
+          setSendError(error);
         })
         .finally(() => {
           setIsProcessing(false);
@@ -1217,10 +1259,13 @@ function ComposerContentImpl({
     [
       blurOnSubmit,
       clearDraft,
+      composerTarget,
       onClientSlashCommand,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
+      setSendError,
+      setIsProcessing,
     ],
   );
 
@@ -1246,7 +1291,6 @@ function ComposerContentImpl({
     [selectAutocompleteOption],
   );
 
-  // Clear send error when user edits the input
   useEffect(() => {
     setCursorIndex((current) => Math.min(current, userInput.length));
   }, [userInput.length]);
@@ -1255,17 +1299,6 @@ function ComposerContentImpl({
 
   const { pickImages } = useImageAttachmentPicker();
   const { pickFiles } = useFilePicker();
-  const agentIdRef = useRef(agentId);
-  const sendAgentMessageRef = useRef<
-    | ((
-        agentId: string,
-        text: string,
-        attachments: ComposerAttachment[],
-        activeTurnBehavior: "interrupt" | "steer",
-      ) => Promise<void>)
-    | null
-  >(null);
-  const onSubmitMessageRef = useRef(onSubmitMessage);
 
   const addImages = useCallback(
     (images: ImageAttachment[]) => {
@@ -1325,32 +1358,8 @@ function ComposerContentImpl({
     onFocusInput?.(focusInput);
   }, [focusInput, onFocusInput]);
 
-  const submitMessage = useCallback(
-    async (text: string, submitAttachments: ComposerAttachment[]) => {
-      onMessageSent?.();
-      if (onSubmitMessageRef.current) {
-        await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
-        return;
-      }
-      if (!sendAgentMessageRef.current) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      await sendAgentMessageRef.current(
-        agentIdRef.current,
-        text,
-        submitAttachments,
-        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
-      );
-    },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
-  );
-
-  useEffect(() => {
-    agentIdRef.current = agentId;
-  }, [agentId]);
-
-  useEffect(() => {
-    sendAgentMessageRef.current = async (
+  const sendAgentMessage = useCallback(
+    async (
       targetAgentId: string,
       text: string,
       sendAttachments: ComposerAttachment[],
@@ -1393,22 +1402,43 @@ function ComposerContentImpl({
                 ?.turnId ?? undefined)
             : undefined,
       });
-      onAttentionPromptSend?.();
-    };
-  }, [
-    appSettings.sendBehavior,
-    client,
-    cwd,
-    i18n,
-    onAttentionPromptSend,
-    serverId,
-    supportsForgeSearch,
-    t,
-  ]);
+      if (currentTargetRef.current === composerTarget) onAttentionPromptSend?.();
+    },
+    [client, composerTarget, cwd, i18n, onAttentionPromptSend, serverId, supportsForgeSearch, t],
+  );
 
-  useEffect(() => {
-    onSubmitMessageRef.current = onSubmitMessage;
-  }, [onSubmitMessage]);
+  const submitMessage = useCallback(
+    async (text: string, submitAttachments: ComposerAttachment[]) => {
+      onMessageSent?.();
+      if (onSubmitMessage) {
+        await onSubmitMessage({ text, attachments: submitAttachments, cwd });
+        return;
+      }
+      const activeTurnBehavior = appSettings.sendBehavior === "steer" ? "steer" : "interrupt";
+      const store = useSessionStore.getState();
+      const cancellationRequestId =
+        activeTurnBehavior === "interrupt" &&
+        selectAgentTurnPresentation(store.sessions[serverId], agentId).isActive
+          ? store.beginAgentCancellation(serverId, agentId)
+          : null;
+      try {
+        await sendAgentMessage(agentId, text, submitAttachments, activeTurnBehavior);
+      } finally {
+        if (cancellationRequestId !== null) {
+          store.settleAgentCancellation(serverId, agentId, cancellationRequestId);
+        }
+      }
+    },
+    [
+      agentId,
+      appSettings.sendBehavior,
+      cwd,
+      onMessageSent,
+      onSubmitMessage,
+      sendAgentMessage,
+      serverId,
+    ],
+  );
 
   const hasActiveTurn = useSessionStore(
     (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isActive,
@@ -1447,21 +1477,30 @@ function ComposerContentImpl({
     (hasAgent || (userInput.trim().length === 0 && selectedAttachments.length === 0));
   const runOmpToolCommand = useCallback(
     (command: OmpToolUseCommand) => {
-      if (!canRunOmpToolCommand) return;
+      if (!canRunOmpToolCommand || processingTargetRef.current === composerTarget) return;
 
       setSendError(null);
       setIsProcessing(true);
       void submitMessage(command, [])
         .catch((error) => {
           console.error("[Composer] Failed to run OMP tool command:", error);
-          setSendError(error instanceof Error ? error.message : String(error));
+          setSendError(error);
         })
         .finally(() => {
           setIsProcessing(false);
-          focusInput();
+          getHostRuntimeStore().reevaluateQueuedAgentMessages(serverId);
+          if (currentTargetRef.current === composerTarget) focusInput();
         });
     },
-    [canRunOmpToolCommand, focusInput, submitMessage],
+    [
+      canRunOmpToolCommand,
+      composerTarget,
+      focusInput,
+      serverId,
+      setIsProcessing,
+      setSendError,
+      submitMessage,
+    ],
   );
 
   const queueWriter = useMemo<QueueWriter>(
@@ -1503,6 +1542,10 @@ function ComposerContentImpl({
       outgoingAttachments: ComposerAttachment[],
       forceSend?: boolean,
     ) => {
+      if (processingTargetRef.current === composerTarget || isCancellingAgent) return "noop";
+      const submittedDraftAttachments = attachments;
+      const submittedDraftText =
+        messageInputRef.current?.getInputSnapshot().text ?? draftContentRef.current.text;
       const result = await withRetainedComposerImages(outgoingAttachments, () =>
         submitAgentInput({
           message: outgoingMessage,
@@ -1510,20 +1553,23 @@ function ComposerContentImpl({
           hasExternalContent,
           allowEmptySubmit,
           forceSend,
+          snapshot: {
+            isCurrentTarget: () => currentTargetRef.current === composerTarget,
+            isInputUnchanged: () =>
+              (messageInputRef.current?.getInputSnapshot().text ?? draftContentRef.current.text) ===
+                submittedDraftText &&
+              draftContentRef.current.attachments === submittedDraftAttachments,
+          },
           submitBehavior,
           isAgentRunning,
           // Parent-managed submits are still valid submit paths even when the
           // transport is disconnected, because the parent decides the failure mode.
-          canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
+          canSubmit: Boolean(client || onSubmitMessage),
           queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
             queueMessage(queuedText, queuedAttachments);
           },
-          submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
-            if (submitBehavior !== "preserve-and-lock") {
-              beginSubmit(submitAttachments);
-            }
-            await submitMessage(submitText, submitAttachments);
-          },
+          submitMessage: ({ message: submitText, attachments: submitAttachments }) =>
+            submitMessage(submitText, submitAttachments),
           clearDraft,
           setUserInput: replaceUserInput,
           setAttachments: (nextAttachments) => {
@@ -1539,21 +1585,30 @@ function ComposerContentImpl({
           failedToSendMessage: t("composer.errors.failedToSend"),
         }),
       );
-      completeSubmit({
-        result,
-        outgoingAttachments,
-      });
+      if (currentTargetRef.current === composerTarget) {
+        completeSubmit({ result, outgoingAttachments });
+      }
+      if (result === "submitted" || result === "failed") {
+        getHostRuntimeStore().reevaluateQueuedAgentMessages(serverId);
+      }
       return result;
     },
     [
       allowEmptySubmit,
-      beginSubmit,
+      attachments,
+      client,
+      composerTarget,
       clearDraft,
       completeSubmit,
       hasExternalContent,
       isAgentRunning,
+      isCancellingAgent,
+      onSubmitMessage,
       queueMessage,
+      serverId,
       setSelectedAttachments,
+      setSendError,
+      setIsProcessing,
       replaceUserInput,
       submitBehavior,
       submitMessage,
@@ -1563,6 +1618,8 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      if (processingTargetRef.current === composerTarget || isCancellingAgent || isSubmitLoading)
+        return;
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1580,6 +1637,9 @@ function ComposerContentImpl({
     [
       attachments,
       blurOnSubmit,
+      composerTarget,
+      isCancellingAgent,
+      isSubmitLoading,
       buildOutgoingAttachments,
       runClientSlashCommand,
       sendMessageWithContent,
@@ -1783,49 +1843,91 @@ function ComposerContentImpl({
   );
 
   const handleCancelAgent = useCallback(() => {
-    const targetAgentId = agentIdRef.current;
+    if (processingTargetRef.current === composerTarget || isCancellingAgent) return;
+    setIsProcessing(true);
     const cancellation = cancelComposerAgent({
       client,
-      agentId: targetAgentId,
+      agentId,
       isAgentRunning,
       isCancellingAgent,
       isConnected,
     });
-    if (!cancellation) return;
-    const requestId = beginAgentCancellation(serverId, targetAgentId);
+    if (!cancellation) {
+      setIsProcessing(false);
+      return;
+    }
+    setSendError(null);
+    const requestId = beginAgentCancellation(serverId, agentId);
     void cancellation
-      .catch(async (error) => {
-        const message = resolveErrorMessage(error);
-        if (message && message.trim().length > 0) {
-          toastErrorRef.current(message);
-        }
-        if (!client || !targetAgentId || !message?.includes("cancellation was not acknowledged"))
-          return;
-        const confirmed = await confirmDialog({
-          title: t("composer.cancel.recoverTitle"),
-          message: t("composer.cancel.recoverMessage"),
-          confirmLabel: t("composer.cancel.recoverRuntime"),
-          cancelLabel: t("common.actions.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) return;
-        try {
-          await client.cancelAgent(targetAgentId, { force: true });
-        } catch (recoveryError) {
-          toastErrorRef.current(resolveErrorMessage(recoveryError) ?? String(recoveryError));
-        }
+      .catch((error) => {
+        console.error("[Composer] Failed to stop agent:", error);
+        setSendError(error, "stop");
       })
       .finally(() => {
-        settleAgentCancellation(serverId, targetAgentId, requestId);
+        settleAgentCancellation(serverId, agentId, requestId);
+        getHostRuntimeStore().reevaluateQueuedAgentMessages(serverId);
+        setIsProcessing(false);
       });
     messageInputRef.current?.focus();
   }, [
+    agentId,
     beginAgentCancellation,
     client,
+    composerTarget,
     isAgentRunning,
     isCancellingAgent,
     isConnected,
     serverId,
+    setIsProcessing,
+    setSendError,
+    settleAgentCancellation,
+  ]);
+
+  const handleRecoverRuntime = useCallback(async () => {
+    if (
+      !client ||
+      !isConnected ||
+      !isAgentCancellationUnacknowledged(sendError) ||
+      processingTargetRef.current === composerTarget ||
+      isCancellingAgent
+    )
+      return;
+    setIsProcessing(true);
+    const requestId = beginAgentCancellation(serverId, agentId);
+    try {
+      const confirmed = await confirmDialog({
+        title: t("composer.cancel.recoverTitle"),
+        message: t("composer.cancel.recoverMessage"),
+        confirmLabel: t("composer.cancel.recoverRuntime"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      });
+      if (!confirmed || currentTargetRef.current !== composerTarget) return;
+      await client.cancelAgent(agentId, { force: true });
+      if (currentTargetRef.current === composerTarget) {
+        setSendError(null);
+        setRecoveredTarget(composerTarget);
+      }
+    } catch (error) {
+      console.error("[Composer] Failed to recover runtime:", error);
+      setSendError(error, sendFailure?.source ?? "stop");
+    } finally {
+      settleAgentCancellation(serverId, agentId, requestId);
+      getHostRuntimeStore().reevaluateQueuedAgentMessages(serverId);
+      setIsProcessing(false);
+    }
+  }, [
+    agentId,
+    beginAgentCancellation,
+    client,
+    composerTarget,
+    isCancellingAgent,
+    isConnected,
+    sendError,
+    sendFailure?.source,
+    serverId,
+    setIsProcessing,
+    setSendError,
     settleAgentCancellation,
     t,
   ]);
@@ -1856,25 +1958,52 @@ function ComposerContentImpl({
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
-      if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
-      // Reuse the regular send path; server-side send atomically interrupts any active run.
-      const result = await sendQueuedComposerMessageNow({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-        submitMessage: ({ text, attachments: queuedAttachments }) =>
-          submitMessage(text, queuedAttachments),
-        failedToSendMessage: t("composer.errors.failedToSend"),
-      });
-      if (result.status === "failed") {
-        setSendError(result.errorMessage);
+      if (
+        processingTargetRef.current === composerTarget ||
+        isCancellingAgent ||
+        isSubmitLoading ||
+        (!client && !onSubmitMessage)
+      )
+        return;
+      setIsProcessing(true);
+      setSendError(null);
+      try {
+        const result = await sendQueuedComposerMessageNow({
+          agentId,
+          messageId: id,
+          queue: queueWriter,
+          submitMessage: ({ text, attachments: queuedAttachments }) =>
+            withRetainedComposerImages(queuedAttachments, () =>
+              submitMessage(text, queuedAttachments),
+            ),
+          failedToSendMessage: t("composer.errors.failedToSend"),
+        });
+        if (result.status === "failed") setSendError(result.error ?? result.errorMessage);
+        getHostRuntimeStore().reevaluateQueuedAgentMessages(serverId);
+      } finally {
+        setIsProcessing(false);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [
+      agentId,
+      client,
+      composerTarget,
+      isCancellingAgent,
+      isSubmitLoading,
+      onSubmitMessage,
+      queueWriter,
+      serverId,
+      setIsProcessing,
+      setSendError,
+      submitMessage,
+      t,
+    ],
   );
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
+      if (processingTargetRef.current === composerTarget || isCancellingAgent || isSubmitLoading)
+        return;
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1885,7 +2014,15 @@ function ComposerContentImpl({
       }
       queueMessage(payload.text, outgoingAttachments);
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [
+      attachments,
+      buildOutgoingAttachments,
+      composerTarget,
+      isCancellingAgent,
+      isSubmitLoading,
+      queueMessage,
+      runClientSlashCommand,
+    ],
   );
 
   // Handle keyboard navigation for command autocomplete.
@@ -1895,8 +2032,8 @@ function ComposerContentImpl({
   );
 
   const cancelButtonStyle = useMemo(
-    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
-    [isConnected, isCancellingAgent],
+    () => buildCancelButtonStyle(isConnected, isCancellingAgent || isProcessing),
+    [isConnected, isCancellingAgent, isProcessing],
   );
 
   const activeActionContent = useMemo(
@@ -1906,7 +2043,7 @@ function ComposerContentImpl({
         cancelButtonStyle={cancelButtonStyle}
         handleCancelAgent={handleCancelAgent}
         isConnected={isConnected}
-        isCancellingAgent={isCancellingAgent}
+        isCancellingAgent={isCancellingAgent || isProcessing}
         agentInterruptKeys={agentInterruptKeys}
         t={t}
       />
@@ -1917,6 +2054,7 @@ function ComposerContentImpl({
       cancelButtonStyle,
       handleCancelAgent,
       isCancellingAgent,
+      isProcessing,
       isConnected,
       t,
     ],
@@ -2270,21 +2408,48 @@ function ComposerContentImpl({
   const messageInputContainerRef = useRef<View>(null);
 
   const isSubmitLoadingVisible =
-    isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
+    isProcessing ||
+    isCancellingAgent ||
+    isSubmitLoading ||
+    isUploadingFile ||
+    pendingNativeImagePastes > 0;
   const isSubmitDisabled =
     isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
-  const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
-  const sendErrorNode = useMemo(
-    () =>
-      sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
-          {sendError}
-        </Text>
-      ) : null,
-    [sendError],
-  );
+  const submitLoadingPressHandler =
+    isAgentRunning && !isProcessing && !isCancellingAgent ? handleCancelAgent : undefined;
+  let queuedSendKey = "composer.input.sendMessage";
+  if (isAgentRunning) {
+    queuedSendKey =
+      appSettings.sendBehavior === "steer"
+        ? "composer.input.sendAndSteer"
+        : "composer.input.sendAndInterrupt";
+  }
+  const cancellationUnacknowledged = isAgentCancellationUnacknowledged(sendError);
+  const sendErrorNode = sendError ? (
+    <View style={styles.sendFeedback}>
+      <Text accessibilityRole="alert" style={styles.sendErrorText}>
+        {cancellationUnacknowledged
+          ? t(
+              sendFailure?.source === "stop"
+                ? "composer.cancel.taskNotStopped"
+                : "composer.cancel.messageRetained",
+            )
+          : (resolveErrorMessage(sendError) ?? String(sendError))}
+      </Text>
+      {cancellationUnacknowledged ? (
+        <Button
+          size="xs"
+          variant="secondary"
+          onPress={handleRecoverRuntime}
+          disabled={!isConnected || isProcessing || isCancellingAgent}
+        >
+          {t("composer.cancel.recoverRuntime")}
+        </Button>
+      ) : null}
+    </View>
+  ) : null;
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
     : t("composer.github.noResults");
@@ -2329,8 +2494,20 @@ function ComposerContentImpl({
               queue={queueWriter}
               onEdit={handleEditQueuedMessage}
               onSendNow={handleSendQueuedNow}
+              sendDisabled={isSubmitDisabled || (!onSubmitMessage && !isConnected) || readOnly}
+              sendLabel={t(queuedSendKey)}
             />
             {sendErrorNode}
+            {isCancellingAgent ? (
+              <Text role="status" accessibilityLiveRegion="polite" style={styles.sendStatusText}>
+                {t("composer.cancel.waitingForCleanup")}
+              </Text>
+            ) : null}
+            {!isCancellingAgent && recoveredTarget === composerTarget ? (
+              <Text role="status" accessibilityLiveRegion="polite" style={styles.sendStatusText}>
+                {t("composer.cancel.runtimeRecovered")}
+              </Text>
+            ) : null}
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocomplete
@@ -2506,6 +2683,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   sendErrorText: {
     color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.base,
+  },
+  sendFeedback: {
+    gap: theme.spacing[2],
+    alignItems: "flex-start",
+  },
+  sendStatusText: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
 })) as unknown as Record<string, object>;

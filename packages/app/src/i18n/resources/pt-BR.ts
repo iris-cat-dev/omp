@@ -167,8 +167,13 @@ export const ptBR: TranslationResources = {
       interrupt: "Interromper",
       recoverTitle: "A parada não foi confirmada",
       recoverRuntime: "Recuperar ambiente",
+      waitingForCleanup: "Parando a tarefa, aguardando a limpeza das subtarefas…",
+      messageRetained:
+        "A tarefa ainda não parou, então a nova mensagem não foi enviada. Sua mensagem foi mantida; aguarde o fim da tarefa e tente novamente.",
+      taskNotStopped: "A tarefa ainda não parou. Aguarde a limpeza ou recupere o ambiente.",
+      runtimeRecovered: "Ambiente recuperado. As mensagens não foram reenviadas.",
       recoverMessage:
-        "Recuperar apenas o ambiente desta conversa? O processo do provedor será encerrado à força e as ferramentas do host deverão concluir. O histórico será mantido. Gravações e outros efeitos já realizados não serão desfeitos: verifique-os antes de tentar novamente. Outras conversas e o daemon não serão reiniciados.",
+        "Recuperar apenas o ambiente desta conversa? O processo do provedor será encerrado à força e as ferramentas do host deverão concluir. O histórico será mantido. Gravações e outros efeitos já realizados não serão desfeitos: verifique-os antes de tentar novamente. As subtarefas gerenciadas ainda podem estar em execução. Outras conversas e o daemon não serão reiniciados.",
     },
     attachments: {
       addImage: "Adicionar imagem",

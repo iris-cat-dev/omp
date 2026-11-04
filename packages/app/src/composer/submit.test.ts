@@ -203,7 +203,7 @@ describe("submitAgentInput", () => {
     expect(setAttachments).toHaveBeenNthCalledWith(1, []);
     expect(setAttachments).toHaveBeenNthCalledWith(2, attachments);
     expect(setSendError).toHaveBeenNthCalledWith(1, null);
-    expect(setSendError).toHaveBeenNthCalledWith(2, "No host selected");
+    expect(setSendError).toHaveBeenNthCalledWith(2, submitError);
     expect(setIsProcessing).toHaveBeenNthCalledWith(1, true);
     expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
     expect(clearDraft).not.toHaveBeenCalled();
@@ -239,8 +239,159 @@ describe("submitAgentInput", () => {
     expect(setUserInput).toHaveBeenNthCalledWith(2, "steer this turn");
     expect(setAttachments).toHaveBeenNthCalledWith(1, []);
     expect(setAttachments).toHaveBeenNthCalledWith(2, [{ id: "img-1" }]);
-    expect(setSendError).toHaveBeenLastCalledWith("connection lost after delivery");
+    expect(setSendError).toHaveBeenLastCalledWith(error);
   });
+
+  it.each(["accepted", "rejected"] as const)(
+    "keeps an interrupt draft and attachments editable until the request is %s",
+    async (outcome) => {
+      const pending = createDeferredPromise<void>();
+      const failure = Object.assign(new Error("Diagnostic details from the host"), {
+        code: "agent_cancellation_unacknowledged",
+      });
+      const originalAttachments = [{ id: "image-original" }];
+      let text = "original message";
+      let attachments = originalAttachments;
+      const clearDraft = vi.fn();
+      const setSendError = vi.fn();
+      const setIsProcessing = vi.fn();
+      const submitting = submitAgentInput({
+        message: text,
+        attachments,
+        forceSend: true,
+        isAgentRunning: true,
+        canSubmit: true,
+        snapshot: {
+          isCurrentTarget: () => true,
+          isInputUnchanged: () =>
+            text === "original message" && attachments === originalAttachments,
+        },
+        queueMessage: vi.fn(),
+        submitMessage: () => pending.promise,
+        clearDraft,
+        setUserInput: (next) => {
+          text = next;
+        },
+        setAttachments: (next) => {
+          attachments = next;
+        },
+        setSendError,
+        setIsProcessing,
+      });
+      expect(text).toBe("original message");
+      expect(attachments).toBe(originalAttachments);
+      expect(setIsProcessing).toHaveBeenLastCalledWith(true);
+      text = "edited while stopping";
+      attachments = [...originalAttachments, { id: "new-image" }];
+      if (outcome === "accepted") pending.resolve();
+      else pending.reject(failure);
+
+      await expect(submitting).resolves.toBe(outcome === "accepted" ? "submitted" : "failed");
+      expect(text).toBe("edited while stopping");
+      expect(attachments.map((attachment) => attachment.id)).toEqual([
+        "image-original",
+        "new-image",
+      ]);
+      expect(clearDraft).not.toHaveBeenCalled();
+      expect(setIsProcessing).toHaveBeenLastCalledWith(false);
+      if (outcome === "rejected") expect(setSendError).toHaveBeenLastCalledWith(failure);
+    },
+  );
+
+  it.each(["accepted", "rejected"] as const)(
+    "settles an unchanged retained draft only after it is %s",
+    async (outcome) => {
+      const pending = createDeferredPromise<void>();
+      const failure = Object.assign(new Error("The old task is still running"), {
+        code: "agent_cancellation_unacknowledged",
+      });
+      const image = { id: "image-retained" };
+      let text = "retry me";
+      let attachments = [image];
+      const clearDraft = vi.fn();
+      const setSendError = vi.fn();
+      const submitting = submitAgentInput({
+        message: text,
+        attachments,
+        forceSend: true,
+        isAgentRunning: true,
+        canSubmit: true,
+        snapshot: { isCurrentTarget: () => true, isInputUnchanged: () => true },
+        queueMessage: vi.fn(),
+        submitMessage: () => pending.promise,
+        clearDraft,
+        setUserInput: (next) => {
+          text = next;
+        },
+        setAttachments: (next) => {
+          attachments = next;
+        },
+        setSendError,
+        setIsProcessing: vi.fn(),
+      });
+      expect(text).toBe("retry me");
+      expect(attachments).toEqual([image]);
+      expect(clearDraft).not.toHaveBeenCalled();
+      if (outcome === "accepted") pending.resolve();
+      else pending.reject(failure);
+      await expect(submitting).resolves.toBe(outcome === "accepted" ? "submitted" : "failed");
+      if (outcome === "accepted") {
+        expect(text).toBe("");
+        expect(attachments).toEqual([]);
+        expect(clearDraft).toHaveBeenCalledOnce();
+      } else {
+        expect(text).toBe("retry me");
+        expect(attachments).toEqual([image]);
+        expect(clearDraft).not.toHaveBeenCalled();
+        expect(setSendError).toHaveBeenLastCalledWith(failure);
+      }
+    },
+  );
+
+  it.each(["accepted", "rejected"] as const)(
+    "does not apply a stale %s submission to another target's draft, errors, or processing state",
+    async (outcome) => {
+      const pending = createDeferredPromise<void>();
+      const oldTarget = { serverId: "host-a", agentId: "agent" };
+      let currentTarget = oldTarget;
+      let draft = { text: "old draft", attachments: [{ id: "old-image" }] };
+      const clearDraft = vi.fn();
+      const setSendError = vi.fn();
+      const setIsProcessing = vi.fn();
+      const submitting = submitAgentInput({
+        message: draft.text,
+        attachments: draft.attachments,
+        forceSend: true,
+        isAgentRunning: true,
+        canSubmit: true,
+        snapshot: {
+          isCurrentTarget: () => currentTarget === oldTarget,
+          isInputUnchanged: () => true,
+        },
+        queueMessage: vi.fn(),
+        submitMessage: () => pending.promise,
+        clearDraft,
+        setUserInput: (text) => {
+          draft = { ...draft, text };
+        },
+        setAttachments: (attachments) => {
+          draft = { ...draft, attachments };
+        },
+        setSendError,
+        setIsProcessing,
+      });
+      // Even the same agent ID on another server is a different composer target.
+      currentTarget = { serverId: "host-b", agentId: "agent" };
+      draft = { text: "new target's draft", attachments: [{ id: "new-image" }] };
+      if (outcome === "accepted") pending.resolve();
+      else pending.reject(new Error("old target failed"));
+      await submitting;
+      expect(draft).toEqual({ text: "new target's draft", attachments: [{ id: "new-image" }] });
+      expect(clearDraft).not.toHaveBeenCalled();
+      expect(setSendError.mock.calls).toEqual([[null]]);
+      expect(setIsProcessing.mock.calls).toEqual([[true]]);
+    },
+  );
 
   it("submits when empty submit is explicitly allowed", async () => {
     const queueMessage = vi.fn();

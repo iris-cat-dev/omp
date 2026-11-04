@@ -12,6 +12,7 @@ import type { AgentPermissionRequest } from "@omp-desktop/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { createUserMessage } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
@@ -23,7 +24,11 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import { ReplicaCache } from "./replica-cache";
-import { moveQueuedComposerMessageTo, type QueueWriter } from "@/composer/actions";
+import {
+  moveQueuedComposerMessageTo,
+  sendQueuedComposerMessageNow,
+  type QueueWriter,
+} from "@/composer/actions";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -3294,6 +3299,140 @@ describe("HostRuntimeStore", () => {
       }
     },
   );
+
+  it("holds a cancelling conversation's queue without blocking independent conversations", async () => {
+    const host = makeHost({ serverId: "srv_queue_cancellation" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore();
+    const state = useSessionStore.getState();
+    state.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    state.setQueuedMessages(
+      host.serverId,
+      new Map([
+        ["stopping", [{ id: "stop-1", text: "after cleanup", attachments: [] }]],
+        ["other", [{ id: "other-1", text: "independent work", attachments: [] }]],
+      ]),
+    );
+    const requestId = state.beginAgentCancellation(host.serverId, "stopping");
+    try {
+      store.reevaluateQueuedAgentMessages(host.serverId);
+      await fakeClient.waitForSentMessages(1);
+      expect(fakeClient.sentAgentMessages.map(([id]) => id)).toEqual(["other"]);
+      expect(state.getSession(host.serverId)?.queuedMessages.get("stopping")?.[0]?.id).toBe(
+        "stop-1",
+      );
+      state.settleAgentCancellation(host.serverId, "stopping", requestId);
+      store.reevaluateQueuedAgentMessages(host.serverId);
+      await fakeClient.waitForSentMessages(2);
+      expect(fakeClient.sentAgentMessages.map(([id]) => id)).toEqual(["other", "stopping"]);
+    } finally {
+      state.clearSession(host.serverId);
+    }
+  });
+
+  it("waits for a manual submission's ACK, not its delayed timeline echo, before dispatching the queue", async () => {
+    const host = makeHost({ serverId: "srv_queue_manual_ack" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore();
+    const state = useSessionStore.getState();
+    state.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    state.beginAgentMessageSubmission(
+      host.serverId,
+      "agent",
+      createUserMessage({
+        text: "manual first",
+        clientMessageId: "manual-rpc",
+        timestamp: new Date(0),
+      }),
+    );
+    state.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "next",
+              text: "queued second",
+              attachments: [],
+            },
+          ],
+        ],
+      ]),
+    );
+    try {
+      store.reevaluateQueuedAgentMessages(host.serverId);
+      expect(fakeClient.sentAgentMessages).toEqual([]);
+      expect(state.getSession(host.serverId)?.queuedMessages.get("agent")?.[0]?.id).toBe("next");
+      state.acceptAgentMessageSubmission(host.serverId, "agent", "manual-rpc");
+      store.reevaluateQueuedAgentMessages(host.serverId);
+      await fakeClient.waitForSentMessages(1);
+      expect(fakeClient.sentAgentMessages[0]?.[1]).toBe("queued second");
+      await vi.waitFor(() =>
+        expect(state.getSession(host.serverId)?.queuedMessages.has("agent")).toBe(false),
+      );
+    } finally {
+      state.clearSession(host.serverId);
+    }
+  });
+
+  it("does not resend a cancellation-failed queue item when its runtime closes", async () => {
+    const host = makeHost({ serverId: "srv_queue_manual_retry" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore();
+    const state = useSessionStore.getState();
+    state.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    const first = { id: "failed-1", text: "keep for manual retry", attachments: [] };
+    const second = { id: "next-2", text: "keep behind first", attachments: [] };
+    state.setQueuedMessages(host.serverId, new Map([["agent", [first, second]]]));
+    const queue: QueueWriter = {
+      read: (id) => state.getSession(host.serverId)?.queuedMessages.get(id) ?? [],
+      write: (update) => state.setQueuedMessages(host.serverId, update),
+    };
+    fakeClient.sendAgentMessageFailures.push(
+      Object.assign(new Error("cleanup pending"), {
+        code: "agent_cancellation_unacknowledged",
+      }),
+    );
+    try {
+      store.drainQueuedAgentMessage(host.serverId, "agent");
+      await vi.waitFor(() => expect(queue.read("agent")[0]?.requiresManualRetry).toBe(true));
+      const entry = makeFetchAgentsEntry({
+        id: "agent",
+        cwd: "/repo",
+        updatedAt: "2026-07-12T10:00:00.000Z",
+      });
+      state.setAgents(
+        host.serverId,
+        new Map([
+          [
+            "agent",
+            {
+              ...replicaAgent(entry.agent, host.serverId),
+              status: "closed",
+            },
+          ],
+        ]),
+      );
+      store.drainQueuedAgentMessage(host.serverId, "agent");
+      store.reevaluateQueuedAgentMessages(host.serverId);
+      expect(fakeClient.sentAgentMessages).toHaveLength(1);
+      expect(queue.read("agent").map((item) => item.id)).toEqual([first.id, second.id]);
+      await sendQueuedComposerMessageNow({
+        agentId: "agent",
+        messageId: first.id,
+        queue,
+        submitMessage: ({ text }) => fakeClient.sendAgentMessage("agent", text),
+      });
+      expect(fakeClient.sentAgentMessages.map(([, text]) => text)).toEqual([
+        first.text,
+        first.text,
+      ]);
+      expect(queue.read("agent").map((item) => item.id)).toEqual([second.id]);
+    } finally {
+      state.clearSession(host.serverId);
+    }
+  });
 
   it("continues each conversation independently while another submission is awaiting its ACK", async () => {
     const host = makeHost({ serverId: "srv_independent_ack" });

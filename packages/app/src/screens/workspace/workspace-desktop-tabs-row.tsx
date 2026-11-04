@@ -22,6 +22,7 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
+  Cpu,
   FolderTree,
   Pencil,
   Plus,
@@ -116,6 +117,7 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedCpu = withUnistyles(Cpu);
 const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
 
 function WorkspaceTabScrollShadeSvg({ side, color }: { side: "left" | "right"; color: string }) {
@@ -367,6 +369,8 @@ function TabContextMenuItem({
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+      case "cpu":
+        return <ThemedCpu size={16} uniProps={mutedColorMapping} />;
       case "folder-tree":
         return <ThemedFolderTree size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":

@@ -24,7 +24,7 @@ import {
   type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { QueuedComposerMessage } from "@/composer/actions";
 import type { AgentLifecycleStatus } from "@omp-desktop/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
@@ -72,7 +72,10 @@ import {
   retainTimelineByteWindow,
   TIMELINE_RESIDENCY_BUDGET,
 } from "@/timeline/timeline-residency";
-import { persistTimelineImageAssets, retainTimelineImageAssets } from "@/assistant-image/timeline-assets";
+import {
+  persistTimelineImageAssets,
+  retainTimelineImageAssets,
+} from "@/assistant-image/timeline-assets";
 
 export interface AgentRuntimeInfo {
   provider: AgentProvider;
@@ -465,12 +468,6 @@ function updateAgentTasks(
   return next;
 }
 
-interface QueuedMessageState {
-  id: string;
-  text: string;
-  attachments: ComposerAttachment[];
-}
-
 export type WorkspaceRestoreStatus = "restoring" | "failed" | "needs-host-upgrade";
 
 // Per-session state
@@ -536,7 +533,7 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Pending messages in each conversation's user-selected order.
-  queuedMessages: Map<string, QueuedMessageState[]>;
+  queuedMessages: Map<string, QueuedComposerMessage[]>;
 }
 
 // Global store state
@@ -736,8 +733,8 @@ interface SessionStoreActions {
   setQueuedMessages: (
     serverId: string,
     value:
-      | Map<string, QueuedMessageState[]>
-      | ((prev: Map<string, QueuedMessageState[]>) => Map<string, QueuedMessageState[]>),
+      | Map<string, QueuedComposerMessage[]>
+      | ((prev: Map<string, QueuedComposerMessage[]>) => Map<string, QueuedComposerMessage[]>),
   ) => void;
 
   // Hydration
@@ -2270,7 +2267,14 @@ export const useSessionStore = create<SessionStore>()(
   }),
 );
 
-const timelineVisibility = new Map<string, { consumers: number; anchorId: string | null; visibleIds: Set<string>; touched: number }>();
+interface TimelineVisibility {
+  consumers: number;
+  anchorId: string | null;
+  visibleIds: Set<string>;
+  touched: number;
+}
+
+const timelineVisibility = new Map<string, TimelineVisibility>();
 let residencyTimer: ReturnType<typeof setTimeout> | null = null;
 let unloadedTimelineCount = 0;
 let evictedJsBytes = 0;
@@ -2279,7 +2283,12 @@ const pendingImageAssets = new WeakSet<StreamItem>();
 
 export function retainAgentTimelineVisibility(serverId: string, agentId: string): () => void {
   const key = `${serverId}:${agentId}`;
-  const current = timelineVisibility.get(key) ?? { consumers: 0, anchorId: null, visibleIds: new Set<string>(), touched: 0 };
+  const current = timelineVisibility.get(key) ?? {
+    consumers: 0,
+    anchorId: null,
+    visibleIds: new Set<string>(),
+    touched: 0,
+  };
   current.consumers += 1;
   current.touched = Date.now();
   timelineVisibility.set(key, current);
@@ -2294,7 +2303,11 @@ export function retainAgentTimelineVisibility(serverId: string, agentId: string)
   };
 }
 
-export function setAgentTimelineReadingPosition(serverId: string, agentId: string, anchorId: string | null): void {
+export function setAgentTimelineReadingPosition(
+  serverId: string,
+  agentId: string,
+  anchorId: string | null,
+): void {
   const current = timelineVisibility.get(`${serverId}:${agentId}`);
   if (!current || current.anchorId === anchorId) return;
   current.anchorId = anchorId;
@@ -2302,48 +2315,101 @@ export function setAgentTimelineReadingPosition(serverId: string, agentId: strin
   scheduleTimelineResidency();
 }
 
-export function setAgentTimelineVisibleItems(serverId: string, agentId: string, ids: readonly string[]): void {
+export function setAgentTimelineVisibleItems(
+  serverId: string,
+  agentId: string,
+  ids: readonly string[],
+): void {
   const current = timelineVisibility.get(`${serverId}:${agentId}`);
-  if (!current || (current.visibleIds.size === ids.length && ids.every((id) => current.visibleIds.has(id)))) return;
+  if (
+    !current ||
+    (current.visibleIds.size === ids.length && ids.every((id) => current.visibleIds.has(id)))
+  )
+    return;
   current.visibleIds = new Set(ids);
   scheduleTimelineResidency();
 }
 
+interface RendererTimelineResidencyStats {
+  budgets: typeof TIMELINE_RESIDENCY_BUDGET;
+  jsBytes: number;
+  pinnedJsBytes: number;
+  evictedJsBytes: number;
+  encodedImageBytes: number;
+  residentItems: number;
+  residentTimelines: number;
+  visibleTimelines: number;
+  unloadedTimelineCount: number;
+}
 
-export function getRendererTimelineResidencyStats() {
-  const sessions = useSessionStore.getState().sessions;
-  let jsBytes = 0;
-  let pinnedJsBytes = 0;
-  let encodedImageBytes = 0;
-  let residentItems = 0;
-  let residentTimelines = 0;
-  let visibleTimelines = 0;
-  for (const session of Object.values(sessions)) {
-    for (const [agentId, items] of session.agentStreamTail) {
-      if (items.length === 0) continue;
-      residentTimelines += 1;
-      if ((timelineVisibility.get(`${session.serverId}:${agentId}`)?.consumers ?? 0) > 0) visibleTimelines += 1;
-      jsBytes += estimateResidentJsBytes(items);
-      residentItems += items.length;
-      const turn = selectAgentTurnPresentation(session, agentId);
-      const sessionPinned = getActiveMessageSubmissions(session.messageSubmissions.get(agentId)).length > 0 || [...session.pendingPermissions.values()].some((permission) => permission.agentId === agentId);
-      for (const item of items) {
-        if (sessionPinned || timelineVisibility.get(`${session.serverId}:${agentId}`)?.visibleIds.has(item.id) || isNonReloadableStreamItem(item) || (turn.isActive && turn.turnId && "turnId" in item && item.turnId === turn.turnId)) pinnedJsBytes += estimateResidentJsBytes(item);
-        if (item.kind === "user_message") {
-          for (const image of item.images ?? []) {
-            if (image.storageType === "inline-data") encodedImageBytes += Math.floor(image.storageKey.length * 3 / 4);
-          }
-        }
-      }
-    }
-    for (const items of session.agentStreamHead.values()) {
-      const bytes = estimateResidentJsBytes(items);
-      jsBytes += bytes;
-      pinnedJsBytes += bytes;
-      residentItems += items.length;
+function hasAgentPendingPermission(session: SessionState, agentId: string): boolean {
+  for (const permission of session.pendingPermissions.values()) {
+    if (permission.agentId === agentId) return true;
+  }
+  return false;
+}
+
+function getInlineTimelineImageBytes(item: StreamItem): number {
+  if (item.kind !== "user_message") return 0;
+  const images = item.images;
+  if (!images) return 0;
+  let bytes = 0;
+  for (const image of images) {
+    if (image.storageType === "inline-data") bytes += Math.floor((image.storageKey.length * 3) / 4);
+  }
+  return bytes;
+}
+
+function addSessionTimelineResidencyStats(
+  stats: RendererTimelineResidencyStats,
+  session: SessionState,
+): void {
+  for (const [agentId, items] of session.agentStreamTail) {
+    if (items.length === 0) continue;
+    const visibility = timelineVisibility.get(`${session.serverId}:${agentId}`);
+    stats.residentTimelines += 1;
+    if ((visibility?.consumers ?? 0) > 0) stats.visibleTimelines += 1;
+    stats.jsBytes += estimateResidentJsBytes(items);
+    stats.residentItems += items.length;
+    const turn = selectAgentTurnPresentation(session, agentId);
+    const sessionPinned =
+      getActiveMessageSubmissions(session.messageSubmissions.get(agentId)).length > 0 ||
+      hasAgentPendingPermission(session, agentId);
+    for (const item of items) {
+      if (
+        sessionPinned ||
+        visibility?.visibleIds.has(item.id) ||
+        isNonReloadableStreamItem(item) ||
+        (turn.isActive && turn.turnId && "turnId" in item && item.turnId === turn.turnId)
+      )
+        stats.pinnedJsBytes += estimateResidentJsBytes(item);
+      stats.encodedImageBytes += getInlineTimelineImageBytes(item);
     }
   }
-  return { budgets: TIMELINE_RESIDENCY_BUDGET, jsBytes, pinnedJsBytes, evictedJsBytes, encodedImageBytes, residentItems, residentTimelines, visibleTimelines, unloadedTimelineCount };
+  for (const items of session.agentStreamHead.values()) {
+    const bytes = estimateResidentJsBytes(items);
+    stats.jsBytes += bytes;
+    stats.pinnedJsBytes += bytes;
+    stats.residentItems += items.length;
+  }
+}
+
+export function getRendererTimelineResidencyStats(): RendererTimelineResidencyStats {
+  const stats: RendererTimelineResidencyStats = {
+    budgets: TIMELINE_RESIDENCY_BUDGET,
+    jsBytes: 0,
+    pinnedJsBytes: 0,
+    evictedJsBytes,
+    encodedImageBytes: 0,
+    residentItems: 0,
+    residentTimelines: 0,
+    visibleTimelines: 0,
+    unloadedTimelineCount,
+  };
+  for (const session of Object.values(useSessionStore.getState().sessions)) {
+    addSessionTimelineResidencyStats(stats, session);
+  }
+  return stats;
 }
 
 function scheduleTimelineResidency(): void {
@@ -2354,92 +2420,254 @@ function scheduleTimelineResidency(): void {
   }, 80);
 }
 
-function enforceTimelineResidency(): void {
-  const state = useSessionStore.getState();
-  const sessions = { ...state.sessions };
-  const background: Array<{ serverId: string; agentId: string; bytes: number; touched: number }> = [];
-  let backgroundBytes = 0;
-  let changed = false;
-  const liveItems = new Set<StreamItem>();
-  for (const [serverId, original] of Object.entries(sessions)) {
-    let session = original;
-    for (const [agentId, items] of original.agentStreamTail) {
-      const visibility = timelineVisibility.get(`${serverId}:${agentId}`);
-      const turn = selectAgentTurnPresentation(session, agentId);
-      const hasPermission = [...session.pendingPermissions.values()].some((permission) => permission.agentId === agentId);
-      const hasSubmission = getActiveMessageSubmissions(session.messageSubmissions.get(agentId)).length > 0;
-      const cursor = session.agentTimelineCursor.get(agentId);
-      const canReload = session.agentAuthoritativeHistoryApplied.get(agentId) === true && cursor !== undefined;
-      const visible = (visibility?.consumers ?? 0) > 0;
-      if (cursor && canReload && !hasPermission && !hasSubmission && !session.agentTimelineOlderFetchInFlight.get(agentId)) {
-        const retained = retainTimelineByteWindow({ items, cursor, anchorId: visible ? visibility?.anchorId ?? null : null, budget: TIMELINE_RESIDENCY_BUDGET.visibleJsBytes, pinnedTurnId: turn.isActive ? turn.turnId : null, pinnedIds: visible ? visibility?.visibleIds : undefined });
-        if (retained.items !== items) {
-          evictedJsBytes += Math.max(0, estimateResidentJsBytes(items) - estimateResidentJsBytes(retained.items));
-          session = { ...session, agentStreamTail: new Map(session.agentStreamTail), agentTimelineCursor: new Map(session.agentTimelineCursor), agentTimelineHasOlder: new Map(session.agentTimelineHasOlder), agentTimelineHasNewer: new Map(session.agentTimelineHasNewer) };
-          session.agentStreamTail.set(agentId, retained.items);
-          session.agentTimelineCursor.set(agentId, retained.cursor);
-          if (retained.droppedOlder) session.agentTimelineHasOlder.set(agentId, true);
-          if (retained.droppedNewer) session.agentTimelineHasNewer.set(agentId, true);
-        }
-      }
-      const retained = session.agentStreamTail.get(agentId) ?? [];
-      if (!visible && canReload && !turn.isActive && !hasPermission && !hasSubmission && !(session.agentStreamHead.get(agentId)?.length) && !retained.some(isNonReloadableStreamItem) && !session.agentTimelineOlderFetchInFlight.get(agentId)) {
-        const bytes = estimateResidentJsBytes(retained);
-        backgroundBytes += bytes;
-        background.push({ serverId, agentId, bytes, touched: visibility?.touched ?? 0 });
+interface BackgroundTimeline {
+  serverId: string;
+  agentId: string;
+  bytes: number;
+  touched: number;
+}
+
+interface BackgroundTimelineResidency {
+  timelines: BackgroundTimeline[];
+  bytes: number;
+}
+
+function isAgentTimelinePinned(session: SessionState, agentId: string): boolean {
+  return (
+    hasAgentPendingPermission(session, agentId) ||
+    getActiveMessageSubmissions(session.messageSubmissions.get(agentId)).length > 0 ||
+    session.agentTimelineOlderFetchInFlight.get(agentId) === true
+  );
+}
+
+function copySessionTimelineWindows(session: SessionState): SessionState {
+  return {
+    ...session,
+    agentStreamTail: new Map(session.agentStreamTail),
+    agentTimelineCursor: new Map(session.agentTimelineCursor),
+    agentTimelineHasOlder: new Map(session.agentTimelineHasOlder),
+    agentTimelineHasNewer: new Map(session.agentTimelineHasNewer),
+  };
+}
+
+function isBackgroundTimelineUnloadable(
+  session: SessionState,
+  agentId: string,
+  items: StreamItem[],
+  visible: boolean,
+  canEvict: boolean,
+  turnActive: boolean,
+): boolean {
+  return (
+    canEvict &&
+    !visible &&
+    !turnActive &&
+    !session.agentStreamHead.get(agentId)?.length &&
+    !items.some(isNonReloadableStreamItem)
+  );
+}
+
+function retainSessionTimelineWindows(
+  serverId: string,
+  session: SessionState,
+  background: BackgroundTimelineResidency,
+): SessionState {
+  let next: SessionState | undefined;
+  for (const [agentId, items] of session.agentStreamTail) {
+    const visibility = timelineVisibility.get(`${serverId}:${agentId}`);
+    const turn = selectAgentTurnPresentation(session, agentId);
+    const cursor = session.agentTimelineCursor.get(agentId);
+    const canEvict =
+      session.agentAuthoritativeHistoryApplied.get(agentId) === true &&
+      cursor !== undefined &&
+      !isAgentTimelinePinned(session, agentId);
+    const visibleTimeline = visibility && visibility.consumers > 0 ? visibility : undefined;
+    const visible = visibleTimeline !== undefined;
+    let retainedItems = items;
+    if (cursor && canEvict) {
+      const retained = retainTimelineByteWindow({
+        items,
+        cursor,
+        anchorId: visibleTimeline?.anchorId ?? null,
+        budget: TIMELINE_RESIDENCY_BUDGET.visibleJsBytes,
+        pinnedTurnId: turn.isActive ? turn.turnId : null,
+        pinnedIds: visibleTimeline?.visibleIds,
+      });
+      retainedItems = retained.items;
+      if (retained.items !== items) {
+        evictedJsBytes += Math.max(
+          0,
+          estimateResidentJsBytes(items) - estimateResidentJsBytes(retained.items),
+        );
+        // Copy each affected map once, before mutating this unpublished session.
+        next ??= copySessionTimelineWindows(session);
+        next.agentStreamTail.set(agentId, retained.items);
+        next.agentTimelineCursor.set(agentId, retained.cursor);
+        if (retained.droppedOlder) next.agentTimelineHasOlder.set(agentId, true);
+        if (retained.droppedNewer) next.agentTimelineHasNewer.set(agentId, true);
       }
     }
-    if (session !== original) { sessions[serverId] = session; changed = true; }
+    if (
+      isBackgroundTimelineUnloadable(
+        session,
+        agentId,
+        retainedItems,
+        visible,
+        canEvict,
+        turn.isActive,
+      )
+    ) {
+      const bytes = estimateResidentJsBytes(retainedItems);
+      background.bytes += bytes;
+      background.timelines.push({ serverId, agentId, bytes, touched: visibility?.touched ?? 0 });
+    }
   }
-  background.sort((a, b) => a.touched - b.touched);
-  for (const entry of background) {
-    if (backgroundBytes <= TIMELINE_RESIDENCY_BUDGET.backgroundJsBytes) break;
-    const session = sessions[entry.serverId]!;
-    const next = { ...session, agentStreamTail: new Map(session.agentStreamTail), agentTimelineCursor: new Map(session.agentTimelineCursor), agentAuthoritativeHistoryApplied: new Map(session.agentAuthoritativeHistoryApplied), agentHistorySyncGeneration: new Map(session.agentHistorySyncGeneration), agentTimelineHasOlder: new Map(session.agentTimelineHasOlder), agentTimelineHasNewer: new Map(session.agentTimelineHasNewer) };
+  return next ?? session;
+}
+
+function copySessionForTimelineUnload(session: SessionState): SessionState {
+  return {
+    ...session,
+    agentStreamTail: new Map(session.agentStreamTail),
+    agentTimelineCursor: new Map(session.agentTimelineCursor),
+    agentTimelineHasOlder: new Map(session.agentTimelineHasOlder),
+    agentTimelineHasNewer: new Map(session.agentTimelineHasNewer),
+    agentAuthoritativeHistoryApplied: new Map(session.agentAuthoritativeHistoryApplied),
+    agentHistorySyncGeneration: new Map(session.agentHistorySyncGeneration),
+  };
+}
+
+function unloadBackgroundTimelines(
+  sessions: SessionStoreState["sessions"],
+  background: BackgroundTimelineResidency,
+  publishedSessions: SessionStoreState["sessions"],
+): boolean {
+  if (background.bytes <= TIMELINE_RESIDENCY_BUDGET.backgroundJsBytes) return false;
+  background.timelines.sort((a, b) => a.touched - b.touched);
+  const copiedServers = new Set<string>();
+  for (const entry of background.timelines) {
+    if (background.bytes <= TIMELINE_RESIDENCY_BUDGET.backgroundJsBytes) break;
+    if (!copiedServers.has(entry.serverId)) {
+      const session = sessions[entry.serverId]!;
+      if (session === publishedSessions[entry.serverId]) {
+        sessions[entry.serverId] = copySessionForTimelineUnload(session);
+      } else {
+        session.agentAuthoritativeHistoryApplied = new Map(
+          session.agentAuthoritativeHistoryApplied,
+        );
+        session.agentHistorySyncGeneration = new Map(session.agentHistorySyncGeneration);
+      }
+      copiedServers.add(entry.serverId);
+    }
+    const next = sessions[entry.serverId]!;
     next.agentStreamTail.delete(entry.agentId);
     next.agentTimelineCursor.delete(entry.agentId);
     next.agentAuthoritativeHistoryApplied.delete(entry.agentId);
     next.agentHistorySyncGeneration.delete(entry.agentId);
     next.agentTimelineHasOlder.delete(entry.agentId);
     next.agentTimelineHasNewer.delete(entry.agentId);
-    sessions[entry.serverId] = next;
-    backgroundBytes -= entry.bytes;
+    background.bytes -= entry.bytes;
     unloadedTimelineCount += 1;
     evictedJsBytes += entry.bytes;
-    changed = true;
   }
-  if (changed) useSessionStore.setState({ sessions });
-  for (const session of Object.values(sessions)) {
-    for (const streams of [session.agentStreamTail, session.agentStreamHead]) {
-      for (const [agentId, items] of streams) {
-        for (const item of items) {
-          liveItems.add(item);
-          if (!imageAssetRetentions.has(item)) imageAssetRetentions.set(item, retainTimelineImageAssets(item));
-          if (pendingImageAssets.has(item)) continue;
-          pendingImageAssets.add(item);
-          void persistTimelineImageAssets(item).then((next) => {
-            if (next === item) return;
-            useSessionStore.setState((current) => {
-              const latest = current.sessions[session.serverId];
-              if (!latest) return current;
-              const key = streams === session.agentStreamTail ? "agentStreamTail" : "agentStreamHead";
-              const rows = latest[key].get(agentId);
-              if (!rows?.includes(item)) return current;
-              if (!imageAssetRetentions.has(next)) imageAssetRetentions.set(next, retainTimelineImageAssets(next));
-              const map = new Map(latest[key]);
-              map.set(agentId, rows.map((row) => row === item ? next : row));
-              return { sessions: { ...current.sessions, [session.serverId]: { ...latest, [key]: map } } };
-            });
-          }).catch((error) => { pendingImageAssets.delete(item); console.warn("[Timeline] Image persistence failed; canonical image remains reloadable", error); });
-        }
-      }
+  return true;
+}
+
+function retainTimelineItemImageAssets(item: StreamItem): void {
+  if (!imageAssetRetentions.has(item))
+    imageAssetRetentions.set(item, retainTimelineImageAssets(item));
+}
+
+function replacePersistedTimelineItem(
+  serverId: string,
+  agentId: string,
+  key: "agentStreamTail" | "agentStreamHead",
+  item: StreamItem,
+  next: StreamItem,
+): void {
+  useSessionStore.setState((current) => {
+    const latest = current.sessions[serverId];
+    if (!latest) return current;
+    const rows = latest[key].get(agentId);
+    if (!rows?.includes(item)) return current;
+    retainTimelineItemImageAssets(next);
+    const map = new Map(latest[key]);
+    map.set(
+      agentId,
+      rows.map((row) => (row === item ? next : row)),
+    );
+    return { sessions: { ...current.sessions, [serverId]: { ...latest, [key]: map } } };
+  });
+}
+
+async function persistResidentTimelineItemImages(
+  serverId: string,
+  agentId: string,
+  key: "agentStreamTail" | "agentStreamHead",
+  item: StreamItem,
+): Promise<void> {
+  try {
+    const next = await persistTimelineImageAssets(item);
+    if (next !== item) replacePersistedTimelineItem(serverId, agentId, key, item, next);
+  } catch (error) {
+    pendingImageAssets.delete(item);
+    console.warn("[Timeline] Image persistence failed; canonical image remains reloadable", error);
+  }
+}
+
+function retainTimelineStreamImages(
+  serverId: string,
+  key: "agentStreamTail" | "agentStreamHead",
+  streams: Map<string, StreamItem[]>,
+  liveItems: Set<StreamItem>,
+): void {
+  for (const [agentId, items] of streams) {
+    for (const item of items) {
+      liveItems.add(item);
+      retainTimelineItemImageAssets(item);
+      if (pendingImageAssets.has(item)) continue;
+      pendingImageAssets.add(item);
+      void persistResidentTimelineItemImages(serverId, agentId, key, item);
     }
   }
+}
+
+function releaseUnloadedTimelineImageAssets(liveItems: Set<StreamItem>): void {
   for (const [item, release] of imageAssetRetentions) {
-    if (!liveItems.has(item)) { release(); imageAssetRetentions.delete(item); }
+    if (!liveItems.has(item)) {
+      release();
+      imageAssetRetentions.delete(item);
+    }
   }
+}
+
+function enforceTimelineResidency(): void {
+  const state = useSessionStore.getState();
+  const sessions = { ...state.sessions };
+  const background: BackgroundTimelineResidency = { timelines: [], bytes: 0 };
+  let changed = false;
+  for (const [serverId, original] of Object.entries(sessions)) {
+    const session = retainSessionTimelineWindows(serverId, original, background);
+    if (session !== original) {
+      sessions[serverId] = session;
+      changed = true;
+    }
+  }
+  const unloaded = unloadBackgroundTimelines(sessions, background, state.sessions);
+  if (changed || unloaded) useSessionStore.setState({ sessions });
+
+  const liveItems = new Set<StreamItem>();
+  const activeSessions = Object.values(sessions);
+  for (const session of activeSessions) {
+    for (const streams of [session.agentStreamTail, session.agentStreamHead]) {
+      const key = streams === session.agentStreamTail ? "agentStreamTail" : "agentStreamHead";
+      retainTimelineStreamImages(session.serverId, key, streams, liveItems);
+    }
+  }
+  releaseUnloadedTimelineImageAssets(liveItems);
   for (const key of timelineVisibility.keys()) {
-    if (!Object.values(sessions).some((session) => key.startsWith(`${session.serverId}:`))) timelineVisibility.delete(key);
+    if (!activeSessions.some((session) => key.startsWith(`${session.serverId}:`)))
+      timelineVisibility.delete(key);
   }
 }
 

@@ -5188,6 +5188,7 @@ export const CancelAgentResponseMessageSchema = z.object({
     agentId: z.string(),
     agent: AgentSnapshotPayloadSchema.nullable(),
     error: z.string().nullable().optional(),
+    errorCode: z.string().optional(),
   }),
 });
 
@@ -5198,6 +5199,7 @@ export const CancelProviderSubagentResponseMessageSchema = z.object({
     parentAgentId: z.string(),
     subagentId: z.string(),
     error: z.string().nullable(),
+    errorCode: z.string().optional(),
   }),
 });
 
@@ -5247,6 +5249,7 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     error: z.string().nullable(),
+    errorCode: z.string().optional(),
   }),
 });
 

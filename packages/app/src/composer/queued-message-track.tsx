@@ -12,6 +12,7 @@ import {
   type QueuedComposerMessage,
 } from "@/composer/actions";
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 const DRAG_HANDLE_WEB_STYLE = { touchAction: "none", cursor: "grab", userSelect: "none" } as object;
 const ROW_WEB_STYLE = { touchAction: "pan-y" } as object;
 
@@ -25,13 +26,19 @@ export function QueuedMessageTrack({
   queue,
   onEdit,
   onSendNow,
+  sendDisabled = false,
+  sendLabel,
 }: {
   agentId: string;
   messages: QueuedComposerMessage[];
   queue: QueueWriter;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  sendDisabled?: boolean;
+  sendLabel?: string;
 }) {
+  const { t } = useTranslation();
+  const resolvedSendLabel = sendLabel ?? t("composer.input.sendMessage");
   const onReorder = useCallback(
     (messageId: string, targetMessageId: string) => {
       moveQueuedComposerMessageTo({ agentId, messageId, targetMessageId, queue });
@@ -45,9 +52,11 @@ export function QueuedMessageTrack({
         draggable={messages.length > 1}
         onEdit={onEdit}
         onSendNow={onSendNow}
+        sendDisabled={sendDisabled}
+        sendLabel={resolvedSendLabel}
       />
     ),
-    [messages.length, onEdit, onSendNow],
+    [messages.length, onEdit, onSendNow, resolvedSendLabel, sendDisabled],
   );
 
   if (messages.length === 0) return null;
@@ -75,10 +84,14 @@ function QueuedMessageRow({
   draggable,
   onEdit,
   onSendNow,
+  sendDisabled,
+  sendLabel,
 }: DraggableRenderItemInfo<QueuedComposerMessage> & {
   draggable: boolean;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  sendDisabled: boolean;
+  sendLabel: string;
 }) {
   const { t } = useTranslation();
   const handleEdit = useCallback(() => onEdit(item.id), [item.id, onEdit]);
@@ -141,14 +154,24 @@ function QueuedMessageRow({
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
         </Pressable>
-        <Pressable
-          onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
-          accessibilityLabel={t("composer.attachments.sendQueuedMessageNow")}
-          accessibilityRole="button"
-        >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-        </Pressable>
+        <Tooltip delayDuration={200}>
+          <TooltipTrigger
+            onPress={handleSendNow}
+            disabled={sendDisabled}
+            style={[
+              styles.queueActionButton,
+              styles.queueSendButton,
+              sendDisabled && styles.queueSendDisabled,
+            ]}
+            accessibilityLabel={sendLabel}
+            accessibilityRole="button"
+          >
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <Text style={styles.tooltipText}>{sendLabel}</Text>
+          </TooltipContent>
+        </Tooltip>
       </View>
     </View>
   );
@@ -204,6 +227,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   queueSendButton: {
     backgroundColor: theme.colors.accent,
+  },
+  queueSendDisabled: {
+    opacity: 0.5,
+  },
+  tooltipText: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.popoverForeground,
   },
 }));
 

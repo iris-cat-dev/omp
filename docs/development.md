@@ -65,6 +65,10 @@ For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package ro
 
 Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
+Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.
+
+`debug` is temporarily disabled before tool registration in Node RPC hosts, including Desktop and SDK-backed remote sessions. A real launch through an installed `lldb-dap` failed with `Bun is not defined`; a successful session-list query does not verify the launch path. The host overrides `debug.enabled` to `false`, so configuration files and an explicit `--tools read,debug` selection cannot activate it. Bun CLI behavior is unchanged. Re-enable only after Node-compatible DAP launch and cleanup have been verified. Rebuild the SDK and recreate existing session hosts to apply this policy; already-running hosts retain their previous tool registry.
+
 Browser Relay also uses the embedded runtime: the first loopback relay browser open lazily starts `dist/node/host.mjs browser-relay` through the SDK's machine-global daemon broker. It does not invoke an `omp` executable from `PATH`. Concurrent SDK sessions share the existing relay; broker leases keep it alive while another consumer remains, and externally started relays remain under their owner's control. Remote relay endpoints are never auto-started.
 
 Chrome still needs the OMP Browser Relay extension installed and enabled. Desktop ships `omp-desktop browser-relay status --json`, `omp-desktop browser-relay serve --no-group`, and `omp-desktop browser-relay install`; no global `omp` or Bun is needed. Use `--sdk-root <package root>` only for an explicit SDK override. After installation, use Chrome's **Load unpacked** or **Reload** action. Status distinguishes an absent service, an unrelated listener, a missing/disconnected extension, incompatible protocols, and a ready relay. Existing relays are never automatically replaced, even when incompatible: their owner must arrange a safe restart. Rebuild the SDK artifacts and restart the backend after changing this startup path.
@@ -86,8 +90,11 @@ Stop waits for the selected agent and its managed descendants to finish cleanup,
 even when the selected root is idle. This includes accepted host-tool calls,
 background jobs, retained shell subprocesses, and idle JS/Python eval kernels and
 their subprocess groups. Admissions and autonomous continuations are fenced
-during cleanup; independent roots are not stopped. A timeout or unconfirmed
-shutdown returns a failure instead of claiming that live execution is idle.
+during cleanup; independent roots are not stopped. Tree cancellation uses one
+15-second deadline shared by ownership admission, native children, interruption,
+background cleanup, event drain, and run settlement. Replacement also waits for
+accepted host-tool work. A timeout or unconfirmed shutdown returns a failure
+instead of claiming that live execution is idle.
 
 The conversation remains usable after Stop. A new prompt reopens admission and
 recreates eval kernels lazily; variables, timers, and other retained eval effects
@@ -95,7 +102,7 @@ from before Stop are discarded. Explicit SDK clients requesting the same eval
 namespace for multiple owners receive a strict-Stop error rather than terminating
 another owner's kernel. Ordinary SDK aborts do not dispose retained eval kernels.
 
-An unacknowledged cancellation still blocks replacement input. The Stop-failure dialog offers an explicit **Recover runtime** confirmation; `kill_agent({ agentId, force: true })` exposes the same targeted recovery to host tools. Default `kill_agent` remains safe unload. Recovery keeps persisted history, but does not roll back completed writes or other side effects. New input is admitted only after the target runtime's exit and accepted host work are confirmed settled; failed recovery retains the admission fence and can be retried. Other independent agents are not terminated.
+An unacknowledged cancellation still blocks replacement input and returns `agent_cancellation_unacknowledged` through send, Stop, and native-child cancellation responses. The composer shows cleanup progress and retains failed input and attachments; cancellation-refused queue items require explicit retry rather than automatic dispatch. Its inline **Recover runtime** action uses the existing dangerous-operation confirmation; `kill_agent({ agentId, force: true })` exposes the same targeted recovery to host tools. Default `kill_agent` remains safe unload. Recovery keeps persisted history and never resubmits input, but does not roll back completed writes or other side effects. New input is admitted only after the target runtime's exit and accepted host work are confirmed settled; failed recovery retains the admission fence and can be retried. Asynchronous feedback stays bound to the original host and conversation. Other independent agents are not terminated.
 
 Backend code updates require a daemon restart: refreshing one agent cannot
 replace provider classes already loaded by the daemon. Refreshing an agent from
@@ -292,6 +299,12 @@ SDK history uses bounded lazy facades with 8 MiB hot bodies plus an 8 MiB body
 LRU and source rereads. Complete `File` bodies remain persisted without generic
 500,000-character truncation; image externalization/private stripping remain.
 
+Window clipping and background LRU removal must not mutate previously published
+session snapshots. They share privately owned map copies until one state
+publication. Head pages, unacknowledged input, and active history fetches fence
+background unload. Exercise the deferred 80ms store pass, not only the pure
+window selector, when changing these paths.
+
 Accounting bytes are not JavaScript heap, macOS `phys_footprint`, or Windows
 process commit. Each measurement must name its category and process scope;
 none increases the 4 GiB compressed V8 cage or substitutes for real Native UI
@@ -301,6 +314,7 @@ Run the targeted regressions from the repository root:
 
 ```bash
 npm run test --workspace=@omp-desktop/app -- --project unit src/git/diff-document/model.test.ts src/git/diff-document/text-measurement.test.ts src/data/query.test.tsx src/data/push-router.test.ts
+npm run test --workspace=@omp-desktop/app -- --project unit src/stores/session-store.test.ts src/timeline/timeline-residency.test.ts src/assistant-image/timeline-assets.test.ts
 ```
 
 These changes address allocation amplification and orphaned snapshot retention,

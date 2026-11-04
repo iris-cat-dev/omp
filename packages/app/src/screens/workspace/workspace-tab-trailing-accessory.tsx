@@ -6,6 +6,7 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
+  Cpu,
   CopyX,
   Ellipsis,
   Pencil,
@@ -24,6 +25,7 @@ import type { Theme } from "@/styles/theme";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedCpu = withUnistyles(Cpu);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
@@ -49,6 +51,8 @@ function MobileTabDropdownMenuItem({
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+      case "cpu":
+        return <ThemedCpu size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
         return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
       case "arrow-left-to-line":

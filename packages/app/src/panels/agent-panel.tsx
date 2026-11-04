@@ -27,7 +27,6 @@ import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { QuotedSelectionContextMenu } from "@/components/quoted-selection-context-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { RuntimeRetention } from "@/panels/runtime-retention";
 import { Composer } from "@/composer";
 import { GoalBar, findLatestGoalSnapshot } from "@/composer/goal-bar";
 import { useWorkspaceHasBranch } from "@/composer/workspace-branch";
@@ -1413,12 +1412,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </View>
   ) : (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
-      {!agentState.archivedAt ? (
-        <RuntimeRetention
-          serverId={serverId}
-          agentId={agentId}
-        />
-      ) : null}
       <AgentComposerSection
         agentId={agentId}
         serverId={serverId}

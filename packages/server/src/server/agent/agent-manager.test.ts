@@ -10,6 +10,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
+  AgentRunCancellationError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -3254,9 +3255,11 @@ test("native cancellation false rejects live children but accepts queued natural
       },
     });
     await manager.flush();
-    await expect(manager.cancelAgentRun(root.id)).rejects.toThrow(
-      "still running after cancellation",
-    );
+    await expect(manager.cancelAgentRun(root.id)).rejects.toMatchObject({
+      name: "AgentRunCancellationError",
+      code: "agent_cancellation_unacknowledged",
+      message: expect.stringContaining("Subagent native-a is still running after cancellation"),
+    });
     expect(manager.getProviderSubagent(root.id, "native-a")?.status).toBe("running");
     session.completeDuringCancel = true;
     await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
@@ -3414,12 +3417,23 @@ test("Stop repeats already visited owners when background cleanup admits autonom
 
 test("detach admitted before parent Stop excludes a live child and overlapping Stops do not deadlock", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stop-ownership-"));
+  class LateAcceptedStartSession extends SteeringTestSession {
+    override async interrupt(reason: AgentInterruptReason = "user"): Promise<void> {
+      await super.interrupt(reason);
+      // The provider's accepted-turn echo can arrive after its terminal event.
+      this.pushEvent({
+        type: "turn_started",
+        provider: this.provider,
+        turnId: `active-turn-${this.startCount}`,
+      });
+    }
+  }
   const sessions: SteeringTestSession[] = [];
   const manager = new AgentManager({
     clients: {
       codex: new (class extends TestAgentClient {
         override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-          const session = new SteeringTestSession(config);
+          const session = new LateAcceptedStartSession(config);
           sessions.push(session);
           return session;
         }
@@ -3443,21 +3457,390 @@ test("detach admitted before parent Stop excludes a live child and overlapping S
       manager.waitForAgentRunStart(child.id),
     ]);
     const detaching = manager.detachAgent(child.id);
-    await manager.cancelAgentRun(root.id);
+    await expect(manager.cancelAgentRun(root.id)).resolves.toEqual({ status: "settled" });
     await detaching;
     expect(manager.getAgent(child.id)?.lifecycle).toBe("running");
     expect(sessions[1]!.interruptCount).toBe(0);
+    expect(manager.getAgent(root.id)?.lifecycle).toBe("idle");
+    expect(manager.hasInFlightRun(root.id)).toBe(false);
     await manager.setLabels(child.id, { [PARENT_AGENT_ID_LABEL]: root.id });
-    await Promise.all([manager.cancelAgentRun(child.id), manager.cancelAgentRun(root.id)]);
+    const cancellations = await Promise.all([
+      manager.cancelAgentRun(child.id),
+      manager.cancelAgentRun(root.id),
+    ]);
+    expect(cancellations.every((result) => result.status !== "refused")).toBe(true);
     await Promise.all([rootRun, childRun]);
     expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(root.id)?.lifecycle).toBe("idle");
+    expect(manager.hasInFlightRun(child.id)).toBe(false);
+    expect(manager.hasInFlightRun(root.id)).toBe(false);
   } finally {
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     rmSync(workdir, { recursive: true, force: true });
   }
 });
 
-test.each(["background", "native"] as const)(
+test.each(["managed", "native"] as const)(
+  "replacement waits beyond two seconds for a slow %s child without touching an independent root",
+  async (kind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-slow-child-replacement-"));
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const sessions: SteeringTestSession[] = [];
+    class SlowChildSession extends SteeringTestSession {
+      override async interrupt(reason: AgentInterruptReason = "user"): Promise<void> {
+        entered.resolve();
+        await release.promise;
+        await super.interrupt(reason);
+      }
+    }
+    class NativeParentSession extends SteeringTestSession {
+      async cancelProviderSubagent(): Promise<boolean> {
+        entered.resolve();
+        await release.promise;
+        return true;
+      }
+    }
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+            let session: SteeringTestSession;
+            if (sessions.length === 0) {
+              session = new NativeParentSession(config);
+            } else if (kind === "managed" && sessions.length === 1) {
+              session = new SlowChildSession(config);
+            } else {
+              session = new SteeringTestSession(config);
+            }
+            sessions.push(session);
+            return session;
+          }
+        })(),
+      },
+      logger,
+    });
+    const runs: Promise<unknown>[] = [];
+    try {
+      const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      if (kind === "managed") {
+        const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+          labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+          workspaceId: undefined,
+        });
+        runs.push(manager.runAgent(child.id, "child work"));
+        await manager.waitForAgentRunStart(child.id);
+      } else {
+        sessions[0]!.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "slow-native", status: "running" },
+        });
+      }
+      const independent = await manager.createAgent(
+        { provider: "codex", cwd: workdir },
+        undefined,
+        {
+          workspaceId: undefined,
+        },
+      );
+      runs.push(
+        manager.runAgent(root.id, "original"),
+        manager.runAgent(independent.id, "independent"),
+      );
+      await Promise.all([
+        manager.waitForAgentRunStart(root.id),
+        manager.waitForAgentRunStart(independent.id),
+      ]);
+      await manager.flush();
+      vi.useFakeTimers();
+      let replaced = false;
+      const replacement = manager.replaceAgentRun(root.id, "replacement").then((run) => {
+        replaced = true;
+        return run;
+      });
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(replaced).toBe(false);
+      expect(sessions[0]!.startPrompts).toEqual(["original"]);
+      expect(sessions.at(-1)!.interruptCount).toBe(0);
+      release.resolve();
+      const stream = await replacement;
+      vi.useRealTimers();
+      runs.push(
+        (async () => {
+          for await (const _event of stream) {
+          }
+        })(),
+      );
+      await manager.waitForAgentRunStart(root.id);
+      expect(sessions[0]!.startPrompts).toEqual(["original", "replacement"]);
+      expect(manager.getAgent(independent.id)?.lifecycle).toBe("running");
+      expect(sessions.at(-1)!.interruptCount).toBe(0);
+      if (kind === "native") {
+        expect(manager.getProviderSubagent(root.id, "slow-native")?.status).toBe("canceled");
+      }
+    } finally {
+      vi.useRealTimers();
+      release.resolve();
+      await Promise.all(manager.listAgents().map((agent) => manager.cancelAgentRun(agent.id)));
+      await Promise.all(runs);
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["background", "execution"] as const)(
+  "replacement shares one injected budget across interrupt, background stop, and %s settlement",
+  async (phase) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-cancel-budget-"));
+    const interruptEntered = deferred<void>();
+    const interruptRelease = deferred<void>();
+    const backgroundEntered = deferred<void>();
+    const backgroundRelease = deferred<void>();
+    class PhasedSession extends SteeringTestSession {
+      override async interrupt(): Promise<void> {
+        this.interruptCount += 1;
+        interruptEntered.resolve();
+        await interruptRelease.promise;
+        if (phase === "background") {
+          this.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
+        }
+      }
+      async stopAllBackgroundProcesses(): Promise<number> {
+        backgroundEntered.resolve();
+        await backgroundRelease.promise;
+        return 1;
+      }
+    }
+    const session = new PhasedSession({ provider: "codex", cwd: workdir });
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(): Promise<AgentSession> {
+            return session;
+          }
+        })(),
+      },
+      logger,
+      rescueTimeouts: { interruptSessionMs: 100 },
+    });
+    let firstRun: Promise<unknown> | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      firstRun = manager.runAgent(agent.id, "original");
+      await manager.waitForAgentRunStart(agent.id);
+      await manager.flush();
+      vi.useFakeTimers();
+      let settled = false;
+      const replacement = manager.replaceAgentRun(agent.id, "must not start").finally(() => {
+        settled = true;
+      });
+      const rejected = expect(replacement).rejects.toMatchObject({
+        name: "AgentRunCancellationError",
+        code: "agent_cancellation_unacknowledged",
+      });
+      await interruptEntered.promise;
+      await vi.advanceTimersByTimeAsync(40);
+      interruptRelease.resolve();
+      await backgroundEntered.promise;
+      await vi.advanceTimersByTimeAsync(40);
+      if (phase === "execution") backgroundRelease.resolve();
+      await vi.advanceTimersByTimeAsync(19);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(session.startPrompts).toEqual(["original"]);
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+      if (phase === "execution") expect(manager.hasInFlightRun(agent.id)).toBe(true);
+      backgroundRelease.resolve();
+      session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
+      await firstRun;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(session.startPrompts).toEqual(["original"]);
+    } finally {
+      vi.useRealTimers();
+      interruptRelease.resolve();
+      backgroundRelease.resolve();
+      session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
+      await firstRun;
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["lifecycle", "foreground", "events"] as const)(
+  "replacement bounds %s admission waits and does not interrupt after the deadline",
+  async (lane) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-lane-budget-"));
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    class HeldStorage extends AgentStorage {
+      held = false;
+      override async applySnapshot(
+        agent: ManagedAgent,
+        options?: { title?: string | null; internal?: boolean },
+      ): Promise<void> {
+        if (this.held) {
+          entered.resolve();
+          await release.promise;
+        }
+        await super.applySnapshot(agent, options);
+      }
+    }
+    class HeldTimelineStore extends RecordingTimelineStore {
+      override async getLastItem(): Promise<AgentTimelineItem | null> {
+        entered.resolve();
+        await release.promise;
+        return null;
+      }
+    }
+    class HeldSteerSession extends SteeringTestSession {
+      override async steerActiveTurn(
+        prompt: AgentPromptInput,
+        options: SteerActiveTurnOptions,
+      ): Promise<SteerResult> {
+        entered.resolve();
+        await release.promise;
+        return super.steerActiveTurn(prompt, options);
+      }
+    }
+    const storage = new HeldStorage(join(workdir, "agents"), logger);
+    const session = new HeldSteerSession({ provider: "codex", cwd: workdir });
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(): Promise<AgentSession> {
+            return session;
+          }
+        })(),
+      },
+      registry: lane === "lifecycle" ? storage : undefined,
+      durableTimelineStore: lane === "events" ? new HeldTimelineStore() : undefined,
+      logger,
+      rescueTimeouts: { interruptSessionMs: 100 },
+    });
+    let run: Promise<unknown> | undefined;
+    let mutation: Promise<unknown> | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      const execution = manager.runAgent(agent.id, "original");
+      run = lane === "events" ? expect(execution).rejects.toThrow("blocked event") : execution;
+      await manager.waitForAgentRunStart(agent.id);
+      await manager.flush();
+      if (lane === "lifecycle") {
+        storage.held = true;
+        mutation = manager.setLabels(agent.id, { phase: "held" });
+      } else if (lane === "foreground") {
+        mutation = manager.steerAgentRun(agent.id, "held steer");
+      } else {
+        session.pushEvent({
+          type: "turn_failed",
+          provider: "codex",
+          turnId: "active-turn-1",
+          error: "blocked event",
+        });
+      }
+      await entered.promise;
+      vi.useFakeTimers();
+      const replacement = manager.replaceAgentRun(agent.id, "must not start");
+      const rejected = expect(replacement).rejects.toMatchObject({
+        code: "agent_cancellation_unacknowledged",
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await rejected;
+      expect(session.interruptCount).toBe(0);
+      expect(session.startPrompts).toEqual(["original"]);
+      if (lane !== "events") expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+      release.resolve();
+      await mutation;
+      await vi.advanceTimersByTimeAsync(1);
+      await manager.flush();
+      expect(session.interruptCount).toBe(0);
+      expect(session.startPrompts).toEqual(["original"]);
+    } finally {
+      vi.useRealTimers();
+      storage.held = false;
+      release.resolve();
+      await mutation;
+      session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
+      await run;
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("successive native cancellation sweeps share the tree deadline", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-sweep-budget-"));
+  class PhasedNativeSession extends TestAgentSession {
+    readonly calls: string[] = [];
+    async cancelProviderSubagent(id: string): Promise<boolean> {
+      this.calls.push(id);
+      const delay = deferred<void>();
+      setTimeout(() => delay.resolve(), 60);
+      await delay.promise;
+      const next = id === "native-a" ? "native-b" : "native-c";
+      this.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: next, status: "running" },
+      });
+      return true;
+    }
+  }
+  const session = new PhasedNativeSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+    rescueTimeouts: { interruptSessionMs: 100 },
+  });
+  try {
+    const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "native-a", status: "running" },
+    });
+    await manager.flush();
+    vi.useFakeTimers();
+    const cancellation = manager.cancelAgentRun(root.id);
+    const rejected = expect(cancellation).rejects.toMatchObject({
+      code: "agent_cancellation_unacknowledged",
+      message: expect.stringContaining("Subagent native-b cancellation was not acknowledged"),
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    expect(session.calls).toEqual(["native-a", "native-b"]);
+    expect(manager.getProviderSubagent(root.id, "native-b")?.status).toBe("running");
+    await vi.advanceTimersByTimeAsync(20);
+    await manager.flush();
+    expect(session.calls).toEqual(["native-a", "native-b"]);
+    expect(manager.getProviderSubagent(root.id, "native-c")?.status).toBe("running");
+  } finally {
+    vi.useRealTimers();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["background", "native", "direct native"] as const)(
   "idle Stop refuses a hanging owned %s cancellation without clearing live state",
   async (kind) => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hanging-owned-stop-"));
@@ -3487,7 +3870,7 @@ test.each(["background", "native"] as const)(
       const root = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
         workspaceId: undefined,
       });
-      if (kind === "native") {
+      if (kind !== "background") {
         session.pushEvent({
           type: "provider_subagent",
           provider: "codex",
@@ -3500,14 +3883,24 @@ test.each(["background", "native"] as const)(
         await manager.flush();
       }
       vi.useFakeTimers();
-      const cancellation = manager.cancelAgentRun(root.id);
+      const cancellation =
+        kind === "direct native"
+          ? manager.cancelProviderSubagent(root.id, "hanging-native")
+          : manager.cancelAgentRun(root.id);
       const result =
-        kind === "native"
-          ? expect(cancellation).rejects.toThrow("cancellation was not acknowledged")
+        kind !== "background"
+          ? expect(cancellation).rejects.toMatchObject({
+              name: "AgentRunCancellationError",
+              code: "agent_cancellation_unacknowledged",
+              message: expect.stringContaining("Subagent hanging-native"),
+            })
           : expect(cancellation).resolves.toEqual({ status: "refused" });
       await vi.runAllTimersAsync();
       await result;
-      if (kind === "native")
+      if (kind !== "background") {
+        await expect(cancellation).rejects.toBeInstanceOf(AgentRunCancellationError);
+      }
+      if (kind !== "background")
         expect(manager.getProviderSubagent(root.id, "hanging-native")?.status).toBe("running");
     } finally {
       vi.useRealTimers();
@@ -11878,9 +12271,10 @@ test("replacement refuses an acknowledged interrupt until real foreground execut
     });
     const firstRun = manager.runAgent(agent.id, "original");
     await manager.waitForAgentRunStart(agent.id);
-    await expect(manager.replaceAgentRun(agent.id, "replacement")).rejects.toThrow(
-      "active run cancellation was not acknowledged",
-    );
+    await expect(manager.replaceAgentRun(agent.id, "replacement")).rejects.toMatchObject({
+      name: "AgentRunCancellationError",
+      code: "agent_cancellation_unacknowledged",
+    });
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: "active-turn-1",

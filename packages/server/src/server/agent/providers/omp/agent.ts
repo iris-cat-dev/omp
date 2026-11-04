@@ -717,6 +717,15 @@ interface OmpAgentSessionOptions {
   live?: boolean;
 }
 
+function initialOmpNativeWorkflowMode(
+  selection: OmpWorkflowSelection,
+  live: boolean | undefined,
+): OmpWorkflowMode | null {
+  if (live !== false) return null;
+  if (isOmpNativeWorkflowMode(selection)) return selection;
+  return null;
+}
+
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
     waitForRetry: async () => {
@@ -1943,10 +1952,7 @@ export class OmpAgentSession implements AgentSession {
       },
       options.initialState.activeCredential,
     );
-    this.activeWorkflowMode =
-      options.live === false && isOmpNativeWorkflowMode(configuredWorkflowMode)
-        ? configuredWorkflowMode
-        : null;
+    this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options.live);
     this.workflowModePending =
       this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
     this.planContextResetPending =
@@ -3009,6 +3015,9 @@ export class OmpAgentSession implements AgentSession {
         this.echoWithdrawnQueue(restored, turnId);
       } else {
         await this.runtimeSession.abort();
+        if (reason === "replacement") {
+          await waitForOmpHostToolsIdle(this.runtimeSession);
+        }
       }
     } catch (error) {
       if (this.activeInterrupt === interrupt) {

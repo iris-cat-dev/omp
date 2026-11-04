@@ -34,6 +34,7 @@ async function createFixture() {
     async createSession(config) {
       session = new OmpAgentSession({
         runtimeSession: runtime,
+        historyRuntimeSettings: { ompSdkPath: process.env.OMP_DESKTOP_TEST_SDK_ROOT },
         config,
         initialState: runtime.state,
         logger,

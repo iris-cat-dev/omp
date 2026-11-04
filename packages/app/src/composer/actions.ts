@@ -25,6 +25,8 @@ export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
+  /** A failed interrupt must never be resent by automatic queue dispatch. */
+  requiresManualRetry?: boolean;
 }
 
 export interface AttachmentPersister {
@@ -170,6 +172,14 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
   } catch (error) {
     return Promise.reject(error);
   }
+}
+
+export function isAgentCancellationUnacknowledged(
+  error: unknown,
+): error is Error & { code: string } {
+  return (
+    error instanceof Error && "code" in error && error.code === "agent_cancellation_unacknowledged"
+  );
 }
 
 export async function withRetainedComposerImages<T>(
@@ -340,7 +350,7 @@ export interface SendQueuedComposerMessageNowInput {
 export type SendQueuedComposerMessageNowResult =
   | { status: "missing" }
   | { status: "submitted" }
-  | { status: "failed"; errorMessage: string };
+  | { status: "failed"; error: unknown; errorMessage: string };
 
 export async function sendQueuedComposerMessageNow(
   input: SendQueuedComposerMessageNowInput,
@@ -365,13 +375,17 @@ export async function sendQueuedComposerMessageNow(
     });
     return { status: "submitted" };
   } catch (error) {
+    const retainedItem = isAgentCancellationUnacknowledged(error)
+      ? { ...item, requiresManualRetry: true }
+      : item;
     input.queue.write((prev) => {
       const next = new Map(prev);
-      next.set(input.agentId, [item, ...(prev.get(input.agentId) ?? [])]);
+      next.set(input.agentId, [retainedItem, ...(prev.get(input.agentId) ?? [])]);
       return next;
     });
     return {
       status: "failed",
+      error,
       errorMessage:
         error instanceof Error
           ? error.message

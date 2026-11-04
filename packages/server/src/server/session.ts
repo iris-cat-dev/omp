@@ -2194,6 +2194,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "fetch_agent_history_request":
+        return this.handleFetchAgentHistory(msg);
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
       case "agent.timeline.list_prompts.request":
@@ -2250,8 +2252,6 @@ export class Session {
     switch (msg.type) {
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
-      case "fetch_agent_history_request":
-        return this.handleFetchAgentHistory(msg);
       case "fetch_recent_provider_sessions_request":
         return this.handleFetchRecentProviderSessions(msg);
       case "fetch_agent_request":
@@ -2824,7 +2824,8 @@ export class Session {
     }
     const live = this.agentManager.getAgent(agentId);
     const record = live ? null : await this.agentStorage.get(agentId);
-    const runtimeRetention = live?.runtimeRetention ??
+    const runtimeRetention =
+      live?.runtimeRetention ??
       (record ? this.buildStoredAgentPayload(record).runtimeRetention : undefined);
     this.emit({
       type: "unload_agent_runtime_response",
@@ -3959,10 +3960,12 @@ export class Session {
     requestId: string,
   ): Promise<void> {
     let error: string | null = null;
+    let errorCode: string | undefined;
     try {
       await this.agentManager.cancelProviderSubagent(parentAgentId, subagentId);
     } catch (reason) {
       error = errorToFriendlyMessage(reason);
+      if (reason instanceof AgentRunCancellationError) errorCode = reason.code;
       this.sessionLogger.warn(
         { err: reason, parentAgentId, subagentId },
         "Failed to stop OMP subagent",
@@ -3970,7 +3973,7 @@ export class Session {
     }
     this.emit({
       type: "cancel_provider_subagent_response",
-      payload: { requestId, parentAgentId, subagentId, error },
+      payload: { requestId, parentAgentId, subagentId, error, ...(errorCode ? { errorCode } : {}) },
     });
   }
 
@@ -4034,6 +4037,7 @@ export class Session {
             agentId,
             agent: payload,
             error: errorToFriendlyMessage(error),
+            ...(error instanceof AgentRunCancellationError ? { errorCode: error.code } : {}),
           },
         });
       } else {
@@ -4154,9 +4158,7 @@ export class Session {
       );
       if (requestId) {
         const agents = (
-          await Promise.all(
-            agentIds.map((id) => this.getAgentPayloadById(id)),
-          )
+          await Promise.all(agentIds.map((id) => this.getAgentPayloadById(id)))
         ).filter((payload): payload is NonNullable<typeof payload> => payload !== null);
         this.emit({
           type: "clear_agent_attention_response",
@@ -4305,7 +4307,10 @@ export class Session {
         },
       });
     } catch (error) {
-      this.sessionLogger.debug({ err: error, agentId, draftConfig }, "Command metadata read unavailable");
+      this.sessionLogger.debug(
+        { err: error, agentId, draftConfig },
+        "Command metadata read unavailable",
+      );
       this.emit({
         type: "list_commands_response",
         payload: {
@@ -4743,7 +4748,9 @@ export class Session {
 
     const client = this.agentManager.getRegisteredClient(record.provider);
     if (!client?.readHistoryPage) {
-      throw new Error(`Provider '${record.provider}' has no selected cold-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`);
+      throw new Error(
+        `Provider '${record.provider}' has no selected cold-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`,
+      );
     }
     const timeline = await client.readHistoryPage({
       sessionFile: nativeHandle,
@@ -7475,6 +7482,110 @@ export class Session {
     return unsubscribe;
   }
 
+  private getTimelineStartCursor(
+    selected: AgentTimelineProjectionSelection,
+    contentVersion: number | undefined,
+  ): AgentTimelineCursor | null {
+    let seq = selected.startSeq;
+    if (seq === null && selected.timeline.window.maxSeq === 0) seq = 0;
+    return seq === null ? null : { epoch: selected.timeline.epoch, seq, contentVersion };
+  }
+
+  private getTimelineEndCursor(
+    selected: AgentTimelineProjectionSelection,
+    controlTimeline: AgentTimelineFetchResult,
+    direction: AgentTimelineFetchDirection,
+    cursor?: AgentTimelineCursor,
+  ): AgentTimelineCursor | null {
+    let seq = selected.endSeq;
+    if (seq === null && direction === "after" && cursor && !controlTimeline.reset) seq = cursor.seq;
+    if (seq === null && selected.timeline.window.maxSeq === 0) seq = 0;
+    return seq === null
+      ? null
+      : {
+          epoch: selected.timeline.epoch,
+          seq,
+          contentVersion: controlTimeline.contentVersion,
+        };
+  }
+
+  private mapTimelineResponseEntry(
+    entry: TimelineProjectionEntry,
+    provider: string,
+    reasoningMergeEnabled: boolean,
+  ) {
+    return {
+      provider,
+      item: entry.item,
+      timestamp: entry.timestamp,
+      seqStart: entry.seqStart,
+      seqEnd: entry.seqEnd,
+      sourceSeqRanges: entry.sourceSeqRanges,
+      turnId: entry.turnId,
+      collapsed: reasoningMergeEnabled
+        ? entry.collapsed
+        : entry.collapsed.filter((value) => value !== "reasoning_merge"),
+    };
+  }
+
+  private emitLoadedAgentTimelineResponse(
+    msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
+    loadedTimeline: AgentTimelineLoad,
+    selectedTimeline: AgentTimelineProjectionSelection,
+    direction: AgentTimelineFetchDirection,
+    projection: TimelineProjectionMode,
+    cursor: AgentTimelineCursor | undefined,
+    source?: object,
+  ): void {
+    const contentVersion = loadedTimeline.controlTimeline.contentVersion;
+    const startCursor = this.getTimelineStartCursor(selectedTimeline, contentVersion);
+    const endCursor = this.getTimelineEndCursor(
+      selectedTimeline,
+      loadedTimeline.controlTimeline,
+      direction,
+      cursor,
+    );
+    const reasoningMergeEnabled =
+      selectedTimeline.entries.length > 0 &&
+      (source
+        ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+        : this.supports(CLIENT_CAPS.reasoningMergeEnum));
+
+    this.emitForSource(
+      {
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          agent: loadedTimeline.agent,
+          direction,
+          projection,
+          epoch: selectedTimeline.timeline.epoch,
+          contentVersion,
+          hasMoreRevisions: loadedTimeline.controlTimeline.hasMoreRevisions,
+          reset: loadedTimeline.controlTimeline.reset,
+          staleCursor: loadedTimeline.controlTimeline.staleCursor,
+          gap: loadedTimeline.controlTimeline.gap,
+          window: selectedTimeline.timeline.window,
+          startCursor,
+          endCursor,
+          hasOlder: selectedTimeline.hasOlder,
+          hasNewer: selectedTimeline.hasNewer,
+          ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
+          entries: selectedTimeline.entries.map((entry) =>
+            this.mapTimelineResponseEntry(entry, loadedTimeline.provider, reasoningMergeEnabled),
+          ),
+          revisedEntries: projectTimelineRows({
+            rows: loadedTimeline.controlTimeline.revisedRows ?? [],
+            mode: "canonical",
+          }).map((entry) => this.mapTimelineResponseEntry(entry, loadedTimeline.provider, true)),
+          error: null,
+        },
+      },
+      source,
+    );
+  }
+
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
     source?: object,
@@ -7487,7 +7598,9 @@ export class Session {
       ? {
           epoch: msg.cursor.epoch,
           seq: msg.cursor.seq,
-          ...(msg.cursor.contentVersion !== undefined ? { contentVersion: msg.cursor.contentVersion } : {}),
+          ...(msg.cursor.contentVersion !== undefined
+            ? { contentVersion: msg.cursor.contentVersion }
+            : {}),
         }
       : undefined;
     const unsubscribeInitialization = this.observeBundledOmpInitialization(
@@ -7552,70 +7665,13 @@ export class Session {
         pageLimit,
         ...(loadedTimeline.fullTimeline ? { fullTimeline: loadedTimeline.fullTimeline } : {}),
       });
-      const contentVersion = loadedTimeline.controlTimeline.contentVersion;
-      const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq, contentVersion }
-          : selectedTimeline.timeline.window.maxSeq === 0
-            ? { epoch: selectedTimeline.timeline.epoch, seq: 0, contentVersion }
-            : null;
-      const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq, contentVersion }
-          : direction === "after" && cursor && !loadedTimeline.controlTimeline.reset
-            ? { epoch: selectedTimeline.timeline.epoch, seq: cursor.seq, contentVersion }
-            : selectedTimeline.timeline.window.maxSeq === 0
-              ? { epoch: selectedTimeline.timeline.epoch, seq: 0, contentVersion }
-              : null;
-
-      this.emitForSource(
-        {
-          type: "fetch_agent_timeline_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId: msg.agentId,
-            agent: loadedTimeline.agent,
-            direction,
-            projection,
-            epoch: selectedTimeline.timeline.epoch,
-            contentVersion,
-            hasMoreRevisions: loadedTimeline.controlTimeline.hasMoreRevisions,
-            reset: loadedTimeline.controlTimeline.reset,
-            staleCursor: loadedTimeline.controlTimeline.staleCursor,
-            gap: loadedTimeline.controlTimeline.gap,
-            window: selectedTimeline.timeline.window,
-            startCursor,
-            endCursor,
-            hasOlder: selectedTimeline.hasOlder,
-            hasNewer: selectedTimeline.hasNewer,
-            ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: selectedTimeline.entries.map((entry) => {
-              const payloadEntry = {
-                provider: loadedTimeline.provider,
-                item: entry.item,
-                timestamp: entry.timestamp,
-                seqStart: entry.seqStart,
-                seqEnd: entry.seqEnd,
-                sourceSeqRanges: entry.sourceSeqRanges,
-                turnId: undefined as string | undefined,
-                collapsed: (
-                  source
-                    ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                    : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-                )
-                  ? entry.collapsed
-                  : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-              };
-              payloadEntry.turnId = entry.turnId;
-              return payloadEntry;
-            }),
-            revisedEntries: projectTimelineRows({
-              rows: loadedTimeline.controlTimeline.revisedRows ?? [],
-              mode: "canonical",
-            }).map((entry) => ({ ...entry, provider: loadedTimeline.provider })),
-            error: null,
-          },
-        },
+      this.emitLoadedAgentTimelineResponse(
+        msg,
+        loadedTimeline,
+        selectedTimeline,
+        direction,
+        projection,
+        cursor,
         source,
       );
     } catch (error) {
@@ -7700,38 +7756,78 @@ export class Session {
   }
 
   private async handleRuntimeResourceRequest(
-    msg: Extract<SessionInboundMessage, { type: "agent_runtime_resources_request" | "agent_runtime_resource_release_request" }>,
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "agent_runtime_resources_request" | "agent_runtime_resource_release_request" }
+    >,
     source?: object,
   ): Promise<void> {
     try {
       const agent = this.agentManager.getAgent(msg.agentId);
-      if (!agent && !(await this.agentStorage.get(msg.agentId)))
-        throw new Error("Agent not found");
+      if (!agent && !(await this.agentStorage.get(msg.agentId))) throw new Error("Agent not found");
       // Inspection of a cold session must never create an SDK host or fresh kernel.
       if (msg.type === "agent_runtime_resources_request") {
-        const resources = await agent?.session?.getRuntimeResources?.() ?? [];
-        this.emitForSource({ type: "agent_runtime_resources_response", payload: {
-          requestId: msg.requestId, agentId: msg.agentId, resources, error: null,
-        } }, source);
+        const resources = (await agent?.session?.getRuntimeResources?.()) ?? [];
+        this.emitForSource(
+          {
+            type: "agent_runtime_resources_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId: msg.agentId,
+              resources,
+              error: null,
+            },
+          },
+          source,
+        );
       } else {
         if (!agent?.session?.releaseRuntimeResource)
           throw new Error("Resource is no longer resident or explicit release is unsupported");
         await agent.session.releaseRuntimeResource(msg.resourceId);
         this.agentManager.notifyAgentState(msg.agentId);
-        this.emitForSource({ type: "agent_runtime_resource_release_response", payload: {
-          requestId: msg.requestId, agentId: msg.agentId, resourceId: msg.resourceId, released: true, error: null,
-        } }, source);
+        this.emitForSource(
+          {
+            type: "agent_runtime_resource_release_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId: msg.agentId,
+              resourceId: msg.resourceId,
+              released: true,
+              error: null,
+            },
+          },
+          source,
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (msg.type === "agent_runtime_resources_request")
-        this.emitForSource({ type: "agent_runtime_resources_response", payload: {
-          requestId: msg.requestId, agentId: msg.agentId, resources: [], error: message,
-        } }, source);
+        this.emitForSource(
+          {
+            type: "agent_runtime_resources_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId: msg.agentId,
+              resources: [],
+              error: message,
+            },
+          },
+          source,
+        );
       else
-        this.emitForSource({ type: "agent_runtime_resource_release_response", payload: {
-          requestId: msg.requestId, agentId: msg.agentId, resourceId: msg.resourceId, released: false, error: message,
-        } }, source);
+        this.emitForSource(
+          {
+            type: "agent_runtime_resource_release_response",
+            payload: {
+              requestId: msg.requestId,
+              agentId: msg.agentId,
+              resourceId: msg.resourceId,
+              released: false,
+              error: message,
+            },
+          },
+          source,
+        );
     }
   }
 
@@ -7862,7 +7958,9 @@ export class Session {
     );
     const client = this.agentManager.getRegisteredClient(record.provider);
     if (!client?.streamPersistedSubagentHistory) {
-      throw new Error(`Provider '${record.provider}' has no selected cold subagent-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`);
+      throw new Error(
+        `Provider '${record.provider}' has no selected cold subagent-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`,
+      );
     }
     for await (const event of client.streamPersistedSubagentHistory({
       sessionFile: nativeHandle,
@@ -7965,7 +8063,9 @@ export class Session {
             seq: row.seq,
           })),
           revisedRows: (timeline.revisedRows ?? []).map((row) => ({
-            item: row.item, timestamp: row.timestamp, seq: row.seq,
+            item: row.item,
+            timestamp: row.timestamp,
+            seq: row.seq,
           })),
           error: null,
         },
@@ -8099,6 +8199,7 @@ export class Session {
             agentId,
             accepted: false,
             error: message,
+            ...(error instanceof AgentRunCancellationError ? { errorCode: error.code } : {}),
           },
         });
         return;
