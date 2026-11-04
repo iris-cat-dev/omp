@@ -81,6 +81,8 @@ public static class OmpNativePetMenuSmoke {
     public string petHandle, menuHandle, fixtureHandle;
     public uint pid, dpi;
     public int petScreenX, petScreenY, outsideScreenX, outsideScreenY;
+    public bool petRepositioned;
+    public int originalPetX, originalPetY, testPetX, testPetY;
     public long outsideInteractivitySequence, readyInteractivitySequence;
     public bool interactiveAckObserved;
     public string actionObservation = "Only native outside-click input was sent; application side effects require parent-side state checks after menu tracking ends.";
@@ -260,15 +262,29 @@ public static class OmpNativePetMenuSmoke {
     IntPtr pet = new IntPtr(handle), observedMenu = IntPtr.Zero;
     OutsideFixture fixture = null;
     POINT original = new POINT(), last = new POINT();
-    bool moved = false, cursorKnown = false, menuAttempted = false;
+    bool moved = false, cursorKnown = false, menuAttempted = false, petPlaced = false;
     long outsideSequence = 0, readySequence = 0;
+    Rectangle originalPetRect = Rectangle.Empty;
     try {
       Rectangle petRect = AssertPet(pet, pid);
+      originalPetRect = petRect;
       Require(NoActivate(pet), "pet did not initially have WS_EX_NOACTIVATE");
       Require(Menus(pid).Count == 0, "app already has an active native popup menu");
       Require(!ButtonsHeld(), "a real mouse button is held; input refused");
       cursorKnown = GetCursorPos(out original);
       Require(cursorKnown, "cannot save cursor position");
+      // Shell flyouts may cover the product's bottom-right position. Control
+      // only this owned fixture window; never dismiss or click a foreign window.
+      Rectangle work = Screen.FromRectangle(petRect).WorkingArea;
+      Require(work.Width >= petRect.Width && work.Height >= petRect.Height,
+        "owned pet does not fit this monitor's working area");
+      int targetX = work.Left + (work.Width - petRect.Width) / 2;
+      int targetY = work.Top + (work.Height - petRect.Height) / 2;
+      Require(SetWindowPos(pet, IntPtr.Zero, targetX, targetY, 0, 0, 0x0015),
+        "cannot center owned pet without activation or z-order changes");
+      petPlaced = true;
+      petRect = AssertPet(pet, pid);
+      Require(petRect.X == targetX && petRect.Y == targetY, "owned pet fixture placement did not settle");
       uint dpi = GetDpiForWindow(pet);
       Require(dpi != 0, "cannot establish pet DPI");
       RECT client;
@@ -302,7 +318,23 @@ public static class OmpNativePetMenuSmoke {
       Require(WaitFor(delegate {
         return InteractiveObserved(observationFile, runId, pid, handle, true, outsideSequence, cssX, cssY, out readySequence);
       }, 2500), "painted pet point never received a fresh genuine interactive IPC ACK");
-      Require(HitOwnedClient(petPoint, pet, pid), "ACK target is not an owned native client hit");
+      if (!HitOwnedClient(petPoint, pet, pid)) {
+        IntPtr hitWindow = WindowFromPoint(petPoint);
+        uint hitPid;
+        GetWindowThreadProcessId(hitWindow, out hitPid);
+        var hitClass = new StringBuilder(128);
+        GetClassName(hitWindow, hitClass, hitClass.Capacity);
+        UIntPtr nonClientHit;
+        uint packed = (uint)(ushort)petPoint.X | ((uint)(ushort)petPoint.Y << 16);
+        bool inspected = SendMessageTimeout(pet, 0x0084, UIntPtr.Zero,
+          new IntPtr(unchecked((int)packed)), 0x0023, 100, out nonClientHit) != IntPtr.Zero;
+        Require(false, String.Format(CultureInfo.InvariantCulture,
+          "ACK target is not an owned native client hit; point={0},{1}; hit={2}; hitPid={3}; hitClass={4}; root={5}; expected={6}; ncHit={7}; exStyle=0x{8:X}",
+          petPoint.X, petPoint.Y, hitWindow.ToInt64(), hitPid, hitClass,
+          GetAncestor(hitWindow, 2).ToInt64(), pet.ToInt64(),
+          inspected ? unchecked((int)nonClientHit.ToUInt64()).ToString(CultureInfo.InvariantCulture) : "timeout",
+          GetWindowLongPtr(pet, -20).ToInt64()));
+      }
       AssertPet(pet, pid);
       Require(Menus(pid).Count == 0, "unexpected popup appeared before right click");
       Require(GetForegroundWindow() == fixtureHwnd, "foreground changed before pet right click");
@@ -339,6 +371,8 @@ public static class OmpNativePetMenuSmoke {
         pid = pid, petHandle = pet.ToInt64().ToString(), menuHandle = observedMenu.ToInt64().ToString(),
         fixtureHandle = fixtureHwnd.ToInt64().ToString(), dpi = dpi,
         petScreenX = petPoint.X, petScreenY = petPoint.Y, outsideScreenX = outside.X, outsideScreenY = outside.Y,
+        petRepositioned = petPlaced, originalPetX = originalPetRect.X, originalPetY = originalPetRect.Y,
+        testPetX = petRect.X, testPetY = petRect.Y,
         outsideInteractivitySequence = outsideSequence, readyInteractivitySequence = readySequence,
         interactiveAckObserved = true,
         menuOpened = true, dismissedAfterOutsideClick = dismissed,
@@ -361,10 +395,16 @@ public static class OmpNativePetMenuSmoke {
             finally { fixture.Dispose(); }
           }
         } finally {
-          POINT current;
-          if (cursorKnown && moved && !ButtonsHeld() && GetCursorPos(out current) && current.X == last.X && current.Y == last.Y)
-            SetCursorPos(original.X, original.Y);
-          SetThreadDpiAwarenessContext(previousDpi);
+          try {
+            if (petPlaced && Owned(pet, pid) && GetAncestor(pet, 2) == pet)
+              Require(SetWindowPos(pet, IntPtr.Zero, originalPetRect.X, originalPetRect.Y, 0, 0, 0x0015),
+                "cannot restore owned pet fixture position");
+          } finally {
+            POINT current;
+            if (cursorKnown && moved && !ButtonsHeld() && GetCursorPos(out current) && current.X == last.X && current.Y == last.Y)
+              SetCursorPos(original.X, original.Y);
+            SetThreadDpiAwarenessContext(previousDpi);
+          }
         }
       }
     }
