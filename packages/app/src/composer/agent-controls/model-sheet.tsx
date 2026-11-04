@@ -2,8 +2,9 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { Bot, Zap } from "lucide-react-native";
+import { Bot } from "lucide-react-native";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
+import { getAgentFeatureOptionIcon } from "@/agent-controls/icons";
 import { formatAgentFeatureOptionLabel } from "@/agent-controls/labels";
 import { FAST_MODE_FEATURE_ID, type FastModeTier } from "@/agent-controls/policy";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -164,6 +165,7 @@ export function CompactModelSheet({
     ? formatAgentFeatureOptionLabel(FAST_MODE_FEATURE_ID, { id: fastModeTier })
     : null;
   const fastModeActive = fastModeTier === "on" || fastModeTier === "ultrafast";
+  const FastModeIcon = getAgentFeatureOptionIcon(FAST_MODE_FEATURE_ID, fastModeTier, "zap");
   const selectedModelAccessibilityLabel = t("modelSelector.selectedModel", {
     model: [`${selectedProviderLabel} · ${displayModelLabel}`, thinkingLabel, fastModeLabel]
       .filter(Boolean)
@@ -296,7 +298,7 @@ export function CompactModelSheet({
                 </Text>
               ) : null}
               {fastModeActive ? (
-                <Zap
+                <FastModeIcon
                   size={12}
                   color={styles.fastModeIcon.color}
                   accessibilityLabel={fastModeLabel ?? undefined}
