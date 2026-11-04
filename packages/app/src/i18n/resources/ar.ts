@@ -279,6 +279,10 @@ export const ar: TranslationResources = {
         ultrafastDescription:
           "يستهلك Ultrafast الاستخدام المشمول بمعدل 8 أضعاف والأرصدة المشتراة بمعدل 6 أضعاف المعدل القياسي. يتطلب حسابًا ونموذجًا مدعومين؛ وتختلف السرعة الفعلية.",
         selectWithValue: "اختر السرعة، الحالية: {{value}}",
+        detecting: "جارٍ اكتشاف السرعات المدعومة…",
+        detectionFailed: "فشل اكتشاف السرعة",
+        unsupported: "اختيار السرعة غير مدعوم",
+        retryDetection: "إعادة اكتشاف السرعة",
       },
       workflow: {
         title: "سير العمل",

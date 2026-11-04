@@ -5100,11 +5100,15 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
         seq: z.number().int().nonnegative(),
       }),
     ),
-    revisedRows: z.array(z.object({
-      item: AgentTimelineItemPayloadSchema,
-      timestamp: z.string(),
-      seq: z.number().int().nonnegative(),
-    })).optional(),
+    revisedRows: z
+      .array(
+        z.object({
+          item: AgentTimelineItemPayloadSchema,
+          timestamp: z.string(),
+          seq: z.number().int().nonnegative(),
+        }),
+      )
+      .optional(),
     error: z.string().nullable(),
   }),
 });
@@ -6784,6 +6788,11 @@ export const OmpMemorySettingsSchema = z.object({
   configPath: z.string(),
   revision: z.string(),
   backend: OmpMemoryBackendSchema,
+  runtime: z
+    .object({
+      profile: z.enum(["core", "full", "unknown"]),
+    })
+    .optional(),
   supportedBackends: z.array(OmpMemoryBackendSchema),
   autolearn: z.object({
     enabled: z.boolean(),

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from "re
 import { Pressable, Text, View } from "react-native";
 import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type {
   OmpMemoryBackend,
   OmpMemorySettings,
@@ -16,17 +16,31 @@ import { Switch } from "@/components/ui/switch";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { SettingsSection } from "./settings-section";
 import {
   buildOmpMemorySettingsPatch,
   createOmpMemoryDraft,
   validateOmpMemoryDraft,
+  getOmpMnemopiBlockers,
   type OmpMemoryDraft,
   type OmpMemoryDraftErrors,
 } from "./omp-memory-form";
 
 type MemoryScoping = OmpMemorySettings["mnemopi"]["scoping"];
 type MemorySecretKey = keyof NonNullable<OmpMemorySettingsPatch["secrets"]>;
+
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronUp = withUnistyles(ChevronUp);
+const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function useDraftFieldChange<Key extends keyof OmpMemoryDraft>(
+  draft: OmpMemoryDraft,
+  onChange: (draft: OmpMemoryDraft) => void,
+  field: Key,
+): (value: OmpMemoryDraft[Key]) => void {
+  return useCallback((value) => onChange({ ...draft, [field]: value }), [draft, field, onChange]);
+}
 
 interface ToggleRowProps {
   title: string;
@@ -117,9 +131,7 @@ function StatusRow({
   );
 }
 
-export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
+function useMemorySettings(serverId: string) {
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useSessionStore(
@@ -132,7 +144,6 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [draftVersion, setDraftVersion] = useState(0);
 
   const load = useCallback(async () => {
@@ -160,6 +171,128 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
     void load();
   }, [connected, load, supported]);
 
+  const patch = settings && draft ? buildOmpMemorySettingsPatch(settings, draft) : null;
+  const dirty = patch ? Object.keys(patch).length > 0 : false;
+  const disabled = saving || loading;
+
+  const save = useCallback(async () => {
+    if (!client || !settings || !draft) return;
+    const nextErrors = validateOmpMemoryDraft(draft);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    const nextPatch = buildOmpMemorySettingsPatch(settings, draft);
+    if (Object.keys(nextPatch).length === 0) return;
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const next = await client.updateOmpMemorySettings(settings.revision, nextPatch);
+      setSettings(next);
+      setDraft(createOmpMemoryDraft(next));
+      setDraftVersion((version) => version + 1);
+      setSaved(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  }, [client, draft, settings]);
+
+  const cancel = useCallback(() => {
+    if (!settings) return;
+    setDraft(createOmpMemoryDraft(settings));
+    setErrors({});
+    setError(null);
+    setSaved(false);
+    setDraftVersion((version) => version + 1);
+  }, [settings]);
+
+  const removeSecret = useCallback(
+    async (key: MemorySecretKey) => {
+      if (!client || !settings || dirty) return;
+      setSaving(true);
+      setError(null);
+      try {
+        const next = await client.updateOmpMemorySettings(settings.revision, {
+          secrets: { [key]: null },
+        });
+        setSettings(next);
+        setDraft(createOmpMemoryDraft(next));
+        setDraftVersion((version) => version + 1);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [client, dirty, settings],
+  );
+
+  return {
+    connected,
+    supported,
+    settings,
+    draft,
+    setDraft,
+    errors,
+    loading,
+    saving,
+    error,
+    saved,
+    draftVersion,
+    dirty,
+    disabled,
+    load,
+    save,
+    cancel,
+    removeSecret,
+  };
+}
+
+export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement {
+  const { t } = useTranslation();
+  const {
+    connected,
+    supported,
+    settings,
+    draft,
+    setDraft,
+    errors,
+    loading,
+    saving,
+    error,
+    saved,
+    draftVersion,
+    dirty,
+    disabled,
+    load,
+    save,
+    cancel,
+    removeSecret,
+  } = useMemorySettings(serverId);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const toggleAdvanced = useCallback(() => setShowAdvanced((value) => !value), []);
+  const reload = useCallback(() => void load(), [load]);
+  const submit = useCallback(() => void save(), [save]);
+  const changeBackend = useCallback(
+    (backend: OmpMemoryBackend) => {
+      if (draft) setDraft({ ...draft, backend });
+    },
+    [draft, setDraft],
+  );
+  const changeAutolearnEnabled = useCallback(
+    (autolearnEnabled: boolean) => {
+      if (draft) setDraft({ ...draft, autolearnEnabled });
+    },
+    [draft, setDraft],
+  );
+  const changeAutolearnAutoContinue = useCallback(
+    (autolearnAutoContinue: boolean) => {
+      if (draft) setDraft({ ...draft, autolearnAutoContinue });
+    },
+    [draft, setDraft],
+  );
+  const envOverrides = useMemo(() => new Set(settings?.environmentOverrides), [settings]);
   const backendOptions = useMemo<SelectFieldOption<OmpMemoryBackend>[]>(() => {
     if (!settings) return [];
     const known: Record<OmpMemoryBackend, { label: string; description: string }> = {
@@ -223,63 +356,6 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
     [errors, t],
   );
 
-  const patch = settings && draft ? buildOmpMemorySettingsPatch(settings, draft) : null;
-  const dirty = patch ? Object.keys(patch).length > 0 : false;
-  const disabled = saving || loading;
-
-  const save = useCallback(async () => {
-    if (!client || !settings || !draft) return;
-    const nextErrors = validateOmpMemoryDraft(draft);
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
-    const nextPatch = buildOmpMemorySettingsPatch(settings, draft);
-    if (Object.keys(nextPatch).length === 0) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const next = await client.updateOmpMemorySettings(settings.revision, nextPatch);
-      setSettings(next);
-      setDraft(createOmpMemoryDraft(next));
-      setDraftVersion((version) => version + 1);
-      setSaved(true);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
-    }
-  }, [client, draft, settings]);
-
-  const cancel = useCallback(() => {
-    if (!settings) return;
-    setDraft(createOmpMemoryDraft(settings));
-    setErrors({});
-    setError(null);
-    setSaved(false);
-    setDraftVersion((version) => version + 1);
-  }, [settings]);
-
-  const removeSecret = useCallback(
-    async (key: MemorySecretKey) => {
-      if (!client || !settings || dirty) return;
-      setSaving(true);
-      setError(null);
-      try {
-        const next = await client.updateOmpMemorySettings(settings.revision, {
-          secrets: { [key]: null },
-        });
-        setSettings(next);
-        setDraft(createOmpMemoryDraft(next));
-        setDraftVersion((version) => version + 1);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        setSaving(false);
-      }
-    },
-    [client, dirty, settings],
-  );
-
   if (!connected) {
     return <MessageCard message={t("settings.memory.unavailable")} />;
   }
@@ -290,57 +366,18 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
     return <MessageCard message={t("settings.memory.loading")} />;
   }
   if (!settings || !draft) {
-    return (
-      <MessageCard
-        message={error ?? t("settings.memory.loadError")}
-        action={<Button onPress={() => void load()}>{t("settings.memory.reload")}</Button>}
-      />
-    );
+    return <MessageCard message={error ?? t("settings.memory.loadError")} onReload={reload} />;
   }
 
   const selectedBackend = backendOptions.find((option) => option.value === draft.backend) ?? null;
-  const currentBackend = backendOptions.find((option) => option.value === settings.backend) ?? null;
-  const currentScoping =
-    settings.backend === "mnemopi"
-      ? settings.mnemopi.scoping
-      : settings.backend === "hindsight"
-        ? settings.hindsight.scoping
-        : null;
-  const currentScopingDisplay = scopingOptions.find((option) => option.value === currentScoping);
-  const envOverrides = new Set(settings.environmentOverrides);
 
   return (
     <View>
-      <SettingsSection title={t("settings.memory.overview.title")}>
-        <View style={settingsStyles.card}>
-          <StatusRow
-            label={t("settings.memory.overview.backend")}
-            value={currentBackend?.label ?? settings.backend}
-          />
-          <StatusRow
-            bordered
-            label={t("settings.memory.overview.storage")}
-            value={
-              settings.backend === "hindsight"
-                ? t("settings.memory.overview.storageRemote")
-                : t("settings.memory.overview.storageLocal")
-            }
-          />
-          {currentScopingDisplay ? (
-            <StatusRow
-              bordered
-              label={t("settings.memory.overview.scoping")}
-              value={currentScopingDisplay.label}
-            />
-          ) : null}
-          <StatusRow
-            bordered
-            label={t("settings.memory.overview.configPath")}
-            value={settings.configPath}
-          />
-          <Text style={styles.notice}>{t("settings.memory.overview.newSessions")}</Text>
-        </View>
-      </SettingsSection>
+      <MemoryOverview
+        settings={settings}
+        backendOptions={backendOptions}
+        scopingOptions={scopingOptions}
+      />
 
       <SettingsSection title={t("settings.memory.backend.title")}>
         <View style={[settingsStyles.card, styles.formCard]}>
@@ -349,7 +386,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
             value={draft.backend}
             selectedDisplay={selectedBackend}
             options={backendOptions}
-            onChange={(backend) => setDraft({ ...draft, backend })}
+            onChange={changeBackend}
             placeholder={t("settings.memory.backend.label")}
             emptyText={t("settings.memory.backend.empty")}
             disabled={disabled}
@@ -367,7 +404,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
               value={draft.autolearnEnabled}
               disabled={disabled}
               testID="omp-memory-autolearn"
-              onChange={(autolearnEnabled) => setDraft({ ...draft, autolearnEnabled })}
+              onChange={changeAutolearnEnabled}
             />
             <ToggleRow
               bordered
@@ -376,7 +413,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
               value={draft.autolearnAutoContinue}
               disabled={disabled || !draft.autolearnEnabled}
               testID="omp-memory-autolearn-auto-continue"
-              onChange={(autolearnAutoContinue) => setDraft({ ...draft, autolearnAutoContinue })}
+              onChange={changeAutolearnAutoContinue}
             />
           </View>
         </SettingsSection>
@@ -402,7 +439,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
           scopingOptions={scopingOptions}
           errorFor={validationMessage}
           onChange={setDraft}
-          onToggleAdvanced={() => setShowAdvanced((value) => !value)}
+          onToggleAdvanced={toggleAdvanced}
           onRemoveSecret={removeSecret}
         />
       ) : null}
@@ -425,7 +462,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
         <Button variant="secondary" onPress={cancel} disabled={!dirty || saving}>
           {t("settings.memory.cancel")}
         </Button>
-        <Button onPress={() => void save()} disabled={!dirty || disabled} testID="omp-memory-save">
+        <Button onPress={submit} disabled={!dirty || disabled} testID="omp-memory-save">
           {saving ? t("settings.memory.saving") : t("settings.memory.save")}
         </Button>
       </View>
@@ -436,17 +473,67 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
   );
 }
 
+function MemoryOverview({
+  settings,
+  backendOptions,
+  scopingOptions,
+}: {
+  settings: OmpMemorySettings;
+  backendOptions: SelectFieldOption<OmpMemoryBackend>[];
+  scopingOptions: SelectFieldOption<MemoryScoping>[];
+}): ReactElement {
+  const { t } = useTranslation();
+  const currentBackend = backendOptions.find((option) => option.value === settings.backend) ?? null;
+  let currentScoping: MemoryScoping | null = null;
+  if (settings.backend === "mnemopi") currentScoping = settings.mnemopi.scoping;
+  if (settings.backend === "hindsight") currentScoping = settings.hindsight.scoping;
+  const currentScopingDisplay = scopingOptions.find((option) => option.value === currentScoping);
+  return (
+    <SettingsSection title={t("settings.memory.overview.title")}>
+      <View style={settingsStyles.card}>
+        <StatusRow
+          label={t("settings.memory.overview.backend")}
+          value={currentBackend?.label ?? settings.backend}
+        />
+        <StatusRow
+          bordered
+          label={t("settings.memory.overview.storage")}
+          value={
+            settings.backend === "hindsight"
+              ? t("settings.memory.overview.storageRemote")
+              : t("settings.memory.overview.storageLocal")
+          }
+        />
+        {currentScopingDisplay ? (
+          <StatusRow
+            bordered
+            label={t("settings.memory.overview.scoping")}
+            value={currentScopingDisplay.label}
+          />
+        ) : null}
+        <StatusRow
+          bordered
+          label={t("settings.memory.overview.configPath")}
+          value={settings.configPath}
+        />
+        <Text style={styles.notice}>{t("settings.memory.overview.newSessions")}</Text>
+      </View>
+    </SettingsSection>
+  );
+}
+
 function MessageCard({
   message,
-  action,
+  onReload,
 }: {
   message: string;
-  action?: ReactElement;
+  onReload?: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <View style={[settingsStyles.card, styles.messageCard]}>
       <Text style={styles.muted}>{message}</Text>
-      {action}
+      {onReload ? <Button onPress={onReload}>{t("settings.memory.reload")}</Button> : null}
     </View>
   );
 }
@@ -467,6 +554,9 @@ function LocalSettings({
   onChange,
 }: BackendSettingsProps): ReactElement {
   const { t } = useTranslation();
+  const changeIdleHours = useDraftFieldChange(draft, onChange, "localMinRolloutIdleHours");
+  const changeMaxAgeDays = useDraftFieldChange(draft, onChange, "localMaxRolloutAgeDays");
+  const changeTokenLimit = useDraftFieldChange(draft, onChange, "localSummaryInjectionTokenLimit");
   return (
     <SettingsSection title={t("settings.memory.local.title")}>
       <View style={[settingsStyles.card, styles.formCard]}>
@@ -477,7 +567,7 @@ function LocalSettings({
           disabled={disabled}
           error={errorFor("localMinRolloutIdleHours")}
           testID="omp-memory-local-idle-hours"
-          onChange={(localMinRolloutIdleHours) => onChange({ ...draft, localMinRolloutIdleHours })}
+          onChange={changeIdleHours}
         />
         <DraftTextField
           label={t("settings.memory.local.maxAgeDays")}
@@ -486,7 +576,7 @@ function LocalSettings({
           disabled={disabled}
           error={errorFor("localMaxRolloutAgeDays")}
           testID="omp-memory-local-max-age"
-          onChange={(localMaxRolloutAgeDays) => onChange({ ...draft, localMaxRolloutAgeDays })}
+          onChange={changeMaxAgeDays}
         />
         <DraftTextField
           label={t("settings.memory.local.tokenLimit")}
@@ -495,9 +585,7 @@ function LocalSettings({
           disabled={disabled}
           error={errorFor("localSummaryInjectionTokenLimit")}
           testID="omp-memory-local-token-limit"
-          onChange={(localSummaryInjectionTokenLimit) =>
-            onChange({ ...draft, localSummaryInjectionTokenLimit })
-          }
+          onChange={changeTokenLimit}
         />
       </View>
     </SettingsSection>
@@ -527,32 +615,90 @@ function MnemopiSettings({
   onRemoveSecret,
 }: MnemopiSettingsProps): ReactElement {
   const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const selectedScoping =
     scopingOptions.find((option) => option.value === draft.mnemopiScoping) ?? null;
-  const embeddingOptions: SelectFieldOption<OmpMemoryDraft["mnemopiEmbeddingVariant"]>[] = [
-    { id: "en", value: "en", label: t("settings.memory.mnemopi.embeddingEnglish") },
-    {
-      id: "multilingual",
-      value: "multilingual",
-      label: t("settings.memory.mnemopi.embeddingMultilingual"),
-    },
-  ];
-  const llmOptions: SelectFieldOption<OmpMemoryDraft["mnemopiLlmMode"]>[] = [
-    { id: "smol", value: "smol", label: t("settings.memory.mnemopi.llmSmol") },
-    { id: "remote", value: "remote", label: t("settings.memory.mnemopi.llmRemote") },
-    { id: "none", value: "none", label: t("settings.memory.mnemopi.llmNone") },
-  ];
+  const blockers = getOmpMnemopiBlockers(settings, draft);
+  const chooseLocalKeywordMode = useCallback(
+    () => onChange({ ...draft, mnemopiNoEmbeddings: true, mnemopiLlmMode: "none" }),
+    [draft, onChange],
+  );
+  const changeScoping = useDraftFieldChange(draft, onChange, "mnemopiScoping");
+  const changeAutoRecall = useDraftFieldChange(draft, onChange, "mnemopiAutoRecall");
+  const changeAutoRetain = useDraftFieldChange(draft, onChange, "mnemopiAutoRetain");
+  const changeRetainEvery = useDraftFieldChange(draft, onChange, "mnemopiRetainEveryNTurns");
+  const changeRecallLimit = useDraftFieldChange(draft, onChange, "mnemopiRecallLimit");
+  const changeContextTurns = useDraftFieldChange(draft, onChange, "mnemopiRecallContextTurns");
+  const changeQueryChars = useDraftFieldChange(draft, onChange, "mnemopiRecallMaxQueryChars");
+  const changeTokenLimit = useDraftFieldChange(draft, onChange, "mnemopiInjectionTokenLimit");
+  const changePolyphonicRecall = useDraftFieldChange(draft, onChange, "mnemopiPolyphonicRecall");
+  const changeEnhancedRecall = useDraftFieldChange(draft, onChange, "mnemopiEnhancedRecall");
+  const changeProactiveLinking = useDraftFieldChange(draft, onChange, "mnemopiProactiveLinking");
+  const changeNoEmbeddings = useDraftFieldChange(draft, onChange, "mnemopiNoEmbeddings");
+  const changeEmbeddingVariant = useDraftFieldChange(draft, onChange, "mnemopiEmbeddingVariant");
+  const changeDbPath = useDraftFieldChange(draft, onChange, "mnemopiDbPath");
+  const changeEmbeddingModel = useDraftFieldChange(draft, onChange, "mnemopiEmbeddingModel");
+  const changeEmbeddingApiUrl = useDraftFieldChange(draft, onChange, "mnemopiEmbeddingApiUrl");
+  const changeEmbeddingApiKey = useDraftFieldChange(draft, onChange, "mnemopiEmbeddingApiKey");
+  const changeLlmMode = useDraftFieldChange(draft, onChange, "mnemopiLlmMode");
+  const changeLlmBaseUrl = useDraftFieldChange(draft, onChange, "mnemopiLlmBaseUrl");
+  const changeLlmModel = useDraftFieldChange(draft, onChange, "mnemopiLlmModel");
+  const changeLlmApiKey = useDraftFieldChange(draft, onChange, "mnemopiLlmApiKey");
+  const removeEmbeddingApiKey = useCallback(
+    () => void onRemoveSecret("mnemopiEmbeddingApiKey"),
+    [onRemoveSecret],
+  );
+  const removeLlmApiKey = useCallback(
+    () => void onRemoveSecret("mnemopiLlmApiKey"),
+    [onRemoveSecret],
+  );
+  const embeddingOptions = useMemo<SelectFieldOption<OmpMemoryDraft["mnemopiEmbeddingVariant"]>[]>(
+    () => [
+      { id: "en", value: "en", label: t("settings.memory.mnemopi.embeddingEnglish") },
+      {
+        id: "multilingual",
+        value: "multilingual",
+        label: t("settings.memory.mnemopi.embeddingMultilingual"),
+      },
+    ],
+    [t],
+  );
+  const llmOptions = useMemo<SelectFieldOption<OmpMemoryDraft["mnemopiLlmMode"]>[]>(
+    () => [
+      { id: "smol", value: "smol", label: t("settings.memory.mnemopi.llmSmol") },
+      { id: "remote", value: "remote", label: t("settings.memory.mnemopi.llmRemote") },
+      { id: "none", value: "none", label: t("settings.memory.mnemopi.llmNone") },
+    ],
+    [t],
+  );
   return (
     <SettingsSection title={t("settings.memory.mnemopi.title")}>
       <View style={settingsStyles.card}>
         <View style={styles.formBlock}>
+          {blockers.map((reason) => (
+            <Text key={reason} style={styles.warning}>
+              {t(`settings.memory.mnemopi.${reason}`)}
+            </Text>
+          ))}
+          <Text style={styles.notice}>{t("settings.memory.mnemopi.privacyHint")}</Text>
+          {settings.runtime?.profile === "core" ? (
+            <>
+              <Text style={styles.notice}>{t("settings.memory.mnemopi.localModeHint")}</Text>
+              <Button
+                variant="secondary"
+                disabled={disabled}
+                onPress={chooseLocalKeywordMode}
+                testID="omp-memory-mnemopi-local-mode"
+              >
+                {t("settings.memory.mnemopi.chooseLocalMode")}
+              </Button>
+            </>
+          ) : null}
           <SelectField
             label={t("settings.memory.mnemopi.scoping")}
             value={draft.mnemopiScoping}
             selectedDisplay={selectedScoping}
             options={scopingOptions}
-            onChange={(mnemopiScoping) => onChange({ ...draft, mnemopiScoping })}
+            onChange={changeScoping}
             placeholder={t("settings.memory.mnemopi.scoping")}
             emptyText={t("settings.memory.backend.empty")}
             disabled={disabled}
@@ -568,7 +714,7 @@ function MnemopiSettings({
           value={draft.mnemopiAutoRecall}
           disabled={disabled}
           testID="omp-memory-mnemopi-auto-recall"
-          onChange={(mnemopiAutoRecall) => onChange({ ...draft, mnemopiAutoRecall })}
+          onChange={changeAutoRecall}
         />
         <ToggleRow
           bordered
@@ -576,7 +722,7 @@ function MnemopiSettings({
           value={draft.mnemopiAutoRetain}
           disabled={disabled}
           testID="omp-memory-mnemopi-auto-retain"
-          onChange={(mnemopiAutoRetain) => onChange({ ...draft, mnemopiAutoRetain })}
+          onChange={changeAutoRetain}
         />
         <View style={[styles.formBlock, settingsStyles.rowBorder]}>
           <DraftTextField
@@ -586,9 +732,7 @@ function MnemopiSettings({
             disabled={disabled || !draft.mnemopiAutoRetain}
             error={errorFor("mnemopiRetainEveryNTurns")}
             testID="omp-memory-mnemopi-retain-every"
-            onChange={(mnemopiRetainEveryNTurns) =>
-              onChange({ ...draft, mnemopiRetainEveryNTurns })
-            }
+            onChange={changeRetainEvery}
           />
           <DraftTextField
             label={t("settings.memory.mnemopi.recallLimit")}
@@ -597,7 +741,7 @@ function MnemopiSettings({
             disabled={disabled}
             error={errorFor("mnemopiRecallLimit")}
             testID="omp-memory-mnemopi-recall-limit"
-            onChange={(mnemopiRecallLimit) => onChange({ ...draft, mnemopiRecallLimit })}
+            onChange={changeRecallLimit}
           />
         </View>
         <Pressable
@@ -606,9 +750,9 @@ function MnemopiSettings({
         >
           <Text style={styles.advancedText}>{t("settings.memory.advanced")}</Text>
           {showAdvanced ? (
-            <ChevronUp size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            <ThemedChevronUp size={ICON_SIZE.sm} uniProps={mutedIconMapping} />
           ) : (
-            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedIconMapping} />
           )}
         </Pressable>
         {showAdvanced ? (
@@ -620,9 +764,7 @@ function MnemopiSettings({
               disabled={disabled}
               error={errorFor("mnemopiRecallContextTurns")}
               testID="omp-memory-mnemopi-context-turns"
-              onChange={(mnemopiRecallContextTurns) =>
-                onChange({ ...draft, mnemopiRecallContextTurns })
-              }
+              onChange={changeContextTurns}
             />
             <DraftTextField
               label={t("settings.memory.mnemopi.recallMaxQueryChars")}
@@ -631,9 +773,7 @@ function MnemopiSettings({
               disabled={disabled}
               error={errorFor("mnemopiRecallMaxQueryChars")}
               testID="omp-memory-mnemopi-query-chars"
-              onChange={(mnemopiRecallMaxQueryChars) =>
-                onChange({ ...draft, mnemopiRecallMaxQueryChars })
-              }
+              onChange={changeQueryChars}
             />
             <DraftTextField
               label={t("settings.memory.mnemopi.injectionTokenLimit")}
@@ -642,9 +782,7 @@ function MnemopiSettings({
               disabled={disabled}
               error={errorFor("mnemopiInjectionTokenLimit")}
               testID="omp-memory-mnemopi-token-limit"
-              onChange={(mnemopiInjectionTokenLimit) =>
-                onChange({ ...draft, mnemopiInjectionTokenLimit })
-              }
+              onChange={changeTokenLimit}
             />
             <ToggleRow
               title={t("settings.memory.mnemopi.polyphonicRecall")}
@@ -652,32 +790,28 @@ function MnemopiSettings({
               value={draft.mnemopiPolyphonicRecall}
               disabled={disabled}
               testID="omp-memory-mnemopi-polyphonic"
-              onChange={(mnemopiPolyphonicRecall) =>
-                onChange({ ...draft, mnemopiPolyphonicRecall })
-              }
+              onChange={changePolyphonicRecall}
             />
             <ToggleRow
               title={t("settings.memory.mnemopi.enhancedRecall")}
               value={draft.mnemopiEnhancedRecall}
               disabled={disabled}
               testID="omp-memory-mnemopi-enhanced"
-              onChange={(mnemopiEnhancedRecall) => onChange({ ...draft, mnemopiEnhancedRecall })}
+              onChange={changeEnhancedRecall}
             />
             <ToggleRow
               title={t("settings.memory.mnemopi.proactiveLinking")}
               value={draft.mnemopiProactiveLinking}
               disabled={disabled}
               testID="omp-memory-mnemopi-linking"
-              onChange={(mnemopiProactiveLinking) =>
-                onChange({ ...draft, mnemopiProactiveLinking })
-              }
+              onChange={changeProactiveLinking}
             />
             <ToggleRow
               title={t("settings.memory.mnemopi.noEmbeddings")}
               value={draft.mnemopiNoEmbeddings}
               disabled={disabled}
               testID="omp-memory-mnemopi-no-embeddings"
-              onChange={(mnemopiNoEmbeddings) => onChange({ ...draft, mnemopiNoEmbeddings })}
+              onChange={changeNoEmbeddings}
             />
             <SelectField
               label={t("settings.memory.mnemopi.embeddingVariant")}
@@ -687,9 +821,7 @@ function MnemopiSettings({
                 null
               }
               options={embeddingOptions}
-              onChange={(mnemopiEmbeddingVariant) =>
-                onChange({ ...draft, mnemopiEmbeddingVariant })
-              }
+              onChange={changeEmbeddingVariant}
               placeholder={t("settings.memory.mnemopi.embeddingVariant")}
               emptyText={t("settings.memory.backend.empty")}
               disabled={disabled || draft.mnemopiNoEmbeddings}
@@ -700,7 +832,7 @@ function MnemopiSettings({
               resetKey={resetKey}
               disabled={disabled}
               testID="omp-memory-mnemopi-db-path"
-              onChange={(mnemopiDbPath) => onChange({ ...draft, mnemopiDbPath })}
+              onChange={changeDbPath}
             />
             <DraftTextField
               label={t("settings.memory.mnemopi.embeddingModel")}
@@ -708,7 +840,7 @@ function MnemopiSettings({
               resetKey={resetKey}
               disabled={disabled || draft.mnemopiNoEmbeddings}
               testID="omp-memory-mnemopi-embedding-model"
-              onChange={(mnemopiEmbeddingModel) => onChange({ ...draft, mnemopiEmbeddingModel })}
+              onChange={changeEmbeddingModel}
             />
             <DraftTextField
               label={t("settings.memory.mnemopi.embeddingApiUrl")}
@@ -716,17 +848,20 @@ function MnemopiSettings({
               resetKey={resetKey}
               disabled={disabled || draft.mnemopiNoEmbeddings}
               testID="omp-memory-mnemopi-embedding-url"
-              onChange={(mnemopiEmbeddingApiUrl) => onChange({ ...draft, mnemopiEmbeddingApiUrl })}
+              onChange={changeEmbeddingApiUrl}
             />
+            {settings.secretState.mnemopiEmbeddingApiKey.source === "environment" ? (
+              <Text style={styles.notice}>{t("settings.memory.mnemopi.environmentSecret")}</Text>
+            ) : null}
             <SecretField
               label={t("settings.memory.mnemopi.embeddingApiKey")}
               value={draft.mnemopiEmbeddingApiKey}
-              configured={settings.secretState.mnemopiEmbeddingApiKey.configured}
+              configured={settings.secretState.mnemopiEmbeddingApiKey.source === "config"}
               resetKey={resetKey}
               disabled={disabled || draft.mnemopiNoEmbeddings}
               testID="omp-memory-mnemopi-embedding-key"
-              onChange={(mnemopiEmbeddingApiKey) => onChange({ ...draft, mnemopiEmbeddingApiKey })}
-              onRemove={() => void onRemoveSecret("mnemopiEmbeddingApiKey")}
+              onChange={changeEmbeddingApiKey}
+              onRemove={removeEmbeddingApiKey}
               removeDisabled={dirty}
             />
             <SelectField
@@ -736,7 +871,7 @@ function MnemopiSettings({
                 llmOptions.find((option) => option.value === draft.mnemopiLlmMode) ?? null
               }
               options={llmOptions}
-              onChange={(mnemopiLlmMode) => onChange({ ...draft, mnemopiLlmMode })}
+              onChange={changeLlmMode}
               placeholder={t("settings.memory.mnemopi.llmMode")}
               emptyText={t("settings.memory.backend.empty")}
               disabled={disabled}
@@ -749,7 +884,7 @@ function MnemopiSettings({
                   resetKey={resetKey}
                   disabled={disabled}
                   testID="omp-memory-mnemopi-llm-url"
-                  onChange={(mnemopiLlmBaseUrl) => onChange({ ...draft, mnemopiLlmBaseUrl })}
+                  onChange={changeLlmBaseUrl}
                 />
                 <DraftTextField
                   label={t("settings.memory.mnemopi.llmModel")}
@@ -757,17 +892,22 @@ function MnemopiSettings({
                   resetKey={resetKey}
                   disabled={disabled}
                   testID="omp-memory-mnemopi-llm-model"
-                  onChange={(mnemopiLlmModel) => onChange({ ...draft, mnemopiLlmModel })}
+                  onChange={changeLlmModel}
                 />
+                {settings.secretState.mnemopiLlmApiKey.source === "environment" ? (
+                  <Text style={styles.notice}>
+                    {t("settings.memory.mnemopi.environmentSecret")}
+                  </Text>
+                ) : null}
                 <SecretField
                   label={t("settings.memory.mnemopi.llmApiKey")}
                   value={draft.mnemopiLlmApiKey}
-                  configured={settings.secretState.mnemopiLlmApiKey.configured}
+                  configured={settings.secretState.mnemopiLlmApiKey.source === "config"}
                   resetKey={resetKey}
                   disabled={disabled}
                   testID="omp-memory-mnemopi-llm-key"
-                  onChange={(mnemopiLlmApiKey) => onChange({ ...draft, mnemopiLlmApiKey })}
-                  onRemove={() => void onRemoveSecret("mnemopiLlmApiKey")}
+                  onChange={changeLlmApiKey}
+                  onRemove={removeLlmApiKey}
                   removeDisabled={dirty}
                 />
               </>
@@ -803,6 +943,17 @@ function HindsightSettings({
   const selectedScoping =
     scopingOptions.find((option) => option.value === draft.hindsightScoping) ?? null;
   const tokenState = settings.secretState.hindsightApiToken;
+  const changeApiUrl = useDraftFieldChange(draft, onChange, "hindsightApiUrl");
+  const changeApiToken = useDraftFieldChange(draft, onChange, "hindsightApiToken");
+  const changeScoping = useDraftFieldChange(draft, onChange, "hindsightScoping");
+  const changeBankId = useDraftFieldChange(draft, onChange, "hindsightBankId");
+  const changeAutoRecall = useDraftFieldChange(draft, onChange, "hindsightAutoRecall");
+  const changeAutoRetain = useDraftFieldChange(draft, onChange, "hindsightAutoRetain");
+  const changeRetainEvery = useDraftFieldChange(draft, onChange, "hindsightRetainEveryNTurns");
+  const removeApiToken = useCallback(
+    () => void onRemoveSecret("hindsightApiToken"),
+    [onRemoveSecret],
+  );
   return (
     <SettingsSection title={t("settings.memory.hindsight.title")}>
       <View style={[settingsStyles.card, styles.formCard]}>
@@ -814,7 +965,7 @@ function HindsightSettings({
           error={errorFor("hindsightApiUrl")}
           placeholder="http://localhost:8888"
           testID="omp-memory-hindsight-url"
-          onChange={(hindsightApiUrl) => onChange({ ...draft, hindsightApiUrl })}
+          onChange={changeApiUrl}
         />
         <SecretField
           label={t("settings.memory.hindsight.apiToken")}
@@ -824,8 +975,8 @@ function HindsightSettings({
           resetKey={resetKey}
           disabled={disabled}
           testID="omp-memory-hindsight-token"
-          onChange={(hindsightApiToken) => onChange({ ...draft, hindsightApiToken })}
-          onRemove={() => void onRemoveSecret("hindsightApiToken")}
+          onChange={changeApiToken}
+          onRemove={removeApiToken}
           removeDisabled={dirty}
         />
         <SelectField
@@ -833,7 +984,7 @@ function HindsightSettings({
           value={draft.hindsightScoping}
           selectedDisplay={selectedScoping}
           options={scopingOptions}
-          onChange={(hindsightScoping) => onChange({ ...draft, hindsightScoping })}
+          onChange={changeScoping}
           placeholder={t("settings.memory.hindsight.scoping")}
           emptyText={t("settings.memory.backend.empty")}
           disabled={disabled || environmentOverrides.has("hindsight.scoping")}
@@ -845,21 +996,21 @@ function HindsightSettings({
           resetKey={resetKey}
           disabled={disabled || environmentOverrides.has("hindsight.bankId")}
           testID="omp-memory-hindsight-bank"
-          onChange={(hindsightBankId) => onChange({ ...draft, hindsightBankId })}
+          onChange={changeBankId}
         />
         <ToggleRow
           title={t("settings.memory.hindsight.autoRecall")}
           value={draft.hindsightAutoRecall}
           disabled={disabled || environmentOverrides.has("hindsight.autoRecall")}
           testID="omp-memory-hindsight-auto-recall"
-          onChange={(hindsightAutoRecall) => onChange({ ...draft, hindsightAutoRecall })}
+          onChange={changeAutoRecall}
         />
         <ToggleRow
           title={t("settings.memory.hindsight.autoRetain")}
           value={draft.hindsightAutoRetain}
           disabled={disabled || environmentOverrides.has("hindsight.autoRetain")}
           testID="omp-memory-hindsight-auto-retain"
-          onChange={(hindsightAutoRetain) => onChange({ ...draft, hindsightAutoRetain })}
+          onChange={changeAutoRetain}
         />
         <DraftTextField
           label={t("settings.memory.hindsight.retainEvery")}
@@ -872,9 +1023,7 @@ function HindsightSettings({
           }
           error={errorFor("hindsightRetainEveryNTurns")}
           testID="omp-memory-hindsight-retain-every"
-          onChange={(hindsightRetainEveryNTurns) =>
-            onChange({ ...draft, hindsightRetainEveryNTurns })
-          }
+          onChange={changeRetainEvery}
         />
       </View>
     </SettingsSection>
@@ -907,11 +1056,12 @@ function SecretField({
   onRemove,
 }: SecretFieldProps): ReactElement {
   const { t } = useTranslation();
-  const hint = environmentControlled
-    ? t("settings.memory.hindsight.environment")
-    : configured
-      ? t("settings.memory.hindsight.configured")
-      : undefined;
+  let hint: string | undefined;
+  if (environmentControlled) {
+    hint = t("settings.memory.hindsight.environment");
+  } else if (configured) {
+    hint = t("settings.memory.hindsight.configured");
+  }
   return (
     <View style={styles.secretRow}>
       <View style={styles.secretInput}>

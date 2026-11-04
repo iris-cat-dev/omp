@@ -5,6 +5,7 @@ import {
   buildOmpMemorySettingsPatch,
   createOmpMemoryDraft,
   validateOmpMemoryDraft,
+  getOmpMnemopiBlockers,
 } from "./omp-memory-form";
 
 const SETTINGS: OmpMemorySettings = {
@@ -92,5 +93,56 @@ describe("OMP memory settings form", () => {
       hindsightApiUrl: "required",
       mnemopiEmbeddingApiUrl: "required",
     });
+  });
+
+  test("reports both core blockers until the user explicitly selects supported memory providers", () => {
+    const settings: OmpMemorySettings = { ...SETTINGS, runtime: { profile: "core" } };
+    const draft = createOmpMemoryDraft(settings);
+    draft.backend = "mnemopi";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual(["coreEmbeddings", "coreLlm"]);
+    draft.mnemopiNoEmbeddings = true;
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual(["coreLlm"]);
+    draft.mnemopiLlmMode = "none";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual([]);
+    expect(buildOmpMemorySettingsPatch(settings, draft)).toEqual({
+      backend: "mnemopi",
+      mnemopi: { noEmbeddings: true, llmMode: "none" },
+    });
+  });
+
+  test("remote memory selection requires an endpoint and model, while unknown profiles are not advertised as compatible", () => {
+    const settings: OmpMemorySettings = { ...SETTINGS, runtime: { profile: "core" } };
+    const draft = createOmpMemoryDraft(settings);
+    draft.backend = "mnemopi";
+    draft.mnemopiNoEmbeddings = true;
+    draft.mnemopiLlmMode = "remote";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual(["remoteUrl", "remoteModel"]);
+    draft.mnemopiLlmBaseUrl = "https://memory.example/v1";
+    draft.mnemopiLlmModel = "chosen-model";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual([]);
+    expect(getOmpMnemopiBlockers({ ...settings, runtime: { profile: "unknown" } }, draft)).toEqual([
+      "profileUnknown",
+    ]);
+  });
+
+  test("does not mistake an OpenRouter URL with a local embedding model for core-compatible API routing", () => {
+    const settings: OmpMemorySettings = { ...SETTINGS, runtime: { profile: "core" } };
+    const draft = createOmpMemoryDraft(settings);
+    draft.backend = "mnemopi";
+    draft.mnemopiLlmMode = "none";
+    draft.mnemopiEmbeddingApiUrl = "https://openrouter.ai/api/v1";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual(["coreEmbeddingModel"]);
+    draft.mnemopiEmbeddingModel = "openai/text-embedding-3-small";
+    expect(getOmpMnemopiBlockers(settings, draft)).toEqual([]);
+    draft.mnemopiEmbeddingModel = "";
+    expect(
+      getOmpMnemopiBlockers(
+        {
+          ...settings,
+          environmentOverrides: ["mnemopi.embeddingsViaApi"],
+        },
+        draft,
+      ),
+    ).toEqual([]);
   });
 });

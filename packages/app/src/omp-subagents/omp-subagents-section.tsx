@@ -6,10 +6,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import type { AgentModelDefinition } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentFeature,
+  AgentModelDefinition,
+  ProviderSnapshotEntry,
+} from "@omp-desktop/protocol/agent-types";
 import type { OmpSubagentSettings } from "@omp-desktop/protocol/messages";
 
 import {
@@ -68,6 +72,7 @@ interface OmpSubagentRowProps {
   models: readonly AgentModelDefinition[];
   modelOptions: SelectFieldOption<string>[];
   catalogLoading: boolean;
+  catalogRevision?: ProviderSnapshotEntry["fetchedAt"];
   disabled: boolean;
   onChange: (
     agentName: string,
@@ -76,14 +81,20 @@ interface OmpSubagentRowProps {
   ) => void;
 }
 
+type OmpSpeedFeature = Extract<AgentFeature, { type: "toggle" | "select" }>;
+
 function OmpSubagentSpeedControl({
   serverId,
   agent,
   model,
   catalogLoading,
+  catalogRevision,
   disabled,
   onChange,
-}: Pick<OmpSubagentRowProps, "serverId" | "agent" | "catalogLoading" | "disabled" | "onChange"> & {
+}: Pick<
+  OmpSubagentRowProps,
+  "serverId" | "agent" | "catalogLoading" | "catalogRevision" | "disabled" | "onChange"
+> & {
   model: AgentModelDefinition | undefined;
 }): ReactElement | null {
   const { t } = useTranslation();
@@ -91,11 +102,12 @@ function OmpSubagentSpeedControl({
   const isConnected = useHostRuntimeIsConnected(serverId);
   // Share capability probes across rows, without leaking the previous model's data.
   const featuresQuery = useFetchQuery({
-    queryKey: ["ompSubagentFeatures", serverId, model?.id ?? null],
+    queryKey: ["ompSubagentFeatures", serverId, model?.id ?? null, catalogRevision ?? null],
     dataShape: "value",
-    staleTimeMs: 5 * 60 * 1000,
+    staleTimeMs: 0,
     enabled: Boolean(client && isConnected && model),
     retry: false,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       if (!client || !model) throw new Error(t("workspace.terminal.hostDisconnected"));
       const payload = await client.listProviderFeatures({
@@ -107,13 +119,63 @@ function OmpSubagentSpeedControl({
       return payload.features ?? [];
     },
   });
-  const fastFeature = model
+  const metadataReady =
+    isConnected && featuresQuery.isSuccess && !featuresQuery.isFetching && !catalogLoading;
+  const refetchMetadata = featuresQuery.refetch;
+  const retryMetadata = useCallback(() => {
+    void refetchMetadata();
+  }, [refetchMetadata]);
+  if (!model) return null;
+  const fastFeature = metadataReady
     ? featuresQuery.data?.find(
-        (feature) =>
+        (feature): feature is OmpSpeedFeature =>
           feature.id === FAST_MODE_FEATURE_ID &&
           (feature.type === "toggle" || feature.type === "select"),
       )
     : undefined;
+  const failed = !isConnected || featuresQuery.isError;
+  if (
+    !metadataReady ||
+    !fastFeature ||
+    (agent.fastMode === "ultrafast" && fastFeature.type !== "select")
+  ) {
+    return (
+      <OmpSubagentSpeedStatus
+        agentName={agent.name}
+        metadataReady={metadataReady}
+        failed={failed}
+        error={
+          !isConnected ? t("workspace.terminal.hostDisconnected") : featuresQuery.error?.message
+        }
+        disabled={disabled || !isConnected}
+        onRetry={retryMetadata}
+      />
+    );
+  }
+  return (
+    <OmpSubagentReadySpeedControl
+      agent={agent}
+      fastFeature={fastFeature}
+      metadataReady={metadataReady}
+      catalogLoading={catalogLoading}
+      disabled={disabled}
+      onChange={onChange}
+    />
+  );
+}
+
+function OmpSubagentReadySpeedControl({
+  agent,
+  fastFeature,
+  metadataReady,
+  catalogLoading,
+  disabled,
+  onChange,
+}: Pick<OmpSubagentRowProps, "agent" | "catalogLoading" | "disabled" | "onChange"> & {
+  fastFeature: OmpSpeedFeature;
+  metadataReady: boolean;
+}): ReactElement | null {
+  const { t } = useTranslation();
   let speedValue = agent.serviceTier ?? DEFAULT_SPEED;
   if (agent.fastMode === "ultrafast") speedValue = "ultrafast";
   else if (agent.fastMode === true) speedValue = "on";
@@ -147,19 +209,20 @@ function OmpSubagentSpeedControl({
   );
   const handleFastChange = useCallback(
     (fastMode: boolean) => {
-      if (agent.model) onChange(agent.name, agent.model, { fastMode });
+      if (metadataReady && agent.model) onChange(agent.name, agent.model, { fastMode });
     },
-    [agent.model, agent.name, onChange],
+    [metadataReady, agent.model, agent.name, onChange],
   );
   const handleSpeedChange = useCallback(
     (next: string) => {
-      if (!agent.model || !speedOptions.some((option) => option.value === next)) return;
+      if (!metadataReady || !agent.model || !speedOptions.some((option) => option.value === next))
+        return;
       let fastMode: boolean | "ultrafast" | null = next === "on";
       if (next === DEFAULT_SPEED) fastMode = null;
       else if (next === "ultrafast") fastMode = "ultrafast";
       onChange(agent.name, agent.model, { fastMode });
     },
-    [agent.model, agent.name, onChange, speedOptions],
+    [metadataReady, agent.model, agent.name, onChange, speedOptions],
   );
   const fastState = useMemo(() => {
     if (agent.fastMode === "ultrafast") {
@@ -225,12 +288,56 @@ function OmpSubagentSpeedControl({
   );
 }
 
+function OmpSubagentSpeedStatus({
+  agentName,
+  metadataReady,
+  failed,
+  error,
+  disabled,
+  onRetry,
+}: {
+  agentName: string;
+  metadataReady: boolean;
+  failed: boolean;
+  error: string | undefined;
+  disabled: boolean;
+  onRetry: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  let statusKey = "agentControls.features.fast.unsupported";
+  if (failed) statusKey = "agentControls.features.fast.detectionFailed";
+  else if (!metadataReady) statusKey = "agentControls.features.fast.detecting";
+  return (
+    <View style={styles.fastMeta} testID={`omp-subagent-speed-status-${agentName}`}>
+      <Text style={styles.controlLabel}>{t("agentControls.features.fast.title")}</Text>
+      <Text style={styles.mutedText}>{t(statusKey)}</Text>
+      {failed ? (
+        <>
+          <Text style={styles.mutedText}>{error}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("agentControls.features.fast.retryDetection")}
+            disabled={disabled}
+            onPress={onRetry}
+            testID={`omp-subagent-speed-retry-${agentName}`}
+          >
+            <Text style={styles.controlLabel}>
+              {t("agentControls.features.fast.retryDetection")}
+            </Text>
+          </Pressable>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function OmpSubagentRow({
   serverId,
   agent,
   models,
   modelOptions,
   catalogLoading,
+  catalogRevision,
   disabled,
   onChange,
 }: OmpSubagentRowProps): ReactElement {
@@ -349,6 +456,7 @@ function OmpSubagentRow({
           agent={agent}
           model={model}
           catalogLoading={catalogLoading}
+          catalogRevision={catalogRevision}
           disabled={disabled}
           onChange={onChange}
         />
@@ -362,6 +470,7 @@ export function OmpSubagentsSection({ serverId }: { serverId: string }): ReactEl
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { entries, isLoading: catalogLoading } = useProvidersSnapshot(serverId);
+  const catalogRevision = entries?.find((entry) => entry.provider === "omp")?.fetchedAt;
   const isSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.ompSubagentSettings === true,
   );
@@ -517,6 +626,7 @@ export function OmpSubagentsSection({ serverId }: { serverId: string }): ReactEl
             models={models}
             modelOptions={modelOptions}
             catalogLoading={catalogLoading}
+            catalogRevision={catalogRevision}
             disabled={!settings.enabled || savingEnabled || savingAgent !== null}
             onChange={updateModel}
           />

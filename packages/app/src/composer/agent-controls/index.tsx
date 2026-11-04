@@ -154,6 +154,9 @@ interface ControlledAgentControlsProps {
   modelSelectorProviders?: ProviderSelectorProvider[];
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
+  featureMetadataStatus?: "loading" | "error" | "ready";
+  featureMetadataError?: string;
+  onRetryFeatureMetadata?: () => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -183,6 +186,8 @@ export interface DraftAgentControlsProps {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   featureMetadataError?: string;
+  featureMetadataStatus?: "loading" | "error" | "ready";
+  onRetryFeatureMetadata?: () => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -488,6 +493,9 @@ function ControlledAgentControls({
   modelSelectorProviders,
   features,
   onSetFeature,
+  featureMetadataStatus,
+  featureMetadataError,
+  onRetryFeatureMetadata,
   onDropdownClose,
   onModelSelectorOpen,
   onRetryModelProvider,
@@ -722,6 +730,7 @@ function ControlledAgentControls({
     [onSelectModel, onSelectProvider, onSelectProviderAndModel, provider],
   );
   const hasModelSettings =
+    featureMetadataStatus !== undefined ||
     canSelectThinking ||
     partitionedFeatures.fastMode !== null ||
     normalizedSelectedModelId.length > 0;
@@ -733,6 +742,9 @@ function ControlledAgentControls({
       selectedThinkingOptionId={selectedThinkingOptionId}
       onSelectThinkingOption={onSelectThinkingOption}
       fastMode={partitionedFeatures.fastMode}
+      featureMetadataStatus={featureMetadataStatus}
+      featureMetadataError={featureMetadataError}
+      onRetryFeatureMetadata={onRetryFeatureMetadata}
       onSetFeature={onSetFeature}
       contextControl={
         <ModelContextWindowControl
@@ -754,6 +766,9 @@ function ControlledAgentControls({
       selectedThinkingOptionId={selectedThinkingOptionId}
       onSelectThinkingOption={onSelectThinkingOption}
       fastMode={partitionedFeatures.fastMode}
+      featureMetadataStatus={featureMetadataStatus}
+      featureMetadataError={featureMetadataError}
+      onRetryFeatureMetadata={onRetryFeatureMetadata}
       onSetFeature={onSetFeature}
       contextControl={
         <ModelContextWindowControl
@@ -1876,6 +1891,7 @@ export const AgentControls = memo(function AgentControls({
   if (!agent) {
     return null;
   }
+  const featureMetadataStatus = agent.features === undefined ? "loading" : "ready";
 
   return (
     <>
@@ -1890,6 +1906,7 @@ export const AgentControls = memo(function AgentControls({
         selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
         onSelectThinkingOption={handleSelectThinkingOption}
         features={agent.features}
+        featureMetadataStatus={agent.provider === "omp" ? featureMetadataStatus : undefined}
         onSetFeature={handleSetFeature}
         isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
         onModelSelectorOpen={handleModelSelectorOpen}
@@ -1925,6 +1942,8 @@ export function DraftAgentControls({
   onSelectThinkingOption,
   features,
   featureMetadataError,
+  featureMetadataStatus,
+  onRetryFeatureMetadata,
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
@@ -2024,6 +2043,10 @@ export function DraftAgentControls({
     enabled: isActiveComposer && !disabled,
     controls: activeControlSource,
   });
+  const handleDraftModelSelectorOpen = useCallback(() => {
+    onModelSelectorOpen?.();
+    onRetryFeatureMetadata?.();
+  }, [onModelSelectorOpen, onRetryFeatureMetadata]);
   return (
     <>
       <ControlledAgentControls
@@ -2038,9 +2061,12 @@ export function DraftAgentControls({
         selectedThinkingOptionId={effectiveSelectedThinkingOption}
         onSelectThinkingOption={onSelectThinkingOption}
         features={features}
+        featureMetadataStatus={selectedProvider === "omp" ? featureMetadataStatus : undefined}
+        featureMetadataError={featureMetadataError}
+        onRetryFeatureMetadata={onRetryFeatureMetadata}
         onSetFeature={onSetFeature}
         onDropdownClose={onDropdownClose}
-        onModelSelectorOpen={onModelSelectorOpen}
+        onModelSelectorOpen={handleDraftModelSelectorOpen}
         onRetryModelProvider={onRetryModelProvider}
         isRetryingModelProvider={isRetryingModelProvider}
         disabled={disabled}
@@ -2052,7 +2078,10 @@ export function DraftAgentControls({
       {featureMetadataError ? (
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
           <TooltipTrigger asChild>
-            <View accessibilityLabel={featureMetadataError} testID="draft-feature-metadata-unavailable">
+            <View
+              accessibilityLabel={featureMetadataError}
+              testID="draft-feature-metadata-unavailable"
+            >
               <Text style={styles.modeBadgeText}>
                 {t("agentControls.features.title")}: {t("providerSelection.unavailable")}
               </Text>

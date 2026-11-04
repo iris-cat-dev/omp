@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AgentProvider, AgentSessionConfig } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentFeature,
+  AgentProvider,
+  AgentSessionConfig,
+} from "@omp-desktop/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {
@@ -16,11 +20,22 @@ import {
   resolveFeatureValues,
 } from "./feature-preferences";
 import type { SupportedLocale } from "@/i18n/locales";
+import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
 
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
-  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues"
 >;
+
+export interface DraftAgentFeaturesResult {
+  features: AgentFeature[];
+  featureValues: Record<string, unknown> | undefined;
+  isLoading: boolean;
+  metadataError: string | undefined;
+  metadataStatus: "loading" | "error" | "ready";
+  retryMetadata: () => void;
+  setFeatureValue: (featureId: string, value: unknown) => void;
+}
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
@@ -31,7 +46,7 @@ export function useDraftAgentFeatures(input: {
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
   persistPreferences?: boolean;
-}) {
+}): DraftAgentFeaturesResult {
   const { t, i18n } = useTranslation();
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
     input;
@@ -41,6 +56,25 @@ export function useDraftAgentFeatures(input: {
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
+  const queryClient = useQueryClient();
+  const catalogKey = useMemo(() => providersSnapshotQueryKey(serverId ?? null), [serverId]);
+  const subscribeCatalog = useCallback(
+    (onChange: () => void) =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (event.query.queryKey[0] === catalogKey[0] && event.query.queryKey[1] === catalogKey[1])
+          onChange();
+      }),
+    [catalogKey, queryClient],
+  );
+  const readCatalogRevision = useCallback(
+    () => queryClient.getQueryState(catalogKey)?.dataUpdateCount ?? 0,
+    [catalogKey, queryClient],
+  );
+  const catalogRevision = useSyncExternalStore(
+    subscribeCatalog,
+    readCatalogRevision,
+    readCatalogRevision,
+  );
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
   const previousProviderRef = useRef<AgentProvider | null>(normalizedProvider);
@@ -48,6 +82,10 @@ export function useDraftAgentFeatures(input: {
     () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
     [preferences.providerPreferences, provider],
   );
+  const account =
+    localFeatureValues.oauth_account_credential ??
+    persistedFeatureValues.oauth_account_credential ??
+    "automatic";
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
     if (!normalizedProvider || !normalizedCwd) {
@@ -60,8 +98,9 @@ export function useDraftAgentFeatures(input: {
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
+      featureValues: { oauth_account_credential: account },
     };
-  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
+  }, [account, modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
 
   const featuresQuery = useQuery({
     queryKey: [
@@ -72,11 +111,15 @@ export function useDraftAgentFeatures(input: {
       modeId ?? null,
       modelId ?? null,
       thinkingOptionId ?? null,
+      account,
+      catalogRevision,
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
-    staleTime: 5 * 60 * 1000,
+    // Reconfirm the server's runtime/profile/account/config fingerprint on each
+    // consumer mount. Only the backend can safely reuse native evidence.
+    staleTime: 0,
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -103,8 +146,17 @@ export function useDraftAgentFeatures(input: {
   );
 
   const features = useMemo(() => {
-    return applyFeatureValues(availableFeatures, featureValues);
-  }, [availableFeatures, featureValues]);
+    const applied = applyFeatureValues(availableFeatures, featureValues);
+    return isConnected && featuresQuery.isSuccess && !featuresQuery.isFetching
+      ? applied
+      : applied.filter((feature) => feature.id !== "fast_mode");
+  }, [
+    availableFeatures,
+    featureValues,
+    isConnected,
+    featuresQuery.isFetching,
+    featuresQuery.isSuccess,
+  ]);
 
   useEffect(() => {
     const previousProvider = previousProviderRef.current;
@@ -118,14 +170,24 @@ export function useDraftAgentFeatures(input: {
   }, [normalizedProvider]);
 
   useEffect(() => {
-    if (availableFeaturesRaw === undefined) {
+    if (
+      availableFeaturesRaw === undefined ||
+      !featuresQuery.isSuccess ||
+      featuresQuery.isFetching
+    ) {
       return;
     }
     const next = pruneFeatureValues(localFeatureValues, availableFeatures);
     if (next !== localFeatureValues) {
       setLocalFeatureValues(next);
     }
-  }, [availableFeatures, availableFeaturesRaw, localFeatureValues]);
+  }, [
+    availableFeatures,
+    availableFeaturesRaw,
+    localFeatureValues,
+    featuresQuery.isSuccess,
+    featuresQuery.isFetching,
+  ]);
 
   const localizedFeatureValues = useMemo(
     () =>
@@ -141,6 +203,14 @@ export function useDraftAgentFeatures(input: {
     Object.keys(localizedFeatureValues).length > 0 ? localizedFeatureValues : undefined;
   const setFeatureValue = useCallback(
     (featureId: string, value: unknown) => {
+      if (
+        featureId === "fast_mode" &&
+        (!isConnected ||
+          !featuresQuery.isSuccess ||
+          featuresQuery.isFetching ||
+          !features.some((feature) => feature.id === "fast_mode"))
+      )
+        return;
       setLocalFeatureValues((current) => {
         if (Object.is(current[featureId], value)) {
           return current;
@@ -169,14 +239,36 @@ export function useDraftAgentFeatures(input: {
         console.warn("[useDraftAgentFeatures] persist feature preference failed", error);
       });
     },
-    [provider, updatePreferences, input.persistPreferences],
+    [
+      provider,
+      updatePreferences,
+      input.persistPreferences,
+      features,
+      isConnected,
+      featuresQuery.isFetching,
+      featuresQuery.isSuccess,
+    ],
   );
+  const refetchMetadata = featuresQuery.refetch;
+  const retryMetadata = useCallback(() => {
+    void refetchMetadata();
+  }, [refetchMetadata]);
+  const metadataStatus = useMemo<DraftAgentFeaturesResult["metadataStatus"]>(() => {
+    if (!isConnected) return "error";
+    if (featuresQuery.isFetching || featuresQuery.isPending) return "loading";
+    if (featuresQuery.isError) return "error";
+    return "ready";
+  }, [isConnected, featuresQuery.isFetching, featuresQuery.isPending, featuresQuery.isError]);
 
   return {
     features,
     featureValues: effectiveFeatureValues,
     isLoading: featuresQuery.isLoading,
-    metadataError: featuresQuery.error?.message,
+    metadataError: !isConnected
+      ? t("workspace.terminal.hostDisconnected")
+      : featuresQuery.error?.message,
+    metadataStatus,
+    retryMetadata,
     setFeatureValue,
   };
 }

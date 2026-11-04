@@ -19,7 +19,12 @@ export const zhCN: TranslationResources = {
     owner: "会话 {{session}} · Agent {{agent}}",
     refresh: "刷新资源",
     releaseFailed: "资源未确认释放。",
-    kinds: { python_kernel: "Python 内核", javascript_kernel: "JavaScript 内核", shell: "Shell", helper: "Eval 辅助任务" },
+    kinds: {
+      python_kernel: "Python 内核",
+      javascript_kernel: "JavaScript 内核",
+      shell: "Shell",
+      helper: "Eval 辅助任务",
+    },
     reasons: {
       kernel_variables: "保留内核变量（无法从历史恢复）",
       shell_variables: "保留 Shell 变量和函数",
@@ -37,7 +42,8 @@ export const zhCN: TranslationResources = {
     historyOnly: "仅历史 · 宿主不可恢复",
     unloading: "正在卸载宿主",
     historyHint: "浏览历史不会启动宿主；发送消息时恢复会话。",
-    idleHint: "无依赖且可恢复的宿主闲置 5 分钟后卸载，每 30 秒复查保留依赖。隐藏面板不会停止运行工作。",
+    idleHint:
+      "无依赖且可恢复的宿主闲置 5 分钟后卸载，每 30 秒复查保留依赖。隐藏面板不会停止运行工作。",
     keep: "显式保留宿主",
     stopKeeping: "取消显式保留",
     unload: "安全卸载宿主",
@@ -336,6 +342,10 @@ export const zhCN: TranslationResources = {
         ultrafastDescription:
           "极速 (Ultrafast) 的套餐内额度消耗速率为标准模式的 8 倍，购买额度的消耗速率为 6 倍。需账号和模型支持，实际速度因情况而异。",
         selectWithValue: "选择速度，当前：{{value}}",
+        detecting: "正在检测可用速度…",
+        detectionFailed: "速度能力检测失败",
+        unsupported: "不支持速度选择",
+        retryDetection: "重新检测速度能力",
       },
       workflow: {
         title: "工作流",

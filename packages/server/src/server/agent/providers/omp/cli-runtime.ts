@@ -10,7 +10,10 @@ import {
   type BackgroundProcess,
   type BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
-import { RuntimeResourceSchema, type RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import {
+  RuntimeResourceSchema,
+  type RuntimeResource,
+} from "@omp-desktop/protocol/runtime-resources";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -27,6 +30,7 @@ import {
   type OmpRuntime,
   type OmpRuntimeLaunch,
   type OmpRuntimeSession,
+  type OmpRuntimeRetirement,
   type OmpStartSessionInput,
 } from "./runtime.js";
 import { resolveOmpBuiltinToolArgsForLaunch } from "./provider-config.js";
@@ -190,6 +194,7 @@ export class OmpCliRuntime implements OmpRuntime {
   private async applyBuiltInToolPolicy(
     launch: OmpRuntimeLaunch,
     command: ReturnType<typeof resolveOmpRuntimeCommand>,
+    onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void,
   ): Promise<void> {
     const disabledBuiltInTools = this.options.disabledBuiltInTools;
     if (!disabledBuiltInTools?.length) return;
@@ -206,7 +211,11 @@ export class OmpCliRuntime implements OmpRuntime {
     });
     if (policyArgs[0] === "--tools") {
       // Validate the actual registry: equal versions can expose different tools.
-      const available = await inspectOmpActiveTools(launch, this.options.logger);
+      const available = await inspectOmpActiveTools(
+        launch,
+        this.options.logger,
+        onRetirementCreated,
+      );
       if (!disabledBuiltInTools.some((name) => available.has(name))) {
         policyArgs = [];
       } else {
@@ -255,6 +264,8 @@ export class OmpCliRuntime implements OmpRuntime {
   }
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+    input.signal?.throwIfAborted();
+    const preparationStartedAt = performance.now();
     const launch = buildOmpLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
@@ -293,18 +304,23 @@ export class OmpCliRuntime implements OmpRuntime {
       launch.env = { ...launch.env, [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token };
     }
     try {
-      if (!input.localModelGateway) await this.applyBuiltInToolPolicy(launch, effectiveCommand);
+      if (!input.localModelGateway)
+        await this.applyBuiltInToolPolicy(launch, effectiveCommand, input.onRetirementCreated);
       if (input.protocolMode === "rpc-ui") {
         launch.argv.push("--extension", resolveOmpBackgroundJobsExtensionPath());
       }
       if (imageLaunch) launch.argv.push("--extension", resolveOmpImageSettingsExtensionPath());
       const imageToolAllowed = imageToolAllowedByArguments(launch.argv);
+      input.signal?.throwIfAborted();
+      input.onActivity?.("prepareMs", performance.now() - preparationStartedAt);
+      const startStartedAt = performance.now();
       const session = await startOmpRpcSession({
         launch,
         logger: this.options.logger,
         commandsRpcName: this.commandsRpcName,
         spawnProcess: this.spawnProcess,
         signal: input.signal,
+        onRetirementCreated: input.onRetirementCreated,
         getImageGenerationConfig: input.getImageGenerationConfig,
         imageSettingsToken: imageLaunch?.token,
         imageToolAllowed,
@@ -313,6 +329,7 @@ export class OmpCliRuntime implements OmpRuntime {
         serviceTierToken,
         cleanup: imageLaunch?.cleanup,
       });
+      input.onActivity?.("startMs", performance.now() - startStartedAt);
       const proxyPolicy = input.proxyPolicy ?? this.options.runtimeSettings?.proxyPolicy;
       if (proxyPolicy) {
         try {
@@ -374,6 +391,7 @@ export interface OmpRpcSessionOptions {
   commandsRpcName?: "get_available_commands";
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
   signal?: AbortSignal;
+  onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void;
   getImageGenerationConfig?: OmpImageSettingsGetter;
   imageSettingsToken?: string;
   imageToolAllowed?: boolean;
@@ -416,6 +434,7 @@ export async function startOmpRpcSession(
   const abort = () => void process.close(options.signal?.reason).catch(() => undefined);
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
+    options.onRetirementCreated?.(session);
     await negotiateOmpProtocolV2(process, logger);
     options.signal?.throwIfAborted();
     await session.refreshImageSettings();
@@ -486,6 +505,7 @@ function waitForOmpReadyFrame(process: JsonlRpcProcess): Promise<Record<string, 
 async function inspectOmpActiveTools(
   launch: OmpRuntimeLaunch,
   logger: Logger,
+  onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void,
 ): Promise<Set<string>> {
   const probeArgv = [...launch.argv];
   const sessionIndex = probeArgv.indexOf("--session");
@@ -498,6 +518,7 @@ async function inspectOmpActiveTools(
     diagnosticName: "OMP tool inventory",
   });
   try {
+    onRetirementCreated?.(process);
     const response = await process.request({ type: "get_state" }, OMP_READY_TIMEOUT_MS);
     const inventory = OmpToolInventorySchema.safeParse(response);
     if (!inventory.success) {

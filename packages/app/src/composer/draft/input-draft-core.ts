@@ -24,6 +24,8 @@ export function buildDraftAgentControls(input: {
   onSetFeature?: DraftAgentControlsProps["onSetFeature"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
   featureMetadataError?: string;
+  featureMetadataStatus?: DraftAgentControlsProps["featureMetadataStatus"];
+  onRetryFeatureMetadata?: DraftAgentControlsProps["onRetryFeatureMetadata"];
 }): DraftAgentControlsProps {
   const { formState, features, onSetFeature, onDropdownClose } = input;
   return {
@@ -45,6 +47,8 @@ export function buildDraftAgentControls(input: {
     features,
     onSetFeature,
     featureMetadataError: input.featureMetadataError,
+    featureMetadataStatus: input.featureMetadataStatus,
+    onRetryFeatureMetadata: input.onRetryFeatureMetadata,
     onDropdownClose,
     onModelSelectorOpen: formState.refetchProviderModelsIfStale,
     onRetryModelProvider: formState.refreshProviderModels,

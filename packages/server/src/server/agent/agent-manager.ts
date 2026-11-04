@@ -150,7 +150,9 @@ class AgentRunAdmissionCancelledError extends Error {
 
 export class AgentRuntimeRetainedError extends Error {
   constructor(public readonly retention: AgentRuntimeRetention) {
-    super(`Runtime cannot be unloaded: ${retention.reasons.map((reason) => reason.detail ?? reason.code).join(", ")}`);
+    super(
+      `Runtime cannot be unloaded: ${retention.reasons.map((reason) => reason.detail ?? reason.code).join(", ")}`,
+    );
     this.name = "AgentRuntimeRetainedError";
   }
 }
@@ -1028,7 +1030,7 @@ export class AgentManager {
   listAgents(options: { includeInternal?: boolean } = {}): ManagedAgent[] {
     return Array.from(this.agents.values())
       .filter((agent) => options.includeInternal === true || !agent.internal)
-      .map((agent) => ({ ...agent, runtimeRetention: this.buildRuntimeRetention(agent) }));
+      .map((agent) => this.copyAgentWithRuntimeRetention(agent));
   }
 
   async listImportableSessions(
@@ -1131,8 +1133,10 @@ export class AgentManager {
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    const stored = await this.findStoredInspection(normalizedConfig, "features");
-    if (stored?.features) return stored.features;
+    if (normalizedConfig.provider !== "omp") {
+      const stored = await this.findStoredInspection(normalizedConfig, "features");
+      if (stored?.features) return stored.features;
+    }
     if (client.listFeatures) return client.listFeatures(normalizedConfig);
     throw new Error(
       `Feature metadata is unavailable for ${normalizedConfig.provider}. Start or resume a session explicitly to refresh capabilities.`,
@@ -1147,28 +1151,44 @@ export class AgentManager {
     let latest: StoredAgentRecord | null = null;
     for (const record of await this.registry.list()) {
       if (
-        record.internal ||
-        record.provider !== config.provider ||
-        record.cwd !== config.cwd ||
-        (record.config?.model ?? null) !== (config.model ?? null) ||
-        (record.config?.modeId ?? record.lastModeId ?? null) !== (config.modeId ?? null) ||
-        (record.config?.thinkingOptionId ?? null) !== (config.thinkingOptionId ?? null) ||
-        (kind === "features" && config.featureValues !== undefined &&
+        !this.matchesStoredInspectionConfig(record, config) ||
+        (kind === "features" &&
+          config.featureValues !== undefined &&
           !equal(record.config?.featureValues ?? {}, config.featureValues))
-      ) continue;
-      const available = kind === "features"
-        ? record.features !== undefined
-        : ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
-            record.persistence?.metadata?.commands,
-          ).success;
+      )
+        continue;
+      const available =
+        kind === "features"
+          ? record.features !== undefined
+          : ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
+              record.persistence?.metadata?.commands,
+            ).success;
       if (available && (!latest || record.updatedAt > latest.updatedAt)) latest = record;
     }
     return latest;
   }
 
+  private matchesStoredInspectionConfig(
+    record: StoredAgentRecord,
+    config: AgentSessionConfig,
+  ): boolean {
+    return !(
+      record.internal ||
+      record.provider !== config.provider ||
+      record.cwd !== config.cwd ||
+      (record.config?.model ?? null) !== (config.model ?? null) ||
+      (record.config?.modeId ?? record.lastModeId ?? null) !== (config.modeId ?? null) ||
+      (record.config?.thinkingOptionId ?? null) !== (config.thinkingOptionId ?? null)
+    );
+  }
+
+  private copyAgentWithRuntimeRetention(agent: ManagedAgent): ManagedAgent {
+    return { ...agent, runtimeRetention: this.buildRuntimeRetention(agent) };
+  }
+
   getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
-    return agent ? { ...agent, runtimeRetention: this.buildRuntimeRetention(agent) } : null;
+    return agent ? this.copyAgentWithRuntimeRetention(agent) : null;
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
@@ -1858,8 +1878,8 @@ export class AgentManager {
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) !== close) return;
       this.inFlightAgentCloses.delete(agentId);
-      const current = this.agents.get(agentId);
-      if (current) this.emitState(current, { persist: false });
+      const remainingAgent = this.agents.get(agentId);
+      if (remainingAgent) this.emitState(remainingAgent, { persist: false });
     };
     void close.then(clearClose, clearClose);
     return close;
@@ -1891,11 +1911,7 @@ export class AgentManager {
     );
     const cancelUnloads: Array<() => void> = [];
     try {
-      for (const candidate of this.agents.values()) {
-        if (!candidate.session || !this.isAgentInRunTree(candidate.id, agentId)) continue;
-        const cancelUnload = candidate.session.beginRuntimeUnload?.();
-        if (cancelUnload) cancelUnloads.push(cancelUnload);
-      }
+      this.beginRunTreeRuntimeUnload(agentId, cancelUnloads);
       if (mode !== "close") {
         await this.readRuntimeInventory(agent);
         await this.drainSessionEvents(agentId);
@@ -1903,11 +1919,7 @@ export class AgentManager {
         // authoritative inventories while provider and manager admission are fenced.
         await this.readRuntimeInventory(agent);
         const retention = this.buildRuntimeRetention(agent, agentId);
-        if (
-          this.agents.get(agentId) !== agent ||
-          !retention.canUnload ||
-          (mode === "idle" && Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs)
-        ) {
+        if (this.isRuntimeUnloadRetained(agent, retention, mode)) {
           throw new AgentRuntimeRetainedError(retention);
         }
       } else {
@@ -1944,6 +1956,26 @@ export class AgentManager {
     } finally {
       for (let index = cancelUnloads.length - 1; index >= 0; index--) cancelUnloads[index]!();
     }
+  }
+
+  private beginRunTreeRuntimeUnload(agentId: string, cancelUnloads: Array<() => void>): void {
+    for (const candidate of this.agents.values()) {
+      if (!candidate.session || !this.isAgentInRunTree(candidate.id, agentId)) continue;
+      const cancelUnload = candidate.session.beginRuntimeUnload?.();
+      if (cancelUnload) cancelUnloads.push(cancelUnload);
+    }
+  }
+
+  private isRuntimeUnloadRetained(
+    agent: ManagedAgent,
+    retention: AgentRuntimeRetention,
+    mode: "unload" | "idle",
+  ): boolean {
+    return (
+      this.agents.get(agent.id) !== agent ||
+      !retention.canUnload ||
+      (mode === "idle" && Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs)
+    );
   }
 
   private clearIdleRuntimeTimer(agentId: string): void {
@@ -2000,47 +2032,68 @@ export class AgentManager {
     const reasons: AgentRuntimeRetention["reasons"] = [];
     for (const candidate of this.agents.values()) {
       if (!this.isAgentInRunTree(candidate.id, agent.id)) continue;
-      const detail = candidate.id === agent.id ? undefined : `Agent ${candidate.id}`;
-      if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
-      if (
-        candidate.lifecycle === "running" ||
-        this.hasInFlightRun(candidate.id) ||
-        candidate.activeTurnId ||
-        this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
-      ) reasons.push({ code: "running", detail });
-      if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
-        reasons.push({ code: "permission", detail });
-      }
-      if (
-        candidate.pendingReplacement ||
-        this.stoppingAgentIds.has(candidate.id) ||
-        this.recoveryBlockedAgentIds.has(candidate.id) ||
-        this.foregroundMutationTails.has(candidate.id) ||
-        this.lifecycleMutationTails.has(candidate.id) ||
-        this.sessionEventTails.has(candidate.id) ||
-        this.durableTimelineWrites.has(candidate.id) ||
-        candidate.session?.hasBackgroundOwnershipTransition?.() ||
-        (candidate.id !== ignoredCloseId && this.inFlightAgentCloses.has(candidate.id))
-      ) reasons.push({ code: "submission", detail });
-      if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
-        reasons.push({ code: "user_keep", detail });
-      }
-      const inventory = this.runtimeInventoryReasons.get(candidate.id);
-      if (inventory) reasons.push(...inventory);
-      else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
+      this.appendRuntimeRetentionReasons(candidate, agent.id, ignoredCloseId, reasons);
     }
     if (!recoverable) reasons.push({ code: "unrecoverable" });
     return {
-      state: this.inFlightAgentCloses.has(agent.id) && agent.id !== ignoredCloseId
-        ? "unloading"
-        : "resident",
+      state:
+        this.inFlightAgentCloses.has(agent.id) && agent.id !== ignoredCloseId
+          ? "unloading"
+          : "resident",
       reasons,
       canUnload: reasons.length === 0,
       recoverable,
-      idleSince: agent.lifecycle === "idle" || agent.lifecycle === "error"
-        ? agent.updatedAt.toISOString()
-        : null,
+      idleSince:
+        agent.lifecycle === "idle" || agent.lifecycle === "error"
+          ? agent.updatedAt.toISOString()
+          : null,
     };
+  }
+
+  private appendRuntimeRetentionReasons(
+    candidate: ManagedAgent,
+    rootAgentId: string,
+    ignoredCloseId: string | undefined,
+    reasons: AgentRuntimeRetention["reasons"],
+  ): void {
+    const detail = candidate.id === rootAgentId ? undefined : `Agent ${candidate.id}`;
+    if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
+    if (
+      candidate.lifecycle === "running" ||
+      this.hasInFlightRun(candidate.id) ||
+      candidate.activeTurnId ||
+      this.providerSubagents.list(candidate.id).some((child) => child.status === "running")
+    )
+      reasons.push({ code: "running", detail });
+    if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
+      reasons.push({ code: "permission", detail });
+    }
+    if (this.hasPendingRuntimeSubmission(candidate, ignoredCloseId)) {
+      reasons.push({ code: "submission", detail });
+    }
+    if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
+      reasons.push({ code: "user_keep", detail });
+    }
+    const inventory = this.runtimeInventoryReasons.get(candidate.id);
+    if (inventory) reasons.push(...inventory);
+    else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
+  }
+
+  private hasPendingRuntimeSubmission(
+    candidate: ManagedAgent,
+    ignoredCloseId: string | undefined,
+  ): boolean {
+    return Boolean(
+      candidate.pendingReplacement ||
+      this.stoppingAgentIds.has(candidate.id) ||
+      this.recoveryBlockedAgentIds.has(candidate.id) ||
+      this.foregroundMutationTails.has(candidate.id) ||
+      this.lifecycleMutationTails.has(candidate.id) ||
+      this.sessionEventTails.has(candidate.id) ||
+      this.durableTimelineWrites.has(candidate.id) ||
+      candidate.session?.hasBackgroundOwnershipTransition?.() ||
+      (candidate.id !== ignoredCloseId && this.inFlightAgentCloses.has(candidate.id)),
+    );
   }
 
   private async readRuntimeInventory(agent: LiveManagedAgent): Promise<void> {
@@ -2063,7 +2116,9 @@ export class AgentManager {
         }
         this.runtimeInventoryReasons.set(candidate.id, reasons);
       } catch (error) {
-        this.runtimeInventoryReasons.set(candidate.id, [{ code: "checking", detail: "Runtime inventory unavailable" }]);
+        this.runtimeInventoryReasons.set(candidate.id, [
+          { code: "checking", detail: "Runtime inventory unavailable" },
+        ]);
         throw error;
       }
     }
@@ -2071,15 +2126,23 @@ export class AgentManager {
 
   private refreshRuntimeRetention(agent: ManagedAgent): void {
     agent.runtimeRetention = this.buildRuntimeRetention(agent);
-    if (!agent.session || this.inFlightAgentCloses.has(agent.id) || this.runtimeInventoryRefreshes.has(agent.id)) return;
+    if (
+      !agent.session ||
+      this.inFlightAgentCloses.has(agent.id) ||
+      this.runtimeInventoryRefreshes.has(agent.id)
+    )
+      return;
     const refresh = this.readRuntimeInventory(agent)
-      .catch((err) => this.logger.debug({ err, agentId: agent.id }, "Runtime inventory refresh failed"))
+      .catch((err) =>
+        this.logger.debug({ err, agentId: agent.id }, "Runtime inventory refresh failed"),
+      )
       .then(() => {
-        if (this.agents.get(agent.id) !== agent) return;
+        if (this.agents.get(agent.id) !== agent) return undefined;
         const retention = this.buildRuntimeRetention(agent);
-        if (JSON.stringify(retention) === JSON.stringify(agent.runtimeRetention)) return;
+        if (JSON.stringify(retention) === JSON.stringify(agent.runtimeRetention)) return undefined;
         agent.runtimeRetention = retention;
         this.dispatch({ type: "agent_state", agent: { ...agent } });
+        return undefined;
       })
       .finally(() => {
         if (this.runtimeInventoryRefreshes.get(agent.id) === refresh) {
@@ -2093,10 +2156,12 @@ export class AgentManager {
   private async retireIdleRuntime(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
     if (
-      !agent || !this.acceptingAgentRegistrations ||
+      !agent ||
+      !this.acceptingAgentRegistrations ||
       Date.now() - agent.updatedAt.getTime() < this.idleRuntimeTimeoutMs ||
       this.inFlightAgentCloses.has(agentId)
-    ) return;
+    )
+      return;
     const retention = this.buildRuntimeRetention(agent);
     if (retention.reasons.some((reason) => reason.code !== "checking")) {
       this.refreshRuntimeRetention(agent);
@@ -2689,14 +2754,18 @@ export class AgentManager {
     mutation: () => Promise<T>,
     allowClosing = false,
   ): Promise<T> {
-    if (!allowClosing && this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
+    if (!allowClosing && this.inFlightAgentCloses.has(agentId))
+      throw new Error(`Agent ${agentId} is unloading`);
     // Parent cascade classifies a child inside the same lane used by open-tab
     // label writes, so a received ownership update cannot be overtaken.
     const previous = this.lifecycleMutationTails.get(agentId) ?? Promise.resolve();
-    const result = previous.catch(() => undefined).then(() => {
-      if (!allowClosing && this.inFlightAgentCloses.has(agentId)) throw new Error(`Agent ${agentId} is unloading`);
-      return mutation();
-    });
+    const result = previous
+      .catch(() => undefined)
+      .then(() => {
+        if (!allowClosing && this.inFlightAgentCloses.has(agentId))
+          throw new Error(`Agent ${agentId} is unloading`);
+        return mutation();
+      });
     const tail = result.then(
       () => undefined,
       () => undefined,
@@ -3510,55 +3579,61 @@ export class AgentManager {
       const batches = await Promise.allSettled(
         candidates.map((snapshot) => {
           const expectedParentId = getParentAgentIdFromLabels(snapshot.labels);
-          return this.runLifecycleMutation(snapshot.id, async () => {
-            const agent = this.agents.get(snapshot.id);
-            if (
-              !agent?.session ||
-              getParentAgentIdFromLabels(agent.labels) !== expectedParentId ||
-              !this.isAgentInRunTree(agent.id, rootAgentId)
-            ) {
-              return { completion: Promise.resolve([]) };
-            }
-            await this.drainSessionEvents(agent.id);
-            const run =
-              this.runs.getRun(agent.id) ??
-              (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agent.id, null) : null);
-            const attempted = attemptedAgents.get(agent.id);
-            const cancelOwn =
-              !attempted ||
-              attempted.session !== agent.session ||
-              (run !== null && attempted.token !== run.token);
-            attemptedAgents.set(agent.id, { session: agent.session, token: run?.token ?? null });
-            let nativeIds = attemptedNativeChildren.get(agent.session);
-            if (!nativeIds) {
-              nativeIds = new Set();
-              attemptedNativeChildren.set(agent.session, nativeIds);
-            }
-            const nativeChildren = this.providerSubagents
-              .list(agent.id)
-              .filter((child) => child.status === "running" && !nativeIds.has(child.id));
-            for (const child of nativeChildren) nativeIds.add(child.id);
-            // Interrupt the parent concurrently, so it cannot keep admitting work
-            // while child cancellation waits for its execution to wind down.
-            const expectedSession = agent.session;
-            const operations: Promise<AgentRunCancellationResult>[] = [
-              ...(cancelOwn
-                ? [
-                    this.runForegroundMutation(agent.id, () => {
-                      if (this.agents.get(agent.id)?.session !== expectedSession) {
-                        return Promise.resolve({ status: "not_running" } as const);
-                      }
-                      return this.cancelAgentRunNow(agent.id, reason);
-                    }),
-                  ]
-                : []),
-              ...nativeChildren.map(async (child) => {
-                await this.cancelProviderSubagent(agent.id, child.id);
-                return { status: "settled" } as const;
-              }),
-            ];
-            return { completion: Promise.allSettled(operations) };
-          }, true);
+          return this.runLifecycleMutation(
+            snapshot.id,
+            async () => {
+              const agent = this.agents.get(snapshot.id);
+              if (
+                !agent?.session ||
+                getParentAgentIdFromLabels(agent.labels) !== expectedParentId ||
+                !this.isAgentInRunTree(agent.id, rootAgentId)
+              ) {
+                return { completion: Promise.resolve([]) };
+              }
+              await this.drainSessionEvents(agent.id);
+              const run =
+                this.runs.getRun(agent.id) ??
+                (agent.lifecycle === "running"
+                  ? this.runs.trackAutonomousRun(agent.id, null)
+                  : null);
+              const attempted = attemptedAgents.get(agent.id);
+              const cancelOwn =
+                !attempted ||
+                attempted.session !== agent.session ||
+                (run !== null && attempted.token !== run.token);
+              attemptedAgents.set(agent.id, { session: agent.session, token: run?.token ?? null });
+              let nativeIds = attemptedNativeChildren.get(agent.session);
+              if (!nativeIds) {
+                nativeIds = new Set();
+                attemptedNativeChildren.set(agent.session, nativeIds);
+              }
+              const nativeChildren = this.providerSubagents
+                .list(agent.id)
+                .filter((child) => child.status === "running" && !nativeIds.has(child.id));
+              for (const child of nativeChildren) nativeIds.add(child.id);
+              // Interrupt the parent concurrently, so it cannot keep admitting work
+              // while child cancellation waits for its execution to wind down.
+              const expectedSession = agent.session;
+              const operations: Promise<AgentRunCancellationResult>[] = [
+                ...(cancelOwn
+                  ? [
+                      this.runForegroundMutation(agent.id, () => {
+                        if (this.agents.get(agent.id)?.session !== expectedSession) {
+                          return Promise.resolve({ status: "not_running" } as const);
+                        }
+                        return this.cancelAgentRunNow(agent.id, reason);
+                      }),
+                    ]
+                  : []),
+                ...nativeChildren.map(async (child) => {
+                  await this.cancelProviderSubagent(agent.id, child.id);
+                  return { status: "settled" } as const;
+                }),
+              ];
+              return { completion: Promise.allSettled(operations) };
+            },
+            true,
+          );
         }),
       );
       for (const batch of batches) {

@@ -280,6 +280,10 @@ export const es: TranslationResources = {
         ultrafastDescription:
           "Ultrafast consume el uso incluido a 8× y los créditos comprados a 6× la tasa estándar. Requiere una cuenta y un modelo compatibles; la velocidad real puede variar.",
         selectWithValue: "Seleccionar velocidad, actual: {{value}}",
+        detecting: "Detectando velocidades compatibles…",
+        detectionFailed: "Error al detectar velocidades",
+        unsupported: "La selección de velocidad no es compatible",
+        retryDetection: "Reintentar la detección de velocidad",
       },
       workflow: {
         title: "Flujo de trabajo",

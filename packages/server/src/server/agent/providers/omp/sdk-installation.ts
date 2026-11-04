@@ -8,6 +8,11 @@ import { OMP_SDK_ROOT_ENV } from "./sdk-host-protocol.js";
 const sdkMetadata = z.object({
   name: z.literal("@oh-my-pi/pi-coding-agent"),
   version: z.string().min(1),
+  ompNodeSdk: z
+    .object({
+      profile: z.enum(["core", "full"]).optional(),
+    })
+    .optional(),
 });
 const sdkIpcModule = z.object({
   ipcEndpoint: z.custom<(dir: string, name: string) => string>(
@@ -19,6 +24,7 @@ const sdkIpcModule = z.object({
 export interface OmpSdkInstallation {
   root: string;
   version: string;
+  profile: "core" | "full" | "unknown";
   sdkEntry: string;
   rpcEntry: string;
   workerEntry: string;
@@ -87,6 +93,7 @@ export async function resolveOmpSdkInstallation(
   return {
     root,
     version: manifest.version,
+    profile: manifest.ompNodeSdk?.profile ?? "unknown",
     sdkEntry: path.join(root, "dist", "node", "sdk.mjs"),
     rpcEntry: path.join(root, "dist", "node", "rpc.mjs"),
     workerEntry: path.join(root, "dist", "node", "host.mjs"),

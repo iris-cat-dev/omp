@@ -28,29 +28,10 @@ async function createAgentDir(config?: string): Promise<{
 }
 
 describe("OMP memory settings", () => {
-  test("returns documented defaults without creating a config file", async () => {
+  test("reading absent memory settings does not create a config file", async () => {
     const { env, configPath } = await createAgentDir();
 
-    await expect(readOmpMemorySettings(env)).resolves.toMatchObject({
-      configPath,
-      backend: "off",
-      autolearn: { enabled: false, autoContinue: false },
-      local: { minRolloutIdleHours: 12, maxRolloutAgeDays: 30 },
-      mnemopi: {
-        scoping: "per-project",
-        autoRecall: true,
-        autoRetain: true,
-        retainEveryNTurns: 4,
-        recallLimit: 8,
-      },
-      hindsight: {
-        apiUrl: "http://localhost:8888",
-        scoping: "per-project-tagged",
-        autoRecall: true,
-        autoRetain: true,
-        retainEveryNTurns: 3,
-      },
-    });
+    await readOmpMemorySettings(env);
     await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -123,6 +104,46 @@ describe("OMP memory settings", () => {
       autoRetain: true,
     });
     expect(settings.environmentOverrides).toEqual(["hindsight.autoRecall"]);
+  });
+
+  test("uses Mnemopi environment fallbacks without leaking secrets or persisting service choices", async () => {
+    const raw =
+      "memory:\n  backend: mnemopi\nmnemopi:\n  embeddingModel: explicit-model\n  llmApiKey: config-key\n";
+    const { env, configPath } = await createAgentDir(raw);
+    const effectiveEnv = {
+      ...env,
+      MNEMOPI_EMBEDDING_API_URL: "https://embedding.example/v1",
+      MNEMOPI_EMBEDDING_MODEL: "environment-model",
+      MNEMOPI_EMBEDDING_API_KEY: "environment-key",
+      MNEMOPI_LLM_BASE_URL: "https://llm.example/v1",
+      MNEMOPI_LLM_MODEL: "memory-model",
+      MNEMOPI_LLM_API_KEY: "ignored-key",
+    };
+    const initial = await readOmpMemorySettings(effectiveEnv);
+    expect(initial.mnemopi).toMatchObject({
+      embeddingModel: "explicit-model",
+      embeddingApiUrl: "https://embedding.example/v1",
+      llmBaseUrl: "https://llm.example/v1",
+      llmModel: "memory-model",
+    });
+    expect(initial.secretState.mnemopiEmbeddingApiKey).toEqual({
+      configured: true,
+      source: "environment",
+    });
+    expect(initial.secretState.mnemopiLlmApiKey).toEqual({ configured: true, source: "config" });
+    expect(initial.environmentOverrides).not.toContain("mnemopi.embeddingModel");
+    expect(initial.environmentOverrides).not.toContain("mnemopi.llmApiKey");
+    expect(JSON.stringify(initial)).not.toMatch(/environment-key|config-key|ignored-key/);
+    const updated = await updateOmpMemorySettings(
+      initial.revision,
+      { mnemopi: { noEmbeddings: true, llmMode: "none" } },
+      effectiveEnv,
+    );
+    expect(updated.mnemopi).toMatchObject({ noEmbeddings: true, llmMode: "none" });
+    const persisted = await readFile(configPath, "utf8");
+    expect(persisted).not.toMatch(/embedding\.example|llm\.example|environment-key|memory-model/);
+    expect(persisted).toContain("explicit-model");
+    expect(persisted).toContain("config-key");
   });
 
   test("rejects stale revisions without changing the file", async () => {

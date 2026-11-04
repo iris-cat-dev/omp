@@ -13,11 +13,17 @@ export const en = {
   visualFeedback: visualFeedback.en,
   runtimeResources: {
     title: "Runtime resources",
-    empty: "No retained kernels, helpers or shell handles. Browsing this list does not start a runtime.",
+    empty:
+      "No retained kernels, helpers or shell handles. Browsing this list does not start a runtime.",
     owner: "Session {{session}} · Agent {{agent}}",
     refresh: "Refresh resources",
     releaseFailed: "The resource did not confirm release.",
-    kinds: { python_kernel: "Python kernel", javascript_kernel: "JavaScript kernel", shell: "Shell", helper: "Eval helper" },
+    kinds: {
+      python_kernel: "Python kernel",
+      javascript_kernel: "JavaScript kernel",
+      shell: "Shell",
+      helper: "Eval helper",
+    },
     reasons: {
       kernel_variables: "Retained kernel variables (not recoverable from history)",
       shell_variables: "Retained shell variables and functions",
@@ -34,15 +40,18 @@ export const en = {
     unloaded: "Runtime unloaded · history recoverable",
     historyOnly: "History only · runtime unavailable",
     unloading: "Runtime unloading",
-    historyHint: "Browsing history does not start a runtime. Sending a message restores the session.",
-    idleHint: "An unneeded recoverable runtime unloads after 5 minutes idle; dependencies are rechecked every 30 seconds. Hiding a panel never stops work.",
+    historyHint:
+      "Browsing history does not start a runtime. Sending a message restores the session.",
+    idleHint:
+      "An unneeded recoverable runtime unloads after 5 minutes idle; dependencies are rechecked every 30 seconds. Hiding a panel never stops work.",
     keep: "Keep runtime",
     stopKeeping: "Stop keeping",
     unload: "Safely unload",
     handles: "live handles",
     release: "Release resource",
     releaseTitle: "Release kernel state?",
-    releaseWarning: "This permanently discards this resource's in-memory variables and handles. They cannot be restored from history. Running resources cannot be released.",
+    releaseWarning:
+      "This permanently discards this resource's in-memory variables and handles. They cannot be restored from history. Running resources cannot be released.",
     reasons: {
       initializing: "Session initializing",
       running: "Active turn or subagent",
@@ -337,6 +346,10 @@ export const en = {
         ultrafastDescription:
           "Ultrafast consumes included usage at 8× and purchased credits at 6× the Standard rate. Requires a supported account and model; actual speed varies.",
         selectWithValue: "Select speed, current: {{value}}",
+        detecting: "Detecting supported speeds…",
+        detectionFailed: "Speed detection failed",
+        unsupported: "Speed selection is not supported",
+        retryDetection: "Retry speed detection",
       },
       workflow: {
         title: "Workflow",
