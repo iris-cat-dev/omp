@@ -49,6 +49,7 @@ export type WorkspaceTabMenuEntry =
       label: string;
       icon?:
         | "copy"
+        | "cpu"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -234,6 +235,7 @@ export function buildWorkspaceTabMenuEntries(
     });
     if (input.serverId) entries.push({
       kind: "item", key: "runtime-resources", label: i18n.t("runtimeResources.title"),
+      icon: "cpu",
       testID: `${menuTestIDBase}-runtime-resources`,
       onSelect: () => openRuntimeResourceSheet(input.serverId!, agentId),
     });

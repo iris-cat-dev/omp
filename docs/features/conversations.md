@@ -108,7 +108,7 @@ Background ownership is stable as `desktop:<agentId>` across rewind: changing th
 
 ### Runtime retention and safe unload
 
-After five idle minutes Desktop considers unloading the runtime and rechecks retained conversations every 30 seconds. It keeps history and the conversation record. Running or admitted work, queued or unconfirmed input, pending permissions, background dependencies, and retained variables/resources prevent unload; idle does not mean disposable. Runtime retention controls show the actual inventory and retention reasons, not a guessed memory saving.
+After five idle minutes Desktop considers unloading the runtime and rechecks retained conversations every 30 seconds. It keeps history and the conversation record. Running or admitted work, queued or unconfirmed input, pending permissions, background dependencies, and retained variables/resources prevent unload; idle does not mean disposable. The Agent tab menu's **Runtime resources** entry uses a CPU icon and opens the resource inventory and retention reasons. The conversation footer no longer shows runtime-retention status or an expandable retention panel; automatic unload behavior is unchanged.
 
 Explicit resource release permanently discards that resource's variables. Busy or shared resources and resources required by background work cannot be released. Safe unload inventories resources, drains pending persistence, inventories again, then synchronously fences final admission before invoking disposal. The runtime is detached only after provider closure succeeds; an unconfirmed close remains visible and blocks new work and safe unload.
 
