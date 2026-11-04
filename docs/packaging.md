@@ -192,6 +192,10 @@ Cross-builds skip the native packaged-app smoke because Windows executables cann
 
 Windows packages use `@iriscat/mini-electron` installer 0.1.12. Screen-coordinate and DPI-position fixes require runtime **0.1.23 or newer** ([mini-electron #7](https://github.com/iris-cat-dev/mini-electron/issues/7)), but version alone is insufficient: the selected distribution must carry the native file-clipboard capability above. The macOS channel remains independent. Native SQLite, IPC frame identity, image clipboard/keyboard/OLE input, selection colors, and IME remain supported.
 
+Windows distributions must also advertise `features.asyncContextPropagation: 1`. The repaired native build emits this capability only after running `test/node-async-context-smoke.js` against the staged executable: concurrent/nested ALS scopes, Promise/foreign-realm callbacks, timers, Workers, both Node ALS implementations, and ordered single Promise-hook notifications must pass. Do not add this field to an older binary or treat a newer runtime version as semantic proof.
+
+The Windows packaged-app smoke additionally runs `scripts/packaging/runtime-async-context-probe.cjs` with the actual packaged EXE in `ELECTRON_RUN_AS_NODE=1` mode. SDK artifact smoke exercises synchronous and post-`await` printing, an object final expression, and explicit Eval errors in a real shared-host child. Cross-building an installer on Mac does not execute these Windows checks; qualify the exact executable on Windows before distribution.
+
 To package an unpublished local runtime instead, build its checkout with `python build.py --package-dist` and select that distribution explicitly (PowerShell):
 
 ```powershell

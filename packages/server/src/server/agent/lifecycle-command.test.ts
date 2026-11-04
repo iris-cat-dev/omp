@@ -103,8 +103,12 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return archived;
   }
 
-  async unloadAgentRuntime(agentId: string): Promise<void> {
+  async closeAgent(agentId: string): Promise<void> {
     this.closedAgentIds.push(agentId);
+    this.liveAgents.delete(agentId);
+  }
+
+  async recoverAgentRuntime(agentId: string): Promise<void> {
     this.liveAgents.delete(agentId);
   }
 
@@ -168,6 +172,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 const logger = createTestLogger();
 
 describe("agent lifecycle commands", () => {
+
   test("cancels an agent with an in-flight run", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);

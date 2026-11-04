@@ -2329,16 +2329,23 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Safely unload agent runtime",
       description:
-        "Safely unload a recoverable idle agent runtime, retaining persistent conversation records and history. Refuses running turns, background jobs, unreleased kernels, pending permissions or submissions, and explicit runtime retention. Stop work or explicitly release kernel state first; this command never kills that work or deletes history.",
+        "Request acknowledged cancellation, then safely unload an eligible runtime. Background dependencies, unreleased kernels, pending permissions or submissions, and explicit retention can refuse unload. Set force:true only for explicit controlled recovery: terminate only the target provider runtime after confirmed process exit and host-tool settlement, discarding its variables. Conversation records/history are retained; side effects are not rolled back. This never deletes an agent.",
       inputSchema: {
         agentId: z.string(),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Explicit target-runtime recovery; default false keeps safe unload."),
       },
       outputSchema: {
         success: z.boolean(),
       },
     },
-    async ({ agentId }) => {
-      await closeAgentCommand({ agentManager, agentStorage }, agentId);
+    async ({ agentId, force }) => {
+      if (force && callerAgentId === agentId) {
+        throw new Error("Cannot force-terminate the calling agent runtime");
+      }
+      await closeAgentCommand({ agentManager, agentStorage }, agentId, { force });
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),

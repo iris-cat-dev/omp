@@ -165,6 +165,10 @@ export const ko: TranslationResources = {
       cancelingAgent: "에이전트 취소 중",
       stopAgent: "에이전트 중지",
       interrupt: "중단",
+      recoverTitle: "중지를 확인하지 못했습니다",
+      recoverRuntime: "런타임 복구",
+      recoverMessage:
+        "이 대화의 런타임만 복구할까요? 공급자 프로세스를 강제 종료하고 호스트 도구의 작업이 끝날 때까지 기다립니다. 기록은 유지됩니다. 완료된 파일 쓰기와 다른 부수 효과는 되돌리지 않으므로 재시도 전에 확인하세요. 다른 대화나 데몬은 재시작하지 않습니다.",
     },
     attachments: {
       addImage: "이미지 추가",

@@ -38,6 +38,7 @@ export {
   type ProviderProfileModel,
 } from "./agent/provider-launch-config.js";
 export { findExecutable } from "../executable-resolution/executable-resolution.js";
+export { resolveOmpSdkInstallation } from "./agent/providers/omp/sdk-installation.js";
 export { execCommand, spawnProcess } from "../utils/spawn.js";
 export { killProcessTree } from "../utils/tree-kill.js";
 

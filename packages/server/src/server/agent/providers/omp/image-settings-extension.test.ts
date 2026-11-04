@@ -35,7 +35,7 @@ function createHarness() {
     cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
   };
   models.set("openai-codex/native-carrier", carrier);
-  let active = ["read", "bash", "generate_image"];
+  const active = new Set(["read", "bash", "generate_image"]);
   let accounts = [
     {
       id: 7,
@@ -60,12 +60,12 @@ function createHarness() {
   ) => {
     if (model.provider === "openai-codex") {
       const identities = restrictions.get(sessionId!);
-      const candidates = accounts.filter(
+      const candidate = accounts.find(
         (account) =>
           (!identities || identities.includes(account.identityKey)) &&
           (!pins.has(sessionId!) || account.id === pins.get(sessionId!)),
       );
-      return candidates[0]?.credential.access;
+      return candidate?.credential.access;
     }
     const definition = definitions.get(model.provider);
     return definition ? process.env[String(definition.apiKey)] : "chat-key";
@@ -113,11 +113,11 @@ function createHarness() {
   };
   const pi: NativeImageExtensionApi = {
     on: vi.fn(),
-    getActiveTools: () => [...active],
     getAllTools: () => ["read", "bash", "generate_image"].map((name) => ({ name })),
-    setActiveTools: vi.fn(async (names: string[]) => {
-      active = names;
-    }),
+    setToolEnabled: async (name, enabled) => {
+      if (enabled) active.add(name);
+      else active.delete(name);
+    },
     registerProvider: vi.fn((provider: string, definition: Record<string, unknown>) => {
       definitions.set(provider, definition);
       const model = (definition.models as NativeImageModel[])[0]!;
@@ -154,6 +154,8 @@ function createHarness() {
     sessions,
     carrier,
     call,
+    activeTools: () => [...active],
+    registerDynamicTool: (name: string) => active.add(name),
     removeAccounts: () => {
       accounts = [];
     },
@@ -171,7 +173,7 @@ describe("Desktop preferences for native generate_image", () => {
   it("removes only image access when disabled or prohibited by the native tool policy", async () => {
     const h = createHarness();
     await h.preference.apply(null, true);
-    expect(h.pi.getActiveTools()).toEqual(["read", "bash"]);
+    expect(h.activeTools()).toEqual(["read", "bash"]);
     expect(
       h.preference.beforeToolCall({
         toolName: "generate_image",
@@ -180,10 +182,27 @@ describe("Desktop preferences for native generate_image", () => {
       }),
     ).toMatchObject({ block: true });
     await h.preference.apply(apiConfig, false);
-    expect(h.pi.getActiveTools()).toEqual(["read", "bash"]);
+    expect(h.activeTools()).toEqual(["read", "bash"]);
     expect(
       h.preference.beforeToolCall({ toolName: "read", toolCallId: "read", input: {} }),
     ).toBeUndefined();
+  });
+
+  it("retains independently registered dynamic tools through disabled and enabled image settings", async () => {
+    const h = createHarness();
+    h.registerDynamicTool("figma_get_metadata");
+    await h.preference.apply(null, false);
+    h.registerDynamicTool("figma_create_session");
+    await h.preference.apply(apiConfig, true);
+    expect(h.activeTools()).toEqual([
+      "read",
+      "bash",
+      "figma_get_metadata",
+      "figma_create_session",
+      "generate_image",
+    ]);
+    await h.preference.apply(null, false);
+    expect(h.activeTools()).toEqual(["read", "bash", "figma_get_metadata", "figma_create_session"]);
   });
 
   it("keeps concurrent calls and changed settings on their original private provider/key", async () => {
@@ -233,7 +252,7 @@ describe("Desktop preferences for native generate_image", () => {
     await h.preference.apply(config, true);
     h.removeAccounts();
     await h.preference.apply(config, true);
-    expect(h.pi.getActiveTools()).not.toContain("generate_image");
+    expect(h.activeTools()).not.toContain("generate_image");
     expect(
       h.preference.beforeToolCall({ toolName: "generate_image", toolCallId: "removed", input: {} }),
     ).toMatchObject({ block: true });
@@ -242,7 +261,7 @@ describe("Desktop preferences for native generate_image", () => {
   it("blocks image requests without API credentials while leaving ordinary tools usable", async () => {
     const h = createHarness();
     await h.preference.apply({ ...apiConfig, apiKey: undefined }, true);
-    expect(h.pi.getActiveTools()).toEqual(["read", "bash"]);
+    expect(h.activeTools()).toEqual(["read", "bash"]);
     expect(
       h.preference.beforeToolCall({ toolName: "generate_image", toolCallId: "no-key", input: {} }),
     ).toMatchObject({ block: true });

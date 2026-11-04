@@ -1,6 +1,7 @@
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
+import { createBrowserRelayCommand } from "./commands/browser-relay.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
 import { createProjectCommand } from "./commands/project/index.js";
@@ -172,6 +173,7 @@ export function createCli(): Command {
 
   // Daemon commands
   program.addCommand(createDaemonCommand());
+  program.addCommand(createBrowserRelayCommand());
 
   // Chat commands
 

@@ -119,6 +119,7 @@ export class JsonlRpcProcess {
   private disposed = false;
   private stdoutBuffer = "";
   private pendingChunks: PendingChunkSequence | null = null;
+  private closing: Promise<void> | null = null;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
     this.diagnosticName = options.diagnosticName ?? "JSONL RPC";
@@ -202,8 +203,16 @@ export class JsonlRpcProcess {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
-    if (this.disposed) return;
+  close(reason = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
+    if (this.closing) return this.closing;
+    const closing = this.closeProcess(reason).finally(() => {
+      this.closing = null;
+    });
+    this.closing = closing;
+    return closing;
+  }
+
+  private async closeProcess(error: Error): Promise<void> {
     this.failAll(error);
     try {
       this.child.stdin.end();
@@ -225,6 +234,7 @@ export class JsonlRpcProcess {
         { timeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS },
         `${this.diagnosticName} process did not report exit after SIGKILL`,
       );
+      throw new Error(`${this.diagnosticName} process exit could not be confirmed`);
     }
   }
 
@@ -272,6 +282,7 @@ export class JsonlRpcProcess {
 
   /** Route a complete logical frame to its consumer (response or subscriber). */
   private dispatchFrame(message: Record<string, unknown>): void {
+    if (this.disposed) return;
     if (message.type === "response") {
       this.handleResponse(message as unknown as JsonlRpcResponse);
       return;

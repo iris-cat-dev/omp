@@ -3383,11 +3383,12 @@ export class DaemonClient {
     return payload;
   }
 
-  async cancelAgent(agentId: string): Promise<void> {
+  async cancelAgent(agentId: string, options?: { force?: boolean }): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "cancel_agent_request",
       agentId,
+      ...(options?.force ? { force: true } : {}),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -6420,14 +6421,11 @@ export class DaemonClient {
     if (transportEpoch !== this.transportValidationEpoch) return;
     const rawData = data && typeof data === "object" && "data" in data ? data.data : data;
     if (this.readingTransportBlob) {
-      const byteLength = Math.max(
-        1,
-        typeof rawData === "string"
-          ? rawData.length * 2
-          : typeof Blob !== "undefined" && rawData instanceof Blob
-            ? rawData.size
-            : (asUint8Array(rawData)?.byteLength ?? 1),
-      );
+      let byteLength: number;
+      if (typeof rawData === "string") byteLength = rawData.length * 2;
+      else if (typeof Blob !== "undefined" && rawData instanceof Blob) byteLength = rawData.size;
+      else byteLength = asUint8Array(rawData)?.byteLength ?? 1;
+      byteLength = Math.max(1, byteLength);
       if (this.pendingTransportMessageBytes + byteLength > MAX_PENDING_TRANSPORT_MESSAGE_BYTES) {
         this.failTransportMessage("WebSocket Blob decoding backlog exceeded", false);
         return;
@@ -6442,6 +6440,23 @@ export class DaemonClient {
     this.processTransportMessage(rawData, transportEpoch);
   }
 
+  private completeTransportBlob(buffer: ArrayBuffer, transportEpoch: number): void {
+    if (transportEpoch !== this.transportValidationEpoch) return;
+    this.readingTransportBlob = false;
+    this.processTransportMessage(buffer, transportEpoch);
+    while (
+      transportEpoch === this.transportValidationEpoch &&
+      !this.readingTransportBlob &&
+      this.pendingTransportMessageHead
+    ) {
+      const pending = this.pendingTransportMessageHead;
+      this.pendingTransportMessageHead = pending.next;
+      if (!pending.next) this.pendingTransportMessageTail = null;
+      this.pendingTransportMessageBytes -= pending.byteLength;
+      this.processTransportMessage(pending.data, transportEpoch);
+    }
+  }
+
   private processTransportMessage(rawData: unknown, transportEpoch: number): void {
     if (transportEpoch !== this.transportValidationEpoch) return;
     if (typeof Blob !== "undefined" && rawData instanceof Blob) {
@@ -6454,22 +6469,7 @@ export class DaemonClient {
         return;
       }
       void decoded.then(
-        (buffer) => {
-          if (transportEpoch !== this.transportValidationEpoch) return;
-          this.readingTransportBlob = false;
-          this.processTransportMessage(buffer, transportEpoch);
-          while (
-            transportEpoch === this.transportValidationEpoch &&
-            !this.readingTransportBlob &&
-            this.pendingTransportMessageHead
-          ) {
-            const pending = this.pendingTransportMessageHead;
-            this.pendingTransportMessageHead = pending.next;
-            if (!pending.next) this.pendingTransportMessageTail = null;
-            this.pendingTransportMessageBytes -= pending.byteLength;
-            this.processTransportMessage(pending.data, transportEpoch);
-          }
-        },
+        (buffer) => this.completeTransportBlob(buffer, transportEpoch),
         () => {
           if (transportEpoch !== this.transportValidationEpoch) return;
           this.failTransportMessage("Failed to decode WebSocket Blob", false);

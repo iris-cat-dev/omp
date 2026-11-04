@@ -731,6 +731,8 @@ export interface AgentSession {
   cancelProviderSubagent?(subagentId: string): Promise<boolean>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
+  /** Fence this runtime and confirm process exit and host-tool settlement before resolving. */
+  terminate?(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   listBackgroundProcesses?(): Promise<BackgroundProcess[]>;
   getBackgroundProcessOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;

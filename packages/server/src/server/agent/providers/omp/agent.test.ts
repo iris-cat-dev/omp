@@ -1088,6 +1088,74 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test("forced runtime termination waits for actual host execution settlement and fences late events", async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const cleanup = Promise.withResolvers<void>();
+    const catalog = createToolCatalog();
+    catalog.executeTool = async (_name, _input, context = {}) => {
+      started.resolve(context.signal!);
+      await cleanup.promise;
+      return { content: [{ type: "text", text: "late host result" }] };
+    };
+    const omp = new OmpHarness();
+    await omp.start({}, catalog);
+    await omp.requireStartTurn("perform host operation");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "host_tool_call",
+      id: "recovery-host",
+      toolCallId: "recovery-operation",
+      toolName: "create_agent",
+      arguments: {},
+    });
+    const signal = await started.promise;
+    vi.useFakeTimers();
+    try {
+      const recovery = expect(omp.terminate()).rejects.toThrow("host tool work has not settled");
+      await vi.advanceTimersByTimeAsync(2_000);
+      await recovery;
+      expect(runtime.closed).toBe(true);
+      expect(signal.aborted).toBe(true);
+      const before = omp.timeline();
+      runtime.emit({
+        type: "extension_error",
+        extensionPath: "/home/user/plugin.ts",
+        event: "session_start",
+        error: "stale",
+      });
+      runtime.emit({ type: "agent_start" });
+      runtime.streamAssistantText("stale output");
+      expect(omp.timeline()).toEqual(before);
+      cleanup.resolve();
+      await Promise.resolve();
+      await omp.terminate();
+      expect(runtime.hostToolResults).toEqual([]);
+      const promptCount = runtime.prompts.length;
+      await expect(omp.startTurn("cannot reuse a dead runtime")).rejects.toBeInstanceOf(Error);
+      expect(runtime.prompts).toHaveLength(promptCount);
+    } finally {
+      cleanup.resolve();
+      vi.useRealTimers();
+    }
+  });
+
+  test("forced termination does not claim success when the provider cannot confirm process exit", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const close = runtime.close.bind(runtime);
+    runtime.close = async () => {
+      throw new Error("process exit could not be confirmed");
+    };
+    await expect(omp.terminate()).rejects.toThrow("process exit could not be confirmed");
+    const promptCount = runtime.prompts.length;
+    await expect(omp.startTurn("unsafe new work")).rejects.toBeInstanceOf(Error);
+    expect(runtime.prompts).toHaveLength(promptCount);
+    runtime.close = close;
+    await expect(omp.terminate()).resolves.toBeUndefined();
+  });
+
   test("Stop waits for canceled host tool execution to finish before acknowledging", async () => {
     const started = deferred<AbortSignal>();
     const cleanup = deferred<void>();
@@ -1121,6 +1189,7 @@ describe("OMP agent client and session", () => {
     let acknowledged = false;
     const stopped = omp.interrupt().then(() => {
       acknowledged = true;
+      return undefined;
     });
     try {
       await waitForImmediate();
@@ -3186,12 +3255,7 @@ describe("OMP agent client and session", () => {
       toolName: "todo",
       result: { content: [], details: { phases: [] } },
     });
-    expect(
-      omp
-        .timeline()
-        .filter((item) => item.type === "todo")
-        .at(-1)?.items,
-    ).toEqual([]);
+    expect(omp.timeline().findLast((item) => item.type === "todo")?.items).toEqual([]);
     await omp.close();
   });
 
@@ -3378,12 +3442,7 @@ describe("OMP agent client and session", () => {
         },
       },
     });
-    expect(
-      omp
-        .streamEvents()
-        .filter((event) => event.type === "working_intent")
-        .at(-1),
-    ).toEqual({
+    expect(omp.streamEvents().findLast((event) => event.type === "working_intent")).toEqual({
       type: "working_intent",
       provider: "omp",
       turnId: secondTurnId,

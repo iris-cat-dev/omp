@@ -154,6 +154,72 @@ describe("OMP CLI runtime", () => {
     }
   });
 
+  test("accepts SDK extension_error frames and shows source/category without credentials or local paths", async () => {
+    const child = createOmpChild();
+    replyToCommands(child, () => ({}));
+    const runtimeSession = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const session = new OmpAgentSession({
+      runtimeSession,
+      initialState: {
+        model: null,
+        isStreaming: false,
+        isCompacting: false,
+        sessionId: "extension-errors",
+        messageCount: 0,
+        queuedMessageCount: 0,
+      },
+      config: { provider: "omp", cwd: "/workspace/project" },
+      logger: pino({ level: "silent" }),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      for (const event of ["session_start", "tool_registration"]) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "extension_error",
+            extensionPath: "C:\\Users\\private-user\\private-project\\figma-plugin.ts",
+            event,
+            error:
+              "Registration failed: apiKey=private-key\nAuthorization: Bearer private-token\nat C:\\Users\\private-user\\private-project\\plugin.ts:9\nat /home/private-user/private-project/plugin.ts:9\nhttps://name:password@example.test/path?token=private-query",
+          })}\n`,
+        );
+      }
+      await waitForImmediate();
+      const notices = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "extension_notification"
+          ? [event.item]
+          : [],
+      );
+      expect(notices).toHaveLength(2);
+      expect(notices[0]).toMatchObject({
+        level: "error",
+        message: expect.stringContaining("[figma-plugin.ts: session_start] Registration failed"),
+      });
+      expect(notices[1]).toMatchObject({
+        level: "error",
+        message: expect.stringContaining(
+          "[figma-plugin.ts: tool_registration] Registration failed",
+        ),
+      });
+      const visible = JSON.stringify(notices);
+      for (const secret of [
+        "private-user",
+        "private-project",
+        "private-key",
+        "private-token",
+        "private-query",
+        "password",
+        "C:\\",
+        "/home/",
+      ]) {
+        expect(visible).not.toContain(secret);
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
   test("chat initialization ends after provisioning, before RPC spawn", async () => {
     const phases: Array<string | null> = [];
     const unsubscribe = subscribeBundledOmpInitialization("runtime-progress-agent", (phase) =>

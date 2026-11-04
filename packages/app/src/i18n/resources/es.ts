@@ -165,6 +165,10 @@ export const es: TranslationResources = {
       cancelingAgent: "Agente de cancelación",
       stopAgent: "detener agente",
       interrupt: "Interrumpir",
+      recoverTitle: "La detención no se confirmó",
+      recoverRuntime: "Recuperar entorno",
+      recoverMessage:
+        "¿Recuperar solo el entorno de esta conversación? Se terminará por la fuerza el proceso del proveedor y se esperará a las herramientas del host. Se conserva el historial. Las escrituras y otros efectos ya realizados no se revierten: revísalos antes de reintentar. No se reinician otras conversaciones ni el daemon.",
     },
     attachments: {
       addImage: "Agregar imagen",
@@ -1885,7 +1889,8 @@ export const es: TranslationResources = {
         "La aplicación de escritorio guarda esta dirección en el config.json del daemon local, activa la retransmisión y la aplica de inmediato. Introduce una dirección ws:// o wss:// no vacía. La aplicación web debe usar el mismo servidor. El tráfico sigue cifrado de extremo a extremo.",
       desktopSaved:
         "Guardado en el config.json del daemon local y aplicado de inmediato, sin reiniciar. Los nuevos enlaces de emparejamiento usarán esta dirección.",
-      desktopUnavailable: "El daemon local está desconectado. No se puede guardar su configuración.",
+      desktopUnavailable:
+        "El daemon local está desconectado. No se puede guardar su configuración.",
     },
     device: {
       loadingOffer: "Cargando oferta de maridaje...",

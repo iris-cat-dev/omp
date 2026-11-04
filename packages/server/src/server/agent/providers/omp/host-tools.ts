@@ -96,12 +96,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function clearOmpHostToolState(runtimeSession: OmpRuntimeSession): void {
-  routersByRuntimeSession.get(runtimeSession)?.clear();
-  routersByRuntimeSession.delete(runtimeSession);
+  // Keep the router's pending ledger until execution really settles. A prompt
+  // rejection or late interrupt may request cleanup while recovery is waiting.
+  // WeakMap ownership releases the router with the runtime, not with a turn.
+  routersByRuntimeSession.get(runtimeSession)?.abort();
 }
 
 export async function waitForOmpHostToolsIdle(runtimeSession: OmpRuntimeSession): Promise<void> {
   await routersByRuntimeSession.get(runtimeSession)?.waitForIdle();
+}
+
+/** Abort host work without forgetting pending side effects or claiming it has settled. */
+export function abortOmpHostTools(runtimeSession: OmpRuntimeSession): void {
+  routersByRuntimeSession.get(runtimeSession)?.abort();
 }
 
 function getRouter(input: {
@@ -174,13 +181,11 @@ class OmpHostToolRouter {
     pending.controller.abort(new Error(`OMP host tool call ${targetId} cancelled`));
   }
 
-  clear(): void {
+  abort(): void {
     for (const pending of this.pendingCalls.values()) {
       pending.canceled = true;
       pending.controller.abort(new Error("OMP session closed"));
     }
-    this.pendingCalls.clear();
-    this.resolveIdleWaiters();
   }
 
   waitForIdle(): Promise<void> {

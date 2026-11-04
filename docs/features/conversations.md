@@ -110,7 +110,9 @@ Background ownership is stable as `desktop:<agentId>` across rewind: changing th
 
 After five idle minutes Desktop considers unloading the runtime and rechecks retained conversations every 30 seconds. It keeps history and the conversation record. Running or admitted work, queued or unconfirmed input, pending permissions, background dependencies, and retained variables/resources prevent unload; idle does not mean disposable. Runtime retention controls show the actual inventory and retention reasons, not a guessed memory saving.
 
-Explicit resource release permanently discards that resource's variables. Busy or shared resources and resources required by background work cannot be released. Safe unload inventories resources, drains pending persistence, inventories again, then synchronously fences final admission before disposal. `kill_agent` uses this safe unload path rather than bypassing the data and variable gates.
+Explicit resource release permanently discards that resource's variables. Busy or shared resources and resources required by background work cannot be released. Safe unload inventories resources, drains pending persistence, inventories again, then synchronously fences final admission before invoking disposal. The runtime is detached only after provider closure succeeds; an unconfirmed close remains visible and blocks new work and safe unload.
+
+Automatic idle retirement and `agent unload` never cancel or force work. Ordinary `kill_agent` requests acknowledged cancellation first, then applies the same data and variable gates. Explicit `kill_agent({ force: true })` performs controlled recovery of only the target provider runtime, requiring confirmed process exit and host-tool settlement. It discards that runtime's variables, preserves conversation records/history, and does not roll back side effects.
 
 ## Conversation organization and history
 
@@ -138,7 +140,7 @@ Desktop-injected tools distinguish:
 | --------------- | -------------------------------------------------------------------------- |
 | `cancel_agent`  | Stops a run.                                                               |
 | `archive_agent` | Hides the conversation, retaining history.                                 |
-| `kill_agent`    | Safely unloads an eligible runtime, retaining its record; retained work/resources can refuse unload. |
+| `kill_agent`    | Requests acknowledged cancellation, then safely unloads an eligible runtime; explicit `force` recovers only its target runtime. |
 | `delete_agent`  | Permanently removes the Desktop conversation record and retained timeline. |
 
 Native `archive_agent` updates connected sidebars without a refresh. A workspace whose conversations are all archived is hidden from the project and status lists, including their keyboard shortcuts, but its workspace record, files, and history remain intact. New empty workspaces and workspaces with another unarchived conversation remain visible. Reopening an archived conversation restores its sidebar entry.

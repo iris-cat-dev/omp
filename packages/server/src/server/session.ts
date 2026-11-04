@@ -2281,7 +2281,7 @@ export class Session {
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
-        return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
+        return this.handleCancelAgentRequest(msg.agentId, msg.requestId, msg.force);
       case "cancel_provider_subagent_request":
         return this.handleCancelProviderSubagentRequest(
           msg.parentAgentId,
@@ -3974,19 +3974,31 @@ export class Session {
     });
   }
 
-  private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {
+  private async handleCancelAgentRequest(
+    agentId: string,
+    requestId?: string,
+    force = false,
+  ): Promise<void> {
     this.sessionLogger.info({ agentId }, `Cancel request received for agent ${agentId}`);
 
     try {
-      await cancelAgentRunCommand(
-        {
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          logger: this.sessionLogger,
-        },
-        agentId,
-      );
-      if (this.terminalManager) {
+      if (force) {
+        await closeAgentCommand(
+          { agentManager: this.agentManager, agentStorage: this.agentStorage },
+          agentId,
+          { force: true },
+        );
+      } else {
+        await cancelAgentRunCommand(
+          {
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            logger: this.sessionLogger,
+          },
+          agentId,
+        );
+      }
+      if (!force && this.terminalManager) {
         await stopAllAgentTerminalProcesses(this.terminalManager, agentId);
       }
       if (!this.agentManager.getAgent(agentId)) {

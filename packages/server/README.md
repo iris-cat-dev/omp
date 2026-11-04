@@ -170,12 +170,20 @@ release is allowed. Busy/shared resources and background dependencies reject
 release; eligible explicit release permanently discards variables.
 
 Idle unload starts considering sessions after five minutes, rechecking every
-30 seconds. Both `agent unload` and `kill_agent` use safe unload: inventory,
-persistence drain, inventory again, then a synchronous final admission guard.
+30 seconds. `agent unload` uses safe unload: inventory, persistence drain,
+inventory again, then a synchronous final admission guard before disposal.
 Active/admitted work, unconfirmed input, permissions, background dependencies and
 retained variables/resources prevent unload. The background owner stays
 `desktop:<agentId>` across rewind. `releaseRetainedEntries` is a terminal release
 only after disposal, never a way to unload a still-usable session.
+
+Ordinary `kill_agent` requests acknowledged cancellation and then applies the
+same unload gates. Explicit `force:true` uses controlled target-runtime recovery:
+confirmed provider-process exit and host-tool settlement are required; runtime
+variables are discarded, records/history remain, and side effects are not rolled
+back. Failed closure retains the visible runtime and its admission fence until
+confirmed closure or recovery. Persisted handles keep the conversation's working
+directory so native resume and unarchive still resolve the original storage.
 
 The daemon and application must be deployed together for revision-aware tool
 updates. Renderer budgets separately account conservative UTF-16 history bodies
