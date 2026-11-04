@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AgentProvider, AgentSessionConfig } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentFeature,
+  AgentProvider,
+  AgentSessionConfig,
+} from "@omp-desktop/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {
@@ -16,11 +20,21 @@ import {
   resolveFeatureValues,
 } from "./feature-preferences";
 import type { SupportedLocale } from "@/i18n/locales";
+import { useProvidersSnapshot } from "./use-providers-snapshot";
+import { findModelByReference, getModelDraftFeatures } from "@/provider-selection/model-catalog";
 
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
 >;
+
+export interface UseDraftAgentFeaturesResult {
+  features: AgentFeature[];
+  featureValues: Record<string, unknown> | undefined;
+  isLoading: boolean;
+  metadataError: string | undefined;
+  setFeatureValue: (featureId: string, value: unknown) => void;
+}
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
@@ -31,7 +45,7 @@ export function useDraftAgentFeatures(input: {
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
   persistPreferences?: boolean;
-}) {
+}): UseDraftAgentFeaturesResult {
   const { t, i18n } = useTranslation();
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
     input;
@@ -63,6 +77,20 @@ export function useDraftAgentFeatures(input: {
     };
   }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
 
+  // Subscribe to the form's existing catalog without initiating a refresh.
+  const { entries: providerEntries } = useProvidersSnapshot(serverId ?? null, { enabled: false });
+  const selectedModel = useMemo(
+    () =>
+      modelId
+        ? findModelByReference(
+            providerEntries?.find((entry) => entry.provider === provider)?.models ?? null,
+            modelId,
+          )
+        : null,
+    [modelId, provider, providerEntries],
+  );
+  const catalogFeatures = useMemo(() => getModelDraftFeatures(selectedModel), [selectedModel]);
+
   const featuresQuery = useQuery({
     queryKey: [
       "providerFeatures",
@@ -88,7 +116,10 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
-  const availableFeaturesRaw = featuresQuery.data;
+  const availableFeaturesRaw = useMemo(
+    () => getModelDraftFeatures(selectedModel, featuresQuery.data),
+    [featuresQuery.data, selectedModel],
+  );
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const featureValues = useMemo(
     () =>
@@ -175,8 +206,8 @@ export function useDraftAgentFeatures(input: {
   return {
     features,
     featureValues: effectiveFeatureValues,
-    isLoading: featuresQuery.isLoading,
-    metadataError: featuresQuery.error?.message,
+    isLoading: catalogFeatures === undefined && featuresQuery.isLoading,
+    metadataError: catalogFeatures === undefined ? featuresQuery.error?.message : undefined,
     setFeatureValue,
   };
 }

@@ -46,6 +46,7 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
+import { getDesktopHost } from "@/desktop/host";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -416,7 +417,10 @@ function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
       const { isConnected, disabled, onAddImages, onPasteFiles } = argsRef.current;
       if (!onAddImages && !onPasteFiles) return;
 
-      const { imageFiles, genericFiles } = collectClipboardAttachmentFiles(event.clipboardData);
+      const { imageFiles, genericFiles } = collectClipboardAttachmentFiles(
+        event.clipboardData,
+        getDesktopHost()?.webUtils?.getPathForFile,
+      );
       if (imageFiles.length === 0 && genericFiles.length === 0) return;
 
       // A file paste must never fall through to inserting a local path as text, even while busy.

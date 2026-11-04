@@ -10,7 +10,10 @@ import {
   type BackgroundProcess,
   type BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
-import { RuntimeResourceSchema, type RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import {
+  RuntimeResourceSchema,
+  type RuntimeResource,
+} from "@omp-desktop/protocol/runtime-resources";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -909,6 +912,14 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       await this.request({ type: "get_available_models" }, timeoutMs),
     );
     return data.models ?? [];
+  }
+  async getServiceTierCapabilities() {
+    const state = OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
+    const native = this.serviceTierEndpointPort ? await this.requestServiceTier() : undefined;
+    return {
+      fastMode: typeof state.fastModeEnabled === "boolean",
+      ultrafast: native?.available === true && (await this.supportsUltrafastCommand()),
+    };
   }
   async getLoginProviders(): Promise<OmpLoginProvider[]> {
     const data = OmpLoginProvidersResultSchema.parse(

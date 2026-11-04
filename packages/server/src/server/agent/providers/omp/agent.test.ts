@@ -439,20 +439,6 @@ describe("OMP agent client and session", () => {
     expect(omp.recordedPrompts()).toEqual([]);
   });
 
-  test.each([true, false])(
-    "reports missing draft metadata without launching a fast-mode probe (supported=%s)",
-    async (fastModeSupported) => {
-      const omp = new OmpHarness({ fastModeSupported });
-      await expect(
-        omp.listFeatures({
-          model: "openai-codex/gpt-5.6",
-          featureValues: { fast_mode: true },
-        }),
-      ).rejects.toThrow("Feature metadata is unavailable");
-      expect(omp.launchCount()).toBe(0);
-    },
-  );
-
   test.each(["claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"])(
     "offers fast mode for direct Anthropic %s after explicit session activation",
     async (id) => {

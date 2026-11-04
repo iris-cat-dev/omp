@@ -149,7 +149,13 @@ import {
   listOmpImportableSessions,
   readOmpImportSessionConfig,
 } from "./session-descriptor.js";
-import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
+import type {
+  OmpRuntime,
+  OmpRuntimeSession,
+  OmpServiceTierCapabilities,
+  OmpStartSessionInput,
+} from "./runtime.js";
+import { isOmpUltrafastModel } from "./service-tier-extension.js";
 import type {
   OmpAbortAndRestoreQueueResult,
   OmpAgentSessionEvent,
@@ -1110,6 +1116,21 @@ function parseModelReference(modelId: string | null): OmpModelReference | null {
     }
   }
   return { id: modelId };
+}
+
+/** Catalog-only defaults: never captures an active session's tier or account selection. */
+export function createOmpDraftFeatures(input: {
+  model: OmpModel;
+  capabilities: OmpServiceTierCapabilities;
+}): AgentFeature[] {
+  const modelId = `${input.model.provider}/${input.model.id}`;
+  const ultrafastSupported = input.capabilities.ultrafast && isOmpUltrafastModel(input.model);
+  return createOmpFeatures({ provider: "omp", cwd: "", model: modelId }, [], {
+    supported: input.capabilities.fastMode,
+    eligible: ultrafastSupported || isOmpFastModeEligibleModel(input.model, modelId),
+    selection: "off",
+    ultrafastSupported,
+  });
 }
 
 function isOmpFastModeEligibleModel(
@@ -5726,12 +5747,26 @@ export class OmpAgentClient implements AgentClient {
         const name = optionalString(provider.name)?.trim();
         if (name) providerNames.set(id, name);
       }
+      const tierCapabilities = catalogSession.getServiceTierCapabilities
+        ? await catalogSession.getServiceTierCapabilities()
+        : {
+            fastMode: typeof (await catalogSession.getState()).fastModeEnabled === "boolean",
+            ultrafast: false,
+          };
       const models = (
         await runProviderRefreshActivity(context, "get_available_models", () =>
           catalogSession.getAvailableModels(null),
         )
       )
-        .map((model) => mapOmpModel(model, this.provider, providerNames.get(model.provider)))
+        .map((model): AgentModelDefinition => {
+          const mapped = mapOmpModel(model, this.provider, providerNames.get(model.provider));
+          mapped.metadata ??= {};
+          mapped.metadata.draftFeatures = createOmpDraftFeatures({
+            model,
+            capabilities: tierCapabilities,
+          });
+          return mapped;
+        })
         .filter(
           (model) =>
             !isOmpDesktopRpcBootstrapModel(model) &&

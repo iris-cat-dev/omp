@@ -14,6 +14,13 @@ function createClipboardItem(params: { kind: string; type: string; file?: File |
   };
 }
 
+function createClipboardData(files: readonly File[]) {
+  return {
+    items: files.map((file) => createClipboardItem({ kind: "file", type: file.type, file })),
+    files,
+  };
+}
+
 function createTestStore(): AttachmentStore {
   let sequence = 0;
   return {
@@ -122,6 +129,26 @@ describe("collectClipboardAttachmentFiles", () => {
     expect(files.genericFiles[0]?.name).toBe("文本 café.txt");
   });
 
+  it("preserves distinct images with the same name and bytes in one paste", () => {
+    const first = new File(["same image"], "image.png", { type: "image/png" });
+    const second = new File(["same image"], "image.png", { type: "image/png" });
+    const document = new File(["notes"], "notes.txt", { type: "text/plain" });
+
+    const files = collectClipboardAttachmentFiles({
+      items: [
+        createClipboardItem({ kind: "file", type: first.type, file: first }),
+        createClipboardItem({ kind: "file", type: second.type, file: second }),
+        createClipboardItem({ kind: "file", type: document.type, file: document }),
+      ],
+      files: [first, second, document],
+    });
+
+    expect(files.imageFiles).toHaveLength(2);
+    expect(files.imageFiles[0]?.file).toBe(first);
+    expect(files.imageFiles[1]?.file).toBe(second);
+    expect(files.genericFiles).toEqual([document]);
+  });
+
   it("recognizes an image with an empty MIME type by its file name", () => {
     const imagePng = new File([new Uint8Array([0, 1, 2, 3])], "paste.png");
 
@@ -170,6 +197,101 @@ describe("collectClipboardAttachmentFiles", () => {
   });
 });
 
+describe("desktop clipboard image representations", () => {
+  it.each([false, true])(
+    "prefers original image files over the same paste's bitmap regardless of order (bitmap first: %s)",
+    (bitmapFirst) => {
+      const bitmap = new File(["rendered png"], "image.png", { type: "image/png" });
+      const original = new File(["original jpeg"], "photo.jpg", { type: "image/jpeg" });
+      const notes = new File(["notes"], "notes.txt", { type: "text/plain" });
+      const files = bitmapFirst ? [bitmap, original, notes] : [original, notes, bitmap];
+      const clipboard = createClipboardData(files);
+      const getPathForFile = (file: File) => (file === original ? "C:/photos/photo.jpg" : "");
+
+      const first = collectClipboardAttachmentFiles(clipboard, getPathForFile);
+      const second = collectClipboardAttachmentFiles(clipboard, getPathForFile);
+
+      expect(first.imageFiles).toEqual([{ file: original, mimeType: "image/jpeg" }]);
+      expect(first.genericFiles).toEqual([notes]);
+      expect(second).toEqual(first);
+    },
+  );
+
+  it("normalizes files-only clipboard delivery using the same source rule", () => {
+    const bitmap = new File(["bitmap"], "image.png", { type: "image/png" });
+    const original = new File(["original"], "image.png", { type: "image/png" });
+
+    const files = collectClipboardAttachmentFiles({ files: [bitmap, original] }, (file) =>
+      file === original ? "C:/photos/image.png" : "",
+    );
+
+    expect(files.imageFiles).toEqual([{ file: original, mimeType: "image/png" }]);
+  });
+
+  it("retains multiple original images even when their names and contents match", () => {
+    const bitmap = new File(["bitmap"], "image.png", { type: "image/png" });
+    const first = new File(["same image"], "image.png", { type: "image/png" });
+    const second = new File(["same image"], "image.png", { type: "image/png" });
+    const document = new File(["pdf"], "document.pdf", { type: "application/pdf" });
+
+    const files = collectClipboardAttachmentFiles(
+      createClipboardData([bitmap, first, document, second]),
+      (file) => {
+        if (file === first) return "C:/first/image.png";
+        if (file === second) return "C:/second/image.png";
+        return "";
+      },
+    );
+
+    expect(files.imageFiles).toEqual([
+      { file: first, mimeType: "image/png" },
+      { file: second, mimeType: "image/png" },
+    ]);
+    expect(files.genericFiles).toEqual([document]);
+  });
+
+  it("keeps screenshot images when the native file list is absent or unreadable", () => {
+    const first = new File(["first bitmap"], "image.png", { type: "image/png" });
+    const second = new File(["second bitmap"], "image.png", { type: "image/png" });
+    const clipboard = createClipboardData([first, second]);
+
+    expect(collectClipboardAttachmentFiles(clipboard, () => "").imageFiles).toEqual([
+      { file: first, mimeType: "image/png" },
+      { file: second, mimeType: "image/png" },
+    ]);
+    expect(
+      collectClipboardAttachmentFiles(createClipboardData([first]), () => "").imageFiles,
+    ).toEqual([{ file: first, mimeType: "image/png" }]);
+  });
+
+  it("does not treat a generic native file as an original image", () => {
+    const bitmap = new File(["bitmap"], "image.png", { type: "image/png" });
+    const document = new File(["pdf"], "document.pdf", { type: "application/pdf" });
+
+    const files = collectClipboardAttachmentFiles(createClipboardData([bitmap, document]), (file) =>
+      file === document ? "C:/document.pdf" : "",
+    );
+
+    expect(files.imageFiles).toEqual([{ file: bitmap, mimeType: "image/png" }]);
+    expect(files.genericFiles).toEqual([document]);
+  });
+
+  it("leaves web clipboard images and non-PNG files unchanged without native bitmap provenance", () => {
+    const bitmap = new File(["bitmap"], "image.png", { type: "image/png" });
+    const original = new File(["jpeg"], "photo.jpg", { type: "image/jpeg" });
+    const clipboard = createClipboardData([bitmap, original]);
+
+    expect(collectClipboardAttachmentFiles(clipboard).imageFiles).toHaveLength(2);
+    expect(
+      collectClipboardAttachmentFiles(clipboard, (file) => (file === bitmap ? "C:/image.png" : ""))
+        .imageFiles,
+    ).toEqual([
+      { file: bitmap, mimeType: "image/png" },
+      { file: original, mimeType: "image/jpeg" },
+    ]);
+  });
+});
+
 describe("filesToImageAttachments", () => {
   it("persists files as attachment metadata in order", async () => {
     const pngFile = new File([new Uint8Array([0, 1, 2, 3])], "first.png", {
@@ -215,5 +337,25 @@ describe("filesToImageAttachments", () => {
 
     expect(attachment?.storageType).toBe("web-indexeddb");
     expect(attachment?.byteSize).toBe(4 * 1024 * 1024);
+  });
+
+  it("persists a repeated paste of the same file as a new attachment", async () => {
+    const file = new File(["same image"], "image.png", { type: "image/png" });
+    const clipboard = {
+      items: [createClipboardItem({ kind: "file", type: file.type, file })],
+      files: [file],
+    };
+
+    const first = await filesToImageAttachments(
+      collectClipboardAttachmentFiles(clipboard).imageFiles,
+    );
+    const second = await filesToImageAttachments(
+      collectClipboardAttachmentFiles(clipboard).imageFiles,
+    );
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]?.id).toBe("att-1");
+    expect(second[0]?.id).toBe("att-2");
   });
 });

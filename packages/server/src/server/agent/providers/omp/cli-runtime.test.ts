@@ -124,30 +124,74 @@ describe("OMP CLI runtime", () => {
     const sessionFile = join(dir, "session.jsonl");
     const prefix = [
       { type: "session", id: "root", cwd: dir },
-      { type: "message", id: "kept", parentId: "root", message: { role: "user", content: "Kept prompt" } },
-      { type: "message", id: "answer", parentId: "kept", message: { role: "assistant", content: [{ type: "text", text: "Kept answer" }] } },
+      {
+        type: "message",
+        id: "kept",
+        parentId: "root",
+        message: { role: "user", content: "Kept prompt" },
+      },
+      {
+        type: "message",
+        id: "answer",
+        parentId: "kept",
+        message: { role: "assistant", content: [{ type: "text", text: "Kept answer" }] },
+      },
     ];
-    const serialize = (entries: unknown[]) => entries.map(entry => JSON.stringify(entry)).join("\n") + "\n";
-    writeFileSync(sessionFile, serialize([...prefix,
-      { type: "message", id: "revoked", parentId: "answer", message: { role: "user", content: "Revoked checkpoint" } },
-    ]));
+    const serialize = (entries: unknown[]) =>
+      entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+    writeFileSync(
+      sessionFile,
+      serialize([
+        ...prefix,
+        {
+          type: "message",
+          id: "revoked",
+          parentId: "answer",
+          message: { role: "user", content: "Revoked checkpoint" },
+        },
+      ]),
+    );
     const child = createOmpChild();
-    replyToCommands(child, command => {
+    replyToCommands(child, (command) => {
       if (command.type === "branch") {
         const replacement = join(dir, "replacement.jsonl");
         writeFileSync(replacement, serialize(prefix));
         renameSync(replacement, sessionFile);
         return { text: "Revoked checkpoint" };
       }
-      return { model: null, isStreaming: false, isCompacting: false, sessionId: "root", sessionFile, messageCount: 3, queuedMessageCount: 0 };
+      return {
+        model: null,
+        isStreaming: false,
+        isCompacting: false,
+        sessionId: "root",
+        sessionFile,
+        messageCount: 3,
+        queuedMessageCount: 0,
+      };
     });
     const session = await createRuntime(child).startSession({ cwd: dir });
     try {
       await session.branch("revoked");
       const items: AgentStreamEvent[] = [];
-      for await (const event of streamOmpHistory({ sessionFile, runtimeSession: session, runtimeSettings: ompHistoryRuntimeSettings, provider: "omp" })) items.push(event);
-      expect(items.flatMap(event => event.type === "timeline" && event.item.type === "user_message" ? [event.item.text] : [])).toEqual(["Kept prompt"]);
-      expect(items.flatMap(event => event.type === "timeline" && event.item.type === "assistant_message" ? [event.item.text] : [])).toEqual(["Kept answer"]);
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        runtimeSession: session,
+        runtimeSettings: ompHistoryRuntimeSettings,
+        provider: "omp",
+      }))
+        items.push(event);
+      expect(
+        items.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "user_message" ? [event.item.text] : [],
+        ),
+      ).toEqual(["Kept prompt"]);
+      expect(
+        items.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "assistant_message"
+            ? [event.item.text]
+            : [],
+        ),
+      ).toEqual(["Kept answer"]);
     } finally {
       await session.close();
       rmSync(dir, { recursive: true, force: true });
@@ -580,6 +624,60 @@ describe("OMP CLI runtime", () => {
       await session.close();
     }
   });
+
+  test.each([
+    { available: true, source: "builtin", ultrafast: true },
+    { available: false, source: "builtin", ultrafast: false },
+    { available: true, source: "extension", ultrafast: false },
+  ])(
+    "discovers catalog tier controls independently of the selected model: $available/$source",
+    async ({ available, source, ultrafast }) => {
+      const child = createOmpChild();
+      const commands: string[] = [];
+      replyToCommands(child, (command) => {
+        commands.push(String(command.type));
+        return command.type === "get_available_commands"
+          ? { commands: [{ name: "fast", source, subcommands: [{ name: "ultra" }] }] }
+          : {
+              model: { provider: "anthropic", id: "catalog-default" },
+              isStreaming: false,
+              isCompacting: false,
+              sessionId: "catalog-session",
+              fastModeEnabled: false,
+              fastModeActive: false,
+              messageCount: 0,
+              queuedMessageCount: 0,
+            };
+      });
+      const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+      child.stdout.write(
+        `${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`,
+      );
+      const fetchApi = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            available,
+            model: { provider: "anthropic", id: "catalog-default" },
+            openaiFamily: false,
+            tier: null,
+            ultrafastAvailable: false,
+          }),
+        ),
+      );
+      try {
+        await expect(session.getServiceTierCapabilities?.()).resolves.toEqual({
+          fastMode: true,
+          ultrafast,
+        });
+        expect(commands).toEqual(
+          available ? ["get_state", "get_available_commands"] : ["get_state"],
+        );
+      } finally {
+        fetchApi.mockRestore();
+        await session.close();
+      }
+    },
+  );
 
   test.each([
     { advertised: false, available: true, source: "builtin" },
