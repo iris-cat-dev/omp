@@ -152,8 +152,15 @@ function configuredSecret(
   return { configured: false, source: "none" };
 }
 
-function environmentOverrides(env: NodeJS.ProcessEnv): string[] {
+function environmentOverrides(env: NodeJS.ProcessEnv, mnemopi: ConfigRecord): string[] {
   const paths: string[] = [];
+  if (
+    ["1", "Y", "y", "TRUE", "true", "YES", "yes", "ON", "on"].includes(
+      env.MNEMOPI_EMBEDDINGS_VIA_API ?? "",
+    )
+  ) {
+    paths.push("mnemopi.embeddingsViaApi");
+  }
   if (env.HINDSIGHT_API_URL?.trim()) paths.push("hindsight.apiUrl");
   if (env.HINDSIGHT_API_TOKEN?.trim()) paths.push("hindsight.apiToken");
   if (env.HINDSIGHT_BANK_ID?.trim()) paths.push("hindsight.bankId");
@@ -171,7 +178,32 @@ function environmentOverrides(env: NodeJS.ProcessEnv): string[] {
   if (parseEnvPositiveInteger(env.HINDSIGHT_RETAIN_EVERY_N_TURNS) !== undefined) {
     paths.push("hindsight.retainEveryNTurns");
   }
+  for (const key of [
+    "embeddingModel",
+    "embeddingApiUrl",
+    "embeddingApiKey",
+    "llmBaseUrl",
+    "llmModel",
+    "llmApiKey",
+  ]) {
+    const name = `MNEMOPI_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`;
+    const configured = mnemopi[key];
+    if (!(typeof configured === "string" && configured.trim()) && env[name]?.trim()) {
+      paths.push(`mnemopi.${key}`);
+    }
+  }
   return paths;
+}
+
+function readMnemopiString(
+  record: ConfigRecord,
+  key: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const name = `MNEMOPI_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`;
+  const configured = record[key];
+  if (typeof configured === "string" && !configured.trim()) return env[name]?.trim() || null;
+  return readOptionalString(record, key, `mnemopi.${key}`) ?? (env[name]?.trim() || null);
 }
 
 function toSettings(
@@ -201,6 +233,7 @@ function toSettings(
     ? (envHindsightScoping as MemoryScoping)
     : configuredHindsightScoping;
 
+  const overrides = environmentOverrides(env, mnemopi);
   return {
     configPath,
     revision: revisionOf(raw),
@@ -279,10 +312,10 @@ function toSettings(
       ),
       llmMode: readEnum(mnemopi, "llmMode", "smol", ["smol", "remote", "none"], "mnemopi.llmMode"),
       dbPath: readOptionalString(mnemopi, "dbPath", "mnemopi.dbPath"),
-      embeddingModel: readOptionalString(mnemopi, "embeddingModel", "mnemopi.embeddingModel"),
-      embeddingApiUrl: readOptionalString(mnemopi, "embeddingApiUrl", "mnemopi.embeddingApiUrl"),
-      llmBaseUrl: readOptionalString(mnemopi, "llmBaseUrl", "mnemopi.llmBaseUrl"),
-      llmModel: readOptionalString(mnemopi, "llmModel", "mnemopi.llmModel"),
+      embeddingModel: readMnemopiString(mnemopi, "embeddingModel", env),
+      embeddingApiUrl: readMnemopiString(mnemopi, "embeddingApiUrl", env),
+      llmBaseUrl: readMnemopiString(mnemopi, "llmBaseUrl", env),
+      llmModel: readMnemopiString(mnemopi, "llmModel", env),
     },
     hindsight: {
       apiUrl:
@@ -307,10 +340,16 @@ function toSettings(
     },
     secretState: {
       hindsightApiToken: configuredSecret(hindsight.apiToken, env.HINDSIGHT_API_TOKEN),
-      mnemopiEmbeddingApiKey: configuredSecret(mnemopi.embeddingApiKey),
-      mnemopiLlmApiKey: configuredSecret(mnemopi.llmApiKey),
+      mnemopiEmbeddingApiKey: configuredSecret(
+        mnemopi.embeddingApiKey,
+        overrides.includes("mnemopi.embeddingApiKey") ? env.MNEMOPI_EMBEDDING_API_KEY : undefined,
+      ),
+      mnemopiLlmApiKey: configuredSecret(
+        mnemopi.llmApiKey,
+        overrides.includes("mnemopi.llmApiKey") ? env.MNEMOPI_LLM_API_KEY : undefined,
+      ),
     },
-    environmentOverrides: environmentOverrides(env),
+    environmentOverrides: overrides,
   };
 }
 

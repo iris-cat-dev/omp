@@ -109,8 +109,8 @@ describe("feature-preferences", () => {
         localFeatureValues: retained,
       });
       expect(retained).toBe(values);
-      expect(resolved).toEqual({});
-      expect(applyFeatureValues(availableFeatures, retained)).toEqual(availableFeatures);
+      expect(resolved).toEqual({ fast_mode: "ultrafast" });
+      expect(applyFeatureValues(availableFeatures, retained)).toEqual([]);
     }
     const restored = resolveFeatureValues({
       features: [speedFeature],

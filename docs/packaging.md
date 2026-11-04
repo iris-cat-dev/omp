@@ -109,6 +109,8 @@ Packaging accepts newer native runtime releases without a script update, validat
 
 Windows distributions must also declare `version.json.features.nativeClipboardFiles === 1`, after executable hash verification. This marks the native user-authorized Explorer-file → DOM File implementation, not merely PNG clipboard support. Unmodified Windows runtime 0.1.32 lacks this capability and is rejected; a frontend rebuild or npm-installer update cannot add it.
 
+Windows distributions must also declare `version.json.features.asyncContextPropagation === 1`. The native build earns that marker by running the main-thread and Worker AsyncLocalStorage/Promise-hook probe against the actual executable; changing only a version number does not qualify a runtime.
+
 Packaging uses the installed runtime (or `MINI_ELECTRON_DIST_PATH`) without downloading or downgrading it to a fixed release. Before packaging, refresh an existing installation with:
 
 ```bash
@@ -116,6 +118,14 @@ npx mini-electron --update-runtime
 ```
 
 Normal dependency installation reuses an already valid native runtime; updating the npm installer alone does not refresh it. Verify the selected native version in `node_modules/@iriscat/mini-electron/dist/version.json`.
+
+For a reproducible Windows x64 build using the [0.1.35 runtime and matching full PDB](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.35), select that immutable runtime explicitly:
+
+```bash
+npx mini-electron --update-runtime 0.1.35
+```
+
+The installer checks the downloaded archive and every declared runtime file before atomic replacement. This changes the native runtime, not the pinned npm installer version. The separate upstream symbols ZIP must match the EXE's RSDS GUID and Age; symbols from a previous runtime release are not interchangeable.
 
 ### Local runtime distributions
 
@@ -278,6 +288,10 @@ The Windows runtime includes the upstream [`executeJavaScript` value/Promise/err
 Windows runtime 0.1.15 also has an observed [electron-log renderer-preload redeclaration issue](https://github.com/iris-cat-dev/mini-electron/issues/5). The native smoke retains this error; passing the application scenarios does not prove that renderer logging initialized successfully.
 
 Windows runtimes must use system randomness for `mkdtemp`: repeated suffixes can block agent history loading before OMP starts, eventually reporting a 60-second message timeout.
+
+Windows runtime [0.1.35](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.35) enables SQLite FTS5 in both embedded Node and application modes, and preserves the mandatory `node:sqlite` namespace through forwarding CommonJS hooks. Its final runtime ZIP passed both SQLite entry-mode smokes, including phrase/ranking queries, index updates/deletes, read-only reopen and Workers.
+
+FTS5 does not add local embedding or small-model inference to the bundled `core` SDK. **Host Settings → Memory** explains both unavailable defaults and offers an explicit local keyword-only mode: `mnemopi.noEmbeddings: true` and `mnemopi.llmMode: none`. Saving that choice preserves the backend, existing data and automatic-retention preferences; it does not configure a remote service. New sessions expose memory tools and the memory prompt only after backend initialization actually succeeds. Keyword-only recall uses full-text matching, not semantic vectors or a memory LLM.
 
 Windows daemon and CLI process-tree cleanup launch `taskkill.exe /T /F` directly with a hidden console, avoiding transient `cmd.exe` windows during provider refresh and process shutdown. Interactive terminal launches are unchanged. macOS and Linux retain signal-based tree cleanup.
 

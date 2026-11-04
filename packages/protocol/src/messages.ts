@@ -6791,6 +6791,11 @@ export const OmpMemorySettingsSchema = z.object({
   configPath: z.string(),
   revision: z.string(),
   backend: OmpMemoryBackendSchema,
+  runtime: z
+    .object({
+      profile: z.enum(["core", "full", "unknown"]),
+    })
+    .optional(),
   supportedBackends: z.array(OmpMemoryBackendSchema),
   autolearn: z.object({
     enabled: z.boolean(),

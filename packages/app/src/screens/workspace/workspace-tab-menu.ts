@@ -233,12 +233,15 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
-    if (input.serverId) entries.push({
-      kind: "item", key: "runtime-resources", label: i18n.t("runtimeResources.title"),
-      icon: "cpu",
-      testID: `${menuTestIDBase}-runtime-resources`,
-      onSelect: () => openRuntimeResourceSheet(input.serverId!, agentId),
-    });
+    if (input.serverId)
+      entries.push({
+        kind: "item",
+        key: "runtime-resources",
+        label: i18n.t("runtimeResources.title"),
+        icon: "cpu",
+        testID: `${menuTestIDBase}-runtime-resources`,
+        onSelect: () => openRuntimeResourceSheet(input.serverId!, agentId),
+      });
   }
 
   if (tab.target.kind === "terminal") {

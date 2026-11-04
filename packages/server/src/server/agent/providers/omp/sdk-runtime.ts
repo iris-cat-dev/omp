@@ -87,31 +87,12 @@ export class OmpSdkRuntime implements OmpRuntime {
   }
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+    const preparationStartedAt = performance.now();
     input.signal?.throwIfAborted();
     const major = Number(process.versions.node.split(".")[0]);
     if (major < 24) throw new Error("OMP SDK backend requires Node.js 24 or newer");
     const runtimeSettings = this.options.runtimeSettings;
-    const configuredCommand = runtimeSettings?.command;
-    const defaultBinary = process.env.OMP_COMMAND?.trim() || "omp";
-    if (
-      configuredCommand &&
-      configuredCommand.mode !== "default" &&
-      !(
-        configuredCommand.mode === "replace" &&
-        configuredCommand.argv.length === 1 &&
-        configuredCommand.argv[0] === defaultBinary
-      )
-    ) {
-      throw new Error(
-        "OMP SDK backend does not execute custom CLI commands; remove the command override or select the CLI backend",
-      );
-    }
-    const env = createProviderEnv({ runtimeSettings, overlays: [input.env] });
-    if (hasBundledOmpPlugins(env)) {
-      throw new Error(
-        "This plugin-bound CLI distribution cannot use the SDK backend; select CLI or package SDK-compatible plugins separately",
-      );
-    }
+    const env = this.createSdkSessionEnv(runtimeSettings, input);
     const installation = await resolveOmpSdkInstallation(runtimeSettings, env);
     const command = await resolveOmpSdkHostCommand();
     const serviceTierToken = randomUUID();
@@ -145,38 +126,18 @@ export class OmpSdkRuntime implements OmpRuntime {
         })
       : undefined;
     try {
-      if (imageLaunch) extensions.push(resolveOmpImageSettingsExtensionPath());
-      const denied = [
-        ...new Set([
-          ...(runtimeSettings?.disallowedTools ?? []),
-          ...(this.options.disabledBuiltInTools ?? []),
-        ]),
-      ];
-      const systemPrompt = input.systemPrompt?.trim();
-      const payload = OmpSdkHostLaunchSchema.parse({
-        cwd: input.cwd,
-        proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
-        protocolMode: launch.protocolMode,
-        model: launch.model,
-        thinkingOptionId: input.thinkingOptionId,
-        session: input.session,
-        noSession: input.noSession,
-        extraArgs: [
-          ...(input.extraArgs ?? []),
-          ...launch.argv.slice(command.length),
-          ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
-        ],
+      const denied = this.configureSdkHostLaunch(
+        input,
+        launch,
+        command,
         extensions,
-        disallowedTools: input.localModelGateway ? [] : denied,
-        configFiles: imageLaunch ? [imageLaunch.configPath] : [],
-      });
-      launch.argv = [...command];
-      launch.env = {
-        ...launch.env,
-        ...(imageLaunch ? { [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token } : {}),
-        [OMP_SDK_LAUNCH_ENV]: JSON.stringify(payload),
-      };
-      return await startOmpRpcSession({
+        runtimeSettings,
+        imageLaunch,
+      );
+      input.signal?.throwIfAborted();
+      input.onActivity?.("prepareMs", performance.now() - preparationStartedAt);
+      const startStartedAt = performance.now();
+      const session = await startOmpRpcSession({
         launch,
         // This is our Node host, not an external provider command. The shared
         // transport's default spawn strips ELECTRON_RUN_AS_NODE, which makes a
@@ -193,6 +154,7 @@ export class OmpSdkRuntime implements OmpRuntime {
         },
         logger: this.options.logger,
         signal: input.signal,
+        onRetirementCreated: input.onRetirementCreated,
         getImageGenerationConfig: input.getImageGenerationConfig,
         imageSettingsToken: imageLaunch?.token,
         imageToolAllowed: !denied.includes("generate_image"),
@@ -201,9 +163,81 @@ export class OmpSdkRuntime implements OmpRuntime {
         serviceTierToken,
         cleanup: imageLaunch?.cleanup,
       });
+      input.onActivity?.("startMs", performance.now() - startStartedAt);
+      return session;
     } catch (error) {
       await imageLaunch?.cleanup();
       throw error;
     }
+  }
+
+  private createSdkSessionEnv(
+    runtimeSettings: ProviderRuntimeSettings | undefined,
+    input: OmpStartSessionInput,
+  ): NodeJS.ProcessEnv {
+    const configuredCommand = runtimeSettings?.command;
+    const defaultBinary = process.env.OMP_COMMAND?.trim() || "omp";
+    if (
+      configuredCommand &&
+      configuredCommand.mode !== "default" &&
+      !(
+        configuredCommand.mode === "replace" &&
+        configuredCommand.argv.length === 1 &&
+        configuredCommand.argv[0] === defaultBinary
+      )
+    ) {
+      throw new Error(
+        "OMP SDK backend does not execute custom CLI commands; remove the command override or select the CLI backend",
+      );
+    }
+    const env = createProviderEnv({ runtimeSettings, overlays: [input.env] });
+    if (hasBundledOmpPlugins(env)) {
+      throw new Error(
+        "This plugin-bound CLI distribution cannot use the SDK backend; select CLI or package SDK-compatible plugins separately",
+      );
+    }
+    return env;
+  }
+
+  private configureSdkHostLaunch(
+    input: OmpStartSessionInput,
+    launch: OmpRuntimeLaunch,
+    command: readonly string[],
+    extensions: string[],
+    runtimeSettings: ProviderRuntimeSettings | undefined,
+    imageLaunch: { configPath: string; token: string } | undefined,
+  ): string[] {
+    if (imageLaunch) extensions.push(resolveOmpImageSettingsExtensionPath());
+    const denied = [
+      ...new Set([
+        ...(runtimeSettings?.disallowedTools ?? []),
+        ...(this.options.disabledBuiltInTools ?? []),
+      ]),
+    ];
+    const systemPrompt = input.systemPrompt?.trim();
+    const payload = OmpSdkHostLaunchSchema.parse({
+      cwd: input.cwd,
+      proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
+      protocolMode: launch.protocolMode,
+      model: launch.model,
+      thinkingOptionId: input.thinkingOptionId,
+      session: input.session,
+      noSession: input.noSession,
+      extraArgs: [
+        ...(input.extraArgs ?? []),
+        ...launch.argv.slice(command.length),
+        ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
+      ],
+      extensions,
+      disallowedTools: input.localModelGateway ? [] : denied,
+      configFiles: imageLaunch ? [imageLaunch.configPath] : [],
+    });
+    launch.argv = [...command];
+    launch.env = {
+      ...launch.env,
+      ...(imageLaunch ? { [OMP_IMAGE_SETTINGS_TOKEN_ENV]: imageLaunch.token } : {}),
+      [OMP_SDK_LAUNCH_ENV]: JSON.stringify(payload),
+    };
+    return denied;
   }
 }

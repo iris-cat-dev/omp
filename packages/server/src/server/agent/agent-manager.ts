@@ -1140,8 +1140,10 @@ export class AgentManager {
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    const stored = await this.findStoredInspection(normalizedConfig, "features");
-    if (stored?.features) return stored.features;
+    if (normalizedConfig.provider !== "omp") {
+      const stored = await this.findStoredInspection(normalizedConfig, "features");
+      if (stored?.features) return stored.features;
+    }
     if (client.listFeatures) return client.listFeatures(normalizedConfig);
     throw new Error(
       `Feature metadata is unavailable for ${normalizedConfig.provider}. Start or resume a session explicitly to refresh capabilities.`,
@@ -1177,19 +1179,23 @@ export class AgentManager {
     record: StoredAgentRecord,
     config: AgentSessionConfig,
   ): boolean {
-    if (record.internal || record.provider !== config.provider || record.cwd !== config.cwd) {
-      return false;
-    }
-    return (
-      (record.config?.model ?? null) === (config.model ?? null) &&
-      (record.config?.modeId ?? record.lastModeId ?? null) === (config.modeId ?? null) &&
-      (record.config?.thinkingOptionId ?? null) === (config.thinkingOptionId ?? null)
+    return !(
+      record.internal ||
+      record.provider !== config.provider ||
+      record.cwd !== config.cwd ||
+      (record.config?.model ?? null) !== (config.model ?? null) ||
+      (record.config?.modeId ?? record.lastModeId ?? null) !== (config.modeId ?? null) ||
+      (record.config?.thinkingOptionId ?? null) !== (config.thinkingOptionId ?? null)
     );
+  }
+
+  private copyAgentWithRuntimeRetention(agent: ManagedAgent): ManagedAgent {
+    return { ...agent, runtimeRetention: this.buildRuntimeRetention(agent) };
   }
 
   getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
-    return agent ? { ...agent, runtimeRetention: this.buildRuntimeRetention(agent) } : null;
+    return agent ? this.copyAgentWithRuntimeRetention(agent) : null;
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
@@ -2059,8 +2065,7 @@ export class AgentManager {
     const reasons: AgentRuntimeRetention["reasons"] = [];
     for (const candidate of this.agents.values()) {
       if (!this.isAgentInRunTree(candidate.id, agent.id)) continue;
-      const detail = candidate.id === agent.id ? undefined : `Agent ${candidate.id}`;
-      this.appendRuntimeRetentionReasons(reasons, candidate, detail, ignoredCloseId);
+      this.appendRuntimeRetentionReasons(candidate, agent.id, ignoredCloseId, reasons);
     }
     if (!recoverable) reasons.push({ code: "unrecoverable" });
     return {
@@ -2079,11 +2084,12 @@ export class AgentManager {
   }
 
   private appendRuntimeRetentionReasons(
-    reasons: AgentRuntimeRetention["reasons"],
     candidate: ManagedAgent,
-    detail: string | undefined,
+    rootAgentId: string,
     ignoredCloseId: string | undefined,
+    reasons: AgentRuntimeRetention["reasons"],
   ): void {
+    const detail = candidate.id === rootAgentId ? undefined : `Agent ${candidate.id}`;
     if (candidate.lifecycle === "initializing") reasons.push({ code: "initializing", detail });
     if (
       candidate.lifecycle === "running" ||
@@ -2095,7 +2101,7 @@ export class AgentManager {
     if (candidate.pendingPermissions.size || candidate.inFlightPermissionResponses.size) {
       reasons.push({ code: "permission", detail });
     }
-    if (this.hasRuntimeSubmission(candidate, ignoredCloseId)) {
+    if (this.hasPendingRuntimeSubmission(candidate, ignoredCloseId)) {
       reasons.push({ code: "submission", detail });
     }
     if (candidate.labels[RUNTIME_KEEP_LABEL] === "true") {
@@ -2106,7 +2112,7 @@ export class AgentManager {
     else if (candidate.provider === "omp") reasons.push({ code: "checking", detail });
   }
 
-  private hasRuntimeSubmission(
+  private hasPendingRuntimeSubmission(
     candidate: ManagedAgent,
     ignoredCloseId: string | undefined,
   ): boolean {

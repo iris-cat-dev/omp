@@ -19,7 +19,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function makeSdk() {
+async function makeSdk(profile?: "core" | "full") {
   const root = await mkdtemp(path.join(tmpdir(), "omp-sdk-installation-"));
   roots.push(root);
   await mkdir(path.join(root, "dist", "node"), { recursive: true });
@@ -28,6 +28,7 @@ async function makeSdk() {
     JSON.stringify({
       name: "@oh-my-pi/pi-coding-agent",
       version: "19.2.3",
+      ...(profile ? { ompNodeSdk: { profile } } : {}),
     }),
   );
   for (const file of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"]) {
@@ -58,7 +59,9 @@ describe("OMP SDK runtime selection", () => {
   });
 
   it("preserves explicit SDK path precedence over provider and launch environments", async () => {
-    const root = await makeSdk();
+    const root = await makeSdk("core");
+    const ambientRoot = await makeSdk("full");
+    mocks.resolve.mockReturnValue(path.join(ambientRoot, "package.json"));
     expect(
       await resolveOmpSdkInstallation(
         {
@@ -67,7 +70,7 @@ describe("OMP SDK runtime selection", () => {
         },
         { OMP_DESKTOP_SDK_ROOT: "/launch/sdk" },
       ),
-    ).toMatchObject({ root, version: "19.2.3" });
+    ).toMatchObject({ root, version: "19.2.3", profile: "core" });
     expect(mocks.resolve).not.toHaveBeenCalled();
   });
 

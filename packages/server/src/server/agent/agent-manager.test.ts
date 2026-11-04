@@ -2485,6 +2485,58 @@ test("draft inspection reads complete persisted command and feature snapshots wi
   }
 });
 
+test("OMP draft capabilities do not reuse persisted native evidence or revive its session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-omp-capabilities-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const confirmed: AgentFeature[] = [
+    {
+      id: "fast_mode",
+      label: "Speed",
+      type: "select",
+      value: "ultrafast",
+      options: [
+        { id: "off", label: "Standard" },
+        { id: "on", label: "Fast" },
+        { id: "ultrafast", label: "Ultrafast" },
+      ],
+    },
+  ];
+  class CurrentCapabilityClient extends TestAgentClient {
+    async listFeatures(): Promise<AgentFeature[]> {
+      return confirmed;
+    }
+  }
+  const client = new CurrentCapabilityClient("omp");
+  const config: AgentSessionConfig = {
+    provider: "omp",
+    cwd: workdir,
+    model: "openai-codex/gpt-6.1-sol",
+  };
+  await storage.upsert({
+    id: "stale-omp-capabilities",
+    provider: config.provider,
+    cwd: workdir,
+    createdAt: "2026-11-03T00:00:00.000Z",
+    updatedAt: "2026-11-03T00:00:00.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: { model: config.model },
+    features: [createFeature({ id: "fast_mode", label: "Fast mode", value: false })],
+    persistence: { provider: config.provider, sessionId: "closed-native-session" },
+  });
+  const manager = new AgentManager({ clients: { omp: client }, registry: storage, logger });
+  try {
+    await expect(manager.listDraftFeatures(config)).resolves.toEqual(confirmed);
+    expect(client.createdConfigs).toEqual([]);
+    expect(client.resumeOverrides).toEqual([]);
+    expect(manager.listAgents()).toEqual([]);
+    expect((await storage.get("stale-omp-capabilities"))?.lastStatus).toBe("closed");
+  } finally {
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("listDraftFeatures uses explicit model config without default model fetching", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
@@ -8126,6 +8178,8 @@ test("failed replacement cancellation preserves an autonomous running state", as
       activeForegroundTurnId: null,
     });
   } finally {
+    await manager.flush();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

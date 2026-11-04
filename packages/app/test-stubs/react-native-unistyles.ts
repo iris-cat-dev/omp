@@ -1,3 +1,5 @@
+import { createElement, type ComponentType } from "react";
+
 const testTheme = {
   colorScheme: "light",
   colors: {
@@ -50,6 +52,7 @@ const testTheme = {
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },
       red: { 300: "#fca5a5" },
+      yellow: { 400: "#facc15" },
       zinc: { 600: "#52525b" },
       white: "#ffffff",
     },
@@ -111,7 +114,13 @@ export const StyleSheet = {
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+export const withUnistyles = <P extends object>(
+  Component: ComponentType<P>,
+  mapProps?: (theme: typeof testTheme) => Partial<P>,
+): ComponentType<P> =>
+  mapProps
+    ? (props: P) => createElement(Component, { ...mapProps(testTheme), ...props })
+    : Component;
 
 export const useUnistyles = () => ({
   theme: testTheme,

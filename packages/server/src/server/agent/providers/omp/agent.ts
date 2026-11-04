@@ -7,7 +7,7 @@ import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
@@ -107,6 +107,7 @@ import {
   type OmpRuntimeProviderParams,
 } from "./provider-config.js";
 import { prepareOmpProviderEnv } from "./provider-env.js";
+import { fingerprintOmpFeatureContext } from "./feature-context.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { mapOmpCustomAssistantMessage, shouldDisplayOmpCustomMessage } from "./custom-message.js";
@@ -143,7 +144,7 @@ import {
 } from "./installer.js";
 import { OmpCliRuntime, OmpReadyTimeoutError } from "./cli-runtime.js";
 import { OmpSdkRuntime } from "./sdk-runtime.js";
-import { resolveOmpBackend } from "./sdk-installation.js";
+import { resolveOmpBackend, resolveOmpSdkInstallation } from "./sdk-installation.js";
 import {
   inspectOmpSessionHistoryAvailability,
   listOmpImportableSessions,
@@ -151,6 +152,7 @@ import {
 } from "./session-descriptor.js";
 import type {
   OmpRuntime,
+  OmpRuntimeRetirement,
   OmpRuntimeSession,
   OmpServiceTierCapabilities,
   OmpStartSessionInput,
@@ -1994,10 +1996,7 @@ export class OmpAgentSession implements AgentSession {
     this.subagentCardTracker = new OmpSubagentCardTracker({
       scheduler: options.subagentCardScheduler,
     });
-    this.lastKnownThinkingOptionId =
-      normalizeOmpThinkingOption(options.config.thinkingOptionId) ??
-      this.state.thinkingLevel ??
-      null;
+    this.lastKnownThinkingOptionId = this.getInitialThinkingOptionId(options.config);
     this.runtimeSession.onEvent((event) => {
       this.handleRuntimeEvent(event);
     });
@@ -2013,6 +2012,10 @@ export class OmpAgentSession implements AgentSession {
   private fastModeSelection: OmpFastModeSelection;
   private modelControls = Promise.resolve();
   private modelControlRevision = 0;
+
+  private getInitialThinkingOptionId(config: AgentSessionConfig): string | null {
+    return normalizeOmpThinkingOption(config.thinkingOptionId) ?? this.state.thinkingLevel ?? null;
+  }
 
   private runModelControl<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.modelControls.then(async () => {
@@ -5179,6 +5182,15 @@ export class OmpAgentClient implements AgentClient {
   private readonly loginFlows = new Map<string, OmpProviderLoginFlow>();
   private defaultProxyPolicy: ProxyPolicy;
   private readonly proxySessions = new Set<OmpAgentSession>();
+  private readonly featureProbes = new Map<string, Promise<OmpSessionState>>();
+  private readonly featureEvidence = new Map<
+    string,
+    { state: OmpSessionState; expiresAt: number }
+  >();
+  private featureProbeQueue: Promise<void> = Promise.resolve();
+  private readonly featureProbeControllers = new Set<AbortController>();
+  private featureMetadataStopped = false;
+  private readonly featureProbeRetirements = new Map<OmpRuntimeRetirement, string>();
 
   constructor(options: OmpAgentClientOptions) {
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
@@ -5432,7 +5444,10 @@ export class OmpAgentClient implements AgentClient {
     return true;
   }
 
-  private async startOmpRuntimeSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
+  private async startOmpRuntimeSession(
+    input: OmpStartSessionInput,
+    allowBootstrap = true,
+  ): Promise<OmpRuntimeSession> {
     const env = this.desktopConfigDir
       ? await prepareOmpProviderEnv({
           configDir: this.desktopConfigDir,
@@ -5443,7 +5458,7 @@ export class OmpAgentClient implements AgentClient {
     try {
       return await this.runtime.startSession({ ...input, env, proxyPolicy });
     } catch (error) {
-      if (!isOmpRpcMissingModelError(error)) throw error;
+      if (!allowBootstrap || !isOmpRpcMissingModelError(error)) throw error;
       const injected = await this.ensureRpcBootstrapModel();
       if (!injected) throw error;
       this.logger.debug({}, "Retrying OMP RPC after adding a keyless bootstrap model");
@@ -5781,9 +5796,264 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    throw new Error(
-      `Feature metadata is unavailable for ${config.provider} without an active session. Resume explicitly to refresh capabilities.`,
+    if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+    const startedAt = performance.now();
+    const modelProvider = parseModelReference(config.model ?? null)?.provider;
+    const fingerprint = async () => {
+      const installation =
+        this.runtime instanceof OmpSdkRuntime ? await this.runtime.getInstallation() : undefined;
+      const launch = installation ? undefined : await this.resolveOmpLaunch();
+      const availability = launch ? await checkProviderLaunchAvailable(launch) : undefined;
+      let runtimeFiles: string[];
+      if (installation) {
+        runtimeFiles = [
+          installation.sdkEntry,
+          installation.rpcEntry,
+          join(installation.root, "package.json"),
+        ];
+      } else if (availability?.resolvedPath) {
+        runtimeFiles = [availability.resolvedPath];
+      } else {
+        runtimeFiles = [];
+      }
+      return fingerprintOmpFeatureContext({
+        config,
+        runtimeSettings: this.runtimeSettings,
+        desktopConfigDir: this.desktopConfigDir,
+        credentialEvidence: this.oauthAccountsOverride,
+        runtimeIdentity: installation ?? launch,
+        commandArgs: launch?.args,
+        modelProvider,
+        runtimeFiles,
+      });
+    };
+    const key = await fingerprint();
+    const contextMs = performance.now() - startedAt;
+    if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+    // Until a provider-qualified model is selected, native configuration owns
+    // model resolution. Re-read it each time instead of caching an assumed scope.
+    const cached = modelProvider ? this.featureEvidence.get(key) : undefined;
+    let state: OmpSessionState;
+    let source: "warm" | "shared" | "probe";
+    if (cached && cached.expiresAt > Date.now()) {
+      state = cached.state;
+      source = "warm";
+    } else {
+      let pending = this.featureProbes.get(key);
+      source = pending ? "shared" : "probe";
+      if (!pending) {
+        if (this.featureProbes.size >= 8) {
+          throw new Error(
+            "OMP capability detection is busy; retry after the pending checks finish",
+          );
+        }
+        const previous = this.featureProbeQueue;
+        pending = (async () => {
+          await previous;
+          if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+          const evidence = await this.probeFeatureState(config);
+          // An edit during detection cannot certify a new context with
+          // a response from the old one.
+          const settledKey = await fingerprint();
+          if (settledKey !== key) {
+            throw new Error("OMP capability context changed during detection; retry");
+          }
+          if (modelProvider)
+            this.featureEvidence.set(key, {
+              state: evidence,
+              expiresAt: Date.now() + 5 * 60_000,
+            });
+          while (this.featureEvidence.size > 32) {
+            this.featureEvidence.delete(this.featureEvidence.keys().next().value!);
+          }
+          return evidence;
+        })();
+        // One owned probe process at a time; changing models rapidly cannot
+        // fan out unbounded native runtimes.
+        this.featureProbeQueue = pending.then(
+          () => undefined,
+          () => undefined,
+        );
+        this.featureProbes.set(key, pending);
+      }
+      try {
+        state = await pending;
+      } finally {
+        if (this.featureProbes.get(key) === pending) this.featureProbes.delete(key);
+      }
+    }
+    const accountStartedAt = performance.now();
+    const accounts = this.readOAuthAccounts();
+    // Automatic account display is optional evidence, not a prerequisite for
+    // speed capability. In particular do not poll a no-session sticky record.
+    const features = createOmpFeatures(config, accounts, {
+      supported: typeof state.fastModeEnabled === "boolean",
+      eligible:
+        state.ultrafastSupported === true || isOmpFastModeEligibleModel(state.model, config.model),
+      selection:
+        normalizeOmpFastMode(config.featureValues?.[OMP_FAST_MODE_FEATURE_ID]) ??
+        readOmpFastMode(state),
+      ultrafastSupported: state.ultrafastSupported === true,
+      nativeTier: state.fastModeTier,
+    });
+    this.logger.info(
+      {
+        source,
+        contextMs,
+        accountMs: performance.now() - accountStartedAt,
+        totalMs: performance.now() - startedAt,
+      },
+      "OMP draft feature metadata ready",
     );
+    return features;
+  }
+
+  private async probeFeatureState(config: AgentSessionConfig): Promise<OmpSessionState> {
+    await this.retireFeatureProbes();
+    if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    this.featureProbeControllers.add(controller);
+    const timer = setTimeout(
+      () => controller.abort(new Error("OMP capability detection timed out")),
+      30_000,
+    );
+    timer.unref?.();
+    const launchMode = this.resolveLaunchMode(config.modeId);
+    let session: OmpRuntimeSession | undefined;
+    let closing: Promise<void> | undefined;
+    let directory: string | undefined;
+    const close = () => {
+      if (!directory) return Promise.resolve();
+      closing ??= this.closeFeatureProbeHandles(directory);
+      return closing;
+    };
+    const abort = () => {
+      void close().catch(() => undefined);
+    };
+    controller.signal.addEventListener("abort", abort, { once: true });
+    const timings: Record<string, number> = {};
+    let phase: "prepare" | "start" | "state" = "prepare";
+    let phaseStartedAt = startedAt;
+    try {
+      directory = await fs.mkdtemp(join(tmpdir(), "omp-capabilities-"));
+      const probeDirectory = directory;
+      const overlay = join(directory, "probe.yml");
+      // Metadata inspection must never initialize memory models, remote memory,
+      // or learning jobs configured for real conversations.
+      await fs.writeFile(overlay, "memory:\n  backend: off\nautolearn:\n  enabled: false\n", {
+        mode: 0o600,
+      });
+      const launchStartedAt = performance.now();
+      session = await this.startOmpRuntimeSession(
+        {
+          cwd: config.cwd,
+          model: config.model,
+          thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
+          protocolMode: "rpc",
+          noSession: true,
+          modeId: launchMode.modeId,
+          extraArgs: [...(launchMode.extraArgs ?? []), "--config", overlay],
+          proxyPolicy: config.proxyPolicy,
+          signal: controller.signal,
+          onRetirementCreated: (retirement) => {
+            this.featureProbeRetirements.set(retirement, probeDirectory);
+          },
+          onActivity: (stage, elapsedMs) => {
+            timings[stage] = elapsedMs;
+            phase = stage === "prepareMs" ? "start" : "state";
+            phaseStartedAt = performance.now();
+          },
+          env: { OMP_DESKTOP_SERVICE_OWNER: `desktop:capabilities:${randomUUID()}` },
+        },
+        false,
+      );
+      this.featureProbeRetirements.set(session, directory);
+      timings.launchMs = performance.now() - launchStartedAt;
+      controller.signal.throwIfAborted();
+      const stateStartedAt = performance.now();
+      phase = "state";
+      phaseStartedAt = stateStartedAt;
+      const state = await session.getState();
+      timings.stateMs = performance.now() - stateStartedAt;
+      controller.signal.throwIfAborted();
+      const expected = parseModelReference(config.model ?? null);
+      if (
+        expected &&
+        (!state.model ||
+          state.model.id !== expected.id ||
+          (expected.provider !== undefined && state.model.provider !== expected.provider))
+      ) {
+        throw new Error("OMP capability detection returned a different model");
+      }
+      return state;
+    } catch (error) {
+      timings[`${phase}Ms`] = performance.now() - phaseStartedAt;
+      this.logger.info(
+        {
+          ...timings,
+          phase,
+          status: "error",
+          totalMs: performance.now() - startedAt,
+        },
+        "OMP draft capability detection failed",
+      );
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", abort);
+      this.featureProbeControllers.delete(controller);
+      const closeStartedAt = performance.now();
+      // Await actual process retirement, including timeout paths. Never race
+      // cleanup against a timer or retain this probe as a conversation runtime.
+      try {
+        await close();
+        timings.closeMs = performance.now() - closeStartedAt;
+        const cleanupStartedAt = performance.now();
+        if (directory) await fs.rm(directory, { recursive: true, force: true });
+        timings.cleanupMs = performance.now() - cleanupStartedAt;
+        for (const [retirement, ownerDirectory] of this.featureProbeRetirements) {
+          if (ownerDirectory === directory) this.featureProbeRetirements.delete(retirement);
+        }
+      } finally {
+        timings.closeMs ??= performance.now() - closeStartedAt;
+        this.logger.info(
+          {
+            ...timings,
+            retired: ![...this.featureProbeRetirements.values()].includes(directory ?? ""),
+            totalMs: performance.now() - startedAt,
+          },
+          "OMP draft capability probe retirement",
+        );
+      }
+    }
+  }
+
+  private async retireFeatureProbes(): Promise<void> {
+    // Unconfirmed exit retains ownership. A later request/shutdown retries it
+    // before admitting another runtime instead of abandoning a failed close.
+    for (const directory of new Set(this.featureProbeRetirements.values())) {
+      await this.closeFeatureProbeHandles(directory);
+      await fs.rm(directory, { recursive: true, force: true });
+      for (const [retirement, ownerDirectory] of this.featureProbeRetirements) {
+        if (ownerDirectory === directory) this.featureProbeRetirements.delete(retirement);
+      }
+    }
+  }
+
+  private async closeFeatureProbeHandles(directory: string): Promise<void> {
+    // A CLI preflight and the eventual session share the overlay. Every child
+    // must acknowledge retirement before the common configuration is removed.
+    const results = await Promise.allSettled(
+      [...this.featureProbeRetirements]
+        .filter(([, owner]) => owner === directory)
+        .map(([retirement]) => retirement.close()),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length)
+      throw new AggregateError(failures, "OMP capability process exits could not all be confirmed");
   }
 
   async listImportableSessions(
@@ -6152,17 +6422,30 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async getOmpMemorySettings(): Promise<OmpMemorySettings> {
-    return readOmpMemorySettings({ ...process.env, ...this.runtimeSettings?.env });
+    const env = { ...process.env, ...this.runtimeSettings?.env };
+    return this.withMemoryRuntimeProfile(await readOmpMemorySettings(env), env);
   }
 
   async updateOmpMemorySettings(
     expectedRevision: string,
     patch: OmpMemorySettingsPatch,
   ): Promise<OmpMemorySettings> {
-    return updateMemorySettings(expectedRevision, patch, {
-      ...process.env,
-      ...this.runtimeSettings?.env,
-    });
+    const env = { ...process.env, ...this.runtimeSettings?.env };
+    return this.withMemoryRuntimeProfile(
+      await updateMemorySettings(expectedRevision, patch, env),
+      env,
+    );
+  }
+
+  private async withMemoryRuntimeProfile(
+    settings: OmpMemorySettings,
+    env: NodeJS.ProcessEnv,
+  ): Promise<OmpMemorySettings> {
+    const profile =
+      resolveOmpBackend(this.runtimeSettings, env) === "sdk"
+        ? (await resolveOmpSdkInstallation(this.runtimeSettings, env)).profile
+        : "unknown";
+    return { ...settings, runtime: { profile } };
   }
 
   async saveOmpProviderConfig(configYaml: string): Promise<OmpProviderManagement> {
@@ -6602,13 +6885,28 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async shutdown(): Promise<void> {
+    this.featureMetadataStopped = true;
+    for (const controller of this.featureProbeControllers) {
+      controller.abort(new Error("OMP provider is shutting down"));
+    }
+    await this.featureProbeQueue;
+    this.featureEvidence.clear();
+    const retirements = this.retireFeatureProbes();
     const flows = [...this.loginFlows.values()];
     this.loginFlows.clear();
     for (const flow of flows) {
       clearTimeout(flow.timeout);
       flow.unsubscribe();
     }
-    await Promise.all(flows.map((flow) => flow.runtimeSession.close().catch(() => undefined)));
+    const results = await Promise.allSettled([
+      retirements,
+      ...flows.map((flow) => flow.runtimeSession.close()),
+    ]);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length)
+      throw new AggregateError(failures, "OMP provider shutdown could not retire all runtimes");
   }
 
   private deleteLoginFlow(flowId: string): void {

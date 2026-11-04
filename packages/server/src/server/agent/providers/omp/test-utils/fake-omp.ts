@@ -41,6 +41,14 @@ export interface FakeOmpLoginFlow {
   launchUrl?: string;
   instructions?: string;
 }
+
+function getDraftModel(input: OmpStartSessionInput): OmpModel | null {
+  if (!input.noSession || !input.model) return null;
+  const separator = input.model.indexOf("/");
+  if (separator <= 0) return null;
+  return { provider: input.model.slice(0, separator), id: input.model.slice(separator + 1) };
+}
+
 export class FakeOmp implements OmpRuntime {
   readonly recordedLaunches: OmpRuntimeLaunch[] = [];
   private readonly sessions: FakeOmpSession[] = [];
@@ -73,7 +81,7 @@ export class FakeOmp implements OmpRuntime {
     if (input.proxyPolicy) await session.setProxyPolicy(input.proxyPolicy);
     session.state = {
       ...session.state,
-      model: this.initialModel,
+      model: this.initialModel ?? getDraftModel(input),
       activeCredential: this.initialActiveCredential,
     };
     session.nativeUltrafastSupported = this.ultrafastSupported;

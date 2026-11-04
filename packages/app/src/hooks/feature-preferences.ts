@@ -76,7 +76,7 @@ export function applyFeatureValues(
     return features;
   }
 
-  return features.map((feature) => {
+  return features.flatMap<AgentFeature>((feature) => {
     if (!Object.prototype.hasOwnProperty.call(featureValues, feature.id)) {
       return feature;
     }
@@ -85,7 +85,9 @@ export function applyFeatureValues(
       feature.id === FAST_MODE_FEATURE_ID
         ? normalizeFastModeFeatureValue(feature, featureValues[feature.id])
         : featureValues[feature.id];
-    if (value === undefined) return feature;
+    // A saved tier that this definition cannot represent is unavailable, not
+    // the native default and never an implicit ordinary Fast selection.
+    if (value === undefined) return feature.id === FAST_MODE_FEATURE_ID ? [] : [feature];
     return {
       ...feature,
       value,
@@ -117,6 +119,17 @@ export function resolveFeatureValues(args: {
         feature.id === FAST_MODE_FEATURE_ID ? normalizeFastModeFeatureValue(feature, value) : value;
       if (normalizedValue !== undefined) next[feature.id] = normalizedValue;
     }
+  }
+  // An unavailable native tier is a retained preference, not permission to use
+  // a different service. Send it unchanged when starting a later capable model.
+  const fastPreference = Object.prototype.hasOwnProperty.call(
+    args.localFeatureValues,
+    FAST_MODE_FEATURE_ID,
+  )
+    ? args.localFeatureValues[FAST_MODE_FEATURE_ID]
+    : args.persistedFeatureValues[FAST_MODE_FEATURE_ID];
+  if (fastPreference !== undefined && next[FAST_MODE_FEATURE_ID] === undefined) {
+    next[FAST_MODE_FEATURE_ID] = fastPreference;
   }
   const supportsWorkflow = args.features.some((feature) => feature.id === "workflow_mode");
   if (supportsWorkflow) {

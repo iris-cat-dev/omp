@@ -17,14 +17,16 @@ import {
   hasOmpUltrafastCommand,
   resolveOmpCodexCatalogPreloadPath,
   resolveOmpServiceTierExtensionPath,
+  startOmpRpcSession,
 } from "./cli-runtime.js";
-import type { OmpRuntimeLaunch } from "./runtime.js";
+import type { OmpRuntimeLaunch, OmpRuntimeRetirement } from "./runtime.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import * as bundledPlugins from "../../../bundled-omp-plugins.js";
 import { subscribeBundledOmpInitialization } from "../../../bundled-omp-initialization.js";
 import { streamOmpHistory } from "./history.js";
 import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
+import { JsonlRpcProcess } from "../jsonl-rpc-process.js";
 type OmpChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -1244,6 +1246,40 @@ describe("OMP CLI runtime", () => {
       message: "hello",
       streamingBehavior: "steer",
     });
+  });
+
+  test("keeps an owned retirement handle when protocol negotiation and its first process close fail", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    let owned: OmpRuntimeRetirement | undefined;
+    let ownedAtNegotiation = false;
+    replyToCommands(child, () => {
+      ownedAtNegotiation = owned !== undefined;
+      return { protocolVersion: 1 };
+    });
+    const closeError = new Error("process exit not confirmed");
+    const failedClose = vi
+      .spyOn(JsonlRpcProcess.prototype, "close")
+      .mockRejectedValueOnce(closeError);
+    try {
+      await expect(
+        startOmpRpcSession({
+          launch: { cwd: tmpdir(), argv: [process.execPath] },
+          logger: pino({ level: "silent" }),
+          spawnProcess: () => child,
+          onRetirementCreated: (session) => {
+            owned = session;
+          },
+        }),
+      ).rejects.toBe(closeError);
+      expect(ownedAtNegotiation).toBe(true);
+      expect(child.killedSignals).toEqual([]);
+      failedClose.mockRestore();
+      await owned!.close();
+      expect(child.killedSignals).toContain("SIGTERM");
+    } finally {
+      failedClose.mockRestore();
+      await owned?.close();
+    }
   });
 
   test("negotiates RPC protocol v2 when OMP advertises it", async () => {

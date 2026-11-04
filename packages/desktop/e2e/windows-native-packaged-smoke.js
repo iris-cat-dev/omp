@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const nodeUtil = require("node:util");
+const { syncSdkStatsFixture } = require("./sdk-stats-fixture.js");
 
 // Invoked by packaged-app-smoke.js on Windows. A visible, unlocked desktop is
 // required for the owned-window surface screenshots; no Inspector/CDP is used.
@@ -1099,8 +1100,8 @@ function seedStatsFixture(profile) {
     baseTime,
     rows,
     parserSource: "packages/stats/src/parser.ts:47-55,227-303",
-    ingestCommand:
-      "configured bundled omp --profile default stats --summary (through real Stats RPC)",
+    ingestion:
+      "explicit smoke-owned packaged SDK __omp_worker_stats_activity worker; production Stats RPC is read-only",
     initialIndex: "missing",
   };
 }
@@ -1239,14 +1240,14 @@ async function smokeUsage({
     route,
     fixture,
     ranges: {},
-    nativeIndexer: {
-      binaryPath: report.cli.omp.binaryPath,
-      version: report.cli.omp.version,
-      args: ["--profile", "default", "stats", "--summary"],
-      invokedBy: "real Desktop Stats RPC",
+    fixtureIndexer: {
+      executable: report.runtime.executable,
+      sdkRoot: report.cli.omp.sdkRoot,
+      selector: "__omp_worker_stats_activity",
+      invokedBy: "explicit smoke fixture synchronization, not production Stats RPC or CLI",
     },
     notExercised: [
-      "unsupported native schema and forced native index refresh failure/timeout",
+      "unsupported native schema and forced SDK fixture synchronization failure/timeout",
       "real user credentials/transcripts, provider quotas, paid/model requests",
     ],
   };
@@ -1267,7 +1268,7 @@ async function smokeUsage({
     assert.equal(
       result.stats?.status,
       "available",
-      "The real Stats RPC must ingest the owned JSONL before reading the native index",
+      "The real Stats RPC must read the existing SDK-generated native index",
     );
     assert.deepEqual(result.stats?.scope, { kind: "host_profile", profile: "default" });
     assert.ok(
@@ -1528,22 +1529,53 @@ async function smokeUsage({
     report.usage.lastDom = snapshot;
     return snapshot;
   };
-  report.usage.indexBeforePage = { exists: fs.existsSync(fixture.statsPath) };
+  report.usage.indexBeforeSync = { exists: fs.existsSync(fixture.statsPath) };
   assert.equal(
-    report.usage.indexBeforePage.exists,
+    report.usage.indexBeforeSync.exists,
     false,
-    "Opening Usage must build the missing index; no helper may pre-sync it",
+    "The synthetic JSONL fixture must begin without a native index",
   );
-  await navigateChinese(page, route);
-  // Observe the real renderer before issuing any auxiliary Stats RPC. Otherwise
-  // that RPC's native sync could hide a broken page-open indexing path.
-  report.usage.opened = await checkUi("24h", expectedStatsFixture(fixture, "24h"));
+  report.usage.missingIndexRpc = await command({ action: "stats", range: "24h" });
+  assert.equal(report.usage.missingIndexRpc.serverInfo?.serverId, serverId);
+  assert.equal(report.usage.missingIndexRpc.serverInfo?.features?.ompStats, true);
+  assert.equal(report.usage.missingIndexRpc.stats?.source, "omp_stats_db");
+  assert.deepEqual(report.usage.missingIndexRpc.stats?.scope, {
+    kind: "host_profile",
+    profile: "default",
+  });
+  assert.equal(report.usage.missingIndexRpc.stats?.status, "unavailable");
+  assert.equal(report.usage.missingIndexRpc.stats?.reason, "missing");
+  report.usage.indexAfterMissingRpc = { exists: fs.existsSync(fixture.statsPath) };
+  assert.equal(
+    report.usage.indexAfterMissingRpc.exists,
+    false,
+    "SDK-only Stats RPC must report a missing index without creating it",
+  );
+  const synchronizeFixture = async () => {
+    const result = await syncSdkStatsFixture({
+      executable: report.runtime.executable,
+      sdkRoot: report.cli.omp.sdkRoot,
+      env,
+      cwd: profile,
+      timeoutMs: STATS_COMMAND_TIMEOUT_MS,
+    });
+    assert.equal(
+      result.completed,
+      true,
+      "The real SDK fixture worker must complete its native sync",
+    );
+    assert.equal(result.stopped, true, "The owned SDK fixture worker must exit before index reads");
+    return result;
+  };
+  report.usage.initialSync = await synchronizeFixture();
   report.usage.sourceBefore = readStatsSource(profile);
   assert.equal(report.usage.sourceBefore.requests, 7);
   assert.equal(report.usage.sourceBefore.uniqueEntries, 7);
   assert.equal(report.usage.sourceBefore.transcripts, 5);
   assert.equal(report.usage.sourceBefore.totalTokens, 1665);
   assert.equal(report.usage.sourceBefore.cost, 7.5);
+  await navigateChinese(page, route);
+  report.usage.opened = await checkUi("24h", expectedStatsFixture(fixture, "24h"));
   // Verify default 24h, every actual range control, and all RPC breakdowns.
   for (const range of ["24h", "1h", "7d", "30d", "90d", "all"]) {
     if (range !== "24h") await click(`omp-native-stats-range-${range}`);
@@ -1554,7 +1586,7 @@ async function smokeUsage({
       await page.snapshot(`usage-${range}-zh-cn-renderer.png`);
   }
   await click("omp-native-stats-range-24h");
-  await checkUi("24h", expectedStatsFixture(fixture, "24h"));
+  const beforeRefreshDom = await checkUi("24h", expectedStatsFixture(fixture, "24h"));
   const refreshRow = {
     entry: "fixture-refresh-1",
     session: "fixture-main.jsonl",
@@ -1576,10 +1608,24 @@ async function smokeUsage({
   assert.deepEqual(
     report.usage.sourceAfterAppend,
     report.usage.sourceBefore,
-    "Appending JSONL must leave a genuinely stale index until the real refresh",
+    "Appending JSONL must leave a genuinely stale index until explicit SDK fixture synchronization",
   );
-  // No navigation/cache replacement or auxiliary Stats RPC after the append:
-  // only this real Refresh click may sync the new request into the mounted UI.
+  report.usage.refreshSync = await synchronizeFixture();
+  report.usage.sourceAfterSync = readStatsSource(profile);
+  assert.equal(report.usage.sourceAfterSync.requests, 8);
+  assert.equal(report.usage.sourceAfterSync.uniqueEntries, 8);
+  assert.equal(report.usage.sourceAfterSync.totalTokens, 1764);
+  assert.equal(report.usage.sourceAfterSync.cost, 7.75);
+  assert.equal(report.usage.sourceAfterSync.indexedThrough, refreshRow.timestamp);
+  report.usage.beforeRefreshClick = await inspect();
+  assert.deepEqual(
+    report.usage.beforeRefreshClick.values,
+    beforeRefreshDom.values,
+    "Updating the index outside Desktop must not replace the mounted UI before its real Refresh",
+  );
+  // The SDK fixture worker, not Desktop, updates the index. No navigation,
+  // cache replacement or auxiliary Stats RPC follows that sync: only this real
+  // Refresh click may read the new index into the already mounted Usage UI.
   await click("omp-native-stats-refresh");
   const refreshedDom = await checkUi("24h", expectedStatsFixture(fixture, "24h"));
   report.usage.sourceAfterRefresh = readStatsSource(profile);
@@ -1587,6 +1633,12 @@ async function smokeUsage({
   assert.equal(report.usage.sourceAfterRefresh.uniqueEntries, 8);
   assert.equal(report.usage.sourceAfterRefresh.totalTokens, 1764);
   assert.equal(report.usage.sourceAfterRefresh.indexedThrough, refreshRow.timestamp);
+  assert.equal(report.usage.sourceAfterRefresh.cost, 7.75);
+  assert.deepEqual(
+    report.usage.sourceAfterRefresh,
+    report.usage.sourceAfterSync,
+    "The real Refresh button must read the SDK-generated index without changing it",
+  );
   const refreshed = await readRpc("24h");
   assert.equal(refreshed.expected.overall.totalRequests, 4);
   assert.equal(refreshed.expected.overall.totalTokens, 1619);
@@ -1607,7 +1659,7 @@ async function smokeUsage({
   assert.deepEqual(
     report.usage.sourceAfter,
     report.usage.sourceAfterRefresh,
-    "Subsequent Stats RPC syncs must not duplicate native indexed requests",
+    "Subsequent read-only Stats RPCs must not change native indexed requests",
   );
   report.usage.repeatReads = [];
   for (let iteration = 1; iteration <= 2; iteration++) {
@@ -1616,7 +1668,7 @@ async function smokeUsage({
     assert.deepEqual(
       source,
       report.usage.sourceAfter,
-      "Repeated native index syncs/reads must preserve unique requests, tokens and costs",
+      "Repeated native index reads must preserve unique requests, tokens and costs",
     );
     report.usage.repeatReads.push({ iteration, ...repeated, source });
   }
@@ -1632,7 +1684,7 @@ async function smokeUsage({
   report.usage.status = "passed";
   writeJson(path.join(evidence, "usage-zh-cn.json"), report.usage);
   report.checks.push(
-    "mandatory real Stats native JSONL ingestion/SQL/RPC and Chinese Usage; missing index built on open; six ranges, independent native total_tokens, model/provider/main/subagent/advisor breakdowns, unpriced costs, numeric-only DTOs; append JSONL then genuine Refresh before auxiliary RPC; repeat syncs without duplicate requests",
+    "mandatory real packaged SDK worker native JSONL indexing, read-only Stats SQL/RPC and Chinese Usage; missing RPC leaves index absent; six ranges, independent native total_tokens, model/provider/main/subagent/advisor breakdowns, unpriced costs, numeric-only DTOs; append JSONL leaves index stale, explicit SDK fixture sync then genuine Refresh reads new index before auxiliary RPC; repeated reads without duplicate requests or source changes",
   );
 }
 
@@ -1852,7 +1904,7 @@ async function smokeWindowsPackagedApp({
       sessionsPath: fixture.sessionsPath,
       initialIndex: fixture.initialIndex,
       parserSource: fixture.parserSource,
-      ingestCommand: fixture.ingestCommand,
+      ingestion: fixture.ingestion,
       evidence: path.join(evidence, "stats-fixture.json"),
     };
     writeJson(report.statsFixture.evidence, fixture);

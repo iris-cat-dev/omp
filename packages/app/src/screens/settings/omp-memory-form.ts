@@ -43,6 +43,35 @@ export interface OmpMemoryDraft {
 
 export type OmpMemoryDraftErrors = Partial<Record<keyof OmpMemoryDraft, string>>;
 
+/** Configuration compatibility only; a running session may still fail to initialize its database/service. */
+export function getOmpMnemopiBlockers(
+  settings: OmpMemorySettings,
+  draft: OmpMemoryDraft,
+): string[] {
+  if (draft.backend !== "mnemopi") return [];
+  const reasons: string[] = [];
+  if (!settings.runtime || settings.runtime.profile === "unknown") reasons.push("profileUnknown");
+  if (settings.runtime?.profile === "core") {
+    if (!draft.mnemopiNoEmbeddings && !draft.mnemopiEmbeddingApiUrl.trim())
+      reasons.push("coreEmbeddings");
+    if (draft.mnemopiLlmMode === "smol") reasons.push("coreLlm");
+    if (
+      !draft.mnemopiNoEmbeddings &&
+      draft.mnemopiEmbeddingApiUrl.toLowerCase().includes("openrouter.ai") &&
+      !draft.mnemopiEmbeddingModel.trim().startsWith("openai/") &&
+      !draft.mnemopiEmbeddingModel.trim().includes("text-embedding") &&
+      !settings.environmentOverrides.includes("mnemopi.embeddingsViaApi")
+    ) {
+      reasons.push("coreEmbeddingModel");
+    }
+  }
+  if (draft.mnemopiLlmMode === "remote") {
+    if (!draft.mnemopiLlmBaseUrl.trim()) reasons.push("remoteUrl");
+    if (!draft.mnemopiLlmModel.trim()) reasons.push("remoteModel");
+  }
+  return reasons;
+}
+
 export function createOmpMemoryDraft(settings: OmpMemorySettings): OmpMemoryDraft {
   return {
     backend: settings.backend,

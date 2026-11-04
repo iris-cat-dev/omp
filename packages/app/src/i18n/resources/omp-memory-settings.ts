@@ -25,7 +25,7 @@ const en = {
       description: "Build project summaries from persisted session history.",
     },
     mnemopi: {
-      label: "Mnemopi · Recommended",
+      label: "Mnemopi",
       description: "Local SQLite memory with recall and item-level maintenance.",
     },
     hindsight: {
@@ -53,6 +53,23 @@ const en = {
   },
   mnemopi: {
     title: "Mnemopi settings",
+    coreEmbeddings:
+      "Unavailable in the core SDK: local embeddings are not included. Choose keyword-only search explicitly, or configure an embedding API endpoint in Advanced settings.",
+    coreLlm:
+      "Unavailable in the core SDK: the small-model memory mode is not included. Choose Disabled, or configure your own remote memory model in Advanced settings.",
+    coreEmbeddingModel:
+      "The OpenRouter endpoint requires an API embedding model (for example openai/text-embedding-3-small). The default BAAI model needs the full SDK. Choose your service's model explicitly in Advanced settings.",
+    remoteUrl: "Remote memory mode requires an LLM API URL.",
+    remoteModel: "Remote memory mode requires an explicit model.",
+    profileUnknown:
+      "This host has not reported its SDK profile. Local embeddings and small-model memory inference require the full SDK; core needs an explicit supported configuration.",
+    privacyHint:
+      "The database stays on this host, but configured embedding/LLM APIs receive memory content and may incur charges. No endpoint or chat model is selected automatically. Compatibility does not confirm that a session initialized successfully; session memory status reports startup failures.",
+    localModeHint:
+      "Requires a runtime with SQLite FTS5 support; older runtimes may need rebuilding/updating. Local keyword-only mode uses full-text matching, not semantic vectors, and no memory LLM extraction/synthesis. Retain/learn stores supplied text. Automatic conversation retention remains your choice below. Existing databases and settings are preserved.",
+    environmentSecret:
+      "Provided by the environment. Enter a replacement to override it in configuration; removing a configured key restores the environment fallback.",
+    chooseLocalMode: "Choose local keyword-only mode · no memory LLM",
     scoping: "Memory scope",
     autoRecall: "Recall on session start",
     autoRetain: "Automatically retain conversations",
@@ -143,7 +160,7 @@ const zhCN: MemoryTranslations<typeof en> = {
     empty: "没有受支持的记忆后端",
     off: { label: "关闭", description: "不保存或召回长期记忆。" },
     local: { label: "本地总结", description: "从持久化的会话历史生成项目总结。" },
-    mnemopi: { label: "Mnemopi · 推荐", description: "本地 SQLite 记忆，支持召回和单条维护。" },
+    mnemopi: { label: "Mnemopi", description: "本地 SQLite 记忆，支持召回和单条维护。" },
     hindsight: { label: "Hindsight", description: "适合共享或跨设备使用的远程 Bank 记忆。" },
     sharpshooter: { label: "Sharpshooter", description: "保存确认过的架构、产品和风格决策。" },
   },
@@ -163,6 +180,23 @@ const zhCN: MemoryTranslations<typeof en> = {
   },
   mnemopi: {
     title: "Mnemopi 设置",
+    coreEmbeddings:
+      "当前配置不可用：core SDK 不包含本地向量模型。请明确选择仅全文搜索，或在高级设置中配置向量 API 地址。",
+    coreLlm:
+      "当前配置不可用：core SDK 不包含小模型记忆模式。请选择「禁用」，或在高级设置中配置自己的远程记忆模型。",
+    coreEmbeddingModel:
+      "OpenRouter 地址需要 API 向量模型（例如 openai/text-embedding-3-small）。默认 BAAI 模型需要 full SDK。请在高级设置中明确选择服务支持的模型。",
+    remoteUrl: "远程记忆模式需要 LLM API 地址。",
+    remoteModel: "远程记忆模式需要明确指定模型。",
+    profileUnknown:
+      "此 Host 尚未报告 SDK 构建类型。本地向量模型和小模型记忆推理需要 full SDK；core 需要明确选择支持的配置。",
+    privacyHint:
+      "数据库保留在此 Host，但配置的向量／LLM API 会接收记忆内容，并可能产生费用。不会自动选择远程地址或当前聊天模型。配置兼容不代表会话初始化已成功；启动失败原因会显示在会话记忆状态中。",
+    localModeHint:
+      "需要运行时包含 SQLite FTS5 支持；旧运行时可能需要重建／更新。本地仅全文模式使用关键词匹配，不提供语义向量检索，也不使用记忆 LLM 提取／综合。retain／learn 保存传入的文本。是否自动保存对话仍由下方选项决定。已有数据库和设置均保留。",
+    chooseLocalMode: "选择本地仅全文模式 · 不使用记忆 LLM",
+    environmentSecret:
+      "当前密钥来自环境变量。输入新密钥可在配置中覆盖；移除配置密钥后会重新使用环境变量。",
     scoping: "记忆作用域",
     autoRecall: "会话启动时召回",
     autoRetain: "自动保存对话",

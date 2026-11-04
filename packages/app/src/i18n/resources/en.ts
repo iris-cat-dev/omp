@@ -328,6 +328,10 @@ export const en = {
         ultrafastDescription:
           "Ultrafast consumes included usage at 8× and purchased credits at 6× the Standard rate. Requires a supported account and model; actual speed varies.",
         selectWithValue: "Select speed, current: {{value}}",
+        detecting: "Detecting supported speeds…",
+        detectionFailed: "Speed detection failed",
+        unsupported: "Speed selection is not supported",
+        retryDetection: "Retry speed detection",
       },
       workflow: {
         title: "Workflow",

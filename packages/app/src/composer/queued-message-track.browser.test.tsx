@@ -8,6 +8,19 @@ import { QueuedMessageTrack } from "./queued-message-track";
 import { i18n } from "@/i18n/i18next";
 import { useSessionStore } from "@/stores/session-store";
 
+vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
+// The real session store imports timeline-assets, whose Expo crypto boundary is
+// unrelated to queue interactions and is not bundled by the Vitest browser harness.
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digestStringAsync: async (_algorithm: string, text: string) => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+      "",
+    );
+  },
+}));
+
 const serverId = "browser-queued-messages";
 const agentId = "browser-agent";
 const emptyMessages: QueuedComposerMessage[] = [];

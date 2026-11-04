@@ -46,9 +46,16 @@ export interface OmpRuntimeLaunch {
   extraArgs?: string[];
 }
 
+export interface OmpRuntimeRetirement {
+  close(): Promise<void>;
+}
+
 export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
+  onActivity?: (stage: "prepareMs" | "startMs", elapsedMs: number) => void;
+  /** Transfers retirement ownership before readiness/protocol negotiation can fail. */
+  onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void;
   getImageGenerationConfig?: OmpImageSettingsGetter;
   proxyPolicy?: ProxyPolicy;
   localModelGateway?: boolean;
