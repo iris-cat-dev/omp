@@ -72,7 +72,11 @@ While a conversation runs, the composer defaults to **Steer**. Steering guides t
 
 If the provider cannot accept steering, Desktop reports a send failure and leaves the current turn running. Agent-to-agent prompts and completion notifications follow this same non-destructive rule, rather than replacing the turn.
 
+Prompt admission is serialized per target until its provider accepts the turn, not until the task finishes. Concurrent messages and completion notifications then steer that turn instead of replacing a still-starting request. Queued admissions retain their submission-time Stop epochs, including managed ancestors: Stop withdraws them rather than letting a late admission response restart work. Deliberate messages submitted after Stop can start normally. Other conversations remain independent; out-of-band controls bypass admission waits.
+
 After a message is accepted, the composer clears the unchanged submitted text and its image/file attachments, even when a deferred draft save rebuilds attachment objects while sending. Failed submissions preserve the draft. New text or attachment edits still present at acceptance, and drafts in a newly selected conversation, are not cleared by an earlier submission. Workspace setup propagates directory-validation and agent-creation failures to the composer instead of treating a displayed error as acceptance. Successful creation clears only its unchanged originating snapshot before closing or navigating, cancels unpublished text, and preserves attachment edits or a replacement workspace draft.
+
+Closing and reopening setup for the same directory starts a replacement setup. A creation accepted by the earlier setup cannot close the replacement or clear its text and attachments, including text still awaiting after-paint publication.
 
 When starting a conversation in a new workspace, directory-check, workspace-creation, and agent-creation failures are reported as rejected submissions. The text and image/file attachments remain available for an explicit retry; displaying a creation error does not count as accepting the message.
 
@@ -157,13 +161,17 @@ Connected clients refresh directories and history/search caches after deletion. 
 
 ## Independent agents
 
-Agent-scoped `create_agent` creates a child in the caller's workspace by default. Each workspace can have only one unarchived independent root conversation. For another independent conversation, call `create_workspace`, then `create_agent` with `detached: true` and its returned `workspaceId`. Normal children stay in their parent's workspace.
+Agent-scoped `create_agent` creates a child in the caller's workspace by default. Each workspace can have only one unarchived independent root conversation. For another independent conversation, call `create_workspace`, then `create_agent` with `detached: true` and its returned `workspaceId`. Assigning a child to another worktree keeps its parent relationship and execution workspace; it does not make it an independent conversation.
 
 A new workspace starts without a conversation. `create_workspace` instructs the caller to use `create_agent` with that ID so work appears as the workspace's own conversation. Built-in task subagents retain the caller's workspace: editing another worktree changes its files, but does not relocate the conversation.
+
+Managed children remain in their parent's subagent track, including children in another worktree. Child-only workspaces do not add sidebar conversation rows or automatically open tabs. Opening a child in the same project keeps it with the parent pane while preserving its own working directory and workspace; children in another project open in that project's layout. Detaching restores independent conversation visibility; empty workspaces and workspaces with an active independent root remain visible.
 
 Older workspaces with multiple active roots restore each root as a tab and focus the one needing attention. Their workspace menu can open or archive each root without global history. Archiving retains history. A shared workspace does not isolate concurrent file edits.
 
 `notifyOnFinish: true` can notify the creator when an independent agent finishes, fails, or needs permission without creating a parent relationship. It does not revive an archived creator. Ordinary child agents retain parent-owned notifications, which cease if the child is detached.
+
+Repeated finish subscriptions for the same target, caller, and ownership policy share one notification. Agent-scoped `send_agent_prompt` defaults to no finish notification when reporting to a parent or another managed ancestor, so a parent's completion does not restart finished reporters. Child tasks and independent collaborators still default to notifications; explicit `notifyOnFinish: true` opts in for ancestor reports.
 
 ### OMP-native task subagents
 

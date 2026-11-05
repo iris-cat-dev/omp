@@ -543,6 +543,31 @@ describe("WorkspaceSetupDialog accepted draft snapshots", () => {
     });
   });
 
+  it.each([false, true])(
+    "preserves a reopened same-workspace draft when earlier creation succeeds (published: %s)",
+    async (publishReplacement) => {
+      const creation = deferredRequest(createdAgent);
+      client.createAgent.mockReturnValueOnce(creation.promise);
+      const directory = await startSubmission(initialAttachments, false);
+      await act(async () => directory.resolve(true));
+      await act(async () => useWorkspaceSetupStore.getState().clearWorkspaceSetup());
+      await act(async () => {
+        useWorkspaceSetupStore.getState().beginWorkspaceSetup({ serverId, sourceDirectory: cwd });
+      });
+      const replacementSetup = useWorkspaceSetupStore.getState().pendingWorkspaceSetup;
+      const replacementText = "New unsent message";
+      expect(textarea().readOnly).toBe(false);
+      act(() => edit(replacementText));
+      if (publishReplacement) publishAfterPaint();
+
+      await act(async () => creation.resolve(createdAgent));
+      expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBe(replacementSetup);
+      expect(textarea().value).toBe(replacementText);
+      publishAfterPaint();
+      expectDraft(replacementText, initialAttachments);
+    },
+  );
+
   it("preserves the replacement workspace when an inactive creation succeeds", async () => {
     const directory = await startSubmission(initialAttachments);
     const creation = deferredRequest(createdAgent);

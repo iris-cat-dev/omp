@@ -8,18 +8,27 @@ import { join } from "node:path";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { createAgentMcpServer } from "./mcp-server.js";
+import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
+import { PARENT_AGENT_ID_LABEL } from "@omp-desktop/protocol/agent-labels";
 import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
+import { respondToAgentPermission } from "./permission-response.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
   AgentRunResult,
   AgentSession,
   AgentStreamEvent,
+  AgentPromptInput,
+  AgentPermissionResult,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "./agent-sdk-types.js";
 
 interface CapturedLogger {
@@ -72,7 +81,10 @@ interface FinishNotificationScenario {
 function createFinishNotificationScenario(
   options?: FinishNotificationScenarioOptions,
 ): FinishNotificationScenario {
-  let subscriber: ((event: AgentManagerEvent) => void) | null = null;
+  const subscribers = new Set<(event: AgentManagerEvent) => void>();
+  const subscriber = (event: AgentManagerEvent) => {
+    for (const callback of subscribers) callback(event);
+  };
   let resolveParentPrompt: ((prompt: string) => void) | null = null;
   let parentPrompted = false;
   let steerAttemptCount = 0;
@@ -84,13 +96,20 @@ function createFinishNotificationScenario(
   Reflect.set(childAgent, "lifecycle", "idle");
   Reflect.set(childAgent, "config", { title: "Child Agent" });
   Reflect.set(childAgent, "pendingPermissions", new Map());
+  const parentAgentId =
+    options?.childParentAgentId === undefined ? "caller-agent" : options.childParentAgentId;
+  Reflect.set(
+    childAgent,
+    "labels",
+    parentAgentId ? { [PARENT_AGENT_ID_LABEL]: parentAgentId } : {},
+  );
 
   const callerAgent: ManagedAgent = Object.create(null);
   Reflect.set(callerAgent, "id", "caller-agent");
   Reflect.set(callerAgent, "lifecycle", "idle");
   Reflect.set(callerAgent, "config", { title: "Caller Agent" });
 
-  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  const agentManager = new AgentManager({ logger: createTestLogger() });
   Reflect.set(agentManager, "getAgent", (agentId: string) => {
     if (agentId === "child-agent") {
       return childAgent;
@@ -101,9 +120,9 @@ function createFinishNotificationScenario(
     return null;
   });
   Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
-    subscriber = callback;
+    subscribers.add(callback);
     return () => {
-      subscriber = null;
+      subscribers.delete(callback);
     };
   });
   Reflect.set(agentManager, "getLastAssistantMessage", async () => {
@@ -420,6 +439,31 @@ test("finish notifications survive repeated permission cycles", async () => {
   ).toEqual(["needs permission", "needs permission", "finished"]);
 });
 
+test("repeated reports merge finish subscriptions through permission cycles and release at terminal", async () => {
+  const scenario = createFinishNotificationScenario();
+  scenario.startWatchingChild();
+  scenario.startWatchingChild();
+  scenario.startWatchingChild();
+  scenario.requestChildPermission();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+
+  scenario.startWatchingChild();
+  scenario.resolveChildPermission();
+  scenario.requestChildPermission();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  scenario.resolveChildPermission();
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  scenario.finishChild();
+  expect(scenario.parentPrompts().filter((prompt) => prompt.includes("finished."))).toHaveLength(1);
+
+  // A later task may install a fresh subscription after the terminal boundary.
+  scenario.startWatchingChild();
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(4));
+  expect(scenario.parentPrompts().filter((prompt) => prompt.includes("finished."))).toHaveLength(2);
+});
+
 test("detaching a child ends its parent-owned finish notification", async () => {
   const scenario = createFinishNotificationScenario({
     childParentAgentId: null,
@@ -479,7 +523,7 @@ it("does not notify archived callers", async () => {
   const streamAgentSpy = vi.fn(() => (async function* noop() {})());
   const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
 
-  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  const agentManager = new AgentManager({ logger: createTestLogger() });
   Reflect.set(
     agentManager,
     "getAgent",
@@ -587,7 +631,7 @@ class SlowStartAgentSession implements AgentSession {
     this.releaseStartTurn();
   }
 
-  async startTurn(): Promise<{ turnId: string }> {
+  async startTurn(_prompt: AgentPromptInput): Promise<{ turnId: string }> {
     await new Promise<void>((resolve) => {
       if (this.startDelayMs !== null) {
         setTimeout(resolve, this.startDelayMs);
@@ -635,7 +679,11 @@ class SlowStartAgentSession implements AgentSession {
     return [];
   }
 
-  async respondToPermission(): Promise<void> {}
+  permissionFollowUp: AgentPromptInput | undefined;
+
+  async respondToPermission(): Promise<AgentPermissionResult | void> {
+    if (this.permissionFollowUp) return { followUpPrompt: this.permissionFollowUp };
+  }
 
   describePersistence() {
     return { provider: this.provider, sessionId: this.id };
@@ -773,3 +821,379 @@ test("waiting for a run start still gives up at the run start budget", async () 
     await scenario.cleanup();
   }
 });
+
+class AdmissionAgentSession extends SlowStartAgentSession {
+  readonly startGate = Promise.withResolvers<void>();
+  readonly startEntered = Promise.withResolvers<void>();
+  readonly received: AgentPromptInput[] = [];
+  interruptCount = 0;
+  paused = false;
+  turnId: string | null = null;
+  private turnNumber = 0;
+  startFailure: Error | undefined;
+  steerUnavailable: "unsupported" | "no_active_turn" | "turn_mismatch" | undefined;
+
+  constructor() {
+    super(null);
+  }
+
+  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.startEntered.resolve();
+    await this.startGate.promise;
+    if (this.startFailure) {
+      const error = this.startFailure;
+      this.startFailure = undefined;
+      throw error;
+    }
+    this.received.push(prompt);
+    this.turnId = `${this.id}-${++this.turnNumber}`;
+    return { turnId: this.turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.steerUnavailable) return { status: "unavailable", reason: this.steerUnavailable };
+    if (options.expectedTurnId !== this.turnId)
+      return { status: "unavailable", reason: "turn_mismatch" };
+    this.received.push(prompt);
+    return { status: "accepted" };
+  }
+
+  tryHandleOutOfBand(prompt: AgentPromptInput) {
+    if (prompt !== "/goal pause") return null;
+    return {
+      run: async () => {
+        this.paused = true;
+      },
+    };
+  }
+
+  finish(): void {
+    if (!this.turnId) return;
+    this.pushEvent({ type: "turn_completed", provider: this.provider, turnId: this.turnId });
+    this.turnId = null;
+  }
+
+  override async interrupt(): Promise<void> {
+    this.interruptCount += 1;
+    this.finish();
+  }
+}
+
+async function createAdmissionScenario() {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-prompt-admission-"));
+  const sessions: AdmissionAgentSession[] = [];
+  const client = new SlowStartAgentClient(null);
+  client.createSession = async () => {
+    const session = new AdmissionAgentSession();
+    sessions.push(session);
+    return session;
+  };
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const first = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const second = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const send = (agentId: string, body: string) =>
+    startAgentRun(manager, agentId, body, logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      replaceOnSteerUnavailable: false,
+      runOptions: { clientMessageId: randomUUID() },
+    });
+  return {
+    manager,
+    storage,
+    logger,
+    first,
+    second,
+    sessions,
+    send,
+    async cleanup() {
+      for (const session of sessions) session.startGate.resolve();
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    },
+  };
+}
+
+test("slow provider admission queues same-target system reports for steering without interrupting", async () => {
+  const scenario = await createAdmissionScenario();
+  try {
+    const { first, sessions, send, manager } = scenario;
+    const initial = send(first.id, "initial task");
+    await sessions[0]!.startEntered.promise;
+    const reports = ["child A finished", "child B finished", "child C finished"].map(
+      formatSystemNotificationPrompt,
+    );
+    const pending = reports.map((report) => send(first.id, report));
+    expect(sessions[0]!.received).toEqual([]);
+    sessions[0]!.startGate.resolve();
+    await expect(initial).resolves.toEqual({ disposition: "turn_started" });
+    await expect(Promise.all(pending)).resolves.toEqual(
+      reports.map(() => ({ disposition: "steered" })),
+    );
+    expect(sessions[0]!.received).toEqual(["initial task", ...reports]);
+    expect(sessions[0]!.interruptCount).toBe(0);
+    expect(manager.getAgent(first.id)?.activeForegroundTurnId).toBe(sessions[0]!.turnId);
+
+    const finished = manager.waitForAgentEvent(first.id, { waitForActive: true });
+    sessions[0]!.finish();
+    await finished;
+    expect(manager.getAgent(first.id)?.lifecycle).toBe("idle");
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test.each(["target", "ancestor"] as const)(
+  "Stop on %s withdraws queued admission even after its first start response arrives late",
+  async (stopScope) => {
+    const scenario = await createAdmissionScenario();
+    const accepted = Promise.withResolvers<void>();
+    const releaseResponse = Promise.withResolvers<void>();
+    const { manager, first, second, sessions, send } = scenario;
+    const streamAgent = manager.streamAgent.bind(manager);
+    manager.streamAgent = (...args) => {
+      const iterator = streamAgent(...args);
+      return (async function* () {
+        const started = await iterator.next();
+        accepted.resolve();
+        await releaseResponse.promise;
+        if (!started.done) yield started.value;
+        yield* iterator;
+      })();
+    };
+    try {
+      if (stopScope === "ancestor") {
+        await manager.setLabels(first.id, { [PARENT_AGENT_ID_LABEL]: second.id });
+      }
+      sessions[0]!.startGate.resolve();
+      const initial = send(first.id, "initial task");
+      await accepted.promise;
+      const queued = send(first.id, "queued before Stop");
+      const withdrawn = expect(queued).rejects.toMatchObject({
+        name: "AgentRunAdmissionCancelledError",
+      });
+      await expect(
+        manager.cancelAgentRun(stopScope === "ancestor" ? second.id : first.id),
+      ).resolves.toEqual({ status: "settled" });
+      releaseResponse.resolve();
+      await initial;
+      await withdrawn;
+      expect(sessions[0]!.received).toEqual(["initial task"]);
+      expect(manager.hasInFlightRun(first.id)).toBe(false);
+      expect(manager.getAgent(first.id)?.lifecycle).toBe("idle");
+
+      await expect(send(first.id, "deliberate continuation")).resolves.toEqual({
+        disposition: "turn_started",
+      });
+      const finished = manager.waitForAgentEvent(first.id, { waitForActive: true });
+      sessions[0]!.finish();
+      await finished;
+    } finally {
+      releaseResponse.resolve();
+      await scenario.cleanup();
+    }
+  },
+);
+
+test.each([
+  { active: false, followUp: true },
+  { active: true, followUp: true },
+  { active: true, followUp: false },
+])(
+  "permission approval preserves admission and execution ($active, $followUp)",
+  async ({ active, followUp }) => {
+    const scenario = await createAdmissionScenario();
+    const { manager, first, sessions, send, logger } = scenario;
+    const session = sessions[0]!;
+    try {
+      session.startGate.resolve();
+      if (active) await send(first.id, "original task");
+      const originalTurn = manager.getAgent(first.id)?.activeTurnId;
+      session.permissionFollowUp = followUp ? "approved continuation" : undefined;
+      session.pushEvent({
+        type: "permission_requested",
+        provider: "codex",
+        ...(session.turnId ? { turnId: session.turnId } : {}),
+        request: { id: "approval", provider: "codex", kind: "tool", name: "Approve execution" },
+      });
+      await vi.waitFor(() => expect(manager.getAgent(first.id)?.pendingPermissions.size).toBe(1));
+      await respondToAgentPermission({
+        agentManager: manager,
+        agentId: first.id,
+        requestId: "approval",
+        response: { behavior: "allow" },
+        logger,
+      });
+      expect(manager.getAgent(first.id)?.pendingPermissions.size).toBe(0);
+      expect(manager.getAgent(first.id)?.lifecycle).toBe("running");
+      expect(manager.hasInFlightRun(first.id)).toBe(true);
+      if (followUp) {
+        expect(manager.getAgent(first.id)?.activeTurnId).not.toBe(originalTurn);
+      } else {
+        expect(manager.getAgent(first.id)?.activeTurnId).toBe(originalTurn);
+        expect(session.interruptCount).toBe(0);
+      }
+      const finished = manager.waitForAgentEvent(first.id, { waitForActive: true });
+      session.finish();
+      await finished;
+      expect(manager.getAgent(first.id)?.lifecycle).toBe("idle");
+    } finally {
+      await scenario.cleanup();
+    }
+  },
+);
+
+test("independent targets and out-of-band controls bypass a pending provider admission", async () => {
+  const scenario = await createAdmissionScenario();
+  try {
+    const firstStart = scenario.send(scenario.first.id, "held start");
+    await scenario.sessions[0]!.startEntered.promise;
+    const secondStart = scenario.send(scenario.second.id, "independent task");
+    await scenario.sessions[1]!.startEntered.promise;
+    scenario.sessions[1]!.startGate.resolve();
+    await expect(secondStart).resolves.toEqual({ disposition: "turn_started" });
+    await expect(scenario.send(scenario.first.id, "/goal pause")).resolves.toEqual({
+      disposition: "out_of_band",
+    });
+    expect(scenario.sessions[0]!.paused).toBe(true);
+    expect(scenario.sessions[0]!.received).toEqual([]);
+    scenario.sessions[0]!.startGate.resolve();
+    await firstStart;
+    expect(scenario.sessions.every((session) => session.interruptCount === 0)).toBe(true);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("a rejected provider start reaches the caller and releases queued prompt admission", async () => {
+  const scenario = await createAdmissionScenario();
+  try {
+    scenario.sessions[0]!.startFailure = new Error("provider start refused");
+    const failed = scenario.send(scenario.first.id, "failed task");
+    const rejection = expect(failed).rejects.toThrow("provider start refused");
+    await scenario.sessions[0]!.startEntered.promise;
+    const next = scenario.send(scenario.first.id, "next task");
+    scenario.sessions[0]!.startGate.resolve();
+    await rejection;
+    await expect(next).resolves.toEqual({ disposition: "turn_started" });
+    expect(scenario.sessions[0]!.received).toEqual(["next task"]);
+    expect(scenario.sessions[0]!.interruptCount).toBe(0);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test.each([
+  ["unsupported", "does not support steering"],
+  ["no_active_turn", "no longer has an active turn"],
+  ["turn_mismatch", "did not match"],
+] as const)(
+  "prompt admission preserves %s steering errors without replacement",
+  async (reason, message) => {
+    const scenario = await createAdmissionScenario();
+    try {
+      scenario.sessions[0]!.startGate.resolve();
+      await scenario.send(scenario.first.id, "initial task");
+      scenario.sessions[0]!.steerUnavailable = reason;
+      await expect(scenario.send(scenario.first.id, "must not interrupt")).rejects.toThrow(message);
+      expect(scenario.sessions[0]!.received).toEqual(["initial task"]);
+      expect(scenario.sessions[0]!.interruptCount).toBe(0);
+    } finally {
+      await scenario.cleanup();
+    }
+  },
+);
+
+test.each([
+  { relationship: "parent", notifyOnFinish: undefined, expectsNotification: false },
+  { relationship: "ancestor", notifyOnFinish: undefined, expectsNotification: false },
+  { relationship: "parent", notifyOnFinish: true, expectsNotification: true },
+  { relationship: "ancestor", notifyOnFinish: true, expectsNotification: true },
+  { relationship: "child", notifyOnFinish: undefined, expectsNotification: true },
+  { relationship: "collaborator", notifyOnFinish: undefined, expectsNotification: true },
+] as const)(
+  "completed reporters to $relationship receive finish notifications only when requested ($notifyOnFinish)",
+  async ({ relationship, notifyOnFinish, expectsNotification }) => {
+    const scenario = await createAdmissionScenario();
+    const { manager, storage, first: target, second: caller, sessions, send, logger } = scenario;
+    try {
+      if (relationship === "parent") {
+        await manager.setLabels(caller.id, { [PARENT_AGENT_ID_LABEL]: target.id });
+      } else if (relationship === "ancestor") {
+        const intermediate = await manager.createAgent(
+          { provider: "codex", cwd: target.cwd },
+          undefined,
+          {
+            workspaceId: undefined,
+          },
+        );
+        await manager.setLabels(caller.id, { [PARENT_AGENT_ID_LABEL]: intermediate.id });
+        await manager.setLabels(intermediate.id, { [PARENT_AGENT_ID_LABEL]: target.id });
+      } else if (relationship === "child") {
+        await manager.setLabels(target.id, { [PARENT_AGENT_ID_LABEL]: caller.id });
+      }
+      for (const session of sessions) session.startGate.resolve();
+      await send(target.id, "target task");
+      await send(caller.id, "reporter task");
+      const callerFinished = manager.waitForAgentEvent(caller.id, { waitForActive: true });
+      sessions[1]!.finish();
+      await callerFinished;
+
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        callerAgentId: caller.id,
+        logger,
+      });
+      const tool = Reflect.get(server, "_registeredTools").send_agent_prompt;
+      for (const prompt of ["report 1", "report 2", "report 3"]) {
+        const parsed = await tool.inputSchema.parseAsync({
+          agentId: target.id,
+          prompt,
+          ...(notifyOnFinish === undefined ? {} : { notifyOnFinish }),
+        });
+        const response = await (tool.handler ?? tool.callback)(parsed);
+        expect(Boolean(response.structuredContent.guidance)).toBe(expectsNotification);
+      }
+      expect(sessions[0]!.received).toEqual(["target task", "report 1", "report 2", "report 3"]);
+
+      const callerRestarted = Promise.withResolvers<void>();
+      const unsubscribe = manager.subscribe(
+        (event) => {
+          if (event.type === "agent_stream" && event.event.type === "turn_started")
+            callerRestarted.resolve();
+        },
+        { agentId: caller.id, replayState: false },
+      );
+      const targetFinished = manager.waitForAgentEvent(target.id, { waitForActive: true });
+      sessions[0]!.finish();
+      await targetFinished;
+      if (expectsNotification) {
+        await callerRestarted.promise;
+        await send(caller.id, "notification delivery barrier");
+        expect(sessions[1]!.received).toHaveLength(3);
+        expect(sessions[1]!.received[1]).toContain(`Agent ${target.id}`);
+        expect(sessions[1]!.received[1]).toContain("finished.");
+        expect(sessions[1]!.received[2]).toBe("notification delivery barrier");
+      } else {
+        expect(sessions[1]!.received).toEqual(["reporter task"]);
+        expect(manager.getAgent(caller.id)?.lifecycle).toBe("idle");
+      }
+      unsubscribe();
+      expect(sessions.every((session) => session.interruptCount === 0)).toBe(true);
+      await server.close();
+    } finally {
+      await scenario.cleanup();
+    }
+  },
+);

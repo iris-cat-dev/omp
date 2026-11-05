@@ -35,6 +35,8 @@ When old layouts merge into one project, tab state remains, the first split tree
 
 ## Conversation names and navigation
 
+The sidebar and its conversation shortcuts list independent conversations. A worktree containing only active managed children stays accessible through the parent's subagent track, not as another top-level conversation. Explicitly opening a child keeps its own execution workspace even when its tab is hosted beside the parent. Detaching makes it independent and visible; empty workspaces, unknown agent inventories, and mixed workspaces with an active independent root remain visible.
+
 Double-click a sidebar conversation row to rename inline; **Enter** confirms and **Esc** cancels/restores the original. The row's Rename action uses the same editor, and tab context menus also rename. Renaming a primary conversation changes its workspace name; additional conversations retain their own titles.
 
 Accepted names update tabs immediately, without waiting for directory events, and remain visible across tab changes even for unloaded conversations or unavailable provider history. Each tab's title and rename target come from its conversation's own workspace, including mixed-workspace tabs within one project. Focus changes may change tools' active workspace, never a conversation's primary-workspace identity or saved name. Tab-width measurements do not own names or selection. Saved metadata is published for unloaded conversations, and session initialization preserves concurrent renames.

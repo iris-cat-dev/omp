@@ -23,6 +23,8 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "captureRunAdmission"
+  | "assertRunAdmission"
 >;
 
 export interface StartAgentRunOptions {
@@ -105,6 +107,10 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+// This lane only owns prompt admission, not the foreground lifecycle lane or
+// the lifetime of a turn. Stop/control commands bypass it below.
+const promptAdmissions = new WeakMap<AgentRunController, Map<string, Promise<void>>>();
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -131,6 +137,34 @@ export async function startAgentRun(
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
   }
+  const epochs = agentManager.captureRunAdmission(agentId);
+  const admissions = promptAdmissions.get(agentManager) ?? new Map<string, Promise<void>>();
+  promptAdmissions.set(agentManager, admissions);
+  const previousAdmission = admissions.get(agentId) ?? Promise.resolve();
+  const admission = previousAdmission.then(() => {
+    agentManager.assertRunAdmission(epochs, agentId);
+    return admitAgentRun(agentManager, agentId, prompt, logger, options);
+  });
+  // A failed start must reach its caller without poisoning later admissions.
+  const settled = admission.then(
+    () => {},
+    () => {},
+  );
+  admissions.set(agentId, settled);
+  void settled.then(() => {
+    if (admissions.get(agentId) === settled) admissions.delete(agentId);
+  });
+  return await admission;
+}
+
+async function admitAgentRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options?: StartAgentRunOptions,
+): Promise<{ disposition: PromptDispatchDisposition }> {
+  const snapshot = agentManager.getAgent(agentId);
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
     return steered;
@@ -147,6 +181,11 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.iterator_returned",
   );
+  // streamAgent installs its turn waiter before yielding the accepted start.
+  // Keep the lane until that boundary (or terminal/start failure), so another
+  // steer cannot mistake a pending provider start for an inactive target.
+  await iterator.next();
+
   void (async () => {
     try {
       for await (const _ of iterator) {
@@ -436,6 +475,8 @@ interface NotifySafelyOptions {
   permissionRequest?: AgentPermissionRequest;
 }
 
+const finishSubscriptions = new WeakMap<AgentManager, Map<string, () => void>>();
+
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
   const {
     agentManager,
@@ -445,6 +486,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     requireParentOwnership = false,
     logger,
   } = params;
+  const subscriptions = finishSubscriptions.get(agentManager) ?? new Map<string, () => void>();
+  finishSubscriptions.set(agentManager, subscriptions);
+  const subscriptionKey = JSON.stringify([childAgentId, callerAgentId, requireParentOwnership]);
+  if (subscriptions.has(subscriptionKey)) return;
+  subscriptions.set(subscriptionKey, stop);
   let hasSeenRunning = false;
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
@@ -454,6 +500,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   function stop(): void {
     if (stopped) return;
     stopped = true;
+    subscriptions.delete(subscriptionKey);
     unsubscribe?.();
   }
 
@@ -468,6 +515,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
 
     const record = await agentStorage.get(childAgentId);
     if (requireParentOwnership && getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
+      stop();
       return;
     }
     const title = record?.title ?? childAgentId;
@@ -512,6 +560,13 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       }
 
       if (event.type === "agent_state") {
+        if (
+          requireParentOwnership &&
+          getParentAgentIdFromLabels(event.agent.labels) !== callerAgentId
+        ) {
+          stop();
+          return;
+        }
         for (const requestId of notifiedPermissionRequestIds) {
           if (!event.agent.pendingPermissions.has(requestId)) {
             notifiedPermissionRequestIds.delete(requestId);

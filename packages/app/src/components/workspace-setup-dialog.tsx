@@ -256,12 +256,9 @@ export function WorkspaceSetupDialog() {
   );
 
   const getIsStillActive = useCallback(() => {
-    const current = useWorkspaceSetupStore.getState().pendingWorkspaceSetup;
-    return (
-      current?.serverId === pendingWorkspaceSetup?.serverId &&
-      current?.sourceDirectory === pendingWorkspaceSetup?.sourceDirectory
-    );
-  }, [pendingWorkspaceSetup?.serverId, pendingWorkspaceSetup?.sourceDirectory]);
+    // Reopening the same directory creates a replacement setup, not the old request's target.
+    return useWorkspaceSetupStore.getState().pendingWorkspaceSetup === pendingWorkspaceSetup;
+  }, [pendingWorkspaceSetup]);
 
   const clearChatDraftInput = chatDraft.clear;
   const getChatDraftSnapshot = chatDraft.getSnapshot;

@@ -79,6 +79,29 @@ afterEach(() => {
 });
 
 describe("selectSubagentsForParent", () => {
+  it("keeps cross-worktree managed children in the parent track until detached", () => {
+    const parent = makeAgent({ id: "parent", workspaceId: "parent-workspace" });
+    const child = makeAgent({
+      id: "child",
+      workspaceId: "child-worktree",
+      cwd: "/repo/worktrees/child",
+      parentAgentId: parent.id,
+    });
+    setAgents([parent, child]);
+    const params = { serverId: SERVER_ID, parentAgentId: parent.id };
+    const rows = selectSubagentsForParent(
+      useSessionStore.getState(),
+      params,
+      EMPTY_PENDING_ARCHIVE_IDS,
+    );
+    expect(rows.map((row) => row.id)).toEqual([child.id]);
+    expect(rows[0]?.kind).toBe("paseo");
+    setAgents([parent, { ...child, parentAgentId: null }]);
+    expect(
+      selectSubagentsForParent(useSessionStore.getState(), params, EMPTY_PENDING_ARCHIVE_IDS),
+    ).toEqual([]);
+  });
+
   it("hides cached provider children when the host does not support them", () => {
     useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
       kind: "upsert",

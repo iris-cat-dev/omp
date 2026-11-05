@@ -249,7 +249,7 @@ function makeAgent(id: string, workspaceId: string, parentAgentId: string | null
 }
 
 function seedPaseoChild(workspaceId: string): SubagentRow {
-  const parent = makeAgent(PARENT_AGENT_ID, OTHER_WORKSPACE_ID);
+  const parent = makeAgent(PARENT_AGENT_ID, HOST_WORKSPACE_ID);
   const child = makeAgent("paseo-child", workspaceId, parent.id);
   const session = useSessionStore.getState();
   session.initializeSession(SERVER_ID, null as unknown as DaemonClient);
@@ -266,6 +266,29 @@ function seedPaseoChild(workspaceId: string): SubagentRow {
     requiresAttention: child.requiresAttention,
     createdAt: child.createdAt,
   };
+}
+
+function registerChildWorktree(workspaceId: string): void {
+  const state = useSessionStore.getState();
+  const session = state.sessions[SERVER_ID]!;
+  const workspace = {
+    ...makeWorkspace(workspaceId, PROJECT_HOST),
+    workspaceDirectory: `/repo/worktrees/${workspaceId}`,
+  };
+  const child = session.agents.get("paseo-child")!;
+  useSessionStore.setState({
+    sessions: {
+      ...state.sessions,
+      [SERVER_ID]: {
+        ...session,
+        workspaces: new Map(session.workspaces).set(workspaceId, workspace),
+        agents: new Map(session.agents).set(child.id, {
+          ...child,
+          cwd: workspace.workspaceDirectory,
+        }),
+      },
+    },
+  });
 }
 
 interface TracksFixture {
@@ -481,38 +504,30 @@ describe("AgentTracks Git diff 路由", () => {
 });
 
 describe("AgentTracks Paseo 子会话路由", () => {
-  it("navigates to the owning project instead of opening another project's child in the host", () => {
-    const row = seedPaseoChild(OTHER_WORKSPACE_ID);
-    const fixture = renderAgentTracks(OTHER_WORKSPACE_ID, row);
+  it("opens a child alongside its parent while preserving the owning workspace and cwd", () => {
+    const childWorkspaceId = "child-worktree";
+    const row = seedPaseoChild(childWorkspaceId);
+    const fixture = renderAgentTracks(HOST_WORKSPACE_ID, row);
+    registerChildWorktree(childWorkspaceId);
 
     fireEvent.click(screen.getByRole("button", { name: "打开 Paseo 子会话" }));
 
-    expect(navigateToAgent).toHaveBeenCalledWith({ serverId: SERVER_ID, agentId: row.id });
-    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toBe(fixture.layoutsBefore);
+    expectChildInHost(fixture, {
+      kind: "agent",
+      agentId: row.id,
+      workspaceId: childWorkspaceId,
+    });
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agents.get(row.id)).toMatchObject({
+      workspaceId: childWorkspaceId,
+      cwd: `/repo/worktrees/${childWorkspaceId}`,
+      parentAgentId: PARENT_AGENT_ID,
+    });
   });
 
-  it.each([
-    {
-      scenario: "桌面模式下真正跨归属工作区的子会话仍使用导航",
-      isCompact: false,
-      childWorkspaceId: "workspace-c",
-    },
-    {
-      scenario: "compact 模式下同归属工作区的子会话仍使用导航",
-      isCompact: true,
-      childWorkspaceId: OTHER_WORKSPACE_ID,
-    },
-  ])("$scenario", ({ isCompact, childWorkspaceId }) => {
-    layoutMode.isCompact = isCompact;
-    const row = seedPaseoChild(childWorkspaceId);
-    const fixture = renderAgentTracks(OTHER_WORKSPACE_ID, row);
-
+  it("keeps a child from another project out of the parent's project layout", () => {
+    const row = seedPaseoChild(OTHER_WORKSPACE_ID);
+    const fixture = renderAgentTracks(HOST_WORKSPACE_ID, row);
     fireEvent.click(screen.getByRole("button", { name: "打开 Paseo 子会话" }));
-
-    expect(navigateToAgent).toHaveBeenCalledExactlyOnceWith({
-      serverId: SERVER_ID,
-      agentId: row.id,
-    });
     expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toBe(fixture.layoutsBefore);
   });
 });

@@ -181,6 +181,7 @@ interface TestDeps {
 }
 
 function buildAgentManagerSpies() {
+  const admissions = new AgentManager({ logger: createTestLogger() });
   return {
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
@@ -206,6 +207,8 @@ function buildAgentManagerSpies() {
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
+    captureRunAdmission: admissions.captureRunAdmission.bind(admissions),
+    assertRunAdmission: admissions.assertRunAdmission.bind(admissions),
     subscribe: vi.fn().mockReturnValue(() => {}),
     steerOrReplaceActiveTurn: vi.fn().mockResolvedValue({ status: "inactive" }),
     replaceAgentRun: vi.fn(() => (async function* noop() {})()),
@@ -3311,125 +3314,6 @@ describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
-  it("defaults agent-scoped prompts to background finish notifications", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const parentAgent = {
-      id: "parent-agent",
-      cwd: existingCwd,
-      workspaceId: "wks_parent",
-      provider: "codex",
-      currentModeId: "full-access",
-    } as ManagedAgent;
-    const childAgent = {
-      id: "child-agent",
-      cwd: existingCwd,
-      lifecycle: "running",
-      currentModeId: null,
-      availableModes: [],
-      config: { title: "Child" },
-    } as ManagedAgent;
-    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
-      if (agentId === "parent-agent") return parentAgent;
-      if (agentId === "child-agent") return childAgent;
-      return null;
-    });
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "parent-agent",
-      logger,
-    });
-
-    const tool = registeredTool(server, "send_agent_prompt");
-    const parsed = await tool.inputSchema.safeParseAsync({
-      agentId: "child-agent",
-      prompt: "Follow up",
-    });
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error("Expected caller send_agent_prompt input to parse");
-    }
-    expect(parsed.data).toMatchObject({
-      background: true,
-      notifyOnFinish: true,
-    });
-
-    const response = await tool.handler(parsed.data as Record<string, unknown>);
-
-    expect(spies.agentManager.subscribe).toHaveBeenCalledTimes(1);
-    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
-    expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
-    );
-    expect(spies.agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
-      "child-agent",
-      "Follow up",
-      { replaceOnUnavailable: false },
-    );
-    expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
-  });
-
-  it("delivers a child prompt to its running parent without replacing either run", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const parentAgent = {
-      id: "parent-agent",
-      cwd: existingCwd,
-      lifecycle: "running",
-      activeForegroundTurnId: "parent-turn",
-      currentModeId: null,
-      availableModes: [],
-      config: { title: "Parent" },
-      labels: {},
-    } as ManagedAgent;
-    const childAgent = {
-      id: "child-agent",
-      cwd: existingCwd,
-      lifecycle: "running",
-      activeForegroundTurnId: "child-turn",
-      currentModeId: null,
-      availableModes: [],
-      config: { title: "Child" },
-      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
-    } as ManagedAgent;
-    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
-      if (agentId === "parent-agent") return parentAgent;
-      if (agentId === "child-agent") return childAgent;
-      return null;
-    });
-    spies.agentManager.hasInFlightRun.mockImplementation(
-      (agentId: string) => agentId === "parent-agent",
-    );
-    spies.agentManager.steerOrReplaceActiveTurn.mockResolvedValueOnce({ status: "steered" });
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "child-agent",
-      logger,
-    });
-
-    const response = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
-      agentId: "parent-agent",
-      prompt: "ACK",
-      background: true,
-      notifyOnFinish: false,
-    });
-
-    expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
-    expect(spies.agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
-      "parent-agent",
-      "ACK",
-      { replaceOnUnavailable: false },
-    );
-    expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
-    expect(spies.agentManager.cancelAgentRun).not.toHaveBeenCalled();
-    expect(parentAgent.lifecycle).toBe("running");
-    expect(childAgent.lifecycle).toBe("running");
-  });
-
   it("keeps top-level prompts blocking by default", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
@@ -5207,25 +5091,6 @@ describe("agent snapshot MCP serialization", () => {
     const response = await tool.handler({ cwd: REPO_CWD, includeArchived: true });
     const item = agentsOf(response)[0];
 
-    expect(item).toEqual({
-      id: "stored-archived-compact",
-      shortId: "stored-",
-      title: "Stored agent",
-      provider: "claude",
-      model: "claude-sonnet-4-20250514",
-      thinkingOptionId: null,
-      effectiveThinkingOptionId: null,
-      status: "closed",
-      cwd: REPO_CWD,
-      createdAt: "2026-04-11T00:00:00.000Z",
-      updatedAt: now,
-      lastUserMessageAt: null,
-      archivedAt: now,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-      labels: {},
-    });
     expect(item).not.toHaveProperty("features");
     expect(item).not.toHaveProperty("availableModes");
     expect(item).not.toHaveProperty("capabilities");

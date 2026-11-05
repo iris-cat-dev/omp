@@ -3302,6 +3302,49 @@ test("Stop withdraws an unconsumed foreground iterator without letting its late 
   }
 });
 
+test("concurrent replacement admission cannot leave an idle provider stuck running", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pending-replacement-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 50 },
+  });
+  const iterators: AsyncGenerator<AgentStreamEvent>[] = [];
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    iterators.push(manager.streamAgent(agent.id, "pending admission"));
+    const replacements = await Promise.allSettled(
+      ["one", "two", "three"].map((prompt) => manager.replaceAgentRun(agent.id, prompt)),
+    );
+    for (const replacement of replacements) {
+      if (replacement.status === "fulfilled") iterators.push(replacement.value);
+    }
+
+    const cancellation = await manager.cancelAgentRun(agent.id);
+    expect(cancellation.status).not.toBe("refused");
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
+      status: "idle",
+      activeTurn: null,
+    });
+    await expect(
+      manager.runAgent(agent.id, "continue after withdrawn admission"),
+    ).resolves.toMatchObject({ canceled: false });
+    await manager.flush();
+    expect((await storage.get(agent.id))?.lastStatus).toBe("idle");
+  } finally {
+    await Promise.all(iterators.map((iterator) => iterator.return(undefined)));
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a descendant registration begun before Stop cannot publish runnable work after it completes", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-registration-stop-"));
   const childCreateEntered = deferred<void>();
@@ -3658,6 +3701,16 @@ test.each(["background", "execution"] as const)(
       expect(session.startPrompts).toEqual(["original"]);
       expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
       if (phase === "execution") expect(manager.hasInFlightRun(agent.id)).toBe(true);
+      if (phase === "background") {
+        expect(manager.hasInFlightRun(agent.id)).toBe(true);
+        const retry = manager.replaceAgentRun(agent.id, "still must not start");
+        const retryRejected = expect(retry).rejects.toMatchObject({
+          code: "agent_cancellation_unacknowledged",
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        await retryRejected;
+        expect(session.startPrompts).toEqual(["original"]);
+      }
       backgroundRelease.resolve();
       session.pushEvent({ type: "turn_canceled", provider: "codex", turnId: "active-turn-1" });
       await firstRun;
