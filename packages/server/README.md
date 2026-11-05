@@ -193,6 +193,18 @@ Accounting bytes, live JavaScript heap, macOS `phys_footprint`, and Windows proc
 commit are distinct measurements. These budgets do not enlarge mini-electron's
 4 GiB compressed V8 heap cage or establish native-platform memory qualification.
 
+## Visual feedback outcomes
+
+`request_visual_feedback` returns `cancelled` only after an explicit editor
+cancellation. Submitted text and annotations are returned only after submission;
+unsubmitted drafts are never returned.
+
+A request that reaches its deadline (at most 30 minutes), is interrupted, or loses
+the feedback service during shutdown fails with a distinct error instead of
+claiming that the user cancelled it. These terminal paths remove the pending
+request and notify connected editors. A client disconnect alone does not cancel
+the request; reconnecting editors can retrieve it with `visual_feedback.list`.
+
 ## Tech Stack
 
 - **Server**: Express, TypeScript, ws (WebSocket)

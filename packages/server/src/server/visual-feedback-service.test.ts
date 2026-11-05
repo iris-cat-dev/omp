@@ -78,21 +78,25 @@ describe("visual feedback lifecycle", () => {
     expect(await result).toEqual({ status: "cancelled" });
   });
 
-  it("aborts, times out within 30 minutes, and cancels all waiters on shutdown", async () => {
+  it("never reports an abort, timeout, or shutdown as an explicit user cancellation", async () => {
     vi.useFakeTimers();
     const value = service();
     const controller = new AbortController();
-    const aborted = value.request(request, { signal: controller.signal });
+    const aborted = expect(
+      value.request(request, { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(Error);
     controller.abort();
-    expect(await aborted).toEqual({ status: "cancelled" });
-    const timed = value.request(request, { timeoutMs: 60 * 60 * 1000 });
+    await aborted;
+    const timed = expect(
+      value.request(request, { timeoutMs: 60 * 60 * 1000 }),
+    ).rejects.toBeInstanceOf(Error);
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000 - 1);
     expect(value.list()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
-    expect(await timed).toEqual({ status: "cancelled" });
-    const shutdown = value.request(request);
+    await timed;
+    const shutdown = expect(value.request(request)).rejects.toBeInstanceOf(Error);
     value.close();
-    expect(await shutdown).toEqual({ status: "cancelled" });
+    await shutdown;
     await expect(value.request(request)).rejects.toThrow("closed");
     expect(value.list()).toEqual([]);
   });

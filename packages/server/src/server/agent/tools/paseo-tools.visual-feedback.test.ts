@@ -122,14 +122,16 @@ describe("request_visual_feedback", () => {
   it("propagates tool abort and does not register without the service", async () => {
     const { service, opened } = setup();
     const controller = new AbortController();
-    const result = catalog("/tmp", service).executeTool(
-      "request_visual_feedback",
-      {},
-      { signal: controller.signal },
-    );
+    const result = expect(
+      catalog("/tmp", service).executeTool(
+        "request_visual_feedback",
+        {},
+        { signal: controller.signal },
+      ),
+    ).rejects.toBeInstanceOf(Error);
     await opened;
     controller.abort();
-    expect((await result).structuredContent).toEqual({ status: "cancelled" });
+    await result;
     expect(service.list()).toEqual([]);
     expect(catalog("/tmp").getTool("request_visual_feedback")).toBeUndefined();
   });
