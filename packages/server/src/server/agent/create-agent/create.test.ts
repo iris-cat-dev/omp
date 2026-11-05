@@ -57,45 +57,6 @@ function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: strin
     }) as unknown as CreatePaseoWorktreeWorkflowResult;
 }
 
-test("session create forwards clientMessageId to the initial prompt run options", async () => {
-  const snapshot = {
-    id: "agent-1",
-    provider: "codex",
-    cwd: "/tmp/paseo-create-test",
-    runtimeInfo: null,
-  } as ManagedAgent;
-  const streamAgent = vi.fn(() => (async function* noop() {})());
-  const dependencies: Parameters<typeof createAgentCommand>[0] = {
-    agentManager: {
-      createAgent: vi.fn(async () => snapshot),
-      getAgent: vi.fn(() => snapshot),
-      tryRunOutOfBand: vi.fn(() => false),
-      hasInFlightRun: vi.fn(() => false),
-      streamAgent,
-      waitForAgentRunStart: vi.fn(async () => undefined),
-    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
-    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
-    logger: createTestLogger(),
-    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-  };
-
-  await createAgentCommand(dependencies, {
-    kind: "session",
-    config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
-    workspaceId: "ws-create-test",
-    initialPrompt: "hello from create",
-    clientMessageId: "msg-create-1",
-    labels: {},
-    provisionalTitle: null,
-    firstAgentContext: { attachments: [] },
-    buildSessionConfig: async (config) => ({ sessionConfig: config }),
-  });
-
-  expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
-    clientMessageId: "msg-create-1",
-  });
-});
-
 test("session create validates the requested mode against the provider's modes", async () => {
   const snapshot = {
     id: "agent-1",

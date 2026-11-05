@@ -79,23 +79,21 @@ export const AgentTracks = memo(function AgentTracks({
         navigateToAgent({ serverId, agentId: subagentId });
         return;
       }
-      if (agent.workspaceId !== workspaceId) {
-        navigateToAgent({ serverId, agentId: subagentId });
-        return;
-      }
       if (
-        resolveProjectLayoutKey({ serverId, workspaceId: agent.workspaceId }) !== paneWorkspaceKey
+        canSplit &&
+        paneWorkspaceKey &&
+        resolveProjectLayoutKey({ serverId, workspaceId: agent.workspaceId }) === paneWorkspaceKey
       ) {
-        navigateToAgent({ serverId, agentId: subagentId });
-        return;
-      }
-      if (canSplit) {
         openTab({ kind: "agent", agentId: subagentId, workspaceId: agent.workspaceId });
         return;
       }
-      navigateToAgent({ serverId, agentId: subagentId });
+      navigateToAgent({
+        serverId,
+        agentId: subagentId,
+        tabHost: { serverId, workspaceId: paneWorkspaceId },
+      });
     },
-    [canSplit, openTab, paneWorkspaceKey, serverId, workspaceId],
+    [canSplit, openTab, paneWorkspaceId, paneWorkspaceKey, serverId],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {

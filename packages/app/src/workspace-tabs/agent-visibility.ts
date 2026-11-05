@@ -1,6 +1,5 @@
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
-import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
 export interface WorkspaceAgentVisibility {
@@ -60,8 +59,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     knownAgentIds.add(agent.id);
     if (!agent.archivedAt) {
       activeAgentIds.add(agent.id);
-      const parentAgent = agent.parentAgentId ? agentsById.get(agent.parentAgentId) : undefined;
-      if (isWorkspaceRootAgent(agent, parentAgent)) {
+      if (!agent.parentAgentId) {
         autoOpenAgentIds.add(agent.id);
       }
     }

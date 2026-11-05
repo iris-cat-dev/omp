@@ -1212,9 +1212,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     notifyOnFinish: z
       .boolean()
       .optional()
-      .default(true)
       .describe(
-        "Get notified when the prompted agent finishes, errors, or needs permission. Set false only for truly fire-and-forget prompts.",
+        "Get notified when the prompted agent finishes, errors, or needs permission. Defaults false when reporting to your parent or any managed ancestor, and true for child tasks or independent collaborators. Explicit true opts in even for ancestor reports; false is fire-and-forget.",
       ),
   };
   const topLevelSendAgentPromptInputSchema = {
@@ -2074,7 +2073,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        "Send a task to an agent. Prompts sent while the target is running use non-destructive steering and never replace its active turn; the call fails before interruption when the provider cannot steer. Agent-scoped callers run in background by default; top-level callers wait by default.",
+        "Send a task or report to an agent. Prompts sent while the target is running use non-destructive steering and never replace its active turn; the call fails before interruption when the provider cannot steer. Agent-scoped callers run in background by default; top-level callers wait by default. Finish notifications default off for reports to your managed ancestors and on for child tasks or independent collaborators; explicit notifyOnFinish overrides this default.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
@@ -2089,9 +2088,20 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       prompt,
       sessionMode,
       background = Boolean(callerAgentId),
-      notifyOnFinish = Boolean(callerAgentId),
+      notifyOnFinish,
     }) => {
-      const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
+      const resolvedNotifyOnFinish =
+        notifyOnFinish ??
+        Boolean(
+          callerAgentId &&
+          !(await isManagedAncestor({
+            agentManager,
+            agentStorage,
+            descendantAgentId: callerAgentId,
+            ancestorAgentId: agentId,
+          })),
+        );
+      const shouldNotifyOnFinish = Boolean(callerAgentId && resolvedNotifyOnFinish && background);
 
       await sendPromptToAgent({
         agentManager,

@@ -158,6 +158,47 @@ describe("buildSidebarProjection", () => {
         "archived",
       );
     });
+
+    it(`excludes parented-only worktrees from ${groupMode} rows and shortcuts and restores detached roots`, () => {
+      const child = makeWorkspace("child", "running");
+      child.entry.hasOnlySubagents = true;
+      const mixed = makeWorkspace("mixed", "running");
+      mixed.entry.hasOnlySubagents = false;
+      const empty = makeWorkspace("empty");
+      const unloaded = makeWorkspace("unloaded");
+      const rows = [child, mixed, empty, unloaded];
+      const input = {
+        ...projectionInput({ groupMode }),
+        projects: [makeProject(rows.map(({ placement }) => placement))],
+        pinnedKeys: { pinnedWorkspaceKeys: [child.entry.workspaceKey], pinnedAtByKey: {} },
+        workspaceEntriesByKey: new Map(
+          rows.filter((row) => row !== unloaded).map(({ entry }) => [entry.workspaceKey, entry]),
+        ),
+      };
+      const projection = buildSidebarProjection(input);
+      expect(projection.projects[0]?.workspaces.map((row) => row.workspaceId).sort()).toEqual([
+        "empty",
+        "mixed",
+        "unloaded",
+      ]);
+      expect(projection.shortcutModel.shortcutTargets.map((row) => row.workspaceId).sort()).toEqual(
+        groupMode === "project" ? ["empty", "mixed", "unloaded"] : ["empty", "mixed"],
+      );
+      expect(
+        projection.workspaceGroups
+          .flatMap((group) => group.rows.map((row) => row.workspaceId))
+          .sort(),
+      ).toEqual(groupMode === "status" ? ["empty", "mixed"] : []);
+      expect(input.projects[0]?.workspaces).toHaveLength(4);
+      expect(input.workspaceEntriesByKey.get(child.entry.workspaceKey)).toBe(child.entry);
+
+      const detachedEntries = new Map(input.workspaceEntriesByKey);
+      detachedEntries.set(child.entry.workspaceKey, { ...child.entry, hasOnlySubagents: false });
+      const detached = buildSidebarProjection({ ...input, workspaceEntriesByKey: detachedEntries });
+      expect(detached.shortcutModel.shortcutTargets.map((row) => row.workspaceId)).toContain(
+        "child",
+      );
+    });
   }
 
   it("orders project chats by task status, preserving pins and same-status order", () => {

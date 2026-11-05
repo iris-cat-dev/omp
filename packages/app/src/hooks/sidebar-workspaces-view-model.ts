@@ -15,7 +15,6 @@ import {
   normalizeWorkspaceOpaqueId,
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
-import { isWorkspaceRootAgent } from "@/subagents/policies";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -60,6 +59,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   currentBranch: string | null;
   archivingAt: string | null;
   hasOnlyArchivedAgents?: boolean;
+  hasOnlySubagents?: boolean;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
   archiveHasUncommittedChanges: boolean | null;
@@ -169,6 +169,7 @@ export function createSidebarWorkspaceEntry(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
   rootAgents?: readonly SidebarWorkspaceRootAgent[];
+  hasOnlySubagents?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -193,6 +194,7 @@ export function createSidebarWorkspaceEntry(input: {
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
     hasOnlyArchivedAgents: input.workspace.hasOnlyArchivedAgents ?? false,
+    hasOnlySubagents: input.hasOnlySubagents ?? false,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,
@@ -384,24 +386,30 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
-function buildSidebarWorkspaceRootAgentIndex(
-  agents: ReadonlyMap<string, Agent> | undefined,
-): Map<string, SidebarWorkspaceRootAgent[]> {
+function buildSidebarWorkspaceAgentIndex(agents: ReadonlyMap<string, Agent> | undefined): {
+  rootAgents: Map<string, SidebarWorkspaceRootAgent[]>;
+  hasOnlySubagents: Map<string, boolean>;
+} {
   const rootsByWorkspaceId = new Map<string, Array<{ agent: Agent; createdAt: number }>>();
-  if (!agents) return new Map();
-
+  const hasOnlySubagents = new Map<string, boolean>();
+  if (!agents) return { rootAgents: new Map(), hasOnlySubagents };
   for (const agent of agents.values()) {
     const workspaceId = normalizeWorkspaceOpaqueId(agent.workspaceId);
-    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
-    if (agent.archivedAt || !workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
+    if (agent.archivedAt || !workspaceId) {
       continue;
     }
+    hasOnlySubagents.set(
+      workspaceId,
+      (hasOnlySubagents.get(workspaceId) ?? true) && Boolean(agent.parentAgentId),
+    );
+    // Workspace ownership is independent of top-level conversation presentation.
+    if (agent.parentAgentId) continue;
     const roots = rootsByWorkspaceId.get(workspaceId) ?? [];
     roots.push({ agent, createdAt: agent.createdAt.getTime() });
     rootsByWorkspaceId.set(workspaceId, roots);
   }
 
-  return new Map(
+  const rootAgents = new Map(
     Array.from(rootsByWorkspaceId, ([workspaceId, roots]) => [
       workspaceId,
       roots
@@ -419,6 +427,7 @@ function buildSidebarWorkspaceRootAgentIndex(
         })),
     ]),
   );
+  return { rootAgents, hasOnlySubagents };
 }
 
 export function buildSidebarWorkspaceEntries(input: {
@@ -432,10 +441,10 @@ export function buildSidebarWorkspaceEntries(input: {
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
-  const rootAgentsByServerId = new Map(
+  const agentsByServerId = new Map(
     input.sessions.map((session) => [
       session.serverId,
-      buildSidebarWorkspaceRootAgentIndex(session.agents),
+      buildSidebarWorkspaceAgentIndex(session.agents),
     ]),
   );
   const entries = new Map<string, SidebarWorkspaceEntry>();
@@ -456,9 +465,12 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
-      rootAgents: rootAgentsByServerId
+      rootAgents: agentsByServerId
         .get(placement.serverId)
-        ?.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
+        ?.rootAgents.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
+      hasOnlySubagents: agentsByServerId
+        .get(placement.serverId)
+        ?.hasOnlySubagents.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

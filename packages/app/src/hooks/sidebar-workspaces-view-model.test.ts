@@ -514,6 +514,77 @@ describe("shared sidebar workspace model", () => {
     ]);
   });
 
+  it("derives parented-only worktree visibility without changing ownership and updates memoized rows on detach", () => {
+    const ids = ["parent", "child", "mixed", "empty", "archived-root"];
+    const workspaces = new Map(ids.map((id) => [id, projectWorkspace(id, "done")]));
+    const parent = agent({ id: "parent-agent", workspaceId: "parent", status: "idle" });
+    const child = agent({
+      id: "child-agent",
+      workspaceId: "child",
+      status: "idle",
+      parentAgentId: parent.id,
+    });
+    const sibling = agent({
+      id: "sibling",
+      workspaceId: "child",
+      status: "running",
+      parentAgentId: "unloaded-parent",
+    });
+    const mixedRoot = agent({ id: "mixed-root", workspaceId: "mixed", status: "idle" });
+    const mixedChild = agent({
+      id: "mixed-child",
+      workspaceId: "mixed",
+      status: "idle",
+      parentAgentId: parent.id,
+    });
+    const archivedRoot = agent({
+      id: "archived",
+      workspaceId: "archived-root",
+      status: "idle",
+      archivedAt: new Date(1_000),
+    });
+    const liveChild = agent({
+      id: "live-child",
+      workspaceId: "archived-root",
+      status: "idle",
+      parentAgentId: parent.id,
+    });
+    const agents = new Map(
+      [parent, child, sibling, mixedRoot, mixedChild, archivedRoot, liveChild].map((entry) => [
+        entry.id,
+        entry,
+      ]),
+    );
+    const session = { serverId: "srv", workspaces, agents, workspaceAgentActivity: new Map() };
+    const placements = ids.map((workspaceId) => workspacePlacement({ workspaceId }));
+    const entries = buildSidebarWorkspaceEntries({ placements, sessions: [session] });
+    expect(entries.get("srv:child")?.hasOnlySubagents).toBe(true);
+    expect(entries.get("srv:child")?.rootAgents).toBeUndefined();
+    expect(entries.get("srv:archived-root")?.hasOnlySubagents).toBe(true);
+    for (const id of ["parent", "mixed", "empty"]) {
+      expect(entries.get(`srv:${id}`)?.hasOnlySubagents).toBe(false);
+    }
+    expect(agents.get(child.id)).toBe(child);
+    expect(workspaces.get("child")?.workspaceKind).toBe("worktree");
+
+    const detachedAgents = new Map(agents);
+    detachedAgents.set(child.id, { ...child, parentAgentId: null });
+    const detached = buildSidebarWorkspaceEntries({
+      placements,
+      sessions: [{ ...session, agents: detachedAgents }],
+      previousEntries: entries,
+    });
+    expect(detached.get("srv:child")?.hasOnlySubagents).toBe(false);
+    expect(detached.get("srv:child")).not.toBe(entries.get("srv:child"));
+    expect(detached.get("srv:empty")).toBe(entries.get("srv:empty"));
+
+    const unloaded = buildSidebarWorkspaceEntries({
+      placements,
+      sessions: [{ ...session, agents: undefined }],
+    });
+    expect(unloaded.get("srv:child")?.hasOnlySubagents).toBe(false);
+  });
+
   it("keeps a structurally disambiguated project key in status entries", () => {
     const projectKey = "host:srv:project:prj_a";
     const model = buildSidebarWorkspacePlacementModel({

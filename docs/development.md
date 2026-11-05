@@ -96,6 +96,10 @@ background cleanup, event drain, and run settlement. Replacement also waits for
 accepted host-tool work. A timeout or unconfirmed shutdown returns a failure
 instead of claiming that live execution is idle.
 
+Cancellation tracks recorded execution and non-empty turn identities; the displayed `running` lifecycle alone never creates an autonomous registry entry. Busy state still blocks replacement while owned cleanup is unconfirmed, even after the model turn ends. A legacy autonomous registry entry with no turn identity is retired only after interruption is acknowledged, owned background cleanup succeeds, and session events drain with no active turn; this does not fabricate a cancellation event. Confirmed Stop also clears withdrawn replacement admission. Unconfirmed execution or cleanup remains busy and blocks replacement.
+
+The prompt-admission lane captures the target and managed ancestors' Stop epochs when input is submitted, then rechecks that same admission before dispatch. Delayed provider admission responses cannot turn pre-Stop queued input into fresh post-Stop work. This lane stays separate from foreground/lifecycle mutations so cancellation and out-of-band controls cannot deadlock on it.
+
 The conversation remains usable after Stop. A new prompt reopens admission and
 recreates eval kernels lazily; variables, timers, and other retained eval effects
 from before Stop are discarded. Explicit SDK clients requesting the same eval

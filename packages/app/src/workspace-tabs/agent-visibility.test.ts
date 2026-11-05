@@ -132,7 +132,7 @@ describe("workspace agent visibility", () => {
     expect(result.knownAgentIds).toEqual(new Set(["child-agent", "parent-agent"]));
   });
 
-  it("auto-opens a subagent whose parent belongs to another workspace", () => {
+  it("keeps a cross-worktree child accessible without auto-opening it, then auto-opens on detach", () => {
     const parent = makeAgent({
       id: "parent-agent",
       cwd: "/repo",
@@ -154,8 +154,32 @@ describe("workspace agent visibility", () => {
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["child-agent"]));
-    expect(result.autoOpenAgentIds).toEqual(new Set(["child-agent"]));
+    expect(result.autoOpenAgentIds).toEqual(new Set());
     expect(result.knownAgentIds).toEqual(new Set(["child-agent"]));
+
+    const parentNotLoaded = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map([[child.id, child]]),
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(parentNotLoaded.autoOpenAgentIds).toEqual(new Set());
+
+    const explicitlyOpened = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map([
+        [parent.id, parent],
+        [child.id, child],
+      ]),
+      workspaceId: parent.workspaceId,
+      openAgentIds: [child.id],
+    });
+    expect(explicitlyOpened.activeAgentIds).toEqual(new Set([parent.id, child.id]));
+    expect(explicitlyOpened.knownAgentIds).toEqual(new Set([parent.id, child.id]));
+    expect(explicitlyOpened.autoOpenAgentIds).toEqual(new Set([parent.id]));
+
+    const detached = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map([[child.id, { ...child, parentAgentId: null }]]),
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(detached.autoOpenAgentIds).toEqual(new Set([child.id]));
   });
 
   it("keeps archived agents out of activeAgentIds but present in knownAgentIds", () => {

@@ -983,6 +983,7 @@ export class AgentManager {
 
     return (
       agent.lifecycle === "running" ||
+      Boolean(agent.activeTurnId) ||
       Boolean(agent.activeForegroundTurnId) ||
       this.runs.hasRun(agentId)
     );
@@ -2736,7 +2737,7 @@ export class AgentManager {
     await this.writeStoredMetadata(agentId, updates);
   }
 
-  private captureRunAdmission(agentId: string | null): ReadonlyMap<string, number> {
+  captureRunAdmission(agentId: string | null): ReadonlyMap<string, number> {
     const epochs = new Map<string, number>();
     while (agentId && !epochs.has(agentId)) {
       if (
@@ -2752,7 +2753,7 @@ export class AgentManager {
     return epochs;
   }
 
-  private assertRunAdmission(
+  assertRunAdmission(
     epochs: ReadonlyMap<string, number> | undefined,
     ownerId?: string | null,
   ): void {
@@ -2860,11 +2861,11 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
-    this.captureRunAdmission(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
     }
+    this.captureRunAdmission(agentId);
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
         sourceAgentId: options.sourceAgentId,
@@ -3193,13 +3194,9 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
-    const snapshot = this.requireAgent(agentId);
+    this.requireAgent(agentId);
     const admission = this.captureRunAdmission(agentId);
-    if (
-      snapshot.lifecycle !== "running" &&
-      !snapshot.activeForegroundTurnId &&
-      !this.runs.hasRun(agentId)
-    ) {
+    if (!this.hasInFlightRun(agentId)) {
       return this.streamAgent(agentId, prompt, options);
     }
 
@@ -3209,17 +3206,34 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     this.emitState(agent);
 
+    let cancellationConfirmed = false;
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
+      cancellationConfirmed = true;
       this.assertRunAdmission(admission, agentId);
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
-      const latest = this.agents.get(agentId);
-      if (latest) {
-        latest.pendingReplacement = false;
-      }
+      this.finishFailedReplacement(agent, cancellationConfirmed);
       throw error;
     }
+  }
+
+  private finishFailedReplacement(agent: ActiveManagedAgent, cancellationConfirmed: boolean): void {
+    const current = this.agents.get(agent.id);
+    if (!current || current.session !== agent.session) return;
+    current.pendingReplacement = false;
+    if (cancellationConfirmed) this.restoreIdleRunLifecycle(current);
+  }
+
+  private restoreIdleRunLifecycle(agent: ActiveManagedAgent, cancelReplacement = false): void {
+    if (agent.activeTurnId || agent.activeForegroundTurnId || this.runs.hasRun(agent.id)) return;
+    if (cancelReplacement) agent.pendingReplacement = false;
+    if (agent.pendingReplacement) return;
+    const lifecycle = agent.lastError ? "error" : "idle";
+    if (agent.lifecycle === lifecycle) return;
+    agent.lifecycle = lifecycle;
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
   }
 
   async steerAgentRun(
@@ -3369,15 +3383,14 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     this.emitState(agent);
 
+    let cancellationConfirmed = false;
     try {
       await this.cancelAgentRunBefore(agent.id, "replace");
+      cancellationConfirmed = true;
       this.assertRunAdmission(admission, agent.id);
       return this.streamAgent(agent.id, prompt, options, workingStartedAt);
     } catch (error) {
-      const latest = this.agents.get(agent.id);
-      if (latest) {
-        latest.pendingReplacement = false;
-      }
+      this.finishFailedReplacement(agent, cancellationConfirmed);
       throw error;
     }
   }
@@ -3641,11 +3654,7 @@ export class AgentManager {
               if (drained === "timed_out" || Date.now() >= deadline) {
                 return { completion: Promise.resolve([refusal]) };
               }
-              const run =
-                this.runs.getRun(agent.id) ??
-                (agent.lifecycle === "running"
-                  ? this.runs.trackAutonomousRun(agent.id, null)
-                  : null);
+              const run = this.getCancellationRun(agent);
               const attempted = attemptedAgents.get(agent.id);
               const cancelOwn =
                 !attempted ||
@@ -3761,16 +3770,20 @@ export class AgentManager {
     return settlement === "completed" ? result : { status: "refused" };
   }
 
+  private getCancellationRun(agent: ActiveManagedAgent): TrackedAgentRun | null {
+    const run = this.runs.getRun(agent.id);
+    if (run) return run;
+    const turnId = agent.activeTurnId ?? agent.activeForegroundTurnId;
+    return turnId ? this.runs.trackAutonomousRun(agent.id, turnId) : null;
+  }
+
   private async cancelAgentRunNow(
     agentId: string,
     reason: AgentInterruptReason,
     deadline: number,
   ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId, true);
-    const run =
-      this.runs.getRun(agentId) ??
-      (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
-    if (!run && reason !== "user") return { status: "not_running" };
+    const run = this.getCancellationRun(agent);
     if (
       run?.kind === "foreground" &&
       !run.started &&
@@ -3800,12 +3813,25 @@ export class AgentManager {
     });
     if (drained === "timed_out") return { status: "refused" };
     if (!interruptAcknowledged) return { status: "refused" };
+    // Older replacement races could leave a registry entry with no provider turn.
+    // Only retire that entry after acknowledged interruption, owned cleanup, and event drain.
+    if (
+      run?.kind === "autonomous" &&
+      run.turnId === null &&
+      this.runs.getRun(agentId) === run &&
+      !agent.activeTurnId &&
+      !agent.activeForegroundTurnId
+    ) {
+      this.runs.settleTerminalRun(agentId, undefined);
+    }
     if (!run) {
+      this.restoreIdleRunLifecycle(agent, reason === "user");
       return { status: stoppedBackgroundProcesses > 0 ? "settled" : "not_running" };
     }
     if (!(await this.waitForCancelledRun(agent, run, interruptAcknowledged, deadline))) {
       return { status: "refused" };
     }
+    this.restoreIdleRunLifecycle(agent, reason === "user");
 
     if (agent.pendingPermissions.size > 0) {
       this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
@@ -3834,6 +3860,7 @@ export class AgentManager {
       (settlement === "timed_out" && !run.settled) ||
       (run.turnId !== null && agent.activeForegroundTurnId === run.turnId) ||
       (run.kind === "autonomous" &&
+        run.turnId !== null &&
         agent.lifecycle === "running" &&
         agent.activeTurnId === run.turnId)
     ) {
