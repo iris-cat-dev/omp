@@ -70,6 +70,11 @@ export interface OmpStartSessionInput {
   extraArgs?: string[];
 }
 
+export interface OmpServiceTierCapabilities {
+  fastMode: boolean;
+  ultrafast: boolean;
+}
+
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   prompt(
@@ -100,6 +105,8 @@ export interface OmpRuntimeSession {
   getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
+  /** Native control availability, independent of the catalog session's selected model. */
+  getServiceTierCapabilities?(): Promise<OmpServiceTierCapabilities>;
   getLocalModelGatewayPort?(): Promise<number>;
   getLoginProviders(): Promise<OmpLoginProvider[]>;
   login(providerId: string): Promise<void>;

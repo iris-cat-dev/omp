@@ -789,6 +789,60 @@ describe("OMP CLI runtime", () => {
   });
 
   test.each([
+    { available: true, source: "builtin", ultrafast: true },
+    { available: false, source: "builtin", ultrafast: false },
+    { available: true, source: "extension", ultrafast: false },
+  ])(
+    "discovers catalog tier controls independently of the selected model: $available/$source",
+    async ({ available, source, ultrafast }) => {
+      const child = createOmpChild();
+      const commands: string[] = [];
+      replyToCommands(child, (command) => {
+        commands.push(String(command.type));
+        return command.type === "get_available_commands"
+          ? { commands: [{ name: "fast", source, subcommands: [{ name: "ultra" }] }] }
+          : {
+              model: { provider: "anthropic", id: "catalog-default" },
+              isStreaming: false,
+              isCompacting: false,
+              sessionId: "catalog-session",
+              fastModeEnabled: false,
+              fastModeActive: false,
+              messageCount: 0,
+              queuedMessageCount: 0,
+            };
+      });
+      const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+      child.stdout.write(
+        `${JSON.stringify({ type: "desktop_service_tier_ready", port: 12345 })}\n`,
+      );
+      const fetchApi = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            available,
+            model: { provider: "anthropic", id: "catalog-default" },
+            openaiFamily: false,
+            tier: null,
+            ultrafastAvailable: false,
+          }),
+        ),
+      );
+      try {
+        await expect(session.getServiceTierCapabilities?.()).resolves.toEqual({
+          fastMode: true,
+          ultrafast,
+        });
+        expect(commands).toEqual(
+          available ? ["get_state", "get_available_commands"] : ["get_state"],
+        );
+      } finally {
+        fetchApi.mockRestore();
+        await session.close();
+      }
+    },
+  );
+
+  test.each([
     { advertised: false, available: true, source: "builtin" },
     { advertised: true, available: false, source: "builtin" },
     { advertised: true, available: true, source: "extension" },

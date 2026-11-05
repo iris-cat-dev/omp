@@ -372,6 +372,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
   async getAvailableModels(_timeoutMs?: number | null): Promise<OmpModel[]> {
     return this.models;
   }
+  async getServiceTierCapabilities() {
+    return {
+      fastMode: typeof this.state.fastModeEnabled === "boolean",
+      ultrafast: this.nativeUltrafastSupported,
+    };
+  }
   async getLoginProviders(): Promise<OmpLoginProvider[]> {
     return this.loginProviders;
   }

@@ -43,6 +43,7 @@ function collectClipboardFile(
 
 export function collectClipboardAttachmentFiles(
   clipboardData?: ClipboardDataLike | null,
+  getPathForFile?: (file: File) => string,
 ): ClipboardAttachmentFiles {
   const result: ClipboardAttachmentFiles = { imageFiles: [], genericFiles: [] };
   const items = clipboardData?.items;
@@ -70,6 +71,24 @@ export function collectClipboardAttachmentFiles(
       if (file) {
         collectClipboardFile(result, file);
       }
+    }
+  }
+
+  if (getPathForFile && result.imageFiles.length > 1) {
+    let hasFileBackedImage = false;
+    const syntheticBitmaps = new Set<ClipboardImageFile>();
+    for (const image of result.imageFiles) {
+      if (getPathForFile(image.file).length > 0) {
+        hasFileBackedImage = true;
+      } else if (image.mimeType === "image/png") {
+        syntheticBitmaps.add(image);
+      }
+    }
+    // Desktop clipboard formats can expose both an original file and its PNG
+    // bitmap representation in one event. Prefer the original by provenance,
+    // never by name/bytes or across pastes; screenshot-only pastes stay intact.
+    if (hasFileBackedImage && syntheticBitmaps.size > 0) {
+      result.imageFiles = result.imageFiles.filter((image) => !syntheticBitmaps.has(image));
     }
   }
 
