@@ -322,6 +322,7 @@ export function WorkspaceSetupDialog() {
         const message = toErrorMessage(error);
         setErrorMessage(message);
         toast.error(message);
+        throw error;
       } finally {
         if (getIsStillActive()) {
           setPendingAction(null);

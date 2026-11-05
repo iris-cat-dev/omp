@@ -107,7 +107,7 @@ import {
   type OmpRuntimeProviderParams,
 } from "./provider-config.js";
 import { prepareOmpProviderEnv } from "./provider-env.js";
-import { fingerprintOmpFeatureContext } from "./feature-context.js";
+import { fingerprintOmpFeatureContext, matchesOmpFeatureModel } from "./feature-context.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { mapOmpCustomAssistantMessage, shouldDisplayOmpCustomMessage } from "./custom-message.js";
@@ -5802,7 +5802,7 @@ export class OmpAgentClient implements AgentClient {
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const startedAt = performance.now();
     const modelProvider = parseModelReference(config.model ?? null)?.provider;
-    const fingerprint = async () => {
+    const fingerprint = async (verifyModel?: OmpModel | null) => {
       const installation =
         this.runtime instanceof OmpSdkRuntime ? await this.runtime.getInstallation() : undefined;
       const launch = installation ? undefined : await this.resolveOmpLaunch();
@@ -5827,6 +5827,7 @@ export class OmpAgentClient implements AgentClient {
         runtimeIdentity: installation ?? launch,
         commandArgs: launch?.args,
         modelProvider,
+        verifyModel,
         runtimeFiles,
       });
     };
@@ -5866,13 +5867,21 @@ export class OmpAgentClient implements AgentClient {
             throw new Error("OMP capability context changed during detection; retry");
           }
           let authenticatedContext = initialContext;
-          const evidence = await this.probeFeatureState(config, async (phase) => {
-            const readyContext = await fingerprint();
+          const evidence = await this.probeFeatureState(config, async (phase, model) => {
+            const readyContext = await fingerprint(model);
             if (phase === "state") {
               if (readyContext.key !== authenticatedContext.key) {
                 throw new Error("OMP capability context changed during detection; retry");
               }
-              return;
+              // Readiness does not imply that background discovery's new
+              // declarations were adopted by the active native model. Check
+              // cold retries too; a failed first probe must not warm stale state.
+              if (readyContext.modelEvidenceMatches === false) {
+                throw new Error(
+                  "OMP capability model declaration does not match native state; retry",
+                );
+              }
+              return readyContext.modelEvidenceMatches === null;
             }
             // Only first materialization may cross startup. Existing model
             // declarations and all non-model evidence must remain unchanged.
@@ -5883,6 +5892,7 @@ export class OmpAgentClient implements AgentClient {
               throw new Error("OMP capability context changed during detection; retry");
             }
             authenticatedContext = readyContext;
+            return false;
           });
           // Certify the response against the model declarations observed after
           // startup, before getState, including the entire retirement interval.
@@ -5953,7 +5963,7 @@ export class OmpAgentClient implements AgentClient {
 
   private async probeFeatureState(
     config: AgentSessionConfig,
-    authenticate: (phase: "ready" | "state") => Promise<void>,
+    authenticate: (phase: "ready" | "state", model?: OmpModel | null) => Promise<boolean>,
   ): Promise<OmpSessionState> {
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const startedAt = performance.now();
@@ -6021,20 +6031,13 @@ export class OmpAgentClient implements AgentClient {
       const stateStartedAt = performance.now();
       phase = "state";
       phaseStartedAt = stateStartedAt;
-      const state = await session.getState();
+      const state = await this.readFeatureProbeState(
+        session,
+        config,
+        authenticate,
+        controller.signal,
+      );
       timings.stateMs = performance.now() - stateStartedAt;
-      controller.signal.throwIfAborted();
-      const expected = parseModelReference(config.model ?? null);
-      if (
-        expected &&
-        (!state.model ||
-          state.model.id !== expected.id ||
-          (expected.provider !== undefined && state.model.provider !== expected.provider))
-      ) {
-        throw new Error("OMP capability detection returned a different model");
-      }
-      await authenticate("state");
-      controller.signal.throwIfAborted();
       return state;
     } catch (error) {
       timings[`${phase}Ms`] = performance.now() - phaseStartedAt;
@@ -6076,6 +6079,61 @@ export class OmpAgentClient implements AgentClient {
         );
       }
     }
+  }
+
+  private async readFeatureProbeState(
+    session: OmpRuntimeSession,
+    config: AgentSessionConfig,
+    authenticate: (phase: "ready" | "state", model?: OmpModel | null) => Promise<boolean>,
+    signal: AbortSignal,
+  ): Promise<OmpSessionState> {
+    let state = await session.getState();
+    signal.throwIfAborted();
+    const expected = parseModelReference(config.model ?? null);
+    if (
+      expected &&
+      (!state.model ||
+        state.model.id !== expected.id ||
+        (expected.provider !== undefined && state.model.provider !== expected.provider))
+    ) {
+      throw new Error("OMP capability detection returned a different model");
+    }
+    const needsCatalog = await authenticate("state", state.model ?? null);
+    signal.throwIfAborted();
+    if (needsCatalog) {
+      // Only unidentified endpoint/account scopes pay for general discovery.
+      // The same owned runtime resolves its current account and enabled models;
+      // no database row from another scope can certify this active state.
+      const modelAtRead = state.model;
+      if (!modelAtRead) {
+        throw new Error("OMP capability model declaration does not match native state; retry");
+      }
+      const models = await session.getAvailableModels();
+      signal.throwIfAborted();
+      await authenticate("state", modelAtRead);
+      signal.throwIfAborted();
+      let declaration: OmpModel | undefined;
+      for (const model of models) {
+        if (model.provider !== modelAtRead.provider || model.id !== modelAtRead.id) continue;
+        if (declaration) {
+          throw new Error("OMP capability model declaration does not match native state; retry");
+        }
+        declaration = model;
+      }
+      if (!declaration) {
+        throw new Error("OMP capability model declaration does not match native state; retry");
+      }
+      // Discovery may rebind the model while the catalog read is pending.
+      // Read back active state, rather than synthesize capability flags.
+      state = await session.getState();
+      signal.throwIfAborted();
+      await authenticate("state", state.model ?? null);
+      signal.throwIfAborted();
+      if (!matchesOmpFeatureModel(declaration, state.model ?? null)) {
+        throw new Error("OMP capability model declaration does not match native state; retry");
+      }
+    }
+    return state;
   }
 
   private async retireFeatureProbes(): Promise<void> {
