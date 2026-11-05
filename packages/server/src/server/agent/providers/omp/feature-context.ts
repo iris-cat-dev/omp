@@ -93,6 +93,12 @@ function addCommandConfigFiles(
   }
 }
 
+export interface OmpFeatureContext {
+  key: string;
+  configurationKey: string;
+  hasModelEvidence: boolean;
+}
+
 /** Fingerprint local evidence, never credentials or selected tier values in a cache/log key. */
 export async function fingerprintOmpFeatureContext(input: {
   config: AgentSessionConfig;
@@ -103,7 +109,7 @@ export async function fingerprintOmpFeatureContext(input: {
   credentialEvidence?: unknown;
   commandArgs?: readonly string[];
   modelProvider?: string;
-}): Promise<string> {
+}): Promise<OmpFeatureContext> {
   const env = { ...process.env, ...input.runtimeSettings?.env };
   const paths = resolveOmpDiagnosticPaths(env);
   const files = new Set(input.runtimeFiles);
@@ -168,13 +174,18 @@ export async function fingerprintOmpFeatureContext(input: {
     input.credentialEvidence ??
     (await readFeatureDatabaseEvidence({ file: paths.agentDb, table: "auth_credentials" }));
   hash.update(JSON.stringify(credentials));
-  if (input.modelProvider) {
-    const models = await readFeatureDatabaseEvidence({
-      file: join(dirname(paths.agentDb), "models.db"),
-      table: "model_cache",
-      modelProvider: input.modelProvider,
-    });
-    hash.update(JSON.stringify(models));
-  }
-  return hash.digest("hex");
+  const configurationKey = hash.copy().digest("hex");
+  const models = input.modelProvider
+    ? await readFeatureDatabaseEvidence({
+        file: join(dirname(paths.agentDb), "models.db"),
+        table: "model_cache",
+        modelProvider: input.modelProvider,
+      })
+    : [];
+  if (input.modelProvider) hash.update(JSON.stringify(models));
+  return {
+    key: hash.digest("hex"),
+    configurationKey,
+    hasModelEvidence: models.length > 0,
+  };
 }

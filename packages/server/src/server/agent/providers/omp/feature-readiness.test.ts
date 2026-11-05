@@ -8,6 +8,7 @@ import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import type { AgentFeature, AgentSessionConfig } from "../../agent-sdk-types.js";
 import type { OmpStartSessionInput } from "./runtime.js";
+import * as featureContext from "./feature-context.js";
 
 const model = {
   provider: "openai-codex",
@@ -57,6 +58,23 @@ function setup(runtime = new FakeOmp(), commandArgs: string[] = []) {
 }
 function speed(features: AgentFeature[]) {
   return features.find((feature) => feature.id === "fast_mode");
+}
+
+async function createModelCache(populated = false) {
+  await mkdir(join(directory, "profile"), { recursive: true });
+  const require = createRequire(import.meta.url);
+  const { DatabaseSync } = require("node:sqlite") as {
+    DatabaseSync: new (file: string) => { exec(sql: string): void; close(): void };
+  };
+  const database = new DatabaseSync(join(directory, "profile", "models.db"));
+  database.exec(
+    "CREATE TABLE model_cache(provider_id TEXT PRIMARY KEY, updated_at INTEGER, models TEXT)",
+  );
+  if (populated)
+    database.exec(
+      `INSERT INTO model_cache VALUES('openai-codex:client-version:account-scope', 1, '[{"serviceTiers":["priority","ultrafast"]}]')`,
+    );
+  return database;
 }
 
 describe("draft native feature readiness", () => {
@@ -155,6 +173,120 @@ describe("draft native feature readiness", () => {
       expect(speed(await client.listFeatures(config))).toMatchObject({ value: "ultrafast" });
       expect(speed(await client.listFeatures(config))).toMatchObject({ value: "ultrafast" });
       expect(runtime.recordedLaunches).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    "accepts first selected-provider cache materialization and shares consumers across it (schema=%s)",
+    async (withSchema) => {
+      if (withSchema) (await createModelCache()).close();
+      const materialized = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      class MaterializingRuntime extends FakeOmp {
+        override async startSession(input: OmpStartSessionInput) {
+          const session = await super.startSession(input);
+          await mkdir(join(directory, "profile"), { recursive: true });
+          const require = createRequire(import.meta.url);
+          const { DatabaseSync } = require("node:sqlite") as {
+            DatabaseSync: new (file: string) => { exec(sql: string): void; close(): void };
+          };
+          const database = new DatabaseSync(join(directory, "profile", "models.db"));
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS model_cache(provider_id TEXT PRIMARY KEY, updated_at INTEGER, models TEXT)",
+            );
+            database.exec(
+              `INSERT OR REPLACE INTO model_cache VALUES('openai-codex:client-version:account-scope', 1, '[{"serviceTiers":["priority","ultrafast"]}]')`,
+            );
+          } finally {
+            database.close();
+          }
+          materialized.resolve();
+          await released.promise;
+          return session;
+        }
+      }
+      const { client, runtime, config } = setup(new MaterializingRuntime());
+      const first = client.listFeatures(config);
+      const concurrent = client.listFeatures({ ...config, featureValues: { fast_mode: "off" } });
+      await materialized.promise;
+      const observed = Promise.withResolvers<void>();
+      const fingerprint = featureContext.fingerprintOmpFeatureContext;
+      const observation = vi
+        .spyOn(featureContext, "fingerprintOmpFeatureContext")
+        .mockImplementation(async (input) => {
+          const context = await fingerprint(input);
+          observed.resolve();
+          return context;
+        });
+      const afterMaterialization = client.listFeatures(config);
+      try {
+        await observed.promise;
+      } finally {
+        observation.mockRestore();
+        released.resolve();
+      }
+      const results = await Promise.all([first, concurrent, afterMaterialization]);
+      expect(results.map((features) => speed(features)?.value)).toEqual([
+        "ultrafast",
+        "off",
+        "ultrafast",
+      ]);
+      expect(speed(await client.listFeatures(config))).toMatchObject({ value: "ultrafast" });
+      expect(runtime.recordedLaunches).toHaveLength(1);
+      expect(runtime.latestSession().closed).toBe(true);
+    },
+  );
+
+  it.each(["model", "configuration", "credentials", "runtime"])(
+    "rejects startup changes to existing %s evidence instead of warming an invalid result",
+    async (changed) => {
+      const database = await createModelCache(changed === "model");
+      let mutate = true;
+      class MutatingRuntime extends FakeOmp {
+        override async startSession(input: OmpStartSessionInput) {
+          const session = await super.startSession(input);
+          if (mutate) {
+            mutate = false;
+            database.exec(
+              `INSERT OR REPLACE INTO model_cache VALUES('openai-codex:client-version:account-scope', 2, '[{"serviceTiers":["priority"]}]')`,
+            );
+            if (changed === "configuration") {
+              await mkdir(join(directory, ".omp"));
+              await writeFile(join(directory, ".omp", "config.yml"), "tier: off\n");
+            } else if (changed === "credentials") {
+              const require = createRequire(import.meta.url);
+              const { DatabaseSync } = require("node:sqlite") as {
+                DatabaseSync: new (file: string) => { exec(sql: string): void; close(): void };
+              };
+              const credentials = new DatabaseSync(join(directory, "profile", "agent.db"));
+              try {
+                credentials.exec(
+                  "CREATE TABLE auth_credentials(id INTEGER PRIMARY KEY, provider TEXT, data TEXT)",
+                );
+                credentials.exec(
+                  "INSERT INTO auth_credentials VALUES(41, 'openai-codex', 'changed credential')",
+                );
+              } finally {
+                credentials.close();
+              }
+            } else if (changed === "runtime") {
+              await writeFile(binary, "runtime installation changed during startup");
+            }
+          }
+          return session;
+        }
+      }
+      const { client, runtime, config } = setup(new MutatingRuntime());
+      try {
+        await expect(client.listFeatures(config)).rejects.toThrow("context changed");
+        expect(runtime.latestSession().closed).toBe(true);
+        runtime.setUltrafastSupported(false);
+        expect(speed(await client.listFeatures(config))).toBeUndefined();
+        expect(runtime.recordedLaunches).toHaveLength(2);
+      } finally {
+        database.close();
+      }
     },
   );
 
@@ -301,6 +433,167 @@ describe("draft native feature readiness", () => {
     expect(runtime.recordedLaunches).toHaveLength(2);
   });
 
+  it.each(["getState", "close", "getState-restored-on-close"])(
+    "rejects model evidence changed after readiness during %s and reconfirms on retry",
+    async (phase) => {
+      const database = await createModelCache();
+      let mutate = true;
+      const change = () => {
+        if (!mutate) return;
+        mutate = false;
+        database.exec(`UPDATE model_cache SET models = '[{"serviceTiers":["priority"]}]'`);
+      };
+      class MutatingRuntime extends FakeOmp {
+        override async startSession(input: OmpStartSessionInput) {
+          const session = await super.startSession(input);
+          database.exec(
+            `INSERT OR IGNORE INTO model_cache VALUES('openai-codex:client-version:account-scope', 1, '[{"serviceTiers":["priority","ultrafast"]}]')`,
+          );
+          const getState = session.getState.bind(session);
+          session.getState = async () => {
+            const state = await getState();
+            if (phase !== "close") change();
+            return state;
+          };
+          const close = session.close.bind(session);
+          session.close = async () => {
+            await close();
+            if (phase === "close") change();
+            if (phase === "getState-restored-on-close")
+              database.exec(
+                `UPDATE model_cache SET models = '[{"serviceTiers":["priority","ultrafast"]}]'`,
+              );
+          };
+          return session;
+        }
+      }
+      const { client, runtime, config } = setup(new MutatingRuntime());
+      try {
+        await expect(client.listFeatures(config)).rejects.toThrow("context changed");
+        expect(runtime.latestSession().closed).toBe(true);
+        runtime.setUltrafastSupported(false);
+        expect(speed(await client.listFeatures(config))).toBeUndefined();
+        expect(runtime.recordedLaunches).toHaveLength(2);
+      } finally {
+        database.close();
+      }
+    },
+  );
+
+  it("does not give a shared probe's old declaration to a caller that observed a newer one", async () => {
+    const database = await createModelCache(true);
+    const reading = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const observed = Promise.withResolvers<void>();
+    let hold = true;
+    class HeldRuntime extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput) {
+        const session = await super.startSession(input);
+        const getState = session.getState.bind(session);
+        session.getState = async () => {
+          if (hold) {
+            reading.resolve();
+            await released.promise;
+          }
+          return getState();
+        };
+        return session;
+      }
+    }
+    const { client, runtime, config } = setup(new HeldRuntime());
+    // Observe a completed real SQLite read to order the two callers around an
+    // external declaration change; the fingerprint itself is never replaced.
+    const fingerprint = featureContext.fingerprintOmpFeatureContext;
+    let observeNext = false;
+    const observation = vi
+      .spyOn(featureContext, "fingerprintOmpFeatureContext")
+      .mockImplementation(async (input) => {
+        const context = await fingerprint(input);
+        if (observeNext) {
+          observeNext = false;
+          observed.resolve();
+        }
+        return context;
+      });
+    try {
+      const first = client.listFeatures(config);
+      await reading.promise;
+      database.exec(`UPDATE model_cache SET models = '[{"serviceTiers":["priority"]}]'`);
+      observeNext = true;
+      const changed = client.listFeatures(config).catch((error: unknown) => error);
+      await observed.promise;
+      database.exec(
+        `UPDATE model_cache SET models = '[{"serviceTiers":["priority","ultrafast"]}]'`,
+      );
+      hold = false;
+      released.resolve();
+      expect(speed(await first)).toMatchObject({ value: "ultrafast" });
+      expect(await changed).toBeInstanceOf(Error);
+      expect(runtime.recordedLaunches).toHaveLength(1);
+      expect(runtime.latestSession().closed).toBe(true);
+    } finally {
+      released.resolve();
+      observation.mockRestore();
+      database.close();
+    }
+  });
+
+  it.each([false, true])(
+    "bounds queued work and rejects model changes before queued startup (existing evidence=%s)",
+    async (populated) => {
+      const database = await createModelCache(populated);
+      const reading = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      const busy = Promise.withResolvers<void>();
+      class HeldRuntime extends FakeOmp {
+        override async startSession(input: OmpStartSessionInput) {
+          const session = await super.startSession(input);
+          const getState = session.getState.bind(session);
+          session.getState = async () => {
+            reading.resolve();
+            await released.promise;
+            return getState();
+          };
+          return session;
+        }
+      }
+      const { client, runtime, config } = setup(new HeldRuntime());
+      const first = client.listFeatures(config).catch((error: unknown) => error);
+      await reading.promise;
+      const recordQueuedError = (error: unknown) => {
+        if (error instanceof Error && error.message.includes("busy")) busy.resolve();
+        return error;
+      };
+      const queued = Array.from({ length: 8 }, (_, index) =>
+        client
+          .listFeatures({
+            ...config,
+            featureValues: { oauth_account_credential: String(index + 1) },
+          })
+          .catch(recordQueuedError),
+      );
+      try {
+        // The ninth distinct request is refused only after the other seven
+        // have joined the queue; no sleeps or private queue inspection.
+        await busy.promise;
+        database.exec(
+          `INSERT OR REPLACE INTO model_cache VALUES('openai-codex:client-version:account-scope', 2, '[{"serviceTiers":["priority"]}]')`,
+        );
+        released.resolve();
+        const results = await Promise.all([first, ...queued]);
+        expect(results.every((result) => result instanceof Error)).toBe(true);
+        expect(runtime.recordedLaunches).toHaveLength(1);
+        expect(runtime.latestSession().closed).toBe(true);
+        runtime.setUltrafastSupported(false);
+        expect(speed(await client.listFeatures(config))).toBeUndefined();
+        expect(runtime.recordedLaunches).toHaveLength(2);
+      } finally {
+        released.resolve();
+        database.close();
+      }
+    },
+  );
+
   it("does not cache failure and allows an explicit retry", async () => {
     const { client, runtime, config } = setup();
     runtime.failNextStart(new Error("native startup failed"));
@@ -417,6 +710,70 @@ describe("draft native feature readiness", () => {
     } finally {
       failRetirement = false;
     }
+  });
+
+  it("aborts a stalled startup at its deadline, retires it and permits a bounded retry", async () => {
+    const starting = Promise.withResolvers<void>();
+    let stall = true;
+    class StalledRuntime extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput) {
+        const session = await super.startSession(input);
+        if (!stall) return session;
+        stall = false;
+        input.onRetirementCreated?.(session);
+        const signal = input.signal!;
+        signal.throwIfAborted();
+        const blocked = Promise.withResolvers<never>();
+        signal.addEventListener("abort", () => blocked.reject(signal.reason), { once: true });
+        starting.resolve();
+        await blocked.promise;
+        return session;
+      }
+    }
+    vi.useFakeTimers();
+    const { client, runtime, config } = setup(new StalledRuntime());
+    try {
+      const detected = client.listFeatures(config).catch((error: unknown) => error);
+      await starting.promise;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await detected).toMatchObject({ message: "OMP capability detection timed out" });
+      expect(runtime.latestSession().closed).toBe(true);
+      const args = runtime.recordedLaunches[0]!.argv;
+      const overlay = args[args.indexOf("--config") + 1]!;
+      await expect(access(overlay)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(speed(await client.listFeatures(config))).toMatchObject({ value: "ultrafast" });
+      expect(runtime.recordedLaunches).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not publish successful state when shutdown begins during retirement", async () => {
+    const retiring = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    class HeldRetirementRuntime extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput) {
+        const session = await super.startSession(input);
+        const close = session.close.bind(session);
+        session.close = async () => {
+          retiring.resolve();
+          await released.promise;
+          await close();
+        };
+        return session;
+      }
+    }
+    const { client, runtime, config } = setup(new HeldRetirementRuntime());
+    const detected = client.listFeatures(config).catch((error: unknown) => error);
+    await retiring.promise;
+    const shutdown = client.shutdown();
+    await expect(client.listFeatures(config)).rejects.toThrow("shutting down");
+    expect(runtime.latestSession().closed).toBe(false);
+    released.resolve();
+    await shutdown;
+    expect(await detected).toMatchObject({ message: "OMP provider is shutting down" });
+    expect(runtime.latestSession().closed).toBe(true);
+    expect(runtime.recordedLaunches).toHaveLength(1);
   });
 
   it("waits for actual probe retirement on shutdown and refuses further work", async () => {

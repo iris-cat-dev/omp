@@ -5182,7 +5182,10 @@ export class OmpAgentClient implements AgentClient {
   private readonly loginFlows = new Map<string, OmpProviderLoginFlow>();
   private defaultProxyPolicy: ProxyPolicy;
   private readonly proxySessions = new Set<OmpAgentSession>();
-  private readonly featureProbes = new Map<string, Promise<OmpSessionState>>();
+  private readonly featureProbes = new Map<
+    string,
+    Promise<{ state: OmpSessionState; key: string }>
+  >();
   private readonly featureEvidence = new Map<
     string,
     { state: OmpSessionState; expiresAt: number }
@@ -5827,7 +5830,12 @@ export class OmpAgentClient implements AgentClient {
         runtimeFiles,
       });
     };
-    const key = await fingerprint();
+    const initialContext = await fingerprint();
+    const key = initialContext.key;
+    // Startup may materialize the selected provider's first model-cache row.
+    // Keep one in-flight owner across that transition, but not across changes
+    // to the selected model, credentials, configuration or runtime.
+    const pendingKey = initialContext.configurationKey;
     const contextMs = performance.now() - startedAt;
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     // Until a provider-qualified model is selected, native configuration owns
@@ -5839,7 +5847,7 @@ export class OmpAgentClient implements AgentClient {
       state = cached.state;
       source = "warm";
     } else {
-      let pending = this.featureProbes.get(key);
+      let pending = this.featureProbes.get(pendingKey);
       source = pending ? "shared" : "probe";
       if (!pending) {
         if (this.featureProbes.size >= 8) {
@@ -5851,22 +5859,47 @@ export class OmpAgentClient implements AgentClient {
         pending = (async () => {
           await previous;
           if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
-          const evidence = await this.probeFeatureState(config);
-          // An edit during detection cannot certify a new context with
-          // a response from the old one.
-          const settledKey = await fingerprint();
-          if (settledKey !== key) {
+          await this.retireFeatureProbes();
+          // A queued request must still describe the context it observed.
+          // Only startup itself may materialize missing model evidence.
+          if ((await fingerprint()).key !== key) {
+            throw new Error("OMP capability context changed during detection; retry");
+          }
+          let authenticatedContext = initialContext;
+          const evidence = await this.probeFeatureState(config, async (phase) => {
+            const readyContext = await fingerprint();
+            if (phase === "state") {
+              if (readyContext.key !== authenticatedContext.key) {
+                throw new Error("OMP capability context changed during detection; retry");
+              }
+              return;
+            }
+            // Only first materialization may cross startup. Existing model
+            // declarations and all non-model evidence must remain unchanged.
+            if (
+              readyContext.configurationKey !== initialContext.configurationKey ||
+              (initialContext.hasModelEvidence && readyContext.key !== key)
+            ) {
+              throw new Error("OMP capability context changed during detection; retry");
+            }
+            authenticatedContext = readyContext;
+          });
+          // Certify the response against the model declarations observed after
+          // startup, before getState, including the entire retirement interval.
+          const settledContext = await fingerprint();
+          if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+          if (settledContext.key !== authenticatedContext.key) {
             throw new Error("OMP capability context changed during detection; retry");
           }
           if (modelProvider)
-            this.featureEvidence.set(key, {
+            this.featureEvidence.set(authenticatedContext.key, {
               state: evidence,
               expiresAt: Date.now() + 5 * 60_000,
             });
           while (this.featureEvidence.size > 32) {
             this.featureEvidence.delete(this.featureEvidence.keys().next().value!);
           }
-          return evidence;
+          return { state: evidence, key: authenticatedContext.key };
         })();
         // One owned probe process at a time; changing models rapidly cannot
         // fan out unbounded native runtimes.
@@ -5874,14 +5907,24 @@ export class OmpAgentClient implements AgentClient {
           () => undefined,
           () => undefined,
         );
-        this.featureProbes.set(key, pending);
+        this.featureProbes.set(pendingKey, pending);
       }
       try {
-        state = await pending;
+        const evidence = await pending;
+        // A shared probe may span first materialization, but must not answer
+        // a caller that already observed a different model declaration.
+        if (
+          (initialContext.hasModelEvidence && evidence.key !== key) ||
+          (await fingerprint()).key !== evidence.key
+        ) {
+          throw new Error("OMP capability context changed during detection; retry");
+        }
+        state = evidence.state;
       } finally {
-        if (this.featureProbes.get(key) === pending) this.featureProbes.delete(key);
+        if (this.featureProbes.get(pendingKey) === pending) this.featureProbes.delete(pendingKey);
       }
     }
+    if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const accountStartedAt = performance.now();
     const accounts = this.readOAuthAccounts();
     // Automatic account display is optional evidence, not a prerequisite for
@@ -5908,8 +5951,10 @@ export class OmpAgentClient implements AgentClient {
     return features;
   }
 
-  private async probeFeatureState(config: AgentSessionConfig): Promise<OmpSessionState> {
-    await this.retireFeatureProbes();
+  private async probeFeatureState(
+    config: AgentSessionConfig,
+    authenticate: (phase: "ready" | "state") => Promise<void>,
+  ): Promise<OmpSessionState> {
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const startedAt = performance.now();
     const controller = new AbortController();
@@ -5971,6 +6016,8 @@ export class OmpAgentClient implements AgentClient {
       this.featureProbeRetirements.set(session, directory);
       timings.launchMs = performance.now() - launchStartedAt;
       controller.signal.throwIfAborted();
+      await authenticate("ready");
+      controller.signal.throwIfAborted();
       const stateStartedAt = performance.now();
       phase = "state";
       phaseStartedAt = stateStartedAt;
@@ -5986,6 +6033,8 @@ export class OmpAgentClient implements AgentClient {
       ) {
         throw new Error("OMP capability detection returned a different model");
       }
+      await authenticate("state");
+      controller.signal.throwIfAborted();
       return state;
     } catch (error) {
       timings[`${phase}Ms`] = performance.now() - phaseStartedAt;
