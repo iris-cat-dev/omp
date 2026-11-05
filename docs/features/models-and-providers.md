@@ -42,6 +42,10 @@ Names are stored as `providers.<id>.name` in the host's native `models.yml`. For
 
 Model catalogs prefer an explicit `models.yml` display name, then the registered provider name from the same OMP runtime that loads the models, then the existing provider-ID fallback. Registered names such as **AIME** and **LLMBox** retain their exact capitalization.
 
+**Fetch model list** tries `/v2/models` first, then `/v1/models` after any failed request, HTTP error, invalid or empty response, or body-decoding failure (including broken gzip). Unversioned API roots retain `/models` as the last fallback. Valid gzip responses remain supported, and successful v2 discovery retains its richer model metadata.
+
+If every endpoint fails, discovery returns no models without surfacing a fetch error or clearing the editor's existing model draft; models can still be entered manually. Each endpoint has a 15-second timeout, and the client allows 60 seconds for the complete fallback chain.
+
 ## Catalog refresh and sign-in
 
 Updating OMP, saving provider configuration, or signing in/out refreshes the affected provider's global catalog. Open clients receive the refreshed result, or a terminal unavailable/error state, without reopening a picker or reloading the application.
@@ -77,6 +81,8 @@ Confirmed Fast changes add system notices too. Model switches show the selected 
 Hover **Fast** for its cost explanation, localized in all nine supported locales.
 
 The draft model panel keeps **Speed** visible and read-only while detecting capabilities. A successful check enables only the supported controls; a confirmed unsupported model says so explicitly. A failed check shows the error and **Retry speed detection** instead of hiding the row or allowing an unconfirmed Ultrafast selection. Desktop and compact pickers share these states. Saved Ultrafast preferences are retained through detection, failures, and unsupported models; they are never silently converted to ordinary Fast.
+
+Draft capability failures do not add a **Features: unavailable** badge or raw-error tooltip beside the composer. Error details and retry remain in the model settings panel; native capability checks still reject inconsistent model evidence.
 
 Draft detection uses a separate, no-session native runtime with an explicit owner, never resumes a conversation, sends no prompts, and disables memory backends and automatic learning only in a temporary probe configuration. Ownership transfers before startup negotiation, including CLI tool-inventory preflight children; the temporary configuration is removed only after every owned child confirms exit. One probe runs at a time per provider client; equivalent requests share in-flight work and confirmed native evidence is reused for up to five minutes. Each consumer rechecks the runtime/install, profile, selected model/account, effective configuration (including external CLI `--config` files), credentials, and the selected provider's committed native model-cache declarations before reuse. Native endpoint/account/version cache namespaces remain part of that evidence; populating unrelated providers, freshness-only updates, and initialization of empty databases do not invalidate it. Cached selected values are not capability evidence. Existing conversations continue using their own live feature state, not draft responses.
 

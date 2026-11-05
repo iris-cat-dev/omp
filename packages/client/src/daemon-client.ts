@@ -5347,7 +5347,7 @@ export class DaemonClient {
       requestId: options?.requestId,
       message: { type: "omp.provider.models.discover.request", ...input },
       responseType: "omp.provider.models.discover.response",
-      timeout: 30_000,
+      timeout: 60_000,
     });
   }
 

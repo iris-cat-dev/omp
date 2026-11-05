@@ -1342,6 +1342,7 @@ function OmpProviderForm({
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim(),
       });
+      if (result.models.length === 0) return;
       setDraft((current) => ({
         ...current,
         models: configureDiscoveredProviderModels(current.models, result.models, () => {

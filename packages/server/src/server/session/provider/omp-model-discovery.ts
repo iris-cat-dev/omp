@@ -139,53 +139,33 @@ function parseModels(value: unknown): OmpDiscoveredProviderModel[] {
 export async function discoverOmpProviderModels(
   input: DiscoveryInput,
 ): Promise<OmpDiscoveredProviderModel[]> {
-  const urls = buildModelUrls(input.baseUrl);
-  let lastStatus: number | undefined;
-
-  for (const url of urls) {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-        "x-api-key": input.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    lastStatus = response.status;
-    if (!response.ok) {
-      if (response.status === 404 && url !== urls.at(-1)) continue;
-      throw new Error(`Model endpoint returned HTTP ${response.status}`);
-    }
-
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
-      throw new Error("Model endpoint response is too large");
-    }
-    const body = await response.text();
-    if (body.length > MAX_RESPONSE_BYTES) throw new Error("Model endpoint response is too large");
-
-    let parsed: unknown;
+  for (const url of buildModelUrls(input.baseUrl)) {
     try {
-      parsed = JSON.parse(body);
-    } catch {
-      if (
-        url.pathname.endsWith("/v2/models") &&
-        response.headers.get("content-type")?.toLowerCase().includes("text/html")
-      ) {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${input.apiKey}`,
+          "x-api-key": input.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const contentLength = Number(response.headers.get("content-length"));
+      if (!response.ok || (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES)) {
+        await response.body?.cancel();
         continue;
       }
-      if (!url.pathname.endsWith("/v2/models") && url !== urls.at(-1)) continue;
-      throw new Error("Model endpoint did not return JSON");
+
+      const body = await response.text();
+      if (body.length > MAX_RESPONSE_BYTES) continue;
+      const models = parseModels(JSON.parse(body));
+      if (models.length > 0) return models;
+    } catch {
+      // Fetch, body decoding (including broken gzip), and JSON failures try the next endpoint.
+      continue;
     }
-    const models = parseModels(parsed);
-    if (models.length > 0) return models;
-    if (url.pathname.endsWith("/v2/models")) {
-      throw new Error("Model endpoint returned no models");
-    }
-    if (url === urls.at(-1)) throw new Error("Model endpoint returned no models");
   }
 
-  throw new Error(`Could not discover models${lastStatus ? ` (HTTP ${lastStatus})` : ""}`);
+  return [];
 }
