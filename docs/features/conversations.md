@@ -76,6 +76,10 @@ Prompt admission is serialized per target until its provider accepts the turn, n
 
 Sending immediately clears the submitted text and image/file attachments from the composer and cancels any deferred publication of that draft. The conversation displays one local message while loading or sending; the host's canonical echo reconciles by client message ID. On rejection, the submitted text and attachments return only if the current composer is still empty. New text or attachment edits, and drafts in a newly selected conversation, are never cleared or overwritten by an earlier submission.
 
+Workspace setup retains its submitted text and image/file attachments until creation is accepted. Directory-validation and agent-creation failures are rejected submissions, not acceptance. Successful creation clears only its unchanged originating snapshot before closing or navigating, cancels unpublished text, and preserves attachment edits or a replacement workspace draft.
+
+Closing and reopening setup for the same directory starts a replacement setup. A creation accepted by the earlier setup cannot close the replacement or clear its text and attachments, including text still awaiting after-paint publication.
+
 When starting a conversation in a new workspace, directory-check, workspace-creation, and agent-creation failures are reported as rejected submissions. The text and image/file attachments remain available for an explicit retry; displaying a creation error does not count as accepting the message.
 
 Autonomous OMP continuations remain steerable after a foreground turn finishes: the provider and Desktop share one active turn identity. Delayed idle checks from an older turn or an earlier continuation cannot clear the current turn. Rejections distinguish unsupported steering, a provider with no active turn, and a mismatched turn identity; identity failures never trigger automatic cancellation or replacement.

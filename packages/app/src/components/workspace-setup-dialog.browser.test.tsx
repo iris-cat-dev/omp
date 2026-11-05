@@ -264,7 +264,11 @@ function deferredRequest<T>(cleanupValue: T) {
   settlePendingRequests.push(() => request.resolve(cleanupValue));
   return request;
 }
-async function startSubmission(attachments: UserComposerAttachment[]) {
+async function startSubmission(
+  attachments: UserComposerAttachment[],
+  publishDraft = true,
+  finalText = "Final DOM edit",
+) {
   const directory = deferredRequest(true);
   client.directoryExists.mockReturnValueOnce(directory.promise);
   seed(attachments);
@@ -272,18 +276,20 @@ async function startSubmission(attachments: UserComposerAttachment[]) {
   await act(async () => root.render(<Harness />));
   expect(textarea().value).toBe("Earlier edit");
   act(() => {
-    edit("Final DOM edit");
+    edit(finalText);
     enter();
   });
   expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
     text: "Earlier edit",
     attachments,
   });
-  publishAfterPaint();
-  expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
-    text: "Final DOM edit",
-    attachments,
-  });
+  if (publishDraft) {
+    publishAfterPaint();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
+      text: finalText,
+      attachments,
+    });
+  }
   return directory;
 }
 function expectDraft(text: string, attachments: UserComposerAttachment[]) {
@@ -418,6 +424,9 @@ describe("WorkspaceSetupDialog submission rejection", () => {
       expect(client.createAgent.mock.calls.at(-1)?.[0].initialPrompt).toBe("Final DOM edit");
       expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBeNull();
       expect(container.querySelector('[data-testid="workspace-setup-dialog"]')).toBeNull();
+      expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
+      publishAfterPaint();
+      expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
     },
   );
 
@@ -449,5 +458,152 @@ describe("WorkspaceSetupDialog submission rejection", () => {
       serverId,
       sourceDirectory: otherCwd,
     });
+  });
+});
+
+describe("WorkspaceSetupDialog accepted draft snapshots", () => {
+  it("clears accepted unpublished text before closing and cancels its delayed publication", async () => {
+    const creation = deferredRequest(createdAgent);
+    client.createAgent.mockReturnValueOnce(creation.promise);
+    const directory = await startSubmission(initialAttachments, false);
+    await act(async () => directory.resolve(true));
+    expect(client.createAgent).toHaveBeenCalledTimes(1);
+    expect(useDraftStore.getState().getDraftInput(draftKey())?.text).toBe("Earlier edit");
+    await act(async () => creation.resolve(createdAgent));
+    expect(client.createAgent.mock.calls[0]?.[0].initialPrompt).toBe("Final DOM edit");
+    expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBeNull();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
+    publishAfterPaint();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
+  });
+
+  it.each(["text", "attachment order", "image metadata", "file payload"] as const)(
+    "preserves a same-workspace replacement's changed %s when earlier creation succeeds",
+    async (change) => {
+      const creation = deferredRequest(createdAgent);
+      client.createAgent.mockReturnValueOnce(creation.promise);
+      const directory = await startSubmission(initialAttachments);
+      await act(async () => directory.resolve(true));
+      const replacement = {
+        text: change === "text" ? "Replacement draft" : "Final DOM edit",
+        attachments: structuredClone(initialAttachments),
+      };
+      if (change === "attachment order") replacement.attachments.reverse();
+      if (change === "image metadata") {
+        const image = replacement.attachments.find((attachment) => attachment.kind === "image");
+        if (!image || image.kind !== "image") throw new Error("Fixture image missing");
+        image.metadata.fileName = "replacement-pixel.png";
+      }
+      if (change === "file payload") {
+        const attachment = replacement.attachments.find((value) => value.kind === "file");
+        if (!attachment || attachment.kind !== "file") throw new Error("Fixture file missing");
+        attachment.attachment = { ...attachment.attachment, fileName: "replacement-notes.txt" };
+      }
+      act(() => {
+        useDraftStore.getState().saveDraftInput({ draftKey: draftKey(), draft: replacement });
+      });
+      await act(async () => creation.resolve(createdAgent));
+      expect(client.createAgent).toHaveBeenCalledTimes(1);
+      expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual(replacement);
+      publishAfterPaint();
+      expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual(replacement);
+    },
+  );
+
+  it("preserves external attachment edits while creation and text publication are pending", async () => {
+    const creation = deferredRequest(createdAgent);
+    client.createAgent.mockReturnValueOnce(creation.promise);
+    const directory = await startSubmission(initialAttachments, false);
+    await act(async () => directory.resolve(true));
+    expect(textarea().readOnly).toBe(true);
+    act(() => {
+      useDraftStore.getState().saveDraftInput({
+        draftKey: draftKey(),
+        draft: { text: "Earlier edit", attachments: [] },
+      });
+    });
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
+      text: "Earlier edit",
+      attachments: [],
+    });
+    await act(async () => creation.resolve(createdAgent));
+    expect(client.createAgent).toHaveBeenCalledTimes(1);
+    expect(client.createAgent.mock.calls[0]?.[0].initialPrompt).toBe("Final DOM edit");
+    expect(client.createAgent.mock.calls[0]?.[0].images).toHaveLength(1);
+    expect(client.createAgent.mock.calls[0]?.[0].attachments).toHaveLength(1);
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
+      text: "Final DOM edit",
+      attachments: [],
+    });
+    publishAfterPaint();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
+      text: "Final DOM edit",
+      attachments: [],
+    });
+  });
+
+  it.each([false, true])(
+    "preserves a reopened same-workspace draft when earlier creation succeeds (published: %s)",
+    async (publishReplacement) => {
+      const creation = deferredRequest(createdAgent);
+      client.createAgent.mockReturnValueOnce(creation.promise);
+      const directory = await startSubmission(initialAttachments, false);
+      await act(async () => directory.resolve(true));
+      await act(async () => useWorkspaceSetupStore.getState().clearWorkspaceSetup());
+      await act(async () => {
+        useWorkspaceSetupStore.getState().beginWorkspaceSetup({ serverId, sourceDirectory: cwd });
+      });
+      const replacementSetup = useWorkspaceSetupStore.getState().pendingWorkspaceSetup;
+      const replacementText = "New unsent message";
+      expect(textarea().readOnly).toBe(false);
+      act(() => edit(replacementText));
+      if (publishReplacement) publishAfterPaint();
+
+      await act(async () => creation.resolve(createdAgent));
+      expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBe(replacementSetup);
+      expect(textarea().value).toBe(replacementText);
+      publishAfterPaint();
+      expectDraft(replacementText, initialAttachments);
+    },
+  );
+
+  it("preserves the replacement workspace when an inactive creation succeeds", async () => {
+    const directory = await startSubmission(initialAttachments);
+    const creation = deferredRequest(createdAgent);
+    client.createAgent.mockReturnValueOnce(creation.promise);
+    await act(async () => directory.resolve(true));
+    const otherCwd = "/isolated-other";
+    await act(async () => {
+      seed([file], "Other target draft", otherCwd);
+      useWorkspaceSetupStore
+        .getState()
+        .beginWorkspaceSetup({ serverId, sourceDirectory: otherCwd });
+    });
+    await act(async () => creation.resolve(createdAgent));
+    expect(textarea().value).toBe("Other target draft");
+    publishAfterPaint();
+    expect(useDraftStore.getState().getDraftInput(draftKey(otherCwd))).toEqual({
+      text: "Other target draft",
+      attachments: [file],
+    });
+    expect(useSessionStore.getState().sessions[serverId]?.agents.has(createdAgent.id)).toBe(false);
+    expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toEqual({
+      serverId,
+      sourceDirectory: otherCwd,
+    });
+  });
+
+  it("clears raw whitespace after trimmed submission and deferred publication", async () => {
+    const creation = deferredRequest(createdAgent);
+    client.createAgent.mockReturnValueOnce(creation.promise);
+    const rawText = "  Final DOM edit  \n";
+    const directory = await startSubmission(initialAttachments, true, rawText);
+    await act(async () => directory.resolve(true));
+    expect(client.createAgent.mock.calls[0]?.[0].initialPrompt).toBe(rawText.trim());
+    await act(async () => creation.resolve(createdAgent));
+    expect(useWorkspaceSetupStore.getState().pendingWorkspaceSetup).toBeNull();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
+    publishAfterPaint();
+    expect(useDraftStore.getState().getDraftInput(draftKey())).toBeUndefined();
   });
 });

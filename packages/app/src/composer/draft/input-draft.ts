@@ -25,6 +25,8 @@ import { toDraftInputIfReady } from "@/stores/draft-store/state";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb } from "@/constants/platform";
 
+const EMPTY_ATTACHMENTS: readonly UserComposerAttachment[] = [];
+
 type AttachmentUpdater =
   | UserComposerAttachment[]
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
@@ -58,6 +60,10 @@ export interface AgentInputDraft {
   editText: (text: string) => void;
   replaceText: (text: string) => void;
   textReplacementKey: string;
+  getSnapshot: () => {
+    text: string;
+    attachments: readonly UserComposerAttachment[];
+  } | null;
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   restoreIfEmpty: (draft: { text: string; attachments: UserComposerAttachment[] }) => void;
@@ -123,6 +129,13 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       }),
     [saveDraft],
   );
+
+  const getSnapshot = useCallback(() => {
+    const current = useDraftStore.getState().getDraftInput(draftKey);
+    const pendingText = textPublication.peek();
+    if (pendingText === null || pendingText === current?.text) return current ?? null;
+    return { text: pendingText, attachments: current?.attachments ?? EMPTY_ATTACHMENTS };
+  }, [draftKey, textPublication]);
 
   const editText = useCallback(
     (nextText: string) => {
@@ -348,6 +361,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
   return {
     text,
+    getSnapshot,
     editText,
     replaceText,
     textReplacementKey: `${draftKey}:${textReplacementRevision}`,

@@ -10,6 +10,8 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { areAttachmentsEqual } from "@/composer/draft/input-draft-core";
+import { useDraftStore } from "@/stores/draft-store";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { assertLocalModelBridgeReady } from "@/runtime/local-model-bridge-runtime";
@@ -152,8 +154,9 @@ export function WorkspaceSetupDialog() {
   const workspace = createdWorkspace;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const draftKey = `workspace-setup:${serverId}:${sourceDirectory}`;
   const chatDraft = useAgentInputDraft({
-    draftKey: `workspace-setup:${serverId}:${sourceDirectory}`,
+    draftKey,
     composer: buildChatDraftComposerArgs({
       serverId,
       isConnected,
@@ -253,15 +256,27 @@ export function WorkspaceSetupDialog() {
   );
 
   const getIsStillActive = useCallback(() => {
-    const current = useWorkspaceSetupStore.getState().pendingWorkspaceSetup;
-    return (
-      current?.serverId === pendingWorkspaceSetup?.serverId &&
-      current?.sourceDirectory === pendingWorkspaceSetup?.sourceDirectory
-    );
-  }, [pendingWorkspaceSetup?.serverId, pendingWorkspaceSetup?.sourceDirectory]);
+    // Reopening the same directory creates a replacement setup, not the old request's target.
+    return useWorkspaceSetupStore.getState().pendingWorkspaceSetup === pendingWorkspaceSetup;
+  }, [pendingWorkspaceSetup]);
+
+  const clearChatDraftInput = chatDraft.clear;
+  const getChatDraftSnapshot = chatDraft.getSnapshot;
+
+  const clearChatDraft = useCallback(
+    (lifecycle: "sent" | "abandoned") => {
+      // The parent's accepted snapshot owns cleanup once it closes the dialog.
+      // A later Composer continuation must not clear a replacement or inactive draft.
+      if (lifecycle === "sent" && !getIsStillActive()) return;
+      clearChatDraftInput(lifecycle);
+    },
+    [clearChatDraftInput, getIsStillActive],
+  );
 
   const handleCreateChatAgent = useCallback(
     async ({ text, attachments, cwd }: MessagePayload) => {
+      const submittedDraftRecord = useDraftStore.getState().drafts[draftKey];
+      const submittedDraft = getChatDraftSnapshot();
       try {
         setPendingAction("chat");
         setErrorMessage(null);
@@ -317,6 +332,22 @@ export function WorkspaceSetupDialog() {
           );
           return next;
         });
+        const draftStore = useDraftStore.getState();
+        const currentDraft = draftStore.getDraftInput(draftKey);
+        // Closing changes Composer's target before its acceptance continuation.
+        // Own the sent snapshot here, cancelling unpublished text before navigation,
+        // but never clear a replacement draft written while creation was pending.
+        if (
+          draftStore.drafts[draftKey] === submittedDraftRecord ||
+          (submittedDraft &&
+            currentDraft?.text === submittedDraft.text &&
+            areAttachmentsEqual({
+              left: currentDraft.attachments,
+              right: submittedDraft.attachments,
+            }))
+        ) {
+          clearChatDraft("sent");
+        }
         navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });
       } catch (error) {
         const message = toErrorMessage(error);
@@ -330,8 +361,11 @@ export function WorkspaceSetupDialog() {
       }
     },
     [
+      clearChatDraft,
+      draftKey,
       composerState,
       getIsStillActive,
+      getChatDraftSnapshot,
       navigateAfterCreation,
       serverId,
       setAgents,
@@ -401,6 +435,7 @@ export function WorkspaceSetupDialog() {
           serverId={serverId}
           isPaneFocused={true}
           onSubmitMessage={handleCreateChatAgent}
+          submitBehavior="preserve-and-lock"
           isSubmitLoading={pendingAction === "chat"}
           blurOnSubmit={true}
           value={chatDraft.text}
@@ -409,7 +444,7 @@ export function WorkspaceSetupDialog() {
           attachments={chatDraft.attachments}
           onChangeAttachments={chatDraft.setAttachments}
           cwd={sourceDirectory}
-          clearDraft={chatDraft.clear}
+          clearDraft={clearChatDraft}
           autoFocus
           commandDraftConfig={composerState?.commandDraftConfig}
           agentControls={agentControlsWithDisabled}
