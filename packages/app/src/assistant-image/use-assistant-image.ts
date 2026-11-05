@@ -429,10 +429,8 @@ export function useAssistantImage({
   const preview = dataImage || persistedAsset ? dataImagePreview : filePreview;
   const previewUri = preview.status === "loaded" ? preview.uri : null;
   const uri = directUri ?? previewUri;
-  const cachedMetadata = useMemo(
-    () => getAssistantImageMetadata({ source, workspaceRoot, serverId }),
-    [serverId, source, workspaceRoot],
-  );
+  // Dimensions outlive decoded previews, including metadata learned after the first render.
+  const cachedMetadata = getAssistantImageMetadata({ source, workspaceRoot, serverId });
   const [lifecycle, dispatchLifecycle] = useReducer(
     lifecycleReducer,
     uri,
@@ -558,6 +556,6 @@ export function useAssistantImage({
   return {
     status: "loading",
     binding,
-    aspectRatio: hasCurrentLifecycleUri ? lifecycle.aspectRatio : null,
+    aspectRatio: cachedMetadata?.aspectRatio ?? null,
   };
 }
