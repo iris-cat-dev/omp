@@ -97,6 +97,15 @@ npm installation. Management uses OMP's existing stores. Selecting the SDK
 backend does not provision or enable plugins; explicit install/link/enable
 commands retain their existing CLI behavior.
 
+## OMP image bridge lifetime
+
+The native image-settings bridge belongs to one RPC child process. Confirmed
+process exit invalidates its cached endpoint and aborts pending readiness waits
+and HTTP updates. Queued and subsequent inputs fail with the original process
+exit diagnostic instead of sending settings or credentials to the old port.
+This does not replay inputs or restart a failed runtime; recovery retains the
+existing explicit conversation recovery flow.
+
 ## Timeline memory retention
 
 Tool progress is materialized per call/turn instead of appending every growing

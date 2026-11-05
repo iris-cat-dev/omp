@@ -564,6 +564,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   private backgroundJobsRecoveryCommand: string | undefined;
   private backgroundJobsRecovery: Promise<BackgroundJobsEndpoint> | undefined;
   private readonly imageEndpoint = Promise.withResolvers<number>();
+  private readonly processExit = new AbortController();
   private imageEndpointPort: number | undefined;
   private appliedImageSettings: string | undefined;
   private imageUpdates = Promise.resolve();
@@ -596,7 +597,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       }
       if (message.type === "desktop_image_settings_ready") {
         const endpoint = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(message);
-        if (endpoint.success) {
+        if (endpoint.success && !this.processExit.signal.aborted) {
           this.imageEndpointPort = endpoint.data.port;
           this.appliedImageSettings = undefined;
           this.imageEndpoint.resolve(endpoint.data.port);
@@ -644,8 +645,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       this.backgroundJobsBridge = { status: "dead" };
       this.backgroundJobsRecoveryCommand = undefined;
       this.serviceTierEndpointPort = undefined;
+      this.imageEndpointPort = undefined;
       this.appliedImageSettings = undefined;
       this.localModelGatewayEndpoint.resolve(new Error("The local OMP model worker stopped"));
+      this.processExit.abort(error);
       this.emit({ type: "process_exit", error: error.message });
     });
   }
@@ -671,22 +674,29 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     config: ReturnType<OmpImageSettingsGetter>,
     encoded: string,
   ): Promise<void> {
+    this.processExit.signal.throwIfAborted();
     if (
       encoded === this.appliedImageSettings &&
       !(config?.enabled && this.imageToolAllowed && config.backend === "chatgpt-subscription")
     )
       return;
-    const signal = AbortSignal.timeout(OMP_READY_TIMEOUT_MS);
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(OMP_READY_TIMEOUT_MS),
+      this.processExit.signal,
+    ]);
     const aborted = Promise.withResolvers<never>();
     const onAbort = () =>
       aborted.reject(
-        new Error(
-          "OMP native image settings bridge did not become available; update OMP to v18.8.7 or newer",
-        ),
+        this.processExit.signal.aborted
+          ? this.processExit.signal.reason
+          : new Error(
+              "OMP native image settings bridge did not become available; update OMP to v18.8.7 or newer",
+            ),
       );
     signal.addEventListener("abort", onAbort, { once: true });
     try {
       const readyPort = await Promise.race([this.imageEndpoint.promise, aborted.promise]);
+      signal.throwIfAborted();
       const port = this.imageEndpointPort ?? readyPort;
       const response = await fetch(`http://127.0.0.1:${port}/settings`, {
         method: "POST",
@@ -703,6 +713,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
           result.success ? result.data.error : "OMP native image settings update failed",
         );
       }
+      signal.throwIfAborted();
       this.appliedImageSettings = encoded;
     } finally {
       signal.removeEventListener("abort", onAbort);
@@ -710,6 +721,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async refreshImageSettings(): Promise<void> {
+    this.processExit.signal.throwIfAborted();
     if (!this.getImageGenerationConfig || !this.imageToken) return;
     const config = this.getImageGenerationConfig();
     const encoded = JSON.stringify({ config, allowed: this.imageToolAllowed });
