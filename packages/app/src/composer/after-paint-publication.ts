@@ -43,6 +43,10 @@ export class AfterPaintPublication<T> {
     });
   }
 
+  peek(): T | null {
+    return this.pending;
+  }
+
   flush(): void {
     if (this.pending === null) return;
     this.cancelScheduled?.();

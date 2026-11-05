@@ -72,7 +72,7 @@ While a conversation runs, the composer defaults to **Steer**. Steering guides t
 
 If the provider cannot accept steering, Desktop reports a send failure and leaves the current turn running. Agent-to-agent prompts and completion notifications follow this same non-destructive rule, rather than replacing the turn.
 
-After a message is accepted, the composer clears the unchanged submitted text and its image/file attachments, even when a deferred draft save rebuilds attachment objects while sending. Failed submissions preserve the draft. New text or attachment edits still present at acceptance, and drafts in a newly selected conversation, are not cleared by an earlier submission.
+After a message is accepted, the composer clears the unchanged submitted text and its image/file attachments, even when a deferred draft save rebuilds attachment objects while sending. Failed submissions preserve the draft. New text or attachment edits still present at acceptance, and drafts in a newly selected conversation, are not cleared by an earlier submission. Workspace setup propagates directory-validation and agent-creation failures to the composer instead of treating a displayed error as acceptance. Successful creation clears only its unchanged originating snapshot before closing or navigating, cancels unpublished text, and preserves attachment edits or a replacement workspace draft.
 
 When starting a conversation in a new workspace, directory-check, workspace-creation, and agent-creation failures are reported as rejected submissions. The text and image/file attachments remain available for an explicit retry; displaying a creation error does not count as accepting the message.
 

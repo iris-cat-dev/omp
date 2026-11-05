@@ -1346,6 +1346,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   // when only toast state changes (which does not affect any draft field).
   const {
     text,
+    getSnapshot: getInputDraftSnapshot,
     editText,
     replaceText,
     textReplacementKey,
@@ -1360,6 +1361,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const agentInputDraft = useMemo(
     (): AgentInputDraft => ({
       text,
+      getSnapshot: getInputDraftSnapshot,
       editText,
       replaceText,
       textReplacementKey,
@@ -1373,6 +1375,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     }),
     [
       text,
+      getInputDraftSnapshot,
       editText,
       replaceText,
       textReplacementKey,
