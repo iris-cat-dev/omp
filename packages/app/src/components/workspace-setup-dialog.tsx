@@ -435,6 +435,7 @@ export function WorkspaceSetupDialog() {
           serverId={serverId}
           isPaneFocused={true}
           onSubmitMessage={handleCreateChatAgent}
+          submitBehavior="preserve-and-lock"
           isSubmitLoading={pendingAction === "chat"}
           blurOnSubmit={true}
           value={chatDraft.text}

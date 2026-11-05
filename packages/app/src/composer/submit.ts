@@ -9,7 +9,7 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   allowEmptySubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
   forceSend?: boolean;
-  /** An editable, target-bound snapshot is cleared only after acceptance. */
+  /** Target and post-submit draft guards prevent stale settlement from replacing new edits. */
   snapshot?: {
     isCurrentTarget: () => boolean;
     isInputUnchanged: () => boolean;
@@ -49,7 +49,7 @@ function handleAgentInputRejection<TAttachment>(
 ): void {
   input.onSubmitError?.(error);
   if (!(input.snapshot?.isCurrentTarget() ?? true)) return;
-  if (restoreDraft) {
+  if (restoreDraft && (input.snapshot?.isInputUnchanged() ?? true)) {
     input.setUserInput(message);
     input.setAttachments(attachments);
   }
@@ -67,7 +67,6 @@ export async function submitAgentInput<TAttachment>(
   const trimmedMessage = input.message.trim();
   const attachments = input.attachments;
   const shouldClearOnSubmit = input.submitBehavior !== "preserve-and-lock";
-  const deferClear = shouldClearOnSubmit && input.snapshot !== undefined;
 
   if (
     !trimmedMessage &&
@@ -91,9 +90,9 @@ export async function submitAgentInput<TAttachment>(
     return "queued";
   }
 
-  const clearImmediately = shouldClearOnSubmit && !deferClear;
-  // Keep the existing immediate-clear behavior unless acceptance owns the clear.
-  if (clearImmediately) {
+  // Clear the persisted draft too, canceling any staged publication of the sent text.
+  if (shouldClearOnSubmit) {
+    input.clearDraft("sent");
     input.setUserInput("");
     input.setAttachments([]);
   }
@@ -104,18 +103,14 @@ export async function submitAgentInput<TAttachment>(
     await input.submitMessage({ message: trimmedMessage, attachments });
     const snapshot = input.snapshot;
     if (!snapshot || snapshot.isCurrentTarget()) {
-      if (!deferClear || (input.snapshot?.isInputUnchanged() ?? true)) {
+      if (!shouldClearOnSubmit && (snapshot?.isInputUnchanged() ?? true)) {
         input.clearDraft("sent");
-        if (deferClear) {
-          input.setUserInput("");
-          input.setAttachments([]);
-        }
       }
       input.setIsProcessing(false);
     }
     return "submitted";
   } catch (error) {
-    handleAgentInputRejection(input, error, trimmedMessage, attachments, clearImmediately);
+    handleAgentInputRejection(input, error, trimmedMessage, attachments, shouldClearOnSubmit);
     return "failed";
   }
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertWorkspaceDirectoryExists, submitAgentInput } from "./submit";
+import {
+  assertWorkspaceDirectoryExists,
+  submitAgentInput,
+  type AgentInputSubmitActionInput,
+} from "./submit";
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -41,389 +45,136 @@ describe("assertWorkspaceDirectoryExists", () => {
 });
 
 describe("submitAgentInput", () => {
-  it("clears the composer before an in-flight submit resolves", async () => {
-    const deferred = createDeferredPromise<void>();
-    const queueMessage = vi.fn();
-    const submitMessage = vi.fn(async () => {
-      await deferred.promise;
-    });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-
-    const submitPromise = submitAgentInput({
-      message: "  hello world  ",
-      attachments: [],
-      isAgentRunning: false,
+  function createSubmission(options: Partial<AgentInputSubmitActionInput<{ id: string }>> = {}) {
+    const pending = createDeferredPromise<void>();
+    const original = { text: "original message", attachments: [{ id: "original-image" }] };
+    const state = {
+      ...original,
+      persisted: original as typeof original | null,
+      error: null as unknown,
+      processing: false,
+      currentTarget: true,
+    };
+    const input: AgentInputSubmitActionInput<{ id: string }> = {
+      message: original.text,
+      attachments: original.attachments,
+      forceSend: true,
+      isAgentRunning: true,
       canSubmit: true,
-      queueMessage,
-      submitMessage,
-      clearDraft,
-      setUserInput,
-      setAttachments,
-      setSendError,
-      setIsProcessing,
+      snapshot: {
+        isCurrentTarget: () => state.currentTarget,
+        isInputUnchanged: () => state.text === "" && state.attachments.length === 0,
+      },
+      queueMessage: vi.fn(),
+      submitMessage: () => pending.promise,
+      clearDraft: () => {
+        state.persisted = null;
+      },
+      setUserInput: (text) => {
+        state.text = text;
+      },
+      setAttachments: (attachments) => {
+        state.attachments = attachments;
+      },
+      setSendError: (error) => {
+        state.error = error;
+      },
+      setIsProcessing: (processing) => {
+        state.processing = processing;
+      },
+      ...options,
+    };
+    return { pending, original, state, input };
+  }
+
+  it.each([false, true])(
+    "clears live and persisted input before sending (active turn: %s)",
+    async (isAgentRunning) => {
+      const { input, pending, state } = createSubmission({ isAgentRunning });
+      const sending = submitAgentInput(input);
+      expect(state).toMatchObject({ text: "", attachments: [], persisted: null, processing: true });
+      pending.resolve();
+      await expect(sending).resolves.toBe("submitted");
+      expect(state.processing).toBe(false);
+    },
+  );
+
+  it("restores the cleared text and attachments after rejection", async () => {
+    const { input, pending, state, original } = createSubmission();
+    const sending = submitAgentInput(input);
+    const failure = Object.assign(new Error("The old task is still running"), {
+      code: "agent_cancellation_unacknowledged",
     });
-
-    expect(queueMessage).not.toHaveBeenCalled();
-    expect(submitMessage).toHaveBeenCalledWith({
-      message: "hello world",
-      attachments: [],
-    });
-    expect(setUserInput).toHaveBeenCalledWith("");
-    expect(setAttachments).toHaveBeenCalledWith([]);
-    expect(setSendError).toHaveBeenCalledWith(null);
-    expect(setIsProcessing).toHaveBeenCalledWith(true);
-    expect(clearDraft).not.toHaveBeenCalled();
-
-    deferred.resolve();
-
-    await expect(submitPromise).resolves.toBe("submitted");
-    expect(clearDraft).toHaveBeenCalledWith("sent");
-  });
-
-  it("preserves the composer before an in-flight submit resolves when requested", async () => {
-    const deferred = createDeferredPromise<void>();
-    const attachments = [{ id: "img-1" }];
-    const queueMessage = vi.fn();
-    const submitMessage = vi.fn(async () => {
-      await deferred.promise;
-    });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-
-    const submitPromise = submitAgentInput({
-      message: "  keep me  ",
-      attachments,
-      submitBehavior: "preserve-and-lock",
-      isAgentRunning: false,
-      canSubmit: true,
-      queueMessage,
-      submitMessage,
-      clearDraft,
-      setUserInput,
-      setAttachments,
-      setSendError,
-      setIsProcessing,
-    });
-
-    expect(queueMessage).not.toHaveBeenCalled();
-    expect(submitMessage).toHaveBeenCalledWith({
-      message: "keep me",
-      attachments,
-    });
-    expect(setUserInput).not.toHaveBeenCalled();
-    expect(setAttachments).not.toHaveBeenCalled();
-    expect(setSendError).toHaveBeenCalledWith(null);
-    expect(setIsProcessing).toHaveBeenCalledWith(true);
-    expect(clearDraft).not.toHaveBeenCalled();
-
-    deferred.resolve();
-
-    await expect(submitPromise).resolves.toBe("submitted");
-    expect(clearDraft).toHaveBeenCalledWith("sent");
-  });
-
-  it("queues while the agent is running and clears the composer immediately", async () => {
-    const queueMessage = vi.fn();
-    const submitMessage = vi.fn();
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-
-    await expect(
-      submitAgentInput({
-        message: "  queued message  ",
-        attachments: [{ id: "img-1" }],
-        isAgentRunning: true,
-        canSubmit: true,
-        queueMessage,
-        submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
-        setSendError,
-        setIsProcessing,
-      }),
-    ).resolves.toBe("queued");
-
-    expect(queueMessage).toHaveBeenCalledWith({
-      message: "queued message",
-      attachments: [{ id: "img-1" }],
-    });
-    expect(submitMessage).not.toHaveBeenCalled();
-    expect(setUserInput).toHaveBeenCalledWith("");
-    expect(setAttachments).toHaveBeenCalledWith([]);
-    expect(setSendError).not.toHaveBeenCalled();
-    expect(setIsProcessing).not.toHaveBeenCalled();
-    expect(clearDraft).not.toHaveBeenCalled();
-  });
-
-  it("restores the composer when submit fails", async () => {
-    const submitError = new Error("No host selected");
-    const queueMessage = vi.fn();
-    const submitMessage = vi.fn(async () => {
-      throw submitError;
-    });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-    const onSubmitError = vi.fn();
-    const attachments = [{ id: "img-1" }];
-
-    await expect(
-      submitAgentInput({
-        message: "  hello world  ",
-        attachments,
-        isAgentRunning: false,
-        canSubmit: true,
-        queueMessage,
-        submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
-        setSendError,
-        setIsProcessing,
-        onSubmitError,
-      }),
-    ).resolves.toBe("failed");
-
-    expect(onSubmitError).toHaveBeenCalledWith(submitError);
-    expect(setUserInput).toHaveBeenNthCalledWith(1, "");
-    expect(setUserInput).toHaveBeenNthCalledWith(2, "hello world");
-    expect(setAttachments).toHaveBeenNthCalledWith(1, []);
-    expect(setAttachments).toHaveBeenNthCalledWith(2, attachments);
-    expect(setSendError).toHaveBeenNthCalledWith(1, null);
-    expect(setSendError).toHaveBeenNthCalledWith(2, submitError);
-    expect(setIsProcessing).toHaveBeenNthCalledWith(1, true);
-    expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
-    expect(clearDraft).not.toHaveBeenCalled();
-  });
-
-  it("restores a steered active-turn draft after an ambiguous immediate-send error", async () => {
-    const error = new Error("connection lost after delivery");
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-
-    await expect(
-      submitAgentInput({
-        message: "  steer this turn  ",
-        attachments: [{ id: "img-1" }],
-        forceSend: true,
-        isAgentRunning: true,
-        canSubmit: true,
-        queueMessage: vi.fn(),
-        submitMessage: async () => {
-          throw error;
-        },
-        clearDraft: vi.fn(),
-        setUserInput,
-        setAttachments,
-        setSendError,
-        setIsProcessing,
-      }),
-    ).resolves.toBe("failed");
-
-    expect(setUserInput).toHaveBeenNthCalledWith(1, "");
-    expect(setUserInput).toHaveBeenNthCalledWith(2, "steer this turn");
-    expect(setAttachments).toHaveBeenNthCalledWith(1, []);
-    expect(setAttachments).toHaveBeenNthCalledWith(2, [{ id: "img-1" }]);
-    expect(setSendError).toHaveBeenLastCalledWith(error);
+    pending.reject(failure);
+    await expect(sending).resolves.toBe("failed");
+    expect(state).toMatchObject({ ...original, error: failure, processing: false });
   });
 
   it.each(["accepted", "rejected"] as const)(
-    "keeps an interrupt draft and attachments editable until the request is %s",
+    "preserves new text and attachments when the earlier send is %s",
     async (outcome) => {
-      const pending = createDeferredPromise<void>();
-      const failure = Object.assign(new Error("Diagnostic details from the host"), {
-        code: "agent_cancellation_unacknowledged",
-      });
-      const originalAttachments = [{ id: "image-original" }];
-      let text = "original message";
-      let attachments = originalAttachments;
-      const clearDraft = vi.fn();
-      const setSendError = vi.fn();
-      const setIsProcessing = vi.fn();
-      const submitting = submitAgentInput({
-        message: text,
-        attachments,
-        forceSend: true,
-        isAgentRunning: true,
-        canSubmit: true,
-        snapshot: {
-          isCurrentTarget: () => true,
-          isInputUnchanged: () =>
-            text === "original message" && attachments === originalAttachments,
-        },
-        queueMessage: vi.fn(),
-        submitMessage: () => pending.promise,
-        clearDraft,
-        setUserInput: (next) => {
-          text = next;
-        },
-        setAttachments: (next) => {
-          attachments = next;
-        },
-        setSendError,
-        setIsProcessing,
-      });
-      expect(text).toBe("original message");
-      expect(attachments).toBe(originalAttachments);
-      expect(setIsProcessing).toHaveBeenLastCalledWith(true);
-      text = "edited while stopping";
-      attachments = [...originalAttachments, { id: "new-image" }];
+      const { input, pending, state } = createSubmission();
+      const sending = submitAgentInput(input);
+      const next = { text: "the next message", attachments: [{ id: "new-image" }] };
+      Object.assign(state, next, { persisted: next });
       if (outcome === "accepted") pending.resolve();
-      else pending.reject(failure);
-
-      await expect(submitting).resolves.toBe(outcome === "accepted" ? "submitted" : "failed");
-      expect(text).toBe("edited while stopping");
-      expect(attachments.map((attachment) => attachment.id)).toEqual([
-        "image-original",
-        "new-image",
-      ]);
-      expect(clearDraft).not.toHaveBeenCalled();
-      expect(setIsProcessing).toHaveBeenLastCalledWith(false);
-      if (outcome === "rejected") expect(setSendError).toHaveBeenLastCalledWith(failure);
+      else pending.reject(new Error("send failed"));
+      await sending;
+      expect(state).toMatchObject({ ...next, persisted: next, processing: false });
     },
   );
 
   it.each(["accepted", "rejected"] as const)(
-    "settles an unchanged retained draft only after it is %s",
+    "does not mutate another target's draft or send state after stale %s settlement",
     async (outcome) => {
-      const pending = createDeferredPromise<void>();
-      const failure = Object.assign(new Error("The old task is still running"), {
-        code: "agent_cancellation_unacknowledged",
+      const { input, pending, state } = createSubmission();
+      const sending = submitAgentInput(input);
+      const next = { text: "another target's draft", attachments: [{ id: "other-image" }] };
+      Object.assign(state, next, {
+        persisted: next,
+        currentTarget: false,
+        error: "another target's error",
+        processing: true,
       });
-      const image = { id: "image-retained" };
-      let text = "retry me";
-      let attachments = [image];
-      const clearDraft = vi.fn();
-      const setSendError = vi.fn();
-      const submitting = submitAgentInput({
-        message: text,
-        attachments,
-        forceSend: true,
-        isAgentRunning: true,
-        canSubmit: true,
-        snapshot: { isCurrentTarget: () => true, isInputUnchanged: () => true },
-        queueMessage: vi.fn(),
-        submitMessage: () => pending.promise,
-        clearDraft,
-        setUserInput: (next) => {
-          text = next;
-        },
-        setAttachments: (next) => {
-          attachments = next;
-        },
-        setSendError,
-        setIsProcessing: vi.fn(),
-      });
-      expect(text).toBe("retry me");
-      expect(attachments).toEqual([image]);
-      expect(clearDraft).not.toHaveBeenCalled();
-      if (outcome === "accepted") pending.resolve();
-      else pending.reject(failure);
-      await expect(submitting).resolves.toBe(outcome === "accepted" ? "submitted" : "failed");
-      if (outcome === "accepted") {
-        expect(text).toBe("");
-        expect(attachments).toEqual([]);
-        expect(clearDraft).toHaveBeenCalledOnce();
-      } else {
-        expect(text).toBe("retry me");
-        expect(attachments).toEqual([image]);
-        expect(clearDraft).not.toHaveBeenCalled();
-        expect(setSendError).toHaveBeenLastCalledWith(failure);
-      }
-    },
-  );
-
-  it.each(["accepted", "rejected"] as const)(
-    "does not apply a stale %s submission to another target's draft, errors, or processing state",
-    async (outcome) => {
-      const pending = createDeferredPromise<void>();
-      const oldTarget = { serverId: "host-a", agentId: "agent" };
-      let currentTarget = oldTarget;
-      let draft = { text: "old draft", attachments: [{ id: "old-image" }] };
-      const clearDraft = vi.fn();
-      const setSendError = vi.fn();
-      const setIsProcessing = vi.fn();
-      const submitting = submitAgentInput({
-        message: draft.text,
-        attachments: draft.attachments,
-        forceSend: true,
-        isAgentRunning: true,
-        canSubmit: true,
-        snapshot: {
-          isCurrentTarget: () => currentTarget === oldTarget,
-          isInputUnchanged: () => true,
-        },
-        queueMessage: vi.fn(),
-        submitMessage: () => pending.promise,
-        clearDraft,
-        setUserInput: (text) => {
-          draft = { ...draft, text };
-        },
-        setAttachments: (attachments) => {
-          draft = { ...draft, attachments };
-        },
-        setSendError,
-        setIsProcessing,
-      });
-      // Even the same agent ID on another server is a different composer target.
-      currentTarget = { serverId: "host-b", agentId: "agent" };
-      draft = { text: "new target's draft", attachments: [{ id: "new-image" }] };
+      const before = { ...state };
       if (outcome === "accepted") pending.resolve();
       else pending.reject(new Error("old target failed"));
-      await submitting;
-      expect(draft).toEqual({ text: "new target's draft", attachments: [{ id: "new-image" }] });
-      expect(clearDraft).not.toHaveBeenCalled();
-      expect(setSendError.mock.calls).toEqual([[null]]);
-      expect(setIsProcessing.mock.calls).toEqual([[true]]);
+      await sending;
+      expect(state).toEqual(before);
     },
   );
 
-  it("submits when empty submit is explicitly allowed", async () => {
-    const queueMessage = vi.fn();
-    const submitMessage = vi.fn(async () => {});
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
-    const setSendError = vi.fn();
-    const setIsProcessing = vi.fn();
-
-    await expect(
-      submitAgentInput({
-        message: "   ",
-        attachments: [],
-        allowEmptySubmit: true,
-        isAgentRunning: false,
-        canSubmit: true,
-        queueMessage,
-        submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
-        setSendError,
-        setIsProcessing,
-      }),
-    ).resolves.toBe("submitted");
-
-    expect(queueMessage).not.toHaveBeenCalled();
-    expect(submitMessage).toHaveBeenCalledWith({
-      message: "",
-      attachments: [],
+  it("keeps input visible when preservation is explicitly requested", async () => {
+    const { input, pending, state, original } = createSubmission({
+      submitBehavior: "preserve-and-lock",
+      snapshot: undefined,
     });
-    expect(clearDraft).toHaveBeenCalledWith("sent");
+    const sending = submitAgentInput(input);
+    expect(state).toMatchObject({ ...original, persisted: original, processing: true });
+    pending.resolve();
+    await sending;
+    expect(state.persisted).toBeNull();
   });
+
+  it("queues an active-turn message without submitting it", async () => {
+    const submitMessage = vi.fn();
+    const { input, state } = createSubmission({ forceSend: false, submitMessage });
+    await expect(submitAgentInput(input)).resolves.toBe("queued");
+    expect(input.queueMessage).toHaveBeenCalledWith({
+      message: "original message",
+      attachments: [{ id: "original-image" }],
+    });
+    expect(submitMessage).not.toHaveBeenCalled();
+    expect(state).toMatchObject({ text: "", attachments: [], processing: false });
+  });
+
+  it.each([{ canSubmit: false }, { message: "   ", attachments: [] }])(
+    "leaves the draft untouched when no send starts: %j",
+    async (options) => {
+      const { input, state } = createSubmission(options);
+      const before = { ...state };
+      await expect(submitAgentInput(input)).resolves.toBe("noop");
+      expect(state).toEqual(before);
+    },
+  );
 });

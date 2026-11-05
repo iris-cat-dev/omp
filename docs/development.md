@@ -173,6 +173,11 @@ read-only; explicitly changing the workflow still synchronizes the language
 immediately.
 The renderer publishes the local message before asynchronous workspace checks
 and language synchronization; both still finish before the prompt is sent.
+Default composer submission clears the live editor and persisted draft synchronously,
+canceling staged after-paint text publication before transport preparation. Submission
+snapshots guard the post-clear draft and target: rejection restores an empty draft,
+while acceptance never clears a later edit. Image retention spans preparation and
+settlement so immediate clearing cannot release outgoing attachment bytes.
 
 Cold background-process lists inspect durable OMP daemon metadata and its broker
 without resuming the conversation. Only the original native session's daemons are

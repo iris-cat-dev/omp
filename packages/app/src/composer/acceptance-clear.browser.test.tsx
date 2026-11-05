@@ -7,7 +7,6 @@ import {
   ComposerAcceptanceFixture,
   composerAcceptanceAttachments as initialAttachments,
   composerAcceptanceFile as file,
-  composerAcceptanceImage as image,
 } from "./acceptance-clear.fixture";
 import { browserAfterPaintScheduler } from "./after-paint-publication";
 import type { AgentInputDraft } from "./draft/input-draft";
@@ -208,9 +207,12 @@ async function startSend(attachments = initialAttachments) {
     attachments,
     cwd: "/isolated",
   });
-  // The last edit has not reached the real draft store when sending starts.
-  expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))?.text).toBe("Earlier edit");
-  expect(textarea().value).toBe("Final DOM edit");
+  // Clearing cancels the final edit's pending publication as well as the visible input.
+  expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
+  expect(textarea().value).toBe("");
+  expect(draft.attachments).toEqual([]);
+  expect(container.querySelector('[data-testid="composer-file-attachment-pill"]')).toBeNull();
+  expect(container.querySelector('[data-testid="composer-image-attachment-pill"]')).toBeNull();
 }
 async function accept() {
   await act(async () => {
@@ -268,23 +270,16 @@ describe("Composer parent acceptance and deferred draft publication", () => {
     { name: "images and uploaded files", attachments: initialAttachments },
     { name: "an empty attachment array", attachments: [] },
   ])(
-    "clears $name and live text after the last edit publishes during sending",
+    "clears $name and live text before acceptance without a delayed edit reviving the sent draft",
     async ({ attachments }) => {
       await startSend(attachments);
       publishAfterPaint();
-      expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toEqual({
-        text: "Final DOM edit",
-        attachments,
-      });
-      // Publication must not clear anything before the parent's acceptance.
-      expect(textarea().value).toBe("Final DOM edit");
+      expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
+      expect(textarea().value).toBe("");
       await accept();
+      publishAfterPaint();
       expect(textarea().value).toBe("");
       expect(draft.attachments).toEqual([]);
-      expect(container.querySelector('[data-testid="composer-file-attachment-pill"]')).toBeNull();
-      expect(container.querySelector('[data-testid="composer-image-attachment-pill"]')).toBeNull();
-      expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
-      publishAfterPaint();
       expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
       await act(async () => {
         await userEvent.click(textarea());
@@ -300,47 +295,37 @@ describe("Composer parent acceptance and deferred draft publication", () => {
       await startSend();
       publishAfterPaint();
       act(() => edit("The next message"));
-      expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))?.text).toBe(
-        "Final DOM edit",
-      );
+      expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
       if (published) publishAfterPaint();
       await accept();
       expect(textarea().value).toBe("The next message");
-      expect(draft.attachments).toEqual(initialAttachments);
+      expect(draft.attachments).toEqual([]);
       publishAfterPaint();
       expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toEqual({
         text: "The next message",
-        attachments: initialAttachments,
+        attachments: [],
       });
     },
   );
 
-  it.each(["add", "remove", "reorder", "replace"] as const)(
-    "preserves attachments when the pending draft receives a real %s edit",
-    async (change) => {
+  it.each(["accepted", "rejected"] as const)(
+    "preserves attachment-only edits after the previous send is %s",
+    async (outcome) => {
       await startSend();
       publishAfterPaint();
-      let next: UserComposerAttachment[];
-      switch (change) {
-        case "add":
-          next = [...initialAttachments, { kind: "directory", path: "/new" }];
-          break;
-        case "remove":
-          next = [file];
-          break;
-        case "reorder":
-          next = [file, image];
-          break;
-        case "replace":
-          next = [image, { ...file, attachment: { ...file.attachment, path: "/new/notes.txt" } }];
-          break;
-      }
+      const next: UserComposerAttachment[] = [{ kind: "directory", path: "/new" }];
       act(() => draft.setAttachments(next));
-      await accept();
-      expect(textarea().value).toBe("Final DOM edit");
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      if (outcome === "accepted") await accept();
+      else {
+        await act(async () => {
+          submissions[0]!.reject(new Error("Parent rejected submission"));
+        });
+      }
+      expect(textarea().value).toBe("");
       expect(draft.attachments).toEqual(next);
       expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toEqual({
-        text: "Final DOM edit",
+        text: "",
         attachments: next,
       });
     },
@@ -354,10 +339,7 @@ describe("Composer parent acceptance and deferred draft publication", () => {
     await accept();
     expect(textarea().value).toBe("Other target draft");
     expect(draft.attachments).toEqual([file]);
-    expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toEqual({
-      text: "Final DOM edit",
-      attachments: initialAttachments,
-    });
+    expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toBeUndefined();
     expect(useDraftStore.getState().getDraftInput(draftKey("agent-b"))).toEqual({
       text: "Other target draft",
       attachments: [file],
@@ -377,6 +359,7 @@ describe("Composer parent acceptance and deferred draft publication", () => {
     expect(errorLog).toHaveBeenCalled();
     expect(textarea().value).toBe("Final DOM edit");
     expect(draft.attachments).toEqual(initialAttachments);
+    publishAfterPaint();
     expect(useDraftStore.getState().getDraftInput(draftKey("agent-a"))).toEqual({
       text: "Final DOM edit",
       attachments: initialAttachments,

@@ -510,19 +510,18 @@ describe("WorkspaceSetupDialog accepted draft snapshots", () => {
     },
   );
 
-  it("preserves attachment edits made while creation and text publication are pending", async () => {
+  it("preserves external attachment edits while creation and text publication are pending", async () => {
     const creation = deferredRequest(createdAgent);
     client.createAgent.mockReturnValueOnce(creation.promise);
     const directory = await startSubmission(initialAttachments, false);
     await act(async () => directory.resolve(true));
     expect(textarea().readOnly).toBe(true);
-    for (const label of ["Remove image attachment", "Remove file attachment"]) {
-      act(() => {
-        const remove = container.querySelector(`[aria-label="${label}"]`);
-        if (!(remove instanceof HTMLElement)) throw new Error(`Missing ${label} button`);
-        remove.click();
+    act(() => {
+      useDraftStore.getState().saveDraftInput({
+        draftKey: draftKey(),
+        draft: { text: "Earlier edit", attachments: [] },
       });
-    }
+    });
     expect(useDraftStore.getState().getDraftInput(draftKey())).toEqual({
       text: "Earlier edit",
       attachments: [],
