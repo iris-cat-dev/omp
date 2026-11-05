@@ -1544,9 +1544,10 @@ function ComposerContentImpl({
       forceSend?: boolean,
     ) => {
       if (processingTargetRef.current === composerTarget || isCancellingAgent) return "noop";
-      const submittedDraftAttachments = attachments;
       const submittedDraftText =
         messageInputRef.current?.getInputSnapshot().text ?? draftContentRef.current.text;
+      const expectedDraftText = submitBehavior === "preserve-and-lock" ? submittedDraftText : "";
+      const expectedDraftAttachments = submitBehavior === "preserve-and-lock" ? attachments : [];
       const result = await withRetainedComposerImages(outgoingAttachments, () =>
         submitAgentInput({
           message: outgoingMessage,
@@ -1558,11 +1559,10 @@ function ComposerContentImpl({
             isCurrentTarget: () => currentTargetRef.current === composerTarget,
             isInputUnchanged: () =>
               (messageInputRef.current?.getInputSnapshot().text ?? draftContentRef.current.text) ===
-                submittedDraftText &&
-              // Deferred text publication may reconstruct an otherwise unchanged draft.
+                expectedDraftText &&
               areAttachmentsEqual({
                 left: draftContentRef.current.attachments,
-                right: submittedDraftAttachments,
+                right: expectedDraftAttachments,
               }),
           },
           submitBehavior,
@@ -1578,9 +1578,10 @@ function ComposerContentImpl({
           clearDraft,
           setUserInput: replaceUserInput,
           setAttachments: (nextAttachments) => {
-            setSelectedAttachments(
-              composerWorkspaceAttachment.userAttachmentsOnly(nextAttachments),
-            );
+            const userAttachments =
+              composerWorkspaceAttachment.userAttachmentsOnly(nextAttachments);
+            draftContentRef.current = { ...draftContentRef.current, attachments: userAttachments };
+            setSelectedAttachments(userAttachments);
           },
           setSendError,
           setIsProcessing,
