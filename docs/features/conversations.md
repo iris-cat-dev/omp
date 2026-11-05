@@ -72,6 +72,8 @@ While a conversation runs, the composer defaults to **Steer**. Steering guides t
 
 If the provider cannot accept steering, Desktop reports a send failure and leaves the current turn running. Agent-to-agent prompts and completion notifications follow this same non-destructive rule, rather than replacing the turn.
 
+After a message is accepted, the composer clears the unchanged submitted text and its image/file attachments, even when a deferred draft save rebuilds attachment objects while sending. Failed submissions preserve the draft. New text or attachment edits still present at acceptance, and drafts in a newly selected conversation, are not cleared by an earlier submission.
+
 Autonomous OMP continuations remain steerable after a foreground turn finishes: the provider and Desktop share one active turn identity. Delayed idle checks from an older turn or an earlier continuation cannot clear the current turn. Rejections distinguish unsupported steering, a provider with no active turn, and a mismatched turn identity; identity failures never trigger automatic cancellation or replacement.
 
 The conversation's **Stop** interrupts its current run and all running managed descendants, including children still active when the parent finishes during the stop request. Detached agents are independent and are not stopped. The subagent list also offers **Stop** on each running child; stopped children remain listed, unlike archived children.

@@ -1,4 +1,5 @@
-import type { UserComposerAttachment } from "@/attachments/types";
+import equal from "fast-deep-equal";
+import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { UseAgentFormStateResult } from "@/hooks/use-agent-form-state";
 
@@ -65,15 +66,8 @@ export function hasDraftContent(input: {
 }
 
 export function areAttachmentsEqual(input: {
-  left: UserComposerAttachment[];
-  right: UserComposerAttachment[];
+  left: readonly ComposerAttachment[];
+  right: readonly ComposerAttachment[];
 }): boolean {
-  if (input.left.length !== input.right.length) {
-    return false;
-  }
-
-  return input.left.every((attachment, index) => {
-    const other = input.right[index];
-    return JSON.stringify(attachment) === JSON.stringify(other);
-  });
+  return equal(input.left, input.right);
 }
