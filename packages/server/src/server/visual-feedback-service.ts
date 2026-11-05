@@ -109,7 +109,7 @@ function validateAnnotations(
 
 interface PendingRequest {
   request: VisualFeedbackRequest;
-  finish(response: VisualFeedbackResponse): void;
+  finish(response: VisualFeedbackResponse | Error): void;
 }
 
 /** Daemon-scoped: disconnecting an editor does not discard requests needed on reconnect. */
@@ -136,19 +136,26 @@ export class VisualFeedbackService {
     if (this.closed) throw new Error("Visual feedback service is closed");
     const request = VisualFeedbackRequestSchema.parse({ ...input, id: randomUUID() });
     if (request.image) await validateImage(request.image);
-    if (this.closed || options.signal?.aborted) return { status: "cancelled" };
+    if (this.closed) throw new Error("Visual feedback service is closed");
+    if (options.signal?.aborted)
+      throw new Error("Visual feedback request was interrupted before a user response");
     const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1, options.timeoutMs ?? MAX_TIMEOUT_MS));
     if (!Number.isFinite(timeoutMs)) throw new Error("Invalid visual feedback timeout");
-    const { promise, resolve } = Promise.withResolvers<VisualFeedbackResponse>();
-    const abort = () => finish({ status: "cancelled" });
-    const finish = (response: VisualFeedbackResponse) => {
+    const { promise, resolve, reject } = Promise.withResolvers<VisualFeedbackResponse>();
+    const abort = () =>
+      finish(new Error("Visual feedback request was interrupted before a user response"));
+    const finish = (response: VisualFeedbackResponse | Error) => {
       if (!this.pending.delete(request.id)) return;
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", abort);
-      resolve(response);
+      if (response instanceof Error) reject(response);
+      else resolve(response);
       this.broadcast();
     };
-    const timer = setTimeout(abort, timeoutMs);
+    const timer = setTimeout(
+      () => finish(new Error("Visual feedback timed out without an explicit user response")),
+      timeoutMs,
+    );
     timer.unref?.();
     this.pending.set(request.id, { request, finish });
     options.signal?.addEventListener("abort", abort, { once: true });
@@ -199,7 +206,8 @@ export class VisualFeedbackService {
 
   close(): void {
     this.closed = true;
-    for (const pending of this.pending.values()) pending.finish({ status: "cancelled" });
+    for (const pending of this.pending.values())
+      pending.finish(new Error("Visual feedback service closed before a user response"));
     this.listeners.clear();
   }
 
