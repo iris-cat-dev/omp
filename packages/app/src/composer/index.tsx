@@ -111,6 +111,7 @@ import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/compo
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
+import { areAttachmentsEqual } from "@/composer/draft/input-draft-core";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
@@ -1558,7 +1559,11 @@ function ComposerContentImpl({
             isInputUnchanged: () =>
               (messageInputRef.current?.getInputSnapshot().text ?? draftContentRef.current.text) ===
                 submittedDraftText &&
-              draftContentRef.current.attachments === submittedDraftAttachments,
+              // Deferred text publication may reconstruct an otherwise unchanged draft.
+              areAttachmentsEqual({
+                left: draftContentRef.current.attachments,
+                right: submittedDraftAttachments,
+              }),
           },
           submitBehavior,
           isAgentRunning,

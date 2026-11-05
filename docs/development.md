@@ -318,6 +318,13 @@ SDK history uses bounded lazy facades with 8 MiB hot bodies plus an 8 MiB body
 LRU and source rereads. Complete `File` bodies remain persisted without generic
 500,000-character truncation; image externalization/private stripping remain.
 
+Image visibility may release decoded previews, but must not release known layout
+dimensions. Read source metadata learned by `onLoad` on subsequent renders, and
+keep its aspect ratio while a preview is absent or being reacquired. Memoizing
+an initial metadata miss makes offscreen images collapse to 160-pixel placeholders
+and expand again on return. Changing the source must not reuse the previous
+image's dimensions; offscreen bindings still release normally.
+
 Window clipping and background LRU removal must not mutate previously published
 session snapshots. They share privately owned map copies until one state
 publication. Head pages, unacknowledged input, and active history fetches fence
@@ -334,6 +341,7 @@ Run the targeted regressions from the repository root:
 ```bash
 npm run test --workspace=@omp-desktop/app -- --project unit src/git/diff-document/model.test.ts src/git/diff-document/text-measurement.test.ts src/data/query.test.tsx src/data/push-router.test.ts
 npm run test --workspace=@omp-desktop/app -- --project unit src/stores/session-store.test.ts src/timeline/timeline-residency.test.ts src/assistant-image/timeline-assets.test.ts
+npm run test --workspace=@omp-desktop/app -- --project unit src/assistant-image/use-assistant-image.test.tsx
 ```
 
 These changes address allocation amplification and orphaned snapshot retention,

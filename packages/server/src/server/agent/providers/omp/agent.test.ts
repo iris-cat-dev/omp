@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,16 @@ import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
+
+let profileDirectory: string;
+beforeEach(async () => {
+  profileDirectory = await mkdtemp(join(tmpdir(), "omp-agent-test-profile-"));
+  vi.stubEnv("PI_CODING_AGENT_DIR", profileDirectory);
+});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(profileDirectory, { recursive: true, force: true });
+});
 
 function workflowDisplayRequests(requests: Array<{ message: string; imageCount: number }>) {
   return requests.map((request) => ({

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { hasDraftContent, resolveDraftKey } from "./input-draft-core";
+import { areAttachmentsEqual, hasDraftContent, resolveDraftKey } from "./input-draft-core";
+import type { ComposerAttachment } from "@/attachments/types";
 import {
   buildDraftCommandConfig,
   resolveEffectiveComposerModelId,
@@ -29,6 +30,94 @@ describe("resolveDraftKey", () => {
 describe("hasDraftContent", () => {
   it("preserves whitespace-only text while the user is editing", () => {
     expect(hasDraftContent({ text: "\n\n\n\n\n", attachments: [] })).toBe(true);
+  });
+});
+
+describe("areAttachmentsEqual", () => {
+  const image: Extract<ComposerAttachment, { kind: "image" }> = {
+    kind: "image",
+    metadata: {
+      id: "image-1",
+      mimeType: "image/png",
+      storageType: "inline-data",
+      storageKey: "original-bytes",
+      createdAt: 1,
+    },
+  };
+  const context: Extract<ComposerAttachment, { kind: "chat_history" }> = {
+    kind: "chat_history",
+    id: "history-1",
+    attachment: { type: "text", mimeType: "text/plain", text: "Earlier messages" },
+    source: { serverId: "host", agentId: "agent" },
+  };
+  const review: Extract<ComposerAttachment, { kind: "review" }> = {
+    kind: "review",
+    reviewDraftKey: "review-1",
+    commentCount: 0,
+    attachment: {
+      type: "review",
+      mimeType: "application/paseo-review",
+      cwd: "/repo",
+      mode: "uncommitted",
+      baseRef: null,
+      comments: [],
+    },
+  };
+
+  it("compares reconstructed readonly attachments by content while preserving their order", () => {
+    const left: readonly ComposerAttachment[] = [image, context, review];
+    expect(areAttachmentsEqual({ left, right: structuredClone(left) })).toBe(true);
+    expect(areAttachmentsEqual({ left: [], right: [] })).toBe(true);
+    expect(areAttachmentsEqual({ left, right: [review, context, image] })).toBe(false);
+    expect(areAttachmentsEqual({ left, right: [image, context] })).toBe(false);
+  });
+
+  it("does not mistake changed nested image or workspace-file content for the submitted draft", () => {
+    expect(
+      areAttachmentsEqual({
+        left: [image],
+        right: [{ ...image, metadata: { ...image.metadata, storageKey: "replacement-bytes" } }],
+      }),
+    ).toBe(false);
+    expect(
+      areAttachmentsEqual({
+        left: [{ kind: "workspace_file", path: "index.ts", selection: { kind: "whole_file" } }],
+        right: [
+          {
+            kind: "workspace_file",
+            path: "index.ts",
+            selection: { kind: "line_range", startLine: 1, endLine: 3 },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps workspace context and review ownership and payload semantics", () => {
+    expect(
+      areAttachmentsEqual({
+        left: [context],
+        right: [{ ...context, attachment: { ...context.attachment, text: "New context" } }],
+      }),
+    ).toBe(false);
+    expect(
+      areAttachmentsEqual({
+        left: [context],
+        right: [{ ...context, source: { ...context.source, agentId: "other-agent" } }],
+      }),
+    ).toBe(false);
+    expect(
+      areAttachmentsEqual({
+        left: [review],
+        right: [{ ...review, reviewDraftKey: "other-review" }],
+      }),
+    ).toBe(false);
+    expect(
+      areAttachmentsEqual({
+        left: [review],
+        right: [{ ...review, attachment: { ...review.attachment, cwd: "/other-repo" } }],
+      }),
+    ).toBe(false);
   });
 });
 
