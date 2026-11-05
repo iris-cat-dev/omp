@@ -117,6 +117,108 @@ function candidate(sourceFile: FileState, response: NumericResponse): Candidate 
 
 const ALL = { profile: null, project: null };
 
+describe("OMP business activity versus management writes", () => {
+  it.each([
+    ["custom_message", { customType: "eval-state-context", display: false }],
+    ["message", { message: { role: "custom", customType: "eval-state-context" } }],
+    ["custom", { customType: "session_exit", data: { reason: "dispose", kind: "normal" } }],
+    ["title_change", { title: "Renamed" }],
+    ["label", { targetId: "completed", label: "bookmark" }],
+    ["credential_pin", { provider: "openai", hash: "account" }],
+    ["model_change", { model: "openai/model-a" }],
+    ["thinking_level_change", { thinkingLevel: "high" }],
+    ["service_tier_change", { serviceTier: { openai: "priority" } }],
+  ] as const)("does not advance activity for passive %s records", (type, extra) => {
+    const current = capture("main", NOW - 800_000);
+    const completedAt = NOW - 700_000;
+    current.feed(reply("completed", completedAt), 10);
+    current.feed(journal(type, "management", NOW, { parentId: "completed", ...extra }), 20);
+    expect(current.parser.lastActivityAt).toBe(completedAt);
+    expect(current.parser.phase).toBe("idle");
+    expect([...current.responses.values()].map((response) => response.requests)).toEqual([1]);
+  });
+
+  it("retains branch selections through management snapshots without creating activity", () => {
+    const current = capture();
+    current.feed(reply("completed", NOW - 10_000), 10);
+    current.feed(
+      journal("service_tier_change", "tier", NOW - 5_000, {
+        parentId: "completed",
+        serviceTier: { openai: "priority" },
+      }),
+      20,
+    );
+    current.feed(
+      journal("custom_message", "snapshot", NOW, {
+        parentId: "tier",
+        customType: "eval-state-context",
+      }),
+      30,
+    );
+    expect(current.parser.lastActivityAt).toBe(NOW - 10_000);
+    expect(current.parser.speedMode).toEqual({
+      provider: "openai",
+      value: "fast",
+      evidence: "selected",
+    });
+    current.feed(reply("next", NOW + 1_000, {}, "snapshot"), 40);
+    expect(current.latest().speedMode).toEqual({
+      provider: "openai",
+      value: "fast",
+      evidence: "selected",
+    });
+    expect(current.parser.lastActivityAt).toBe(NOW + 1_000);
+    expect(current.responses.size).toBe(2);
+  });
+
+  it.each([
+    ["custom", { customType: "tool_execution_start" }],
+    ["custom", { customType: "extension-business-event" }],
+    ["custom_message", { customType: "extension-context", display: false }],
+    ["message", { message: { role: "custom", customType: "extension-context" } }],
+    ["message", { message: { role: "user", customType: "eval-state-context" } }],
+  ] as const)("preserves activity for non-management %s records", (type, extra) => {
+    const current = capture();
+    current.feed(journal(type, "business", NOW, extra));
+    expect(current.parser.lastActivityAt).toBe(NOW);
+    const replay = capture();
+    replay.feed(journal(type, "history", NOW, extra), 10, true);
+    expect(replay.parser.lastActivityAt).toBe(NOW - 60_000);
+  });
+
+  it.each([false, true])(
+    "respects file order for exits and clears tools without extending activity (historyOnly=%s)",
+    (historyOnly) => {
+      const current = capture();
+      current.feed(
+        reply("active", NOW, {
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "call", name: "eval", arguments: {} }],
+        }),
+        40,
+      );
+      current.feed(
+        journal("custom", "older-exit", NOW + 2_000, { customType: "session_exit" }),
+        20,
+        historyOnly,
+      );
+      expect(current.parser.phase).toBe("tools");
+      expect(current.parser.retainedToolCount).toBe(1);
+      expect(current.parser.lastActivityAt).toBe(NOW);
+      current.feed(
+        journal("custom", "exit", NOW - 1_000, { customType: "session_exit" }),
+        50,
+        historyOnly,
+      );
+      expect(current.parser.phase).toBe("idle");
+      expect(current.parser.inFlightStartMs).toBeNull();
+      expect(current.parser.retainedToolCount).toBe(0);
+      expect(current.parser.lastActivityAt).toBe(NOW);
+      expect(current.responses.size).toBe(1);
+    },
+  );
+});
+
 describe("OMP native reasoning coverage", () => {
   it.each([
     [undefined, 0, 0],

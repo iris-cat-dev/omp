@@ -24,7 +24,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { ensureAgentLoaded } from "../agent-loading.js";
+import { readPersistedAgentHistory } from "../persisted-agent-history.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
@@ -3247,7 +3247,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "get_agent_activity",
     {
       title: "Get agent activity",
-      description: "Return recent agent timeline entries as a curated summary.",
+      description:
+        "Return recent agent timeline entries as a curated summary without activating unloaded sessions.",
       inputSchema: {
         agentId: z.string(),
         limit: z
@@ -3263,13 +3264,23 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ agentId, limit }) => {
-      await ensureAgentLoaded(agentId, {
-        agentManager,
-        agentStorage,
-        logger: childLogger,
-      });
-      const timeline = agentManager.getTimeline(agentId);
-      const snapshot = agentManager.getAgent(agentId);
+      await agentManager.waitForAgentClose?.(agentId);
+      const history = await readPersistedAgentHistory(
+        agentId,
+        { agentManager, agentStorage },
+        { direction: "tail", limit: 0 },
+      );
+      const snapshot = history ? null : agentManager.getAgent(agentId);
+      const timeline = snapshot?.historyPrimed
+        ? agentManager.getTimeline(agentId)
+        : history?.timeline.rows.map((row) => row.item);
+      if (!timeline) {
+        const record = await agentStorage.get(agentId);
+        if (!record || record.internal) throw new Error(`Agent not found: ${agentId}`);
+        throw new Error(
+          "History is unavailable without activating this session. Resume it explicitly to refresh history.",
+        );
+      }
 
       const selection = selectItemsByProjectedLimit({
         items: timeline,
@@ -3292,7 +3303,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         structuredContent: ensureValidJson({
           agentId,
           updateCount: timeline.length,
-          currentModeId: snapshot?.currentModeId ?? null,
+          currentModeId: snapshot ? snapshot.currentModeId : (history?.record.lastModeId ?? null),
           content: contentWithCount,
         }),
       };

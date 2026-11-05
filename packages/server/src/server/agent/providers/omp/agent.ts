@@ -2464,7 +2464,7 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("OMP runtime does not support resource ownership inspection");
     const resources = await this.runtimeSession.getRuntimeResources();
     const background = (await this.listBackgroundProcesses()).some((item) =>
-      ["starting", "running", "ready", "restarting", "stopping"].includes(item.status),
+      ["starting", "running", "ready", "restarting", "stopping", "unknown"].includes(item.status),
     );
     const busy =
       this.activeTurnId !== null ||

@@ -322,6 +322,27 @@ export function emptyUsage(): OmpMonitorUsage {
   };
 }
 
+/** Passive journal writes must not make an old conversation look recently busy. */
+function managementOnly(entry: JsonObject, message: JsonObject | null): boolean {
+  switch (entry.type) {
+    case "title_change":
+    case "label":
+    case "credential_pin":
+    case "model_change":
+    case "thinking_level_change":
+    case "service_tier_change":
+      return true;
+    case "custom":
+      return entry.customType === "session_exit";
+    case "custom_message":
+      return entry.customType === "eval-state-context";
+    case "message":
+      return message?.role === "custom" && message.customType === "eval-state-context";
+    default:
+      return false;
+  }
+}
+
 /** OMP-only numeric state machine, inspired by Agent Speed METRICS §4.7 (MIT). */
 export class OmpNumericParser {
   headerSeen = false;
@@ -402,8 +423,10 @@ export class OmpNumericParser {
       (this.headerMs !== null && ts < this.headerMs - 2_000)
     )
       return;
-    const assistant = entry.type === "message" && object(entry.message)?.role === "assistant";
-    if (!historyOnly && !assistant) this.lastActivityAt = Math.max(this.lastActivityAt, ts);
+    const message = entry.type === "message" ? object(entry.message) : null;
+    const assistant = message?.role === "assistant";
+    if (!historyOnly && !assistant && !managementOnly(entry, message))
+      this.lastActivityAt = Math.max(this.lastActivityAt, ts);
     if (entry.id.length > 4_096) {
       sink.limit();
       return;

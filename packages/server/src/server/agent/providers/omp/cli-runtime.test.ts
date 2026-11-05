@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -120,7 +121,167 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
   return rest;
 }
 
+async function backgroundJobsServer(processes: unknown[] = []) {
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.headers.authorization ?? "");
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ processes }));
+  });
+  const ready = Promise.withResolvers<void>();
+  server.once("error", ready.reject);
+  server.listen(0, "127.0.0.1", ready.resolve);
+  await ready.promise;
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Test server did not bind");
+  return {
+    port: address.port,
+    requests,
+    close: async () => {
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      server.closeAllConnections();
+      await closed.promise;
+    },
+  };
+}
+
+const recoveryCommand = "desktop-background-jobs-12345678-abcd";
+function announceBackgroundJobs(child: OmpChild, port: number, generation: number) {
+  child.stdout.write(
+    `${JSON.stringify({
+      type: "desktop_background_jobs_ready",
+      port,
+      generation,
+      token: `secret-${generation}`,
+      recoveryCommand,
+    })}\n`,
+  );
+}
+
 describe("OMP CLI runtime", () => {
+  test("keeps startup inventory unknown until an authenticated bridge can confirm empty", async () => {
+    const child = createOmpChild();
+    const commands: string[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(String(command.type));
+      return { commands: [] };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const bridge = await backgroundJobsServer();
+    try {
+      await expect(session.listBackgroundJobs!()).rejects.toThrow("not ready");
+      expect(commands).not.toContain("prompt");
+      expect(bridge.requests).toEqual([]);
+      announceBackgroundJobs(child, bridge.port, 1);
+      expect(await session.listBackgroundJobs!()).toEqual([]);
+      expect(bridge.requests).toEqual(["Bearer secret-1"]);
+    } finally {
+      await session.close();
+      await bridge.close();
+    }
+  });
+
+  test("recovers a refused cached bridge in a living child without losing active jobs or native kernels", async () => {
+    const dead = await backgroundJobsServer();
+    await dead.close();
+    const jobs = [
+      {
+        id: "omp-job:owned:bg_1",
+        name: "calculation",
+        command: "calculation",
+        cwd: "/workspace/project",
+        ownerAgentId: null,
+        scope: "agent",
+        source: "omp-job",
+        status: "running",
+        startedAt: 1,
+        endedAt: null,
+        exitCode: null,
+        terminalId: null,
+      },
+    ];
+    const bridge = await backgroundJobsServer(jobs);
+    const child = createOmpChild();
+    const requests: string[] = [];
+    const resources = [
+      {
+        id: "eval:kernel",
+        kind: "javascript_kernel",
+        ownerSessionId: "owner",
+        state: "retained",
+        retentionReasons: ["variables"],
+        liveHandles: 0,
+        releasable: true,
+      },
+    ];
+    replyToCommands(child, (command) => {
+      requests.push(String(command.type));
+      if (command.type === "get_available_commands")
+        return { commands: [{ name: recoveryCommand, source: "extension" }] };
+      if (command.type === "execute_extension_command") {
+        announceBackgroundJobs(child, bridge.port, 2);
+        return { executed: true };
+      }
+      if (command.type === "get_runtime_resources") return { resources };
+      return {};
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    try {
+      announceBackgroundJobs(child, dead.port, 1);
+      expect(
+        await Promise.all([session.listBackgroundJobs!(), session.listBackgroundJobs!()]),
+      ).toEqual([jobs, jobs]);
+      expect(requests.filter((type) => type === "execute_extension_command")).toHaveLength(1);
+      expect(await session.getRuntimeResources!()).toEqual(resources);
+      expect(await session.getCommands()).toEqual([]);
+      expect(requests).not.toContain("prompt");
+      expect(child.killedSignals).toEqual([]);
+      expect(bridge.requests).toEqual(["Bearer secret-2", "Bearer secret-2"]);
+    } finally {
+      await session.close();
+      await bridge.close();
+    }
+  });
+
+  test("ignores old-generation cleanup and fails closed on shutdown or confirmed process exit", async () => {
+    const bridge = await backgroundJobsServer();
+    const child = createOmpChild();
+    const commands: string[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(String(command.type));
+      if (command.type === "get_available_commands")
+        return { commands: [{ name: recoveryCommand, source: "extension" }] };
+      return { executed: true };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const invalidate = (generation: number) =>
+      child.stdout.write(
+        `${JSON.stringify({
+          type: "desktop_background_jobs_invalidated",
+          generation,
+        })}\n`,
+      );
+    try {
+      announceBackgroundJobs(child, bridge.port, 3);
+      invalidate(1);
+      announceBackgroundJobs(child, bridge.port, 2);
+      expect(await session.listBackgroundJobs!()).toEqual([]);
+      expect(bridge.requests).toEqual(["Bearer secret-3"]);
+      invalidate(3);
+      await expect(session.listBackgroundJobs!()).rejects.toThrow("did not advertise readiness");
+      expect(bridge.requests).toHaveLength(1);
+      child.emit("exit", 0, null);
+      announceBackgroundJobs(child, bridge.port, 4);
+      await expect(session.listBackgroundJobs!()).rejects.toThrow("runtime has exited");
+      expect(bridge.requests).toHaveLength(1);
+      expect(commands).not.toContain("prompt");
+    } finally {
+      await session.close();
+      await bridge.close();
+    }
+  });
+
   test("replays the retained ancestry after branch removes its selected user checkpoint", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-branch-replay-"));
     const sessionFile = join(dir, "session.jsonl");

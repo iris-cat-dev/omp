@@ -1221,7 +1221,10 @@ interface BoardConsumer {
 }
 function boardConsumer(
   style: OmpMonitorBoardStyle,
-  options: Partial<OmpMonitorBoardPreferences> & { appearance?: "dark" | "light" } = {},
+  options: Partial<OmpMonitorBoardPreferences> & {
+    appearance?: "dark" | "light";
+    language?: "en" | "zh";
+  } = {},
 ) {
   document.body.innerHTML = MONITOR_BOARD_MARKUP + MONITOR_PERF_MARKUP;
   vi.stubGlobal("matchMedia", (media: string) => ({ media, matches: false }));
@@ -1240,7 +1243,7 @@ function boardConsumer(
   let serial = 0;
   const frames = new Map<number, FrameRequestCallback>();
   const code = `
-    let language='en',appearance=${JSON.stringify(options.appearance ?? "dark")};
+    let language=${JSON.stringify(options.language ?? "en")},appearance=${JSON.stringify(options.appearance ?? "dark")};
     const view={surface:'board',preferences:{effects:'standard',metric:'output',celebratePeaks:true,titleTheme:'vehicles',redline:2000},board:${JSON.stringify({ ...DEFAULT_BOARD_PREFERENCES, ...options, style, id: "board", orbId: "orb" })},orbs:[],snapshot:null,titleThemes:null};
     const node=id=>document.getElementById(id),snapshotFacts=()=>view.snapshot;
     const finite=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
@@ -1309,6 +1312,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("board performance renderer consumer boundaries", () => {
+  it.each(
+    (["glass", "timing", "neon"] as const).flatMap((style) =>
+      (["en", "zh"] as const).map((language) => [style, language] as const),
+    ),
+  )(
+    "labels omitted %s groups and their combined speed in %s, not executing agents",
+    (style, language) => {
+      const { consumer } = boardConsumer(style, {
+        language,
+        size: "small",
+        showPerformance: true,
+        showThinking: true,
+        showCost: true,
+      });
+      const roots = Array.from({ length: 6 }, (_, index) =>
+        agent(`root-${index}`, { phase: "idle" }),
+      );
+      roots[4]!.phase = "tools";
+      roots[5]!.phase = "generating";
+      roots[5]!.liveMeasuredTps = 7;
+      const members = [
+        ...roots,
+        agent("child", { parentId: "root-4", phase: "tools", liveMeasuredTps: 12 }),
+        agent("grandchild", { parentId: "child", phase: "idle" }),
+      ];
+      consumer.rows(members);
+      expect(consumer.panel.querySelectorAll(".item.group")).toHaveLength(3);
+      expect(consumer.panel.querySelectorAll(".item.more")).toHaveLength(1);
+      const summary = consumer.panel.querySelector(".item.more .row")!;
+      const label =
+        language === "zh" ? "还有 3 个近期分组 · 19 tok/s" : "3 more recent groups · 19 tok/s";
+      expect(summary.querySelector(".label")!.textContent).toBe(label);
+      expect(summary.getAttribute("aria-label")).toBe(label);
+      for (const member of members) {
+        member.phase = "idle";
+        member.liveMeasuredTps = 0;
+      }
+      consumer.rows(members);
+      expect(consumer.panel.querySelectorAll(".item.group")).toHaveLength(3);
+      expect(summary.querySelector(".label")!.textContent).toBe(
+        language === "zh" ? "还有 3 个近期分组 · 0 tok/s" : "3 more recent groups · 0 tok/s",
+      );
+    },
+  );
   it("renders a custom theme's idle and tracked labels and picks up edits without losing its tier", () => {
     const page = boardConsumer("glass"),
       id = "custom:00000000-0000-4000-8000-000000000052";
@@ -1504,7 +1551,7 @@ describe("native board execution-mode capsules", () => {
     expect(capsule.classList.contains("configured")).toBe(false);
     expect(capsule.querySelector(".mode-mark")?.textContent).toBe("");
   });
-  it("keeps overflow informational and carries inline summed speed without a show-all action", () => {
+  it("keeps overflow informational without a show-all action", () => {
     const { consumer } = boardConsumer("timing", { size: "small" });
     const rows = consumer.rows(
       Array.from({ length: 5 }, (_, index) => agent("root-" + index, { liveMeasuredTps: 10 })),
@@ -1512,7 +1559,6 @@ describe("native board execution-mode capsules", () => {
     expect(rows).toHaveLength(4);
     const summary = rows[3]!;
     expect(summary.tabIndex).toBe(-1);
-    expect(summary.textContent).toContain("2 more agents · 20");
     expect(summary.dataset.boardMore).toBeUndefined();
     expect(consumer.panel.querySelectorAll(".fastest")).toHaveLength(1);
   });

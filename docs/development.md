@@ -104,22 +104,41 @@ another owner's kernel. Ordinary SDK aborts do not dispose retained eval kernels
 
 An unacknowledged cancellation still blocks replacement input and returns `agent_cancellation_unacknowledged` through send, Stop, and native-child cancellation responses. The composer shows cleanup progress and retains failed input and attachments; cancellation-refused queue items require explicit retry rather than automatic dispatch. Its inline **Recover runtime** action uses the existing dangerous-operation confirmation; `kill_agent({ agentId, force: true })` exposes the same targeted recovery to host tools. Default `kill_agent` remains safe unload. Recovery keeps persisted history and never resubmits input, but does not roll back completed writes or other side effects. New input is admitted only after the target runtime's exit and accepted host work are confirmed settled; failed recovery retains the admission fence and can be retried. Asynchronous feedback stays bound to the original host and conversation. Other independent agents are not terminated.
 
+OMP background-process inventory uses a generation-scoped, authenticated loopback
+bridge. A live session can rebind it through `execute_extension_command`, which
+dispatches only a registered extension handler, never a prompt/input fallback.
+Concurrent failures share one recovery; inventory reads retry once against the
+new generation, while stop requests are never replayed automatically. Rebinding
+preserves live jobs, their public IDs/output, and retained eval kernels. Ownership
+tracks native session identity and actual job instances, including branch/fork
+inheritance and failed-switch rollback. Unavailable/dead bridges and unresolved
+outgoing work are not empty inventories: inventory failure never authorizes safe
+unload.
+
 Backend code updates require a daemon restart: refreshing one agent cannot
 replace provider classes already loaded by the daemon. Refreshing an agent from
 persistence does close only that agent's runtime and rehydrate its original
 native session history, without replaying a prompt or replacing the conversation.
 
-Cold OMP conversation history and the Chat outline reuse the selected SDK's
+Cold OMP conversation history, the Chat outline and `get_agent_activity` share
+`readPersistedAgentHistory`, which reuses the selected SDK's
 `dist/node/modules.json` export
 `@oh-my-pi/pi-coding-agent/session/indexed-session-journal` without starting an
 SDK host or creating a parallel scanner. First-scan index/catalog cost is
-separate from warm small-page I/O. Loaded agents keep their live timeline.
+separate from warm small-page I/O. History-primed loaded agents keep their live
+timeline; concurrent activation keeps the complete cold page until replay is ready.
 Persisted pages share an epoch distinct from the runtime.
 Cold reads require that real built Node SDK even when a standalone server runs
 agents through CLI. Missing packages/artifacts report the cold-history
 prerequisite, with no scanner fallback or host startup. Tests may select their
 independent built stage through `OMP_DESKTOP_TEST_SDK_ROOT`; production environment
 sanitization remains unchanged.
+
+The activity tool reads the full canonical history before applying its projected
+summary limit, preserving total counts and whole merged messages. Archived and
+unarchived unloaded conversations follow the same read-only path; unavailable
+history is an error, not a reason to activate a runtime.
+
 If resumed live rows arrive in a different epoch above sequence 1, the client
 requests an authoritative catch-up using its existing cursor. The reset response
 replaces the cold window, allowing subsequent replies to display without scrolling

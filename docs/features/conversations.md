@@ -173,6 +173,8 @@ Native snapshots and JSONL history restore child transcripts independently of th
 
 Reading cold history, focus, attention, or model metadata does not start an SDK host or provider session. Retained snapshots are used when available; dynamic information without a snapshot is explicitly unavailable. Tool-body changes arrive incrementally through `contentVersion` and `revisedEntries`/`revisedRows`, even behind the sequence cursor. An older page cannot roll back a newer revision, and an ordinary tool revision does not reset an `after` history window.
 
+`get_agent_activity` uses the same cold-history reader for unloaded OMP conversations, including archived conversations. It preserves complete projected activities and summary limits without restoring a runtime or appending lifecycle records. Missing or unsupported history reports that inspection is unavailable; reading history never implicitly resumes a conversation. The reported mode comes from retained metadata when no runtime is loaded.
+
 ## Schedules
 
 On **Schedules**, use a task's **⋮ → Pause / Resume**, including heartbeats prompting an existing Agent. Paused tasks display **Paused** and retain cadence, prompt, target, and limits. Pausing prevents future triggers without interrupting started executions. Resume computes the next trigger from the original cadence without replaying missed runs.

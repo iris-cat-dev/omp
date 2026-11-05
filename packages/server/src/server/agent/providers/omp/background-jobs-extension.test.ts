@@ -25,15 +25,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function createHarness() {
+async function createHarness(harnessOptions: { start?: boolean } = {}) {
   const jobs = new Map<string, TestJob>();
   const hidden = new Set<string>();
   const acknowledged = new Set<string>();
   const consumed = new Set<string>();
   let sequence = 0;
+  let sessionId = "session";
+  let currentOwnerId = "parent";
+  let snapshotAvailable = true;
   const manager: AsyncJobManager = {
     register(type, label, _run, options: AsyncJobRegisterOptions & { foreground?: boolean } = {}) {
-      const id = `bg_${++sequence}`;
+      const startTime = ++sequence;
+      const id = options.id ?? `bg_${startTime}`;
       const completion = Promise.withResolvers<void>();
       const finish = completion.resolve;
       const promise = completion.promise;
@@ -42,7 +46,7 @@ async function createHarness() {
         type,
         label,
         status: "running",
-        startTime: sequence,
+        startTime,
         ownerId: options.ownerId,
         foreground: options.foreground === true,
         promise,
@@ -72,31 +76,57 @@ async function createHarness() {
   native.instance.mockReturnValue(manager);
   const visibleJobs = () =>
     [...jobs.values()].filter(
-      (job) => job.ownerId === "parent" && !job.foreground && !hidden.has(job.id),
+      (job) => job.ownerId === currentOwnerId && !job.foreground && !hidden.has(job.id),
     );
   const context = {
     cwd: "/repo",
-    sessionManager: { getSessionId: () => "session" },
-    getAsyncJobSnapshot: () => ({
-      running: visibleJobs().filter((job) => job.status === "running"),
-      recent: visibleJobs()
-        .filter((job) => job.status !== "running")
-        .slice(-5),
-    }),
+    sessionManager: { getSessionId: () => sessionId },
+    getAsyncJobSnapshot: () =>
+      snapshotAvailable
+        ? {
+            running: visibleJobs().filter((job) => job.status === "running"),
+            recent: visibleJobs()
+              .filter((job) => job.status !== "running")
+              .slice(-5),
+          }
+        : null,
   };
   let start!: (event: unknown, ctx: typeof context) => Promise<void>;
+  let beforeSwitch!: typeof start;
+  let switchSession!: typeof start;
+  let beforeBranch!: typeof start;
+  let branch!: typeof start;
+  let recover!: (args: string, ctx: typeof context) => Promise<void>;
   desktopBackgroundJobs({
     on(event, handler) {
       if (event === "session_start") start = handler as typeof start;
+      else if (event === "session_before_switch") beforeSwitch = handler as typeof start;
+      else if (event === "session_switch") switchSession = handler as typeof start;
+      else if (event === "session_before_branch") beforeBranch = handler as typeof start;
+      else if (event === "session_branch") branch = handler as typeof start;
       else shutdown = handler as () => void;
+    },
+    registerCommand(_name, options) {
+      recover = options.handler;
     },
   });
   let port = 0;
   let token = "";
+  let generation = 0;
+  const frames: Array<{ type: string; generation: number }> = [];
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    const ready = JSON.parse(String(chunk)) as { token: string; port: number };
-    token = ready.token;
-    port = ready.port;
+    const frame = JSON.parse(String(chunk)) as {
+      type: string;
+      generation: number;
+      token: string;
+      port: number;
+    };
+    frames.push(frame);
+    if (frame.type === "desktop_background_jobs_ready") {
+      token = frame.token;
+      port = frame.port;
+      generation = frame.generation;
+    }
     return true;
   });
   const request = (path: string, method = "GET", authorization = `Bearer ${token}`) =>
@@ -111,8 +141,14 @@ async function createHarness() {
     if (cursor !== undefined) query.set("cursor", String(cursor));
     return (await request(`/output?${query}`)).json();
   };
-  const add = (type: string, label: string, ownerId = "parent", foreground = false) => {
-    const options = { ownerId, foreground };
+  const add = (
+    type: string,
+    label: string,
+    ownerId = "parent",
+    foreground = false,
+    preferredId?: string,
+  ) => {
+    const options = { ownerId, foreground, id: preferredId };
     const id = manager.register(type, label, undefined, options);
     return jobs.get(id)!;
   };
@@ -122,8 +158,38 @@ async function createHarness() {
     job.finish();
     await job.promise;
   };
-  await start(undefined, context);
-  return { jobs, hidden, acknowledged, consumed, add, complete, request, list, output };
+  if (harnessOptions.start !== false) await start(undefined, context);
+  return {
+    jobs,
+    hidden,
+    acknowledged,
+    consumed,
+    add,
+    complete,
+    request,
+    list,
+    output,
+    frames,
+    endpoint: () => ({ port, token, generation }),
+    recover: () => recover("", context),
+    beforeSwitch: (reason = "resume") => beforeSwitch({ reason }, context),
+    beforeBranch: (reason = "branch") => beforeBranch({ reason }, context),
+    setIdentity: (nextId: string, nextOwner = currentOwnerId) => {
+      sessionId = nextId;
+      currentOwnerId = nextOwner;
+    },
+    emitSwitch: (reason = "resume") => switchSession({ reason }, context),
+    emitBranch: (reason = "branch") => branch({ reason }, context),
+    switchSession: async (nextId: string, nextOwner = currentOwnerId, reason = "resume") => {
+      sessionId = nextId;
+      currentOwnerId = nextOwner;
+      await switchSession({ reason }, context);
+    },
+    setSnapshotAvailable: (available: boolean) => {
+      snapshotAvailable = available;
+    },
+    start: () => start(undefined, context),
+  };
 }
 
 describe("OMP background job bridge", () => {
@@ -206,5 +272,251 @@ describe("OMP background job bridge", () => {
     expect(child.abortController.signal.aborted).toBe(false);
     expect(h.acknowledged).toEqual(new Set([bash.id, evaluation.id]));
     expect(h.consumed).toEqual(new Set([bash.id, evaluation.id]));
+  });
+
+  test("rebinds a live bridge without losing owned active jobs, IDs or retained output", async () => {
+    const h = await createHarness();
+    const active = h.add("eval", "keep calculation alive");
+    const completed = h.add("bash", "finished output");
+    await h.complete(completed, "saved result");
+    const before = await h.list();
+    const completedRow = before.find((row) => row.name === "finished output")!;
+    const output = await h.output(completedRow.id);
+    const old = h.endpoint();
+    await h.recover();
+    expect(h.endpoint().generation).toBeGreaterThan(old.generation);
+    expect(h.endpoint().token).not.toBe(old.token);
+    expect(await h.list()).toEqual(before);
+    expect(await h.output(completedRow.id)).toEqual(output);
+    expect(active.abortController.signal.aborted).toBe(false);
+    await expect(
+      fetch(`http://127.0.0.1:${old.port}/list`, {
+        headers: { authorization: `Bearer ${old.token}` },
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("invalidates on shutdown, refuses recovery of a stopped session, and starts a new generation", async () => {
+    const h = await createHarness();
+    const old = h.endpoint();
+    shutdown!();
+    expect(h.frames.at(-1)).toEqual({
+      type: "desktop_background_jobs_invalidated",
+      generation: old.generation,
+    });
+    await expect(h.recover()).rejects.toThrow("session is unavailable");
+    await expect(h.request("/list")).rejects.toThrow();
+    await h.start();
+    expect(h.endpoint().generation).toBeGreaterThan(old.generation);
+    expect(await h.list()).toEqual([]);
+  });
+
+  test("does not publish a queued startup after session shutdown supersedes it", async () => {
+    const h = await createHarness({ start: false });
+    const starting = h.start();
+    shutdown!();
+    await expect(starting).rejects.toThrow("superseded");
+    expect(h.frames.filter((frame) => frame.type === "desktop_background_jobs_ready")).toEqual([]);
+    await expect(h.recover()).rejects.toThrow("session is unavailable");
+    await h.start();
+    expect(await h.list()).toEqual([]);
+  });
+
+  test("does not report an unavailable native ownership snapshot as a known-empty session", async () => {
+    const h = await createHarness();
+    h.setSnapshotAvailable(false);
+    const active = h.add("eval", "registered while inventory unavailable");
+    expect((await h.request("/list")).status).toBe(503);
+    await h.recover();
+    expect((await h.request("/list")).status).toBe(503);
+    h.setSnapshotAvailable(true);
+    expect((await h.list()).map((row) => row.name)).toEqual([active.label]);
+    expect(active.abortController.signal.aborted).toBe(false);
+  });
+
+  test("keeps credentials and owned work on a failed switch, and isolates a committed switch", async () => {
+    const h = await createHarness();
+    const oldJob = h.add("eval", "departing work");
+    const [oldRow] = await h.list();
+    const oldEndpoint = h.endpoint();
+    await h.beforeSwitch();
+    // A failed/cancelled SDK switch emits no session_switch.
+    expect(h.endpoint()).toEqual(oldEndpoint);
+    expect((await h.list())[0]!.id).toBe(oldRow!.id);
+    expect(oldJob.abortController.signal.aborted).toBe(false);
+    await h.complete(oldJob, "outgoing result");
+    await h.switchSession("resumed-session");
+    const incoming = h.add("eval", "incoming work");
+    expect((await h.list()).map((row) => row.name)).toEqual(["incoming work"]);
+    expect((await h.request(`/output?id=${encodeURIComponent(oldRow!.id)}`)).status).toBe(404);
+    await h.request("/stop-all", "POST");
+    expect(incoming.abortController.signal.aborted).toBe(true);
+    expect(oldJob.abortController.signal.aborted).toBe(false);
+  });
+
+  test("preserves inherited fork jobs and refuses to hide unresolved outgoing jobs", async () => {
+    const h = await createHarness();
+    const active = h.add("eval", "inherited work");
+    const [row] = await h.list();
+    await h.beforeSwitch();
+    await h.switchSession("forked-session", "parent", "fork");
+    expect((await h.list())[0]!.id).toBe(row!.id);
+    await h.beforeSwitch();
+    await h.switchSession("other-session", "other-owner");
+    expect((await h.request("/list")).status).toBe(503);
+    expect(active.abortController.signal.aborted).toBe(false);
+    await h.complete(active, "settled outgoing work");
+    expect(await h.list()).toEqual([]);
+  });
+
+  test("never prunes an unknown owned job when completed-job retention fills up", async () => {
+    const h = await createHarness();
+    const missing = h.add("eval", "unknown calculation");
+    const [row] = await h.list();
+    h.jobs.delete(missing.id);
+    for (let index = 0; index < 105; index++) {
+      await h.complete(h.add("eval", `finished ${index}`), `result ${index}`);
+    }
+    expect(await h.list()).toContainEqual(
+      expect.objectContaining({
+        id: row!.id,
+        status: "unknown",
+      }),
+    );
+  });
+
+  test("attributes jobs from an earlier switch hook to the incoming native identity", async () => {
+    const h = await createHarness();
+    const outgoing = h.add("eval", "outgoing calculation");
+    const child = h.add("eval", "child calculation", "child");
+    await h.beforeSwitch();
+    await h.complete(outgoing, "outgoing result");
+    h.setIdentity("incoming-session");
+    // The SDK invokes an earlier extension's hook before this helper's hook.
+    const incoming = h.add("eval", "incoming calculation");
+    await h.emitSwitch();
+    const rows = await h.list();
+    expect(rows.map((row) => row.name)).toEqual(["incoming calculation"]);
+    expect((await h.request(`/stop?id=${encodeURIComponent(rows[0]!.id)}`, "POST")).status).toBe(
+      200,
+    );
+    expect(incoming.abortController.signal.aborted).toBe(true);
+    expect(child.abortController.signal.aborted).toBe(false);
+    expect(h.acknowledged).toEqual(new Set([incoming.id]));
+  });
+
+  test("lists a fresh registration that reuses an evicted outgoing job's preferred ID", async () => {
+    const h = await createHarness();
+    const outgoing = h.add("eval", "original registration");
+    await h.complete(outgoing, "original output");
+    const [oldRow] = await h.list();
+    const oldOutput = await h.output(oldRow!.id);
+    h.jobs.delete(outgoing.id);
+    await h.beforeSwitch();
+    h.setIdentity("incoming-session");
+    const incoming = h.add("eval", "reused ID registration", "parent", false, outgoing.id);
+    await h.emitSwitch();
+    const [newRow] = await h.list();
+    expect(newRow).toMatchObject({ name: "reused ID registration", status: "running" });
+    expect(newRow!.id).not.toBe(oldRow!.id);
+    expect((await h.request(`/stop?id=${encodeURIComponent(oldRow!.id)}`, "POST")).status).toBe(
+      404,
+    );
+    expect(incoming.abortController.signal.aborted).toBe(false);
+    await h.request(`/stop?id=${encodeURIComponent(newRow!.id)}`, "POST");
+    expect(incoming.abortController.signal.aborted).toBe(true);
+    // A late rollback must recover the original instance, not the reused ID's
+    // cancellation/output, even after inventory ran against the target scope.
+    h.setIdentity("session");
+    await h.recover();
+    expect((await h.list())[0]).toMatchObject({ id: oldRow!.id, status: "exited" });
+    expect(await h.output(oldRow!.id)).toEqual(oldOutput);
+  });
+
+  test("keeps an evicted unknown instance distinct from a reused live ID in the same session", async () => {
+    const h = await createHarness();
+    const missing = h.add("eval", "unknown original instance");
+    const [oldRow] = await h.list();
+    h.jobs.delete(missing.id);
+    const replacement = h.add("eval", "live replacement instance", "parent", false, missing.id);
+    const rows = await h.list();
+    expect(rows).toContainEqual(expect.objectContaining({ id: oldRow!.id, status: "unknown" }));
+    const live = rows.find((row) => row.name === "live replacement instance")!;
+    expect(live.id).not.toBe(oldRow!.id);
+    expect(
+      await (await h.request(`/stop?id=${encodeURIComponent(oldRow!.id)}`, "POST")).json(),
+    ).toEqual({ stopped: false });
+    expect(replacement.abortController.signal.aborted).toBe(false);
+    await h.complete(missing, "late original completion");
+    expect(await h.output(oldRow!.id)).toMatchObject({ text: "late original completion" });
+    expect((await h.list()).find((row) => row.id === live.id)).toMatchObject({ status: "running" });
+    await h.request(`/stop?id=${encodeURIComponent(live.id)}`, "POST");
+    expect(replacement.abortController.signal.aborted).toBe(true);
+    expect(missing.abortController.signal.aborted).toBe(false);
+  });
+
+  test("restores IDs, retained output and cursors after a switch event is followed by native rollback", async () => {
+    const h = await createHarness();
+    const outgoing = h.add("eval", "original work");
+    await h.complete(outgoing, "retained before failed switch");
+    const [row] = await h.list();
+    const output = await h.output(row!.id);
+    await h.beforeSwitch();
+    await h.switchSession("tentative-target");
+    expect(await h.list()).toEqual([]);
+    // resetContextForNewTranscript may fail after session_switch; the SDK
+    // restores its actual identity without emitting another lifecycle event.
+    h.setIdentity("session");
+    await expect(h.request("/list")).rejects.toThrow();
+    await h.recover();
+    expect((await h.list())[0]!.id).toBe(row!.id);
+    expect(await h.output(row!.id)).toEqual(output);
+    expect(await h.output(row!.id, output.cursor)).toMatchObject({ text: "", reset: false });
+  });
+
+  test.each(["branch", "fork"])(
+    "keeps %s identity inheritance across an earlier hook and same-session reload",
+    async (reason) => {
+      const h = await createHarness();
+      const original = h.add("eval", "ancestry output");
+      await h.complete(original, "retained ancestry result");
+      const [oldRow] = await h.list();
+      const output = await h.output(oldRow!.id);
+      await h.beforeBranch(reason);
+      h.setIdentity("branched-session");
+      const active = h.add("eval", "work started by earlier branch hook");
+      await h.emitBranch(reason);
+      const beforeReload = await h.list();
+      expect(beforeReload.map((row) => row.name)).toEqual([
+        "ancestry output",
+        "work started by earlier branch hook",
+      ]);
+      await h.beforeSwitch();
+      await h.switchSession("branched-session");
+      expect(await h.list()).toEqual(beforeReload);
+      expect(await h.output(oldRow!.id)).toEqual(output);
+      expect(active.abortController.signal.aborted).toBe(false);
+      expect(await (await h.request("/stop-all", "POST")).json()).toEqual({ stopped: 1 });
+      expect(active.abortController.signal.aborted).toBe(true);
+    },
+  );
+
+  test("inherits a native no-entry fork before this helper's switch hook receives the event", async () => {
+    const h = await createHarness();
+    const original = h.add("eval", "inherited active calculation");
+    const [originalRow] = await h.list();
+    await h.beforeSwitch("fork");
+    h.setIdentity("fork-target");
+    const added = h.add("eval", "started by earlier fork hook");
+    await h.emitSwitch("fork");
+    const rows = await h.list();
+    expect(rows.map((row) => row.name)).toEqual([
+      "inherited active calculation",
+      "started by earlier fork hook",
+    ]);
+    expect(rows[0]!.id).toBe(originalRow!.id);
+    expect(original.abortController.signal.aborted).toBe(false);
+    expect(added.abortController.signal.aborted).toBe(false);
+    expect(await (await h.request("/stop-all", "POST")).json()).toEqual({ stopped: 2 });
   });
 });

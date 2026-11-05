@@ -481,6 +481,7 @@ function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent
     updatedAt: now,
     lastUserMessageAt: null,
     lifecycle: "idle",
+    historyPrimed: true,
     capabilities: {
       supportsStreaming: false,
       supportsSessionPersistence: false,
@@ -5381,50 +5382,6 @@ describe("agent snapshot MCP serialization", () => {
         },
       },
     ]);
-  });
-
-  it("loads archived agents before reading get_agent_activity", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    const record = createStoredRecord({ id: "archived-activity-agent" });
-    const snapshot = {
-      id: "archived-activity-agent",
-      currentModeId: "default",
-    } as ManagedAgent;
-    spies.agentManager.getAgent
-      .mockReturnValueOnce(null)
-      .mockReturnValue(snapshot)
-      .mockReturnValue(snapshot);
-    spies.agentStorage.get.mockResolvedValue(record);
-    spies.agentManager.resumeAgentFromPersistence.mockResolvedValue(snapshot);
-    spies.agentManager.getTimeline.mockReturnValue([
-      {
-        kind: "status",
-        timestamp: "2026-04-11T00:00:00.000Z",
-        text: "Agent resumed",
-      },
-    ]);
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      logger,
-      providerSnapshotManager: createClaudeOnlyManager(),
-    });
-    const tool = registeredTool(server, "get_agent_activity");
-    const response = await tool.handler({ agentId: "archived-activity-agent" });
-
-    expect(response.structuredContent).toEqual(
-      expect.objectContaining({
-        agentId: "archived-activity-agent",
-        updateCount: 1,
-        currentModeId: "default",
-      }),
-    );
-    expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "archived-activity-agent",
-      { broadcast: expect.any(Function) },
-    );
   });
 
   it("get_agent_activity limit counts projected messages, not raw deltas", async () => {

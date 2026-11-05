@@ -18,7 +18,7 @@ import path from "node:path";
 import { OmpLocalMonitor } from "./collector.js";
 import { OmpMonitorHistory } from "./history.js";
 import { calendarDay } from "./math.js";
-import { MONITOR_LIMITS } from "./state.js";
+import { MONITOR_LIMITS, RECENT_MS } from "./state.js";
 import { resolveOmpMonitorRoots } from "./roots.js";
 import { getBundledPricingState } from "./pricing.js";
 import type { OmpMonitorCostInput } from "./pricing.js";
@@ -872,6 +872,130 @@ describe("OMP local numeric filesystem monitor", () => {
       `${JSON.stringify({ type: "custom", id: "exit", customType: "session_exit", timestamp: new Date(now + 1).toISOString() })}\n`,
     );
     expect((await current.poll()).agents[0]!.phase).toBe("idle");
+  });
+
+  it("does not revive an old completed session for eval snapshots or normal disposal", async () => {
+    const root = await directory();
+    let now = NOW;
+    const completedAt = NOW - RECENT_MS - 1_000;
+    const file = await session(root, "main.jsonl", [
+      header(completedAt - 10_000),
+      response("completed", completedAt - 1_000),
+    ]);
+    const current = monitor(root, () => now);
+    const before = await current.poll();
+    expect(before.agents).toEqual([]);
+    expect(before.today.requests).toBe(1);
+    for (const snapshot of [
+      {
+        type: "custom_message",
+        customType: "eval-state-context",
+        content: "snapshot",
+        display: false,
+      },
+      {
+        type: "message",
+        message: { role: "custom", customType: "eval-state-context", content: "snapshot" },
+      },
+      { type: "custom", customType: "session_exit", data: { reason: "dispose", kind: "normal" } },
+    ]) {
+      now++;
+      await appendFile(
+        file,
+        `${JSON.stringify({ id: `management-${now}`, timestamp: new Date(now).toISOString(), ...snapshot })}\n`,
+      );
+      const after = await current.poll();
+      expect(after.agents).toEqual([]);
+      expect(after.today).toEqual(before.today);
+      expect(after.activity.lastResponseAt).toBe(completedAt);
+    }
+  });
+
+  it.each(["user", "developer"])(
+    "keeps zero-token %s, TTFT wait and tool activity visible without treating exit as activity",
+    async (role) => {
+      const root = await directory();
+      let now = NOW;
+      const file = await session(root, "main.jsonl", [
+        header(NOW - RECENT_MS - 10_000),
+        event("request", now, { role, content: "start" }),
+      ]);
+      const current = monitor(root, () => now);
+      const waiting = await current.poll();
+      expect(waiting.agents).toHaveLength(1);
+      expect(waiting.agents[0]).toMatchObject({
+        phase: "generating",
+        lastActivityAt: now,
+        ttftMs: null,
+        liveMeasuredTps: 0,
+        liveEstimatedTps: 0,
+      });
+      now += 1_000;
+      await appendFile(
+        file,
+        `${JSON.stringify(
+          response("tool-call", now - 1_000, 0, {
+            stopReason: "toolUse",
+            usage: { input: 0, output: 0 },
+            content: [{ type: "toolCall", id: "call", name: "eval", arguments: {} }],
+          }),
+        )}\n`,
+      );
+      const tools = await current.poll();
+      expect(tools.agents[0]).toMatchObject({
+        phase: "tools",
+        lastActivityAt: now,
+        liveMeasuredTps: 0,
+        liveEstimatedTps: 0,
+      });
+      now += 1_000;
+      await appendFile(
+        file,
+        `${JSON.stringify(event("result", now, { role: "toolResult", toolCallId: "call", toolName: "eval" }))}\n`,
+      );
+      expect((await current.poll()).agents[0]).toMatchObject({
+        phase: "generating",
+        lastActivityAt: now,
+        liveMeasuredTps: 0,
+        liveEstimatedTps: 0,
+      });
+      const lastBusinessAt = now;
+      now += 1_000;
+      await appendFile(
+        file,
+        `${JSON.stringify({ type: "custom", id: "exit", customType: "session_exit", timestamp: new Date(now).toISOString(), data: { reason: "dispose", kind: "normal" } })}\n`,
+      );
+      const exited = await current.poll();
+      expect(exited.agents[0]).toMatchObject({
+        phase: "idle",
+        lastActivityAt: lastBusinessAt,
+        liveMeasuredTps: 0,
+        liveEstimatedTps: 0,
+      });
+      expect(exited.today.requests).toBe(0);
+      now = lastBusinessAt + RECENT_MS;
+      expect((await current.poll()).agents).toHaveLength(1);
+      now++;
+      expect((await current.poll()).agents).toEqual([]);
+    },
+  );
+
+  it("keeps a real zero-output completion and recorded TTFT visible at zero tok/s", async () => {
+    const root = await directory();
+    await session(root, "main.jsonl", [
+      header(NOW - RECENT_MS - 10_000),
+      response("zero-output", NOW - 1_000, 0, { ttft: 0 }),
+    ]);
+    const snapshot = await monitor(root).poll();
+    expect(snapshot.today).toMatchObject({ requests: 1, inputTokens: 10, outputTokens: 0 });
+    expect(snapshot.agents).toHaveLength(1);
+    expect(snapshot.agents[0]).toMatchObject({
+      phase: "idle",
+      lastActivityAt: NOW,
+      ttftMs: 0,
+      liveMeasuredTps: 0,
+      liveEstimatedTps: 0,
+    });
   });
 
   it("uses last-three agent references and a model fallback without treating side calls as speed references", async () => {

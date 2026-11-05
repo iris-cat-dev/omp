@@ -106,11 +106,24 @@ const OMP_READY_TIMEOUT_MS = JSONL_RPC_DEFAULT_TIMEOUT_MS;
 const OMP_CODEX_CATALOG_PRELOAD_URL_ENV = "OMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL";
 export const OMP_SERVICE_TIER_TOKEN_ENV = "OMP_DESKTOP_SERVICE_TIER_TOKEN";
 const OMP_SERVICE_TIER_TIMEOUT_MS = 5_000;
+const OMP_BACKGROUND_JOBS_COMMAND_PATTERN = /^desktop-background-jobs-[0-9a-f-]+$/;
 const OMP_CODEX_CATALOG_PRELOAD_BRIDGE =
   "data:text/javascript,await%20import(process%2Eenv%2EOMP_DESKTOP_CODEX_CATALOG_PRELOAD_URL)";
 const OmpToolInventorySchema = z.object({
   dumpTools: z.array(z.object({ name: z.string() })),
 });
+
+interface BackgroundJobsEndpoint {
+  port: number;
+  token: string;
+  generation: number;
+}
+
+type BackgroundJobsBridge =
+  | { status: "pending" }
+  | { status: "unavailable" }
+  | { status: "ready"; endpoint: BackgroundJobsEndpoint }
+  | { status: "dead" };
 
 export function resolveOmpBackgroundJobsExtensionPath(
   moduleUrl: string | URL = import.meta.url,
@@ -546,7 +559,10 @@ function imageToolAllowedByArguments(argv: readonly string[]): boolean {
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
   activeBranchEntryId?: string;
-  private backgroundJobsEndpoint: { port: number; token: string } | null = null;
+  private backgroundJobsBridge: BackgroundJobsBridge = { status: "pending" };
+  private backgroundJobsGeneration = -1;
+  private backgroundJobsRecoveryCommand: string | undefined;
+  private backgroundJobsRecovery: Promise<BackgroundJobsEndpoint> | undefined;
   private readonly imageEndpoint = Promise.withResolvers<number>();
   private imageEndpointPort: number | undefined;
   private appliedImageSettings: string | undefined;
@@ -592,9 +608,31 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
           .object({
             port: z.number().int().min(1).max(65535),
             token: z.string().min(1),
+            generation: z.number().int().positive(),
+            recoveryCommand: z.string().regex(OMP_BACKGROUND_JOBS_COMMAND_PATTERN),
           })
           .safeParse(message);
-        if (endpoint.success) this.backgroundJobsEndpoint = endpoint.data;
+        if (
+          endpoint.success &&
+          this.backgroundJobsBridge.status !== "dead" &&
+          endpoint.data.generation > this.backgroundJobsGeneration
+        ) {
+          this.backgroundJobsGeneration = endpoint.data.generation;
+          this.backgroundJobsRecoveryCommand = endpoint.data.recoveryCommand;
+          this.backgroundJobsBridge = { status: "ready", endpoint: endpoint.data };
+        }
+        return;
+      }
+      if (message.type === "desktop_background_jobs_invalidated") {
+        const frame = z.object({ generation: z.number().int().nonnegative() }).safeParse(message);
+        if (
+          frame.success &&
+          this.backgroundJobsBridge.status !== "dead" &&
+          frame.data.generation >= this.backgroundJobsGeneration
+        ) {
+          this.backgroundJobsGeneration = frame.data.generation;
+          this.backgroundJobsBridge = { status: "unavailable" };
+        }
         return;
       }
       const event = OmpRuntimeEventSchema.safeParse(message);
@@ -603,6 +641,8 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       }
     });
     process.onExit(({ error }) => {
+      this.backgroundJobsBridge = { status: "dead" };
+      this.backgroundJobsRecoveryCommand = undefined;
       this.serviceTierEndpointPort = undefined;
       this.appliedImageSettings = undefined;
       this.localModelGatewayEndpoint.resolve(new Error("The local OMP model worker stopped"));
@@ -781,7 +821,6 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async listBackgroundJobs(): Promise<BackgroundProcess[]> {
-    if (!this.backgroundJobsEndpoint) return [];
     const payload = await this.requestBackgroundJobs("/list");
     return z.object({ processes: z.array(BackgroundProcessSchema) }).parse(payload).processes;
   }
@@ -807,9 +846,52 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return z.object({ stopped: z.number().int().nonnegative() }).parse(payload).stopped;
   }
 
-  private async requestBackgroundJobs(path: string, init?: { method: "POST" }): Promise<unknown> {
-    const endpoint = this.backgroundJobsEndpoint;
-    if (!endpoint) throw new Error("OMP background-process bridge is not available yet");
+  private async recoverBackgroundJobs(): Promise<BackgroundJobsEndpoint> {
+    if (this.backgroundJobsBridge.status === "dead")
+      throw new Error("OMP background-process runtime has exited");
+    if (this.backgroundJobsRecovery) return this.backgroundJobsRecovery;
+    const recovery = (async () => {
+      let name = this.backgroundJobsRecoveryCommand;
+      const commands =
+        OmpCommandsResultSchema.parse(await this.request({ type: this.commandsRpcName }))
+          .commands ?? [];
+      if (
+        !name ||
+        !commands.some((command) => command.name === name && command.source === "extension")
+      ) {
+        name = commands.find(
+          (command) =>
+            command.source === "extension" &&
+            OMP_BACKGROUND_JOBS_COMMAND_PATTERN.test(command.name),
+        )?.name;
+      }
+      if (
+        !name ||
+        !commands.some((command) => command.name === name && command.source === "extension")
+      )
+        throw new Error("OMP background-process bridge is not ready or recovery is unavailable");
+      // Command-only RPC never falls back to model input if an extension was
+      // removed between command discovery and execution.
+      z.object({ executed: z.literal(true) }).parse(
+        await this.request({ type: "execute_extension_command", name }),
+      );
+      if (this.backgroundJobsBridge.status !== "ready")
+        throw new Error("OMP background-process bridge recovery did not advertise readiness");
+      return this.backgroundJobsBridge.endpoint;
+    })();
+    this.backgroundJobsRecovery = recovery;
+    try {
+      return await recovery;
+    } finally {
+      this.backgroundJobsRecovery = undefined;
+    }
+  }
+
+  private async fetchBackgroundJobs(
+    endpoint: BackgroundJobsEndpoint,
+    path: string,
+    init?: { method: "POST" },
+  ): Promise<unknown> {
     const response = await fetch(`http://127.0.0.1:${endpoint.port}${path}`, {
       ...init,
       headers: { authorization: `Bearer ${endpoint.token}` },
@@ -817,7 +899,40 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       redirect: "error",
     });
     if (!response.ok) throw new Error(`OMP background-process request failed (${response.status})`);
-    return response.json();
+    const payload: unknown = await response.json();
+    if (
+      this.backgroundJobsBridge.status !== "ready" ||
+      this.backgroundJobsBridge.endpoint !== endpoint
+    )
+      throw new Error("OMP background-process bridge changed during inventory");
+    return payload;
+  }
+
+  private async requestBackgroundJobs(path: string, init?: { method: "POST" }): Promise<unknown> {
+    if (this.backgroundJobsBridge.status === "dead")
+      throw new Error("OMP background-process runtime has exited");
+    const endpoint =
+      this.backgroundJobsBridge.status === "ready"
+        ? this.backgroundJobsBridge.endpoint
+        : await this.recoverBackgroundJobs();
+    try {
+      return await this.fetchBackgroundJobs(endpoint, path, init);
+    } catch (error) {
+      // Do not invalidate a newer ready frame that arrived during this request.
+      if (
+        this.backgroundJobsBridge.status === "ready" &&
+        this.backgroundJobsBridge.endpoint === endpoint
+      )
+        this.backgroundJobsBridge = { status: "unavailable" };
+      const recovered =
+        this.backgroundJobsBridge.status === "ready"
+          ? this.backgroundJobsBridge.endpoint
+          : await this.recoverBackgroundJobs();
+      // A write may already have taken effect. Rebinding is safe, replaying a
+      // stop request would conceal its unknown outcome.
+      if (init) throw error;
+      return this.fetchBackgroundJobs(recovered, path);
+    }
   }
 
   async setFastMode(enabled: boolean): Promise<OmpFastModeResult> {
@@ -988,7 +1103,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   async getCommands(): Promise<OmpRpcSlashCommand[]> {
     const data = OmpCommandsResultSchema.parse(await this.request({ type: this.commandsRpcName }));
-    return data.commands ?? [];
+    return (data.commands ?? []).filter(
+      (command) => !OMP_BACKGROUND_JOBS_COMMAND_PATTERN.test(command.name),
+    );
   }
 
   async setSubagentSubscription(level: OmpSubagentSubscriptionLevel): Promise<void> {

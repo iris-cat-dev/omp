@@ -45,9 +45,9 @@ import {
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import { readPersistedAgentHistory } from "./agent/persisted-agent-history.js";
 import { subscribeBundledOmpInitialization } from "./bundled-omp-initialization.js";
 import {
-  restorePromptSource,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
@@ -112,7 +112,6 @@ import {
   resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
 } from "./agent/agent-projections.js";
-import { limitAgentTimelineItemContent } from "./agent/agent-timeline-content.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -4727,49 +4726,13 @@ export class Session {
       onlyUserMessages?: boolean;
     },
   ): Promise<AgentTimelineLoad | null> {
-    if (this.agentManager.getAgent(agentId)) {
-      return null;
-    }
-    const record = await this.agentStorage.get(agentId);
-    const nativeHandle = record?.persistence?.nativeHandle;
-    if (
-      !record ||
-      record.internal ||
-      !["omp", "pi", "codex"].includes(record.provider) ||
-      typeof nativeHandle !== "string" ||
-      !nativeHandle.trim()
-    ) {
-      return null;
-    }
-    const availability = await inspectOmpSessionHistoryAvailability(nativeHandle);
-    if (availability.status !== "available") {
-      return null;
-    }
-
-    const client = this.agentManager.getRegisteredClient(record.provider);
-    if (!client?.readHistoryPage) {
-      throw new Error(
-        `Provider '${record.provider}' has no selected cold-history reader; configure a built OMP Node SDK with an indexed journal module. History inspection will not activate a runtime.`,
-      );
-    }
-    const timeline = await client.readHistoryPage({
-      sessionFile: nativeHandle,
-      provider: record.provider,
-      epoch: `persisted-omp:${agentId}`,
-      timestamp: record.updatedAt,
-      projection: options.projection,
-      onlyUserMessages: options.onlyUserMessages,
+    const history = await readPersistedAgentHistory(
+      agentId,
+      { agentManager: this.agentManager, agentStorage: this.agentStorage },
       options,
-    });
-    const promptSources = await this.agentStorage.getPromptSources(agentId);
-    timeline.rows = timeline.rows.map((row) => ({
-      ...row,
-      item: limitAgentTimelineItemContent(restorePromptSource(row.item, promptSources)),
-    }));
-    // A prompt or reload may have resumed the agent while the file was being read.
-    if (this.agentManager.getAgent(agentId)) {
-      return null;
-    }
+    );
+    if (!history) return null;
+    const { record, timeline } = history;
 
     return {
       agent: this.buildStoredAgentPayload(record),
