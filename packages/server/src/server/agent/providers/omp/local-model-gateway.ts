@@ -60,7 +60,6 @@ export async function startOmpLocalModelGateway(
     env: { OMP_DESKTOP_LOCAL_MODEL_GATEWAY_TOKEN: token },
     extraArgs: [
       "--no-tools",
-      "--no-extensions",
       "--no-skills",
       "--no-rules",
       "--no-lsp",

@@ -22,7 +22,9 @@ The execution boundary is:
 - **Remote host:** the Agent loop, conversation state, files, shell commands, terminals, and tools.
 - **Existing encrypted connection:** the advertised credential-free model catalog, inference context, streamed native model events, and cancellation. No provider credentials or local model endpoint URLs are copied to the server.
 
-The local daemon starts a tool-free native OMP model worker. Both model-bridge listeners bind ephemeral loopback ports, require process-scoped bearer tokens, and expose only catalog/native inference operations; they are not public HTTP proxies. Native reasoning, tool calls, image input, and Unicode streaming do not pass through an OpenAI-format conversion. Keyless local providers (`auth: none`, such as locally configured compatible servers) remain keyless.
+The local daemon starts an inference-only native OMP model worker with built-in tools disabled. It loads enabled local provider extensions, including their model catalogs, authentication, and native streaming implementations; disabled plugins remain excluded. Both model-bridge listeners bind ephemeral loopback ports, require process-scoped bearer tokens, and expose only catalog/native inference operations; they are not public HTTP proxies. Native reasoning, tool calls, image input, and Unicode streaming do not pass through an OpenAI-format conversion. Keyless local providers (`auth: none`, such as locally configured compatible servers) remain keyless.
+
+Plugin models discovered asynchronously become usable as soon as they appear in the shared model catalog.
 
 Keep Desktop, its local daemon, and both host connections running while using local models. Losing the source cancels forwarding and fails inference explicitly; it does not fall back to a remotely configured model or retry a disconnected source indefinitely. Remote schedules and unattended work also require the local source to remain connected. Changing sources pauses existing OMP runtimes; their conversation history is retained for resuming with the selected source.
 
@@ -31,6 +33,12 @@ To use the server's own models and credentials, turn off **Use models configured
 Both daemons need model-bridge support, and the local Desktop SDK must include the native model gateway. Update older daemons before enabling local models; SSH-managed hosts can use **Update via SSH**. SDK hosts execute the Agent loop and tools directly and require neither an OMP executable nor provider credentials in local-model mode.
 
 Only enable sharing for hosts you trust: while attached, a host can submit inference to the advertised local models and consume their quota. Inference context is still sent to whichever provider you configured locally. The model gateway does not execute the remote host's tools on the local machine.
+
+## Files and Changes in restored projects
+
+Saved **Files** and **Changes** panels recover automatically after the host's workspace list finishes loading if their old workspace was removed. Recovery stays within the same host and project, preferring the focused checkout, then the project root checkout, then another available checkout. Valid bindings and panel state are retained; specific file views, path-focused diffs, commit diffs, and terminals keep their original workspace.
+
+An empty Changes panel displaying **No uncommitted changes** means the selected checkout is clean. A missing-directory message means the panel could not resolve its workspace.
 
 ## Supported hosts and prerequisites
 

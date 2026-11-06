@@ -22,13 +22,19 @@ import type {
 } from "@omp-desktop/protocol/messages";
 import {
   collectAllTabs,
+  findPaneById,
   createWorkspaceLayoutStore,
   type WorkspaceLayout,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  clearWorkspaceArchivePending,
+  markWorkspaceArchivePending,
+} from "@/contexts/session-workspace-upserts";
 import { mountProjectLayoutMigrationRuntime } from "./project-layout-migration-runtime";
 import type { WorkspaceTab } from "./model";
+import { resolveWorkspaceTabWorkspaceId } from "./tool-workspace-selection";
 
 const serverId = "migration-runtime-host";
 const rawKey = `${serverId}:source`;
@@ -527,5 +533,234 @@ describe("automatic project layout migration runtime", () => {
     expect(tabAt(rawKey, "dead-terminal")).toBeUndefined();
     expect(tabAt(sourceProject, "dead-agent")).toBeUndefined();
     expect(tabAt(sourceProject, "dead-terminal")).toBeUndefined();
+  });
+
+  it.each(["files", "working_diff"] as const)(
+    "recovers restored orphaned %s panels only after authoritative workspace hydration",
+    (kind) => {
+      const connection = client();
+      setSession(connection);
+      const session = useSessionStore.getState().sessions[serverId];
+      useSessionStore.setState({
+        sessions: {
+          ...useSessionStore.getState().sessions,
+          [serverId]: { ...session, hasHydratedWorkspaces: false },
+        },
+      });
+      const restored = layout(tab("tool", { kind, workspaceId: "removed" }));
+      useWorkspaceLayoutStore.setState({
+        layoutByWorkspace: { [sourceProject]: restored },
+        sidePanelPaneIdByWorkspace: { [sourceProject]: "pane" },
+        splitSizesByWorkspace: { [sourceProject]: { split: [0.7, 0.3] } },
+      });
+      mount(connection);
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[sourceProject]).toBe(restored);
+      const ready = useSessionStore.getState().sessions[serverId];
+      useSessionStore.setState({
+        sessions: {
+          ...useSessionStore.getState().sessions,
+          [serverId]: { ...ready, hasHydratedWorkspaces: true },
+        },
+      });
+      const recovered = tabAt(sourceProject, "tool")!;
+      expect(recovered).toEqual({
+        tabId: "tool",
+        createdAt: 37,
+        state: { cursor: 123 },
+        target: { kind, workspaceId: "source" },
+      });
+      // The pane-context resolver now supplies a real descriptor/directory to
+      // FileExplorerPane and ChangesSurface instead of the directoryMissing gate.
+      const workspaceId = resolveWorkspaceTabWorkspaceId({
+        target: recovered.target,
+        routeWorkspaceId: "source",
+        toolWorkspaceId: "removed",
+      });
+      expect(
+        useSessionStore.getState().sessions[serverId].workspaces.get(workspaceId)
+          ?.workspaceDirectory,
+      ).toBe("/work/source");
+      expect(useWorkspaceLayoutStore.getState().sidePanelPaneIdByWorkspace[sourceProject]).toBe(
+        "pane",
+      );
+      expect(useWorkspaceLayoutStore.getState().splitSizesByWorkspace[sourceProject]).toEqual({
+        split: [0.7, 0.3],
+      });
+      const finalized = useWorkspaceLayoutStore.getState().layoutByWorkspace;
+      useSessionStore.setState({
+        sessions: {
+          ...useSessionStore.getState().sessions,
+          [serverId]: {
+            ...useSessionStore.getState().sessions[serverId],
+            focusedAgentId: "another-conversation",
+          },
+        },
+      });
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toBe(finalized);
+    },
+  );
+
+  it("prefers the focused main checkout behind an orphaned focused side panel", () => {
+    const connection = client();
+    setSession(connection);
+    const session = useSessionStore.getState().sessions[serverId];
+    const source = session.workspaces.get("source")!;
+    useSessionStore.setState({
+      sessions: {
+        ...useSessionStore.getState().sessions,
+        [serverId]: {
+          ...session,
+          workspaces: new Map([
+            ...session.workspaces,
+            ["sibling", { ...source, id: "sibling", workspaceDirectory: "/work/sibling" }],
+          ]),
+        },
+      },
+    });
+    const main = layout(tab("agent", { kind: "agent", agentId: "a", workspaceId: "sibling" }));
+    const tools = layout(
+      tab("files", { kind: "files", workspaceId: "removed" }),
+      tab("changes", {
+        kind: "working_diff",
+        workspaceId: "removed",
+      }),
+    );
+    const restored: WorkspaceLayout = {
+      root: {
+        kind: "group",
+        group: {
+          id: "split",
+          direction: "horizontal",
+          sizes: [0.7, 0.3],
+          children: [
+            main.root,
+            { kind: "pane", pane: { ...findPaneById(tools.root, "pane")!, id: "tools" } },
+          ],
+        },
+      },
+      focusedPaneId: "tools",
+      parentTabIdByTabId: { changes: "agent" },
+    };
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: { [sourceProject]: restored } });
+    mount(connection);
+    expect(tabAt(sourceProject, "files")?.target.workspaceId).toBe("sibling");
+    expect(tabAt(sourceProject, "changes")).toEqual({
+      ...tab("changes", {
+        kind: "working_diff",
+        workspaceId: "sibling",
+      }),
+    });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[sourceProject]).toMatchObject({
+      focusedPaneId: "tools",
+      parentTabIdByTabId: { changes: "agent" },
+      root: { group: { sizes: [0.7, 0.3] } },
+    });
+  });
+
+  it("retains valid bound tools, unbound tools and resource-specific owners across focus changes", () => {
+    const connection = client();
+    setSession(connection);
+    const restored = layout(
+      tab("files", { kind: "files", workspaceId: "source" }),
+      tab("changes", { kind: "working_diff", workspaceId: "source" }),
+      tab("unbound", { kind: "files" }),
+      tab("file", { kind: "file", path: "/old/checkout/file.ts", workspaceId: "removed" }),
+      tab("focused-diff", {
+        kind: "working_diff",
+        workspaceId: "removed",
+        focusPath: "src/main.ts",
+      }),
+      tab("requested-diff", {
+        kind: "working_diff",
+        workspaceId: "removed",
+        focusRequestId: 0,
+      }),
+      tab("commit", { kind: "commit_diff", sha: "abc", workspaceId: "removed" }),
+      tab("terminal", { kind: "terminal", terminalId: "t", workspaceId: "removed" }),
+      tab("foreign-owner", { kind: "working_diff", workspaceId: "destination" }),
+    );
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: { [sourceProject]: restored } });
+    mount(connection);
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[sourceProject]).toBe(restored);
+  });
+
+  it("never recovers into another project or host", () => {
+    const connection = client();
+    setSession(connection);
+    const foreignKey = `another-host:project:source-project`;
+    const missingKey = `${serverId}:project:deleted-project`;
+    const foreign = layout(tab("foreign", { kind: "files", workspaceId: "removed" }));
+    const missing = layout(tab("missing", { kind: "working_diff", workspaceId: "removed" }));
+    const layouts = { [foreignKey]: foreign, [missingKey]: missing };
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: layouts });
+    mount(connection);
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toBe(layouts);
+  });
+
+  it("uses the project's root checkout when no focused tab has a live owner", () => {
+    const connection = client();
+    setSession(connection);
+    const session = useSessionStore.getState().sessions[serverId];
+    const source = session.workspaces.get("source")!;
+    useSessionStore.setState({
+      sessions: {
+        ...useSessionStore.getState().sessions,
+        [serverId]: {
+          ...session,
+          workspaces: new Map([
+            ...session.workspaces,
+            ["root", { ...source, id: "root", workspaceDirectory: source.projectRootPath }],
+          ]),
+        },
+      },
+    });
+    useWorkspaceLayoutStore.setState({
+      layoutByWorkspace: {
+        [sourceProject]: layout(tab("changes", { kind: "working_diff", workspaceId: "removed" })),
+      },
+    });
+    mount(connection);
+    expect(tabAt(sourceProject, "changes")?.target.workspaceId).toBe("root");
+  });
+
+  it.each([{ workspaceDirectory: "" }, { archivingAt: "2026-11-06T00:00:00Z" }])(
+    "does not recover into an unusable sibling %j",
+    (patch) => {
+      const connection = client();
+      setSession(connection);
+      const session = useSessionStore.getState().sessions[serverId];
+      const source = session.workspaces.get("source")!;
+      useSessionStore.setState({
+        sessions: {
+          ...useSessionStore.getState().sessions,
+          [serverId]: {
+            ...session,
+            workspaces: new Map(session.workspaces).set("source", { ...source, ...patch }),
+          },
+        },
+      });
+      const restored = layout(tab("files", { kind: "files", workspaceId: "removed" }));
+      useWorkspaceLayoutStore.setState({ layoutByWorkspace: { [sourceProject]: restored } });
+      mount(connection);
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[sourceProject]).toBe(restored);
+    },
+  );
+
+  it("preserves tool bindings while an optimistic archive may still roll back", () => {
+    const connection = client();
+    setSession(connection);
+    const archive = { serverId, workspaceId: "removed" };
+    markWorkspaceArchivePending(archive);
+    try {
+      const restored = layout(
+        tab("files", { kind: "files", workspaceId: "removed" }),
+        tab("changes", { kind: "working_diff", workspaceId: "removed" }),
+      );
+      useWorkspaceLayoutStore.setState({ layoutByWorkspace: { [sourceProject]: restored } });
+      mount(connection);
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[sourceProject]).toBe(restored);
+    } finally {
+      clearWorkspaceArchivePending(archive);
+    }
   });
 });

@@ -27,7 +27,9 @@ npm run deploy:web
 
 ### Self-hosted relay and Web domains
 
-Deploy the `paseo-relay` repository using its `deployment/self-hosted/compose.yaml`, `Caddyfile`, and `.env.example`. That deployment serves both your WSS relay and the Web export on your own domains, with automatic HTTPS and SPA route fallback. The relay machine does not need OMP or access to the daemon's private listening port.
+Deploy the [Paseo Relay OCI image](https://github.com/getpaseo/paseo-relay) pinned to a verified image digest, using Docker or Podman under a process supervisor. Serve the Web export separately through your HTTPS reverse proxy. Forward `/ws` using HTTP/1.1 WebSocket upgrades with proxy buffering disabled. The relay machine does not need OMP or access to the daemon's private listening port.
+
+For a standalone Podman service using host networking, set `RELEASE_DISTRIBUTION=none` so Erlang cluster listeners are not exposed. Configure the relay bind address and port with `PASEO_RELAY_HOST` and `PASEO_RELAY_PORT`; add a memory limit and a suitable `PASEO_RELAY_MEMORY_WATERMARK_BYTES` on small hosts. Verify `/ready` and a real encrypted WebSocket exchange before changing existing daemon connections.
 
 ## Configure the machine running OMP
 

@@ -17,6 +17,7 @@ import {
   normalizeWorkspaceTabTarget,
 } from "@/workspace-tabs/identity";
 import { buildProjectLayoutKey, type WorkspaceTab } from "@/workspace-tabs/model";
+import { isWorkspaceSidePanelToolTarget } from "@/workspace-tabs/side-panel-target";
 
 export function resolveProjectLayoutKeyFromWorkspaces(input: {
   serverId: string;
@@ -537,15 +538,22 @@ export function ensureProjectLayoutsMigrated(
     ...ownership,
     agentWorkspaceIds,
   });
+  const preservedWorkspaceIds = new Set(listWorkspaceArchivePendingIds(serverId));
   const prunedLayouts = prunePlaceholderTabsOwnedByMissingWorkspaces({
     serverId,
     layouts: result.layouts,
     workspaces: session.workspaces,
     // Optimistic archives hide the record before the request completes and may
     // restore it on failure; their drafts must survive that window.
-    preservedWorkspaceIds: new Set(listWorkspaceArchivePendingIds(serverId)),
+    preservedWorkspaceIds,
   });
-  if (prunedLayouts !== layoutStore.layoutByWorkspace) {
+  const recoveredLayouts = recoverOrphanedProjectToolBindings({
+    serverId,
+    layouts: prunedLayouts,
+    workspaces: session.workspaces,
+    preservedWorkspaceIds,
+  });
+  if (recoveredLayouts !== layoutStore.layoutByWorkspace) {
     const splitSizesByWorkspace = { ...layoutStore.splitSizesByWorkspace };
     const sidePanelPaneIdByWorkspace = { ...result.sidePanelPaneIds };
     for (const rawKey of result.migratedLegacyKeys) {
@@ -565,12 +573,74 @@ export function ensureProjectLayoutsMigrated(
       delete sidePanelPaneIdByWorkspace[rawKey];
     }
     useWorkspaceLayoutStore.setState({
-      layoutByWorkspace: prunedLayouts,
+      layoutByWorkspace: recoveredLayouts,
       splitSizesByWorkspace,
       sidePanelPaneIdByWorkspace,
     });
   }
   return result.pending;
+}
+
+/**
+ * Files and the Changes overview describe a checkout rather than a specific resource. Once
+ * hydration proves their saved checkout is gone, keep the panel in its project:
+ * prefer its focused conversation, then the root checkout, then a sibling.
+ * Resource-specific files, focused diffs, commits and runtime tabs retain their explicit owner.
+ * This runs only from the hydrated layout finalization above, never at render time.
+ */
+function recoverOrphanedProjectToolBindings(input: {
+  serverId: string;
+  layouts: Record<string, WorkspaceLayout>;
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
+  preservedWorkspaceIds: ReadonlySet<string>;
+}): Record<string, WorkspaceLayout> {
+  const byId = new Map(
+    [...input.workspaces.values()].map((workspace) => [workspace.id, workspace]),
+  );
+  let next = input.layouts;
+  for (const [key, layout] of Object.entries(input.layouts)) {
+    if (!key.startsWith(`${input.serverId}:project:`)) continue;
+    const tabs = collectAllTabs(layout.root);
+    const orphaned = tabs.filter(
+      ({ target }) =>
+        (target.kind === "files" || target.kind === "working_diff") &&
+        isWorkspaceSidePanelToolTarget(target) &&
+        target.workspaceId !== undefined &&
+        !byId.has(target.workspaceId) &&
+        !input.preservedWorkspaceIds.has(target.workspaceId),
+    );
+    if (!orphaned.length) continue;
+    const candidates = [...byId.values()].filter(
+      (workspace) =>
+        !workspace.archivingAt &&
+        Boolean(workspace.workspaceDirectory) &&
+        buildProjectLayoutKey({ serverId: input.serverId, projectId: workspace.projectId }) === key,
+    );
+    if (!candidates.length) continue;
+    const candidateIds = new Set(candidates.map((workspace) => workspace.id));
+    const panes = collectAllPanes(layout.root);
+    const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
+    const focusedTabs = [focusedPane, ...panes.filter((pane) => pane !== focusedPane)].flatMap(
+      (pane) => {
+        const focused = tabs.find((tab) => tab.tabId === pane?.focusedTabId);
+        return focused?.target.workspaceId && candidateIds.has(focused.target.workspaceId)
+          ? [focused]
+          : [];
+      },
+    );
+    const workspaceId =
+      focusedTabs[0]?.target.workspaceId ??
+      candidates.find((workspace) => workspace.workspaceDirectory === workspace.projectRootPath)
+        ?.id ??
+      candidates[0]!.id;
+    const repaired = new Map(tabs.map((tab) => [tab.tabId, tab]));
+    for (const tab of orphaned) {
+      repaired.set(tab.tabId, { ...tab, target: { ...tab.target, workspaceId } });
+    }
+    if (next === input.layouts) next = { ...input.layouts };
+    next[key] = selectTabs(layout, repaired);
+  }
+  return next;
 }
 
 /**

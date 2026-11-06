@@ -34,15 +34,6 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
   pi.on("session_start", async (_event, context) => {
     await dispose?.();
     const registry = context.modelRegistry;
-    const available = new Map(
-      registry
-        .getAvailable()
-        .filter(
-          (model) =>
-            model.provider !== "desktop-local" && model.provider !== "omp-desktop-bootstrap",
-        )
-        .map((model) => [`${model.provider}/${model.id}`, model]),
-    );
     // The registry also owns keyless providers (Ollama/LM Studio/auth:none).
     // Raw AuthStorage alone would incorrectly reject those models with HTTP 401.
     const resolveCredential = registry.getApiKeyWithCredentialForProvider.bind(registry);
@@ -62,7 +53,16 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
     });
     const router = createAuthGatewayRouter({
       storage,
-      resolveModel: (id) => available.get(id),
+      // Provider discovery can finish after session_start; resolve against the live registry.
+      resolveModel: (id) =>
+        registry
+          .getAvailable()
+          .find(
+            (model) =>
+              model.provider !== "desktop-local" &&
+              model.provider !== "omp-desktop-bootstrap" &&
+              `${model.provider}/${model.id}` === id,
+          ),
     });
     const server = await serve({
       hostname: "127.0.0.1",
@@ -101,24 +101,11 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
             bytes.set(chunk, offset);
             offset += chunk.byteLength;
           }
-          const body: unknown = JSON.parse(new TextDecoder().decode(bytes));
-          if (
-            !body ||
-            typeof body !== "object" ||
-            !("modelId" in body) ||
-            typeof body.modelId !== "string" ||
-            !available.has(body.modelId)
-          ) {
-            return Response.json(
-              { error: { message: "Local model is unavailable" } },
-              { status: 404 },
-            );
-          }
           return await router.route(
             new Request(request.url, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify(body),
+              body: bytes,
               signal: request.signal,
             }),
             "desktop",
