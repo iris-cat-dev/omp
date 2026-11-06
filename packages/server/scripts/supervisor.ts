@@ -46,6 +46,7 @@ interface SupervisorOptions {
     env?: NodeJS.ProcessEnv;
   } | null;
   onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
+  onWorkerNotReady?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
@@ -125,6 +126,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   let shuttingDown = false;
   let exiting = false;
   let forceKillTimer: NodeJS.Timeout | null = null;
+  let pendingWorkerState = Promise.resolve(true);
   const logStream = createSupervisorLogStream(options.logFile);
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
@@ -149,6 +151,23 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog(message);
   };
 
+  const queueWorkerStateUpdate = (
+    updateState: () => Promise<void> | void,
+    label: string,
+  ): Promise<boolean> => {
+    pendingWorkerState = pendingWorkerState
+      .then(async () => {
+        await updateState();
+        return true;
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`Worker ${label} callback failed: ${message}`);
+        return false;
+      });
+    return pendingWorkerState;
+  };
+
   const closeLogStream = (): Promise<void> =>
     new Promise((resolve) => {
       if (!logStream) {
@@ -163,7 +182,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       return;
     }
     exiting = true;
-    Promise.resolve(options.onSupervisorExit?.())
+    pendingWorkerState
+      .then(() => options.onSupervisorExit?.())
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         log(`Supervisor exit cleanup failed: ${message}`);
@@ -268,17 +288,16 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("message", (msg: unknown) => {
       const lifecycleMessage = parseLifecycleMessage(msg);
-      if (!lifecycleMessage) {
+      if (!lifecycleMessage || child !== currentChild) {
         return;
       }
 
       if (lifecycleMessage.type === "paseo:ready") {
+        if (restarting || shuttingDown) return;
         writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
-        Promise.resolve(options.onWorkerReady?.({ listen: lifecycleMessage.listen })).catch(
-          (error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            log(`Worker ready callback failed: ${message}`);
-          },
+        void queueWorkerStateUpdate(
+          () => options.onWorkerReady?.({ listen: lifecycleMessage.listen }),
+          "ready",
         );
         return;
       }
@@ -300,30 +319,42 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       clearForceKillTimer();
       const exitDescriptor = describeExit(code, signal);
       writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
+      child = null;
 
-      if (shuttingDown) {
-        log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
-        exitSupervisor(0);
-        return;
-      }
+      void queueWorkerStateUpdate(() => options.onWorkerNotReady?.(), "not ready").then(
+        (updated) => {
+          if (!updated) {
+            log("Failed to mark worker not ready. Supervisor exiting without replacement.");
+            exitSupervisor(1);
+            return undefined;
+          }
 
-      const crashed =
-        restartOnCrash &&
-        ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
+          if (shuttingDown) {
+            log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
+            exitSupervisor(0);
+            return undefined;
+          }
 
-      if (restarting || crashed) {
-        restarting = false;
-        log(
-          crashed
-            ? `Worker crashed (${exitDescriptor}). Restarting worker...`
-            : `Worker exited (${exitDescriptor}). Restarting worker...`,
-        );
-        spawnWorker();
-        return;
-      }
+          const crashed =
+            restartOnCrash &&
+            ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
 
-      log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
-      exitSupervisor(typeof code === "number" ? code : 1);
+          if (restarting || crashed) {
+            restarting = false;
+            log(
+              crashed
+                ? `Worker crashed (${exitDescriptor}). Restarting worker...`
+                : `Worker exited (${exitDescriptor}). Restarting worker...`,
+            );
+            spawnWorker();
+            return undefined;
+          }
+
+          log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
+          exitSupervisor(typeof code === "number" ? code : 1);
+          return undefined;
+        },
+      );
     });
   };
 
@@ -345,6 +376,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       return;
     }
     restarting = true;
+    void queueWorkerStateUpdate(() => options.onWorkerNotReady?.(), "not ready");
     writeLifecycleLog("Restart requested", { reason });
     log(`${reason}. Stopping worker for restart...`);
     signalWorker("SIGTERM", reason);
@@ -360,7 +392,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog("Supervisor shutdown requested", { reason });
     log(`${reason}. Stopping worker...`);
     if (!child) {
-      exitSupervisor(0);
+      // The worker exit continuation owns cleanup after its queued state update.
       return;
     }
     signalWorker("SIGTERM", reason);

@@ -32,7 +32,10 @@ export async function executeDaemonManagementToggle(
   // state reflects what was actually applied if the stop fails.
   await deps.persistSettings({ manageBuiltInDaemon: false });
 
-  if (daemonStatus?.status === "running" && daemonStatus.desktopManaged) {
+  if (
+    daemonStatus?.desktopManaged &&
+    (daemonStatus.status === "running" || daemonStatus.status === "starting")
+  ) {
     const newStatus = await deps.stopDaemon();
     return { kind: "disabled", newStatus };
   }

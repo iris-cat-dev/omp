@@ -262,6 +262,21 @@ function resolveDesktopAppVersion(): string {
 // ---------------------------------------------------------------------------
 
 export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
+  return resolveDaemonStatus();
+}
+
+function classifyDesktopDaemonState(
+  localDaemon: string,
+  connectedDaemon: string,
+  requireApiReachable: boolean,
+): DesktopDaemonState {
+  if (localDaemon === "starting") return "starting";
+  if (connectedDaemon === "reachable") return "running";
+  if (localDaemon === "running") return requireApiReachable ? "errored" : "running";
+  return localDaemon === "unresponsive" ? "errored" : "stopped";
+}
+
+async function resolveDaemonStatus(requireApiReachable = false): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
 
   try {
@@ -273,15 +288,10 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
     const connectedDaemon =
       typeof payload.connectedDaemon === "string" ? payload.connectedDaemon : "not_probed";
     const hasRunningLocalProcess = localDaemon === "running";
-    const hasLocalProcess = hasRunningLocalProcess || localDaemon === "unresponsive";
+    const hasLocalProcess =
+      hasRunningLocalProcess || localDaemon === "starting" || localDaemon === "unresponsive";
     const desktopManaged = payload.desktopManaged === true;
-    const apiReachable = connectedDaemon === "reachable";
-    let status: DesktopDaemonState = "stopped";
-    if (apiReachable || hasRunningLocalProcess) {
-      status = "running";
-    } else if (localDaemon === "unresponsive") {
-      status = "errored";
-    }
+    const status = classifyDesktopDaemonState(localDaemon, connectedDaemon, requireApiReachable);
 
     return {
       serverId: typeof payload.serverId === "string" ? payload.serverId : "",
@@ -371,9 +381,10 @@ function buildStartupFailureError(result: {
 }
 
 async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
-  async function poll(attempt: number): Promise<DesktopDaemonStatus> {
-    if (attempt >= STARTUP_POLL_MAX_ATTEMPTS) return resolveDesktopDaemonStatus();
-    const status = await resolveDesktopDaemonStatus();
+  let lastStatus: DesktopDaemonStatus | null = null;
+  for (let attempt = 0; attempt < STARTUP_POLL_MAX_ATTEMPTS; attempt += 1) {
+    const status = await resolveDaemonStatus(true);
+    lastStatus = status;
     if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
       logDesktopDaemonLifecycle("polling daemon status after detached start", {
         attempt: attempt + 1,
@@ -383,17 +394,21 @@ async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
         serverId: status.serverId || null,
       });
     }
+    if (status.status === "running") assertCompatibleDaemonDistribution(status);
     if (
       status.status === "running" &&
-      status.serverId &&
-      status.listen &&
+      status.serverId.trim() &&
+      status.listen?.trim() &&
       status.distributionIdentity === DESKTOP_DISTRIBUTION_IDENTITY
-    )
+    ) {
       return status;
+    }
     await sleep(STARTUP_POLL_INTERVAL_MS);
-    return poll(attempt + 1);
   }
-  return poll(0);
+  throw new Error(
+    `Timed out waiting for desktop daemon readiness. Last status: ${lastStatus?.status ?? "unknown"}` +
+      `${lastStatus?.error ? ` (${lastStatus.error})` : ""}. Existing supervisor was not stopped.`,
+  );
 }
 function createDaemonEnvironment(invocationEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sdkRoot = resolveDesktopSdkRoot(invocationEnv);
@@ -413,7 +428,7 @@ function createDaemonEnvironment(invocationEnv: NodeJS.ProcessEnv): NodeJS.Proce
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
 
-  const current = await resolveDesktopDaemonStatus();
+  let current = await resolveDesktopDaemonStatus();
   logDesktopDaemonLifecycle("initial status check before start", {
     status: current.status,
     pid: current.pid,
@@ -422,6 +437,9 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     error: current.error,
     desktopManaged: current.desktopManaged,
   });
+  if (current.status === "starting") {
+    current = await pollForRunningDaemon();
+  }
   if (current.status === "running") {
     assertCompatibleDaemonDistribution(current);
     if (shouldRestartForVersion(current)) {
@@ -517,16 +535,14 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     throw buildStartupFailureError(result);
   }
 
-  const started = await pollForRunningDaemon();
-  if (started.status === "running") assertCompatibleDaemonDistribution(started);
-  return started;
+  return pollForRunningDaemon();
 }
 
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
 ): Promise<DesktopDaemonStatus> {
   const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running") {
+  if (status.status !== "running" && status.status !== "starting") {
     logDesktopDaemonLifecycle("desktop daemon stop skipped", {
       reason,
       statusBefore: summarizeDesktopDaemonStatus(status),

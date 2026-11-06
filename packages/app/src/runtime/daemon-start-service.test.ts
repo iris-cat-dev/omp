@@ -79,6 +79,24 @@ describe("DaemonStartService", () => {
     expect(service.isRunning()).toBe(false);
   });
 
+  it.each(["starting", "stopped", "errored"] as const)(
+    "surfaces a %s daemon as a startup failure even when its host already exists",
+    async (status) => {
+      const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+      const service = new DaemonStartService({
+        store: fake.store,
+        startDesktopDaemon: async () => makeStatus({ status }),
+      });
+
+      const result = await service.start();
+
+      expect(result).toMatchObject({ ok: false });
+      expect(service.getLastError()).toContain(status);
+      expect(service.isRunning()).toBe(false);
+      expect(fake.upserts).toEqual([]);
+    },
+  );
+
   it("reports lastError after a missing listen address and clears running state when done", async () => {
     const fake = createFakeStore();
     const service = new DaemonStartService({
@@ -138,6 +156,8 @@ describe("DaemonStartService", () => {
 
     expect(result).toEqual({ ok: false, error: "ipc broke" });
     expect(service.getLastError()).toBe("ipc broke");
+    expect(service.isRunning()).toBe(false);
+    expect(fake.upserts).toEqual([]);
   });
 
   it("clears lastError on retry entry and reports null after subsequent success", async () => {
@@ -312,6 +332,31 @@ describe("upsertDesktopDaemonConnection", () => {
     expect(fake.upserts).toEqual([
       { listenAddress: "127.0.0.1:6767", serverId: "srv_desktop", hostname: "desktop" },
     ]);
+  });
+
+  it.each(["starting", "stopped", "errored"] as const)(
+    "does not register a %s daemon with an otherwise valid connection",
+    async (status) => {
+      const fake = createFakeStore();
+
+      const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ status }));
+
+      expect(result).toMatchObject({ ok: false });
+      expect(result.ok ? "" : result.error).toContain(status);
+      expect(fake.upserts).toEqual([]);
+    },
+  );
+
+  it("preserves the daemon failure diagnostic without registering its connection", async () => {
+    const fake = createFakeStore();
+
+    const result = await upsertDesktopDaemonConnection(
+      fake.store,
+      makeStatus({ status: "errored", error: "worker exited before readiness" }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "worker exited before readiness" });
+    expect(fake.upserts).toEqual([]);
   });
 
   it("does not add localhost when desktop bootstrap finds its server id already registered", async () => {

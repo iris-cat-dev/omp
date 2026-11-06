@@ -128,6 +128,32 @@ describe("executeDaemonManagementToggle", () => {
       expect(result).toEqual({ kind: "disabled", newStatus: stoppedStatus });
     });
 
+    it("stops a starting managed supervisor when management is explicitly disabled", async () => {
+      const { deps, calls } = makeDeps();
+
+      const result = await executeDaemonManagementToggle(
+        true,
+        { ...runningManagedStatus, status: "starting" },
+        deps,
+      );
+
+      expect(calls).toEqual(["persist", "stop"]);
+      expect(result).toEqual({ kind: "disabled", newStatus: stoppedStatus });
+    });
+
+    it("preserves a starting supervisor that is not desktop-managed", async () => {
+      const { deps, calls } = makeDeps();
+
+      const result = await executeDaemonManagementToggle(
+        true,
+        { ...runningManagedStatus, status: "starting", desktopManaged: false },
+        deps,
+      );
+
+      expect(calls).toEqual(["persist"]);
+      expect(result).toEqual({ kind: "disabled", newStatus: null });
+    });
+
     it("skips stop when daemon is running but not desktop-managed", async () => {
       const { deps, calls } = makeDeps();
       const manuallyManagedStatus = { ...runningManagedStatus, desktopManaged: false };

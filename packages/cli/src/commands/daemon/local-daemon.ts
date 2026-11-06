@@ -29,6 +29,7 @@ export interface LocalDaemonPidInfo {
   uid?: number;
   listen?: string;
   desktopManaged?: boolean;
+  ready?: boolean;
 }
 
 export interface LocalDaemonState {
@@ -265,6 +266,7 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
       listen: resolveListenField(parsed.listen, parsed.sockPath),
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
+      ready: typeof parsed.ready === "boolean" ? parsed.ready : undefined,
     };
   } catch {
     return null;
@@ -578,6 +580,10 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   };
 }
 
+export function isLocalDaemonStarting(state: LocalDaemonState): boolean {
+  return state.running && state.pidInfo?.desktopManaged === true && state.pidInfo.ready === false;
+}
+
 export function tailDaemonLog(home?: string, lines = 30): string | null {
   const logPath = path.join(resolveLocalPaseoHome(home), DAEMON_LOG_FILENAME);
   return tailFile(logPath, lines);
@@ -682,6 +688,13 @@ async function requestLifecycleShutdown(
   state: LocalDaemonState,
   timeoutMs: number,
 ): Promise<LifecycleShutdownAttempt> {
+  if (isLocalDaemonStarting(state)) {
+    return {
+      requested: false,
+      reason: "daemon worker is starting, falling back to owner PID signal",
+    };
+  }
+
   const host = resolveTcpHostFromListen(state.listen);
   if (!host) {
     return {
