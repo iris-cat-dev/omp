@@ -11,9 +11,15 @@ import { resolveOmpSdkBuildConfig } from "../../../scripts/omp-sdk-build-config.
 const require = createRequire(import.meta.url);
 const tar = createRequire(require.resolve("app-builder-lib"))("tar");
 
-test.each(["target", "version", "revision", "checksum"])(
+test.each([
+  ["target", /does not match/],
+  ["profile", /does not match/],
+  ["version", /does not match/],
+  ["revision", /provenance/],
+  ["checksum", /checksum/],
+])(
   "rejects an SDK artifact with a mismatched %s without replacing the ready SDK",
-  async (failure) => {
+  async (failure, expectedError) => {
     const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-sdk-rejection-"));
     try {
       const { source, buildTarget, profile } = resolveOmpSdkBuildConfig();
@@ -55,19 +61,14 @@ test.each(["target", "version", "revision", "checksum"])(
       };
       if (failure === "target")
         manifest.platform = process.platform === "win32" ? "darwin" : "win32";
+      if (failure === "profile") manifest.profile = profile === "full" ? "core" : "full";
       if (failure === "version") manifest.version = "0.0.0-mismatched";
       if (failure === "revision") provenance.sdkCommit = "0".repeat(40);
       if (failure === "checksum") provenance.sha256 = "0".repeat(64);
       await writeFile(path.join(artifact, "manifest.json"), JSON.stringify(manifest));
       await writeFile(path.join(artifact, "provenance.json"), JSON.stringify(provenance));
       await writeFile(path.join(artifact, "omp-sdk.tgz"), archive);
-      await expect(importSdkArtifact(artifact, destination)).rejects.toThrow(
-        failure === "checksum"
-          ? /checksum/
-          : failure === "revision"
-            ? /provenance/
-            : /does not match/,
-      );
+      await expect(importSdkArtifact(artifact, destination)).rejects.toThrow(expectedError);
       expect(await readFile(path.join(destination, "ready"), "utf8")).toBe("previous working SDK");
     } finally {
       await rm(temporary, { recursive: true, force: true });
@@ -316,6 +317,26 @@ async function createReleaseFixture({
     throw error;
   }
 }
+
+test("imports the explicitly requested profile rather than the ambient profile", async () => {
+  const fixture = await createReleaseFixture({ buildMode: "release" });
+  try {
+    const profile = fixture.manifest.profile;
+    const env = { ...process.env, OMP_DESKTOP_SDK_PROFILE: profile };
+    vi.stubEnv("OMP_DESKTOP_SDK_PROFILE", profile === "full" ? "core" : "full");
+    const result = await importSdkArtifact(
+      fixture.artifact,
+      path.join(fixture.directory, "ready"),
+      {
+        env,
+      },
+    );
+    expect(result.profile).toBe(profile);
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
 
 test.each(["manifest", "package", "sidecar"])(
   "rejects development %s during artifact create and import without replacing existing output",

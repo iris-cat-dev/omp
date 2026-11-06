@@ -20,6 +20,29 @@ const SUPPORTED_BACKENDS: OmpMemoryBackend[] = [
   "sharpshooter",
 ];
 const mutationQueues = new Map<string, Promise<OmpMemorySettings>>();
+const LOCAL_MEMORY_MODEL = "local/lfm2-1.2b";
+const LOCAL_EMBEDDING_MODELS = {
+  en: "BAAI/bge-base-en-v1.5",
+  multilingual: "intfloat/multilingual-e5-large",
+} as const;
+const ENVIRONMENT_FLAG_VALUES: ReadonlySet<string> = new Set([
+  "1",
+  "Y",
+  "y",
+  "TRUE",
+  "true",
+  "YES",
+  "yes",
+  "ON",
+  "on",
+]);
+const LOCAL_MODEL_PRESET_FIELDS: Partial<Record<string, true>> = {
+  useLocalModels: true,
+  noEmbeddings: true,
+  llmMode: true,
+  embeddingModel: true,
+  embeddingApiUrl: true,
+};
 
 type ConfigRecord = Record<string, unknown>;
 type MemoryScoping = OmpMemorySettings["mnemopi"]["scoping"];
@@ -152,13 +175,49 @@ function configuredSecret(
   return { configured: false, source: "none" };
 }
 
+// Match the native $flag parser, which is deliberately case- and whitespace-sensitive.
+function embeddingsViaApi(env: NodeJS.ProcessEnv): boolean {
+  return ENVIRONMENT_FLAG_VALUES.has(env.MNEMOPI_EMBEDDINGS_VIA_API ?? "");
+}
+
+function remoteEmbeddingEnvironment(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.MNEMOPI_EMBEDDING_API_URL) return "MNEMOPI_EMBEDDING_API_URL";
+  if (embeddingsViaApi(env)) return "MNEMOPI_EMBEDDINGS_VIA_API";
+  // Native isApiModel falls back to this URL and classifies OpenRouter by substring.
+  if (env.OPENROUTER_BASE_URL && !env.OPENROUTER_BASE_URL.toLowerCase().includes("openrouter.ai")) {
+    return "OPENROUTER_BASE_URL";
+  }
+  return undefined;
+}
+
+function localModelsConfigured(
+  root: ConfigRecord,
+  mnemopi: ConfigRecord,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  const roles = root.modelRoles;
+  const retry = root.retry;
+  if (!roles || typeof roles !== "object" || Array.isArray(roles)) return false;
+  if (!retry || typeof retry !== "object" || Array.isArray(retry)) return false;
+  const chains = (retry as ConfigRecord).fallbackChains;
+  if (!chains || typeof chains !== "object" || Array.isArray(chains)) return false;
+  const memoryFallbacks = (chains as ConfigRecord).memory;
+  const variant = mnemopi.embeddingVariant === "multilingual" ? "multilingual" : "en";
+  return (
+    (roles as ConfigRecord).memory === LOCAL_MEMORY_MODEL &&
+    Array.isArray(memoryFallbacks) &&
+    memoryFallbacks.length === 0 &&
+    mnemopi.noEmbeddings !== true &&
+    (mnemopi.llmMode ?? "smol") === "smol" &&
+    readMnemopiString(mnemopi, "embeddingModel", env) === LOCAL_EMBEDDING_MODELS[variant] &&
+    readMnemopiString(mnemopi, "embeddingApiUrl", env) === null &&
+    remoteEmbeddingEnvironment(env) === undefined
+  );
+}
+
 function environmentOverrides(env: NodeJS.ProcessEnv, mnemopi: ConfigRecord): string[] {
   const paths: string[] = [];
-  if (
-    ["1", "Y", "y", "TRUE", "true", "YES", "yes", "ON", "on"].includes(
-      env.MNEMOPI_EMBEDDINGS_VIA_API ?? "",
-    )
-  ) {
+  if (embeddingsViaApi(env)) {
     paths.push("mnemopi.embeddingsViaApi");
   }
   if (env.HINDSIGHT_API_URL?.trim()) paths.push("hindsight.apiUrl");
@@ -267,6 +326,7 @@ function toSettings(
       ),
     },
     mnemopi: {
+      localModelsConfigured: localModelsConfigured(root, mnemopi, env),
       scoping: readEnum(mnemopi, "scoping", "per-project", scopingValues, "mnemopi.scoping"),
       autoRecall: readBoolean(mnemopi, "autoRecall", true, "mnemopi.autoRecall"),
       autoRetain: readBoolean(mnemopi, "autoRetain", true, "mnemopi.autoRetain"),
@@ -366,10 +426,11 @@ function applyObjectPatch(
   document: Document.Parsed,
   prefix: string[],
   patch: Record<string, unknown> | undefined,
+  ignoredFields?: Partial<Record<string, true>>,
 ): void {
   if (!patch) return;
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
+    if (value === undefined || ignoredFields?.[key]) continue;
     const path = [...prefix, key];
     if (value === null) document.deleteIn(path);
     else document.setIn(path, value);
@@ -383,12 +444,63 @@ function removeEmptyMappings(document: Document.Parsed): void {
   }
 }
 
-function applyPatch(document: Document.Parsed, patch: OmpMemorySettingsPatch): void {
+function applyLocalModelsPreset(
+  document: Document.Parsed,
+  patch: NonNullable<OmpMemorySettingsPatch["mnemopi"]>,
+  env: NodeJS.ProcessEnv,
+): void {
+  const remoteEnvironment = remoteEmbeddingEnvironment(env);
+  if (remoteEnvironment) {
+    throw new Error(
+      `Local memory models conflict with ${remoteEnvironment}; remove that environment override first`,
+    );
+  }
+  for (const path of [["modelRoles"], ["retry"], ["retry", "fallbackChains"]]) {
+    const value = document.getIn(path, true);
+    if (value !== undefined && !isMap(value)) {
+      throw new Error(`Invalid OMP config: ${path.join(".")} must be a mapping`);
+    }
+  }
+  const variant = patch.embeddingVariant ?? document.getIn(["mnemopi", "embeddingVariant"]) ?? "en";
+  if (variant !== "en" && variant !== "multilingual") {
+    throw new Error("Invalid OMP config: mnemopi.embeddingVariant has an unsupported value");
+  }
+  const embeddingModel = LOCAL_EMBEDDING_MODELS[variant];
+  if (
+    patch.noEmbeddings === true ||
+    (patch.llmMode !== undefined && patch.llmMode !== "smol") ||
+    (patch.embeddingModel != null && patch.embeddingModel !== embeddingModel) ||
+    patch.embeddingApiUrl != null ||
+    patch.llmBaseUrl !== undefined ||
+    patch.llmModel !== undefined
+  ) {
+    throw new Error("Local memory models conflict with explicit memory routing options");
+  }
+  document.setIn(["modelRoles", "memory"], LOCAL_MEMORY_MODEL);
+  document.setIn(["retry", "fallbackChains", "memory"], []);
+  document.setIn(["mnemopi", "noEmbeddings"], false);
+  document.setIn(["mnemopi", "llmMode"], "smol");
+  document.setIn(["mnemopi", "embeddingModel"], embeddingModel);
+  document.deleteIn(["mnemopi", "embeddingApiUrl"]);
+}
+
+function applyPatch(
+  document: Document.Parsed,
+  patch: OmpMemorySettingsPatch,
+  env: NodeJS.ProcessEnv,
+): void {
   assertEditableMappings(document);
   if (patch.backend !== undefined) document.setIn(["memory", "backend"], patch.backend);
   applyObjectPatch(document, ["autolearn"], patch.autolearn);
   applyObjectPatch(document, ["memories"], patch.local);
-  applyObjectPatch(document, ["mnemopi"], patch.mnemopi);
+  const mnemopiPatch = patch.mnemopi;
+  if (mnemopiPatch?.useLocalModels) {
+    applyLocalModelsPreset(document, mnemopiPatch, env);
+    // The command is not native YAML, and preset route fields must survive null reset patches.
+    applyObjectPatch(document, ["mnemopi"], mnemopiPatch, LOCAL_MODEL_PRESET_FIELDS);
+  } else {
+    applyObjectPatch(document, ["mnemopi"], mnemopiPatch);
+  }
   applyObjectPatch(document, ["hindsight"], patch.hindsight);
   if (patch.secrets) {
     applyObjectPatch(document, ["hindsight"], {
@@ -421,11 +533,12 @@ export async function updateOmpMemorySettings(
     const raw = await readConfigFile(configPath);
     if (revisionOf(raw) !== expectedRevision) throw new OmpMemorySettingsConflictError();
     const document = parseConfig(raw);
-    applyPatch(document, patch);
+    applyPatch(document, patch, env);
     const nextRaw = document.toString();
+    const settings = toSettings(configPath, nextRaw, document, env);
     await fs.mkdir(dirname(configPath), { recursive: true });
     await writeFileAtomic(configPath, nextRaw);
-    return toSettings(configPath, nextRaw, document, env);
+    return settings;
   };
   const previous = mutationQueues.get(configPath);
   const queued = previous ? previous.then(update, update) : update();

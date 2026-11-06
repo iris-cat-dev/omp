@@ -23,6 +23,7 @@ export interface OmpMemoryDraft {
   mnemopiEnhancedRecall: boolean;
   mnemopiProactiveLinking: boolean;
   mnemopiNoEmbeddings: boolean;
+  mnemopiUseLocalModels: boolean;
   mnemopiEmbeddingVariant: OmpMemorySettings["mnemopi"]["embeddingVariant"];
   mnemopiLlmMode: OmpMemorySettings["mnemopi"]["llmMode"];
   mnemopiDbPath: string;
@@ -72,6 +73,54 @@ export function getOmpMnemopiBlockers(
   return reasons;
 }
 
+export function canUseOmpMnemopiLocalModels(settings: OmpMemorySettings): boolean {
+  return (
+    settings.runtime?.profile === "full" &&
+    typeof settings.mnemopi.localModelsConfigured === "boolean"
+  );
+}
+
+export function applyOmpMnemopiLocalModelsDraft(
+  settings: OmpMemorySettings,
+  draft: OmpMemoryDraft,
+): OmpMemoryDraft {
+  if (draft.backend !== "mnemopi" || !canUseOmpMnemopiLocalModels(settings)) return draft;
+  return {
+    ...draft,
+    mnemopiUseLocalModels: true,
+    mnemopiNoEmbeddings: false,
+    mnemopiLlmMode: "smol",
+    mnemopiEmbeddingModel: "",
+    mnemopiEmbeddingApiUrl: "",
+    mnemopiLlmBaseUrl: settings.mnemopi.llmBaseUrl ?? "",
+    mnemopiLlmModel: settings.mnemopi.llmModel ?? "",
+  };
+}
+
+const LOCAL_MODEL_ROUTE_FIELDS: Partial<Record<keyof OmpMemoryDraft, true>> = {
+  mnemopiNoEmbeddings: true,
+  mnemopiLlmMode: true,
+  mnemopiEmbeddingModel: true,
+  mnemopiEmbeddingApiUrl: true,
+  mnemopiLlmBaseUrl: true,
+  mnemopiLlmModel: true,
+};
+
+export function changeOmpMemoryDraftField<Key extends keyof OmpMemoryDraft>(
+  draft: OmpMemoryDraft,
+  field: Key,
+  value: OmpMemoryDraft[Key],
+): OmpMemoryDraft {
+  return {
+    ...draft,
+    [field]: value,
+    mnemopiUseLocalModels:
+      draft.mnemopiUseLocalModels &&
+      !LOCAL_MODEL_ROUTE_FIELDS[field] &&
+      !(field === "backend" && value !== "mnemopi"),
+  };
+}
+
 export function createOmpMemoryDraft(settings: OmpMemorySettings): OmpMemoryDraft {
   return {
     backend: settings.backend,
@@ -92,6 +141,7 @@ export function createOmpMemoryDraft(settings: OmpMemorySettings): OmpMemoryDraf
     mnemopiEnhancedRecall: settings.mnemopi.enhancedRecall,
     mnemopiProactiveLinking: settings.mnemopi.proactiveLinking,
     mnemopiNoEmbeddings: settings.mnemopi.noEmbeddings,
+    mnemopiUseLocalModels: false,
     mnemopiEmbeddingVariant: settings.mnemopi.embeddingVariant,
     mnemopiLlmMode: settings.mnemopi.llmMode,
     mnemopiDbPath: settings.mnemopi.dbPath ?? "",
@@ -275,6 +325,10 @@ export function buildOmpMemorySettingsPatch(
     draft.mnemopiEmbeddingVariant,
   );
   assignChanged(mnemopi, "llmMode", settings.mnemopi.llmMode, draft.mnemopiLlmMode);
+  const useLocalModels =
+    draft.mnemopiUseLocalModels &&
+    draft.backend === "mnemopi" &&
+    canUseOmpMnemopiLocalModels(settings);
   for (const [key, current, next] of [
     ["dbPath", settings.mnemopi.dbPath, draft.mnemopiDbPath],
     ["embeddingModel", settings.mnemopi.embeddingModel, draft.mnemopiEmbeddingModel],
@@ -282,9 +336,11 @@ export function buildOmpMemorySettingsPatch(
     ["llmBaseUrl", settings.mnemopi.llmBaseUrl, draft.mnemopiLlmBaseUrl],
     ["llmModel", settings.mnemopi.llmModel, draft.mnemopiLlmModel],
   ] as const) {
+    if (useLocalModels && (key === "llmBaseUrl" || key === "llmModel")) continue;
     const value = optionalStringPatch(current, next);
     if (value !== undefined) mnemopi[key] = value;
   }
+  if (useLocalModels) mnemopi.useLocalModels = true;
   if (Object.keys(mnemopi).length > 0) patch.mnemopi = mnemopi;
 
   const hindsight: NonNullable<OmpMemorySettingsPatch["hindsight"]> = {};

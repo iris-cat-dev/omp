@@ -6648,21 +6648,29 @@ export class OmpAgentClient implements AgentClient {
     patch: OmpMemorySettingsPatch,
   ): Promise<OmpMemorySettings> {
     const env = { ...process.env, ...this.runtimeSettings?.env };
-    return this.withMemoryRuntimeProfile(
-      await updateMemorySettings(expectedRevision, patch, env),
-      env,
-    );
+    const profile = await this.resolveMemoryRuntimeProfile(env);
+    if (patch.mnemopi?.useLocalModels && profile !== "full") {
+      throw new Error("Local memory models require a positively identified full OMP SDK runtime");
+    }
+    return {
+      ...(await updateMemorySettings(expectedRevision, patch, env)),
+      runtime: { profile },
+    };
   }
 
   private async withMemoryRuntimeProfile(
     settings: OmpMemorySettings,
     env: NodeJS.ProcessEnv,
   ): Promise<OmpMemorySettings> {
-    const profile =
-      resolveOmpBackend(this.runtimeSettings, env) === "sdk"
-        ? (await resolveOmpSdkInstallation(this.runtimeSettings, env)).profile
-        : "unknown";
-    return { ...settings, runtime: { profile } };
+    return { ...settings, runtime: { profile: await this.resolveMemoryRuntimeProfile(env) } };
+  }
+
+  private async resolveMemoryRuntimeProfile(
+    env: NodeJS.ProcessEnv,
+  ): Promise<"core" | "full" | "unknown"> {
+    return resolveOmpBackend(this.runtimeSettings, env) === "sdk"
+      ? (await resolveOmpSdkInstallation(this.runtimeSettings, env)).profile
+      : "unknown";
   }
 
   async saveOmpProviderConfig(configYaml: string): Promise<OmpProviderManagement> {
