@@ -1,12 +1,10 @@
 import pino from "pino";
 import { describe, expect, test } from "vitest";
-import { z } from "zod";
 
 import type { PaseoToolCatalog, PaseoToolDefinition, PaseoToolResult } from "../../tools/types.js";
 import {
   clearOmpHostToolState,
   handleOmpHostToolRuntimeEvent,
-  serializeOmpHostTools,
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import type { OmpRpcHostToolResult } from "./rpc-types.js";
@@ -128,37 +126,61 @@ class OmpHostToolHarness {
 }
 
 describe("OMP host tools", () => {
-  test("marks every caller-scoped Paseo tool essential for direct invocation", () => {
-    const catalog = createCatalog([
+  test("successful entry results suggest only available follow-up tools without changing data", async () => {
+    const created = { agentId: "child-1", guidance: "Completion will be delivered automatically." };
+    const omp = await OmpHostToolHarness.withTools([
       {
         name: "create_agent",
-        title: "Create agent",
-        description: "Create a Paseo agent.",
-        inputSchema: { initialPrompt: z.string().describe("Prompt for the new agent.") },
+        description: "Create an agent.",
+        handler: async () => ({ content: [], structuredContent: created }),
+      },
+      ...["send_agent_prompt", "cancel_agent"].map((name) => ({
+        name,
+        description: name,
         handler: async () => ({ content: [] }),
+      })),
+    ]);
+
+    const result = await omp.call({
+      id: "create-1",
+      toolCallId: "tool-create-1",
+      toolName: "create_agent",
+      arguments: { initialPrompt: "Inspect the bug" },
+    });
+    const text = result.result.content.map((item) => item.text ?? "").join("\n");
+    expect(result.result.details).toEqual(created);
+    expect(JSON.parse(result.result.content[0].text as string)).toEqual(created);
+    expect(text.match(/xd:\/\/[a-z_]+/g)).toEqual(["xd://send_agent_prompt", "xd://cancel_agent"]);
+    omp.close();
+  });
+
+  test("failed entry results do not recommend follow-up operations", async () => {
+    const failure: PaseoToolResult = {
+      content: [{ type: "text", text: "Workspace creation failed" }],
+      isError: true,
+    };
+    const omp = await OmpHostToolHarness.withTools([
+      {
+        name: "create_workspace",
+        description: "Create a workspace.",
+        handler: async () => failure,
       },
       {
-        name: "list_agents",
-        description: "List agents.",
+        name: "archive_workspace",
+        description: "Archive a workspace.",
         handler: async () => ({ content: [] }),
       },
     ]);
 
-    expect(serializeOmpHostTools(catalog)).toEqual([
-      {
-        name: "create_agent",
-        label: "Create agent",
-        description: "Create a Paseo agent.",
-        loadMode: "essential",
-        parameters: expect.objectContaining({ type: "object", required: ["initialPrompt"] }),
-      },
-      {
-        name: "list_agents",
-        description: "List agents.",
-        loadMode: "essential",
-        parameters: expect.objectContaining({ type: "object" }),
-      },
-    ]);
+    const result = await omp.call({
+      id: "create-failed",
+      toolCallId: "tool-create-failed",
+      toolName: "create_workspace",
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.result.content).toEqual(failure.content);
+    omp.close();
   });
 
   test("routes calls and progress through the typed OMP runtime", async () => {

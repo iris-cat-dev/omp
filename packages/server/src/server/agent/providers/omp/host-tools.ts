@@ -30,12 +30,31 @@ interface OmpHostToolRouterInput {
 
 const routersByRuntimeSession = new WeakMap<OmpRuntimeSession, OmpHostToolRouter>();
 
+// Keep capability entry points visible; object-specific management stays discoverable.
+const HOST_TOOL_ENTRY_POINTS: Readonly<Record<string, readonly string[]>> = {
+  present_image: [],
+  request_visual_feedback: [],
+  create_workspace: ["rename_workspace", "archive_workspace"],
+  list_workspaces: ["rename_workspace", "archive_workspace"],
+  create_agent: ["send_agent_prompt", "get_agent_status", "cancel_agent"],
+  list_agents: ["send_agent_prompt", "get_agent_status", "cancel_agent"],
+  list_workspace_scripts: ["start_workspace_script", "stop_workspace_script"],
+  create_terminal: ["send_terminal_keys", "capture_terminal", "kill_terminal"],
+  list_terminals: ["send_terminal_keys", "capture_terminal", "kill_terminal"],
+  create_schedule: ["inspect_schedule", "update_schedule", "pause_schedule", "schedule_logs"],
+  list_schedules: ["inspect_schedule", "update_schedule", "pause_schedule", "schedule_logs"],
+  create_heartbeat: ["delete_heartbeat"],
+  list_providers: ["inspect_provider"],
+  list_models: ["inspect_provider"],
+  list_pending_permissions: ["respond_to_permission"],
+};
+
 export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostToolDefinition[] {
   return [...catalog.tools.values()].map((tool) => {
     const definition: OmpRpcHostToolDefinition = {
       name: tool.name,
       description: tool.description,
-      loadMode: "essential",
+      loadMode: Object.hasOwn(HOST_TOOL_ENTRY_POINTS, tool.name) ? "essential" : "discoverable",
       parameters: serializePaseoToolInputParameters(tool),
     };
     if (tool.title) {
@@ -210,7 +229,23 @@ class OmpHostToolRouter {
       if (entry.canceled || entry.controller.signal.aborted) {
         return;
       }
-      this.runtimeSession.sendHostToolResult(toOmpHostToolResult(request.id, result));
+      const response = toOmpHostToolResult(request.id, result);
+      if (!result.isError) {
+        const followUps = Object.hasOwn(HOST_TOOL_ENTRY_POINTS, request.toolName)
+          ? HOST_TOOL_ENTRY_POINTS[request.toolName].filter((name) => this.catalog.tools.has(name))
+          : undefined;
+        if (followUps?.length) {
+          response.result.content.push({
+            type: "text",
+            text:
+              "When needed, use the IDs above with the following tools. If not directly exposed, " +
+              "read their references for parameters first: " +
+              followUps.map((name) => `xd://${name}`).join(", ") +
+              ".",
+          });
+        }
+      }
+      this.runtimeSession.sendHostToolResult(response);
     } catch (error) {
       if (entry.canceled || entry.controller.signal.aborted) {
         return;

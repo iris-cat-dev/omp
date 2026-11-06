@@ -5,6 +5,7 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 ## Contents
 
 - [OMP built-in tools](#omp-built-in-tools)
+- [Desktop host tools](#desktop-host-tools)
 - [OMP working status](#omp-working-status)
 - [Browser and computer use](#browser-and-computer-use)
 - [Screenshot annotation and text feedback](#screenshot-annotation-and-text-feedback)
@@ -19,6 +20,29 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 Known releases use their tool catalog; unfamiliar versions use the combined known list, not a version whitelist. Desktop checks native `--tools`/`--no-tools` support rather than rejecting unfamiliar releases. Builds sharing a version may expose different tools, so partial selection briefly starts an ephemeral session to request only tools in that build's active roster. No custom OMP build is needed for supported versions.
 
 **This is not a strict denylist.** OMP may add tools excluded from `--tools`, even under `--no-tools`; child agents may use a different list. OMP's own settings may disable selected tools. These choices do not affect standalone OMP sessions, Desktop-injected tools/extensions, or replace permission/approval enforcement. Custom OMP commands cannot combine these settings with their own `--tools`/`--no-tools` flags.
+
+## Desktop host tools
+
+Desktop keeps capability entry points directly callable and exposes object-management tools on demand through OMP's `xd://` transport. With `tools.xdev` enabled and `tools.xdevDocs` set to `catalog`, the model sees a short catalog instead of every management tool's full schema.
+
+The always-visible entry points, when their Desktop capability is enabled, are:
+
+| Capability                | Entry points                                                  |
+| ------------------------- | ------------------------------------------------------------- |
+| Agents                    | `create_agent`, `list_agents`                                 |
+| Workspaces                | `create_workspace`, `list_workspaces`                         |
+| Terminals and scripts     | `create_terminal`, `list_terminals`, `list_workspace_scripts` |
+| Scheduling                | `create_schedule`, `list_schedules`, `create_heartbeat`       |
+| Providers and permissions | `list_providers`, `list_models`, `list_pending_permissions`   |
+| Visual interaction        | `present_image`, `request_visual_feedback`                    |
+
+Other host tools remain enabled but discoverable, including sending prompts, inspecting status, updating, canceling, archiving, unloading, and deleting objects. Successful entry-point results preserve their IDs and existing guidance, then add references to available follow-up tools. Failed results do not add follow-up guidance. Automatically delivered agent results still do not require polling.
+
+For example, after `create_schedule` returns an ID, read `xd://pause_schedule` for its parameters and write `{"id":"<returned ID>"}` to that URI when the task calls for pausing it. The existing Eval tool bridge also reaches enabled discoverable tools. These paths use the same host handlers, input validation, cancellation, and permission boundaries as direct calls; discovery does not grant extra access. Tools disabled by Desktop capability settings are neither registered nor recommended.
+
+Turning off OMP's `tools.xdev` keeps enabled tools directly exposed. Inlining all device documentation also gives up the catalog-only savings. The policy applies when Desktop next registers host tools for a new or resumed SDK session; it does not replace tools in an already-running conversation by itself.
+
+An isolated measurement on 2026-11-06 used the current Desktop serializer, the installed SDK, `trae/gpt-6.1-sol@i18n-tt`, and `O200kBase`: the same 41 host tools changed from 55 total direct tools and 13,974 startup tokens to 29 direct tools and 11,714 tokens. The 26 discoverable host tools saved 2,260 tokens (16.2%), including catalog overhead. A real create → read documentation → pause → inspect flow through the RPC host bridge and temporary schedule storage succeeded; its result guidance cost 44 tokens and the pause documentation cost 40. These are local context estimates before user messages, history, or GPT with Taste turn hooks, not provider usage or a measurement of model tool-selection accuracy.
 
 ## OMP working status
 
