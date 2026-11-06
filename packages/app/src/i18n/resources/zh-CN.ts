@@ -2582,9 +2582,9 @@ export const zhCN: TranslationResources = {
         openLocalSettings: "打开本机模型设置",
         status: {
           remote: "模型来源：远端主机",
-          connecting: "正在连接本机模型来源…",
+          connecting: "正在连接所选模型来源…",
           ready: "模型来源：本机 · {{count}} 个可用模型",
-          error: "本机模型来源不可用，不会回退到远端模型",
+          error: "所选模型来源不可用",
         },
       },
       appearance: {

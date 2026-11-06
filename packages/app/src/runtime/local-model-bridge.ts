@@ -1,6 +1,6 @@
 import type { DaemonClient, DaemonEvent } from "@omp-desktop/client/internal/daemon-client";
 import type { LocalModel, LocalModelStreamFrame } from "@omp-desktop/protocol/local-models";
-import type { DesktopRemoteSshProfile } from "@/desktop/host";
+import type { HostProfile } from "@/types/host-connection";
 
 export type LocalModelBridgeClient = Pick<
   DaemonClient,
@@ -21,7 +21,7 @@ export interface ModelBridgeConnection {
 }
 
 export interface LocalModelBridgeStatus {
-  profile: DesktopRemoteSshProfile;
+  profile: Pick<HostProfile, "serverId" | "modelSource">;
   status: "remote" | "connecting" | "ready" | "error";
   error: string | null;
   modelCount: number;
@@ -41,7 +41,7 @@ const SOURCE_UNAVAILABLE =
 
 /** One renderer-owned source session; requests never enter a global host broadcast. */
 export class LocalModelBridgeController {
-  private profiles = new Map<string, DesktopRemoteSshProfile>();
+  private profiles = new Map<string, LocalModelBridgeStatus["profile"]>();
   private statuses = new Map<string, LocalModelBridgeStatus>();
   private listeners = new Set<() => void>();
   private bindings = new Map<string, Binding>();
@@ -66,7 +66,7 @@ export class LocalModelBridgeController {
     return this.statuses.get(serverId) ?? null;
   }
 
-  setProfile(serverId: string, profile: DesktopRemoteSshProfile | null): void {
+  setProfile(serverId: string, profile: LocalModelBridgeStatus["profile"] | null): void {
     if (profile) this.profiles.set(serverId, profile);
     else this.profiles.delete(serverId);
   }
@@ -78,7 +78,7 @@ export class LocalModelBridgeController {
     const wanted = new Map(
       [...connections].filter(([serverId]) => {
         const profile = this.profiles.get(serverId);
-        return profile && profile.modelSource !== "remote";
+        return profile?.modelSource === "local";
       }),
     );
     const nextSource = wanted.size ? source : null;
@@ -99,9 +99,13 @@ export class LocalModelBridgeController {
     }
 
     for (const [serverId, profile] of this.profiles) {
-      if (profile.modelSource === "remote") {
+      if (profile.modelSource !== "local") {
         const connection = connections.get(serverId);
-        if (connection && !this.sameConnection(this.remoteSelections.get(serverId), connection)) {
+        if (
+          profile.modelSource === "remote" &&
+          connection &&
+          !this.sameConnection(this.remoteSelections.get(serverId), connection)
+        ) {
           this.remoteSelections.set(serverId, connection);
           this.detaching.add(serverId);
           this.publish(serverId, { profile, status: "connecting", error: null, modelCount: 0 });

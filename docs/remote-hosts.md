@@ -1,4 +1,4 @@
-# SSH remote hosts
+# Remote hosts
 
 The Desktop app can provision a remote daemon from **Settings → General → Add host → Connect via SSH**. It uses the system OpenSSH client, including `~/.ssh/config`, agent identities, `ProxyJump`, host-key verification, passwords, passphrases, and MFA prompts.
 
@@ -6,13 +6,15 @@ The Desktop app can provision a remote daemon from **Settings → General → Ad
 
 SSH is used only to inspect the host, upload the version-matched backend, start the daemon, and obtain its pairing offer. After pairing, SSH closes and the app connects through the configured end-to-end encrypted Relay. The remote daemon remains bound to `127.0.0.1:6770`; **do not expose that port to the Internet**.
 
-SSH passwords, private-key passphrases, MFA responses, and pairing links are never persisted. The local management profile stores only the SSH target fields, identity-file path, remote runtime path, server ID, deployed version, and model-source choice.
+SSH passwords, private-key passphrases, MFA responses, and pairing links are never persisted. The local management profile stores only the SSH target fields, identity-file path, remote runtime path, server ID, and deployed version. Model-source choices are stored separately in the Desktop host registry.
 
 See [self-hosted Web and relay deployment](deployment.md) for relay configuration, browser-facing addresses, and pairing-link precautions.
 
 ## Use models configured on this Desktop
 
-SSH-managed hosts use **local models by default**, including saved SSH profiles created before this setting existed. Configure or sign in to models on the local host, connect the SSH host, then select a model in its remote workspace. **Host Settings → Model source** shows the connection state and links to the local model settings. The remote host's Providers page also links to those settings while local models are selected.
+Each connected remote host can independently use models configured on **this computer** or on **the remote host**, whether connected through SSH provisioning, manual pairing, or direct TCP. Choose the source in **Host Settings → Model source** or **Host Settings → Providers → Model source**. The choice persists across reconnections and Desktop restarts. Configure or sign in to local models on the local host; while local models are selected, the remote Providers page links to those settings.
+
+New SSH-managed hosts use local models by default. Existing SSH choices are migrated without overriding a choice already saved in the host registry; older SSH profiles with no choice keep the local default. Manually paired and TCP hosts with no saved choice continue using remote models and do not take over another Desktop's attached source.
 
 The execution boundary is:
 
@@ -24,9 +26,9 @@ The local daemon starts a tool-free native OMP model worker. Both model-bridge l
 
 Keep Desktop, its local daemon, and both host connections running while using local models. Losing the source cancels forwarding and fails inference explicitly; it does not fall back to a remotely configured model or retry a disconnected source indefinitely. Remote schedules and unattended work also require the local source to remain connected. Changing sources pauses existing OMP runtimes; their conversation history is retained for resuming with the selected source.
 
-To intentionally use a server's own credentials instead, turn off **Use models from this Desktop** in that host's settings. Manually paired hosts without an SSH management profile are unchanged. Another Desktop connection cannot take over an attached model source.
+To use the server's own models and credentials, turn off **Use models configured on this computer** in that host's settings. Another Desktop connection cannot take over an attached model source.
 
-Both daemons need model-bridge support. Update an older remote daemon with **Update via SSH** when the app asks. SDK hosts execute the Agent loop and tools directly and require neither an OMP executable nor provider credentials in local-model mode.
+Both daemons need model-bridge support, and the local Desktop SDK must include the native model gateway. Update older daemons before enabling local models; SSH-managed hosts can use **Update via SSH**. SDK hosts execute the Agent loop and tools directly and require neither an OMP executable nor provider credentials in local-model mode.
 
 Only enable sharing for hosts you trust: while attached, a host can submit inference to the advertised local models and consume their quota. Inference context is still sent to whichever provider you configured locally. The model gateway does not execute the remote host's tools on the local machine.
 

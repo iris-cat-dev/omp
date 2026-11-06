@@ -64,7 +64,6 @@ export async function startOmpLocalModelGateway(
       "--no-skills",
       "--no-rules",
       "--no-lsp",
-      "--no-title",
       "--extension",
       resolveOmpRuntimeHelperPath("local-model-gateway-extension", import.meta.url),
     ],

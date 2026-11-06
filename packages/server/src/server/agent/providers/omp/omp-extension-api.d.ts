@@ -38,3 +38,16 @@ declare module "@oh-my-pi/pi-ai/auth-gateway" {
     close(): void;
   };
 }
+
+declare module "@oh-my-pi/pi-utils/runtime" {
+  export interface RuntimeServer {
+    readonly port: number;
+    stop(closeActiveConnections?: boolean): void | Promise<void>;
+  }
+  export function serve(options: {
+    hostname: string;
+    port: number;
+    idleTimeout: number;
+    fetch(request: Request): Promise<Response>;
+  }): RuntimeServer | Promise<RuntimeServer>;
+}

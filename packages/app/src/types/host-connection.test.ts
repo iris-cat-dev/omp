@@ -166,6 +166,29 @@ describe("normalizeStoredHostProfile", () => {
 
     expect(profile?.lifecycle).toEqual({});
   });
+  it.each(["local", "remote"] as const)(
+    "restores a host's %s model choice across reconnection",
+    (modelSource) => {
+      const profile = normalizeStoredHostProfile({
+        ...makeHost("srv_model_source"),
+        modelSource,
+        connections: [{ type: "directTcp", endpoint: "remote.example.com:6770" }],
+      })!;
+      const [reconnected] = upsertHostConnectionInProfiles({
+        profiles: [profile],
+        serverId: profile.serverId,
+        connection: {
+          id: "relay:relay.example.com:443",
+          type: "relay",
+          relayEndpoint: "relay.example.com:443",
+          daemonPublicKeyB64: "pubkey",
+        },
+      });
+      expect(normalizeStoredHostProfile(JSON.parse(JSON.stringify(reconnected)))?.modelSource).toBe(
+        modelSource,
+      );
+    },
+  );
 });
 
 describe("upsertHostConnectionInProfiles", () => {

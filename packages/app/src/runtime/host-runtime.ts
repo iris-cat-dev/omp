@@ -15,6 +15,7 @@ import {
   StoredHostRegistrySchema,
   type HostConnection,
   type HostProfile,
+  type HostModelSource,
 } from "@/types/host-connection";
 import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
 import {
@@ -1559,6 +1560,21 @@ export class HostRuntimeStore {
           shouldPersistHosts = true;
         }
       }
+      const getSshProfile = shouldUseDesktopDaemon()
+        ? getDesktopHost()?.remoteSsh?.getProfile
+        : null;
+      if (getSshProfile) {
+        profiles = await Promise.all(
+          profiles.map(async (host) => {
+            if (host.modelSource !== undefined) return host;
+            const sshProfile = await getSshProfile(host.serverId);
+            if (!sshProfile) return host;
+            shouldPersistHosts = true;
+            return { ...host, modelSource: sshProfile.modelSource ?? "local" };
+          }),
+        );
+      }
+      if (shouldPersistHosts) await this.persistHosts(profiles);
       this.hosts = profiles;
       this.replicaCache.setHosts(profiles.map((profile) => profile.serverId));
       projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
@@ -1570,11 +1586,6 @@ export class HostRuntimeStore {
       this.replicaCache.start();
       this.hostRegistryStatus = "ready";
       this.emitHostList();
-      if (shouldPersistHosts) {
-        void this.persistHosts().catch((error) =>
-          console.error("[HostRuntime] Failed to persist host registry", error),
-        );
-      }
     }
   }
 
@@ -1937,6 +1948,22 @@ export class HostRuntimeStore {
       ...host,
       appearance: { ...host.appearance, badgeDisplay },
     }));
+  }
+
+  setHostModelSource(serverId: string, modelSource: HostModelSource): Promise<void> {
+    const update = this.hostMutationTail.then(async () => {
+      const host = this.hosts.find((candidate) => candidate.serverId === serverId);
+      if (!host) throw new Error(`Unknown host ${serverId}`);
+      if (host.modelSource === modelSource) return;
+      const updatedAt = new Date().toISOString();
+      const next = this.hosts.map((candidate) =>
+        candidate.serverId === serverId ? { ...candidate, modelSource, updatedAt } : candidate,
+      );
+      await this.persistHosts(next);
+      this.setHostsAndSync(next);
+    });
+    this.hostMutationTail = update.catch(() => undefined);
+    return update;
   }
 
   async setHostConnectionEnabled(serverId: string, enabled: boolean): Promise<void> {
@@ -2727,6 +2754,7 @@ export interface HostMutations {
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
   setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
   setHostConnectionEnabled: (serverId: string, enabled: boolean) => Promise<void>;
+  setHostModelSource: (serverId: string, modelSource: HostModelSource) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }
@@ -2746,6 +2774,8 @@ export function useHostMutations(): HostMutations {
         store.setHostBadgeDisplay(serverId, badgeDisplay),
       setHostConnectionEnabled: (serverId, enabled) =>
         store.setHostConnectionEnabled(serverId, enabled),
+      setHostModelSource: (serverId, modelSource) =>
+        store.setHostModelSource(serverId, modelSource),
       removeHost: (serverId) => store.removeHost(serverId),
       removeConnection: (serverId, connectionId) => store.removeConnection(serverId, connectionId),
     }),

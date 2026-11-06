@@ -1,4 +1,5 @@
 import { createAuthGatewayRouter } from "@oh-my-pi/pi-ai/auth-gateway";
+import { serve } from "@oh-my-pi/pi-utils/runtime";
 
 const TOKEN_ENV = "OMP_DESKTOP_LOCAL_MODEL_GATEWAY_TOKEN";
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
@@ -21,11 +22,7 @@ interface GatewayExtensionApi {
     event: "session_start",
     handler: (event: unknown, context: { modelRegistry: GatewayRegistry }) => void,
   ): void;
-  on(event: "session_shutdown", handler: () => void): void;
-}
-interface NativeHttpServer {
-  port: number;
-  stop(closeActiveConnections?: boolean): void;
+  on(event: "session_shutdown", handler: () => void | Promise<void>): void;
 }
 
 /** Runs inside the local OMP host. The router owns native provider auth, never the remote daemon. */
@@ -33,9 +30,9 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
   const token = process.env[TOKEN_ENV];
   delete process.env[TOKEN_ENV];
   if (!token) throw new Error("Local model gateway token is unavailable");
-  let dispose: (() => void) | undefined;
-  pi.on("session_start", (_event, context) => {
-    dispose?.();
+  let dispose: (() => Promise<void>) | undefined;
+  pi.on("session_start", async (_event, context) => {
+    await dispose?.();
     const registry = context.modelRegistry;
     const available = new Map(
       registry
@@ -67,18 +64,7 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
       storage,
       resolveModel: (id) => available.get(id),
     });
-    // Bun is supplied by the compiled OMP extension host, not the Desktop Node process.
-    const host = globalThis as unknown as {
-      Bun: {
-        serve(options: {
-          hostname: string;
-          port: number;
-          idleTimeout: number;
-          fetch(request: Request): Promise<Response>;
-        }): NativeHttpServer;
-      };
-    };
-    const server = host.Bun.serve({
+    const server = await serve({
       hostname: "127.0.0.1",
       port: 0,
       idleTimeout: 0,
@@ -145,8 +131,8 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
         }
       },
     });
-    dispose = () => {
-      server.stop(true);
+    dispose = async () => {
+      await server.stop(true);
       router.close();
       dispose = undefined;
     };

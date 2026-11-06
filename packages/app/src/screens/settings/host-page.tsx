@@ -37,6 +37,7 @@ import {
 import { getIsElectron } from "@/constants/platform";
 import {
   getDesktopDaemonStatus,
+  shouldUseDesktopDaemon,
   restartDesktopDaemon,
   startDesktopDaemon,
   stopDesktopDaemon,
@@ -76,8 +77,7 @@ import { PaseoToolsCard } from "./paseo-tools-card";
 import { hasDaemonReconnectedAfter, type DaemonConnectionMarker } from "./daemon-reconnect";
 import { restartDaemonFromSettings } from "./daemon-restart";
 import { OmpBuiltinToolsCard } from "./omp-builtin-tools-card";
-import { SshModelSourceSection } from "./ssh-model-source-section";
-import { useLocalModelBridgeStatus } from "@/runtime/local-model-bridge-runtime";
+import { HostModelSourceSection } from "./host-model-source-section";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedArrowDown = withUnistyles(ArrowDown);
@@ -281,19 +281,20 @@ export function HostProxyPage({ serverId }: { serverId: string }) {
 export function HostProvidersPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
-  const modelBridge = useLocalModelBridgeStatus(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
 
   if (!host) {
     return <HostNotFound />;
   }
-  if (modelBridge && modelBridge.profile.modelSource !== "remote") {
-    return <SshModelSourceSection serverId={serverId} />;
-  }
-
   return (
-    <SettingsSection title={t("settings.providers.title")}>
-      <OmpProviderConfigurationPanel serverId={serverId} />
-    </SettingsSection>
+    <View>
+      <HostModelSourceSection serverId={serverId} />
+      {!shouldUseDesktopDaemon() || isLocalDaemon || host.modelSource !== "local" ? (
+        <SettingsSection title={t("settings.providers.title")}>
+          <OmpProviderConfigurationPanel serverId={serverId} />
+        </SettingsSection>
+      ) : null}
+    </View>
   );
 }
 
@@ -333,7 +334,7 @@ export function HostSettingsPage({
       <HostStatusBadges serverId={serverId} />
       <HostConnectionError serverId={serverId} />
       <ConnectionsSection host={host} />
-      <SshModelSourceSection serverId={serverId} />
+      <HostModelSourceSection serverId={serverId} />
 
       <HostAppearanceSection host={host} />
       <PairDeviceSection key={serverId} serverId={serverId} />

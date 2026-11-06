@@ -12,7 +12,6 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { PairHostError, pairHostFromOffer } from "@/pairing/pair-host-from-offer";
 import { useHostMutations } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
-import { reloadLocalModelBridgeProfile } from "@/runtime/local-model-bridge-runtime";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "./ui/button";
 
@@ -41,7 +40,7 @@ export function RemoteSshHostModal({
 }: RemoteSshHostModalProps) {
   const { t } = useTranslation();
   const { settings } = useAppSettings();
-  const { upsertConnectionFromOffer } = useHostMutations();
+  const { upsertConnectionFromOffer, setHostModelSource } = useHostMutations();
   const operationId = useRef<string | null>(null);
   const [host, setHost] = useState(managedProfile?.target.host ?? "");
   const [username, setUsername] = useState(managedProfile?.target.username ?? "");
@@ -67,7 +66,8 @@ export function RemoteSshHostModal({
         setInteractive(event.enabled);
       } else if (event.type === "phase") {
         const phase =
-          (event.phase === "uploading" || event.phase === "downloading") && event.progress !== undefined
+          (event.phase === "uploading" || event.phase === "downloading") &&
+          event.progress !== undefined
             ? t(`pairing.ssh.phases.${event.phase}Progress`, { percent: event.progress })
             : t(`pairing.ssh.phases.${event.phase}`);
         setState({ status: "running", phase });
@@ -132,9 +132,10 @@ export function RemoteSshHostModal({
         target: result.target,
         runtimeRoot: result.runtimeRoot,
         deployedVersion: result.deployedVersion,
-        modelSource: managedProfile?.modelSource ?? "local",
       });
-      await reloadLocalModelBridgeProfile(profile.serverId);
+      if (profile.modelSource === undefined) {
+        await setHostModelSource(profile.serverId, managedProfile?.modelSource ?? "local");
+      }
       onSaved?.(profile);
       onClose();
     } catch (error) {
@@ -165,6 +166,7 @@ export function RemoteSshHostModal({
     settings.relayServerAddress,
     t,
     upsertConnectionFromOffer,
+    setHostModelSource,
     username,
   ]);
 

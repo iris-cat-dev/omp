@@ -2680,9 +2680,9 @@ export const en = {
         openLocalSettings: "Open local model settings",
         status: {
           remote: "Source: remote host",
-          connecting: "Connecting to local model source…",
+          connecting: "Connecting to selected model source…",
           ready: "Source: this computer · {{count}} models available",
-          error: "Local model source unavailable — no remote fallback",
+          error: "Selected model source unavailable",
         },
       },
       appearance: {

@@ -1821,6 +1821,98 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("persists independent model choices for TCP and paired hosts across restart", async () => {
+    const first = makeHost({ serverId: "tcp-model-host", lifecycle: { autoConnect: false } });
+    const second = makeHost({ serverId: "paired-model-host", lifecycle: { autoConnect: false } });
+    const storage = createMemoryHostRuntimeStorage({
+      "@omp-desktop:daemon-registry": JSON.stringify([first, second]),
+      "@omp-desktop:e2e": "1",
+    });
+    const store = createAppearanceStore(storage);
+    store.boot();
+    await onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    await Promise.all([
+      store.setHostModelSource(first.serverId, "local"),
+      store.setHostColor(first.serverId, "teal"),
+      store.setHostModelSource(second.serverId, "remote"),
+    ]);
+    store.syncHosts([]);
+    const restarted = createAppearanceStore(storage);
+    restarted.boot();
+    await onceHostListMatches(restarted, () => restarted.isHostRegistryLoaded());
+    expect(restarted.getHosts()).toMatchObject([
+      {
+        serverId: first.serverId,
+        modelSource: "local",
+        appearance: { color: "teal" },
+        lifecycle: { autoConnect: false },
+      },
+      { serverId: second.serverId, modelSource: "remote", lifecycle: { autoConnect: false } },
+    ]);
+    restarted.syncHosts([]);
+  });
+
+  it("does not activate a model choice that failed to persist", async () => {
+    const host = makeHost({ serverId: "model-host", lifecycle: { autoConnect: false } });
+    const storage = createMemoryHostRuntimeStorage({
+      "@omp-desktop:daemon-registry": JSON.stringify([host]),
+      "@omp-desktop:e2e": "1",
+    });
+    const store = createAppearanceStore(storage);
+    store.boot();
+    await onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    storage.setItem = async () => {
+      throw new Error("disk full");
+    };
+    await expect(store.setHostModelSource(host.serverId, "local")).rejects.toThrow("disk full");
+    expect(store.getHosts()[0]?.modelSource).toBeUndefined();
+    store.syncHosts([]);
+  });
+
+  it("migrates SSH choices while keeping generic host choices authoritative", async () => {
+    const hosts = ["legacy-local", "legacy-remote", "selected", "paired"].map((serverId) => ({
+      ...makeHost({ serverId, lifecycle: { autoConnect: false } }),
+      ...(serverId === "selected" ? { modelSource: "remote" } : {}),
+    }));
+    const storage = createMemoryHostRuntimeStorage({
+      "@omp-desktop:daemon-registry": JSON.stringify(hosts),
+      "@omp-desktop:e2e": "1",
+    });
+    Reflect.set(globalThis, "window", {
+      paseoDesktop: {
+        remoteSsh: {
+          getProfile: async (serverId: string) =>
+            serverId === "paired"
+              ? null
+              : {
+                  serverId,
+                  target: { host: serverId },
+                  runtimeRoot: "/tmp/omp",
+                  deployedVersion: "1.0.0",
+                  ...(serverId === "legacy-remote" ? { modelSource: "remote" } : {}),
+                },
+        },
+      },
+    });
+    const store = createAppearanceStore(storage);
+    store.boot();
+    await onceHostListMatches(store, () => store.isHostRegistryLoaded());
+    expect(store.getHosts().map((host) => host.modelSource)).toEqual([
+      "local",
+      "remote",
+      "remote",
+      undefined,
+    ]);
+    const persisted = JSON.parse((await storage.getItem("@omp-desktop:daemon-registry"))!);
+    expect(persisted.map((host: HostProfile) => host.modelSource)).toEqual([
+      "local",
+      "remote",
+      "remote",
+      undefined,
+    ]);
+    store.syncHosts([]);
+  });
+
   it("records a chosen host color and writes it through to storage", async () => {
     const host = makeHost({ serverId: "srv_appearance", updatedAt: new Date(0).toISOString() });
     const storage = createMemoryHostRuntimeStorage();

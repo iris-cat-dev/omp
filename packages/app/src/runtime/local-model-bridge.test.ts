@@ -30,28 +30,43 @@ const body: LocalModelInferenceRequest = {
   stream: true,
 };
 
-function managed(
+function selectSource(
   controller: LocalModelBridgeController,
   serverId: string,
-  modelSource?: "local" | "remote",
+  modelSource: "local" | "remote" = "local",
 ) {
-  controller.setProfile(serverId, {
-    serverId,
-    target: { host: serverId },
-    runtimeRoot: "/tmp/omp",
-    deployedVersion: "1.0.0",
-    modelSource,
-  });
+  controller.setProfile(serverId, { serverId, modelSource });
 }
 
 describe("local model bridge lifecycle", () => {
-  it("defaults old SSH profiles to local and namespaces same request IDs across hosts", async () => {
+  it("leaves an unselected host's model ownership unchanged until explicitly selected", async () => {
+    const controller = new LocalModelBridgeController();
+    const local = new BridgeClient();
+    const remote = new BridgeClient();
+    controller.setProfile("paired", { serverId: "paired" });
+    const source = { client: local, generation: "1" };
+    const connections = new Map([["paired", { client: remote, generation: "1" }]]);
+    controller.reconcile(source, connections);
+    expect(controller.getStatus("paired")?.status).toBe("remote");
+    expect(local.openLocalModelSource).not.toHaveBeenCalled();
+    expect(remote.attachLocalModels).not.toHaveBeenCalled();
+    expect(remote.detachLocalModels).not.toHaveBeenCalled();
+    selectSource(controller, "paired");
+    controller.reconcile(source, connections);
+    await vi.waitFor(() => expect(controller.getStatus("paired")?.status).toBe("ready"));
+    selectSource(controller, "paired", "remote");
+    controller.reconcile(source, connections);
+    await vi.waitFor(() => expect(controller.getStatus("paired")?.status).toBe("remote"));
+    expect(remote.detachLocalModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("namespaces same request IDs across arbitrary hosts using local models", async () => {
     const controller = new LocalModelBridgeController();
     const local = new BridgeClient();
     const first = new BridgeClient();
     const second = new BridgeClient();
-    managed(controller, "first");
-    managed(controller, "second");
+    selectSource(controller, "first");
+    selectSource(controller, "second");
     first.attachLocalModels.mockImplementation(async () => {
       first.emit({ type: "local_model_request", requestId: "shared", body });
     });
@@ -87,7 +102,7 @@ describe("local model bridge lifecycle", () => {
     const controller = new LocalModelBridgeController();
     const local = new BridgeClient();
     const remote = new BridgeClient();
-    managed(controller, "remote");
+    selectSource(controller, "remote");
     const connections = new Map([["remote", { client: remote, generation: "1" }]]);
     controller.reconcile({ client: local, generation: "1" }, connections);
     await vi.waitFor(() => expect(controller.getStatus("remote")?.status).toBe("ready"));
@@ -120,8 +135,8 @@ describe("local model bridge lifecycle", () => {
     const local = new BridgeClient();
     const first = new BridgeClient();
     const second = new BridgeClient();
-    managed(controller, "first");
-    managed(controller, "second");
+    selectSource(controller, "first");
+    selectSource(controller, "second");
     const source = { client: local, generation: "1" };
     const secondConnection = { client: second, generation: "1" };
     controller.reconcile(
@@ -140,7 +155,7 @@ describe("local model bridge lifecycle", () => {
     expect(local.cancelLocalModel).toHaveBeenCalledWith(firstId);
     expect(local.cancelLocalModel).not.toHaveBeenCalledWith(secondId);
     expect(local.closeLocalModelSource).not.toHaveBeenCalled();
-    managed(controller, "second", "remote");
+    selectSource(controller, "second", "remote");
     controller.reconcile(source, new Map([["second", secondConnection]]));
     await vi.waitFor(() => expect(second.detachLocalModels).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(controller.getStatus("second")?.status).toBe("remote"));
@@ -153,11 +168,11 @@ describe("local model bridge lifecycle", () => {
     const remote = new BridgeClient();
     const sourceOpen = Promise.withResolvers<{ models: LocalModel[] }>();
     local.openLocalModelSource.mockImplementation(() => sourceOpen.promise);
-    managed(controller, "remote");
+    selectSource(controller, "remote");
     const connections = new Map([["remote", { client: remote, generation: "1" }]]);
     controller.reconcile({ client: local, generation: "1" }, connections);
     await vi.waitFor(() => expect(local.openLocalModelSource).toHaveBeenCalled());
-    managed(controller, "remote", "remote");
+    selectSource(controller, "remote", "remote");
     controller.reconcile({ client: local, generation: "1" }, connections);
     sourceOpen.resolve({ models: local.models });
     await vi.waitFor(() => expect(remote.detachLocalModels).toHaveBeenCalled());
@@ -167,7 +182,7 @@ describe("local model bridge lifecycle", () => {
   it("keeps explicit remote source usable on old daemons without bridge capability", async () => {
     const controller = new LocalModelBridgeController();
     const remote = new BridgeClient();
-    managed(controller, "remote", "remote");
+    selectSource(controller, "remote", "remote");
     controller.reconcile(
       null,
       new Map([["remote", { client: remote, generation: "1", supportsLocalModels: false }]]),

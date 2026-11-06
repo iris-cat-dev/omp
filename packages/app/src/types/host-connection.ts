@@ -45,11 +45,14 @@ export interface HostLifecycle {
   autoConnect?: boolean;
 }
 
+export type HostModelSource = "local" | "remote";
+
 export interface HostProfile {
   serverId: string;
   label: string;
   appearance: HostAppearance;
   lifecycle: HostLifecycle;
+  modelSource?: HostModelSource;
   connections: HostConnection[];
   preferredConnectionId: string | null;
   createdAt: string;
@@ -327,6 +330,7 @@ const StoredHostProfileSchema = z.strictObject({
   label: z.string().optional(),
   appearance: HostAppearanceSchema.optional(),
   lifecycle: z.strictObject({ autoConnect: z.boolean().optional() }).optional(),
+  modelSource: z.enum(["local", "remote"]).optional(),
   connections: z.array(StoredHostConnectionSchema).min(1),
   preferredConnectionId: z.string().nullable().optional(),
   createdAt: z.string().datetime({ offset: true }).optional(),
@@ -408,6 +412,7 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
     label,
     appearance: record.appearance ?? defaultHostAppearance(),
     lifecycle: record.lifecycle ?? defaultLifecycle(),
+    ...(record.modelSource !== undefined ? { modelSource: record.modelSource } : {}),
     connections,
     preferredConnectionId,
     createdAt: record.createdAt ?? now,
