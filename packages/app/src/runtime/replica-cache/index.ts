@@ -66,6 +66,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("user_message"),
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
+    rewindStatus: z.enum(["pending", "ready", "unavailable"]).optional(),
     text: z.string(),
   }),
   z.strictObject({
@@ -374,6 +375,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         kind: item.kind,
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.rewindStatus ? { rewindStatus: item.rewindStatus } : {}),
         text: item.text,
       };
     case "assistant_message":
@@ -457,6 +459,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         kind: item.kind,
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.rewindStatus ? { rewindStatus: item.rewindStatus } : {}),
         text: item.text,
       };
     case "assistant_message":
@@ -747,7 +750,12 @@ function serializeHost(serverId: string, input: ReplicaInput, directorySync?: un
             items,
             range:
               canPersistCoverage && range !== null
-                ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq, contentVersion: range.contentVersion }
+                ? {
+                    epoch: range.epoch,
+                    startSeq: range.startSeq,
+                    endSeq: range.endSeq,
+                    contentVersion: range.contentVersion,
+                  }
                 : null,
             hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
           }

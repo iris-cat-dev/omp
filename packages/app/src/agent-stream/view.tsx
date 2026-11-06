@@ -44,7 +44,11 @@ import type {
   AgentUsage,
 } from "@omp-desktop/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore, setAgentTimelineReadingPosition, setAgentTimelineVisibleItems } from "@/stores/session-store";
+import {
+  useSessionStore,
+  setAgentTimelineReadingPosition,
+  setAgentTimelineVisibleItems,
+} from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { useSettings } from "@/hooks/use-settings";
@@ -703,18 +707,42 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       const movingForward = index > previousReadingIndex.current;
       previousReadingIndex.current = index;
       if (!movingForward || newerFetchInFlight.current || remoteIsLoadingOlder) return;
-      const cursor = useSessionStore.getState().sessions[resolvedServerId]?.agentTimelineCursor.get(agentId);
+      const cursor = useSessionStore
+        .getState()
+        .sessions[resolvedServerId]?.agentTimelineCursor.get(agentId);
       if (!cursor) return;
       const position = effectiveStreamItems[index]?.timelineCursor;
-      const island = position ? cursor.retainedRanges?.find((range) => position.seq >= range.startSeq && position.seq <= range.endSeq) : undefined;
-      const islandEnd = island ? effectiveStreamItems.findLastIndex((item) => item.timelineCursor?.epoch === cursor.epoch && item.timelineCursor.seq <= island.endSeq) : -1;
+      const island = position
+        ? cursor.retainedRanges?.find(
+            (range) => position.seq >= range.startSeq && position.seq <= range.endSeq,
+          )
+        : undefined;
+      const islandEnd = island
+        ? effectiveStreamItems.findLastIndex(
+            (item) =>
+              item.timelineCursor?.epoch === cursor.epoch &&
+              item.timelineCursor.seq <= island.endSeq,
+          )
+        : -1;
       const fillingGap = island !== undefined && index >= islandEnd - 8;
       if (!fillingGap && (index < effectiveStreamItems.length - 8 || !isTimelineDetached)) return;
       newerFetchInFlight.current = true;
-      void getHostRuntimeStore().fetchAgentTimeline(resolvedServerId, agentId, {
-        direction: "after", cursor: { epoch: cursor.epoch, seq: fillingGap ? island!.endSeq : cursor.endSeq, contentVersion: cursor.contentVersion },
-        limit: TIMELINE_FETCH_PAGE_SIZE, projection: "projected", ...(fillingGap ? { mergeWindow: true } : {}),
-      }).catch(handleTimelineHistoryLoadError).finally(() => { newerFetchInFlight.current = false; });
+      void getHostRuntimeStore()
+        .fetchAgentTimeline(resolvedServerId, agentId, {
+          direction: "after",
+          cursor: {
+            epoch: cursor.epoch,
+            seq: fillingGap ? island!.endSeq : cursor.endSeq,
+            contentVersion: cursor.contentVersion,
+          },
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          projection: "projected",
+          ...(fillingGap ? { mergeWindow: true } : {}),
+        })
+        .catch(handleTimelineHistoryLoadError)
+        .finally(() => {
+          newerFetchInFlight.current = false;
+        });
     });
     const reportVisibleHistoryItems = useStableEvent((rowIds: readonly string[]) => {
       const ids = new Set(rowIds);
@@ -800,6 +828,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         return (
           <UserMessage
+            id={item.id}
+            clientMessageId={item.clientMessageId}
+            rewindStatus={item.rewindStatus}
             serverId={resolvedServerId}
             agentId={agentId}
             messageId={item.messageId}

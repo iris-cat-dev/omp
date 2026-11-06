@@ -476,6 +476,32 @@ describe("ReplicaCache", () => {
     expect(tail.find((item) => item.id === "hello")?.turnId).toBe("turn-1");
   });
 
+  it.each(["pending", "unavailable", "ready"] as const)(
+    "keeps canonical rewind status %s across cache restoration",
+    async (rewindStatus) => {
+      const storage = new MemoryStorage();
+      const writer = new ReplicaCache(storage);
+      writer.setHosts([SERVER_ID]);
+      seedSession();
+      const prompt = createUserMessage({
+        clientMessageId: "client-prompt",
+        text: "prompt",
+        rewindStatus,
+        timestamp: new Date(1000),
+        timelineCursor: { epoch: "epoch-1", seq: 12 },
+      });
+      useSessionStore.getState().setAgentStreamTail(SERVER_ID, new Map([["agent-1", [prompt]]]));
+      await writer.flush();
+      useSessionStore.getState().clearSession(SERVER_ID);
+      const reader = new ReplicaCache(storage);
+      reader.setHosts([SERVER_ID]);
+      await reader.restore();
+      expect(
+        useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1"),
+      ).toEqual([prompt]);
+    },
+  );
+
   it("restores tool calls inside an authoritative cached window", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);

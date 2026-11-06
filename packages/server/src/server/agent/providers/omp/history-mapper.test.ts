@@ -47,65 +47,217 @@ describe("OMP history mapper", () => {
     const runtimeSettings = { ompBackend: "cli" as const, ompSdkPath: join(dir, "missing-sdk") };
     const client = new OmpAgentClient({ logger: pino({ level: "silent" }), runtimeSettings });
     try {
-      await expect(client.readHistoryPage({ sessionFile, provider: "omp", epoch: "missing", timestamp: "2026-10-01T00:00:00Z", options: { direction: "tail" } })).rejects.toThrow("cold history requires its indexed journal module");
+      await expect(
+        client.readHistoryPage({
+          sessionFile,
+          provider: "omp",
+          epoch: "missing",
+          timestamp: "2026-10-01T00:00:00Z",
+          options: { direction: "tail" },
+        }),
+      ).rejects.toThrow("cold history requires its indexed journal module");
       const events: AgentStreamEvent[] = [];
-      await expect((async () => {
-        for await (const event of streamOmpHistory({ sessionFile, provider: "omp", runtimeSettings })) events.push(event);
-      })()).rejects.toThrow("including when using a standalone CLI runtime");
+      await expect(
+        (async () => {
+          for await (const event of streamOmpHistory({
+            sessionFile,
+            provider: "omp",
+            runtimeSettings,
+          }))
+            events.push(event);
+        })(),
+      ).rejects.toThrow("including when using a standalone CLI runtime");
       expect(events).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test.each(["sdk", "cli"] as const)("reads the selected %s client's journal through provider wrappers without starting a host", async (ompBackend) => {
-    expect(process.env.OMP_DESKTOP_SDK_ROOT).toBeUndefined();
-    const dir = mkdtempSync(join(tmpdir(), "omp-selected-journal-"));
-    const sessionFile = join(dir, "parent.jsonl");
-    const childFile = join(dir, "parent", "Worker.jsonl");
-    const screenshot = { data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aShoAAAAASUVORK5CYII=", mimeType: "image/png" };
-    mkdirSync(join(dir, "parent"));
-    writeFileSync(sessionFile, [
-      { type: "session", id: "root", cwd: dir },
-      { type: "message", id: "prompt", parentId: "root", message: { role: "user", content: [{ type: "text", text: "Selected root" }, { type: "image", ...screenshot }] } },
-      { type: "message", id: "spawn", parentId: "prompt", message: { role: "assistant", content: [{ type: "toolCall", id: "task", name: "task", arguments: { tasks: [{ task: "Inspect" }] } }] } },
-      { type: "message", id: "result", parentId: "spawn", message: { role: "toolResult", toolCallId: "task", toolName: "task", content: [{ type: "text", text: "Done" }], details: { results: [{ id: "Worker", exitCode: 0 }] } } },
-      { type: "message", id: "off-branch", parentId: "root", message: { role: "user", content: "Excluded" } },
-      { type: "model_usage", id: "usage", parentId: "off-branch", activeLeafId: "result" },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    writeFileSync(childFile, [
-      { type: "session", id: "child-root", cwd: dir },
-      { type: "message", id: "answer", parentId: "child-root", message: { role: "assistant", content: [{ type: "text", text: "Real child journal" }] } },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    const sdkStart = vi.spyOn(OmpSdkRuntime.prototype, "startSession").mockImplementation(async () => { throw new Error("History must not start an SDK host"); });
-    const cliStart = vi.spyOn(OmpCliRuntime.prototype, "startSession").mockImplementation(async () => { throw new Error("History must not start a CLI runtime"); });
-    try {
-      const logger = pino({ level: "silent" });
-      const settings = { ...ompHistoryRuntimeSettings, ompBackend };
-      const registry = buildProviderRegistry(logger, { runtimeSettings: { omp: settings, pi: settings, codex: settings } });
-      for (const provider of ["omp", "pi", "codex"]) {
-        const selectedClient = registry[provider]!.createClient(logger);
-        const manager = new AgentManager({ logger, clients: { [provider]: selectedClient } });
-        const client = manager.getRegisteredClient(provider)!;
-        expect(client).toBe(selectedClient);
-        expect(manager.getRegisteredClient("missing")).toBeUndefined();
-        const page = await client.readHistoryPage!({ sessionFile, provider, epoch: "selected", timestamp: "2026-10-01T00:00:00Z", options: { direction: "tail", limit: 0 } });
-        expect(page.rows.map((row) => row.item)).toContainEqual(expect.objectContaining({ type: "user_message", text: "Selected root", images: [screenshot] }));
-        expect(JSON.stringify(page.rows)).not.toContain("Excluded");
-        const children: AgentStreamEvent[] = [];
-        for await (const event of client.streamPersistedSubagentHistory!({ sessionFile, provider })) children.push(event);
-        expect(children).toContainEqual(expect.objectContaining({ type: "provider_subagent", provider, event: expect.objectContaining({ type: "timeline", id: "Worker", item: expect.objectContaining({ type: "assistant_message", text: "Real child journal" }) }) }));
-        expect(manager.listAgents()).toEqual([]);
-      }
-      expect(getOmpColdHistoryStats(sessionFile)?.entryEntriesParsed).toBeGreaterThan(0);
-      expect(sdkStart).not.toHaveBeenCalled();
-      expect(cliStart).not.toHaveBeenCalled();
+  test.each(["sdk", "cli"] as const)(
+    "reads the selected %s client's journal through provider wrappers without starting a host",
+    async (ompBackend) => {
       expect(process.env.OMP_DESKTOP_SDK_ROOT).toBeUndefined();
-    } finally {
-      sdkStart.mockRestore();
-      cliStart.mockRestore();
-      rmSync(dir, { recursive: true, force: true });
-    }
+      const dir = mkdtempSync(join(tmpdir(), "omp-selected-journal-"));
+      const sessionFile = join(dir, "parent.jsonl");
+      const childFile = join(dir, "parent", "Worker.jsonl");
+      const screenshot = {
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aShoAAAAASUVORK5CYII=",
+        mimeType: "image/png",
+      };
+      mkdirSync(join(dir, "parent"));
+      writeFileSync(
+        sessionFile,
+        [
+          { type: "session", id: "root", cwd: dir },
+          {
+            type: "message",
+            id: "prompt",
+            parentId: "root",
+            message: {
+              role: "user",
+              content: [
+                { type: "text", text: "Selected root" },
+                { type: "image", ...screenshot },
+              ],
+            },
+          },
+          {
+            type: "message",
+            id: "spawn",
+            parentId: "prompt",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "task",
+                  name: "task",
+                  arguments: { tasks: [{ task: "Inspect" }] },
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            id: "result",
+            parentId: "spawn",
+            message: {
+              role: "toolResult",
+              toolCallId: "task",
+              toolName: "task",
+              content: [{ type: "text", text: "Done" }],
+              details: { results: [{ id: "Worker", exitCode: 0 }] },
+            },
+          },
+          {
+            type: "message",
+            id: "off-branch",
+            parentId: "root",
+            message: { role: "user", content: "Excluded" },
+          },
+          { type: "model_usage", id: "usage", parentId: "off-branch", activeLeafId: "result" },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+      );
+      writeFileSync(
+        childFile,
+        [
+          { type: "session", id: "child-root", cwd: dir },
+          {
+            type: "message",
+            id: "answer",
+            parentId: "child-root",
+            message: { role: "assistant", content: [{ type: "text", text: "Real child journal" }] },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+      );
+      const sdkStart = vi
+        .spyOn(OmpSdkRuntime.prototype, "startSession")
+        .mockImplementation(async () => {
+          throw new Error("History must not start an SDK host");
+        });
+      const cliStart = vi
+        .spyOn(OmpCliRuntime.prototype, "startSession")
+        .mockImplementation(async () => {
+          throw new Error("History must not start a CLI runtime");
+        });
+      try {
+        const logger = pino({ level: "silent" });
+        const settings = { ...ompHistoryRuntimeSettings, ompBackend };
+        const registry = buildProviderRegistry(logger, {
+          runtimeSettings: { omp: settings, pi: settings, codex: settings },
+        });
+        for (const provider of ["omp", "pi", "codex"]) {
+          const selectedClient = registry[provider]!.createClient(logger);
+          const manager = new AgentManager({ logger, clients: { [provider]: selectedClient } });
+          const client = manager.getRegisteredClient(provider)!;
+          expect(client).toBe(selectedClient);
+          expect(manager.getRegisteredClient("missing")).toBeUndefined();
+          const page = await client.readHistoryPage!({
+            sessionFile,
+            provider,
+            epoch: "selected",
+            timestamp: "2026-10-01T00:00:00Z",
+            options: { direction: "tail", limit: 0 },
+          });
+          expect(page.rows.map((row) => row.item)).toContainEqual(
+            expect.objectContaining({
+              type: "user_message",
+              text: "Selected root",
+              images: [screenshot],
+            }),
+          );
+          expect(JSON.stringify(page.rows)).not.toContain("Excluded");
+          const children: AgentStreamEvent[] = [];
+          for await (const event of client.streamPersistedSubagentHistory!({
+            sessionFile,
+            provider,
+          }))
+            children.push(event);
+          expect(children).toContainEqual(
+            expect.objectContaining({
+              type: "provider_subagent",
+              provider,
+              event: expect.objectContaining({
+                type: "timeline",
+                id: "Worker",
+                item: expect.objectContaining({
+                  type: "assistant_message",
+                  text: "Real child journal",
+                }),
+              }),
+            }),
+          );
+          expect(manager.listAgents()).toEqual([]);
+        }
+        expect(getOmpColdHistoryStats(sessionFile)?.entryEntriesParsed).toBeGreaterThan(0);
+        expect(sdkStart).not.toHaveBeenCalled();
+        expect(cliStart).not.toHaveBeenCalled();
+        expect(process.env.OMP_DESKTOP_SDK_ROOT).toBeUndefined();
+      } finally {
+        sdkStart.mockRestore();
+        cliStart.mockRestore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("replayed native user records retain distinct client identities for identical prompts", async () => {
+    const events = await collectHistory(
+      [
+        { role: "user", content: "same", clientMessageId: "first-client" },
+        { role: "user", content: "same", clientMessageId: "second-client" },
+      ],
+      [
+        { id: "first-native", text: "same" },
+        { id: "second-native", text: "same" },
+      ],
+    );
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "same",
+          messageId: "first-native",
+          clientMessageId: "first-client",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "same",
+          messageId: "second-native",
+          clientMessageId: "second-client",
+        },
+      },
+    ]);
   });
 
   test("hides injected workflow directives in replayed user messages", async () => {
@@ -783,7 +935,12 @@ describe("OMP history mapper", () => {
           .join("\n"),
       );
       const first: AgentStreamEvent[] = [];
-      for await (const event of streamOmpHistory({ sessionFile, provider: "omp", blobDir, runtimeSettings: ompHistoryRuntimeSettings }))
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        provider: "omp",
+        blobDir,
+        runtimeSettings: ompHistoryRuntimeSettings,
+      }))
         first.push(event);
       const toolItems = first.flatMap((event) =>
         event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
@@ -816,7 +973,12 @@ describe("OMP history mapper", () => {
       rmSync(nativePath);
       rmSync(previewPath);
       const replay: AgentStreamEvent[] = [];
-      for await (const event of streamOmpHistory({ sessionFile, provider: "omp", blobDir, runtimeSettings: ompHistoryRuntimeSettings }))
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        provider: "omp",
+        blobDir,
+        runtimeSettings: ompHistoryRuntimeSettings,
+      }))
         replay.push(event);
       expect(replay).toEqual(first);
       expect(readFileSync(previewPath)).toEqual(bytes);
@@ -881,7 +1043,12 @@ describe("OMP history mapper", () => {
       );
 
       const events: AgentStreamEvent[] = [];
-      for await (const event of streamOmpHistory({ sessionFile, provider: "omp", blobDir, runtimeSettings: ompHistoryRuntimeSettings })) {
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        provider: "omp",
+        blobDir,
+        runtimeSettings: ompHistoryRuntimeSettings,
+      })) {
         events.push(event);
       }
       expect(events.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([

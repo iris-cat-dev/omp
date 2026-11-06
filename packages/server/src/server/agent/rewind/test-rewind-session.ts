@@ -117,7 +117,7 @@ export class FakeRewindSession implements AgentSession {
     this.recordedRewinds.push({ mode: "both", messageId: input.messageId });
   }
 
-  private emit(event: AgentStreamEvent): void {
+  emit(event: AgentStreamEvent): void {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

@@ -32,6 +32,8 @@ import {
   type OmpRuntimeSession,
   type OmpRuntimeRetirement,
   type OmpStartSessionInput,
+  type OmpUserMessageOptions,
+  type OmpBranchMessage,
 } from "./runtime.js";
 import { resolveOmpBuiltinToolArgsForLaunch } from "./provider-config.js";
 import {
@@ -739,6 +741,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<OmpPromptAck> {
     this.assertModelSource();
     const generation = this.inputGeneration;
@@ -751,6 +754,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
         type: "prompt",
         message,
         ...(images?.length ? { images } : {}),
+        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         // Steering admits queued input even while the preceding run is streaming.
         streamingBehavior: "steer",
       },
@@ -1161,9 +1165,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return { text: data.text };
   }
 
-  async getBranchMessages(): Promise<Array<{ entryId: string; text: string }>> {
+  async getBranchMessages(): Promise<OmpBranchMessage[]> {
     const data = OmpBranchMessagesResultSchema.parse(
-      await this.request({ type: "get_branch_messages" }),
+      await this.request({ type: "get_branch_messages", activeBranchOnly: true }),
     );
     return data.messages ?? [];
   }
@@ -1171,22 +1175,34 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<void> {
     this.assertModelSource();
     const generation = this.inputGeneration;
     await this.refreshImageSettings();
     this.assertInputGeneration(generation);
-    await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+      ...options,
+    });
   }
 
   followUp(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): void {
     this.assertModelSource();
     const generation = this.inputGeneration;
     if (!this.getImageGenerationConfig || !this.imageToken) {
-      this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
+      this.process.send({
+        type: "follow_up",
+        message,
+        ...(images?.length ? { images } : {}),
+        ...options,
+      });
       return;
     }
     void this.refreshImageSettings()
@@ -1196,6 +1212,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
           type: "follow_up",
           message,
           ...(images?.length ? { images } : {}),
+          ...options,
         });
       })
       .catch((error: unknown) => {

@@ -1,7 +1,7 @@
-import { memo, useCallback, useMemo, useState, type ReactElement } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { FileText, Layers, MessageSquare, Undo2 } from "lucide-react-native";
+import { FileText, Layers, MessageSquare, RefreshCw, Undo2 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,
@@ -12,7 +12,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type RewindMode, useRewindCapabilities } from "./use-rewind-capabilities";
-import type { AgentCapabilityFlags } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentUserMessageRewindStatus,
+} from "@omp-desktop/protocol/agent-types";
 import type { AgentAttachment } from "@omp-desktop/protocol/messages";
 import type { UserMessageImageAttachment } from "@/types/stream";
 
@@ -20,6 +23,8 @@ export type { RewindMode };
 
 interface RewindMenuProps {
   capabilities: AgentCapabilityFlags;
+  rewindStatus: AgentUserMessageRewindStatus;
+  onSync: () => Promise<void> | void;
   rewoundText: string;
   rewoundImages: readonly UserMessageImageAttachment[];
   rewoundAttachments: readonly AgentAttachment[];
@@ -46,6 +51,8 @@ function getIcon(mode: RewindMode, color: string): ReactElement {
 
 export const RewindMenu = memo(function RewindMenu({
   capabilities,
+  rewindStatus,
+  onSync,
   rewoundText,
   rewoundImages,
   rewoundAttachments,
@@ -66,19 +73,32 @@ export const RewindMenu = memo(function RewindMenu({
   const items = useRewindCapabilities(capabilities, rewindLabels);
   const [isOpen, setIsOpen] = useState(false);
   const [pendingMode, setPendingMode] = useState<RewindMode | null>(null);
-  const isLocked = isPendingProp || pendingMode !== null;
-
-  const handleOpenChange = useCallback(
-    (next: boolean) => {
-      if (!next && pendingMode !== null) return;
-      setIsOpen(next);
-    },
-    [pendingMode],
+  const [isSyncPending, setIsSyncPending] = useState(false);
+  const actionInFlight = useRef(false);
+  const isLocked = isPendingProp || pendingMode !== null || isSyncPending;
+  const isTriggerDisabled = isLocked || rewindStatus === "pending";
+  let tooltipLabel: string;
+  if (rewindStatus === "pending") {
+    tooltipLabel = t("rewind.pending");
+  } else if (rewindStatus === "unavailable") {
+    tooltipLabel = t("rewind.unavailable");
+  } else {
+    tooltipLabel = t("rewind.tooltip");
+  }
+  const syncIcon = useMemo(
+    () => <RefreshCw size={16} color={theme.colors.foreground} />,
+    [theme.colors.foreground],
   );
+
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (!next && actionInFlight.current) return;
+    setIsOpen(next);
+  }, []);
 
   const handleSelect = useCallback(
     (mode: RewindMode) => async () => {
-      if (isLocked) return;
+      if (isLocked || actionInFlight.current || rewindStatus !== "ready") return;
+      actionInFlight.current = true;
       setPendingMode(mode);
       try {
         await onRewind({ mode, rewoundText, rewoundImages, rewoundAttachments });
@@ -86,24 +106,38 @@ export const RewindMenu = memo(function RewindMenu({
         // useRewindAgentMutation owns the toast; the menu only owns flow state.
       } finally {
         setPendingMode(null);
+        actionInFlight.current = false;
         setIsOpen(false);
       }
     },
-    [isLocked, onRewind, rewoundAttachments, rewoundImages, rewoundText],
+    [isLocked, onRewind, rewindStatus, rewoundAttachments, rewoundImages, rewoundText],
   );
+  const handleSync = useCallback(async () => {
+    if (isLocked || actionInFlight.current || rewindStatus !== "unavailable") return;
+    actionInFlight.current = true;
+    setIsSyncPending(true);
+    try {
+      await onSync();
+    } catch {
+      // The mutation owns error feedback; synchronization never rewinds or restores a draft.
+    } finally {
+      actionInFlight.current = false;
+      setIsSyncPending(false);
+    }
+  }, [isLocked, onSync, rewindStatus]);
 
   const triggerStyle = useCallback(
-    () => [styles.trigger, isLocked ? styles.triggerDisabled : null],
-    [isLocked],
+    () => [styles.trigger, isTriggerDisabled ? styles.triggerDisabled : null],
+    [isTriggerDisabled],
   );
 
   const tooltipContent = useMemo(
     () => (
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{t("rewind.tooltip")}</Text>
+        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
       </TooltipContent>
     ),
-    [t],
+    [tooltipLabel],
   );
 
   if (items.length === 0) {
@@ -116,9 +150,9 @@ export const RewindMenu = memo(function RewindMenu({
         <TooltipTrigger asChild>
           <View style={styles.triggerSlot} collapsable={false}>
             <DropdownMenuTrigger
-              accessibilityLabel={t("rewind.tooltip")}
+              accessibilityLabel={tooltipLabel}
               accessibilityRole="button"
-              disabled={isLocked}
+              disabled={isTriggerDisabled}
               style={triggerStyle}
               testID={`${testID}-trigger`}
             >
@@ -135,14 +169,16 @@ export const RewindMenu = memo(function RewindMenu({
       </Tooltip>
       <DropdownMenuContent align="end" minWidth={220} side="bottom" testID={`${testID}-content`}>
         <View style={styles.warningHeader}>
-          <Text style={styles.warningText}>{t("rewind.warning")}</Text>
+          <Text style={styles.warningText}>
+            {rewindStatus === "unavailable" ? t("rewind.unavailable") : t("rewind.warning")}
+          </Text>
         </View>
         <DropdownMenuSeparator />
         {items.map((item) => (
           <DropdownMenuItem
             key={item.mode}
             closeOnSelect={false}
-            disabled={isLocked && pendingMode !== item.mode}
+            disabled={isLocked || rewindStatus !== "ready"}
             leading={getIcon(item.mode, theme.colors.foreground)}
             onSelect={handleSelect(item.mode)}
             status={pendingMode === item.mode ? "pending" : undefined}
@@ -151,6 +187,21 @@ export const RewindMenu = memo(function RewindMenu({
             {item.label}
           </DropdownMenuItem>
         ))}
+        {rewindStatus === "unavailable" || isSyncPending ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              closeOnSelect={false}
+              disabled={isLocked}
+              leading={syncIcon}
+              onSelect={handleSync}
+              status={isSyncPending ? "pending" : undefined}
+              testID={`${testID}-sync`}
+            >
+              {t("rewind.actions.sync")}
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -2,7 +2,12 @@ import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
-import type { AgentClient, AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
+import type {
+  AgentClient,
+  AgentSession,
+  AgentSessionConfig,
+  FetchCatalogOptions,
+} from "../agent-sdk-types.js";
 import { FakeRewindSession, REWIND_TEST_CAPABILITIES } from "./test-rewind-session.js";
 
 class FakeRewindClient implements AgentClient {
@@ -31,6 +36,7 @@ class FakeRewindClient implements AgentClient {
 class RewindHistoryGate {
   private gate: Promise<void> | null = null;
   private releaseGate: (() => void) | null = null;
+  private readonly entered = Promise.withResolvers<void>();
 
   hold(): void {
     this.gate = new Promise<void>((resolve) => {
@@ -45,7 +51,11 @@ class RewindHistoryGate {
   }
 
   async wait(): Promise<void> {
+    this.entered.resolve();
     await this.gate;
+  }
+  waitUntilBlocked(): Promise<void> {
+    return this.entered.promise;
   }
 }
 
@@ -135,6 +145,7 @@ describe("AgentManager rewind", () => {
     const { manager, agentId } = await createRewindHarness({ historyGate });
 
     const rewind = manager.rewind(agentId, "message-1", "both");
+    await historyGate.waitUntilBlocked();
 
     expect(() => manager.streamAgent(agentId, "too early")).toThrow(
       "Agent 00000000-0000-4000-8000-000000000901 already has an active run",
@@ -142,5 +153,124 @@ describe("AgentManager rewind", () => {
 
     historyGate.release();
     await rewind;
+  });
+
+  test("drains a queued native confirmation before validating rewind and preserves pending safety", async () => {
+    const { manager, session, agentId } = await createRewindHarness();
+    const run = manager.streamAgent(agentId, "hello", { clientMessageId: "client-queued" });
+    try {
+      await run.next();
+      await expect(manager.rewind(agentId, "client-queued", "files")).rejects.toMatchObject({
+        code: "message_pending",
+      });
+      expect(session.aborted).toBe(false);
+      expect(session.recordedRewinds).toEqual([]);
+
+      session.emit({
+        type: "timeline",
+        provider: session.provider,
+        turnId: "turn-1",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "client-queued",
+          messageId: "native-queued",
+        },
+      });
+      await manager.rewind(agentId, "client-queued", "files");
+      expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "native-queued" }]);
+      expect(session.aborted).toBe(true);
+    } finally {
+      await run.return(undefined);
+      await manager.closeAgent(agentId);
+      await manager.flush();
+    }
+  });
+
+  test("resync recovers an unavailable prompt without rewinding or duplicating its canonical row", async () => {
+    class RecoverableSession extends FakeRewindSession {
+      lookupError: Error | null = new Error("native history temporarily unavailable");
+      readonly nativeIds = new Map<string, string>();
+
+      async resolveUserMessageId(input: {
+        clientMessageId: string;
+        text: string;
+      }): Promise<string | null> {
+        if (this.lookupError) throw this.lookupError;
+        return this.nativeIds.get(input.clientMessageId) ?? null;
+      }
+    }
+    const session = new RecoverableSession();
+    const manager = new AgentManager({
+      clients: { claude: new FakeRewindClient(session) },
+      logger: createTestLogger(),
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.streamAgent(agent.id, "hello", { clientMessageId: "client-recover" });
+    const updates: Array<{ seq: number | undefined; status: string | undefined }> = [];
+    manager.subscribe(
+      (event) => {
+        if (
+          event.type === "agent_stream" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "user_message"
+        ) {
+          updates.push({ seq: event.seq, status: event.event.item.rewindStatus });
+        }
+      },
+      { agentId: agent.id, replayState: false },
+    );
+    try {
+      await run.next();
+      session.emit({ type: "turn_completed", provider: session.provider, turnId: "turn-1" });
+      await manager.flush();
+      const before = manager.fetchTimeline(agent.id, { limit: 0 }).rows[0];
+      expect(before.item).toMatchObject({
+        messageId: "client-recover",
+        rewindStatus: "unavailable",
+      });
+      await expect(manager.rewind(agent.id, "client-recover", "files")).rejects.toMatchObject({
+        code: "message_unavailable",
+      });
+      await expect(
+        manager.syncAgentRewindMessage(agent.id, "client-recover"),
+      ).rejects.toMatchObject({
+        code: "message_sync_failed",
+        cause: session.lookupError,
+      });
+
+      session.lookupError = null;
+      session.nativeIds.set("client-recover", "native-recovered");
+      expect(await manager.syncAgentRewindMessage(agent.id, "client-recover")).toBe("ready");
+      expect(session.recordedRewinds).toEqual([]);
+      expect(session.aborted).toBe(false);
+      const after = manager.fetchTimeline(agent.id, { limit: 0 }).rows;
+      expect(after).toMatchObject([
+        {
+          seq: before.seq,
+          timestamp: before.timestamp,
+          providerMessageId: "native-recovered",
+          item: {
+            messageId: "client-recover",
+            clientMessageId: "client-recover",
+            text: "hello",
+            rewindStatus: "ready",
+          },
+        },
+      ]);
+      expect(updates).toEqual([
+        { seq: before.seq, status: "pending" },
+        { seq: before.seq, status: "unavailable" },
+        { seq: before.seq, status: "ready" },
+      ]);
+      await manager.rewind(agent.id, "client-recover", "files");
+      expect(session.recordedRewinds).toEqual([{ mode: "files", messageId: "native-recovered" }]);
+    } finally {
+      await run.return(undefined);
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+    }
   });
 });

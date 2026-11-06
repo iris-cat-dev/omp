@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentUserMessageRewindStatus } from "@omp-desktop/protocol/agent-types";
 import type { AgentTimelineItem, ToolCallTimelineItem } from "./agent-sdk-types.js";
 import { mergeToolCallItems } from "./timeline-projection.js";
 import { formatToolCallEntry } from "./activity-curator.js";
@@ -105,19 +106,24 @@ function fetchAfter(ctx: FetchContext): AgentTimelineFetchResult {
   const { state, direction, limit, selectAll, cursor, minSeq, maxSeq, window } = ctx;
   const baseSeq = cursor?.seq ?? 0;
   const acknowledgedVersion = cursor?.contentVersion ?? 0;
-  const revisions = acknowledgedVersion < state.contentVersion
-    ? state.rows.filter((row) => row.seq <= baseSeq && (row.contentVersion ?? 0) > acknowledgedVersion)
-        .sort((left, right) => (left.contentVersion ?? 0) - (right.contentVersion ?? 0))
-    : [];
+  const revisions =
+    acknowledgedVersion < state.contentVersion
+      ? state.rows
+          .filter((row) => row.seq <= baseSeq && (row.contentVersion ?? 0) > acknowledgedVersion)
+          .sort((left, right) => (left.contentVersion ?? 0) - (right.contentVersion ?? 0))
+      : [];
   const revisedRows = selectAll ? revisions : revisions.slice(0, limit);
   const hasMoreRevisions = revisedRows.length < revisions.length;
   const contentVersion = hasMoreRevisions
     ? revisedRows.at(-1)!.contentVersion!
     : state.contentVersion;
   const startIdx = state.rows.findIndex((row) => row.seq > baseSeq);
-  const selected = startIdx < 0 ? [] : selectAll
-    ? state.rows.slice(startIdx)
-    : state.rows.slice(startIdx, startIdx + limit);
+  const selected =
+    startIdx < 0
+      ? []
+      : selectAll
+        ? state.rows.slice(startIdx)
+        : state.rows.slice(startIdx, startIdx + limit);
   const lastSelected = selected.at(-1);
   return {
     epoch: state.epoch,
@@ -171,8 +177,9 @@ function fetchReset(
   // Do not acknowledge unseen edits outside this page: after pages drain them.
   const needsRevisionCatchUp = rows.length < state.rows.length && ctx.cursor?.epoch === state.epoch;
   const contentVersion = needsRevisionCatchUp
-    ? (ctx.cursor?.contentVersion !== undefined && ctx.cursor.contentVersion <= state.contentVersion
-        ? ctx.cursor.contentVersion : 0)
+    ? ctx.cursor?.contentVersion !== undefined && ctx.cursor.contentVersion <= state.contentVersion
+      ? ctx.cursor.contentVersion
+      : 0
     : state.contentVersion;
   return {
     epoch: state.epoch,
@@ -267,8 +274,13 @@ function fetchCursorReset(ctx: FetchContext): AgentTimelineFetchResult | undefin
   if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
     return fetchReset(ctx, { staleCursor: false, gap: true });
   }
-  if (direction === "after" && (!cursor || cursor.contentVersion === undefined ||
-      cursor.contentVersion > state.contentVersion || cursor.seq > ctx.maxSeq)) {
+  if (
+    direction === "after" &&
+    (!cursor ||
+      cursor.contentVersion === undefined ||
+      cursor.contentVersion > state.contentVersion ||
+      cursor.seq > ctx.maxSeq)
+  ) {
     // A seq alone cannot acknowledge edits to old rows. Unknown/restarted
     // replicas receive one authoritative page, then acknowledge its watermark.
     return fetchReset(ctx, { staleCursor: false, gap: false });
@@ -325,10 +337,10 @@ export class InMemoryAgentTimelineStore {
     return row ? cloneRow(row) : null;
   }
 
-  enrichSubmittedUserMessage(
+  updateSubmittedUserMessage(
     agentId: string,
     clientMessageId: string,
-    providerMessageId: string,
+    update: { rewindStatus: AgentUserMessageRewindStatus; providerMessageId?: string },
   ): AgentTimelineRow | null {
     const state = this.requireState(agentId);
     const index = state.rows.findIndex(
@@ -337,11 +349,23 @@ export class InMemoryAgentTimelineStore {
         candidate.item.clientMessageId === clientMessageId,
     );
     const row = state.rows[index];
-    if (!row || row.item.type !== "user_message") {
+    if (!row || row.item.type !== "user_message") return null;
+    const providerMessageId = row.providerMessageId ?? update.providerMessageId;
+    let rewindStatus = update.rewindStatus;
+    if (providerMessageId || (row.item.messageId && row.item.messageId !== clientMessageId)) {
+      rewindStatus = "ready";
+    } else if (row.item.rewindStatus === "unavailable") {
+      rewindStatus = "unavailable";
+    }
+    if (row.providerMessageId === providerMessageId && row.item.rewindStatus === rewindStatus) {
       return null;
     }
-    if (row.providerMessageId === providerMessageId) return cloneRow(row);
-    const enriched: AgentTimelineRow = { ...row, providerMessageId, contentVersion: ++state.contentVersion };
+    const enriched: AgentTimelineRow = {
+      ...row,
+      item: { ...row.item, rewindStatus },
+      ...(providerMessageId ? { providerMessageId } : {}),
+      contentVersion: ++state.contentVersion,
+    };
     state.rows[index] = enriched;
     return cloneRow(enriched);
   }
@@ -349,7 +373,6 @@ export class InMemoryAgentTimelineStore {
   getEpoch(agentId: string): string {
     return this.requireState(agentId).epoch;
   }
-
 
   fetch(agentId: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(agentId);
@@ -460,8 +483,11 @@ export class InMemoryAgentTimelineStore {
     const existing = state.toolCalls.get(key);
     if (existing) {
       const merged = mergeToolCallItems(existing.item, item);
-      if (merged === existing.item && (options?.providerMessageId === undefined ||
-          options.providerMessageId === state.rows[existing.rowIndex].providerMessageId)) {
+      if (
+        merged === existing.item &&
+        (options?.providerMessageId === undefined ||
+          options.providerMessageId === state.rows[existing.rowIndex].providerMessageId)
+      ) {
         return cloneRow(state.rows[existing.rowIndex]);
       }
       existing.item = {

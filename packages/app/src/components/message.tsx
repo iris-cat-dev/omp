@@ -72,6 +72,7 @@ import type {
   TodoEntry,
   UserMessageImageAttachment,
 } from "@/types/stream";
+import { resolveUserMessageRewindStatus } from "@/types/stream";
 import type { AgentAttachment } from "@omp-desktop/protocol/messages";
 import type { ToolCallDetail } from "@omp-desktop/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
@@ -115,7 +116,10 @@ import {
 import { AttachmentLightbox, ImageLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
-import type { AgentCapabilityFlags } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentUserMessageRewindStatus,
+} from "@omp-desktop/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkButton } from "@/components/assistant-fork-button";
@@ -129,6 +133,9 @@ import {
 export type { InlinePathTarget } from "@/assistant-file-links";
 
 interface UserMessageProps {
+  id?: string;
+  clientMessageId?: string;
+  rewindStatus?: AgentUserMessageRewindStatus;
   serverId?: string;
   agentId?: string;
   messageId?: string;
@@ -432,6 +439,9 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 }
 
 export const UserMessage = memo(function UserMessage({
+  id,
+  clientMessageId,
+  rewindStatus,
   serverId,
   agentId,
   messageId,
@@ -458,14 +468,30 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
+  const rewindTargetId = messageId ?? clientMessageId ?? id;
+  const resolvedRewindStatus = resolveUserMessageRewindStatus({
+    rewindStatus,
+    messageId,
+    clientMessageId,
+  });
   const showTrailingRow =
-    !isPending && hasText && (showPersistentActions || isNative || isHovered || isFocusWithin);
+    hasText &&
+    (resolvedRewindStatus === "pending" ||
+      showPersistentActions ||
+      isNative ||
+      isHovered ||
+      isFocusWithin);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
   const skillInvocation = useMemo(() => parseSkillInvocationMessage(message), [message]);
-  const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
+  const rewindMutation = useRewindAgentMutation({
+    serverId,
+    agentId,
+    client,
+    messageId: rewindTargetId,
+  });
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -576,9 +602,11 @@ export const UserMessage = memo(function UserMessage({
             <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
               {formattedTimestamp}
             </Text>
-            {capabilities && messageId ? (
+            {capabilities && rewindTargetId ? (
               <RewindMenu
                 capabilities={capabilities}
+                rewindStatus={resolvedRewindStatus}
+                onSync={rewindMutation.syncMessage}
                 isPending={rewindMutation.isPending}
                 rewoundText={message}
                 rewoundImages={images}
@@ -842,7 +870,9 @@ export function AssistantMarkdownImage({
   const imageVisibility = useImageVisibility();
   const panelActive = useRetainedPanelActive();
   const [imageRetryKey, setImageRetryKey] = useState(0);
-  useEffect(() => { if (!panelActive) setViewerOpen(false); }, [panelActive]);
+  useEffect(() => {
+    if (!panelActive) setViewerOpen(false);
+  }, [panelActive]);
 
   useEffect(() => {
     setViewerOpen(false);
@@ -897,7 +927,10 @@ export function AssistantMarkdownImage({
     return (
       <View ref={imageVisibility.ref} style={stateFrameStyle}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
-        <Pressable accessibilityRole="button" onPress={() => setImageRetryKey((attempt) => attempt + 1)}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setImageRetryKey((attempt) => attempt + 1)}
+        >
           <Text>{t("common.actions.retry")}</Text>
         </Pressable>
       </View>
@@ -943,7 +976,11 @@ export function AssistantMarkdownImage({
         ) : null}
       </View>
       {viewerOpen && image.status === "loaded" ? (
-        binding?.attachment ? <AttachmentLightbox metadata={binding.attachment} onClose={closeViewer} /> : <ImageLightbox uri={imageUri} alt={alt} onClose={closeViewer} />
+        binding?.attachment ? (
+          <AttachmentLightbox metadata={binding.attachment} onClose={closeViewer} />
+        ) : (
+          <ImageLightbox uri={imageUri} alt={alt} onClose={closeViewer} />
+        )
       ) : null}
     </View>
   );

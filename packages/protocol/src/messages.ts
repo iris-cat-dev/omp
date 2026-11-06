@@ -823,6 +823,8 @@ export const ChatProDetailsSchema = z
   })
   .strict();
 
+export const AgentUserMessageRewindStatusSchema = z.enum(["pending", "ready", "unavailable"]);
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
@@ -831,6 +833,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    rewindStatus: AgentUserMessageRewindStatusSchema.optional(),
     sourceAgentId: z.string().min(1).optional(),
     workingStartedAt: z.string().optional(),
     images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
@@ -2477,6 +2480,11 @@ export const AgentDetachResponseMessageSchema = z.object({
 });
 
 export const AgentRewindModeSchema = z.enum(["conversation", "files", "both"]);
+export const AgentRewindErrorCodeSchema = z.enum([
+  "message_pending",
+  "message_unavailable",
+  "message_sync_failed",
+]);
 
 export const AgentRewindRequestMessageSchema = z.object({
   type: z.literal("agent.rewind.request"),
@@ -2493,6 +2501,26 @@ export const AgentRewindResponseMessageSchema = z.object({
     agentId: z.string(),
     ok: z.boolean(),
     error: z.string().nullable(),
+    errorCode: AgentRewindErrorCodeSchema.optional(),
+  }),
+});
+
+export const AgentRewindSyncRequestMessageSchema = z.object({
+  type: z.literal("agent.rewind.sync.request"),
+  agentId: z.string(),
+  messageId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentRewindSyncResponseMessageSchema = z.object({
+  type: z.literal("agent.rewind.sync.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    ok: z.boolean(),
+    rewindStatus: AgentUserMessageRewindStatusSchema.nullable(),
+    error: z.string().nullable(),
+    errorCode: AgentRewindErrorCodeSchema.optional(),
   }),
 });
 
@@ -3808,6 +3836,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
+  AgentRewindSyncRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
@@ -7735,6 +7764,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
+  AgentRewindSyncResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
@@ -7979,6 +8009,8 @@ export type ControlAgentGoalResponseMessage = z.infer<typeof ControlAgentGoalRes
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
+export type AgentRewindSyncResponseMessage = z.infer<typeof AgentRewindSyncResponseMessageSchema>;
+export type AgentRewindErrorCode = z.infer<typeof AgentRewindErrorCodeSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectIconSetResponse = z.infer<typeof ProjectIconSetResponseSchema>;

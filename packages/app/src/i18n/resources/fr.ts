@@ -1928,14 +1928,20 @@ export const fr: TranslationResources = {
   },
   rewind: {
     tooltip: "Revenez à ce message",
+    pending: "En attente de la synchronisation du message pour rembobiner",
+    unavailable: "Identifiant du message indisponible. Resynchronisez pour rembobiner.",
     warning: "Cette action ne peut pas être annulée",
     actions: {
       conversation: "Rembobiner la conversation",
       files: "Rembobiner les fichiers",
       both: "Rembobiner la conversation et les fichiers",
+      sync: "Resynchroniser le message",
     },
     errors: {
       failed: "Échec du rembobinage de l'agent",
+      pending: "Le message est en cours de synchronisation. Patientez avant de rembobiner.",
+      unavailable: "Ce message ne peut pas encore être rembobiné. Resynchronisez-le d’abord.",
+      syncFailed: "Impossible de synchroniser le message. Réessayez.",
     },
   },
   diffViewer: {

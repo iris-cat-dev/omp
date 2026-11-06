@@ -3,6 +3,8 @@ import type {
   OmpRuntimeLaunch,
   OmpRuntimeSession,
   OmpStartSessionInput,
+  OmpUserMessageOptions,
+  OmpBranchMessage,
 } from "../runtime.js";
 import type {
   OmpAbortAndRestoreQueueResult,
@@ -160,6 +162,9 @@ export class FakeOmp implements OmpRuntime {
 
 export class FakeOmpSession implements OmpRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly promptUserMessageOptions: OmpUserMessageOptions[] = [];
+  readonly steerUserMessageOptions: OmpUserMessageOptions[] = [];
+  readonly followUpUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentMessageRequests: OmpSubagentMessagesSelector[] = [];
@@ -209,7 +214,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
   setApprovalModeError: Error | null = null;
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
-  branchMessages: Array<{ entryId: string; text: string }> = [];
+  branchMessages: OmpBranchMessage[] = [];
+  branchMessagesError: Error | null = null;
+  branchMessageLookups = 0;
   readonly branchRequests: string[] = [];
   activeBranchEntryId?: string;
   closed = false;
@@ -253,10 +260,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<OmpPromptAck> {
     // The CLI runtime always sends streamingBehavior "steer": a busy OMP session admits
     // the prompt into its live run instead of throwing AgentBusyError.
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    this.promptUserMessageOptions.push(options ?? {});
     this.promptWaiters.shift()?.();
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
@@ -503,22 +512,28 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return { text: this.branchResponse.text };
   }
 
-  async getBranchMessages(): Promise<Array<{ entryId: string; text: string }>> {
+  async getBranchMessages(): Promise<OmpBranchMessage[]> {
+    this.branchMessageLookups += 1;
+    if (this.branchMessagesError) throw this.branchMessagesError;
     return this.branchMessages;
   }
 
   async steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
+    this.steerUserMessageOptions.push(options ?? {});
   }
 
   followUp(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): void {
     this.followUpRequests.push({ message, imageCount: images?.length ?? 0 });
+    this.followUpUserMessageOptions.push(options ?? {});
   }
 
   sendHostToolResult(result: OmpRpcHostToolResult): void {
@@ -608,10 +623,15 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.emit({ type: "turn_start" });
   }
 
-  acceptPrompt(text: string, entryId = "omp-user-1"): void {
+  acceptPrompt(text: string, entryId = "omp-user-1", clientMessageId?: string): void {
     this.emit({
       type: "message_end",
-      message: { role: "user", content: text, entryId } as OmpAgentMessage,
+      message: {
+        role: "user",
+        content: text,
+        entryId,
+        ...(clientMessageId ? { clientMessageId } : {}),
+      } as OmpAgentMessage,
     });
   }
 

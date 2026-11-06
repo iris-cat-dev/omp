@@ -410,12 +410,13 @@ export class OmpHarness {
 
   async startPromptWithFalseLocalOnlyResult(
     input: string,
+    options?: AgentRunOptions,
   ): Promise<{ completed: () => boolean; completion: Promise<unknown> }> {
     const session = this.requireSession();
     const runtime = this.omp.latestSession();
     runtime.promptAck = { requestId: "prompt-local-only" };
     const promptStarted = runtime.nextPrompt();
-    const completion = session.run(input);
+    const completion = session.run(input, options);
     let isCompleted = false;
     void completion.then(
       () => {
@@ -675,6 +676,10 @@ export class OmpHarness {
     options?: Omit<AgentSteerOptions, "expectedTurnId">,
   ) {
     return await this.requireSession().steerActiveTurn(message, { ...options, expectedTurnId });
+  }
+
+  async resolveUserMessageId(input: { clientMessageId: string; text: string }): Promise<string | null> {
+    return this.requireSession().resolveUserMessageId(input);
   }
 
   async interrupt(reason?: AgentInterruptReason): Promise<void> {

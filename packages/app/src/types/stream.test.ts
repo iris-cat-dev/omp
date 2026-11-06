@@ -9,6 +9,7 @@ import {
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
+  resolveUserMessageRewindStatus,
   type AgentToolCallItem,
   type StreamItem,
   isAgentToolCallItem,
@@ -22,6 +23,149 @@ import { buildToolCallDisplayModel } from "@omp-desktop/protocol/tool-call-displ
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 describe("user message identity", () => {
+  it("keeps a local canonical ID pending until a distinct native ID arrives", () => {
+    const timestamp = new Date(1000);
+    const timelineCursor = { epoch: "epoch-1", seq: 5 };
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: "prompt",
+        clientMessageId: "local-id",
+        messageId: "local-id",
+      },
+    };
+    const pending = hydrateStreamState([{ event, timestamp, timelineCursor }]);
+    const pendingPrompt = pending[0];
+    invariant(pendingPrompt?.kind === "user_message");
+    expect(resolveUserMessageRewindStatus(pendingPrompt)).toBe("pending");
+    const ready = applyStreamEvent({
+      tail: pending,
+      head: [],
+      timestamp,
+      timelineCursor,
+      event: {
+        ...event,
+        item: {
+          type: "user_message",
+          text: "native prompt",
+          clientMessageId: "local-id",
+          messageId: "native-id",
+        },
+      },
+    });
+    expect(ready.tail).toHaveLength(1);
+    const readyPrompt = ready.tail[0];
+    invariant(readyPrompt?.kind === "user_message");
+    expect(readyPrompt.id).toBe(pendingPrompt.id);
+    expect(resolveUserMessageRewindStatus(readyPrompt)).toBe("ready");
+  });
+
+  it("retains unavailable metadata against an older pending row, but allows a new epoch", () => {
+    const existing = createUserMessage({
+      clientMessageId: "client-prompt",
+      text: "prompt",
+      rewindStatus: "unavailable",
+      timestamp: new Date(1000),
+      timelineCursor: { epoch: "epoch-1", seq: 5 },
+    });
+    const latePending = createUserMessage({ ...existing, rewindStatus: "pending" });
+    const items = [existing];
+    expect(upsertUserMessage(items, latePending)).toBe(items);
+    expect(
+      upsertUserMessage(
+        items,
+        createUserMessage({
+          ...latePending,
+          timelineCursor: { epoch: "epoch-2", seq: 5 },
+        }),
+      ),
+    ).toEqual([
+      { ...existing, rewindStatus: "pending", timelineCursor: { epoch: "epoch-2", seq: 5 } },
+    ]);
+  });
+
+  it.each(["tail", "head"] as const)(
+    "updates pending, unavailable and ready metadata in the existing %s row",
+    (lane) => {
+      const local = createUserMessage({
+        clientMessageId: "client-prompt",
+        rewindStatus: "pending",
+        text: "typed prompt",
+        timestamp: new Date("2026-11-06T10:00:00Z"),
+        timelineCursor: { epoch: "epoch-1", seq: 5 },
+      });
+      const unavailable = upsertUserMessageAcrossStream({
+        tail: lane === "tail" ? [local] : [],
+        head: lane === "head" ? [local] : [],
+        message: createUserMessage({ ...local, rewindStatus: "unavailable" }),
+        insert: "none",
+        presentation: "existing",
+      });
+      const ready = upsertUserMessageAcrossStream({
+        tail: unavailable.tail,
+        head: unavailable.head,
+        message: createUserMessage({
+          ...local,
+          id: "provider-prompt",
+          messageId: "provider-prompt",
+          rewindStatus: "ready",
+          text: "provider-transformed prompt",
+        }),
+        insert: "none",
+        presentation: "existing",
+      });
+      expect(unavailable[lane]).toEqual([{ ...local, rewindStatus: "unavailable" }]);
+      expect(ready[lane]).toEqual([
+        { ...local, messageId: "provider-prompt", rewindStatus: "ready" },
+      ]);
+      expect(ready[lane === "tail" ? "head" : "tail"]).toEqual([]);
+      const repeated = upsertUserMessageAcrossStream({
+        tail: ready.tail,
+        head: ready.head,
+        message: ready.location!.message,
+        insert: "none",
+        presentation: "existing",
+      });
+      expect(repeated[lane]).toBe(ready[lane]);
+    },
+  );
+
+  it("hydrates rewind metadata and adds a late native ID by timeline position", () => {
+    const timestamp = new Date("2026-11-06T10:00:00Z");
+    const position = { epoch: "epoch-1", seq: 5 };
+    const pendingEvent: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "user_message", text: "typed prompt", rewindStatus: "pending" },
+    };
+    const hydrated = hydrateStreamState([
+      { event: pendingEvent, timestamp, timelineCursor: position },
+    ]);
+    const updated = applyStreamEvent({
+      tail: hydrated,
+      head: [],
+      event: {
+        ...pendingEvent,
+        item: {
+          type: "user_message",
+          text: "provider-transformed prompt",
+          messageId: "native-prompt",
+          rewindStatus: "ready",
+        },
+      },
+      timestamp: new Date(timestamp.getTime() + 1),
+      timelineCursor: position,
+    });
+    expect(updated.tail).toHaveLength(1);
+    expect(updated.tail[0]).toEqual({
+      ...hydrated[0],
+      messageId: "native-prompt",
+      rewindStatus: "ready",
+    });
+  });
+
   it.each(["tail", "head"] as const)(
     "retains image-only canonical messages inserted into the %s",
     (unmatchedUserMessageInsert) => {

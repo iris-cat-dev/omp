@@ -1903,7 +1903,28 @@ export class OmpAgentSession implements AgentSession {
   private readonly chatProDeliveries = new ChatProDeliveries();
   private initialUsageProbeStarted = false;
   private readonly emittedUserMessageIds = new Set<string>();
-  private lastEmittedLiveUserMessageText: string | null = null;
+  private readonly submittedUserMessages = new Map<
+    string,
+    {
+      text: string;
+      displayText: string;
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      nativeState: "submitted" | "accepted_legacy" | "accepted_identified" | "withdrawn";
+    }
+  >();
+  private readonly emittedClientUserMessages = new Map<
+    string,
+    {
+      item: Extract<AgentTimelineItem, { type: "user_message" }>;
+      nativeText: string;
+      turnId?: string;
+    }
+  >();
+  private lastEmittedLiveUserMessage: {
+    item: Extract<AgentTimelineItem, { type: "user_message" }>;
+    nativeText: string;
+    turnId?: string;
+  } | null = null;
   private lastSubmittedPromptText: string | null = null;
   private lastSubmittedPromptDisplayText: string | null = null;
   private lastSubmittedPromptClientMessageId: string | null = null;
@@ -2255,6 +2276,14 @@ export class OmpAgentSession implements AgentSession {
     this.lastSubmittedPromptText = payload.text;
     this.lastSubmittedPromptDisplayText = displayPromptText;
     this.lastSubmittedPromptClientMessageId = this.activeClientMessageId;
+    if (clientMessageId) {
+      this.submittedUserMessages.set(clientMessageId, {
+        text: payload.text,
+        displayText: displayPromptText,
+        images: payload.images,
+        nativeState: "submitted",
+      });
+    }
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activePlanText = "";
@@ -2270,7 +2299,9 @@ export class OmpAgentSession implements AgentSession {
 
     void (async () => {
       try {
-        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+        const ack = await this.runtimeSession.prompt(payload.text, payload.images, {
+          clientMessageId,
+        });
         if (this.activeTurnId !== turnId) return;
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
@@ -2351,8 +2382,16 @@ export class OmpAgentSession implements AgentSession {
       images: payload.images,
     };
     this.pendingSteeredUserMessages.push(submittedMessage);
+    if (options.clientMessageId) {
+      this.submittedUserMessages.set(options.clientMessageId, {
+        ...submittedMessage,
+        nativeState: "submitted",
+      });
+    }
     try {
-      await this.runtimeSession.steer(payload.text, payload.images);
+      await this.runtimeSession.steer(payload.text, payload.images, {
+        clientMessageId: options.clientMessageId,
+      });
     } catch (error) {
       const index = this.pendingSteeredUserMessages.indexOf(submittedMessage);
       if (index >= 0) {
@@ -3078,25 +3117,34 @@ export class OmpAgentSession implements AgentSession {
     if (restored.truncated) {
       const unmatched = [...restored.steering];
       for (const pending of this.pendingSteeredUserMessages) {
-        const index = unmatched.findIndex(
-          (message) =>
-            getOmpWorkflowDisplayText(message.text) === getOmpWorkflowDisplayText(pending.text),
+        const index = unmatched.findIndex((message) =>
+          message.clientMessageId
+            ? message.clientMessageId === pending.clientMessageId
+            : getOmpWorkflowDisplayText(message.text) === getOmpWorkflowDisplayText(pending.text),
         );
         if (index >= 0) unmatched.splice(index, 1);
-        else queued.push({ text: pending.text, images: pending.images });
+        else
+          queued.push({
+            text: pending.text,
+            images: pending.images,
+            ...(pending.clientMessageId ? { clientMessageId: pending.clientMessageId } : {}),
+          });
       }
     }
     for (const message of queued) {
-      const pending = this.pendingSteeredUserMessages.find(
-        (submitted) =>
-          getOmpWorkflowDisplayText(submitted.text) === getOmpWorkflowDisplayText(message.text),
+      const pending = this.pendingSteeredUserMessages.find((submitted) =>
+        message.clientMessageId
+          ? message.clientMessageId === submitted.clientMessageId
+          : getOmpWorkflowDisplayText(submitted.text) === getOmpWorkflowDisplayText(message.text),
       );
+      const clientMessageId = message.clientMessageId ?? pending?.clientMessageId;
       // Preserve original attachments and client IDs, without replaying the input.
       this.handleMessageEnd(
         {
           type: "message_end",
           message: {
             role: "user",
+            ...(clientMessageId ? { clientMessageId } : {}),
             content: [
               { type: "text", text: message.text },
               ...(pending?.images ?? message.images ?? []),
@@ -3113,6 +3161,33 @@ export class OmpAgentSession implements AgentSession {
         "OMP stopped queue exceeded the RPC response limit; Desktop retained original pending steering input",
       );
     }
+  }
+
+  async resolveUserMessageId(input: {
+    clientMessageId: string;
+    text: string;
+  }): Promise<string | null> {
+    let submitted = this.submittedUserMessages.get(input.clientMessageId);
+    if (submitted?.nativeState === "withdrawn") return null;
+    const messages = await this.runtimeSession.getBranchMessages();
+    submitted = this.submittedUserMessages.get(input.clientMessageId);
+    if (submitted?.nativeState === "withdrawn") return null;
+    const identified = messages.filter(
+      (message) => message.clientMessageId === input.clientMessageId,
+    );
+    if (identified.length > 0) return identified.length === 1 ? identified[0]!.entryId : null;
+    // A structured acceptance must resolve by its identity. Only a genuinely
+    // legacy acceptance can use text; queued/local-only input has no record.
+    if (submitted && submitted.nativeState !== "accepted_legacy") return null;
+    const text = getOmpWorkflowDisplayText(submitted?.text ?? input.text);
+    const legacy = messages.filter((message) => getOmpWorkflowDisplayText(message.text) === text);
+    if (legacy.length !== 1 || legacy[0]!.clientMessageId) return null;
+    const entryId = legacy[0]!.entryId;
+    for (const [clientMessageId, emitted] of this.emittedClientUserMessages) {
+      if (emitted.item.messageId === entryId && clientMessageId !== input.clientMessageId)
+        return null;
+    }
+    return entryId;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -3537,6 +3612,10 @@ export class OmpAgentSession implements AgentSession {
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
     if (promptText) {
+      const submitted = this.activeClientMessageId
+        ? this.submittedUserMessages.get(this.activeClientMessageId)
+        : undefined;
+      if (submitted?.nativeState === "submitted") submitted.nativeState = "withdrawn";
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -3544,6 +3623,7 @@ export class OmpAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptText,
+          rewindStatus: "unavailable",
           ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
         },
       });
@@ -4766,77 +4846,97 @@ export class OmpAgentSession implements AgentSession {
     withdrawnFromQueue?: boolean,
   ): void {
     const text = getUserMessageText(message.content);
-    const images = getUserMessageImages(message.content);
-    if (!text && !images) {
-      return;
-    }
+    const nativeImages = getUserMessageImages(message.content);
+    if (!text && !nativeImages) return;
     const originalText = getOmpWorkflowDisplayText(text);
-    const matchesSubmittedPrompt =
-      this.lastSubmittedPromptText !== null &&
-      originalText === getOmpWorkflowDisplayText(this.lastSubmittedPromptText);
-    const submittedSteer = this.pendingSteeredUserMessages.find(
-      (submitted) => getOmpWorkflowDisplayText(submitted.text) === originalText,
+    const nativeClientMessageId = message.clientMessageId;
+    const matchingSteers = this.pendingSteeredUserMessages.filter((submitted) =>
+      nativeClientMessageId
+        ? submitted.clientMessageId === nativeClientMessageId
+        : getOmpWorkflowDisplayText(submitted.text) === originalText,
     );
-    // Image prompts can produce a second, late user message_end frame after the
-    // turn has completed. Its native entry id may differ, so id-only
-    // deduplication cannot recognize it. Suppress a replay of the last live text
-    // unless it matches a submitted prompt that has not been consumed yet.
+    const submittedSteer = matchingSteers.length === 1 ? matchingSteers[0] : undefined;
+    const matchesSubmittedPrompt = nativeClientMessageId
+      ? nativeClientMessageId === this.lastSubmittedPromptClientMessageId
+      : this.lastSubmittedPromptText !== null &&
+        getOmpWorkflowDisplayText(this.lastSubmittedPromptText) === originalText;
+    let clientMessageId =
+      nativeClientMessageId ??
+      submittedSteer?.clientMessageId ??
+      (matchingSteers.length === 0 && matchesSubmittedPrompt
+        ? this.lastSubmittedPromptClientMessageId
+        : null);
+    const nativeMessage = message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
+    const messageId = readNativeMessageId(nativeMessage);
+    let previous = clientMessageId
+      ? this.emittedClientUserMessages.get(clientMessageId)
+      : undefined;
+    // Legacy image frames can replay after settlement with a different native
+    // ID. A replay with no structured identity may enrich only a no-ID row.
+    const last = this.lastEmittedLiveUserMessage;
     if (
-      this.lastEmittedLiveUserMessageText !== null &&
-      originalText === getOmpWorkflowDisplayText(this.lastEmittedLiveUserMessageText) &&
+      !nativeClientMessageId &&
       !submittedSteer &&
+      matchingSteers.length === 0 &&
+      last &&
+      getOmpWorkflowDisplayText(last.nativeText) === originalText &&
       (!turnId || !matchesSubmittedPrompt)
     ) {
-      return;
+      if (last.item.messageId) return;
+      previous = last;
+      clientMessageId = last.item.clientMessageId ?? null;
     }
-    const nativeMessage = message as OmpAgentMessage & {
-      id?: unknown;
-      entryId?: unknown;
-    };
-    const messageId = readNativeMessageId(nativeMessage);
-    const clientMessageId =
-      submittedSteer?.clientMessageId ??
-      (matchesSubmittedPrompt
-        ? (this.activeClientMessageId ?? this.lastSubmittedPromptClientMessageId)
-        : null);
+    const submitted = clientMessageId ? this.submittedUserMessages.get(clientMessageId) : undefined;
+    if (submitted) {
+      if (withdrawnFromQueue) submitted.nativeState = "withdrawn";
+      else if (submitted.nativeState !== "withdrawn") {
+        submitted.nativeState =
+          nativeClientMessageId || submitted.nativeState === "accepted_identified"
+            ? "accepted_identified"
+            : "accepted_legacy";
+      }
+    }
+    if (submittedSteer) {
+      const index = this.pendingSteeredUserMessages.indexOf(submittedSteer);
+      if (index >= 0) this.pendingSteeredUserMessages.splice(index, 1);
+    }
     const displayText =
+      previous?.item.text ??
+      submitted?.displayText ??
       submittedSteer?.displayText ??
-      (matchesSubmittedPrompt
-        ? (this.lastSubmittedPromptDisplayText ?? getOmpWorkflowDisplayText(text))
-        : getOmpWorkflowDisplayText(text));
+      (matchesSubmittedPrompt ? this.lastSubmittedPromptDisplayText : null) ??
+      originalText;
+    const images =
+      previous?.item.images ??
+      getUserMessageImages(submitted?.images ?? submittedSteer?.images ?? []) ??
+      nativeImages;
     const emitUserMessage = (resolvedMessageId?: string): void => {
-      if (resolvedMessageId) {
-        // OMP re-emits user message_end frames for entries it has already
-        // surfaced (e.g. after steer or a resumed process); emit each native
-        // entry exactly once.
-        if (this.emittedUserMessageIds.has(resolvedMessageId)) {
-          return;
-        }
-        this.emittedUserMessageIds.add(resolvedMessageId);
-      }
-      if (submittedSteer) {
-        const index = this.pendingSteeredUserMessages.indexOf(submittedSteer);
-        if (index >= 0) {
-          this.pendingSteeredUserMessages.splice(index, 1);
-        }
-      }
-      this.lastEmittedLiveUserMessageText = text;
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "user_message",
-          text: displayText,
-          ...(images ? { images } : {}),
-          ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
-          ...(clientMessageId ? { clientMessageId } : {}),
-        },
-      });
+      const existing = clientMessageId
+        ? this.emittedClientUserMessages.get(clientMessageId)
+        : previous;
+      // A late failed lookup must not downgrade a newer ID-bearing frame.
+      if (existing?.item.messageId) return;
+      if (resolvedMessageId && this.emittedUserMessageIds.has(resolvedMessageId)) return;
+      if (existing && !resolvedMessageId) return;
+      if (resolvedMessageId) this.emittedUserMessageIds.add(resolvedMessageId);
+      const item: Extract<AgentTimelineItem, { type: "user_message" }> = {
+        type: "user_message",
+        text: displayText,
+        ...(images ? { images } : {}),
+        ...(resolvedMessageId
+          ? {
+              messageId: resolvedMessageId,
+              ...(existing ? { rewindStatus: "ready" as const } : {}),
+            }
+          : { rewindStatus: "unavailable" as const }),
+        ...(clientMessageId ? { clientMessageId } : {}),
+      };
+      const emitted = { item, nativeText: text, turnId: existing?.turnId ?? turnId };
+      if (clientMessageId) this.emittedClientUserMessages.set(clientMessageId, emitted);
+      this.lastEmittedLiveUserMessage = emitted;
+      this.emit({ type: "timeline", provider: this.provider, turnId: emitted.turnId, item });
     };
-    if (withdrawnFromQueue) {
-      // Withdrawn input was never recorded by native OMP: do not invent an
-      // entry ID or resolve an older identical branch message.
+    if (withdrawnFromQueue || submitted?.nativeState === "withdrawn") {
       emitUserMessage();
       return;
     }
@@ -4844,20 +4944,30 @@ export class OmpAgentSession implements AgentSession {
       emitUserMessage(messageId);
       return;
     }
-    void this.runtimeSession
-      .getBranchMessages()
-      .then((messages) =>
-        emitUserMessage(
-          messages
-            .toReversed()
-            .find((branchMessage) => getOmpWorkflowDisplayText(branchMessage.text) === originalText)
-            ?.entryId,
-        ),
-      )
+    const lookup = clientMessageId
+      ? this.resolveUserMessageId({ clientMessageId, text })
+      : this.runtimeSession.getBranchMessages().then((messages) => {
+          const matching = messages.filter(
+            (entry) => getOmpWorkflowDisplayText(entry.text) === originalText,
+          );
+          return matching.length === 1 && !matching[0]!.clientMessageId
+            ? matching[0]!.entryId
+            : null;
+        });
+    void lookup
+      .then((resolvedMessageId) => {
+        if (!resolvedMessageId) {
+          this.logger.warn(
+            { clientMessageId, turnId, sessionFile: this.state.sessionFile },
+            "OMP accepted user message has no unambiguous native entry ID",
+          );
+        }
+        return emitUserMessage(resolvedMessageId ?? undefined);
+      })
       .catch((error: unknown) => {
-        this.logger.debug(
-          { err: error, sessionFile: this.state.sessionFile },
-          "OMP native user message ID lookup failed",
+        this.logger.warn(
+          { err: error, clientMessageId, turnId, sessionFile: this.state.sessionFile },
+          "OMP native user message ID lookup failed; rewind is unavailable until explicit synchronization",
         );
         emitUserMessage();
       });

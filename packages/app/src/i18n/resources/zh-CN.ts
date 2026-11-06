@@ -1986,14 +1986,20 @@ export const zhCN: TranslationResources = {
   },
   rewind: {
     tooltip: "回退到此消息",
+    pending: "消息同步中，暂时无法回退",
+    unavailable: "尚未获取消息 ID，重新同步后可回退。",
     warning: "此操作无法撤销",
     actions: {
       conversation: "回退对话",
       files: "回退文件",
       both: "回退对话和文件",
+      sync: "重新同步消息",
     },
     errors: {
       failed: "回退 agent 失败",
+      pending: "消息仍在同步，请稍后再回退。",
+      unavailable: "此消息暂时无法回退，请先重新同步。",
+      syncFailed: "消息同步失败，请重试。",
     },
   },
   diffViewer: {

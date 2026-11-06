@@ -201,8 +201,10 @@ interface TimelinePathResult {
 
 function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolean {
   if (isAgentToolCallItem(existing) && isAgentToolCallItem(incoming)) {
-    return existing.payload.data.callId === incoming.payload.data.callId &&
-      (!existing.turnId || !incoming.turnId || existing.turnId === incoming.turnId);
+    return (
+      existing.payload.data.callId === incoming.payload.data.callId &&
+      (!existing.turnId || !incoming.turnId || existing.turnId === incoming.turnId)
+    );
   }
   if (existing.kind === "assistant_message" && incoming.kind === "assistant_message") {
     return (
@@ -966,14 +968,20 @@ function reconcileOverlappingProjectedStreamItems(params: {
     if (unit.event.type === "timeline" && unit.event.item.type === "tool_call") {
       const callId = unit.event.item.callId;
       const turnId = unit.event.turnId;
-      const matches = (item: StreamItem) => isAgentToolCallItem(item) &&
+      const matches = (item: StreamItem) =>
+        isAgentToolCallItem(item) &&
         item.payload.data.callId === callId &&
         (!turnId || !item.turnId || item.turnId === turnId) &&
         (!item.timelineCursor || item.timelineCursor.epoch === params.epoch);
       if (tail.some(matches) || head.some(matches)) {
-        const updated = applyStreamEvent({ tail, head, event: unit.event,
-          timestamp: unit.timestamp, source: "canonical",
-          timelineCursor: { epoch: params.epoch, seq: unit.seqEnd } });
+        const updated = applyStreamEvent({
+          tail,
+          head,
+          event: unit.event,
+          timestamp: unit.timestamp,
+          source: "canonical",
+          timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+        });
         tail = updated.tail;
         head = updated.head;
         reconciledUnits.add(unit);
@@ -1203,15 +1211,20 @@ function applyAcceptedTimelinePage(input: {
     });
   }
   const projected = reconcileOverlappingProjectedStreamItems({
-    tail: currentTail, head: currentHead, units: acceptedUnits,
-    epoch: payload.epoch, currentEndSeq: currentCursor?.endSeq,
+    tail: currentTail,
+    head: currentHead,
+    units: acceptedUnits,
+    epoch: payload.epoch,
+    currentEndSeq: currentCursor?.endSeq,
   });
   const olderTail = hydrateStreamState(
-    acceptedUnits.filter((unit) => !projected.reconciledUnits.has(unit)).map(({ event, timestamp, seqEnd }) => ({
-      event,
-      timestamp,
-      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
-    })),
+    acceptedUnits
+      .filter((unit) => !projected.reconciledUnits.has(unit))
+      .map(({ event, timestamp, seqEnd }) => ({
+        event,
+        timestamp,
+        timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+      })),
     {
       source: "canonical",
       reservedItemIds: new Set(
@@ -1348,15 +1361,33 @@ function getTerminalTimelineResponse(
   return null;
 }
 
-function reconcileMaterializedToolRevisions(
+function reconcileMaterializedTimelineMetadata(
   timelineResult: TimelinePathResult,
   timelineUnits: TimelineUnit[],
   epoch: string,
 ): void {
   if (timelineResult.cursor?.epoch !== epoch) return;
-  // A materialized tool can change without advancing the sequence window.
-  // Reconcile visible calls even when the rest of this response is already known.
+  // Identity/status and materialized tools can change without advancing the seq.
+  // Reconcile retained rows even when this response's window is already known.
   for (const unit of timelineUnits) {
+    if (
+      unit.event.type === "timeline" &&
+      unit.event.item.type === "user_message" &&
+      unit.event.item.rewindStatus !== undefined
+    ) {
+      const revised = applyStreamEvent({
+        tail: timelineResult.tail,
+        head: timelineResult.head,
+        event: unit.event,
+        timestamp: unit.timestamp,
+        source: "canonical",
+        timelineCursor: { epoch, seq: unit.seqEnd },
+        unmatchedUserMessageInsert: "none",
+      });
+      timelineResult.tail = revised.tail;
+      timelineResult.head = revised.head;
+      continue;
+    }
     if (
       unit.event.type !== "timeline" ||
       unit.event.item.type !== "tool_call" ||
@@ -1366,7 +1397,8 @@ function reconcileMaterializedToolRevisions(
     const callId = unit.event.item.callId;
     const turnId = unit.event.turnId;
     const containsCall = (item: StreamItem) =>
-      isAgentToolCallItem(item) && item.payload.data.callId === callId &&
+      isAgentToolCallItem(item) &&
+      item.payload.data.callId === callId &&
       (!turnId || !item.turnId || item.turnId === turnId) &&
       (!item.timelineCursor || item.timelineCursor.epoch === epoch);
     if (!timelineResult.tail.some(containsCall) && !timelineResult.head.some(containsCall))
@@ -1519,10 +1551,20 @@ export function processTimelineResponse(
     });
   }
 
-  reconcileMaterializedToolRevisions(timelineResult, [...timelineUnits, ...revisedUnits], payload.epoch);
-  if (timelineResult.cursor?.epoch === payload.epoch && payload.contentVersion !== undefined &&
-      (payload.reset || (payload.direction === "after" && payload.mergeWindow !== true) || !currentCursor)) {
-    const contentVersion = payload.reset ? payload.contentVersion
+  reconcileMaterializedTimelineMetadata(
+    timelineResult,
+    [...timelineUnits, ...revisedUnits],
+    payload.epoch,
+  );
+  if (
+    timelineResult.cursor?.epoch === payload.epoch &&
+    payload.contentVersion !== undefined &&
+    (payload.reset ||
+      (payload.direction === "after" && payload.mergeWindow !== true) ||
+      !currentCursor)
+  ) {
+    const contentVersion = payload.reset
+      ? payload.contentVersion
       : Math.max(timelineResult.cursor.contentVersion ?? 0, payload.contentVersion);
     if (contentVersion !== timelineResult.cursor.contentVersion) {
       timelineResult.cursor = { ...timelineResult.cursor, contentVersion };
@@ -1558,8 +1600,14 @@ export function processTimelineResponse(
     timelineResponseComplete;
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
-  const commit = currentCursor && nextTail === currentTail && nextHead === currentHead &&
-    !cursorChanged && timelineResult.older === "unchanged" ? "discard" : "apply";
+  const commit =
+    currentCursor &&
+    nextTail === currentTail &&
+    nextHead === currentHead &&
+    !cursorChanged &&
+    timelineResult.older === "unchanged"
+      ? "discard"
+      : "apply";
 
   return {
     commit,
@@ -1834,7 +1882,26 @@ export function processAgentStreamEvent(
   // Apply stream event to tail/head
   // ------------------------------------------------------------------
   let streamResult: ReturnType<typeof applyStreamEvent>;
-  if (!sequencing.shouldApplyStreamEvent) {
+  if (
+    !sequencing.shouldApplyStreamEvent &&
+    event.type === "timeline" &&
+    event.item.type === "user_message" &&
+    currentCursor !== undefined &&
+    epoch === currentCursor.epoch &&
+    seq !== undefined &&
+    seq <= currentCursor.endSeq
+  ) {
+    // Native identity can arrive after the prompt's seq was already committed.
+    // Update only a retained prompt; never append history or flush the live head.
+    streamResult = applyStreamEvent({
+      tail: currentTail,
+      head: currentHead,
+      event,
+      timestamp,
+      timelineCursor,
+      unmatchedUserMessageInsert: "none",
+    });
+  } else if (!sequencing.shouldApplyStreamEvent) {
     streamResult = {
       tail: currentTail,
       head: currentHead,

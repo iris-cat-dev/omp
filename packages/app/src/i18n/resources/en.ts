@@ -2024,14 +2024,20 @@ export const en = {
   },
   rewind: {
     tooltip: "Rewind to this message",
+    pending: "Waiting for message sync before rewind",
+    unavailable: "Message ID unavailable. Resync to enable rewind.",
     warning: "This action cannot be undone",
     actions: {
       conversation: "Rewind conversation",
       files: "Rewind files",
       both: "Rewind conversation and files",
+      sync: "Resync message",
     },
     errors: {
       failed: "Failed to rewind agent",
+      pending: "This message is still syncing. Wait before rewinding.",
+      unavailable: "This message cannot be rewound yet. Resync it first.",
+      syncFailed: "Could not sync this message. Try again.",
     },
   },
   diffViewer: {

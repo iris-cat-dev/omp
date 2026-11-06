@@ -133,6 +133,7 @@ import type {
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
+  AgentRewindSyncResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -970,7 +971,7 @@ type CorrelatedResponsePayload<TType extends CorrelatedResponseType> = Extract<
   { type: TType }
 >["payload"];
 
-class DaemonRpcError extends Error {
+export class DaemonRpcError extends Error {
   readonly requestId: string;
   readonly requestType?: string;
   readonly code?: string;
@@ -3418,7 +3419,45 @@ export class DaemonClient {
       },
     });
     if (!payload.ok) {
-      throw new Error(payload.error ?? "Agent rewind failed");
+      throw new DaemonRpcError({
+        requestId,
+        requestType: message.type,
+        error: payload.error ?? "Agent rewind failed",
+        code: payload.errorCode,
+      });
+    }
+    return payload;
+  }
+
+  async syncAgentRewindMessage(
+    agentId: string,
+    messageId: string,
+  ): Promise<AgentRewindSyncResponseMessage["payload"]> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.rewind.sync.request",
+      requestId,
+      agentId,
+      messageId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.rewind.sync.response" || msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.ok) {
+      throw new DaemonRpcError({
+        requestId,
+        requestType: message.type,
+        error: payload.error ?? "Message synchronization failed",
+        code: payload.errorCode,
+      });
     }
     return payload;
   }

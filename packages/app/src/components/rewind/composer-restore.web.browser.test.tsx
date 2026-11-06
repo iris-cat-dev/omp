@@ -1,18 +1,36 @@
-import React, { act, useState } from "react";
+import React, { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { RewindComposerRestoreProvider, useRewindComposerRestore } from "./composer-restore";
 import { useRewindAgentMutation } from "./use-rewind-agent-mutation";
 
-const { fetchAgentTimelineMock, rewindAgentMock, toastErrorMock } = vi.hoisted(() => ({
-  fetchAgentTimelineMock: vi.fn(),
-  rewindAgentMock: vi.fn(),
-  toastErrorMock: vi.fn(),
+const { fetchAgentTimelineMock, rewindAgentMock, syncAgentRewindMessageMock, toastErrorMock } =
+  vi.hoisted(() => ({
+    fetchAgentTimelineMock: vi.fn(),
+    rewindAgentMock: vi.fn(),
+    syncAgentRewindMessageMock: vi.fn(),
+    toastErrorMock: vi.fn(),
+  }));
+
+// The real session store imports timeline-assets. Keep its crypto boundary web-native,
+// as in queued-message-track.browser.test.tsx, instead of importing Expo's native emitter.
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digestStringAsync: async (_algorithm: string, text: string) => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+      "",
+    );
+  },
 }));
+beforeEach(() => {
+  vi.stubGlobal("React", React);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+});
 
 vi.mock("@/runtime/host-runtime", () => ({
   getHostRuntimeStore: () => ({ fetchAgentTimeline: fetchAgentTimelineMock }),
@@ -45,58 +63,66 @@ const rewoundFile = {
 
 function RestoreControl() {
   const restore = useRewindComposerRestore();
+  const handleRestore = useCallback(() => {
+    restore?.restoreIfComposerEmpty({
+      text: "rewound",
+      images: [rewoundImage],
+      attachments: [rewoundFile],
+    });
+  }, [restore]);
   return (
-    <button
-      type="button"
-      onClick={() =>
-        restore?.restoreIfComposerEmpty({
-          text: "rewound",
-          images: [rewoundImage],
-          attachments: [rewoundFile],
-        })
-      }
-    >
+    <button type="button" onClick={handleRestore}>
       Restore
     </button>
   );
 }
 
 function RewindControl() {
-  const rewind = useRewindAgentMutation({
+  const { rewindAgent, syncMessage } = useRewindAgentMutation({
     serverId: "server-1",
     agentId: "agent-1",
     messageId: "message-1",
-    client: { rewindAgent: rewindAgentMock } as unknown as DaemonClient,
+    client: {
+      rewindAgent: rewindAgentMock,
+      syncAgentRewindMessage: syncAgentRewindMessageMock,
+    } as unknown as DaemonClient,
   });
+  const handleRewind = useCallback(() => {
+    void rewindAgent({
+      mode: "conversation",
+      rewoundText: "rewound",
+      rewoundImages: [rewoundImage],
+      rewoundAttachments: [rewoundFile],
+    }).catch(() => {});
+  }, [rewindAgent]);
+  const handleSync = useCallback(() => {
+    void syncMessage().catch(() => {});
+  }, [syncMessage]);
   return (
-    <button
-      type="button"
-      data-testid="rewind"
-      onClick={() => {
-        void rewind.rewindAgent({
-          mode: "conversation",
-          rewoundText: "rewound",
-          rewoundImages: [rewoundImage],
-          rewoundAttachments: [rewoundFile],
-        });
-      }}
-    >
-      Rewind
-    </button>
+    <>
+      <button type="button" data-testid="rewind" onClick={handleRewind}>
+        Rewind
+      </button>
+      <button type="button" data-testid="sync" onClick={handleSync}>
+        Sync
+      </button>
+    </>
   );
 }
 
 function ComposerHarness() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>([]);
+  const restoreDraftIfEmpty = useCallback(
+    (draft: { text: string; attachments: UserComposerAttachment[] }) => {
+      if (text.length > 0 || attachments.length > 0) return;
+      setText(draft.text);
+      setAttachments(draft.attachments);
+    },
+    [text, attachments],
+  );
   return (
-    <RewindComposerRestoreProvider
-      restoreDraftIfEmpty={(draft) => {
-        if (text.length > 0 || attachments.length > 0) return;
-        setText(draft.text);
-        setAttachments(draft.attachments);
-      }}
-    >
+    <RewindComposerRestoreProvider restoreDraftIfEmpty={restoreDraftIfEmpty}>
       <RestoreControl />
       <output data-testid="composer-text">{text}</output>
       <output data-testid="composer-images">
@@ -118,14 +144,16 @@ function ComposerHarness() {
 function RewindMutationHarness() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>([]);
+  const restoreDraftIfEmpty = useCallback(
+    (draft: { text: string; attachments: UserComposerAttachment[] }) => {
+      if (text.length > 0 || attachments.length > 0) return;
+      setText(draft.text);
+      setAttachments(draft.attachments);
+    },
+    [text, attachments],
+  );
   return (
-    <RewindComposerRestoreProvider
-      restoreDraftIfEmpty={(draft) => {
-        if (text.length > 0 || attachments.length > 0) return;
-        setText(draft.text);
-        setAttachments(draft.attachments);
-      }}
-    >
+    <RewindComposerRestoreProvider restoreDraftIfEmpty={restoreDraftIfEmpty}>
       <RewindControl />
       <output data-testid="rewind-text">{text}</output>
       <output data-testid="rewind-images">
@@ -153,9 +181,66 @@ afterEach(() => {
   root = null;
   container = null;
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("rewind composer restore", () => {
+  it("resyncs without rewinding, refreshing the transcript, or restoring the composer", async () => {
+    syncAgentRewindMessageMock.mockResolvedValue({ ok: true, rewindStatus: "ready" });
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <RewindMutationHarness />
+        </QueryClientProvider>,
+      ),
+    );
+    const syncButton = container.querySelector<HTMLButtonElement>('[data-testid="sync"]')!;
+    await act(async () => syncButton.click());
+    await vi.waitFor(() => expect(syncAgentRewindMessageMock).toHaveBeenCalledOnce());
+    expect(syncAgentRewindMessageMock).toHaveBeenCalledWith("agent-1", "message-1");
+    expect(rewindAgentMock).not.toHaveBeenCalled();
+    expect(fetchAgentTimelineMock).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="rewind-text"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="rewind-images"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="rewind-files"]')?.textContent).toBe("");
+    queryClient.clear();
+  });
+
+  it("prevents concurrent sync and rewind actions and allows retry after sync settles", async () => {
+    const sync = Promise.withResolvers<void>();
+    syncAgentRewindMessageMock.mockReturnValue(sync.promise);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <RewindMutationHarness />
+        </QueryClientProvider>,
+      ),
+    );
+    const syncButton = container.querySelector<HTMLButtonElement>('[data-testid="sync"]')!;
+    const rewindButton = container.querySelector<HTMLButtonElement>('[data-testid="rewind"]')!;
+    act(() => {
+      syncButton.click();
+      syncButton.click();
+      rewindButton.click();
+    });
+    await vi.waitFor(() => expect(syncAgentRewindMessageMock).toHaveBeenCalledOnce());
+    expect(rewindAgentMock).not.toHaveBeenCalled();
+    await act(async () => sync.resolve());
+    syncAgentRewindMessageMock.mockResolvedValue({ ok: true, rewindStatus: "ready" });
+    await act(async () => syncButton.click());
+    await vi.waitFor(() => expect(syncAgentRewindMessageMock).toHaveBeenCalledTimes(2));
+    expect(rewindAgentMock).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+
   it("returns the rewound text and image to an empty composer", () => {
     container = document.createElement("div");
     document.body.appendChild(container);

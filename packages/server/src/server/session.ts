@@ -84,6 +84,7 @@ import {
 } from "./workspace-labels/index.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import { AgentRewindError } from "./agent/rewind/rewind.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { LocalModelBridge } from "./local-model-bridge.js";
@@ -2174,6 +2175,8 @@ export class Session {
     switch (msg.type) {
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg);
+      case "agent.rewind.sync.request":
+        return this.handleAgentRewindSyncRequest(msg);
       default:
         return undefined;
     }
@@ -4067,6 +4070,40 @@ export class Session {
           agentId: msg.agentId,
           ok: false,
           error: error instanceof Error ? error.message : "Failed to rewind agent",
+          ...(error instanceof AgentRewindError ? { errorCode: error.code } : {}),
+        },
+      });
+    }
+  }
+
+  private async handleAgentRewindSyncRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.rewind.sync.request" }>,
+  ): Promise<void> {
+    try {
+      const rewindStatus = await this.agentManager.syncAgentRewindMessage(
+        msg.agentId,
+        msg.messageId,
+      );
+      this.emit({
+        type: "agent.rewind.sync.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ok: true,
+          rewindStatus,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.rewind.sync.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ok: false,
+          rewindStatus: null,
+          error: error instanceof Error ? error.message : "Message synchronization failed",
+          ...(error instanceof AgentRewindError ? { errorCode: error.code } : {}),
         },
       });
     }

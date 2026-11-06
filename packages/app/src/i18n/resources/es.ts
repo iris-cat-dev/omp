@@ -1928,14 +1928,20 @@ export const es: TranslationResources = {
   },
   rewind: {
     tooltip: "Rebobinar a este mensaje",
+    pending: "Esperando la sincronización del mensaje para rebobinar",
+    unavailable: "ID del mensaje no disponible. Resincroniza para rebobinar.",
     warning: "Esta acción no se puede deshacer.",
     actions: {
       conversation: "Rebobinar conversación",
       files: "Rebobinar archivos",
       both: "Rebobinar conversaciones y archivos",
+      sync: "Resincronizar mensaje",
     },
     errors: {
       failed: "No se pudo rebobinar el agente",
+      pending: "El mensaje sigue sincronizándose. Espera antes de rebobinar.",
+      unavailable: "Este mensaje aún no se puede rebobinar. Resincronízalo primero.",
+      syncFailed: "No se pudo sincronizar el mensaje. Inténtalo de nuevo.",
     },
   },
   diffViewer: {

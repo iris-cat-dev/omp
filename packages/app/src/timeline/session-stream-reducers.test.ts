@@ -307,6 +307,75 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
 // ---------------------------------------------------------------------------
 
 describe("processTimelineResponse", () => {
+  it("unlocks rewind from a same-seq history update and ignores a later pending snapshot", () => {
+    const prompt = createUserMessage({
+      clientMessageId: "client-prompt",
+      text: "typed prompt",
+      rewindStatus: "pending",
+      timestamp: new Date(1000),
+      timelineCursor: { epoch: "epoch-1", seq: 5 },
+    });
+    const currentHead = [makeAssistantItem("live reply")];
+    const currentCursor = { epoch: "epoch-1", startSeq: 1, endSeq: 8 };
+    const payload: ProcessTimelineResponseInput["payload"] = {
+      ...baseTimelineInput.payload,
+      window: { minSeq: 1, maxSeq: 8, nextSeq: 9 },
+      startCursor: { seq: 5 },
+      endCursor: { seq: 5 },
+      entries: [
+        {
+          seqStart: 5,
+          seqEnd: 5,
+          provider: "codex",
+          timestamp: new Date(1000).toISOString(),
+          item: {
+            type: "user_message",
+            text: "native-transformed prompt",
+            clientMessageId: "client-prompt",
+            messageId: "native-prompt",
+            rewindStatus: "ready",
+          },
+        },
+      ],
+    };
+    const ready = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [prompt],
+      currentHead,
+      currentCursor,
+      payload,
+    });
+    expect(ready.commit).toBe("apply");
+    expect(ready.tail).toEqual([{ ...prompt, messageId: "native-prompt", rewindStatus: "ready" }]);
+    expect(ready.head).toBe(currentHead);
+    expect(ready.cursorChanged).toBe(false);
+
+    const oldPage = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: ready.tail,
+      currentHead,
+      currentCursor,
+      payload: {
+        ...payload,
+        entries: [
+          {
+            ...payload.entries[0]!,
+            item: {
+              type: "user_message",
+              text: "typed prompt",
+              clientMessageId: "client-prompt",
+              messageId: "provisional-prompt",
+              rewindStatus: "pending",
+            },
+          },
+        ],
+      },
+    });
+    expect(oldPage.commit).toBe("discard");
+    expect(oldPage.tail).toBe(ready.tail);
+    expect(oldPage.head).toBe(currentHead);
+  });
+
   it("discards an unchanged resume tail without replacing timeline state", () => {
     const canonical = createUserMessage({
       id: "canonical-prompt",
@@ -3632,7 +3701,6 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-
   it("requests canonical catch-up when a projected entry overlaps unseen seqs", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
@@ -3794,6 +3862,76 @@ describe("processTimelineResponse", () => {
 // ---------------------------------------------------------------------------
 
 describe("processAgentStreamEvent", () => {
+  it.each(["tail", "head"] as const)(
+    "applies late native rewind metadata in %s without flushing an active reply",
+    (lane) => {
+      const prompt = createUserMessage({
+        clientMessageId: "client-prompt",
+        text: "typed prompt",
+        rewindStatus: "pending",
+        timestamp: new Date(1000),
+        timelineCursor: { epoch: "epoch-1", seq: 5 },
+      });
+      const reply = makeAssistantItem("reply still streaming", "active-reply");
+      const currentTail = lane === "tail" ? [prompt] : [];
+      const currentHead = lane === "head" ? [prompt, reply] : [reply];
+      const result = processAgentStreamEvent({
+        ...baseStreamInput,
+        currentTail,
+        currentHead,
+        currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 8 },
+        seq: 5,
+        epoch: "epoch-1",
+        event: {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "provider-transformed prompt",
+            clientMessageId: "client-prompt",
+            messageId: "native-prompt",
+            rewindStatus: "ready",
+          },
+        },
+      });
+      expect(result[lane][0]).toEqual({
+        ...prompt,
+        messageId: "native-prompt",
+        rewindStatus: "ready",
+      });
+      expect(result.head.at(-1)).toBe(reply);
+      expect([...result.tail, ...result.head]).toHaveLength(2);
+      expect(result.cursorChanged).toBe(false);
+      expect(result.sideEffects).toEqual([]);
+    },
+  );
+
+  it("does not resurrect an omitted prompt from a stale metadata update", () => {
+    const currentHead = [makeAssistantItem("live reply")];
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      currentTail: [],
+      currentHead,
+      currentCursor: { epoch: "epoch-1", startSeq: 6, endSeq: 8 },
+      seq: 5,
+      epoch: "epoch-1",
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "old prompt",
+          messageId: "omitted",
+          rewindStatus: "ready",
+        },
+      },
+    });
+    expect(result.tail).toEqual([]);
+    expect(result.head).toBe(currentHead);
+    expect(result.changedTail).toBe(false);
+    expect(result.changedHead).toBe(false);
+  });
+
   it("preserves the live timeline cursor on an assistant error", () => {
     const result = processAgentStreamEvent({
       ...baseStreamInput,

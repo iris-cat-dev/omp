@@ -378,13 +378,13 @@ A successful build is not native acceptance. Qualify the actual packaged applica
 
 ### Packaged macOS application
 
-To exercise an unpacked application, including its renderer, daemon, bundled OMP, CLI, and terminal:
+To exercise an unpacked application, including its renderer, daemon, bundled Node SDK, CLI, and terminal, use this entry point with a runtime that exposes a CDP debugging endpoint:
 
 ```bash
-node packages/desktop/e2e/packaged-app-smoke.js --app "packages/desktop/release/mac-arm64/OMP Desktop.app"
+node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/release/mac-arm64/OMP Desktop.app"
 ```
 
-Packaged smoke checks verify macOS Dock visibility, including a cold daemon launch, rather than requiring a separate Helper path. The packaged smoke keeps multiple native image launch configurations alive together inside the shipped runtime, in addition to invoking the OMP binary directly.
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The packaged smoke checks macOS Dock visibility, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet image installation.
 
 #### Native window-close interactions
 

@@ -1897,14 +1897,20 @@ export const ja: TranslationResources = {
   },
   rewind: {
     tooltip: "このメッセージに巻き戻す",
+    pending: "メッセージの同期が完了するまで巻き戻せません",
+    unavailable: "メッセージIDを取得できません。再同期すると巻き戻せます。",
     warning: "この操作は元に戻せません",
     actions: {
       conversation: "会話を巻き戻す",
       files: "ファイルを巻き戻す",
       both: "会話とファイルを巻き戻す",
+      sync: "メッセージを再同期",
     },
     errors: {
       failed: "エージェントの巻き戻しに失敗しました",
+      pending: "メッセージを同期中です。完了してから巻き戻してください。",
+      unavailable: "このメッセージはまだ巻き戻せません。先に再同期してください。",
+      syncFailed: "メッセージの同期に失敗しました。再試行してください。",
     },
   },
   diffViewer: {

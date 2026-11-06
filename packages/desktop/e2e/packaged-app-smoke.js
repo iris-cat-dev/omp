@@ -160,7 +160,7 @@ function createDefaultDaemonEnv(extraEnv = process.env) {
 }
 
 function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
-  return {
+  const env = {
     ...process.env,
     OMP_DESKTOP_HOME: home,
     PASEO_HOME: home,
@@ -169,6 +169,8 @@ function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
     PASEO_DISABLE_APP_UPDATES: "1",
     PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
   };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
 }
 
 function configureIsolatedDaemonHome(home, listen) {
@@ -760,16 +762,26 @@ export default function(api) {
   return { sdkRoot, version: sdkPackage.version };
 }
 
-async function smokeCliShim({ appPath, env }) {
+async function smokeCliShim({ appPath, env, waitForReady = false }) {
   console.log("Packaged desktop smoke: running bundled CLI shim daemon status");
-  const result = await runCliShimCommand({
-    appPath,
-    env,
-    args: ["daemon", "status", "--json"],
-    label: "Bundled CLI shim daemon status",
-  });
-  assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
-  const status = JSON.parse(result.stdout.trim());
+  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
+  let result;
+  let status;
+  for (;;) {
+    result = await runCliShimCommand({
+      appPath,
+      env,
+      args: ["daemon", "status", "--json"],
+      label: "Bundled CLI shim daemon status",
+    });
+    assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
+    status = JSON.parse(result.stdout.trim());
+    if (!waitForReady || status.localDaemon !== "starting") break;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for daemon readiness: ${JSON.stringify(status)}`);
+    }
+    await delay(250);
+  }
   if (
     status.localDaemon !== "running" ||
     status.connectedDaemon !== "reachable" ||
@@ -817,6 +829,7 @@ async function smokeColdCliDaemonStart({ appPath, env: isolatedEnv }) {
     report.status = await smokeCliShim({
       appPath,
       env: { ...env, PASEO_HOME: home, PASEO_LISTEN: listen },
+      waitForReady: true,
     });
     if (process.platform === "darwin") {
       const { pid } = JSON.parse(fs.readFileSync(pidPath, "utf8"));

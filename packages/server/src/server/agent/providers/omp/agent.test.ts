@@ -3495,7 +3495,12 @@ describe("OMP agent client and session", () => {
         messageId: "initial-native",
         clientMessageId: "initial-client",
       },
-      { type: "user_message", text: "继续检查", clientMessageId: "queued-client" },
+      {
+        type: "user_message",
+        text: "继续检查",
+        clientMessageId: "queued-client",
+        rewindStatus: "unavailable",
+      },
     ]);
     await omp.close();
   });
@@ -3868,5 +3873,328 @@ describe("OMP agent client and session", () => {
         clientMessageId: "client-image-prompt",
       },
     ]);
+  });
+
+  test("structured identity keeps transformed native prompts attached to the original display text", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("original display", {
+      clientMessageId: "prompt-client",
+    });
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt(
+      "native input hook completely rewrote the prompt",
+      "prompt-native",
+      "prompt-client",
+    );
+    await omp.steerActiveTurn("same display", turnId, { clientMessageId: "steer-one" });
+    await omp.steerActiveTurn("same display", turnId, { clientMessageId: "steer-two" });
+    runtime.acceptPrompt("transformed second", "native-two", "steer-two");
+    runtime.acceptPrompt("transformed first", "native-one", "steer-one");
+    expect(runtime.promptUserMessageOptions).toEqual([{ clientMessageId: "prompt-client" }]);
+    expect(runtime.steerUserMessageOptions).toEqual([
+      { clientMessageId: "steer-one" },
+      { clientMessageId: "steer-two" },
+    ]);
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "original display",
+        clientMessageId: "prompt-client",
+        messageId: "prompt-native",
+      },
+      {
+        type: "user_message",
+        text: "same display",
+        clientMessageId: "steer-two",
+        messageId: "native-two",
+      },
+      {
+        type: "user_message",
+        text: "same display",
+        clientMessageId: "steer-one",
+        messageId: "native-one",
+      },
+    ]);
+    await omp.close();
+  });
+
+  test("a late native ID enriches the existing client row after a failed lookup and turn completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("display", { clientMessageId: "late-client" });
+    const runtime = omp.runtime();
+    runtime.branchMessagesError = new Error("temporary history failure");
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: { role: "user", content: "rewritten", clientMessageId: "late-client" },
+    });
+    await waitForImmediate();
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await waitForImmediate();
+    runtime.acceptPrompt("rewritten", "late-native", "late-client");
+    runtime.acceptPrompt("rewritten", "late-native", "late-client");
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "display",
+        clientMessageId: "late-client",
+        rewindStatus: "unavailable",
+      },
+      {
+        type: "user_message",
+        text: "display",
+        clientMessageId: "late-client",
+        messageId: "late-native",
+        rewindStatus: "ready",
+      },
+    ]);
+    await omp.close();
+  });
+
+  test("explicit synchronization recovers structured IDs after transient failure without cross-binding identical prompts", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("same", { clientMessageId: "first-client" });
+    const runtime = omp.runtime();
+    runtime.branchMessagesError = new Error("temporary history failure");
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: { role: "user", content: "transformed", clientMessageId: "first-client" },
+    });
+    await waitForImmediate();
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "first-client", text: "same" }),
+    ).rejects.toThrow("temporary history failure");
+    await omp.steerActiveTurn("same", turnId, { clientMessageId: "second-client" });
+    runtime.branchMessagesError = null;
+    runtime.branchMessages = [{ entryId: "old-legacy", text: "same" }];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "first-client", text: "same" }),
+    ).resolves.toBeNull();
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "second-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.branchMessages = [
+      { entryId: "native-first", text: "transformed", clientMessageId: "first-client" },
+      { entryId: "native-second", text: "transformed", clientMessageId: "second-client" },
+    ];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "first-client", text: "same" }),
+    ).resolves.toBe("native-first");
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "second-client", text: "same" }),
+    ).resolves.toBe("native-second");
+    expect(runtime.branchRequests).toEqual([]);
+    await omp.close();
+  });
+
+  test("legacy history lookup refuses duplicate text and recovers only an unambiguous accepted record", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("same", { clientMessageId: "legacy-client" });
+    const runtime = omp.runtime();
+    runtime.branchMessages = [
+      { entryId: "old", text: "same" },
+      { entryId: "new", text: "same" },
+    ];
+    runtime.beginTurn();
+    runtime.emit({ type: "message_end", message: { role: "user", content: "same" } });
+    await waitForImmediate();
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "same",
+        clientMessageId: "legacy-client",
+        rewindStatus: "unavailable",
+      },
+    ]);
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "legacy-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.branchMessages = [{ entryId: "only", text: "same" }];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "legacy-client", text: "same" }),
+    ).resolves.toBe("only");
+    runtime.branchMessages = [
+      { entryId: "legacy", text: "same" },
+      { entryId: "identified-other", text: "same", clientMessageId: "other-client" },
+    ];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "legacy-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.branchMessages = [
+      { entryId: "duplicate-one", text: "same", clientMessageId: "legacy-client" },
+      { entryId: "duplicate-two", text: "rewritten", clientMessageId: "legacy-client" },
+    ];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "legacy-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.branchMessages = [];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "legacy-client", text: "same" }),
+    ).resolves.toBeNull();
+    await omp.close();
+  });
+
+  test("pending, withdrawn, and local-only input cannot bind an old identical native message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const turnId = await omp.requireStartTurn("same", { clientMessageId: "local-client" });
+    const runtime = omp.runtime();
+    runtime.branchMessages = [{ entryId: "old", text: "same" }];
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "local-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.beginTurn();
+    await omp.steerActiveTurn("same", turnId, { clientMessageId: "queued-client" });
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "queued-client", text: "same" }),
+    ).resolves.toBeNull();
+    runtime.restoredQueue = {
+      steering: [{ text: "same", clientMessageId: "queued-client" }],
+      followUp: [],
+    };
+    await omp.interrupt();
+    const beforeSync = runtime.branchMessageLookups;
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "queued-client", text: "same" }),
+    ).resolves.toBeNull();
+    expect(runtime.branchMessageLookups).toBe(beforeSync);
+    expect(omp.timeline()).toContainEqual({
+      type: "user_message",
+      text: "same",
+      clientMessageId: "queued-client",
+      rewindStatus: "unavailable",
+    });
+    await omp.close();
+  });
+
+  test("an older failed lookup cannot downgrade a native-ID enrichment", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("same", { clientMessageId: "race-client" });
+    const runtime = omp.runtime();
+    const lookup = deferred<typeof runtime.branchMessages>();
+    runtime.getBranchMessages = () => lookup.promise;
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: { role: "user", content: "same", clientMessageId: "race-client" },
+    });
+    runtime.acceptPrompt("same", "race-native", "race-client");
+    lookup.reject(new Error("late lookup failure"));
+    await waitForImmediate();
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "same",
+        clientMessageId: "race-client",
+        messageId: "race-native",
+      },
+    ]);
+    await omp.close();
+  });
+
+  test("legacy late-ID replay upgrades rather than suppresses an already-visible no-ID prompt", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("same", { clientMessageId: "legacy-late-client" });
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({ type: "message_end", message: { role: "user", content: "same" } });
+    await waitForImmediate();
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await waitForImmediate();
+    runtime.acceptPrompt("same", "legacy-late-native");
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "same",
+        clientMessageId: "legacy-late-client",
+        rewindStatus: "unavailable",
+      },
+      {
+        type: "user_message",
+        text: "same",
+        clientMessageId: "legacy-late-client",
+        messageId: "legacy-late-native",
+        rewindStatus: "ready",
+      },
+    ]);
+    await omp.close();
+  });
+
+  test("a completed local-only command remains unavailable for native ID synchronization", async () => {
+    const scheduler = new ManualNoTurnScheduler();
+    const omp = new OmpHarness({ noTurnScheduler: scheduler });
+    await omp.start();
+    const prompt = await omp.startPromptWithFalseLocalOnlyResult("local-only", {
+      clientMessageId: "local-only-client",
+    });
+    omp.runtime().branchMessages = [{ entryId: "old-local", text: "local-only" }];
+    scheduler.settle();
+    await expect(prompt.completion).resolves.toMatchObject({ finalText: "" });
+    const beforeSync = omp.runtime().branchMessageLookups;
+    await expect(
+      omp.resolveUserMessageId({ clientMessageId: "local-only-client", text: "local-only" }),
+    ).resolves.toBeNull();
+    expect(omp.runtime().branchMessageLookups).toBe(beforeSync);
+    expect(omp.timeline()).toContainEqual({
+      type: "user_message",
+      text: "local-only",
+      clientMessageId: "local-only-client",
+      rewindStatus: "unavailable",
+    });
+    await omp.close();
+  });
+
+  test("structured native identity preserves original images despite native content rewriting", async () => {
+    const image = { data: "original-image-bytes", mimeType: "image/png" };
+    const omp = new OmpHarness({
+      initialModel: {
+        provider: "anthropic",
+        id: "image-model",
+        name: "Image model",
+        input: ["text", "image"],
+      },
+    });
+    await omp.start();
+    await omp.requireStartTurn(
+      [
+        { type: "text", text: "original display" },
+        { type: "image", ...image },
+      ],
+      { clientMessageId: "image-client" },
+    );
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "rewritten" },
+          { type: "image", data: "normalized-image", mimeType: "image/jpeg" },
+        ],
+        clientMessageId: "image-client",
+        entryId: "image-native",
+      },
+    });
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "original display",
+        images: [image],
+        clientMessageId: "image-client",
+        messageId: "image-native",
+      },
+    ]);
+    await omp.close();
   });
 });

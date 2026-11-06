@@ -24,7 +24,11 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@omp-desktop/protocol/agent-labels";
 import type { Logger } from "pino";
-import type { ProviderOptions, ToolPolicy } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentUserMessageRewindStatus,
+  ProviderOptions,
+  ToolPolicy,
+} from "@omp-desktop/protocol/agent-types";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
@@ -86,7 +90,7 @@ import {
   type PendingForegroundRun,
   type TrackedAgentRun,
 } from "./agent-run-state.js";
-import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
+import { AgentRewindError, invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope, restorePromptSource } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
@@ -3075,6 +3079,10 @@ export class AgentManager {
             stagedSubmittedPromptEcho?.item.type === "user_message"
               ? stagedSubmittedPromptEcho.item.messageId
               : undefined,
+          rewindStatus:
+            stagedSubmittedPromptEcho?.item.type === "user_message"
+              ? stagedSubmittedPromptEcho.item.rewindStatus
+              : undefined,
         });
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
@@ -3961,49 +3969,154 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    const admission = this.captureRunAdmission(agentId);
     const agent = this.requireSessionAgent(agentId);
-    const submittedRow = this.timelineStore
+    let providerMessageId = messageId;
+    this.logger.info({ agentId, provider: agent.provider, messageId, mode }, "agent.rewind.start");
+    try {
+      while (true) {
+        const rewound = await this.runForegroundMutation(agentId, async () => {
+          await this.drainSessionEvents(agentId);
+          this.assertRunAdmission(admission, agentId);
+          const row = this.findUserMessageForRewind(agentId, messageId);
+          if (row) {
+            const nativeId = this.getNativeUserMessageId(row);
+            if (!nativeId) {
+              const status = this.getUnresolvedUserMessageStatus(agent, row);
+              if (row.item.type === "user_message" && row.item.clientMessageId) {
+                this.updateSubmittedPromptRewindStatus(agent, row.item.clientMessageId, status);
+              }
+              throw new AgentRewindError(
+                status === "pending" ? "message_pending" : "message_unavailable",
+                agentId,
+                messageId,
+              );
+            }
+            providerMessageId = nativeId;
+          }
+          if (this.hasInFlightRun(agentId)) return false;
+          const lock = this.runs.createPendingRun(agentId);
+          try {
+            await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
+            if (mode !== "files") {
+              await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+            }
+            await this.refreshRuntimeInfo(agent);
+            await this.persistSnapshot(agent);
+            this.logger.info(
+              { agentId, provider: agent.provider, messageId, providerMessageId, mode },
+              "agent.rewind.complete",
+            );
+            return true;
+          } finally {
+            this.runs.settleForegroundRun(agentId, lock.token);
+          }
+        });
+        if (rewound) return;
+        // Tree cancellation takes the same foreground lane. Release it first,
+        // then revalidate and reserve the rewind before admitting another prompt.
+        await this.cancelAgentRunBefore(agentId, "rewind");
+      }
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          agentId,
+          provider: agent.provider,
+          messageId,
+          providerMessageId,
+          mode,
+          lifecycle: agent.lifecycle,
+          errorCode: error instanceof AgentRewindError ? error.code : undefined,
+        },
+        "agent.rewind.failed",
+      );
+      throw error;
+    }
+  }
+
+  async syncAgentRewindMessage(
+    agentId: string,
+    messageId: string,
+  ): Promise<AgentUserMessageRewindStatus> {
+    const admission = this.captureRunAdmission(agentId);
+    return this.runForegroundMutation(agentId, async () => {
+      const agent = this.requireSessionAgent(agentId);
+      await this.drainSessionEvents(agentId);
+      this.assertRunAdmission(admission, agentId);
+      const row = this.findUserMessageForRewind(agentId, messageId);
+      if (!row || row.item.type !== "user_message") {
+        throw new AgentRewindError("message_unavailable", agentId, messageId);
+      }
+      if (this.getNativeUserMessageId(row)) return "ready";
+      const clientMessageId = row.item.clientMessageId;
+      if (!clientMessageId || !row.turnId || !agent.session.resolveUserMessageId) {
+        throw new AgentRewindError("message_unavailable", agentId, messageId);
+      }
+      let nativeId: string | null;
+      try {
+        nativeId = await agent.session.resolveUserMessageId({
+          clientMessageId,
+          text: row.item.text,
+        });
+      } catch (error) {
+        await this.drainSessionEvents(agentId);
+        this.assertRunAdmission(admission, agentId);
+        const latest = this.findUserMessageForRewind(agentId, messageId);
+        if (latest && this.getNativeUserMessageId(latest)) return "ready";
+        this.updateSubmittedPromptRewindStatus(agent, clientMessageId, "unavailable");
+        this.logger.warn(
+          { err: error, agentId, messageId, clientMessageId, provider: agent.provider },
+          "agent.rewind.sync.failed",
+        );
+        throw new AgentRewindError("message_sync_failed", agentId, messageId, { cause: error });
+      }
+      await this.drainSessionEvents(agentId);
+      this.assertRunAdmission(admission, agentId);
+      const latest = this.findUserMessageForRewind(agentId, messageId);
+      if (!latest) throw new AgentRewindError("message_unavailable", agentId, messageId);
+      if (this.getNativeUserMessageId(latest)) return "ready";
+      const status = nativeId ? "ready" : this.getUnresolvedUserMessageStatus(agent, latest);
+      this.updateSubmittedPromptRewindStatus(agent, clientMessageId, status, nativeId ?? undefined);
+      this.logger.info(
+        { agentId, messageId, clientMessageId, providerMessageId: nativeId, status },
+        "agent.rewind.sync.complete",
+      );
+      return status;
+    });
+  }
+
+  private findUserMessageForRewind(
+    agentId: string,
+    messageId: string,
+  ): AgentTimelineRow | undefined {
+    return this.timelineStore
       .getRows(agentId)
       .find(
         (row) =>
           row.item.type === "user_message" &&
-          row.item.messageId === messageId &&
-          row.item.clientMessageId === messageId,
+          (row.item.messageId === messageId || row.item.clientMessageId === messageId),
       );
-    if (submittedRow && !submittedRow.providerMessageId) {
-      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
-    }
-    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
+  }
 
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
-    }
+  private getNativeUserMessageId(row: AgentTimelineRow): string | undefined {
+    if (row.item.type !== "user_message") return undefined;
+    return (
+      row.providerMessageId ??
+      (row.item.messageId !== row.item.clientMessageId ? row.item.messageId : undefined)
+    );
+  }
 
-    const lock = this.runs.createPendingRun(agentId);
-    try {
-      this.logger.info(
-        { agentId, provider: agent.provider, messageId, mode },
-        "agent.rewind.start",
-      );
-      await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
-      if (mode !== "files") {
-        await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
-      }
-      await this.refreshRuntimeInfo(agent);
-      await this.persistSnapshot(agent);
-      this.logger.info(
-        { agentId, provider: agent.provider, messageId, mode },
-        "agent.rewind.complete",
-      );
-    } catch (error) {
-      this.logger.warn(
-        { err: error, agentId, provider: agent.provider, messageId, mode },
-        "agent.rewind.failed",
-      );
-      throw error;
-    } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
-    }
+  private getUnresolvedUserMessageStatus(
+    agent: ActiveManagedAgent,
+    row: AgentTimelineRow,
+  ): "pending" | "unavailable" {
+    return row.item.type === "user_message" &&
+      row.item.rewindStatus !== "unavailable" &&
+      row.turnId !== undefined &&
+      row.turnId === agent.activeTurnId
+      ? "pending"
+      : "unavailable";
   }
 
   async deleteAgent(
@@ -4426,6 +4539,17 @@ export class AgentManager {
     const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
+      for (const row of this.timelineStore.getRows(agentId)) {
+        if (row.item.type !== "user_message" || !row.item.clientMessageId) continue;
+        const updated = this.timelineStore.updateSubmittedUserMessage(
+          agentId,
+          row.item.clientMessageId,
+          {
+            rewindStatus: this.getNativeUserMessageId(row) ? "ready" : "unavailable",
+          },
+        );
+        if (updated) this.enqueueDurableTimelineUpdate(agentId, updated);
+      }
     }
     if (options?.timelineRows?.length || options?.timeline?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, this.timelineStore.getRows(agentId));
@@ -5088,6 +5212,9 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
+        if (terminalDisposition !== "stale") {
+          this.markUnresolvedSubmittedPromptsUnavailable(agent, eventTurnId);
+        }
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
@@ -5592,6 +5719,7 @@ export class AgentManager {
       messageId?: string;
       providerMessageId?: string;
       turnId?: string;
+      rewindStatus?: AgentUserMessageRewindStatus;
       workingStartedAt?: string;
       sourceAgentId?: string;
     },
@@ -5614,6 +5742,9 @@ export class AgentManager {
       text: submittedPromptText(prompt),
       ...(images ? { images } : {}),
       clientMessageId,
+      rewindStatus: options?.providerMessageId
+        ? "ready"
+        : (options?.rewindStatus ?? (options?.turnId ? "pending" : "unavailable")),
       ...(options?.workingStartedAt ? { workingStartedAt: options.workingStartedAt } : {}),
       ...(options?.messageId ? { messageId: options.messageId } : {}),
       ...(options?.sourceAgentId ? { sourceAgentId: options.sourceAgentId } : {}),
@@ -5647,24 +5778,69 @@ export class AgentManager {
       this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
         messageId: clientMessageId,
         ...(messageId ? { providerMessageId: messageId } : {}),
+        ...(item.rewindStatus ? { rewindStatus: item.rewindStatus } : {}),
         ...(turnId ? { turnId } : {}),
         ...(sourceAgentId ? { sourceAgentId } : {}),
       });
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
     if (!existing || existing.item.type !== "user_message") return null;
-    if (messageId) {
-      const enriched = this.timelineStore.enrichSubmittedUserMessage(
-        agent.id,
-        clientMessageId,
-        messageId,
-      );
-      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
-      if (hadSubmittedPrompt && existing.item.sourceAgentId) {
-        this.persistPromptSource(agent.id, messageId, existing.item.sourceAgentId);
-      }
+    const enriched = this.updateSubmittedPromptRewindStatus(
+      agent,
+      clientMessageId,
+      messageId ? "ready" : (item.rewindStatus ?? existing.item.rewindStatus ?? "pending"),
+      messageId,
+    );
+    if (messageId && hadSubmittedPrompt && existing.item.sourceAgentId) {
+      this.persistPromptSource(agent.id, messageId, existing.item.sourceAgentId);
     }
-    return existing;
+    return enriched ?? existing;
+  }
+
+  private updateSubmittedPromptRewindStatus(
+    agent: ActiveManagedAgent,
+    clientMessageId: string,
+    rewindStatus: AgentUserMessageRewindStatus,
+    providerMessageId?: string,
+  ): AgentTimelineRow | null {
+    const row = this.timelineStore.updateSubmittedUserMessage(agent.id, clientMessageId, {
+      rewindStatus,
+      providerMessageId,
+    });
+    if (!row) return null;
+    this.enqueueDurableTimelineUpdate(agent.id, row);
+    this.dispatchStream(
+      agent.id,
+      {
+        type: "timeline",
+        provider: agent.provider,
+        item: row.item,
+        ...(row.turnId ? { turnId: row.turnId } : {}),
+      },
+      {
+        seq: row.seq,
+        epoch: this.timelineStore.getEpoch(agent.id),
+        timestamp: row.timestamp,
+      },
+    );
+    return row;
+  }
+
+  private markUnresolvedSubmittedPromptsUnavailable(
+    agent: ActiveManagedAgent,
+    turnId: string | undefined,
+  ): void {
+    if (!turnId) return;
+    for (const row of this.timelineStore.getRows(agent.id)) {
+      if (
+        row.turnId !== turnId ||
+        row.item.type !== "user_message" ||
+        !row.item.clientMessageId ||
+        this.getNativeUserMessageId(row)
+      )
+        continue;
+      this.updateSubmittedPromptRewindStatus(agent, row.item.clientMessageId, "unavailable");
+    }
   }
 
   private persistPromptSource(agentId: string, messageId: string, sourceAgentId: string): void {

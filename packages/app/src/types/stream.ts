@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   AgentTimelineItem,
   AgentUsage,
+  AgentUserMessageRewindStatus,
   ToolCallDetail,
 } from "@omp-desktop/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@omp-desktop/protocol/messages";
@@ -95,6 +96,7 @@ export interface UserMessageItem {
   id: string;
   clientMessageId?: string;
   messageId?: string;
+  rewindStatus?: AgentUserMessageRewindStatus;
   turnId?: string;
   workingStartedAt?: Date;
   timelineCursor?: TimelinePosition;
@@ -108,6 +110,7 @@ export interface UserMessageInput {
   id?: string;
   clientMessageId?: string;
   messageId?: string;
+  rewindStatus?: AgentUserMessageRewindStatus;
   turnId?: string;
   workingStartedAt?: Date;
   timelineCursor?: TimelinePosition;
@@ -127,6 +130,7 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     id,
     ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     ...(input.messageId ? { messageId: input.messageId } : {}),
+    ...(input.rewindStatus ? { rewindStatus: input.rewindStatus } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.workingStartedAt ? { workingStartedAt: input.workingStartedAt } : {}),
     ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
@@ -137,6 +141,14 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
       ? { attachments: input.attachments }
       : {}),
   };
+}
+
+export function resolveUserMessageRewindStatus(
+  message: Pick<UserMessageInput, "messageId" | "clientMessageId" | "rewindStatus">,
+): AgentUserMessageRewindStatus {
+  if (message.rewindStatus !== undefined) return message.rewindStatus;
+  if (message.messageId && message.messageId !== message.clientMessageId) return "ready";
+  return message.clientMessageId ? "pending" : "unavailable";
 }
 
 export function isUnreconciledLocalUserMessage(message: UserMessageItem): boolean {
@@ -220,9 +232,15 @@ function matchesUserMessage(
   if (existing.clientMessageId && incoming.clientMessageId) {
     return existing.clientMessageId === incoming.clientMessageId;
   }
-  if (existing.messageId && incoming.messageId) {
-    return existing.messageId === incoming.messageId;
-  }
+  if (existing.messageId && existing.messageId === incoming.messageId) return true;
+  if (
+    existing.timelineCursor &&
+    incoming.timelineCursor &&
+    existing.timelineCursor.epoch === incoming.timelineCursor.epoch &&
+    existing.timelineCursor.seq === incoming.timelineCursor.seq
+  )
+    return true;
+  if (existing.messageId && incoming.messageId) return false;
   if (matchesLegacyCanonicalUserMessage(existing, incoming)) return true;
   if (matchesIdlessCanonicalUserMessage(existing, incoming)) return true;
   return policy === "handoff" && matchesLegacyCanonicalUserMessage(incoming, existing);
@@ -250,7 +268,9 @@ function userMessagesEqual(existing: UserMessageItem, merged: UserMessageItem): 
     existing.id === merged.id &&
     existing.clientMessageId === merged.clientMessageId &&
     existing.messageId === merged.messageId &&
-    existing.timelineCursor === merged.timelineCursor &&
+    existing.rewindStatus === merged.rewindStatus &&
+    existing.timelineCursor?.epoch === merged.timelineCursor?.epoch &&
+    existing.timelineCursor?.seq === merged.timelineCursor?.seq &&
     existing.text === merged.text &&
     existing.workingStartedAt === merged.workingStartedAt &&
     existing.timestamp === merged.timestamp &&
@@ -286,10 +306,25 @@ function produceUserMessage(
     throw new Error("User message upsert matched a non-user row");
   }
   const presentation = presentationPolicy === "incoming" ? incoming : existing;
+  const sameEpoch =
+    !existing.timelineCursor ||
+    !incoming.timelineCursor ||
+    existing.timelineCursor.epoch === incoming.timelineCursor.epoch;
+  // Native readiness only advances within an epoch; late snapshots must not relock it.
+  const rewindStatus =
+    sameEpoch &&
+    (existing.rewindStatus === "ready" ||
+      (existing.rewindStatus === "unavailable" && incoming.rewindStatus === "pending"))
+      ? existing.rewindStatus
+      : (incoming.rewindStatus ?? existing.rewindStatus);
   const merged = createUserMessage({
     ...presentation,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
-    messageId: incoming.messageId ?? existing.messageId,
+    messageId:
+      sameEpoch && existing.rewindStatus === "ready"
+        ? (existing.messageId ?? incoming.messageId)
+        : (incoming.messageId ?? existing.messageId),
+    rewindStatus,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
     images:
       presentation.images ??
@@ -470,7 +505,11 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     return null;
   }
   if (isAgentToolCallItem(retained)) {
-    const tailIndex = findExistingAgentToolCallIndex(tail, retained.payload.data.callId, retained.turnId);
+    const tailIndex = findExistingAgentToolCallIndex(
+      tail,
+      retained.payload.data.callId,
+      retained.turnId,
+    );
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
       return null;
@@ -993,6 +1032,7 @@ function appendUserMessage(
   turnId?: string,
   workingStartedAt?: Date,
   images?: Array<{ data: string; mimeType: string }>,
+  rewindStatus?: AgentUserMessageRewindStatus,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent && !images?.length) {
@@ -1005,6 +1045,7 @@ function appendUserMessage(
     id,
     clientMessageId,
     messageId,
+    rewindStatus,
     timelineCursor,
     turnId,
     workingStartedAt,
@@ -1206,7 +1247,11 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
   return mutated ? nextState : state;
 }
 
-function findExistingAgentToolCallIndex(state: StreamItem[], callId: string, turnId?: string): number {
+function findExistingAgentToolCallIndex(
+  state: StreamItem[],
+  callId: string,
+  turnId?: string,
+): number {
   return state.findIndex(
     (entry) =>
       entry.kind === "tool_call" &&
@@ -1330,8 +1375,15 @@ export function mergeAgentToolCallItem(
     !existing.timelineCursor ||
     timelineCursor.epoch === existing.timelineCursor.epoch;
   if (!sameEpoch) {
-    return { ...existing, timelineCursor, timestamp,
-      payload: { source: "agent", data: { ...data, error: data.status === "failed" ? data.error : null } } };
+    return {
+      ...existing,
+      timelineCursor,
+      timestamp,
+      payload: {
+        source: "agent",
+        data: { ...data, error: data.status === "failed" ? data.error : null },
+      },
+    };
   }
   if (
     sameEpoch &&
@@ -1341,11 +1393,7 @@ export function mergeAgentToolCallItem(
   ) {
     return existing;
   }
-  if (
-    existing.payload.data.status !== "running" &&
-    data.status === "running"
-  )
-    return existing;
+  if (existing.payload.data.status !== "running" && data.status === "running") return existing;
   const mergedStatus =
     data.revision !== undefined
       ? data.status
@@ -1689,6 +1737,7 @@ function reduceTimelineEvent(
           event.turnId,
           item.workingStartedAt ? new Date(item.workingStartedAt) : undefined,
           item.images,
+          item.rewindStatus,
         ),
       );
     case "assistant_message":
@@ -2149,7 +2198,7 @@ function applyCanonicalUserMessageEvent(params: {
   event: AgentStreamEventPayload;
   timestamp: Date;
   timelineCursor?: TimelinePosition;
-  unmatchedInsert?: "tail" | "head";
+  unmatchedInsert?: "tail" | "head" | "none";
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
@@ -2159,12 +2208,11 @@ function applyCanonicalUserMessageEvent(params: {
     event.item.messageId ??
     createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp);
 
-  const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
-  const flushedHead = head.length > 0 ? [] : head;
   const canonical = createUserMessage({
     id,
     messageId: event.item.messageId,
     clientMessageId: event.item.clientMessageId,
+    rewindStatus: event.item.rewindStatus,
     turnId: event.turnId,
     workingStartedAt: event.item.workingStartedAt
       ? new Date(event.item.workingStartedAt)
@@ -2174,6 +2222,31 @@ function applyCanonicalUserMessageEvent(params: {
     timestamp,
     images: timelineImagesToAttachments(event.item.images, id, timestamp),
   });
+  const updatesExistingPosition =
+    timelineCursor !== undefined &&
+    (tail.some(
+      (item) =>
+        item.kind === "user_message" &&
+        item.timelineCursor?.epoch === timelineCursor.epoch &&
+        item.timelineCursor.seq === timelineCursor.seq,
+    ) ||
+      head.some(
+        (item) =>
+          item.kind === "user_message" &&
+          item.timelineCursor?.epoch === timelineCursor.epoch &&
+          item.timelineCursor.seq === timelineCursor.seq,
+      ));
+  if (unmatchedInsert === "none" || updatesExistingPosition) {
+    return upsertUserMessageAcrossStream({
+      tail,
+      head,
+      message: canonical,
+      insert: "none",
+      presentation: "existing",
+    });
+  }
+  const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
+  const flushedHead = head.length > 0 ? [] : head;
   if (unmatchedInsert === "head") {
     const reconciled = upsertUserMessageAcrossStream({
       tail,
@@ -2301,7 +2374,7 @@ export function applyStreamEvent(params: {
   timestamp: Date;
   source?: StreamUpdateSource;
   timelineCursor?: TimelinePosition;
-  unmatchedUserMessageInsert?: "tail" | "head";
+  unmatchedUserMessageInsert?: "tail" | "head" | "none";
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
   const customMessageResult = applyCustomMessageEvent(params);
@@ -2320,17 +2393,31 @@ export function applyStreamEvent(params: {
     const callId = event.item.callId;
     // An edit to an existing tool is not a new foreground lane. In particular,
     // stale pages must not flush an assistant response that is still streaming.
-    const matches = (item: StreamItem) => isAgentToolCallItem(item) &&
+    const matches = (item: StreamItem) =>
+      isAgentToolCallItem(item) &&
       item.payload.data.callId === callId &&
       (!turnId || !item.turnId || item.turnId === turnId) &&
-      (!params.timelineCursor || !item.timelineCursor ||
+      (!params.timelineCursor ||
+        !item.timelineCursor ||
         params.timelineCursor.epoch === item.timelineCursor.epoch);
     if (tail.some(matches)) {
-      const nextTail = reduceTimelineToolCall(tail, event, event.item, timestamp, params.timelineCursor);
+      const nextTail = reduceTimelineToolCall(
+        tail,
+        event,
+        event.item,
+        timestamp,
+        params.timelineCursor,
+      );
       return { tail: nextTail, head, changedTail: nextTail !== tail, changedHead: false };
     }
     if (head.some(matches)) {
-      const nextHead = reduceTimelineToolCall(head, event, event.item, timestamp, params.timelineCursor);
+      const nextHead = reduceTimelineToolCall(
+        head,
+        event,
+        event.item,
+        timestamp,
+        params.timelineCursor,
+      );
       return { tail, head: nextHead, changedTail: false, changedHead: nextHead !== head };
     }
   }

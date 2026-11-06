@@ -1,4 +1,5 @@
 import type { AgentSession } from "../agent-sdk-types.js";
+import type { AgentRewindErrorCode } from "@omp-desktop/protocol/messages";
 
 export type RewindMode = "conversation" | "files" | "both";
 
@@ -6,6 +7,25 @@ export class RewindCapabilityError extends Error {
   constructor(mode: RewindMode) {
     super(`Provider does not support rewinding ${mode}`);
     this.name = "RewindCapabilityError";
+  }
+}
+
+const REWIND_ERROR_MESSAGES: Record<AgentRewindErrorCode, string> = {
+  message_pending: "This message is still synchronizing with the native session",
+  message_unavailable:
+    "Cannot locate this message in the native session. Resync it before rewinding",
+  message_sync_failed: "Failed to synchronize this message with the native session",
+};
+
+export class AgentRewindError extends Error {
+  constructor(
+    readonly code: AgentRewindErrorCode,
+    readonly agentId: string,
+    readonly messageId: string,
+    options?: ErrorOptions,
+  ) {
+    super(REWIND_ERROR_MESSAGES[code], options);
+    this.name = "AgentRewindError";
   }
 }
 

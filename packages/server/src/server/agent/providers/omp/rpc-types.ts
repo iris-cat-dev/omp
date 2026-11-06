@@ -43,6 +43,7 @@ const OmpUserMessageSchema = z
   .object({
     role: z.literal("user"),
     timestamp: z.number().optional(),
+    clientMessageId: z.string().optional(),
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
@@ -716,12 +717,14 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     message: z.string(),
     images: z.array(OmpImageContentSchema).optional(),
     streamingBehavior: z.enum(["steer", "followUp"]).optional(),
+    clientMessageId: z.string().optional(),
   }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("steer"),
     message: z.string(),
     images: z.array(OmpImageContentSchema).optional(),
+    clientMessageId: z.string().optional(),
   }),
   z.object({
     ...OmpCommandBase,
@@ -784,7 +787,11 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     tools: z.array(OmpRpcHostToolDefinitionSchema),
   }),
   z.object({ ...OmpCommandBase, type: z.literal("branch"), entryId: z.string() }),
-  z.object({ ...OmpCommandBase, type: z.literal("get_branch_messages") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("get_branch_messages"),
+    activeBranchOnly: z.boolean().optional(),
+  }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("handoff"),
@@ -797,7 +804,11 @@ export const OmpPromptAckSchema = z
   .passthrough()
   .optional();
 const OmpRestoredQueuedMessageSchema = z
-  .object({ text: z.string(), images: z.array(OmpImageContentSchema).optional() })
+  .object({
+    text: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+    clientMessageId: z.string().optional(),
+  })
   .passthrough();
 export const OmpAbortAndRestoreQueueResultSchema = z
   .object({
@@ -827,7 +838,13 @@ export const OmpBranchResultSchema = z
   .passthrough();
 export const OmpBranchMessagesResultSchema = z
   .object({
-    messages: z.array(z.object({ entryId: z.string(), text: z.string() }).passthrough()).optional(),
+    messages: z
+      .array(
+        z
+          .object({ entryId: z.string(), text: z.string(), clientMessageId: z.string().optional() })
+          .passthrough(),
+      )
+      .optional(),
   })
   .passthrough();
 

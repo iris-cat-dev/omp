@@ -5,6 +5,7 @@ import type {
 import type {
   AgentProviderNotice,
   AgentTaskItem,
+  AgentUserMessageRewindStatus,
   AgentUsage,
   ProviderOptions,
   ToolPolicy,
@@ -433,6 +434,7 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      rewindStatus?: AgentUserMessageRewindStatus;
       sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
@@ -748,6 +750,8 @@ export interface AgentSession {
   setFeature?(featureId: string, value: unknown): Promise<void>;
   setGoalObjective?(objective: string): Promise<void>;
   controlGoal?(action: "start" | "pause" | "delete"): Promise<void>;
+  /** Non-destructively resolve a submitted prompt's authoritative native message ID. */
+  resolveUserMessageId?(input: { clientMessageId: string; text: string }): Promise<string | null>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -833,8 +837,12 @@ export interface AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   setDefaultProxyPolicy?(policy: ProxyPolicy): Promise<void>;
   /** Read persisted native history through the selected provider without activating a session. */
-  readHistoryPage?(input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">): Promise<AgentTimelineFetchResult>;
-  streamPersistedSubagentHistory?(input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">): AsyncGenerator<AgentStreamEvent>;
+  readHistoryPage?(
+    input: Omit<OmpHistoryPageInput, "runtimeSettings" | "runtimeSession">,
+  ): Promise<AgentTimelineFetchResult>;
+  streamPersistedSubagentHistory?(
+    input: Omit<OmpHistoryInput, "runtimeSettings" | "runtimeSession">,
+  ): AsyncGenerator<AgentStreamEvent>;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,

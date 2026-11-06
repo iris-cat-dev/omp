@@ -388,6 +388,7 @@ export interface AgentTaskItem {
   phase?: { name: string; index: number };
 }
 export type AssistantMessagePresentation = "plan";
+export type AgentUserMessageRewindStatus = "pending" | "ready" | "unavailable";
 
 export type AgentTimelineItem =
   | {
@@ -395,6 +396,8 @@ export type AgentTimelineItem =
       text: string;
       messageId?: string;
       clientMessageId?: string;
+      /** Whether this message has an authoritative native rewind target. */
+      rewindStatus?: AgentUserMessageRewindStatus;
       /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
       sourceAgentId?: string;
       /** Original work start retained when a steer continues through a replacement turn. */

@@ -12143,6 +12143,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
                 text: item.text,
                 clientMessageId: item.clientMessageId,
                 messageId: item.messageId,
+                rewindStatus: item.rewindStatus,
               }
             : {}),
         },
@@ -12159,9 +12160,9 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     });
     await manager.waitForAgentRunStart(snapshot.id);
 
-    await expect(manager.rewind(snapshot.id, "msg-client-1", "files")).rejects.toThrow(
-      "Cannot rewind before the provider acknowledges the submitted prompt",
-    );
+    await expect(manager.rewind(snapshot.id, "msg-client-1", "files")).rejects.toMatchObject({
+      code: "message_pending",
+    });
     expect(client.session?.interruptCount).toBe(0);
 
     allowProviderEcho.resolve();
@@ -12175,8 +12176,17 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         text: "hello from composer",
         clientMessageId: "msg-client-1",
         messageId: "msg-client-1",
+        rewindStatus: "pending",
       },
       { type: "assistant_message", seq: 2 },
+      {
+        type: "user_message",
+        seq: 1,
+        text: "hello from composer",
+        clientMessageId: "msg-client-1",
+        messageId: "msg-client-1",
+        rewindStatus: "ready",
+      },
       { type: "turn_completed" },
     ]);
 
@@ -12192,6 +12202,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
           text: "hello from composer",
           messageId: "msg-client-1",
           clientMessageId: "msg-client-1",
+          rewindStatus: "ready",
         },
       },
       {
@@ -12279,6 +12290,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        rewindStatus: "unavailable",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
@@ -12289,6 +12301,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        rewindStatus: "unavailable",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);

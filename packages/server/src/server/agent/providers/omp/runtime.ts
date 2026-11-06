@@ -75,11 +75,22 @@ export interface OmpServiceTierCapabilities {
   ultrafast: boolean;
 }
 
+export interface OmpUserMessageOptions {
+  clientMessageId?: string;
+}
+
+export interface OmpBranchMessage {
+  entryId: string;
+  text: string;
+  clientMessageId?: string;
+}
+
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<OmpPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
@@ -119,15 +130,17 @@ export interface OmpRuntimeSession {
   sendHostToolResult(result: OmpRpcHostToolResult): void;
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;
   branch(entryId: string): Promise<{ text: string }>;
-  getBranchMessages(): Promise<Array<{ entryId: string; text: string }>>;
+  getBranchMessages(): Promise<OmpBranchMessage[]>;
   activeBranchEntryId?: string;
   steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): Promise<void>;
   followUp(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: OmpUserMessageOptions,
   ): void;
   handoff(customInstructions?: string): Promise<void>;
   respondToExtensionUiRequest(

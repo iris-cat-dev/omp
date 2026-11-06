@@ -1921,14 +1921,20 @@ export const ptBR: TranslationResources = {
   },
   rewind: {
     tooltip: "Voltar para esta mensagem",
+    pending: "Aguardando a sincronização da mensagem para reverter",
+    unavailable: "ID da mensagem indisponível. Ressincronize para reverter.",
     warning: "Esta ação não pode ser desfeita",
     actions: {
       conversation: "Reverter conversa",
       files: "Reverter arquivos",
       both: "Reverter conversa e arquivos",
+      sync: "Ressincronizar mensagem",
     },
     errors: {
       failed: "Falha ao reverter agente",
+      pending: "A mensagem ainda está sincronizando. Aguarde antes de reverter.",
+      unavailable: "Esta mensagem ainda não pode ser revertida. Ressincronize primeiro.",
+      syncFailed: "Não foi possível sincronizar a mensagem. Tente novamente.",
     },
   },
   diffViewer: {

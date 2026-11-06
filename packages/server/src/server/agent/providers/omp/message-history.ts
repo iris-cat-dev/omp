@@ -114,12 +114,20 @@ export class OmpHistoryMapper {
     if (resetUsage) this.nativeUsage.startTurn(this.nativeTurnId, 0);
   }
   getHistoryIdentityState(): OmpHistoryIdentityState {
-    return { userIndex: this.userIndex, assistantIndex: this.assistantIndex, customDeliveries: [...this.customDeliveries].map(([key, values]): [string, string[]] => [key, [...values]]) };
+    return {
+      userIndex: this.userIndex,
+      assistantIndex: this.assistantIndex,
+      customDeliveries: [...this.customDeliveries].map(([key, values]): [string, string[]] => [
+        key,
+        [...values],
+      ]),
+    };
   }
   restoreHistoryIdentityState(state: OmpHistoryIdentityState): void {
     this.restoreHistoryPosition(state.userIndex, state.assistantIndex);
     this.customDeliveries.clear();
-    for (const [key, values] of state.customDeliveries) this.customDeliveries.set(key, new Set(values));
+    for (const [key, values] of state.customDeliveries)
+      this.customDeliveries.set(key, new Set(values));
   }
 
   mapMessages(
@@ -176,6 +184,7 @@ export class OmpHistoryMapper {
           text,
           ...(images ? { images } : {}),
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
         },
       },
     ];

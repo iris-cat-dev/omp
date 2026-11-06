@@ -1892,14 +1892,20 @@ export const ko: TranslationResources = {
   },
   rewind: {
     tooltip: "이 메시지로 되감기",
+    pending: "메시지 동기화가 끝나면 되감을 수 있습니다",
+    unavailable: "메시지 ID가 없습니다. 다시 동기화하면 되감을 수 있습니다.",
     warning: "이 작업은 되돌릴 수 없습니다",
     actions: {
       conversation: "대화 되감기",
       files: "파일 되감기",
       both: "대화와 파일 되감기",
+      sync: "메시지 다시 동기화",
     },
     errors: {
       failed: "에이전트를 되감지 못했습니다",
+      pending: "메시지를 동기화 중입니다. 완료 후 되감아 주세요.",
+      unavailable: "아직 이 메시지를 되감을 수 없습니다. 먼저 다시 동기화해 주세요.",
+      syncFailed: "메시지 동기화에 실패했습니다. 다시 시도해 주세요.",
     },
   },
   diffViewer: {
