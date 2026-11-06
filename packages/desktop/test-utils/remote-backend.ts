@@ -15,7 +15,7 @@ export interface RemoteBackendFixture {
 export async function writeRemoteBackendFixture(directory: string): Promise<RemoteBackendFixture> {
   await mkdir(path.join(directory, "packages"), { recursive: true });
   const commonFiles: Record<string, string> = {};
-  const dependencies: Record<string, string> = { "@oh-my-pi/pi-coding-agent": "file:packages/omp-sdk.tgz" };
+  const dependencies: Record<string, string> = {};
   for (const name of ["highlight", "protocol", "relay", "client", "server", "cli"]) {
     const relativePath = `packages/${name}.tgz`;
     const archive = Buffer.from(`Workspace package: ${name}`);

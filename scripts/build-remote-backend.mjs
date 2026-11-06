@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { resolveOmpSdkBuildConfig } from "./omp-sdk-build-config.mjs";
@@ -51,35 +49,6 @@ async function sha256(filePath) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
-}
-
-async function downloadSdk(url, destination, asset) {
-  const response = await fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`SDK Release download failed (${response.status}): ${url}`);
-  }
-  const hash = createHash("sha256");
-  const integrity = createHash("sha512");
-  let size = 0;
-  await pipeline(
-    Readable.fromWeb(response.body),
-    new Transform({
-      transform(chunk, _encoding, callback) {
-        size += chunk.length;
-        hash.update(chunk);
-        integrity.update(chunk);
-        callback(null, chunk);
-      },
-    }),
-    createWriteStream(destination, { flags: "wx" }),
-  );
-  if (
-    size !== asset.size ||
-    hash.digest("hex") !== asset.sha256 ||
-    `sha512-${integrity.digest("base64")}` !== asset.integrity
-  ) {
-    throw new Error(`SDK Release checksum or size mismatch: ${url}`);
-  }
 }
 
 function validateRelease(config, index, version) {
@@ -195,7 +164,6 @@ try {
     dependencies[packageName] = `file:packages/${archiveName}`;
     commonFiles[`packages/${archiveName}`] = await sha256(path.join(packageDir, archiveName));
   }
-  dependencies[sdkName] = "file:packages/omp-sdk.tgz";
   const deploymentPackage = {
     name: "omp-desktop-remote-backend",
     version: "0.0.0",
@@ -215,8 +183,7 @@ try {
     for (const relativePath of Object.keys(commonFiles)) {
       await link(path.join(built, relativePath), path.join(work, relativePath));
     }
-    console.log(`Preparing remote SDK ${releaseIndex.version} for ${target}`);
-    await downloadSdk(url, path.join(archives, "omp-sdk.tgz"), asset);
+    console.log(`Preparing remote backend dependencies for ${target}`);
     await writeFile(path.join(work, "package.json"), packageContents);
     runNpm(
       ["install", "--package-lock-only", "--ignore-scripts", "--omit=dev", "--include=optional", `--os=${platform}`, `--cpu=${arch}`, ...(platform === "linux" ? ["--libc=glibc"] : [])],

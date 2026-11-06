@@ -48,7 +48,7 @@ No root access is required. Managed runtime files, including the SDK and Node 24
 
 ## Managed releases and updates
 
-Remote releases are staged and checksum-verified before an atomic switch. Failed starts roll back to the previous managed release.
+Remote releases are staged and checksum-verified before an atomic switch. The installer runs `npm ci` for Desktop backend dependencies, then extracts the verified SDK archive with its bundled dependencies into the same staging directory. Both steps finish before stopping the current daemon or switching releases. Failed starts roll back to the previous managed release.
 
 Hosts provisioned this way update through **Host Settings → Update daemon → Update via SSH** because the workspace packages are bundled with the Desktop application rather than installed from the public npm registry. See [development](development.md#workspace-packages) for the package map and [packaging](packaging.md) for Desktop release construction.
 

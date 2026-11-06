@@ -82,6 +82,9 @@ NPM="$NODE_HOME/bin/npm"
 
 printf '\\n__OMP_PHASE_${token}__installing\\n'
 PATH="$NODE_HOME/bin:$PATH" "$NPM" ci --prefix "$UPLOAD" --omit=dev --include=optional >"$UPLOAD/npm-install.log" 2>&1 || fail "Backend dependency installation failed"
+SDK="$UPLOAD/node_modules/@oh-my-pi/pi-coding-agent"
+mkdir -p "$SDK" || fail "Cannot create SDK installation directory"
+tar -xzf "$UPLOAD/packages/omp-sdk.tgz" -C "$SDK" --strip-components=1 || fail "SDK archive extraction failed"
 STAGED_CLI="$UPLOAD/node_modules/@omp-desktop/cli/bin/omp-desktop"
 [ -f "$STAGED_CLI" ] || fail "Installed backend CLI is missing"
 
