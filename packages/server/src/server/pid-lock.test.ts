@@ -59,12 +59,43 @@ describe("pid-lock ownership", () => {
     }
   });
 
+  test("preserves explicit startup readiness through updates and heartbeat refreshes", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-ready-"));
+
+    try {
+      await acquirePidLock(paseoHome, null, { ready: false });
+      expect((await getPidLockInfo(paseoHome))?.ready).toBe(false);
+
+      await updatePidLock(paseoHome, { listen: "127.0.0.1:6767", ready: true });
+      await refreshPidLock(paseoHome);
+      expect(await getPidLockInfo(paseoHome)).toMatchObject({
+        listen: "127.0.0.1:6767",
+        ready: true,
+        heartbeat: true,
+      });
+
+      await updatePidLock(paseoHome, { ready: false });
+      await refreshPidLock(paseoHome);
+      expect(await getPidLockInfo(paseoHome)).toMatchObject({
+        listen: "127.0.0.1:6767",
+        ready: false,
+      });
+
+      await expect(
+        updatePidLock(paseoHome, { ready: true }, { ownerPid: process.pid + 10_000 }),
+      ).rejects.toBeInstanceOf(PidLockError);
+      expect((await getPidLockInfo(paseoHome))?.ready).toBe(false);
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
   test("keeps a stale heartbeat lock when the recorded pid is alive without a reachability check", async () => {
     const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-stale-heartbeat-"));
     const replacementOwnerPid = process.pid + 10_000;
 
     try {
-      const pidPath = join(paseoHome, "paseo.pid");
+      const pidPath = join(paseoHome, "omp-desktop.pid");
       await writeFile(
         pidPath,
         JSON.stringify({
@@ -97,7 +128,7 @@ describe("pid-lock ownership", () => {
     const replacementOwnerPid = process.pid + 10_000;
 
     try {
-      const pidPath = join(paseoHome, "paseo.pid");
+      const pidPath = join(paseoHome, "omp-desktop.pid");
       await writeFile(
         pidPath,
         JSON.stringify({
@@ -128,7 +159,7 @@ describe("pid-lock ownership", () => {
 
   test("keeps a stale live lock written by a pre-heartbeat daemon", async () => {
     const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-legacy-live-"));
-    const pidPath = join(paseoHome, "paseo.pid");
+    const pidPath = join(paseoHome, "omp-desktop.pid");
 
     try {
       await writeFile(
@@ -159,7 +190,7 @@ describe("pid-lock ownership", () => {
   test("reclaims a stale legacy desktop lock after desktop confirms the daemon is unreachable", async () => {
     const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-legacy-desktop-"));
     const replacementOwnerPid = process.pid + 10_000;
-    const pidPath = join(paseoHome, "paseo.pid");
+    const pidPath = join(paseoHome, "omp-desktop.pid");
 
     try {
       await writeFile(
@@ -205,7 +236,7 @@ describe("pid-lock ownership", () => {
 
   test("retries a heartbeat refresh while its owner is rewriting the lock", async () => {
     const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-refresh-rewrite-"));
-    const pidPath = join(paseoHome, "paseo.pid");
+    const pidPath = join(paseoHome, "omp-desktop.pid");
 
     try {
       await acquirePidLock(paseoHome, null, { ownerPid: process.pid });
@@ -231,7 +262,7 @@ describe("pid-lock ownership", () => {
 
     try {
       await writeFile(
-        join(paseoHome, "paseo.pid"),
+        join(paseoHome, "omp-desktop.pid"),
         JSON.stringify({
           pid: process.pid,
           startedAt: new Date().toISOString(),

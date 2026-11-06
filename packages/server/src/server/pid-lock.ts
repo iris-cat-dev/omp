@@ -12,6 +12,7 @@ export const pidLockInfoSchema = z.object({
   uid: z.number(),
   listen: z.string().nullable(),
   desktopManaged: z.boolean().optional(),
+  ready: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
 });
 
@@ -88,6 +89,7 @@ function resolveOwnerPid(ownerPid?: number): number {
 interface AcquirePidLockOptions {
   ownerPid?: number;
   reclaimStaleDesktopLock?: boolean;
+  ready?: boolean;
 }
 
 function canReclaimLiveLock(
@@ -198,6 +200,7 @@ export async function acquirePidLock(
     uid: process.getuid?.() ?? 0,
     listen,
     heartbeat: true,
+    ...(options?.ready !== undefined ? { ready: options.ready } : {}),
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
   };
 
@@ -298,7 +301,7 @@ export function startPidLockHeartbeat(
 
 export async function updatePidLock(
   paseoHome: string,
-  patch: { listen: string },
+  patch: { listen?: string; ready?: boolean },
   options?: { ownerPid?: number },
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);

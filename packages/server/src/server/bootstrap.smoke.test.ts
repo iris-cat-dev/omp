@@ -1,5 +1,6 @@
 import os from "node:os";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
@@ -9,6 +10,7 @@ import { WebSocket } from "ws";
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
+import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -479,6 +481,110 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("rejects early upgrades and survives peer resets until plugin checks finish", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-early-upgrade-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    await mkdir(paseoHome, { recursive: true });
+    let markCheckStarted = () => {};
+    const checkStarted = new Promise<void>((resolve) => {
+      markCheckStarted = resolve;
+    });
+    let releaseCheck = () => {};
+    const checkReleased = new Promise<void>((resolve) => {
+      releaseCheck = resolve;
+    });
+    vi.spyOn(OmpPluginCliService.prototype, "checkStartup").mockImplementation(async () => {
+      markCheckStarted();
+      await checkReleased;
+    });
+    const config: PaseoDaemonConfig = {
+      listen: "127.0.0.1:0",
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: false,
+      staticDir,
+      mcpDebug: false,
+      isDev: true,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      relayEnabled: false,
+      appBaseUrl: "https://app.paseo.sh",
+    };
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const starting = daemon.start();
+    let client: DaemonClient | null = null;
+
+    try {
+      await checkStarted;
+      const target = daemon.getListenTarget();
+      if (!target || target.type !== "tcp") {
+        throw new Error("Expected daemon TCP listener during plugin startup checks");
+      }
+      const port = target.port;
+      const request = [
+        "GET /ws HTTP/1.1",
+        `Host: 127.0.0.1:${port}`,
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "",
+        "",
+      ].join("\r\n");
+      function sendUpgrade(reset: boolean): Promise<string> {
+        return new Promise((resolve, reject) => {
+          const socket = net.createConnection({ host: "127.0.0.1", port });
+          let response = "";
+          socket.setEncoding("utf8");
+          // Real TCP must close without releasing the check; fake clocks cannot drive socket I/O.
+          socket.setTimeout(2_000, () => {
+            reject(new Error("Early upgrade did not close promptly"));
+            socket.destroy();
+          });
+          socket.once("error", reject);
+          socket.on("data", (chunk: string) => {
+            response += chunk;
+          });
+          socket.once("close", () => resolve(response));
+          const resetAfterWrite = () => {
+            if (reset) socket.resetAndDestroy();
+          };
+          socket.once("connect", () => {
+            socket.write(request, resetAfterWrite);
+          });
+        });
+      }
+
+      const earlyResponse = await sendUpgrade(false);
+      expect(earlyResponse).toMatch(/^HTTP\/1\.1 503(?: [^\r\n]*)?\r\n/);
+      expect(earlyResponse).toContain("\r\nConnection: close\r\n");
+      expect(earlyResponse).toContain("\r\nContent-Length: 0\r\n");
+
+      await sendUpgrade(true);
+      // A second real response proves the listener still works with checks held.
+      expect(await sendUpgrade(false)).toMatch(/^HTTP\/1\.1 503(?: [^\r\n]*)?\r\n/);
+
+      releaseCheck();
+      await starting;
+      client = new DaemonClient({
+        url: `ws://127.0.0.1:${target.port}/ws`,
+        appVersion: "0.6.0",
+        reconnect: { enabled: false },
+      });
+      await client.connect();
+      expect(client.getConnectionState().status).toBe("connected");
+    } finally {
+      releaseCheck();
+      await starting.catch(() => undefined);
+      await client?.close().catch(() => undefined);
+      await daemon.stop().catch(() => undefined);
+      await rm(paseoHomeRoot, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+    }
+  });
+
   test("relay config changes during Hub enrollment reach the live runtime", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-startup-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
@@ -739,7 +845,6 @@ export default function contribute(plugin: unknown) {
       await daemonHandle.close();
     }
   });
-
 
   test("parses whitespace-padded numeric port strings", () => {
     expect(parseListenString(" 6767 ")).toEqual({
