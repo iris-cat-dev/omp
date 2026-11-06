@@ -760,6 +760,20 @@ export class HostRuntimeController {
     await this.switchToConnection(input);
   }
 
+  async activateAvailableConnection(connectionId: string): Promise<void> {
+    if (!this.isConnectionEnabled() || this.snapshot.connectionStatus === "online") {
+      return;
+    }
+    // Daemon readiness supersedes offline probe results. Connect directly rather
+    // than waiting for their backoff or for an unrelated relay probe to settle.
+    this.probeRequestVersion += 1;
+    this.probeCycleInFlight = null;
+    this.connectionLastProbedAt.delete(connectionId);
+    this.switchCandidateConnectionId = null;
+    this.switchCandidateHitCount = 0;
+    await this.activateConnection({ connectionId });
+  }
+
   async runProbeCycleNow(): Promise<void> {
     if (!this.isConnectionEnabled()) {
       return;
@@ -1886,11 +1900,13 @@ export class HostRuntimeStore {
     if (!serverId) {
       throw new Error("Desktop daemon did not return a server id.");
     }
-    return this.upsertHostConnection({
+    const profile = await this.upsertHostConnection({
       serverId,
       label: input.hostname ?? undefined,
       connection,
     });
+    await this.controllers.get(serverId)?.activateAvailableConnection(connection.id);
+    return profile;
   }
 
   private async updateHost(

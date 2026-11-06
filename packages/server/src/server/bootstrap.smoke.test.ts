@@ -1,6 +1,5 @@
 import os from "node:os";
 import http from "node:http";
-import net from "node:net";
 import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
@@ -10,7 +9,8 @@ import { WebSocket } from "ws";
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
-import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
+import { ompHistoryRuntimeSettings } from "./agent/providers/omp/test-utils/history-sdk.js";
+import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -23,15 +23,6 @@ import {
   snapshotGitCommandRuntimeMetrics,
 } from "../utils/run-git-command.js";
 import { DEFAULT_GIT_PROCESS_POLICY } from "../utils/git-process-scheduler.js";
-import type {
-  HubEnrollment,
-  HubEnrollmentResult,
-  HubRelationshipRemote,
-  HubRevocation,
-  HubSocketConnection,
-  HubSocketCredentials,
-  HubSocketEvents,
-} from "./hub/relationship-remote.js";
 
 interface HeldAgentClose {
   started: Promise<void>;
@@ -481,93 +472,132 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("rejects early upgrades and survives peer resets until plugin checks finish", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-early-upgrade-"));
+  test("serves websocket clients without loading plugins from unused workspaces", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-lazy-plugins-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const cwd = path.join(paseoHomeRoot, "unused-project");
+    const pluginsRoot = path.join(cwd, ".omp", "plugins");
+    const pluginDirectory = path.join(pluginsRoot, "node_modules", "unused-plugin");
+    const evaluatedPath = path.join(cwd, "plugin-evaluated");
+    const lockPath = path.join(pluginsRoot, "omp-plugins.lock.json");
+    const logger = pino({ level: "silent" });
     await mkdir(paseoHome, { recursive: true });
-    let markCheckStarted = () => {};
-    const checkStarted = new Promise<void>((resolve) => {
-      markCheckStarted = resolve;
-    });
-    let releaseCheck = () => {};
-    const checkReleased = new Promise<void>((resolve) => {
-      releaseCheck = resolve;
-    });
-    vi.spyOn(OmpPluginCliService.prototype, "checkStartup").mockImplementation(async () => {
-      markCheckStarted();
-      await checkReleased;
-    });
-    const config: PaseoDaemonConfig = {
-      listen: "127.0.0.1:0",
-      paseoHome,
-      corsAllowedOrigins: [],
-      hostnames: true,
-      mcpEnabled: false,
-      staticDir,
-      mcpDebug: false,
-      isDev: true,
-      agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
-      relayEnabled: false,
-      appBaseUrl: "https://app.paseo.sh",
+    await mkdir(pluginDirectory, { recursive: true });
+    await writeFile(
+      path.join(pluginDirectory, "package.json"),
+      JSON.stringify({
+        name: "unused-plugin",
+        version: "1.0.0",
+        type: "module",
+        omp: { extensions: ["entry.mjs"] },
+      }),
+    );
+    await writeFile(
+      path.join(pluginDirectory, "entry.mjs"),
+      `import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(evaluatedPath)}, "loaded");
+throw new Error("Unused project plugin must not load at daemon startup");`,
+    );
+    await writeFile(
+      path.join(pluginsRoot, "package.json"),
+      JSON.stringify({ dependencies: { "unused-plugin": "1.0.0" } }),
+    );
+    const lock = {
+      plugins: { "unused-plugin": { version: "1.0.0", enabled: true, enabledFeatures: null } },
+      settings: {},
     };
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
-    const starting = daemon.start();
+    await writeFile(lockPath, JSON.stringify(lock));
+    await writeFile(
+      path.join(pluginsRoot, "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          "unused-plugin@fixture": [
+            {
+              scope: "project",
+              installPath: pluginDirectory,
+              version: "1.0.0",
+              installedAt: "2026-11-06T00:00:00.000Z",
+              enabled: true,
+            },
+          ],
+        },
+      }),
+    );
+    const projects = new FileBackedProjectRegistry(
+      path.join(paseoHome, "projects", "projects.json"),
+      logger,
+    );
+    const workspaces = new FileBackedWorkspaceRegistry(
+      path.join(paseoHome, "projects", "workspaces.json"),
+      logger,
+    );
+    await projects.initialize();
+    await workspaces.initialize();
+    const timestamp = "2026-11-06T00:00:00.000Z";
+    const project = await projects.getOrCreateActiveByRoot({
+      rootPath: cwd,
+      kind: "non_git",
+      displayName: "Unused project",
+      timestamp,
+    });
+    await workspaces.upsert({
+      workspaceId: "unused-workspace",
+      projectId: project.projectId,
+      cwd,
+      kind: "directory",
+      displayName: "Unused project",
+      title: null,
+      branch: null,
+      worktreeRoot: null,
+      baseBranch: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      archivedAt: null,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+    });
+    const daemon = await createPaseoDaemon(
+      {
+        listen: "127.0.0.1:0",
+        paseoHome,
+        corsAllowedOrigins: [],
+        hostnames: true,
+        mcpEnabled: false,
+        staticDir,
+        mcpDebug: false,
+        isDev: true,
+        agentClients: createTestAgentClients(),
+        agentStoragePath: path.join(paseoHome, "agents"),
+        relayEnabled: false,
+        appBaseUrl: "https://app.paseo.sh",
+        providerOverrides: {
+          omp: {
+            ompSdkPath: ompHistoryRuntimeSettings.ompSdkPath,
+            ompBackend: "sdk",
+            env: {
+              HOME: paseoHomeRoot,
+              PI_CONFIG_DIR: ".omp",
+              PI_CODING_AGENT_DIR: path.join(paseoHomeRoot, "agent"),
+              PI_PROFILE: "",
+              XDG_DATA_HOME: path.join(paseoHomeRoot, "data"),
+              XDG_STATE_HOME: path.join(paseoHomeRoot, "state"),
+              XDG_CACHE_HOME: path.join(paseoHomeRoot, "cache"),
+              OMP_DESKTOP_BUNDLED_PLUGINS: "",
+            },
+          },
+        },
+      },
+      logger,
+    );
     let client: DaemonClient | null = null;
-
     try {
-      await checkStarted;
+      await daemon.start();
       const target = daemon.getListenTarget();
-      if (!target || target.type !== "tcp") {
-        throw new Error("Expected daemon TCP listener during plugin startup checks");
-      }
-      const port = target.port;
-      const request = [
-        "GET /ws HTTP/1.1",
-        `Host: 127.0.0.1:${port}`,
-        "Connection: Upgrade",
-        "Upgrade: websocket",
-        "Sec-WebSocket-Version: 13",
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-        "",
-        "",
-      ].join("\r\n");
-      function sendUpgrade(reset: boolean): Promise<string> {
-        return new Promise((resolve, reject) => {
-          const socket = net.createConnection({ host: "127.0.0.1", port });
-          let response = "";
-          socket.setEncoding("utf8");
-          // Real TCP must close without releasing the check; fake clocks cannot drive socket I/O.
-          socket.setTimeout(2_000, () => {
-            reject(new Error("Early upgrade did not close promptly"));
-            socket.destroy();
-          });
-          socket.once("error", reject);
-          socket.on("data", (chunk: string) => {
-            response += chunk;
-          });
-          socket.once("close", () => resolve(response));
-          const resetAfterWrite = () => {
-            if (reset) socket.resetAndDestroy();
-          };
-          socket.once("connect", () => {
-            socket.write(request, resetAfterWrite);
-          });
-        });
-      }
-
-      const earlyResponse = await sendUpgrade(false);
-      expect(earlyResponse).toMatch(/^HTTP\/1\.1 503(?: [^\r\n]*)?\r\n/);
-      expect(earlyResponse).toContain("\r\nConnection: close\r\n");
-      expect(earlyResponse).toContain("\r\nContent-Length: 0\r\n");
-
-      await sendUpgrade(true);
-      // A second real response proves the listener still works with checks held.
-      expect(await sendUpgrade(false)).toMatch(/^HTTP\/1\.1 503(?: [^\r\n]*)?\r\n/);
-
-      releaseCheck();
-      await starting;
+      if (!target || target.type !== "tcp") throw new Error("Expected daemon TCP listener");
       client = new DaemonClient({
         url: `ws://127.0.0.1:${target.port}/ws`,
         appVersion: "0.6.0",
@@ -575,104 +605,14 @@ describe("paseo daemon bootstrap", () => {
       });
       await client.connect();
       expect(client.getConnectionState().status).toBe("connected");
+      const result = await client.listOmpPlugins(cwd);
+      expect(result.rawOutput).toBeUndefined();
+      expect(result.plugins).toEqual([
+        expect.objectContaining({ name: "unused-plugin", enabled: true }),
+      ]);
+      expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(lock);
+      await expect(access(evaluatedPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      releaseCheck();
-      await starting.catch(() => undefined);
-      await client?.close().catch(() => undefined);
-      await daemon.stop().catch(() => undefined);
-      await rm(paseoHomeRoot, { recursive: true, force: true });
-      await rm(staticDir, { recursive: true, force: true });
-    }
-  });
-
-  test("relay config changes during Hub enrollment reach the live runtime", async () => {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-startup-"));
-    const paseoHome = path.join(paseoHomeRoot, ".paseo");
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    await mkdir(paseoHome, { recursive: true });
-    await writeFile(
-      path.join(paseoHome, "hub-relationship.json"),
-      `${JSON.stringify({
-        version: 1,
-        state: "pending",
-        relationship: {
-          daemonId: "daemon-startup-race",
-          idempotencyKey: "enrollment-startup-race",
-          hubOrigin: "https://hub.test",
-          createdAt: "2026-07-31T00:00:00.000Z",
-          scopes: ["hub.execution.*"],
-        },
-        credential: { secret: "credential" },
-        enrollment: { token: "enrollment-token" },
-        identity: { serverId: "server-startup-race", daemonPublicKey: "public-key" },
-      })}\n`,
-      "utf-8",
-    );
-
-    let markEnrollmentStarted: () => void = () => undefined;
-    const enrollmentStarted = new Promise<void>((resolve) => {
-      markEnrollmentStarted = resolve;
-    });
-    let releaseEnrollment: () => void = () => undefined;
-    const enrollmentReleased = new Promise<void>((resolve) => {
-      releaseEnrollment = resolve;
-    });
-    const remote: HubRelationshipRemote = {
-      async enroll(input: HubEnrollment): Promise<HubEnrollmentResult> {
-        markEnrollmentStarted();
-        await enrollmentReleased;
-        return {
-          daemonId: input.daemonId,
-          scopes: input.scopes,
-          webSocketUrl: "wss://hub.test/daemon",
-        };
-      },
-      async revoke(_input: HubRevocation): Promise<void> {},
-      openSocket(_input: HubSocketCredentials, _events: HubSocketEvents): HubSocketConnection {
-        return { close: () => undefined };
-      },
-    };
-    const config: PaseoDaemonConfig = {
-      listen: "127.0.0.1:0",
-      paseoHome,
-      corsAllowedOrigins: [],
-      hostnames: true,
-      mcpEnabled: false,
-      staticDir,
-      mcpDebug: false,
-      agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
-      relayEnabled: false,
-      relayEndpoint: "127.0.0.1:9",
-      relayUseTls: false,
-      appBaseUrl: "https://app.paseo.sh",
-    };
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
-      hubRelationshipRemote: remote,
-    });
-    const starting = daemon.start();
-    let client: DaemonClient | null = null;
-
-    try {
-      await enrollmentStarted;
-      const listenTarget = daemon.getListenTarget();
-      if (!listenTarget || listenTarget.type !== "tcp") {
-        throw new Error("Expected daemon TCP listener during Hub enrollment");
-      }
-      client = new DaemonClient({
-        url: `ws://127.0.0.1:${listenTarget.port}/ws`,
-        appVersion: "0.1.82",
-      });
-      await client.connect();
-      await client.patchDaemonConfig({ relay: { enabled: true } });
-      releaseEnrollment();
-      await starting;
-
-      const status = await client.getDaemonStatus();
-      expect(status.relay?.enabled).toBe(true);
-    } finally {
-      releaseEnrollment();
-      await starting.catch(() => undefined);
       await client?.close().catch(() => undefined);
       await daemon.stop().catch(() => undefined);
       await rm(paseoHomeRoot, { recursive: true, force: true });

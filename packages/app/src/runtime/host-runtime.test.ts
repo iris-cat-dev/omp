@@ -9,7 +9,11 @@ import type {
 import type { ConnectionOffer } from "@omp-desktop/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@omp-desktop/protocol/messages";
 import type { AgentPermissionRequest } from "@omp-desktop/protocol/agent-types";
-import type { HostConnection, HostProfile } from "@/types/host-connection";
+import {
+  connectionFromListen,
+  type HostConnection,
+  type HostProfile,
+} from "@/types/host-connection";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { createUserMessage } from "@/types/stream";
@@ -23,6 +27,8 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
+import { DaemonStartService } from "./daemon-start-service";
+import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { ReplicaCache } from "./replica-cache";
 import {
   moveQueuedComposerMessageTo,
@@ -432,6 +438,20 @@ function makeHost(input?: Partial<HostProfile>): HostProfile {
     preferredConnectionId: input?.preferredConnectionId ?? direct.id,
     createdAt: input?.createdAt ?? new Date(0).toISOString(),
     updatedAt: input?.updatedAt ?? new Date(0).toISOString(),
+  };
+}
+
+function makeDesktopDaemonStatus(serverId: string, listen = "127.0.0.1:6767"): DesktopDaemonStatus {
+  return {
+    serverId,
+    status: "running",
+    listen,
+    hostname: "desktop-hostname",
+    pid: 1234,
+    home: "/test-home",
+    version: "0.0.0",
+    desktopManaged: true,
+    error: null,
   };
 }
 
@@ -4417,6 +4437,346 @@ describe("HostRuntimeStore", () => {
       });
 
       expect(store.getHosts().find((h) => h.serverId === "srv_desktop")?.label).toBe("mac-dev");
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it("connects a ready local daemon before the offline probe backoff expires", async () => {
+    useHostRuntimeClock();
+    const local = connectionFromListen("127.0.0.1:6767")!;
+    const host = makeHost({ connections: [local], preferredConnectionId: local.id });
+    const client = new FakeDaemonClient();
+    let probeCalls = 0;
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        "@omp-desktop:daemon-registry": JSON.stringify([host]),
+        "@omp-desktop:e2e": "1",
+      }),
+      deps: {
+        createClient: () => client as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          probeCalls += 1;
+          throw new Error("daemon not ready yet");
+        },
+        getClientId: async () => "cid_ready_backoff",
+      },
+    });
+    await store.boot();
+    try {
+      await store.runProbeCycleNow(host.serverId);
+      expect(store.getSnapshot(host.serverId)?.probeByConnectionId.get(local.id)?.status).toBe(
+        "unavailable",
+      );
+      const probesBeforeReady = probeCalls;
+      const readyAt = performance.now();
+      const service = new DaemonStartService({
+        store,
+        startDesktopDaemon: async () => makeDesktopDaemonStatus(host.serverId),
+      });
+
+      expect(await service.start()).toEqual({ ok: true });
+
+      expect(performance.now()).toBe(readyAt);
+      expect(probeCalls).toBe(probesBeforeReady);
+      expect(client.connectCalls).toBe(1);
+      expect(store.getSnapshot(host.serverId)).toMatchObject({
+        activeConnectionId: local.id,
+        connectionStatus: "online",
+        client,
+      });
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it.each([
+    { listen: "127.0.0.1:6767", staleLocalFails: false },
+    { listen: "127.0.0.1:6771", staleLocalFails: true },
+  ])(
+    "connects ready $listen without waiting for old local and relay probes",
+    async ({ listen, staleLocalFails }) => {
+      const local = connectionFromListen("127.0.0.1:6767")!;
+      const readyLocal = connectionFromListen(listen)!;
+      const relay = makeHost().connections[1]!;
+      const host = makeHost({ connections: [local, relay], preferredConnectionId: relay.id });
+      const localGate = createDeferred<void>();
+      const relayGate = createDeferred<void>();
+      const staleClients: FakeDaemonClient[] = [];
+      const client = new FakeDaemonClient();
+      const activatedConnections: HostConnection[] = [];
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage({
+          "@omp-desktop:daemon-registry": JSON.stringify([host]),
+          "@omp-desktop:e2e": "1",
+        }),
+        deps: {
+          createClient: ({ connection }) => {
+            activatedConnections.push(connection);
+            return client as unknown as DaemonClient;
+          },
+          connectToDaemon: async ({ host: profile, connection }) => {
+            await (connection.type === "relay" ? relayGate.promise : localGate.promise);
+            if (connection.type !== "relay" && staleLocalFails) {
+              throw new Error("stale local startup failure");
+            }
+            const staleClient = makeConnectedProbeClient(1);
+            staleClients.push(staleClient);
+            return {
+              client: staleClient as unknown as DaemonClient,
+              serverId: profile.serverId,
+              hostname: profile.label,
+            };
+          },
+          getClientId: async () => "cid_ready_inflight",
+        },
+      });
+      await store.boot();
+      const oldCycle = store.runProbeCycleNow(host.serverId);
+      let oldCycleSettled = false;
+      void oldCycle.then(() => {
+        oldCycleSettled = true;
+      });
+      try {
+        const service = new DaemonStartService({
+          store,
+          startDesktopDaemon: async () => makeDesktopDaemonStatus(host.serverId, listen),
+        });
+
+        expect(await service.start()).toEqual({ ok: true });
+
+        expect(oldCycleSettled).toBe(false);
+        expect(activatedConnections).toMatchObject([readyLocal]);
+        expect(store.getHosts()[0]).toMatchObject({
+          label: host.label,
+          preferredConnectionId: relay.id,
+          connections: listen === "127.0.0.1:6767" ? [local, relay] : [local, relay, readyLocal],
+        });
+        const readySnapshot = store.getSnapshot(host.serverId)!;
+        expect(readySnapshot).toMatchObject({
+          activeConnectionId: readyLocal.id,
+          connectionStatus: "online",
+          client,
+        });
+
+        localGate.resolve();
+        relayGate.resolve();
+        await oldCycle;
+
+        expect(store.getSnapshot(host.serverId)).toMatchObject({
+          activeConnectionId: readyLocal.id,
+          connectionStatus: "online",
+          client,
+          clientGeneration: readySnapshot.clientGeneration,
+          connectionEpoch: readySnapshot.connectionEpoch,
+          lastError: null,
+        });
+        expect(staleClients.every((staleClient) => staleClient.isDisposed())).toBe(true);
+        expect(client.closeCalls).toBe(0);
+      } finally {
+        store.syncHosts([]);
+        localGate.resolve();
+        relayGate.resolve();
+        await oldCycle;
+      }
+    },
+  );
+
+  it("adds the ready local endpoint while preserving a disabled relay host", async () => {
+    const relay = makeHost().connections[1]!;
+    const host = makeHost({
+      label: "My disabled desktop",
+      lifecycle: { autoConnect: false },
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    });
+    let connectionAttempts = 0;
+    const storage = createMemoryHostRuntimeStorage({
+      "@omp-desktop:daemon-registry": JSON.stringify([host]),
+      "@omp-desktop:e2e": "1",
+    });
+    const store = new HostRuntimeStore({
+      storage,
+      deps: {
+        createClient: () => {
+          connectionAttempts += 1;
+          return new FakeDaemonClient() as unknown as DaemonClient;
+        },
+        connectToDaemon: async () => {
+          connectionAttempts += 1;
+          throw new Error("disabled host must not connect");
+        },
+        getClientId: async () => "cid_ready_disabled",
+      },
+    });
+    await store.boot();
+    try {
+      const service = new DaemonStartService({
+        store,
+        startDesktopDaemon: async () => makeDesktopDaemonStatus(host.serverId),
+      });
+
+      expect(await service.start()).toEqual({ ok: true });
+
+      expect(connectionAttempts).toBe(0);
+      expect(store.getSnapshot(host.serverId)).toMatchObject({
+        connectionStatus: "offline",
+        activeConnectionId: null,
+        client: null,
+      });
+      expect(store.getHosts()[0]).toMatchObject({
+        label: host.label,
+        appearance: host.appearance,
+        lifecycle: { autoConnect: false },
+        preferredConnectionId: relay.id,
+        connections: [relay, connectionFromListen("127.0.0.1:6767")],
+      });
+      const persisted = JSON.parse((await storage.getItem("@omp-desktop:daemon-registry"))!);
+      expect(persisted[0].lifecycle).toEqual({ autoConnect: false });
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it("keeps an online relay client when readiness adds or changes the local listen address", async () => {
+    const relay = makeHost().connections[1]!;
+    const host = makeHost({ connections: [relay], preferredConnectionId: relay.id });
+    const relayClient = makeConnectedProbeClient(30);
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        "@omp-desktop:daemon-registry": JSON.stringify([host]),
+        "@omp-desktop:e2e": "1",
+      }),
+      deps: {
+        createClient: () => {
+          throw new Error("online relay must not be replaced");
+        },
+        connectToDaemon: async ({ host: profile, connection }) => {
+          if (connection.type !== "relay") throw new Error("local probe unavailable");
+          return {
+            client: relayClient as unknown as DaemonClient,
+            serverId: profile.serverId,
+            hostname: profile.label,
+          };
+        },
+        getClientId: async () => "cid_ready_online",
+      },
+    });
+    await store.boot();
+    try {
+      await store.runProbeCycleNow(host.serverId);
+      const onlineSnapshot = store.getSnapshot(host.serverId)!;
+      expect(onlineSnapshot.connectionStatus).toBe("online");
+
+      for (const listen of ["127.0.0.1:6767", "127.0.0.1:6771", "127.0.0.1:6771"]) {
+        const service = new DaemonStartService({
+          store,
+          startDesktopDaemon: async () => makeDesktopDaemonStatus(host.serverId, listen),
+        });
+        expect(await service.start()).toEqual({ ok: true });
+        expect(store.getSnapshot(host.serverId)).toMatchObject({
+          activeConnectionId: relay.id,
+          connectionStatus: "online",
+          client: relayClient,
+          clientGeneration: onlineSnapshot.clientGeneration,
+          connectionEpoch: onlineSnapshot.connectionEpoch,
+          lastOnlineAt: onlineSnapshot.lastOnlineAt,
+        });
+        expect(relayClient.closeCalls).toBe(0);
+      }
+      expect(store.getHosts()[0]?.connections).toEqual([
+        relay,
+        connectionFromListen("127.0.0.1:6767"),
+        connectionFromListen("127.0.0.1:6771"),
+      ]);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it.each(["127.0.0.1:6767", "unix:///test/daemon.sock", "pipe://test-daemon"])(
+    "activates a new desktop host using the ready local endpoint %s",
+    async (listen) => {
+      const client = new FakeDaemonClient();
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage(),
+        deps: {
+          createClient: () => client as unknown as DaemonClient,
+          connectToDaemon: async () => {
+            throw new Error("startup probe completed before readiness");
+          },
+          getClientId: async () => "cid_ready_new",
+        },
+      });
+      try {
+        const service = new DaemonStartService({
+          store,
+          startDesktopDaemon: async () => makeDesktopDaemonStatus("srv_desktop", listen),
+        });
+
+        expect(await service.start()).toEqual({ ok: true });
+
+        expect(store.getHosts()).toMatchObject([
+          {
+            serverId: "srv_desktop",
+            label: "desktop-hostname",
+            connections: [connectionFromListen(listen)],
+          },
+        ]);
+        expect(store.getSnapshot("srv_desktop")).toMatchObject({
+          connectionStatus: "online",
+          activeConnectionId: connectionFromListen(listen)!.id,
+          client,
+        });
+        expect(client.connectCalls).toBe(1);
+      } finally {
+        store.syncHosts([]);
+      }
+    },
+  );
+
+  it("keeps the ready local client for its normal reconnect after a connection failure", async () => {
+    const client = new FakeDaemonClient();
+    client.connect = async () => {
+      client.connectCalls += 1;
+      client.setConnectionState({ status: "disconnected", reason: "connection refused" });
+      throw new Error("connection refused");
+    };
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => client as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          throw new Error("daemon not ready yet");
+        },
+        getClientId: async () => "cid_ready_reconnect",
+      },
+    });
+    try {
+      const service = new DaemonStartService({
+        store,
+        startDesktopDaemon: async () => makeDesktopDaemonStatus("srv_desktop"),
+      });
+
+      expect(await service.start()).toEqual({ ok: true });
+
+      const failedSnapshot = store.getSnapshot("srv_desktop")!;
+      expect(failedSnapshot).toMatchObject({
+        connectionStatus: "error",
+        lastError: "connection refused",
+        client,
+      });
+      expect(client.reconnectEnabledCalls).not.toContain(false);
+
+      client.setConnectionState({ status: "connected" });
+
+      expect(store.getSnapshot("srv_desktop")).toMatchObject({
+        connectionStatus: "online",
+        lastError: null,
+        client,
+        clientGeneration: failedSnapshot.clientGeneration,
+      });
+      expect(client.connectCalls).toBe(1);
     } finally {
       store.syncHosts([]);
     }

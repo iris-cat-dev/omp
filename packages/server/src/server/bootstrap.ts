@@ -118,7 +118,6 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { PaseoWebSocketServer } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
-import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { GitHubAuthManager } from "../services/github-auth.js";
@@ -1604,22 +1603,6 @@ export async function createPaseoDaemon(
             if (config.auth?.password) {
               logger.info("Daemon password authentication enabled");
             }
-            const pluginService = new OmpPluginCliService({
-              logger,
-              getProviderConfig: () => daemonConfigStore.get().providers.omp,
-            });
-            const pluginDirectories = new Set([
-              config.paseoHome,
-              ...(await workspaceRegistry.list())
-                .filter((workspace) => !workspace.archivedAt)
-                .map((workspace) => workspace.cwd),
-            ]);
-            for (const cwd of pluginDirectories) {
-              await pluginService.checkStartup(cwd).catch((error) => {
-                logger.warn({ err: error, cwd }, "OMP plugin startup check failed");
-              });
-            }
-
             wsServer = new PaseoWebSocketServer(
               httpServer,
               logger,

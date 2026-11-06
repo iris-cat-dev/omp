@@ -3,7 +3,11 @@ import { DaemonStartService, upsertDesktopDaemonConnection } from "./daemon-star
 import type { HostRuntimeStore } from "./host-runtime";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { defaultHostAppearance } from "@/hosts/appearance";
-import type { HostProfile } from "@/types/host-connection";
+import {
+  connectionFromListen,
+  upsertHostConnectionInProfiles,
+  type HostProfile,
+} from "@/types/host-connection";
 
 interface RecordedUpsert {
   listenAddress: string;
@@ -12,18 +16,26 @@ interface RecordedUpsert {
 }
 
 function createFakeStore(hosts: HostProfile[] = []): {
-  store: Pick<HostRuntimeStore, "getHosts" | "upsertConnectionFromListen">;
+  store: Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+  getHosts: () => HostProfile[];
   upserts: RecordedUpsert[];
 } {
   const upserts: RecordedUpsert[] = [];
   const store = {
-    getHosts: () => hosts,
     upsertConnectionFromListen: async (input: RecordedUpsert) => {
       upserts.push(input);
-      return {} as Awaited<ReturnType<HostRuntimeStore["upsertConnectionFromListen"]>>;
+      const connection = connectionFromListen(input.listenAddress);
+      if (!connection) throw new Error("Unsupported test listen address");
+      hosts = upsertHostConnectionInProfiles({
+        profiles: hosts,
+        serverId: input.serverId,
+        label: input.hostname ?? undefined,
+        connection,
+      });
+      return hosts.find((host) => host.serverId === input.serverId)!;
     },
   };
-  return { store, upserts };
+  return { store, getHosts: () => hosts, upserts };
 }
 
 function makeStatus(overrides: Partial<DesktopDaemonStatus> = {}): DesktopDaemonStatus {
@@ -359,12 +371,33 @@ describe("upsertDesktopDaemonConnection", () => {
     expect(fake.upserts).toEqual([]);
   });
 
-  it("does not add localhost when desktop bootstrap finds its server id already registered", async () => {
-    const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+  it("adds the local connection to an existing relay host without renaming it", async () => {
+    const host = makeRelayOnlyHost("srv_desktop");
+    const fake = createFakeStore([host]);
 
     const result = await upsertDesktopDaemonConnection(fake.store, makeStatus());
 
     expect(result).toEqual({ ok: true });
+    expect(fake.getHosts()).toEqual([
+      {
+        ...host,
+        connections: [
+          ...host.connections,
+          { id: "direct:localhost:6767", type: "directTcp", endpoint: "localhost:6767" },
+        ],
+        updatedAt: expect.any(String),
+      },
+    ]);
+  });
+
+  it.each([null, "???"])("rejects invalid listen %s even for an existing host", async (listen) => {
+    const host = makeRelayOnlyHost("srv_desktop");
+    const fake = createFakeStore([host]);
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen }));
+
+    expect(result.ok).toBe(false);
+    expect(fake.getHosts()).toEqual([host]);
     expect(fake.upserts).toEqual([]);
   });
 

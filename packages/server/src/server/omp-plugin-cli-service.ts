@@ -80,16 +80,6 @@ const OmpPluginListJsonSchema = z
 
 const OmpPluginDoctorJsonSchema = z.array(OmpPluginDoctorCheckSchema);
 
-const OmpPluginStartupChecksSchema = z.array(
-  z.object({
-    name: z.string(),
-    scope: z.enum(["user", "project"]),
-    path: z.string(),
-    errors: z.array(z.string()),
-    disabled: z.boolean(),
-  }),
-);
-
 /** `~/.omp/marketplaces.json` registry: entries with name + sourceUri + catalogPath. */
 const OmpMarketplaceRegistryJsonSchema = z
   .object({
@@ -351,21 +341,6 @@ export class OmpPluginCliService {
         cause: error,
       });
     }
-  }
-
-  async checkStartup(cwd: string): Promise<void> {
-    await this.runExclusive(async () => {
-      const output = await this.runCli(["check", "--fix", "--json"], DOCTOR_TIMEOUT_MS, cwd);
-      const checks = OmpPluginStartupChecksSchema.parse(parseTrailingJson(output));
-      for (const check of checks) {
-        if (check.disabled) {
-          this.logger.warn(
-            { plugin: check.name, scope: check.scope, path: check.path, errors: check.errors },
-            "Disabled OMP plugin after startup load failure",
-          );
-        }
-      }
-    });
   }
 
   async list(cwd?: string): Promise<OmpPluginListResult> {

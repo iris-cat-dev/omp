@@ -75,6 +75,8 @@ Management operations use the selected project's cwd, native `.env` discovery, a
 
 Busy actions, including **Remove** while confirmation is open, preserve button dimensions and adjacent spacing; progress overlays the existing icon/text footprint. A recovered catalog retry clears its old error without dismissing feedback from an operation's own refresh.
 
+SDK sessions check plugins for their own project when starting or resuming. A broken plugin is disabled in its runtime scope before the session starts; unused projects are not scanned during Desktop startup. Fix the plugin and re-enable it here to check it again on the next session startup.
+
 ### Native extension replies and commands
 
 Visible replies retain persisted native entry IDs, original text, and metadata in live/history views, even without model `agent_start`. They never complete a turn: RPC acknowledgements and model lifecycle events own completion. Literal punctuation, JSON quotes, and original text are not rewritten by smart typography; ordinary assistant Markdown keeps normal typography/math. Older history keeps each custom reply separate from adjacent model/custom replies.
