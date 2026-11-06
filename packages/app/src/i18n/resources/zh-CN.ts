@@ -325,9 +325,7 @@ export const zhCN: TranslationResources = {
           "极速 (Ultrafast) 的套餐内额度消耗速率为标准模式的 8 倍，购买额度的消耗速率为 6 倍。需账号和模型支持，实际速度因情况而异。",
         selectWithValue: "选择速度，当前：{{value}}",
         detecting: "正在检测可用速度…",
-        detectionFailed: "速度能力检测失败",
         unsupported: "不支持速度选择",
-        retryDetection: "重新检测速度能力",
       },
       workflow: {
         title: "工作流",

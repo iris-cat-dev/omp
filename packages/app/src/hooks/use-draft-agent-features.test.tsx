@@ -177,10 +177,9 @@ describe("draft catalog speed controls", () => {
     await render("same");
     expect(selectedSpeed()).toBeUndefined();
     expect(result.featureValues?.fast_mode).toBe("ultrafast");
-    expect(result.metadataError).toBeUndefined();
   });
 
-  it("exposes native detection errors instead of enabling catalog Ultrafast", async () => {
+  it("blocks catalog Ultrafast after native detection fails", async () => {
     state.saved = { fast_mode: "ultrafast" };
     state.listProviderFeatures.mockResolvedValue({
       features: [],
@@ -196,7 +195,6 @@ describe("draft catalog speed controls", () => {
     });
     await vi.waitFor(() => expect(result.metadataStatus).toBe("error"));
     expect(selectedSpeed()).toBeUndefined();
-    expect(result.metadataError).toBe("Native detection failed");
     expect(result.featureValues?.fast_mode).toBe("ultrafast");
     act(() => result.setFeatureValue("fast_mode", "on"));
     expect(result.featureValues?.fast_mode).toBe("ultrafast");

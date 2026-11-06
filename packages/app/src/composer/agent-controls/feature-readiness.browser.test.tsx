@@ -17,6 +17,10 @@ import { en } from "@/i18n/resources/en";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { partitionModelFeatures } from "./utils";
 
+vi.mock("expo-clipboard", () => ({}));
+vi.mock("@/hooks/use-providers-snapshot", () => ({
+  useProvidersSnapshot: () => ({ entries: [] }),
+}));
 vi.mock("react-native-reanimated", async (importOriginal) => {
   const actual = await importOriginal<typeof Reanimated>();
   return {
@@ -116,8 +120,6 @@ function DraftConsumer({ model }: { model: string }) {
         thinkingOptions={[]}
         fastMode={partitionModelFeatures(draft.features).fastMode}
         featureMetadataStatus={draft.metadataStatus}
-        featureMetadataError={draft.metadataError}
-        onRetryFeatureMetadata={draft.retryMetadata}
         onSetFeature={draft.setFeatureValue}
       />
     </>
@@ -163,10 +165,8 @@ afterEach(() => {
 });
 
 describe("production draft Speed readiness", () => {
-  it("renders pending read-only, explains error, retries and then preserves the complete Ultrafast selection", async () => {
-    render(<Page model="openai-codex/sol" />);
-    const pending = screen.getByTestId("model-settings-fast-mode-loading");
-    expect(pending.textContent).toContain("Detecting supported speeds");
+  it("hides failed speed detection and restores the saved tier after a model change", async () => {
+    const view = render(<Page model="openai-codex/sol" />);
     act(() => draft.setFeatureValue("fast_mode", "on"));
     expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
     await waitFor(() => expect(runtime.requests).toHaveLength(1));
@@ -176,11 +176,13 @@ describe("production draft Speed readiness", () => {
         error: "Native capability endpoint unavailable",
       }),
     );
-    expect((await screen.findByTestId("model-settings-fast-mode-error")).textContent).toContain(
-      "Native capability endpoint unavailable",
-    );
-    fireEvent.click(screen.getByTestId("model-settings-fast-mode-retry"));
-    await screen.findByTestId("model-settings-fast-mode-loading");
+    await waitFor(() => expect(draft.metadataStatus).toBe("error"));
+    expect(screen.queryByTestId("model-settings-panel")).toBeNull();
+    expect(screen.queryByText("Native capability endpoint unavailable")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry speed detection" })).toBeNull();
+    act(() => draft.setFeatureValue("fast_mode", "on"));
+    expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
+    view.rerender(<Page model="openai-codex/next" />);
     await waitFor(() => expect(runtime.requests).toHaveLength(2));
     act(() => runtime.requests[1]!.resolve({ features: [tierFeature] }));
     const selector = await screen.findByTestId("model-settings-fast-mode");
@@ -194,9 +196,7 @@ describe("production draft Speed readiness", () => {
     render(<Page model="openai-codex/older" />);
     await waitFor(() => expect(runtime.requests).toHaveLength(1));
     act(() => runtime.requests[0]!.resolve({ features: [] }));
-    expect(
-      (await screen.findByTestId("model-settings-fast-mode-unsupported")).textContent,
-    ).toContain("not supported");
+    await screen.findByTestId("model-settings-fast-mode-unsupported");
     expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
     expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
   });
@@ -237,9 +237,6 @@ describe("production draft Speed readiness", () => {
     view.rerender(<Page model="openai-codex/new" />);
     await waitFor(() => expect(runtime.requests).toHaveLength(2));
     act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
-    expect(screen.getByTestId("model-settings-fast-mode-loading").textContent).toContain(
-      "Detecting",
-    );
     expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
     view.rerender(<Page model="openai-codex/new" live />);
     act(() => runtime.requests[1]!.resolve({ features: [] }));
@@ -257,9 +254,7 @@ describe("production draft Speed readiness", () => {
     act(() => draft.setFeatureValue("oauth_account_credential", "42"));
     await waitFor(() => expect(runtime.requests).toHaveLength(2));
     expect(runtime.requests[1]!.account).toBe("42");
-    expect(screen.getByTestId("model-settings-fast-mode-loading").textContent).toContain(
-      "Detecting",
-    );
+    expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
     act(() => runtime.requests[1]!.resolve({ features: [tierFeature, accountFeature] }));
     await screen.findByTestId("model-settings-fast-mode");
     act(() => {
@@ -270,7 +265,9 @@ describe("production draft Speed readiness", () => {
     act(() =>
       runtime.requests[2]!.resolve({ features: [], error: "Cannot read installed runtime" }),
     );
-    await screen.findByTestId("model-settings-fast-mode-error");
+    await waitFor(() => expect(draft.metadataStatus).toBe("error"));
+    expect(screen.queryByTestId("model-settings-panel")).toBeNull();
+    expect(screen.queryByText("Cannot read installed runtime")).toBeNull();
     act(() => draft.setFeatureValue("fast_mode", "on"));
     expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
   });

@@ -25,7 +25,6 @@ const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroun
 const fastIconColorMapping = (theme: Theme) => ({ color: theme.colors.palette.yellow[400] });
 const FAST_MODE_METADATA_LABELS = {
   loading: "agentControls.features.fast.detecting",
-  error: "agentControls.features.fast.detectionFailed",
   ready: "agentControls.features.fast.unsupported",
 } as const;
 
@@ -35,8 +34,6 @@ interface ModelSettingsPanelProps {
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
   fastMode: FastModeFeature | null;
   featureMetadataStatus?: "loading" | "error" | "ready";
-  featureMetadataError?: string;
-  onRetryFeatureMetadata?: () => void;
   onSetFeature?: (featureId: string, value: unknown) => void;
   contextWindowMaxTokens?: number;
   contextControl?: ReactNode;
@@ -51,8 +48,6 @@ export function ModelSettingsPanel({
   onSelectThinkingOption,
   fastMode,
   featureMetadataStatus,
-  featureMetadataError,
-  onRetryFeatureMetadata,
   onSetFeature,
   contextWindowMaxTokens,
   contextControl,
@@ -83,7 +78,10 @@ export function ModelSettingsPanel({
   const hasThinking = thinkingComboboxOptions.length > 1 && Boolean(onSelectThinkingOption);
   const hasContext = contextControl != null || contextWindowMaxTokens !== undefined;
   const hasControls =
-    hasThinking || fastMode !== null || hasContext || featureMetadataStatus !== undefined;
+    hasThinking ||
+    hasContext ||
+    (featureMetadataStatus !== "error" &&
+      (fastMode !== null || featureMetadataStatus !== undefined));
 
   const handleThinkingPress = useCallback(() => {
     setThinkingOpen((current) => !current);
@@ -161,8 +159,6 @@ export function ModelSettingsPanel({
         <FastModeControl
           fastMode={fastMode}
           metadataStatus={featureMetadataStatus}
-          metadataError={featureMetadataError}
-          onRetry={onRetryFeatureMetadata}
           disabled={controlsDisabled}
           canSetFeature={Boolean(onSetFeature)}
           onValueChange={handleFastModeChange}
@@ -186,8 +182,6 @@ export function ModelSettingsPanel({
 function FastModeControl({
   fastMode,
   metadataStatus,
-  metadataError,
-  onRetry,
   disabled,
   canSetFeature,
   onValueChange,
@@ -195,8 +189,6 @@ function FastModeControl({
 }: {
   fastMode: FastModeFeature | null;
   metadataStatus?: "loading" | "error" | "ready";
-  metadataError?: string;
-  onRetry?: () => void;
   disabled: boolean;
   canSetFeature: boolean;
   onValueChange: (value: boolean | string) => void;
@@ -207,11 +199,8 @@ function FastModeControl({
     () => ({ disabled: true, busy: metadataStatus === "loading" }),
     [metadataStatus],
   );
-  if (
-    metadataStatus === "loading" ||
-    metadataStatus === "error" ||
-    (metadataStatus === "ready" && !fastMode)
-  ) {
+  if (metadataStatus === "error") return null;
+  if (metadataStatus === "loading" || (metadataStatus === "ready" && !fastMode)) {
     return (
       <View
         testID={`model-settings-fast-mode-${metadataStatus === "ready" ? "unsupported" : metadataStatus}`}
@@ -225,22 +214,6 @@ function FastModeControl({
             {t(FAST_MODE_METADATA_LABELS[metadataStatus ?? "ready"])}
           </Text>
         </View>
-        {metadataStatus === "error" ? (
-          <>
-            <Text style={styles.tooltipText}>{metadataError}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t("agentControls.features.fast.retryDetection")}
-              onPress={onRetry}
-              disabled={disabled || !onRetry}
-              testID="model-settings-fast-mode-retry"
-            >
-              <Text style={styles.settingLabel}>
-                {t("agentControls.features.fast.retryDetection")}
-              </Text>
-            </Pressable>
-          </>
-        ) : null}
       </View>
     );
   }

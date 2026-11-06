@@ -6,7 +6,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type {
@@ -121,11 +121,7 @@ function OmpSubagentSpeedControl({
   });
   const metadataReady =
     isConnected && featuresQuery.isSuccess && !featuresQuery.isFetching && !catalogLoading;
-  const refetchMetadata = featuresQuery.refetch;
-  const retryMetadata = useCallback(() => {
-    void refetchMetadata();
-  }, [refetchMetadata]);
-  if (!model) return null;
+  if (!model || !isConnected || featuresQuery.isError) return null;
   const fastFeature = metadataReady
     ? featuresQuery.data?.find(
         (feature): feature is OmpSpeedFeature =>
@@ -133,24 +129,12 @@ function OmpSubagentSpeedControl({
           (feature.type === "toggle" || feature.type === "select"),
       )
     : undefined;
-  const failed = !isConnected || featuresQuery.isError;
   if (
     !metadataReady ||
     !fastFeature ||
     (agent.fastMode === "ultrafast" && fastFeature.type !== "select")
   ) {
-    return (
-      <OmpSubagentSpeedStatus
-        agentName={agent.name}
-        metadataReady={metadataReady}
-        failed={failed}
-        error={
-          !isConnected ? t("workspace.terminal.hostDisconnected") : featuresQuery.error?.message
-        }
-        disabled={disabled || !isConnected}
-        onRetry={retryMetadata}
-      />
-    );
+    return <OmpSubagentSpeedStatus agentName={agent.name} metadataReady={metadataReady} />;
   }
   return (
     <OmpSubagentReadySpeedControl
@@ -291,42 +275,18 @@ function OmpSubagentReadySpeedControl({
 function OmpSubagentSpeedStatus({
   agentName,
   metadataReady,
-  failed,
-  error,
-  disabled,
-  onRetry,
 }: {
   agentName: string;
   metadataReady: boolean;
-  failed: boolean;
-  error: string | undefined;
-  disabled: boolean;
-  onRetry: () => void;
 }): ReactElement {
   const { t } = useTranslation();
-  let statusKey = "agentControls.features.fast.unsupported";
-  if (failed) statusKey = "agentControls.features.fast.detectionFailed";
-  else if (!metadataReady) statusKey = "agentControls.features.fast.detecting";
+  const statusKey = metadataReady
+    ? "agentControls.features.fast.unsupported"
+    : "agentControls.features.fast.detecting";
   return (
     <View style={styles.fastMeta} testID={`omp-subagent-speed-status-${agentName}`}>
       <Text style={styles.controlLabel}>{t("agentControls.features.fast.title")}</Text>
       <Text style={styles.mutedText}>{t(statusKey)}</Text>
-      {failed ? (
-        <>
-          <Text style={styles.mutedText}>{error}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("agentControls.features.fast.retryDetection")}
-            disabled={disabled}
-            onPress={onRetry}
-            testID={`omp-subagent-speed-retry-${agentName}`}
-          >
-            <Text style={styles.controlLabel}>
-              {t("agentControls.features.fast.retryDetection")}
-            </Text>
-          </Pressable>
-        </>
-      ) : null}
     </View>
   );
 }

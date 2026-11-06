@@ -288,7 +288,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     features: draftFeatures,
     featureValues: draftFeatureValues,
     setFeatureValue: setDraftFeatureValue,
-    metadataError: featureMetadataError,
     metadataStatus: featureMetadataStatus,
     retryMetadata: retryFeatureMetadata,
   } = useDraftAgentFeatures({
@@ -338,7 +337,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         formState,
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
-        featureMetadataError,
         featureMetadataStatus,
         onRetryFeatureMetadata: retryFeatureMetadata,
       }),
@@ -350,7 +348,6 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveModelId,
     effectiveThinkingOptionId,
     draftFeatures,
-    featureMetadataError,
     featureMetadataStatus,
     retryFeatureMetadata,
     draftFeatureValues,

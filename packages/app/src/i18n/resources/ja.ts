@@ -286,9 +286,7 @@ export const ja: TranslationResources = {
           "Ultrafast は標準の 8 倍の割合でプラン内の使用量を、6 倍の割合で購入済みクレジットを消費します。対応するアカウントとモデルが必要で、実際の速度は状況によって異なります。",
         selectWithValue: "速度を選択、現在：{{value}}",
         detecting: "対応する速度を検出中…",
-        detectionFailed: "速度の検出に失敗しました",
         unsupported: "速度の選択には対応していません",
-        retryDetection: "速度の検出を再試行",
       },
       workflow: {
         title: "ワークフロー",

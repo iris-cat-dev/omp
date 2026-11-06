@@ -288,9 +288,7 @@ export const fr: TranslationResources = {
           "Ultrafast consomme l’usage inclus à 8× et les crédits achetés à 6× le taux standard. Un compte et un modèle compatibles sont requis ; la vitesse réelle peut varier.",
         selectWithValue: "Choisir la vitesse, actuelle : {{value}}",
         detecting: "Détection des vitesses prises en charge…",
-        detectionFailed: "Échec de la détection de vitesse",
         unsupported: "Le choix de vitesse n’est pas pris en charge",
-        retryDetection: "Relancer la détection de vitesse",
       },
       workflow: {
         title: "Flux de travail",

@@ -286,9 +286,7 @@ export const ptBR: TranslationResources = {
           "O Ultrafast consome o uso incluído a 8× e os créditos comprados a 6× a taxa padrão. Requer uma conta e um modelo compatíveis; a velocidade real pode variar.",
         selectWithValue: "Selecionar velocidade, atual: {{value}}",
         detecting: "Detectando velocidades compatíveis…",
-        detectionFailed: "Falha na detecção de velocidade",
         unsupported: "A seleção de velocidade não é compatível",
-        retryDetection: "Tentar detectar a velocidade novamente",
       },
       workflow: {
         title: "Fluxo de trabalho",

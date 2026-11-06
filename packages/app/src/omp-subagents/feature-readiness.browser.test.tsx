@@ -123,27 +123,20 @@ function Page() {
     </I18nextProvider>
   );
 }
-it("keeps the production subagent speed read-only through detection, error and retry, preserving saved Ultrafast", async () => {
+it("hides failed subagent speed detection without changing saved Ultrafast", async () => {
   render(<Page />);
-  const status = await screen.findByTestId("omp-subagent-speed-status-worker");
-  expect(status.textContent).toContain("Detecting supported speeds");
   expect(screen.queryByTestId("omp-subagent-fast-worker")).toBeNull();
   await waitFor(() => expect(runtime.pending).toHaveLength(1));
   act(() => runtime.pending[0]!({ features: [], error: "Native startup failed" }));
-  expect((await screen.findByTestId("omp-subagent-speed-retry-worker")).textContent).toContain(
-    "Retry speed detection",
-  );
-  expect(screen.getByTestId("omp-subagent-speed-status-worker").textContent).toContain(
-    "Native startup failed",
-  );
-  fireEvent.click(screen.getByTestId("omp-subagent-speed-retry-worker"));
-  await waitFor(() => expect(runtime.pending).toHaveLength(2));
-  act(() => runtime.pending[1]!({ features: [] }));
   await waitFor(() =>
-    expect(screen.getByTestId("omp-subagent-speed-status-worker").textContent).toContain(
-      "not supported",
-    ),
+    expect(
+      query.getQueryCache().find({ queryKey: ["ompSubagentFeatures"], exact: false })?.state.status,
+    ).toBe("error"),
   );
+  expect(screen.queryByTestId("omp-subagent-speed-status-worker")).toBeNull();
+  expect(screen.queryByTestId("omp-subagent-fast-worker")).toBeNull();
+  expect(screen.queryByText("Native startup failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry speed detection" })).toBeNull();
   expect(runtime.settings.agents[0]!.fastMode).toBe("ultrafast");
   expect(runtime.writes).toBe(0);
 });
@@ -175,17 +168,19 @@ it("blocks stale confirmed Ultrafast when the host capability context is being r
   });
   await waitFor(() => expect(runtime.pending).toHaveLength(2));
   expect(screen.queryByTestId("omp-subagent-fast-worker")).toBeNull();
-  expect(screen.getByTestId("omp-subagent-speed-status-worker").textContent).toContain("Detecting");
   act(() =>
     runtime.pending[1]!({
       features: [{ id: "fast_mode", label: "Fast", type: "toggle", value: false }],
     }),
   );
   await waitFor(() =>
-    expect(screen.getByTestId("omp-subagent-speed-status-worker").textContent).toContain(
-      "not supported",
-    ),
+    expect(
+      query.getQueryCache().find({ queryKey: ["ompSubagentFeatures"], exact: false })?.state
+        .fetchStatus,
+    ).toBe("idle"),
   );
+  await screen.findByTestId("omp-subagent-speed-status-worker");
+  expect(screen.queryByTestId("omp-subagent-fast-worker")).toBeNull();
   expect(runtime.settings.agents[0]!.fastMode).toBe("ultrafast");
   expect(runtime.writes).toBe(0);
 });

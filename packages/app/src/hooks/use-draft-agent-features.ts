@@ -33,7 +33,6 @@ export interface DraftAgentFeaturesResult {
   features: AgentFeature[];
   featureValues: Record<string, unknown> | undefined;
   isLoading: boolean;
-  metadataError: string | undefined;
   metadataStatus: "loading" | "error" | "ready";
   retryMetadata: () => void;
   setFeatureValue: (featureId: string, value: unknown) => void;
@@ -285,9 +284,6 @@ export function useDraftAgentFeatures(input: {
     features,
     featureValues: effectiveFeatureValues,
     isLoading: featuresQuery.isLoading,
-    metadataError: !isConnected
-      ? t("workspace.terminal.hostDisconnected")
-      : featuresQuery.error?.message,
     metadataStatus,
     retryMetadata,
     setFeatureValue,

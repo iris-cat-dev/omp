@@ -24,7 +24,6 @@ export function buildDraftAgentControls(input: {
   features?: DraftAgentControlsProps["features"];
   onSetFeature?: DraftAgentControlsProps["onSetFeature"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
-  featureMetadataError?: string;
   featureMetadataStatus?: DraftAgentControlsProps["featureMetadataStatus"];
   onRetryFeatureMetadata?: DraftAgentControlsProps["onRetryFeatureMetadata"];
 }): DraftAgentControlsProps {
@@ -47,7 +46,6 @@ export function buildDraftAgentControls(input: {
     onSelectThinkingOption: formState.setThinkingOptionFromUser,
     features,
     onSetFeature,
-    featureMetadataError: input.featureMetadataError,
     featureMetadataStatus: input.featureMetadataStatus,
     onRetryFeatureMetadata: input.onRetryFeatureMetadata,
     onDropdownClose,
