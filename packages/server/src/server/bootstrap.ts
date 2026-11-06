@@ -920,11 +920,23 @@ export async function createPaseoDaemon(
 
   const httpServer = createHTTPServer(app);
 
-  // Script proxy WebSocket upgrade handler — must be registered before the
-  // PaseoWebSocketServer attaches its own "upgrade" listener so that
-  // script-bound upgrades are forwarded first. The handler is a no-op for
-  // requests that don't match a registered script route.
-  httpServer.on("upgrade", serviceProxy.upgradeHandler({ passthroughUnknown: true }));
+  // Own upgrades while plugin startup checks run, before the WS listener exists.
+  // Once ready, script-bound upgrades must still be forwarded before the WS listener.
+  const proxyUpgrade = serviceProxy.upgradeHandler({ passthroughUnknown: true });
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (wsServer) {
+      proxyUpgrade(req, socket, head);
+      return;
+    }
+
+    const onSocketError = () => socket.destroy();
+    socket.on("error", onSocketError);
+    socket.once("close", () => socket.off("error", onSocketError));
+    socket.end(
+      "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\nRetry-After: 1\r\n\r\n",
+      () => socket.destroy(),
+    );
+  });
 
   if (config.serviceProxy?.standaloneListen) {
     serviceProxyListenTarget = parseListenString(config.serviceProxy.standaloneListen);

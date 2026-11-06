@@ -113,6 +113,7 @@ async function main(): Promise<void> {
   try {
     await acquirePidLock(paseoHome, null, {
       ownerPid: process.pid,
+      ready: false,
       reclaimStaleDesktopLock: config.reclaimStalePidLock,
     });
   } catch (error) {
@@ -172,7 +173,10 @@ async function main(): Promise<void> {
     restartOnCrash: true,
     logFile: supervisorLogFile,
     onWorkerReady: async ({ listen }) => {
-      await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
+      await updatePidLock(paseoHome, { listen, ready: true }, { ownerPid: process.pid });
+    },
+    onWorkerNotReady: async () => {
+      await updatePidLock(paseoHome, { ready: false }, { ownerPid: process.pid });
     },
     onSupervisorExit: releaseLock,
   });

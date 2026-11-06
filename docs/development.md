@@ -227,6 +227,10 @@ without legacy shell paths and keeps Bash Interceptor enabled.
 
 Daemon startup runs `plugin check --fix --json` through the selected OMP runtime before accepting WebSocket clients, checking the user profile and non-archived workspace directories. The check loads enabled manifest entry points without opening a model session or executing tools. Plugins with missing entries, import errors, or factory failures are persistently disabled in their own runtime scope; matching marketplace registry entries are synchronized. Healthy plugins, disabled plugins/features, and plugin settings are preserved. Node RPC hosts also check before session creation, covering newly opened projects. Failures to run the check or write plugin state are logged rather than disabling unrelated plugins. Fix or precompile the plugin, then re-enable it in Host Plugins settings; the next startup checks it again.
 
+HTTP listening is not worker readiness. During the startup checks, HTTP upgrades receive `503 Service Unavailable` with `Connection: close`; connection-local errors close only that socket. The supervisor records `ready: false` in its PID metadata until worker-ready IPC arrives, and resets readiness before replacing an exited worker. CLI and Desktop report a live managed supervisor with explicit unready metadata as `starting`, without probing an unavailable WebSocket or spawning a duplicate supervisor. PID files without readiness metadata retain normal reachability checks.
+
+Explicit stop and disabling built-in management can stop a starting managed supervisor. Distribution and version checks still run once it is ready. Updating these modules requires restarting both the supervisor and Desktop main process; already-running processes retain their loaded code.
+
 Build overrides, shared by development, Desktop packaging, and remote deployment:
 
 | Variable                     | Default                         | Purpose                                                                                           |

@@ -3,7 +3,11 @@ import { createRequire } from "node:module";
 import { getOrCreateServerId, findExecutable, execCommand } from "@omp-desktop/server";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
-import { resolveLocalDaemonState } from "./local-daemon.js";
+import {
+  isLocalDaemonStarting,
+  resolveLocalDaemonState,
+  type LocalDaemonState,
+} from "./local-daemon.js";
 import { resolveNodePathFromPid } from "./runtime-toolchain.js";
 
 const DAEMON_STATUS_PROBE_TIMEOUT_MS = 1500;
@@ -17,7 +21,7 @@ interface ProviderBinaryStatus {
 
 interface DaemonStatus {
   serverId: string | null;
-  localDaemon: "running" | "stopped" | "stale_pid" | "unresponsive";
+  localDaemon: "starting" | "running" | "stopped" | "stale_pid" | "unresponsive";
   connectedDaemon: "reachable" | "unreachable" | "auth_required" | "auth_failed" | "not_probed";
   home: string;
   listen: string;
@@ -92,7 +96,7 @@ function createStatusSchema(status: DaemonStatus): OutputSchema<StatusRow> {
         color: (_, item) => {
           if (item.key === "Local Daemon") {
             if (item.value === "running") return "green";
-            if (item.value === "unresponsive") return "yellow";
+            if (item.value === "starting" || item.value === "unresponsive") return "yellow";
             return "red";
           }
           if (item.key === "Connected Daemon") {
@@ -386,6 +390,11 @@ export function selectRelayStatus(input: {
 
 export type StatusResult = ListResult<StatusRow>;
 
+function resolveLocalStatus(state: LocalDaemonState): DaemonStatus["localDaemon"] {
+  if (isLocalDaemonStarting(state)) return "starting";
+  return state.running ? "running" : "stopped";
+}
+
 export async function runStatusCommand(
   options: CommandOptions,
   _command: Command,
@@ -397,20 +406,23 @@ export async function runStatusCommand(
   const owner = resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname);
   let daemonNode = await resolveDaemonNodeLabel(state);
   const cliNode = process.execPath;
-  let localDaemon: DaemonStatus["localDaemon"] = state.running ? "running" : "stopped";
+  let localDaemon = resolveLocalStatus(state);
   let connectedDaemon: DaemonStatus["connectedDaemon"] = "not_probed";
   let daemonVersion: string | null = null;
   let desktopDistributionIdentity: string | null = null;
   let daemonProviders: ProviderBinaryStatus[] | undefined;
   let relayStatus = selectRelayStatus({ persisted: relayConfigFromLocalState(state) });
   let note: string | undefined;
+  if (localDaemon === "starting") {
+    note = "Local daemon supervisor is running; waiting for worker readiness";
+  }
 
   if (!state.running && state.stalePidFile && state.pidInfo) {
     localDaemon = "stale_pid";
     note = `Stale PID file found for PID ${state.pidInfo.pid}`;
   }
 
-  if (daemonTarget) {
+  if (daemonTarget && localDaemon !== "starting") {
     const probe = await probeDaemonOverWebsocket({ host: daemonTarget, state });
     desktopDistributionIdentity = probe.desktopDistributionIdentity ?? null;
     ({
