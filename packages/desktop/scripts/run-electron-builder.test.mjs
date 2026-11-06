@@ -237,7 +237,7 @@ function createPackagingFixture(
   );
   mkdirSync(path.join(directory, "assets"));
   writeFileSync(path.join(directory, "assets/icon.png"), "icon fixture");
-  const { source } = resolveOmpSdkBuildConfig();
+  const { source, buildTarget, profile } = resolveOmpSdkBuildConfig();
   const stage = path.join(directory, "sdk-dist");
   const packageRoot = "node_modules/@oh-my-pi/pi-coding-agent";
   mkdirSync(path.join(stage, packageRoot, "dist/node"), { recursive: true });
@@ -249,8 +249,8 @@ function createPackagingFixture(
       packageRoot,
       platform: runtime.platform,
       arch: runtime.arch,
-      buildTarget: "desktop",
-      profile: "core",
+      buildTarget,
+      profile,
     }),
   );
   writeFileSync(
@@ -261,7 +261,7 @@ function createPackagingFixture(
     path.join(stage, packageRoot, "package.json"),
     JSON.stringify({
       name: "@oh-my-pi/pi-coding-agent",
-      ompNodeSdk: { target: "desktop", profile: "core" },
+      ompNodeSdk: { target: buildTarget, profile },
     }),
   );
   for (const file of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"])
@@ -1253,7 +1253,7 @@ test.each(["missing", "wrong platform", "wrong profile"])(
       else {
         const manifest = JSON.parse(readFileSync(file, "utf8"));
         if (failure === "wrong platform") manifest.platform = "darwin";
-        else manifest.profile = "full";
+        else manifest.profile = manifest.profile === "full" ? "core" : "full";
         writeFileSync(file, JSON.stringify(manifest));
       }
       await expect(

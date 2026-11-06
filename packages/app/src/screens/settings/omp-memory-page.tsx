@@ -19,6 +19,9 @@ import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { SettingsSection } from "./settings-section";
 import {
+  applyOmpMnemopiLocalModelsDraft,
+  canUseOmpMnemopiLocalModels,
+  changeOmpMemoryDraftField,
   buildOmpMemorySettingsPatch,
   createOmpMemoryDraft,
   validateOmpMemoryDraft,
@@ -39,7 +42,10 @@ function useDraftFieldChange<Key extends keyof OmpMemoryDraft>(
   onChange: (draft: OmpMemoryDraft) => void,
   field: Key,
 ): (value: OmpMemoryDraft[Key]) => void {
-  return useCallback((value) => onChange({ ...draft, [field]: value }), [draft, field, onChange]);
+  return useCallback(
+    (value) => onChange(changeOmpMemoryDraftField(draft, field, value)),
+    [draft, field, onChange],
+  );
 }
 
 interface ToggleRowProps {
@@ -276,7 +282,7 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
   const submit = useCallback(() => void save(), [save]);
   const changeBackend = useCallback(
     (backend: OmpMemoryBackend) => {
-      if (draft) setDraft({ ...draft, backend });
+      if (draft) setDraft(changeOmpMemoryDraftField(draft, "backend", backend));
     },
     [draft, setDraft],
   );
@@ -459,7 +465,12 @@ export function HostMemoryPage({ serverId }: { serverId: string }): ReactElement
       ) : null}
 
       <View style={styles.actions}>
-        <Button variant="secondary" onPress={cancel} disabled={!dirty || saving}>
+        <Button
+          variant="secondary"
+          onPress={cancel}
+          disabled={!dirty || saving}
+          testID="omp-memory-cancel"
+        >
           {t("settings.memory.cancel")}
         </Button>
         <Button onPress={submit} disabled={!dirty || disabled} testID="omp-memory-save">
@@ -601,6 +612,31 @@ interface MnemopiSettingsProps extends BackendSettingsProps {
   onRemoveSecret: (key: MemorySecretKey) => Promise<void>;
 }
 
+function LocalModelsNotice({
+  pending,
+  configured,
+}: {
+  pending: boolean;
+  configured: boolean | undefined;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  if (pending) {
+    return (
+      <Text style={styles.notice} testID="omp-memory-mnemopi-local-models-pending">
+        {t("settings.memory.mnemopi.localModelsPending")}
+      </Text>
+    );
+  }
+  if (configured) {
+    return (
+      <Text style={styles.notice} testID="omp-memory-mnemopi-local-models-configured">
+        {t("settings.memory.mnemopi.localModelsConfigured")}
+      </Text>
+    );
+  }
+  return null;
+}
+
 function MnemopiSettings({
   draft,
   settings,
@@ -615,11 +651,23 @@ function MnemopiSettings({
   onRemoveSecret,
 }: MnemopiSettingsProps): ReactElement {
   const { t } = useTranslation();
+  const [localPresetVersion, setLocalPresetVersion] = useState(0);
+  const localModelsSupported = canUseOmpMnemopiLocalModels(settings);
+  const chooseLocalModels = useCallback(() => {
+    onChange(applyOmpMnemopiLocalModelsDraft(settings, draft));
+    setLocalPresetVersion((version) => version + 1);
+  }, [draft, onChange, settings]);
   const selectedScoping =
     scopingOptions.find((option) => option.value === draft.mnemopiScoping) ?? null;
   const blockers = getOmpMnemopiBlockers(settings, draft);
   const chooseLocalKeywordMode = useCallback(
-    () => onChange({ ...draft, mnemopiNoEmbeddings: true, mnemopiLlmMode: "none" }),
+    () =>
+      onChange({
+        ...draft,
+        mnemopiUseLocalModels: false,
+        mnemopiNoEmbeddings: true,
+        mnemopiLlmMode: "none",
+      }),
     [draft, onChange],
   );
   const changeScoping = useDraftFieldChange(draft, onChange, "mnemopiScoping");
@@ -680,6 +728,23 @@ function MnemopiSettings({
             </Text>
           ))}
           <Text style={styles.notice}>{t("settings.memory.mnemopi.privacyHint")}</Text>
+          {localModelsSupported ? (
+            <>
+              <Text style={styles.notice}>{t("settings.memory.mnemopi.localModelsHint")}</Text>
+              <Button
+                variant="secondary"
+                disabled={disabled || draft.mnemopiUseLocalModels}
+                onPress={chooseLocalModels}
+                testID="omp-memory-mnemopi-local-models"
+              >
+                {t("settings.memory.mnemopi.chooseLocalModels")}
+              </Button>
+              <LocalModelsNotice
+                pending={draft.mnemopiUseLocalModels}
+                configured={settings.mnemopi.localModelsConfigured}
+              />
+            </>
+          ) : null}
           {settings.runtime?.profile === "core" ? (
             <>
               <Text style={styles.notice}>{t("settings.memory.mnemopi.localModeHint")}</Text>
@@ -747,6 +812,7 @@ function MnemopiSettings({
         <Pressable
           style={[styles.advancedButton, settingsStyles.rowBorder]}
           onPress={onToggleAdvanced}
+          testID="omp-memory-mnemopi-advanced"
         >
           <Text style={styles.advancedText}>{t("settings.memory.advanced")}</Text>
           {showAdvanced ? (
@@ -825,6 +891,7 @@ function MnemopiSettings({
               placeholder={t("settings.memory.mnemopi.embeddingVariant")}
               emptyText={t("settings.memory.backend.empty")}
               disabled={disabled || draft.mnemopiNoEmbeddings}
+              testID="omp-memory-mnemopi-embedding-variant"
             />
             <DraftTextField
               label={t("settings.memory.mnemopi.dbPath")}
@@ -837,7 +904,7 @@ function MnemopiSettings({
             <DraftTextField
               label={t("settings.memory.mnemopi.embeddingModel")}
               value={draft.mnemopiEmbeddingModel}
-              resetKey={resetKey}
+              resetKey={resetKey + localPresetVersion}
               disabled={disabled || draft.mnemopiNoEmbeddings}
               testID="omp-memory-mnemopi-embedding-model"
               onChange={changeEmbeddingModel}
@@ -845,7 +912,7 @@ function MnemopiSettings({
             <DraftTextField
               label={t("settings.memory.mnemopi.embeddingApiUrl")}
               value={draft.mnemopiEmbeddingApiUrl}
-              resetKey={resetKey}
+              resetKey={resetKey + localPresetVersion}
               disabled={disabled || draft.mnemopiNoEmbeddings}
               testID="omp-memory-mnemopi-embedding-url"
               onChange={changeEmbeddingApiUrl}
@@ -875,6 +942,7 @@ function MnemopiSettings({
               placeholder={t("settings.memory.mnemopi.llmMode")}
               emptyText={t("settings.memory.backend.empty")}
               disabled={disabled}
+              testID="omp-memory-mnemopi-llm-mode"
             />
             {draft.mnemopiLlmMode === "remote" ? (
               <>

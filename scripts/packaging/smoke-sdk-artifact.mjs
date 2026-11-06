@@ -25,7 +25,20 @@ async function smoke(staged, temporary) {
     "audio",
     "localAssistance",
   ]) {
-    assert.equal(capabilities[capability], false, `Desktop core capability ${capability}`);
+    assert.equal(capabilities[capability], false, `Desktop native capability ${capability}`);
+  }
+  if (staged.profile === "full") {
+    // Production isolates these ONNX versions in separate inference workers.
+    for (const engine of ["fastembed", "@huggingface/transformers", "onnxruntime-node"]) {
+      const probe = spawnSync(
+        process.execPath,
+        [fileURLToPath(import.meta.url), "--local-engine", staged.directory, engine],
+        { cwd: temporary, env: process.env, encoding: "utf8", timeout: 60_000 },
+      );
+      if (probe.error) throw probe.error;
+      assert.equal(probe.status, 0, `${engine}: ${probe.stderr}\n${probe.stdout}`);
+      console.log(`SDK local engine ${engine} passed isolated CPU inference`);
+    }
   }
   const work = path.join(temporary, "work");
   await mkdir(work);
@@ -144,6 +157,55 @@ async function smoke(staged, temporary) {
   await smokeEval(staged, temporary, work);
 }
 
+async function smokeLocalEngine(directory, engine) {
+  const load = createRequire(path.join(directory, "package.json"));
+  let engineLoad = load;
+  if (engine !== "onnxruntime-node") {
+    const entry = load.resolve(engine);
+    const imported = await import(pathToFileURL(entry).href);
+    if (engine === "fastembed") {
+      assert.equal(typeof imported.FlagEmbedding.init, "function");
+    } else {
+      assert.equal(engine, "@huggingface/transformers");
+      assert.equal(typeof imported.pipeline, "function");
+    }
+    engineLoad = createRequire(entry);
+  }
+  const ort = engineLoad("onnxruntime-node");
+  const scalar = (field, value) => Buffer.from([field << 3, value]);
+  const message = (field, payload) => {
+    assert.ok(payload.length < 128);
+    return Buffer.concat([Buffer.from([(field << 3) | 2, payload.length]), payload]);
+  };
+  const text = (field, value) => message(field, Buffer.from(value));
+  const valueInfo = (name) =>
+    Buffer.concat([
+      text(1, name),
+      message(2, message(1, Buffer.concat([scalar(1, 1), message(2, message(1, scalar(1, 1)))]))),
+    ]);
+  // ONNX IR 9 / opset 13: two float[1] inputs, y = x + z. No model download.
+  const graph = Buffer.concat([
+    message(1, Buffer.concat([text(1, "x"), text(1, "z"), text(2, "y"), text(4, "Add")])),
+    text(2, "sdk-smoke"),
+    message(11, valueInfo("x")),
+    message(11, valueInfo("z")),
+    message(12, valueInfo("y")),
+  ]);
+  const model = Buffer.concat([scalar(1, 9), message(7, graph), message(8, scalar(2, 13))]);
+  const session = await ort.InferenceSession.create(model, { executionProviders: ["cpu"] });
+  try {
+    const output = await session.run({
+      x: new ort.Tensor("float32", Float32Array.of(2), [1]),
+      z: new ort.Tensor("float32", Float32Array.of(3), [1]),
+    });
+    assert.equal(output.y.type, "float32");
+    assert.deepEqual(output.y.dims, [1]);
+    assert.deepEqual(Array.from(output.y.data), [5]);
+  } finally {
+    await session.release();
+  }
+}
+
 async function smokeEval(staged, temporary, work) {
   const worker = fork(
     path.join(staged.directory, "dist/node/host.mjs"),
@@ -236,7 +298,9 @@ async function smokeEval(staged, temporary, work) {
   }
 }
 
-if (process.argv[2] === "--probe") {
+if (process.argv[2] === "--local-engine") {
+  await smokeLocalEngine(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === "--probe") {
   await smoke(JSON.parse(process.argv[3]), process.argv[4]);
 } else {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "omp-sdk-artifact-smoke-"));

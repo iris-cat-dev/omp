@@ -13,7 +13,7 @@ export function resolveOmpSdkBuildConfig(env = process.env) {
   if (buildTarget !== "generic" && buildTarget !== "desktop") {
     throw new Error(`Unsupported OMP_DESKTOP_SDK_TARGET: ${buildTarget}. Use generic or desktop.`);
   }
-  const profile = env.OMP_DESKTOP_SDK_PROFILE ?? "core";
+  const profile = env.OMP_DESKTOP_SDK_PROFILE ?? "full";
   if (profile !== "core" && profile !== "full") {
     throw new Error(`Unsupported OMP_DESKTOP_SDK_PROFILE: ${profile}. Use core or full.`);
   }

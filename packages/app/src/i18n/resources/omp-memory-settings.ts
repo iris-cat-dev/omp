@@ -64,12 +64,19 @@ const en = {
     profileUnknown:
       "This host has not reported its SDK profile. Local embeddings and small-model memory inference require the full SDK; core needs an explicit supported configuration.",
     privacyHint:
-      "The database stays on this host, but configured embedding/LLM APIs receive memory content and may incur charges. No endpoint or chat model is selected automatically. Compatibility does not confirm that a session initialized successfully; session memory status reports startup failures.",
+      "The database stays on this host, but configured embedding/LLM APIs receive memory content and may incur charges. Small-model mode uses a model role, not a local-only guarantee, and can inherit an online helper model. Compatibility does not confirm that a session initialized successfully; session memory status reports startup failures.",
     localModeHint:
       "Requires a runtime with SQLite FTS5 support; older runtimes may need rebuilding/updating. Local keyword-only mode uses full-text matching, not semantic vectors, and no memory LLM extraction/synthesis. Retain/learn stores supplied text. Automatic conversation retention remains your choice below. Existing databases and settings are preserved.",
     environmentSecret:
       "Provided by the environment. Enter a replacement to override it in configuration; removing a configured key restores the environment fallback.",
     chooseLocalMode: "Choose local keyword-only mode · no memory LLM",
+    chooseLocalModels: "Use models on this host",
+    localModelsHint:
+      "Saving changes this host's defaults: memory extraction/synthesis uses local/lfm2-1.2b with no cloud fallback for the memory role; semantic search uses the managed local embedding model for the selected language. Models run on this host. First memory use downloads model assets and uses RAM and disk space; choosing or saving this preset does not start a model or download. Existing credentials, history, and automatic recall, retention, and learning choices are preserved. Explicit project/runtime overrides remain authoritative and may change effective routing. Configuration status is not a download, availability, or session readiness check.",
+    localModelsPending:
+      "Local-model preset pending — save to apply. No model has been started or downloaded.",
+    localModelsConfigured:
+      "The saved host defaults use the local-model preset. Models have not been checked for availability or session readiness; explicit project/runtime overrides remain authoritative.",
     scoping: "Memory scope",
     autoRecall: "Recall on session start",
     autoRetain: "Automatically retain conversations",
@@ -191,10 +198,16 @@ const zhCN: MemoryTranslations<typeof en> = {
     profileUnknown:
       "此 Host 尚未报告 SDK 构建类型。本地向量模型和小模型记忆推理需要 full SDK；core 需要明确选择支持的配置。",
     privacyHint:
-      "数据库保留在此 Host，但配置的向量／LLM API 会接收记忆内容，并可能产生费用。不会自动选择远程地址或当前聊天模型。配置兼容不代表会话初始化已成功；启动失败原因会显示在会话记忆状态中。",
+      "数据库保留在此 Host，但配置的向量／LLM API 会接收记忆内容，并可能产生费用。「小模型」指模型角色，不保证本机推理，可能继承线上辅助模型。配置兼容不代表会话初始化已成功；启动失败原因会显示在会话记忆状态中。",
     localModeHint:
       "需要运行时包含 SQLite FTS5 支持；旧运行时可能需要重建／更新。本地仅全文模式使用关键词匹配，不提供语义向量检索，也不使用记忆 LLM 提取／综合。retain／learn 保存传入的文本。是否自动保存对话仍由下方选项决定。已有数据库和设置均保留。",
     chooseLocalMode: "选择本地仅全文模式 · 不使用记忆 LLM",
+    chooseLocalModels: "使用本机模型",
+    localModelsHint:
+      "保存将修改此 Host 的默认配置：记忆提取／综合使用 local/lfm2-1.2b，记忆角色不回退到云端；语义检索使用所选语言对应的内置本地向量模型。模型在此 Host 运行，首次使用记忆时会下载模型文件并占用内存和磁盘；选择或保存预设不会启动模型或下载文件。已有密钥、历史记录，以及自动召回、保存和学习选项均保留。项目／运行时的显式覆盖仍优先生效，可能改变实际路由。配置状态不代表模型已下载、可用或会话已就绪。",
+    localModelsPending: "本机模型预设待保存；尚未启动模型或下载文件。",
+    localModelsConfigured:
+      "已保存的 Host 默认配置使用本机模型预设。尚未检查模型可用性或会话就绪状态；项目／运行时的显式覆盖仍优先生效。",
     environmentSecret:
       "当前密钥来自环境变量。输入新密钥可在配置中覆盖；移除配置密钥后会重新使用环境变量。",
     scoping: "记忆作用域",

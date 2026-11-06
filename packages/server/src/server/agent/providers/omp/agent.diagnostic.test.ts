@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
+import { parse } from "yaml";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { OmpAgentClient, resolveOmpDiagnosticPaths } from "./agent.js";
@@ -68,15 +69,7 @@ describe("OMP diagnostics", () => {
 
   test("reports the actual SDK package without resolving or executing an OMP CLI", async () => {
     const dir = await makeTempDir();
-    const sdkRoot = path.join(dir, "sdk-package");
-    await mkdir(path.join(sdkRoot, "dist", "node"), { recursive: true });
-    await writeFile(
-      path.join(sdkRoot, "package.json"),
-      JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "19.2.3" }),
-    );
-    for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"]) {
-      await writeFile(path.join(sdkRoot, "dist", "node", entry), "");
-    }
+    const sdkRoot = await makeSdkPackage(dir);
     const client = new OmpAgentClient({
       logger: createTestLogger(),
       runtimeSettings: {
@@ -120,10 +113,110 @@ describe("OMP diagnostics", () => {
     await expect(client.getOmpInstallationStatus()).rejects.toThrow();
     expect((await client.getDiagnostic()).diagnostic).toContain("missing-sdk");
   });
+
+  test("saves the native local memory preset only for a positively identified full SDK without starting a session", async () => {
+    const dir = await makeTempDir();
+    const sdkRoot = await makeSdkPackage(dir, "full");
+    const client = makeMemoryClient(dir, sdkRoot);
+    const configPath = path.join(dir, "agent", "config.yml");
+    const initial = await client.getOmpMemorySettings();
+    expect(initial.runtime?.profile).toBe("full");
+    expect(initial.mnemopi.localModelsConfigured).toBe(false);
+    await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const saved = await client.updateOmpMemorySettings(initial.revision, {
+      backend: "mnemopi",
+      mnemopi: { useLocalModels: true },
+    });
+    expect(saved).toMatchObject({
+      runtime: { profile: "full" },
+      backend: "mnemopi",
+      mnemopi: { localModelsConfigured: true, noEmbeddings: false, llmMode: "smol" },
+    });
+    const native = parse(await readFile(configPath, "utf8"));
+    expect(native.modelRoles.memory).toMatch(/^local\//);
+    expect(native.retry.fallbackChains.memory).toEqual([]);
+    expect(native.mnemopi).not.toHaveProperty("useLocalModels");
+    expect((await client.getOmpMemorySettings()).revision).toBe(saved.revision);
+  });
+
+  test.each(["core", "unknown"] as const)(
+    "refuses the preset on %s SDK without changing disk or blocking ordinary memory settings",
+    async (profile) => {
+      const dir = await makeTempDir();
+      const sdkRoot = await makeSdkPackage(dir, profile === "unknown" ? undefined : profile);
+      const client = makeMemoryClient(dir, sdkRoot);
+      const initial = await client.getOmpMemorySettings();
+      const configPath = path.join(dir, "agent", "config.yml");
+      expect(initial.runtime?.profile).toBe(profile);
+      await expect(
+        client.updateOmpMemorySettings(initial.revision, {
+          backend: "mnemopi",
+          mnemopi: { useLocalModels: true },
+        }),
+      ).rejects.toThrow("full OMP SDK");
+      await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await client.getOmpMemorySettings()).revision).toBe(initial.revision);
+
+      const ordinary = await client.updateOmpMemorySettings(initial.revision, {
+        backend: "mnemopi",
+        mnemopi: { noEmbeddings: true, llmMode: "none", autoRetain: false },
+      });
+      const raw = await readFile(configPath, "utf8");
+      await expect(
+        client.updateOmpMemorySettings(ordinary.revision, {
+          mnemopi: { useLocalModels: true },
+        }),
+      ).rejects.toThrow("full OMP SDK");
+      await expect(readFile(configPath, "utf8")).resolves.toBe(raw);
+      expect((await client.getOmpMemorySettings()).revision).toBe(ordinary.revision);
+      expect(ordinary).toMatchObject({
+        runtime: { profile },
+        backend: "mnemopi",
+        mnemopi: { noEmbeddings: true, llmMode: "none", autoRetain: false },
+      });
+    },
+  );
 });
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "paseo-omp-diagnostic-"));
   tempDirs.push(dir);
   return dir;
+}
+
+async function makeSdkPackage(dir: string, profile?: "core" | "full"): Promise<string> {
+  const sdkRoot = path.join(dir, "sdk-package");
+  await mkdir(path.join(sdkRoot, "dist", "node"), { recursive: true });
+  await writeFile(
+    path.join(sdkRoot, "package.json"),
+    JSON.stringify({
+      name: "@oh-my-pi/pi-coding-agent",
+      version: "19.2.3",
+      ...(profile ? { ompNodeSdk: { profile } } : {}),
+    }),
+  );
+  for (const entry of ["sdk.mjs", "rpc.mjs", "host.mjs", "plugins.mjs", "modules.json"]) {
+    await writeFile(path.join(sdkRoot, "dist", "node", entry), "");
+  }
+  return sdkRoot;
+}
+
+function makeMemoryClient(dir: string, sdkRoot: string): OmpAgentClient {
+  return new OmpAgentClient({
+    logger: createTestLogger(),
+    runtimeSettings: {
+      ompBackend: "sdk",
+      ompSdkPath: sdkRoot,
+      env: {
+        PATH: "",
+        OMP_PROFILE: "",
+        PI_PROFILE: "",
+        PI_CODING_AGENT_DIR: path.join(dir, "agent"),
+        MNEMOPI_EMBEDDING_API_URL: "",
+        MNEMOPI_EMBEDDINGS_VIA_API: "",
+        OPENROUTER_BASE_URL: "",
+      },
+    },
+  });
 }

@@ -230,7 +230,7 @@ export async function buildOmpSdk({
   if (reused) {
     console.log(`Reusing complete OMP SDK (${buildMode}, ${buildTarget}/${profile}, ${target}).`);
   } else if (artifact) {
-    await importSdkArtifact(artifact, outputDir, { platform, arch });
+    await importSdkArtifact(artifact, outputDir, { platform, arch, env });
     await cacheOutput(state, inputKey, [outputDir]);
   } else {
     function run(args) {

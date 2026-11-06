@@ -55,8 +55,8 @@ async function fingerprint(file) {
   return { sha256: hash.digest("hex"), size };
 }
 
-async function sourceIdentity() {
-  const config = resolveOmpSdkBuildConfig();
+async function sourceIdentity(env = process.env) {
+  const config = resolveOmpSdkBuildConfig(env);
   const source = await realpath(config.source);
   const sdk = await json(path.join(source, "package.json"));
   if (sdk.name !== packageName || typeof sdk.version !== "string" || !sdk.version)
@@ -548,7 +548,7 @@ export async function createSdkArtifact(outputDir, { stageDirectory = stageDir }
 export async function importSdkArtifact(
   artifactDir,
   outputDir,
-  { platform = process.platform, arch = process.arch } = {},
+  { platform = process.platform, arch = process.arch, env = process.env } = {},
 ) {
   if (!path.isAbsolute(artifactDir))
     throw new Error("OMP_DESKTOP_SDK_ARTIFACT must be an absolute extracted artifact directory.");
@@ -557,7 +557,7 @@ export async function importSdkArtifact(
   if (names.length !== artifactFiles.length || artifactFiles.some((name) => !names.includes(name)))
     throw new Error(`SDK artifact must contain exactly ${artifactFiles.join(", ")}.`);
   for (const name of artifactFiles) await requireFile(path.join(input, name));
-  const identity = await sourceIdentity();
+  const identity = await sourceIdentity(env);
   const manifest = await json(path.join(input, "manifest.json"));
   const provenance = await json(path.join(input, "provenance.json"));
   validateManifest(manifest, identity, { platform, arch });
@@ -587,7 +587,7 @@ export async function importSdkArtifact(
     await saveJson(path.join(state.replacement, "manifest.json"), manifest);
     await saveJson(path.join(state.replacement, "provenance.json"), provenance);
     await saveJson(path.join(state.replacement, "source.json"), { packageRoot: identity.source });
-    const current = await sourceIdentity();
+    const current = await sourceIdentity(env);
     if (current.sdkCommit !== identity.sdkCommit || current.version !== identity.version)
       throw new Error("SDK checkout changed while importing its artifact.");
     await replaceOutput(state);

@@ -1915,6 +1915,8 @@ export const OmpMemorySettingsPatchSchema = z
       .optional(),
     mnemopi: z
       .object({
+        // One-shot host preset command; never persisted as a native Mnemopi setting.
+        useLocalModels: z.literal(true).optional(),
         scoping: OmpMemoryScopingSchema.optional(),
         autoRecall: z.boolean().optional(),
         autoRetain: z.boolean().optional(),
@@ -6836,6 +6838,8 @@ export const OmpMemorySettingsSchema = z.object({
     summaryInjectionTokenLimit: z.number().int().positive(),
   }),
   mnemopi: z.object({
+    // Presence advertises preset support, not downloaded models or effective project routing.
+    localModelsConfigured: z.boolean().optional(),
     scoping: OmpMemoryScopingSchema,
     autoRecall: z.boolean(),
     autoRetain: z.boolean(),
