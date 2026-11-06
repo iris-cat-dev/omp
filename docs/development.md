@@ -229,7 +229,9 @@ Daemon startup runs `plugin check --fix --json` through the selected OMP runtime
 
 HTTP listening is not worker readiness. During the startup checks, HTTP upgrades receive `503 Service Unavailable` with `Connection: close`; connection-local errors close only that socket. The supervisor records `ready: false` in its PID metadata until worker-ready IPC arrives, and resets readiness before replacing an exited worker. CLI and Desktop report a live managed supervisor with explicit unready metadata as `starting`, without probing an unavailable WebSocket or spawning a duplicate supervisor. PID files without readiness metadata retain normal reachability checks.
 
-Explicit stop and disabling built-in management can stop a starting managed supervisor. Distribution and version checks still run once it is ready. Updating these modules requires restarting both the supervisor and Desktop main process; already-running processes retain their loaded code.
+If the supervisor cannot persist `ready: false` after a worker exits, it releases its owned PID lock and exits with a failure status instead of launching a replacement with stale readiness metadata.
+
+Explicit stop and disabling built-in management can stop a starting managed supervisor. Desktop registers a local connection only after the worker is reachable and ready, with distribution and version checks applied. If readiness polling times out, the start request reports an error and leaves the existing supervisor running. Updating these modules requires restarting both the supervisor and Desktop main process; already-running processes retain their loaded code.
 
 Build overrides, shared by development, Desktop packaging, and remote deployment:
 

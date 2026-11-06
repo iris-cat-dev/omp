@@ -243,25 +243,133 @@ describe("daemon-manager commands", () => {
     );
   });
 
-  it("returns a still-starting supervisor when the existing readiness poll expires", async () => {
-    vi.useFakeTimers();
-    mocks.runExternalCliJsonCommand.mockResolvedValue({
-      localDaemon: "starting",
-      connectedDaemon: "not_probed",
-      serverId: "warming-up",
-      pid: 4242,
+  it.each(["existing", "detached"] as const)(
+    "rejects readiness timeout without stopping or duplicating the %s supervisor",
+    async (startup) => {
+      vi.useFakeTimers();
+      const starting = {
+        localDaemon: "starting",
+        connectedDaemon: "not_probed",
+        serverId: "warming-up",
+        pid: 4242,
+        listen: "127.0.0.1:6767",
+        desktopManaged: true,
+      };
+      mocks.runExternalCliJsonCommand.mockResolvedValue(starting);
+      if (startup === "detached") {
+        mocks.runExternalCliJsonCommand.mockResolvedValueOnce({ localDaemon: "stopped" });
+        mocks.spawnProcess.mockReturnValue(createMockChildProcess());
+      }
+      const handlers = createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      });
+      const result = handlers.start_desktop_daemon();
+      const rejection = expect(result).rejects.toThrow(/Timed out.*daemon readiness/);
+      await vi.runAllTimersAsync();
+      await rejection;
+
+      expect(mocks.spawnProcess).toHaveBeenCalledTimes(startup === "detached" ? 1 : 0);
+      expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["stop"]),
+      );
+      await expect(handlers.desktop_daemon_status()).resolves.toMatchObject({
+        status: "starting",
+        pid: 4242,
+      });
+    },
+  );
+
+  it.each(["stopped", "unresponsive"])(
+    "rejects when a warming supervisor becomes %s without spawning a replacement",
+    async (localDaemon) => {
+      vi.useFakeTimers();
+      mocks.runExternalCliJsonCommand
+        .mockResolvedValueOnce({ localDaemon: "starting", desktopManaged: true, pid: 4242 })
+        .mockResolvedValue({ localDaemon, connectedDaemon: "unreachable", desktopManaged: true });
+      const handlers = createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      });
+      const rejection = expect(handlers.start_desktop_daemon()).rejects.toThrow(
+        /Timed out.*daemon readiness/,
+      );
+      await vi.runAllTimersAsync();
+      await rejection;
+
+      expect(mocks.spawnProcess).not.toHaveBeenCalled();
+      expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["stop"]),
+      );
+    },
+  );
+
+  it.each([
+    {
+      boundary: "unreachable API",
+      connectedDaemon: "auth_required",
+      serverId: "ready",
       listen: "127.0.0.1:6767",
-      desktopManaged: true,
-    });
+    },
+    {
+      boundary: "blank server id",
+      connectedDaemon: "reachable",
+      serverId: " ",
+      listen: "127.0.0.1:6767",
+    },
+    {
+      boundary: "blank listen address",
+      connectedDaemon: "reachable",
+      serverId: "ready",
+      listen: " ",
+    },
+  ])(
+    "does not fulfill readiness with a $boundary",
+    async ({ connectedDaemon, serverId, listen }) => {
+      vi.useFakeTimers();
+      mocks.runExternalCliJsonCommand
+        .mockResolvedValueOnce({ localDaemon: "starting", desktopManaged: true, pid: 4242 })
+        .mockResolvedValue({
+          localDaemon: "running",
+          connectedDaemon,
+          serverId,
+          listen,
+          desktopManaged: true,
+          desktopDistributionIdentity: "public",
+          daemonVersion: "1.2.3",
+        });
+      const handlers = createDaemonCommandHandlers({
+        prepareForAppUpdate: mocks.prepareForAppUpdate,
+      });
+      const rejection = expect(handlers.start_desktop_daemon()).rejects.toThrow(
+        /Timed out.*daemon readiness/,
+      );
+      await vi.runAllTimersAsync();
+      await rejection;
+
+      expect(mocks.spawnProcess).not.toHaveBeenCalled();
+      expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["stop"]),
+      );
+    },
+  );
+
+  it("includes status-command failure diagnostics when readiness cannot be established", async () => {
+    vi.useFakeTimers();
+    mocks.runExternalCliJsonCommand
+      .mockResolvedValueOnce({ localDaemon: "starting", desktopManaged: true, pid: 4242 })
+      .mockRejectedValue(new Error("daemon status unavailable"));
     const handlers = createDaemonCommandHandlers({
       prepareForAppUpdate: mocks.prepareForAppUpdate,
     });
-    const result = handlers.start_desktop_daemon();
+    const rejection = expect(handlers.start_desktop_daemon()).rejects.toThrow(
+      /Timed out.*daemon readiness.*daemon status unavailable/,
+    );
     await vi.runAllTimersAsync();
+    await rejection;
 
-    await expect(result).resolves.toMatchObject({ status: "starting", pid: 4242 });
     expect(mocks.spawnProcess).not.toHaveBeenCalled();
-    expect(mocks.createNodeEntrypointInvocation).not.toHaveBeenCalled();
+    expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["stop"]),
+    );
   });
 
   it.each([null, `private-three-plugins:${"a".repeat(64)}`])(

@@ -20,6 +20,12 @@ export async function upsertDesktopDaemonConnection(
   store: DaemonConnectionStore,
   daemon: DesktopDaemonStatus,
 ): Promise<DaemonStartResult> {
+  if (daemon.status !== "running") {
+    return {
+      ok: false,
+      error: daemon.error ?? `Desktop daemon is not running (status: ${daemon.status}).`,
+    };
+  }
   const serverId = daemon.serverId.trim();
   if (!serverId) {
     return { ok: false, error: "Desktop daemon did not return a server id." };
