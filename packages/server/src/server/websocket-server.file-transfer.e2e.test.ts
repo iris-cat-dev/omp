@@ -7,7 +7,7 @@ import {
   decodeFileTransferFrame,
   FileTransferOpcode,
 } from "@omp-desktop/protocol/binary-frames/index";
-import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/index.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { WSOutboundMessageSchema, type WSOutboundMessage } from "./messages.js";
 
 const TEST_TIMEOUT_MS = 30_000;

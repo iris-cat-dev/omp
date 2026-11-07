@@ -9,6 +9,11 @@ import {
   sendBoundedPhysicalFrameAndWait,
   type BoundedPhysicalSocket,
 } from "./physical-socket.js";
+import {
+  compressJsonFrame,
+  JSON_COMPRESSION_THRESHOLD_BYTES,
+  supportsJsonCompression,
+} from "@omp-desktop/protocol/json-compression";
 
 // Waiting work is separate from the one active logical response: a valid
 // response larger than the physical backstop must not count as socket backlog.
@@ -37,6 +42,7 @@ export type JsonSendResult = "accepted" | "closed" | "too_large" | "queue_full";
 
 export class JsonOutboundSender {
   private chunkedJsonMessages = false;
+  private gzipJsonMessages = false;
   private disposed = false;
   private sending = false;
   private nextMessageId = 0;
@@ -60,6 +66,14 @@ export class JsonOutboundSender {
     this.chunkedJsonMessages = enabled;
   }
 
+  setGzipJsonMessages(enabled: boolean): void {
+    this.gzipJsonMessages = enabled && supportsJsonCompression();
+  }
+
+  get acceptsCompressedJson(): boolean {
+    return this.gzipJsonMessages;
+  }
+
   get maxMessageBytes(): number {
     return this.chunkedJsonMessages ? MAX_JSON_TOTAL_BYTES : MAX_PHYSICAL_SOCKET_BUFFERED_BYTES;
   }
@@ -75,10 +89,11 @@ export class JsonOutboundSender {
 
     // ws preserves wire order for immediate writes. Keep the ordinary path
     // synchronous until a fragmented message requires callback-paced writes.
-    if (!this.sending && byteLength <= MAX_JSON_MESSAGE_CHUNK_BYTES) {
+    const compress = this.gzipJsonMessages && byteLength >= JSON_COMPRESSION_THRESHOLD_BYTES;
+    if (!this.sending && byteLength <= MAX_JSON_MESSAGE_CHUNK_BYTES && !compress) {
       return this.sendImmediate(json, byteLength, metadata);
     }
-    if (!this.chunkedJsonMessages && !this.sending) {
+    if (!this.chunkedJsonMessages && !this.sending && !compress) {
       return this.sendImmediate(json, byteLength, metadata);
     }
 
@@ -177,14 +192,19 @@ export class JsonOutboundSender {
         await this.immediateDrain.promise;
       }
       while (current && !this.disposed) {
-        if (current.byteLength <= MAX_JSON_MESSAGE_CHUNK_BYTES) {
-          const { byteLength, metadata } = current;
+        if (current.byteLength <= MAX_JSON_MESSAGE_CHUNK_BYTES || !this.chunkedJsonMessages) {
+          const { metadata } = current;
+          const frame = this.gzipJsonMessages
+            ? ((await compressJsonFrame(current.json)) ?? current.json)
+            : current.json;
+          if (this.disposed) return;
+          const frameBytes = typeof frame === "string" ? current.byteLength : frame.byteLength;
           const sent = await sendBoundedPhysicalFrameAndWait({
             socket: this.socket,
-            frame: current.json,
-            frameBytes: current.byteLength,
+            frame,
+            frameBytes,
             signal: this.abort.signal,
-            onHighWater: () => this.onHighWater(byteLength, metadata),
+            onHighWater: () => this.onHighWater(frameBytes, metadata),
           });
           if (!sent) {
             this.dispose();
@@ -246,12 +266,14 @@ export class JsonOutboundSender {
         },
         frameBuffer,
       );
+      const wireFrame = this.gzipJsonMessages ? ((await compressJsonFrame(frame)) ?? frame) : frame;
+      if (this.disposed) return;
       const sent = await sendBoundedPhysicalFrameAndWait({
         socket: this.socket,
-        frame,
-        frameBytes: frame.byteLength,
+        frame: wireFrame,
+        frameBytes: wireFrame.byteLength,
         signal: this.abort.signal,
-        onHighWater: () => this.onHighWater(frame.byteLength, message.metadata),
+        onHighWater: () => this.onHighWater(wireFrame.byteLength, message.metadata),
       });
       if (!sent) {
         this.dispose();

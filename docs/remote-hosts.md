@@ -10,6 +10,24 @@ SSH passwords, private-key passphrases, MFA responses, and pairing links are nev
 
 See [self-hosted Web and relay deployment](deployment.md) for relay configuration, browser-facing addresses, and pairing-link precautions.
 
+## Low-bandwidth connections
+
+Updated Desktop/Web clients and daemons automatically negotiate lossless gzip
+compression for large JSON messages, including history and local-model bridge
+traffic. Messages are compressed before end-to-end encryption and only when
+the result is smaller. Terminal and file-download binary traffic keeps its
+existing format; no relay or reverse-proxy setting is required.
+
+Update both the client and the remote daemon, then reconnect to enable
+compression. Older clients, older daemons and browsers without compression
+support remain usable with uncompressed messages. See the
+[wire protocol](../packages/protocol/README.md#compressed-json-messages).
+
+On a constrained connection, models configured on the remote host avoid
+forwarding full inference contexts to this Desktop. Compression reduces the
+transfer size when local models are needed; it does not remove the requirement
+to keep this Desktop connected.
+
 ## Use models configured on this Desktop
 
 Each connected remote host can independently use models configured on **this computer** or on **the remote host**, whether connected through SSH provisioning, manual pairing, or direct TCP. Choose the source in **Host Settings → Model source** or **Host Settings → Providers → Model source**. The choice persists across reconnections and Desktop restarts. Configure or sign in to local models on the local host; while local models are selected, the remote Providers page links to those settings.

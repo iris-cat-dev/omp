@@ -11,6 +11,14 @@ import type {
 import type { OmpStatsGetResponseMessage, OmpStatsRange } from "@omp-desktop/protocol/omp-stats";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
+import {
+  COMPRESSED_JSON_OPCODE,
+  compressJsonFrame,
+  decompressJsonFrame,
+  JSON_COMPRESSION_THRESHOLD_BYTES,
+  MAX_COMPRESSED_JSON_DECODED_BYTES,
+  supportsJsonCompression,
+} from "@omp-desktop/protocol/json-compression";
 import type { AgentAttentionNotificationPayload } from "@omp-desktop/protocol/agent-attention-notification";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -1160,7 +1168,7 @@ interface PendingTransportMessage {
   next: PendingTransportMessage | null;
 }
 
-// This bounds only frames waiting for Blob decoding, not a logical JSON message.
+// This bounds frames waiting for asynchronous decoding, not a logical JSON message.
 const MAX_PENDING_TRANSPORT_MESSAGE_BYTES = 64 * 1024 * 1024;
 
 export class DaemonClient {
@@ -1168,10 +1176,13 @@ export class DaemonClient {
   private transportCleanup: Array<() => void> = [];
   private transportValidationEpoch = 0;
   private readonly jsonMessageReassembler = new JsonMessageReassembler();
-  private readingTransportBlob = false;
+  private decodingTransportMessage = false;
   private pendingTransportMessageHead: PendingTransportMessage | null = null;
   private pendingTransportMessageTail: PendingTransportMessage | null = null;
   private pendingTransportMessageBytes = 0;
+  private advertisedGzipJsonMessages = false;
+  private gzipJsonMessages = false;
+  private outboundJsonQueue: { pending: Promise<void>; bytes: number; count: number } | null = null;
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
   private messageHandlers: Map<
     SessionOutboundMessage["type"],
@@ -1656,6 +1667,52 @@ export class DaemonClient {
     if (!this.transport) {
       throw new Error("Transport not connected");
     }
+    const compress =
+      this.gzipJsonMessages &&
+      typeof frame === "string" &&
+      frame.length * 3 >= JSON_COMPRESSION_THRESHOLD_BYTES &&
+      frame.length <= MAX_COMPRESSED_JSON_DECODED_BYTES;
+    if (compress || this.outboundJsonQueue) {
+      let bytes = 0;
+      if (this.outboundJsonQueue) {
+        bytes = typeof frame === "string" ? frame.length * 2 : frame.byteLength;
+      }
+      const queue = this.outboundJsonQueue ?? { pending: Promise.resolve(), bytes: 0, count: 0 };
+      if (queue.bytes + bytes > MAX_PENDING_TRANSPORT_MESSAGE_BYTES) {
+        throw new Error("JSON compression send backlog exceeded");
+      }
+      this.outboundJsonQueue = queue;
+      queue.bytes += bytes;
+      queue.count += 1;
+      const epoch = this.transportValidationEpoch;
+      queue.pending = queue.pending
+        .then(async () => {
+          queue.bytes -= bytes;
+          if (epoch !== this.transportValidationEpoch) return undefined;
+          const compressed = compress ? await compressJsonFrame(frame as string) : null;
+          if (epoch === this.transportValidationEpoch) {
+            this.sendRawTransportFrame(compressed ?? frame);
+          }
+          return undefined;
+        })
+        .catch((error: unknown) => {
+          if (epoch !== this.transportValidationEpoch) return;
+          this.failTransportMessage(
+            error instanceof Error ? error.message : "JSON compression send failed",
+            false,
+          );
+        })
+        .finally(() => {
+          queue.count -= 1;
+          if (queue.count === 0 && this.outboundJsonQueue === queue) this.outboundJsonQueue = null;
+        });
+      return;
+    }
+    this.sendRawTransportFrame(frame);
+  }
+
+  private sendRawTransportFrame(frame: string | Uint8Array | ArrayBuffer): void {
+    if (!this.transport) throw new Error("Transport not connected");
     const isOpen = this.beginTraceSection("paseo.ws.frame.outbound", {
       kind: typeof frame === "string" ? "text" : "binary",
       size: String(getTransportFrameSize(frame)),
@@ -6436,6 +6493,9 @@ export class DaemonClient {
       return;
     }
 
+    this.advertisedGzipJsonMessages =
+      supportsJsonCompression() &&
+      this.config.capabilities?.[CLIENT_CAPS.gzipJsonMessages] !== false;
     try {
       this.sendJsonMessage("hello", "hello", {
         type: "hello",
@@ -6451,6 +6511,7 @@ export class DaemonClient {
           [CLIENT_CAPS.compactProviderSnapshots]: true,
           [CLIENT_CAPS.chunkedJsonMessages]: true,
           ...this.config.capabilities,
+          [CLIENT_CAPS.gzipJsonMessages]: this.advertisedGzipJsonMessages,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
       });
@@ -6494,10 +6555,13 @@ export class DaemonClient {
     this.transportCleanup = [];
     this.transportValidationEpoch += 1;
     this.jsonMessageReassembler.reset();
-    this.readingTransportBlob = false;
+    this.decodingTransportMessage = false;
     this.pendingTransportMessageHead = null;
     this.pendingTransportMessageTail = null;
     this.pendingTransportMessageBytes = 0;
+    this.advertisedGzipJsonMessages = false;
+    this.gzipJsonMessages = false;
+    this.outboundJsonQueue = null;
   }
 
   private resetConnectTimeout(): void {
@@ -6511,14 +6575,14 @@ export class DaemonClient {
   private handleTransportMessage(data: unknown, transportEpoch: number): void {
     if (transportEpoch !== this.transportValidationEpoch) return;
     const rawData = data && typeof data === "object" && "data" in data ? data.data : data;
-    if (this.readingTransportBlob) {
+    if (this.decodingTransportMessage) {
       let byteLength: number;
       if (typeof rawData === "string") byteLength = rawData.length * 2;
       else if (typeof Blob !== "undefined" && rawData instanceof Blob) byteLength = rawData.size;
       else byteLength = asUint8Array(rawData)?.byteLength ?? 1;
       byteLength = Math.max(1, byteLength);
       if (this.pendingTransportMessageBytes + byteLength > MAX_PENDING_TRANSPORT_MESSAGE_BYTES) {
-        this.failTransportMessage("WebSocket Blob decoding backlog exceeded", false);
+        this.failTransportMessage("WebSocket decoding backlog exceeded", false);
         return;
       }
       const pending: PendingTransportMessage = { data: rawData, byteLength, next: null };
@@ -6531,13 +6595,16 @@ export class DaemonClient {
     this.processTransportMessage(rawData, transportEpoch);
   }
 
-  private completeTransportBlob(buffer: ArrayBuffer, transportEpoch: number): void {
+  private completeTransportMessage(
+    buffer: string | Uint8Array | ArrayBuffer,
+    transportEpoch: number,
+  ): void {
     if (transportEpoch !== this.transportValidationEpoch) return;
-    this.readingTransportBlob = false;
+    this.decodingTransportMessage = false;
     this.processTransportMessage(buffer, transportEpoch);
     while (
       transportEpoch === this.transportValidationEpoch &&
-      !this.readingTransportBlob &&
+      !this.decodingTransportMessage &&
       this.pendingTransportMessageHead
     ) {
       const pending = this.pendingTransportMessageHead;
@@ -6551,7 +6618,7 @@ export class DaemonClient {
   private processTransportMessage(rawData: unknown, transportEpoch: number): void {
     if (transportEpoch !== this.transportValidationEpoch) return;
     if (typeof Blob !== "undefined" && rawData instanceof Blob) {
-      this.readingTransportBlob = true;
+      this.decodingTransportMessage = true;
       let decoded: Promise<ArrayBuffer>;
       try {
         decoded = rawData.arrayBuffer();
@@ -6560,7 +6627,7 @@ export class DaemonClient {
         return;
       }
       void decoded.then(
-        (buffer) => this.completeTransportBlob(buffer, transportEpoch),
+        (buffer) => this.completeTransportMessage(buffer, transportEpoch),
         () => {
           if (transportEpoch !== this.transportValidationEpoch) return;
           this.failTransportMessage("Failed to decode WebSocket Blob", false);
@@ -6570,6 +6637,23 @@ export class DaemonClient {
     }
 
     const rawBytes = asUint8Array(rawData);
+    if (rawBytes?.[0] === COMPRESSED_JSON_OPCODE) {
+      if (!this.advertisedGzipJsonMessages) {
+        this.failTransportMessage("Received unnegotiated compressed JSON");
+        return;
+      }
+      this.decodingTransportMessage = true;
+      void decompressJsonFrame(rawBytes).then(
+        (decoded) => this.completeTransportMessage(decoded, transportEpoch),
+        (error: unknown) => {
+          if (transportEpoch !== this.transportValidationEpoch) return;
+          this.failTransportMessage(
+            error instanceof Error ? error.message : "Invalid compressed JSON",
+          );
+        },
+      );
+      return;
+    }
     const isOpen = this.beginTraceSection(
       "paseo.ws.frame.inbound",
       describeInboundTransportFrame(rawData, rawBytes),
@@ -7010,6 +7094,8 @@ export class DaemonClient {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
         this.lastServerInfoMessage = serverInfo;
+        this.gzipJsonMessages =
+          this.advertisedGzipJsonMessages && serverInfo.features?.gzipJsonMessages === true;
         if (this.connectionState.status === "connecting") {
           this.resetConnectTimeout();
           this.reconnectAttempt = 0;

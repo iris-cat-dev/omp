@@ -14,8 +14,9 @@ is explicitly documented as stable.
 ## Chunked daemon messages
 
 WebSocket protocol version 1 clients advertise `chunked_json_messages` in hello.
-The daemon keeps outbound JSON up to 256 KiB as ordinary text messages. Larger
-JSON messages use binary opcode `0x20`, with each frame limited to 256 KiB:
+Before optional [compression](#compressed-json-messages), outbound JSON up to
+256 KiB uses ordinary text messages. Larger JSON messages use binary opcode
+`0x20`, with each frame limited to 256 KiB:
 
 | Field               | Encoding                                        |
 | ------------------- | ----------------------------------------------- |
@@ -43,6 +44,39 @@ RPC deadlines are unchanged: sufficiently slow transfers can still time out.
 Diagnostics report rejected byte counts, buffer usage, limits, message types and
 bounded request identifiers, never message content. History and directory
 schemas, cursors and stored data are unchanged.
+
+## Compressed JSON messages
+
+Desktop, Web and daemon clients advertise `gzip_json_messages` in hello only
+when their runtime provides both `CompressionStream` and `DecompressionStream`.
+The daemon may then compress outbound JSON. Clients compress requests only
+after `server_info.features.gzipJsonMessages` confirms daemon support. Missing
+capabilities preserve the existing uncompressed protocol in either direction.
+
+JSON text and individual `0x20` JSON chunks of at least 32 KiB are gzip candidates.
+The compressed envelope is sent only when it is smaller than the original frame:
+
+| Field              | Encoding                                        |
+| ------------------ | ----------------------------------------------- |
+| Opcode             | One byte, `0x21`                                |
+| Original kind      | One byte: `0` for JSON text, `1` for JSON chunk |
+| Decoded byte count | Unsigned 32-bit, big-endian                     |
+| Payload            | Standard gzip; envelope header is 6 bytes       |
+
+Compression happens before E2EE, independently for each frame; the relay needs
+no changes and continues to forward ciphertext. A decoded envelope is bounded
+to 64 MiB, checked while inflating, and must match its declared byte count.
+Text must be valid UTF-8; binary contents must remain JSON chunks. Larger
+uncompressed messages keep the existing framing path. Terminal and file-transfer
+binary frames are not compressed.
+
+Asynchronous encoding/decoding preserves JSON order. Later received frames wait
+for earlier decompression, with a 64 MiB pending-input bound per socket. Queued
+client sends are bounded separately from the active frame. Disconnect discards
+pending work so stale decompression cannot reach a replacement connection.
+Invalid or unnegotiated compressed frames close the connection explicitly.
+Compression does not change model context, history contents, stream event
+semantics, RPC deadlines or stored data.
 
 ## Materialized tool timeline rows
 

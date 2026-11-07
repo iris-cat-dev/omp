@@ -1,11 +1,16 @@
 import { expect, test } from "vitest";
 import { WebSocket, type RawData } from "ws";
-import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/index.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { WSOutboundMessageSchema, type WSOutboundMessage } from "./messages.js";
+import {
+  APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
+  APPLICATION_SOCKET_LEASE_MS,
+} from "./websocket/physical-socket.js";
 
 const LARGE_REQUEST_BYTES = 512 * 1024;
 const BURST_MESSAGE_COUNT = 32;
-const TEST_TIMEOUT_MS = 30_000;
+const TEST_TIMEOUT_MS =
+  APPLICATION_SOCKET_LEASE_MS + 2 * APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS;
 
 interface SocketClose {
   code: number;
@@ -61,7 +66,13 @@ class ResumedPhysicalSocketSession {
 
     await finalResponse;
     this.original.resume();
-    return originalClose;
+    // Real sockets exercise the platform-clock lease; only the replacement keeps sending heartbeats.
+    const heartbeat = setInterval(() => replacement.send(JSON.stringify({ type: "ping" })), 10_000);
+    try {
+      return await originalClose;
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
 
   async replacementRoundTrip(): Promise<void> {

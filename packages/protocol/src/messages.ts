@@ -4008,6 +4008,7 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        gzipJsonMessages: z.boolean().optional(),
         localModelBridge: z.boolean().optional(),
         visualFeedback: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -8555,6 +8556,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
       [CLIENT_CAPS.chunkedJsonMessages]: z.boolean().optional(),
+      [CLIENT_CAPS.gzipJsonMessages]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),

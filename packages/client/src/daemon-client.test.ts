@@ -7,6 +7,7 @@ import {
   type Logger,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
+import { compressJsonFrame } from "@omp-desktop/protocol/json-compression";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -6879,4 +6880,52 @@ test("bounds frames waiting for Blob decoding without limiting a logical JSON to
   delayed.resolve(new Uint8Array([JSON_MESSAGE_CHUNK_OPCODE]).buffer);
   await Promise.resolve();
   expect(client.getConnectionState().status).toBe("disconnected");
+});
+
+test("compressed JSON preserves Unicode and delivery order with following uncompressed messages", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "compressed-json-order",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { gzipJsonMessages: true } });
+  await connecting;
+  const messages: unknown[] = [];
+  client.subscribe((event) => {
+    if (event.type === "status") messages.push(event.payload);
+  });
+  const first = { status: "first", text: "历史🙂中文".repeat(12_000) };
+  const second = { status: "second" };
+  const compressed = await compressJsonFrame(
+    wrapSessionMessage({ type: "status", payload: first }),
+  );
+  mock.triggerMessage(compressed);
+  mock.triggerMessage(wrapSessionMessage({ type: "status", payload: second }));
+  await vi.waitFor(() => expect(messages).toEqual([first, second]));
+});
+
+test("a client that declined compression rejects compressed input instead of silently losing messages", async () => {
+  const mock = createMockTransport();
+  const close = vi.spyOn(mock.transport, "close");
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "unnegotiated-compression",
+    capabilities: { [CLIENT_CAPS.gzipJsonMessages]: false },
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  const frame = await compressJsonFrame(
+    wrapSessionMessage({ type: "status", payload: { status: "large", text: "x".repeat(40_000) } }),
+  );
+  mock.triggerMessage(frame);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  expect(close).toHaveBeenCalledWith(1002, expect.any(String));
 });

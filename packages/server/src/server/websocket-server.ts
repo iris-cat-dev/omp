@@ -111,6 +111,12 @@ import {
   MAX_QUEUED_JSON_ERRORS,
   type OutboundJsonMetadata,
 } from "./websocket/json-outbound-sender.js";
+import {
+  COMPRESSED_JSON_OPCODE,
+  decompressJsonFrame,
+  MAX_COMPRESSED_JSON_DECODED_BYTES,
+  supportsJsonCompression,
+} from "@omp-desktop/protocol/json-compression";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -492,6 +498,10 @@ export class PaseoWebSocketServer {
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
   private readonly jsonSenders = new Map<WebSocketLike, JsonOutboundSender>();
+  private readonly inboundJsonQueues = new Map<
+    WebSocketLike,
+    { pending: Promise<void>; bytes: number }
+  >();
   private readonly externalSessionsByKey: Map<string, ReconnectableSessionConnection> = new Map();
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
   private readonly pluginSocketCleanup = new WeakMap<WebSocketLike, () => void>();
@@ -980,6 +990,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.clear();
     for (const sender of this.jsonSenders.values()) sender.dispose();
     this.jsonSenders.clear();
+    this.inboundJsonQueues.clear();
     this.flushRuntimeMetrics({ final: true });
     this.eventLoopDelayMonitor?.disable();
     this.eventLoopDelayMonitor = null;
@@ -1288,6 +1299,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.release(ws);
     this.jsonSenders.get(ws)?.dispose();
     this.jsonSenders.delete(ws);
+    this.inboundJsonQueues.delete(ws);
     if (ws.readyState !== 1) {
       return;
     }
@@ -1597,6 +1609,9 @@ export class PaseoWebSocketServer {
     this.getJsonSender(ws).setChunkedJsonMessages(
       message.capabilities?.[CLIENT_CAPS.chunkedJsonMessages] === true,
     );
+    this.getJsonSender(ws).setGzipJsonMessages(
+      message.capabilities?.[CLIENT_CAPS.gzipJsonMessages] === true,
+    );
     pending.identity.clientId = clientId;
     if (message.appVersion) {
       pending.identity.appVersion = message.appVersion;
@@ -1685,6 +1700,7 @@ export class PaseoWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(terminalWindowsPtyOptions ? { windowsPty: terminalWindowsPtyOptions } : {}),
       features: {
+        gzipJsonMessages: supportsJsonCompression(),
         localModelBridge: this.localModelBridge !== undefined,
         visualFeedback: this.visualFeedbackService !== undefined,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -1871,7 +1887,7 @@ export class PaseoWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.handleRawMessage(ws, data);
+      this.handleTransportMessage(ws, data);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -1905,6 +1921,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.release(ws);
     this.jsonSenders.get(ws)?.dispose();
     this.jsonSenders.delete(ws);
+    this.inboundJsonQueues.delete(ws);
     const identity = this.socketIdentities.get(ws);
     const identityFields = identity ? toConnectionLogFields(identity) : {};
     const pending = this.clearPendingConnection(ws);
@@ -2025,6 +2042,7 @@ export class PaseoWebSocketServer {
     for (const socket of connection.sockets) {
       this.jsonSenders.get(socket)?.dispose();
       this.jsonSenders.delete(socket);
+      this.inboundJsonQueues.delete(socket);
       this.sessions.delete(socket);
       this.socketIdentities.delete(socket);
     }
@@ -2188,6 +2206,58 @@ export class PaseoWebSocketServer {
     } catch {
       // ignore close errors
     }
+  }
+
+  private handleTransportMessage(
+    ws: WebSocketLike,
+    data: Buffer | ArrayBuffer | Buffer[] | string,
+  ): void {
+    const buffer = bufferFromWsData(data);
+    const compressed = buffer[0] === COMPRESSED_JSON_OPCODE;
+    const existing = this.inboundJsonQueues.get(ws);
+    if (!compressed && !existing) {
+      this.handleRawMessage(ws, buffer);
+      return;
+    }
+    if (compressed && !this.jsonSenders.get(ws)?.acceptsCompressedJson) {
+      this.closePhysicalSocket({ ws, logMessage: "Rejected unnegotiated compressed JSON" });
+      return;
+    }
+    const queue = existing ?? { pending: Promise.resolve(), bytes: 0 };
+    if (queue.bytes + buffer.byteLength > MAX_COMPRESSED_JSON_DECODED_BYTES) {
+      this.closePhysicalSocket({ ws, logMessage: "Compressed JSON decoding backlog exceeded" });
+      return;
+    }
+    this.inboundJsonQueues.set(ws, queue);
+    queue.bytes += buffer.byteLength;
+    queue.pending = queue.pending
+      .then(async () => {
+        if (ws.readyState !== 1 || this.inboundJsonQueues.get(ws) !== queue) return undefined;
+        let decoded: Buffer | string = buffer;
+        if (compressed) {
+          const inflated = await decompressJsonFrame(buffer);
+          if (typeof inflated !== "string") throw new Error("Compressed client JSON must be text");
+          decoded = inflated;
+        }
+        if (ws.readyState === 1 && this.inboundJsonQueues.get(ws) === queue) {
+          this.handleRawMessage(ws, decoded);
+        }
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        if (this.inboundJsonQueues.get(ws) !== queue) return;
+        this.closePhysicalSocket({
+          ws,
+          logMessage: "Invalid compressed JSON",
+          logFields: { err: error },
+        });
+      })
+      .finally(() => {
+        queue.bytes -= buffer.byteLength;
+        if (queue.bytes === 0 && this.inboundJsonQueues.get(ws) === queue) {
+          this.inboundJsonQueues.delete(ws);
+        }
+      });
   }
 
   private handleRawMessage(
