@@ -44,11 +44,15 @@ The local daemon starts an inference-only native OMP model worker with built-in 
 
 Plugin models discovered asynchronously become usable as soon as they appear in the shared model catalog.
 
+Native `task` subagents reuse the same local model source and private bridge authorization. Starting a child keeps the parent session's local models usable; no remote provider API key is required for `desktop-local`.
+
 Keep Desktop, its local daemon, and both host connections running while using local models. Losing the source cancels forwarding and fails inference explicitly; it does not fall back to a remotely configured model or retry a disconnected source indefinitely. Remote schedules and unattended work also require the local source to remain connected. Changing sources pauses existing OMP runtimes; their conversation history is retained for resuming with the selected source.
 
 To use the server's own models and credentials, turn off **Use models configured on this computer** in that host's settings. Another Desktop connection cannot take over an attached model source.
 
 Both daemons need model-bridge support, and the local Desktop SDK must include the native model gateway. Update older daemons before enabling local models; SSH-managed hosts can use **Update via SSH**. SDK hosts execute the Agent loop and tools directly and require neither an OMP executable nor provider credentials in local-model mode.
+
+If an older remote daemon reports `No API key for provider: desktop-local` after starting a task, update to a Desktop/backend build containing the local-model subagent fix, reconnect the model source, and resume the conversation. SSH-managed hosts install the matching backend through **Update via SSH**; do not add a `desktop-local` API key on the remote host.
 
 Only enable sharing for hosts you trust: while attached, a host can submit inference to the advertised local models and consume their quota. Inference context is still sent to whichever provider you configured locally. The model gateway does not execute the remote host's tools on the local machine.
 

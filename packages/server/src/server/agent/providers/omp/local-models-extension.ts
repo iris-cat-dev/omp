@@ -23,9 +23,17 @@ interface LocalModelExtensionApi {
     ) => void,
   ): void;
 }
+interface BridgeConfiguration {
+  baseUrl: string;
+  token: string;
+}
 
-/** Registers only public catalog data; the bearer authorizes this remote loopback hop, not a provider. */
-export default async function localModels(pi: LocalModelExtensionApi): Promise<void> {
+// Prepared extensions are rebound for children in this process after the launch env is consumed.
+let bridgeConfiguration: BridgeConfiguration | undefined;
+const guardedRegistries = new WeakSet<BridgeRegistry>();
+
+function getBridgeConfiguration(): BridgeConfiguration {
+  if (bridgeConfiguration) return bridgeConfiguration;
   const encoded = process.env[BRIDGE_ENV];
   delete process.env[BRIDGE_ENV];
   if (!encoded) throw new Error("Local model bridge is unavailable");
@@ -53,7 +61,14 @@ export default async function localModels(pi: LocalModelExtensionApi): Promise<v
   ) {
     throw new Error("Local model bridge must use a private loopback endpoint");
   }
-  const response = await fetch(`${url.origin}/models`, {
+  bridgeConfiguration = { baseUrl: url.origin, token: configuration.token };
+  return bridgeConfiguration;
+}
+
+/** Registers only public catalog data; the bearer authorizes this remote loopback hop, not a provider. */
+export default async function localModels(pi: LocalModelExtensionApi): Promise<void> {
+  const configuration = getBridgeConfiguration();
+  const response = await fetch(`${configuration.baseUrl}/models`, {
     headers: { authorization: `Bearer ${configuration.token}` },
     signal: AbortSignal.timeout(15_000),
   });
@@ -61,7 +76,7 @@ export default async function localModels(pi: LocalModelExtensionApi): Promise<v
   const models = LocalModelCatalogSchema.parse(await response.json());
   process.env[KEY_ENV] = configuration.token;
   pi.registerProvider(LOCAL_MODEL_PROVIDER, {
-    baseUrl: url.origin,
+    baseUrl: configuration.baseUrl,
     apiKey: KEY_ENV,
     transport: "pi-native",
     models: models.map((model) =>
@@ -74,6 +89,9 @@ export default async function localModels(pi: LocalModelExtensionApi): Promise<v
   });
   pi.on("session_start", (_event, context) => {
     const registry = context.modelRegistry;
+    if (context.model?.provider === LOCAL_MODEL_PROVIDER) context.model.transport = "pi-native";
+    if (guardedRegistries.has(registry)) return;
+    guardedRegistries.add(registry);
     const getAvailable = registry.getAvailable.bind(registry);
     const getAll = registry.getAll.bind(registry);
     const getApiKey = registry.getApiKey.bind(registry);
@@ -85,7 +103,6 @@ export default async function localModels(pi: LocalModelExtensionApi): Promise<v
       model.transport = "pi-native";
       return true;
     };
-    if (context.model) localModel(context.model);
     // Native slash commands and task-model selection must not bypass the selected source.
     registry.getAvailable = () => getAvailable().filter(localModel);
     registry.getAll = () => getAll().filter(localModel);
