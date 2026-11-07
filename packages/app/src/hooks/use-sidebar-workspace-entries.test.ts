@@ -19,6 +19,8 @@ function sidebarSession(input?: Partial<Omit<SidebarWorkspaceSession, "serverId"
   return {
     workspaces: input?.workspaces ?? workspaceMap(),
     workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
+    agents: input?.agents,
+    hasHydratedAgents: input?.hasHydratedAgents,
   };
 }
 
@@ -79,6 +81,13 @@ describe("sidebar workspace session selection", () => {
       ["host-a"],
     );
 
+    expect(areSidebarWorkspaceSessionsEqual(previous, next)).toBe(false);
+  });
+
+  it("notifies the sidebar when an unchanged agent catalog finishes hydration", () => {
+    const indexes = sidebarSession();
+    const previous = selectSidebarWorkspaceSessions({ "host-a": { ...indexes, hasHydratedAgents: false } }, ["host-a"]);
+    const next = selectSidebarWorkspaceSessions({ "host-a": { ...indexes, hasHydratedAgents: true } }, ["host-a"]);
     expect(areSidebarWorkspaceSessionsEqual(previous, next)).toBe(false);
   });
 });

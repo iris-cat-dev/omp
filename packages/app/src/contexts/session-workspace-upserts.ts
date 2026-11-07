@@ -3,6 +3,7 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
 interface PendingWorkspaceArchive {
   workspaceId: string;
+  phase: "checking" | "recovering" | "hidden";
 }
 
 const pendingWorkspaceArchivesByServer = new Map<string, Map<string, PendingWorkspaceArchive>>();
@@ -14,6 +15,7 @@ function pendingArchiveKey(input: { serverId: string; workspaceId: string }): st
 export function markWorkspaceArchivePending(input: {
   serverId: string;
   workspaceId: string;
+  phase?: PendingWorkspaceArchive["phase"];
 }): void {
   const serverId = input.serverId.trim();
   const workspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);
@@ -24,6 +26,7 @@ export function markWorkspaceArchivePending(input: {
   const archives = pendingWorkspaceArchivesByServer.get(serverId) ?? new Map();
   archives.set(pendingArchiveKey({ serverId, workspaceId }), {
     workspaceId,
+    phase: input.phase ?? "hidden",
   });
   pendingWorkspaceArchivesByServer.set(serverId, archives);
 }
@@ -67,21 +70,34 @@ export function isWorkspaceArchivePending(input: {
 }
 
 /**
- * Workspace ids whose records are temporarily hidden by an in-flight local
- * archive. Owners here may be restored on failure, so consumers must not treat
- * them as permanently gone (e.g. dead-owner draft pruning).
+ * Owners may disappear from the directory before an archive response arrives.
+ * Keep their tabs while checking emptiness or recovering from a late-content race.
  */
 export function listWorkspaceArchivePendingIds(serverId: string): string[] {
   const archives = pendingWorkspaceArchivesByServer.get(serverId.trim());
   return archives ? [...archives.values()].map((entry) => entry.workspaceId) : [];
 }
 
+export function reconcileWorkspaceArchivePending(input: {
+  serverId: string;
+  workspaceId: string;
+  kind: "upsert" | "remove";
+}): void {
+  const phase = pendingWorkspaceArchivesByServer.get(input.serverId.trim())
+    ?.get(pendingArchiveKey(input))?.phase;
+  if (
+    (phase === "hidden" && input.kind === "remove") ||
+    (phase === "recovering" && input.kind === "upsert")
+  ) {
+    clearWorkspaceArchivePending(input);
+  }
+}
+
 export function shouldSuppressWorkspaceForLocalArchive(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
 }): boolean {
-  return isWorkspaceArchivePending({
-    serverId: input.serverId,
-    workspaceId: input.workspace.id,
-  });
+  return pendingWorkspaceArchivesByServer.get(input.serverId.trim())
+    ?.get(pendingArchiveKey({ serverId: input.serverId, workspaceId: input.workspace.id }))
+    ?.phase === "hidden";
 }

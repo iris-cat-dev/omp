@@ -25,6 +25,12 @@ Switching projects restores panels without closing conversations, terminating te
 
 Adding the same folder again reuses its project. After Git data is repaired, adding it again refreshes the same project to Git mode. Missing paths and files selected instead of folders remain errors; Git operations and archived-workspace restoration retain their existing error handling.
 
+### Submodules and Git administrative paths
+
+Submodule projects use their source checkout as the repository root, including submodules initialized inside a parent linked worktree. When Git reports an administrative directory outside the usual `.git` location, root discovery checks that directory's own local `core.worktree` and verifies that the candidate checkout's own `.git` points back to it. Included configuration and a `.git` found only in an ancestor cannot establish that relationship.
+
+On daemon startup, verified administrative-directory values in project `rootPath` and workspace `mainRepoRoot` are corrected to the source checkout. IDs, relationships, titles, timestamps, and archive state remain unchanged. This repair neither merges records nor changes Git files, branches, or worktrees; unverified paths remain untouched.
+
 ### Existing layout migration
 
 Old mixed layouts are automatically assigned using the same ownership/checkout context as new tabs. Conversations and terminals follow their actual workspace. Files follow their recorded opener or focused checkout, defaulting to the original route workspace if no opener was saved. No manual workspace-selection page is needed.
@@ -49,17 +55,17 @@ Archiving closes only that conversation's tabs, without creating drafts or relab
 
 ## Empty workspaces and drafts
 
-Closing the last empty conversation tab returns to the project page. Supported hosts also archive its unused workspace record, removing the branch-named sidebar row without deleting project files or the project.
+Repeated ordinary **New conversation** clicks for the same host and project share one pending workspace creation. Once it finishes, a later click creates an independent workspace. Forks and custom setups stay independent, and a failed creation can be retried.
 
-Cleanup preserves history (including archived agents), live/pending resources, custom titles, pins, labels, and worktree ownership. Older hosts need updates. To retry an existing empty entry, reopen it and close its empty tab; entries are never bulk-removed just for being named `main`.
+Untitled ordinary checkouts with a hydrated empty conversation inventory show **Conversation not started**, keeping the branch visible. Their menu offers **Remove unused workspace**. Existing empty records are not automatically archived merely because their names match a branch such as `main`.
 
-Delete an unsent **New workspace** draft with its sidebar hover button or context menu. Only that draft's input/attachments are cleared; other conversations and files remain. Removing the last content tab returns to the project page.
+Close an unsent draft with its tab **Close** button or sidebar **Delete new workspace** action. Both discard only the selected draft's input, attachments, and queued submission. Other drafts remain, including untouched siblings sharing the same workspace; outstanding agent creation also prevents cleanup.
 
-Sidebar draft deletion retires its workspace once no other content tab hosts it. **Files**, **Changes**, and **Pull request** companions do not keep an empty conversation alive and close only after daemon archive confirmation. Other editors/drafts remain. Each sidebar draft has a distinct workspace, so siblings cannot keep a deleted draft alive or leave a checkout-named row.
+Closing the last empty conversation tab returns to the project page. Supported hosts conditionally archive the unused workspace record without deleting project files or the project. Cleanup preserves history (including archived agents), live/pending resources, custom titles, pins, labels, and worktree ownership. Older hosts need updates; failed cleanup leaves the entry available for **Remove unused workspace** to retry.
 
-If the deleted workspace owns the current route, navigation follows a surviving focused conversation. Draft tabs with missing workspace records are pruned when layouts load. The daemon rechecks emptiness before archiving.
+**Files**, **Changes**, and **Pull request** companions do not keep an empty conversation alive and close only after daemon archive confirmation. If another draft, input, attachment, submission, or creation claims that workspace during the request, its tabs and ownership survive early directory events and the workspace is restored instead. A failed restore preserves those tabs for the existing workspace-recovery action to retry.
 
-Conditional cleanup scopes in-flight content changes and agent registration to their owning workspace. Creating a conversation or renaming another workspace—even from another client on the same host—does not leave a deleted empty draft behind as a branch-named row. Operations whose workspace ownership is not yet known still conservatively prevent cleanup until they finish.
+If the archived workspace owns the current route, navigation follows a surviving focused conversation. Unused draft tabs with confirmed missing workspace records are pruned when layouts load. The daemon rechecks emptiness before archiving and scopes in-flight content changes and agent registration to the owning workspace. Operations whose ownership is still unknown conservatively prevent cleanup until they finish.
 
 ## Terminals and split panes
 

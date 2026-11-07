@@ -1374,6 +1374,7 @@ export const es: TranslationResources = {
         serviceRunning: "Servicio {{name}} en ejecución",
         serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
+        unstarted: "Conversación sin iniciar",
       },
       actions: {
         menu: "AccionesWorkspace",
@@ -1390,6 +1391,7 @@ export const es: TranslationResources = {
         unpin: "Desanclar",
         archive: "Archivo",
         archiveWorkspace: "Archivar espacio de trabajo",
+        removeUnused: "Eliminar espacio de trabajo sin usar",
         hideFromSidebar: "Ocultar de la barra lateral",
         archiving: "Archivando...",
         delete: "Eliminar",
@@ -1435,7 +1437,7 @@ export const es: TranslationResources = {
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
         emptyArchiveFailed:
-          "No se pudo eliminar el espacio de trabajo sin usar: {{reason}}. Sigue en la barra lateral; vuelve a abrirlo y cierra la pestaña vacía para reintentar.",
+          "No se pudo eliminar el espacio de trabajo sin usar: {{reason}}. Sigue en la barra lateral; usa Eliminar espacio de trabajo sin usar para reintentar.",
         updateHostToArchiveEmpty:
           "Actualiza el host para eliminar de forma segura los espacios de trabajo sin usar",
         deleteFailed: "No se pudo eliminar el espacio de trabajo",

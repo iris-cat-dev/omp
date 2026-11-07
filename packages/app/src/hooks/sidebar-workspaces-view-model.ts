@@ -59,6 +59,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   currentBranch: string | null;
   archivingAt: string | null;
   hasOnlyArchivedAgents?: boolean;
+  isUnstarted?: boolean;
+  hasAssociatedAgents?: boolean;
   hasOnlySubagents?: boolean;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
@@ -89,12 +91,14 @@ export interface SidebarWorkspaceSession {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
   agents?: Map<string, Agent>;
+  hasHydratedAgents?: boolean;
 }
 
 interface SidebarWorkspaceSessionSource {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
   agents?: Map<string, Agent>;
+  hasHydratedAgents?: boolean;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -112,6 +116,7 @@ export function selectSidebarWorkspaceSessions(
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
       agents: session.agents,
+      hasHydratedAgents: session.hasHydratedAgents,
     });
   }
   return selected;
@@ -133,7 +138,8 @@ export function areSidebarWorkspaceSessionsEqual(
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
-      leftSession.agents !== rightSession.agents
+      leftSession.agents !== rightSession.agents ||
+      leftSession.hasHydratedAgents !== rightSession.hasHydratedAgents
     ) {
       return false;
     }
@@ -170,6 +176,7 @@ export function createSidebarWorkspaceEntry(input: {
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
   rootAgents?: readonly SidebarWorkspaceRootAgent[];
   hasOnlySubagents?: boolean;
+  hasAssociatedAgents?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -195,6 +202,15 @@ export function createSidebarWorkspaceEntry(input: {
     archivingAt: input.workspace.archivingAt,
     hasOnlyArchivedAgents: input.workspace.hasOnlyArchivedAgents ?? false,
     hasOnlySubagents: input.hasOnlySubagents ?? false,
+    hasAssociatedAgents: input.hasAssociatedAgents,
+    isUnstarted:
+      input.workspace.workspaceKind === "local_checkout" &&
+      !input.workspace.title?.trim() &&
+      !input.workspace.worktreeSlug &&
+      !input.workspace.hasOnlyArchivedAgents &&
+      input.hasAssociatedAgents === false &&
+      effectiveStatus.status === "done" &&
+      input.workspace.scripts.length === 0,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,
@@ -389,12 +405,15 @@ function resolveStructuralWorkspaceIdentity(input: {
 function buildSidebarWorkspaceAgentIndex(agents: ReadonlyMap<string, Agent> | undefined): {
   rootAgents: Map<string, SidebarWorkspaceRootAgent[]>;
   hasOnlySubagents: Map<string, boolean>;
+  associatedWorkspaceIds: Set<string>;
 } {
   const rootsByWorkspaceId = new Map<string, Array<{ agent: Agent; createdAt: number }>>();
   const hasOnlySubagents = new Map<string, boolean>();
-  if (!agents) return { rootAgents: new Map(), hasOnlySubagents };
+  const associatedWorkspaceIds = new Set<string>();
+  if (!agents) return { rootAgents: new Map(), hasOnlySubagents, associatedWorkspaceIds };
   for (const agent of agents.values()) {
     const workspaceId = normalizeWorkspaceOpaqueId(agent.workspaceId);
+    if (workspaceId) associatedWorkspaceIds.add(workspaceId);
     if (agent.archivedAt || !workspaceId) {
       continue;
     }
@@ -427,7 +446,7 @@ function buildSidebarWorkspaceAgentIndex(agents: ReadonlyMap<string, Agent> | un
         })),
     ]),
   );
-  return { rootAgents, hasOnlySubagents };
+  return { rootAgents, hasOnlySubagents, associatedWorkspaceIds };
 }
 
 export function buildSidebarWorkspaceEntries(input: {
@@ -458,6 +477,9 @@ export function buildSidebarWorkspaceEntries(input: {
     });
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
+    const agentIndex = agentsByServerId.get(placement.serverId)!;
+    const normalizedWorkspaceId = normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id;
+    const hasAssociatedAgents = agentIndex.associatedWorkspaceIds.has(normalizedWorkspaceId);
 
     const entry = createSidebarWorkspaceEntry({
       serverId: placement.serverId,
@@ -465,12 +487,12 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
-      rootAgents: agentsByServerId
-        .get(placement.serverId)
-        ?.rootAgents.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
-      hasOnlySubagents: agentsByServerId
-        .get(placement.serverId)
-        ?.hasOnlySubagents.get(normalizeWorkspaceOpaqueId(workspace.id) ?? workspace.id),
+      rootAgents: agentIndex.rootAgents.get(normalizedWorkspaceId),
+      hasOnlySubagents: agentIndex.hasOnlySubagents.get(normalizedWorkspaceId),
+      hasAssociatedAgents:
+        session.agents && (hasAssociatedAgents || session.hasHydratedAgents === true)
+          ? hasAssociatedAgents
+          : undefined,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

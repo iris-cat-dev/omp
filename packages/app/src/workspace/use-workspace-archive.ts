@@ -8,7 +8,7 @@ import {
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
+import { archiveEmptyWorkspace, archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 import {
   captureWorkspaceTabCleanup,
   closeWorkspaceAgentTabs,
@@ -19,6 +19,7 @@ export interface ArchiveWorkspaceInput {
   workspaceId: string;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
+  onlyIfEmpty?: boolean;
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
@@ -37,6 +38,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     workspaceId,
     workspaceKind,
     name,
+    onlyIfEmpty = false,
     isDirty,
     aheadOfOrigin,
     diffStat,
@@ -49,6 +51,27 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
 
   const archiveWorkspaceRecord = useCallback(async () => {
     const client = getHostRuntimeStore().getClient(serverId);
+    if (onlyIfEmpty) {
+      onSetHiding?.(true);
+      try {
+        const archived = await archiveEmptyWorkspace({
+          client,
+          workspace: { serverId, workspaceId },
+          hasPendingTerminalCreate: false,
+          preserveDrafts: true,
+        });
+        if (archived) onArchiveStarted();
+      } catch (error) {
+        toast.error(
+          t("sidebar.workspace.toasts.emptyArchiveFailed", {
+            reason: error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
+          }),
+        );
+      } finally {
+        onSetHiding?.(false);
+      }
+      return;
+    }
     if (!client) {
       toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
       return;
@@ -72,7 +95,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     } finally {
       onSetHiding?.(false);
     }
-  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId]);
+  }, [onArchiveStarted, onSetHiding, onlyIfEmpty, serverId, t, toast, workspaceId]);
 
   const archive = useCallback(() => {
     void (async () => {

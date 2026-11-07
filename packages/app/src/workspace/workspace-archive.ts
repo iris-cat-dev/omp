@@ -1,5 +1,6 @@
 import {
   clearWorkspaceArchivePending,
+  isWorkspaceArchivePending,
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -11,23 +12,27 @@ import {
   buildWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
-import {
-  ensureProjectLayoutsMigrated,
-  resolveProjectLayoutKey,
-} from "@/workspace-tabs/project-scope";
+import { ensureProjectLayoutsMigrated } from "@/workspace-tabs/project-scope";
 import { isWorkspaceSidePanelToolTarget } from "@/workspace-tabs/side-panel-target";
 import { isDraftTabInUse } from "@/workspace/draft-tab-usage";
+import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
 export interface WorkspaceArchiveTarget {
   serverId: string;
   workspaceId: string;
 }
 
+interface WorkspaceArchiveResult {
+  error: string | null;
+  skipped?: boolean;
+  archivedAt?: string | null;
+}
+
 interface WorkspaceArchiveClient {
   archiveWorkspace: (
     workspaceId: string,
     options?: { onlyIfEmpty?: boolean },
-  ) => Promise<{ error: string | null; skipped?: boolean; archivedAt?: string | null }>;
+  ) => Promise<WorkspaceArchiveResult>;
 }
 
 interface OptimisticWorkspaceArchiveSnapshot {
@@ -114,38 +119,29 @@ export async function archiveWorkspaceOptimistically(input: {
   }
 }
 
-// Unlike explicit archives, closing an unused conversation must not hide anything
-// until the server has checked its persisted history and live resources.
-export async function archiveEmptyWorkspace(input: {
-  client: WorkspaceArchiveClient | null;
+function hasProtectedWorkspaceContent(input: {
   workspace: WorkspaceArchiveTarget;
   closedDraftId?: string;
   hasPendingTerminalCreate: boolean;
   preserveDrafts?: boolean;
-}): Promise<void> {
+}): boolean {
   const { serverId, workspaceId } = input.workspace;
-  if (input.hasPendingTerminalCreate) {
-    return;
-  }
+  if (input.hasPendingTerminalCreate) return true;
   if (input.preserveDrafts) {
     const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope;
     const workspaceScope = buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd: "" });
-    if (attachments[workspaceScope]?.length) {
-      return;
-    }
+    if (attachments[workspaceScope]?.length) return true;
     ensureProjectLayoutsMigrated(serverId);
-    const projectKey = resolveProjectLayoutKey({ serverId, workspaceId });
-    if (!projectKey) return;
-    for (const tab of useWorkspaceLayoutStore.getState().getWorkspaceTabs(projectKey)) {
-      if (tab.target.workspaceId !== workspaceId) continue;
-      if (tab.target.kind === "agent") {
-        return;
-      }
-      if (
-        tab.target.kind === "draft" &&
-        isDraftTabInUse({ serverId, tabId: tab.tabId, draftId: tab.target.draftId })
-      ) {
-        return;
+    for (const [key, layout] of Object.entries(useWorkspaceLayoutStore.getState().layoutByWorkspace)) {
+      if (!key.startsWith(`${serverId}:project:`)) continue;
+      for (const tab of collectAllTabs(layout.root)) {
+        if (tab.target.workspaceId !== workspaceId) continue;
+        if (tab.target.kind === "agent") return true;
+        if (
+          tab.target.kind === "draft" &&
+          (tab.target.draftId !== input.closedDraftId ||
+            isDraftTabInUse({ serverId, tabId: tab.tabId, draftId: tab.target.draftId }))
+        ) return true;
       }
     }
   }
@@ -153,11 +149,24 @@ export async function archiveEmptyWorkspace(input: {
     if (
       pending.serverId === serverId &&
       (pending.workspaceId === workspaceId || pending.draftId === input.closedDraftId)
-    ) {
-      // Even an abandoned request may still be creating an agent on the server.
-      return;
-    }
+    ) return true;
   }
+  return Object.values(useWorkspaceDraftSubmissionStore.getState().pendingByDraftId).some(
+    (pending) => pending.serverId === serverId && pending.workspaceId === workspaceId,
+  );
+}
+
+// Unlike explicit archives, closing an unused conversation must not hide anything
+// until the server has checked its persisted history and live resources.
+export async function archiveEmptyWorkspace(input: {
+  client: (WorkspaceArchiveClient & { restoreWorkspace: (workspaceId: string) => Promise<void> }) | null;
+  workspace: WorkspaceArchiveTarget;
+  closedDraftId?: string;
+  hasPendingTerminalCreate: boolean;
+  preserveDrafts?: boolean;
+}): Promise<boolean> {
+  const { serverId, workspaceId } = input.workspace;
+  if (hasProtectedWorkspaceContent(input)) return false;
   if (!input.client) {
     throw new Error(i18n.t("sidebar.workspace.toasts.hostDisconnected"));
   }
@@ -168,22 +177,42 @@ export async function archiveEmptyWorkspace(input: {
     // Older daemons strip unknown request fields and would archive unconditionally.
     throw new Error(i18n.t("sidebar.workspace.toasts.updateHostToArchiveEmpty"));
   }
-  const payload = await input.client.archiveWorkspace(workspaceId, { onlyIfEmpty: true });
+  if (isWorkspaceArchivePending(input.workspace)) return false;
+  markWorkspaceArchivePending({ ...input.workspace, phase: "checking" });
+  let payload: WorkspaceArchiveResult;
+  try {
+    payload = await input.client.archiveWorkspace(workspaceId, { onlyIfEmpty: true });
+  } catch (error) {
+    clearWorkspaceArchivePending(input.workspace);
+    throw error;
+  }
   if (payload.error) {
+    clearWorkspaceArchivePending(input.workspace);
     throw new Error(payload.error);
   }
   if (payload.skipped) {
-    return;
+    clearWorkspaceArchivePending(input.workspace);
+    return false;
   }
   if (!payload.archivedAt) {
+    clearWorkspaceArchivePending(input.workspace);
     throw new Error(i18n.t("sidebar.workspace.toasts.archiveFailed"));
+  }
+  if (hasProtectedWorkspaceContent(input)) {
+    // A new conversation claimed this checkout while the server checked emptiness.
+    // Restore it before reporting completion; never sweep its new drafts or inputs.
+    markWorkspaceArchivePending({ ...input.workspace, phase: "recovering" });
+    await input.client.restoreWorkspace(workspaceId);
+    // Keep ownership until a directory upsert/snapshot confirms the restore.
+    return false;
   }
   markWorkspaceArchivePending(input.workspace);
   removeUnusedWorkspaceTabs({ serverId, workspaceId });
+  return true;
 }
 
-// Sweep drafts and overviews seeded while the archive was in flight, and companion
-// tools that would otherwise retain references to the retired workspace.
+// Remove unused views and companion tools only when no conversation claimed the
+// workspace during the conditional archive request.
 function removeUnusedWorkspaceTabs(input: { serverId: string; workspaceId: string }): void {
   const { serverId, workspaceId } = input;
   useSessionStore.getState().removeWorkspace(serverId, workspaceId);

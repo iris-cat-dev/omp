@@ -42,6 +42,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
+import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
 interface Rect {
   x: number;
@@ -291,7 +292,7 @@ function WorkspaceHoverCardContent({
         >
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle} testID="hover-card-workspace-name">
-              {workspace.name}
+              {resolveSidebarWorkspacePrimaryLabel(workspace, t("sidebar.workspace.status.unstarted"))}
             </Text>
           </View>
           {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}

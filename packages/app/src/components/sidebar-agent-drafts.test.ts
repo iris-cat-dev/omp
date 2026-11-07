@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { SplitPane, WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { groupSidebarAgentDrafts } from "./sidebar-agent-drafts";
+import { buildSidebarWorkspaceEntries } from "@/hooks/sidebar-workspaces-view-model";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 
 const hostWorkspace = {
   workspaceKey: "server-1:workspace-host",
@@ -87,12 +89,42 @@ const hostLayout: WorkspaceLayout = {
   },
 };
 
+function workspaceEntries(overrides: Partial<WorkspaceDescriptor> = {}, hasHydratedAgents = true) {
+  const descriptor: WorkspaceDescriptor = {
+    id: targetWorkspace.workspaceId,
+    projectId: "project-target",
+    projectDisplayName: "Target project",
+    projectRootPath: "/target",
+    workspaceDirectory: "/target",
+    projectKind: "git",
+    workspaceKind: "local_checkout",
+    name: "main",
+    title: null,
+    status: "done",
+    archivingAt: null,
+    statusEnteredAt: null,
+    diffStat: null,
+    scripts: [],
+    ...overrides,
+  };
+  return buildSidebarWorkspaceEntries({
+    placements: [targetWorkspace],
+    sessions: [{
+      serverId: targetWorkspace.serverId,
+      workspaces: new Map([[descriptor.id, descriptor]]),
+      workspaceAgentActivity: new Map(),
+      agents: new Map<string, Agent>(),
+      hasHydratedAgents,
+    }],
+  });
+}
+
 describe("sidebar agent drafts", () => {
   it("groups a draft under its owning project", () => {
     const grouped = groupSidebarAgentDrafts({
       projects,
       workspaceLayouts: { "server-1:project:project-target": hostLayout },
-      workspaceEntriesByKey: new Map([[targetWorkspace.workspaceKey, { title: null }]]),
+      workspaceEntriesByKey: workspaceEntries(),
       activeRouteSelection: {
         serverId: targetWorkspace.serverId,
         workspaceId: targetWorkspace.workspaceId,
@@ -121,7 +153,7 @@ describe("sidebar agent drafts", () => {
     const grouped = groupSidebarAgentDrafts({
       projects: [projects[0]!, { ...projects[1]!, workspaces: [targetWorkspace, otherCheckout] }],
       workspaceLayouts: { "server-1:project:project-target": hostLayout },
-      workspaceEntriesByKey: new Map(),
+      workspaceEntriesByKey: workspaceEntries(),
       activeRouteSelection: { serverId: "server-1", workspaceId: otherCheckout.workspaceId },
     });
 
@@ -156,15 +188,28 @@ describe("sidebar agent drafts", () => {
     const grouped = groupSidebarAgentDrafts({
       projects,
       workspaceLayouts: { "server-1:project:project-target": hostLayout },
-      workspaceEntriesByKey: new Map([
-        [targetWorkspace.workspaceKey, { title: "YBA 动态 MCP 控制台" }],
-      ]),
+      workspaceEntriesByKey: workspaceEntries({ title: "YBA 动态 MCP 控制台" }),
       activeRouteSelection: {
         serverId: targetWorkspace.serverId,
         workspaceId: targetWorkspace.workspaceId,
       },
     });
 
+    expect(grouped.get("project-target")).toBeUndefined();
+  });
+
+  it.each([
+    { name: "archived history", overrides: { hasOnlyArchivedAgents: true }, hydrated: true },
+    { name: "worktree", overrides: { workspaceKind: "worktree" as const }, hydrated: true },
+    { name: "worktree metadata", overrides: { worktreeSlug: "keep" }, hydrated: true },
+    { name: "unhydrated checkout", overrides: {}, hydrated: false },
+  ])("keeps a $name on its workspace row", ({ overrides, hydrated }) => {
+    const grouped = groupSidebarAgentDrafts({
+      projects,
+      workspaceLayouts: { "server-1:project:project-target": hostLayout },
+      workspaceEntriesByKey: workspaceEntries(overrides, hydrated),
+      activeRouteSelection: { serverId: "server-1", workspaceId: targetWorkspace.workspaceId },
+    });
     expect(grouped.get("project-target")).toBeUndefined();
   });
 });

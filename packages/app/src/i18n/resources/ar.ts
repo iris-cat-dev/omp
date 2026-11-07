@@ -1335,6 +1335,7 @@ export const ar: TranslationResources = {
         serviceRunning: "الخدمة {{name}} قيد التشغيل",
         serviceUnhealthy: "الخدمة {{name}} غير سليمة",
         creating: "جارٍ الإنشاء...",
+        unstarted: "لم تبدأ المحادثة",
       },
       actions: {
         menu: "إجراءات Workspace",
@@ -1351,6 +1352,7 @@ export const ar: TranslationResources = {
         unpin: "إلغاء التثبيت",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
+        removeUnused: "إزالة مساحة العمل غير المستخدمة",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
         archiving: "أرشفة...",
         delete: "حذف",
@@ -1395,7 +1397,7 @@ export const ar: TranslationResources = {
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
         emptyArchiveFailed:
-          "تعذر إزالة مساحة العمل غير المستخدمة: {{reason}}. ما زالت في الشريط الجانبي؛ أعد فتحها وأغلق علامة التبويب الفارغة للمحاولة مجددًا.",
+          "تعذر إزالة مساحة العمل غير المستخدمة: {{reason}}. ما زالت في الشريط الجانبي؛ استخدم إزالة مساحة العمل غير المستخدمة للمحاولة مجددًا.",
         updateHostToArchiveEmpty: "حدّث المضيف لإزالة مساحات العمل غير المستخدمة بأمان",
         deleteFailed: "فشل حذف مساحة العمل",
       },

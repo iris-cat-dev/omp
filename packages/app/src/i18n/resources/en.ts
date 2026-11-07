@@ -1402,6 +1402,7 @@ export const en = {
         serviceRunning: "Service {{name}} running",
         serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
+        unstarted: "Conversation not started",
       },
       actions: {
         menu: "Workspace actions",
@@ -1418,6 +1419,7 @@ export const en = {
         unpin: "Unpin",
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
+        removeUnused: "Remove unused workspace",
         hideFromSidebar: "Hide from sidebar",
         archiving: "Archiving...",
         delete: "Delete",
@@ -1463,7 +1465,7 @@ export const en = {
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive workspace",
         emptyArchiveFailed:
-          "Could not remove the unused workspace: {{reason}}. It remains in the sidebar; reopen it and close the empty tab to retry.",
+          "Could not remove the unused workspace: {{reason}}. It remains in the sidebar; use Remove unused workspace to retry.",
         updateHostToArchiveEmpty: "Update the host to safely remove unused workspaces",
         deleteFailed: "Failed to delete workspace",
       },

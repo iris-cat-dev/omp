@@ -10,12 +10,22 @@ import { useDraftStore } from "@/stores/draft-store";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildProjectLayoutKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { closeWorkspaceDraftTab, resolveClosedTabWorkspaceArchives } from "@/workspace-tabs/close-cleanup";
+import {
+  buildDraftWorkspaceAttachmentScopeKey,
+  buildWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
+import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import {
   archiveEmptyWorkspace,
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
+import { recoverWorkspaceSelection } from "@/workspace-recovery/model";
+import { WorkspaceDirectoryReplica } from "@/runtime/directory-sync/workspace-replica";
+import { ensureProjectLayoutsMigrated } from "@/workspace-tabs/project-scope";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();
@@ -79,8 +89,8 @@ function target(input?: Partial<WorkspaceArchiveTarget>): WorkspaceArchiveTarget
 
 function createClient(
   archiveWorkspace: DaemonClient["archiveWorkspace"],
-): Pick<DaemonClient, "archiveWorkspace"> {
-  return { archiveWorkspace };
+): Pick<DaemonClient, "archiveWorkspace" | "restoreWorkspace"> {
+  return { archiveWorkspace, restoreWorkspace: async () => { throw new Error("Unexpected workspace restore"); } };
 }
 
 function deferred<T>(): {
@@ -170,6 +180,10 @@ describe("archiveWorkspaceOptimistically", () => {
 describe("archiveEmptyWorkspace", () => {
   beforeEach(() => {
     useCreateFlowStore.getState().clearAll();
+    useWorkspaceLayoutStore.setState(useWorkspaceLayoutStore.getInitialState(), true);
+    useDraftStore.setState(useDraftStore.getInitialState(), true);
+    useWorkspaceAttachmentsStore.setState({ attachmentsByScope: {} });
+    useWorkspaceDraftSubmissionStore.setState({ pendingByDraftId: {} });
     useSessionStore.getState().updateSessionServerInfo(SERVER_ID, {
       serverId: SERVER_ID,
       hostname: "test",
@@ -180,6 +194,7 @@ describe("archiveEmptyWorkspace", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     useCreateFlowStore.getState().clearAll();
   });
 
@@ -198,11 +213,125 @@ describe("archiveEmptyWorkspace", () => {
     });
 
     expect(storedWorkspace("workspace-1")).toBeDefined();
-    expect(isWorkspaceArchivePending(target())).toBe(false);
     releaseArchive.resolve(archivePayload({ workspaceId: "workspace-1" }));
     await archive;
     expect(storedWorkspace("workspace-1")).toBeUndefined();
     expect(isWorkspaceArchivePending(target())).toBe(true);
+  });
+
+  it.each(["untouched", "text", "attachment", "submission", "creation"])("restores a workspace claimed by a new draft while conditional archive is pending (%s)", async (content) => {
+    const descriptor = workspace({ workspaceKind: "local_checkout" });
+    vi.spyOn(useWorkspaceLayoutStore.persist, "hasHydrated").mockReturnValue(true);
+    useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
+    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [descriptor]);
+    const workspaceKey = buildProjectLayoutKey({ serverId: SERVER_ID, projectId: descriptor.projectId })!;
+    const layout = useWorkspaceLayoutStore.getState();
+    layout.openTab({ workspaceKey, target: { kind: "files", workspaceId: descriptor.id }, intent: "new" });
+    const response = deferred<ArchiveWorkspacePayload>();
+    const restoration = deferred<void>();
+    let restoring = false;
+    let remotelyArchived = false;
+    const client = {
+      archiveWorkspace: async () => response.promise,
+      restoreWorkspace: async () => {
+        restoring = true;
+        await restoration.promise;
+        remotelyArchived = false;
+      },
+    };
+    const archive = archiveEmptyWorkspace({
+      client, workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true,
+    });
+    layout.openTab({ workspaceKey, target: { kind: "draft", draftId: "late", workspaceId: descriptor.id }, intent: "new" });
+    const draftKey = buildDraftStoreKey({ serverId: SERVER_ID, agentId: "", draftId: "late" });
+    if (content === "text") {
+      useDraftStore.getState().saveDraftInput({ draftKey, draft: { text: "Keep the new conversation", attachments: [] } });
+    } else if (content === "attachment") {
+      useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+        scopeKey: buildDraftWorkspaceAttachmentScopeKey("late"), attachments: [{ kind: "forge.change_request_comment", id: "keep", title: "Keep", text: "Keep context" }],
+      });
+    } else if (content === "submission") {
+      useWorkspaceDraftSubmissionStore.getState().setPending({
+        serverId: SERVER_ID, workspaceId: descriptor.id, draftId: "late", text: "Keep queued",
+        attachments: [], cwd: "/repo", provider: "claude", clientMessageId: "queued", timestamp: 1,
+      });
+    } else if (content === "creation") {
+      useCreateFlowStore.getState().setPending({
+        serverId: SERVER_ID, workspaceId: descriptor.id, draftId: "late", agentId: null,
+        clientMessageId: "creating", text: "Keep creating", timestamp: 1,
+      });
+    }
+    const draftInput = useDraftStore.getState().getDraftInput(draftKey);
+    const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope;
+    const queued = useWorkspaceDraftSubmissionStore.getState().pendingByDraftId;
+    const creates = useCreateFlowStore.getState().pendingByDraftId;
+    const tabs = layout.getWorkspaceTabs(workspaceKey);
+    remotelyArchived = true;
+    new WorkspaceDirectoryReplica(SERVER_ID).applyDelta({ kind: "remove", id: descriptor.id });
+    response.resolve(archivePayload({ workspaceId: descriptor.id }));
+    await vi.waitFor(() => expect(restoring).toBe(true));
+    expect(layout.getWorkspaceTabs(workspaceKey)).toEqual(tabs);
+    restoration.resolve();
+    expect(await archive).toBe(false);
+    expect(remotelyArchived).toBe(false);
+    ensureProjectLayoutsMigrated(SERVER_ID);
+    expect(layout.getWorkspaceTabs(workspaceKey)).toEqual(tabs);
+    new WorkspaceDirectoryReplica(SERVER_ID).applyDelta({
+      kind: "upsert", workspace: {
+        ...descriptor, title: descriptor.title ?? null, activityAt: null,
+        statusEnteredAt: null, archivingAt: null,
+      },
+    });
+    expect(storedWorkspace(descriptor.id)).toBeDefined();
+    expect(layout.getWorkspaceTabs(workspaceKey)).toEqual(tabs);
+    expect(useDraftStore.getState().getDraftInput(draftKey)).toEqual(draftInput);
+    expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope).toEqual(attachments);
+    expect(useWorkspaceDraftSubmissionStore.getState().pendingByDraftId).toEqual(queued);
+    expect(useCreateFlowStore.getState().pendingByDraftId).toEqual(creates);
+  });
+
+  it("preserves late input when restoration fails and the recovery action can retry", async () => {
+    const descriptor = workspace({ workspaceKind: "local_checkout" });
+    vi.spyOn(useWorkspaceLayoutStore.persist, "hasHydrated").mockReturnValue(true);
+    useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
+    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [descriptor]);
+    const workspaceKey = buildProjectLayoutKey({ serverId: SERVER_ID, projectId: descriptor.projectId })!;
+    const layout = useWorkspaceLayoutStore.getState();
+    layout.openTab({ workspaceKey, target: { kind: "draft", draftId: "late-input", workspaceId: descriptor.id }, intent: "new" });
+    const response = deferred<ArchiveWorkspacePayload>();
+    const failure = new Error("Recovery disconnected");
+    let remotelyArchived = false;
+    let attempts = 0;
+    const client = {
+      archiveWorkspace: async () => response.promise,
+      restoreWorkspace: async () => {
+        if (++attempts === 1) throw failure;
+        remotelyArchived = false;
+        new WorkspaceDirectoryReplica(SERVER_ID).applyDelta({
+          kind: "upsert", workspace: {
+            ...descriptor, title: descriptor.title ?? null, activityAt: null,
+            statusEnteredAt: null, archivingAt: null,
+          },
+        });
+      },
+      refreshAgent: async () => { throw new Error("Workspace recovery must not refresh an agent"); },
+    };
+    const archive = archiveEmptyWorkspace({
+      client, workspace: target(), closedDraftId: "late-input", hasPendingTerminalCreate: false, preserveDrafts: true,
+    });
+    const draftKey = buildDraftStoreKey({ serverId: SERVER_ID, agentId: "", draftId: "late-input" });
+    useDraftStore.getState().saveDraftInput({ draftKey, draft: { text: "Entered during cleanup", attachments: [] } });
+    const tabs = layout.getWorkspaceTabs(workspaceKey);
+    remotelyArchived = true;
+    new WorkspaceDirectoryReplica(SERVER_ID).applyDelta({ kind: "remove", id: descriptor.id });
+    response.resolve(archivePayload({ workspaceId: descriptor.id }));
+    await expect(archive).rejects.toBe(failure);
+    expect(layout.getWorkspaceTabs(workspaceKey)).toEqual(tabs);
+    expect(useDraftStore.getState().getDraftInput(draftKey)?.text).toBe("Entered during cleanup");
+    await recoverWorkspaceSelection({ client, workspaceId: descriptor.id });
+    expect(remotelyArchived).toBe(false);
+    expect(storedWorkspace(descriptor.id)).toBeDefined();
+    expect(layout.getWorkspaceTabs(workspaceKey)).toEqual(tabs);
   });
 
   it("retires a workspace's drafts and companion tools after archive confirmation, keeping sibling tabs", async () => {
@@ -299,11 +428,150 @@ describe("archiveEmptyWorkspace", () => {
       await leave();
       expect(storedWorkspace("workspace-1")).toBeDefined();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "abandoned" });
+      const closingTab = useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)
+        .find((tab) => tab.target.kind === "draft" && tab.target.draftId === draftId)!;
+      closeWorkspaceDraftTab({ serverId: SERVER_ID, workspaceKey, tabId: closingTab.tabId });
       await leave();
       expect(storedWorkspace("workspace-1")).toBeUndefined();
     } finally {
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "abandoned" });
     }
+  });
+
+  it.each(["untouched", "text", "attachment", "scopeAttachment", "submission"])(
+    "closing one draft preserves its owner's other %s draft and only discards the selected input",
+    async (content) => {
+      const workspaceKey = buildProjectLayoutKey({ serverId: SERVER_ID, projectId: workspace().projectId })!;
+      const store = useWorkspaceLayoutStore.getState();
+      for (const draftId of ["closing", "sibling"]) {
+        store.openTab({ workspaceKey, target: { kind: "draft", draftId, workspaceId: "workspace-1" }, intent: "new" });
+      }
+      const closingTab = store.getWorkspaceTabs(workspaceKey).find(
+        (tab) => tab.target.kind === "draft" && tab.target.draftId === "closing",
+      )!;
+      const closingKey = buildDraftStoreKey({ serverId: SERVER_ID, agentId: closingTab.tabId, draftId: "closing" });
+      const siblingKey = buildDraftStoreKey({ serverId: SERVER_ID, agentId: "", draftId: "sibling" });
+      useDraftStore.getState().saveDraftInput({ draftKey: closingKey, draft: { text: "Discard only me", attachments: [] } });
+      useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+        scopeKey: buildDraftWorkspaceAttachmentScopeKey("closing"), attachments: [{ kind: "forge.change_request_comment", id: "discard", title: "Discard", text: "Discard context" }],
+      });
+      useWorkspaceDraftSubmissionStore.getState().setPending({
+        serverId: SERVER_ID, workspaceId: "workspace-1", draftId: "closing", text: "Discard queued message",
+        attachments: [], cwd: "/repo", provider: "claude", clientMessageId: "closing-queued", timestamp: 1,
+      });
+      if (content === "text" || content === "attachment") {
+        useDraftStore.getState().saveDraftInput({ draftKey: siblingKey, draft: {
+          text: content === "text" ? "Keep this input" : "",
+          attachments: content === "attachment" ? [{ kind: "directory", path: "/keep" }] : [],
+        } });
+      }
+      if (content === "scopeAttachment") {
+        useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+          scopeKey: buildDraftWorkspaceAttachmentScopeKey("sibling"),
+          attachments: [{ kind: "forge.change_request_comment", id: "keep", title: "Keep", text: "Keep context" }],
+        });
+      }
+      if (content === "submission") {
+        useWorkspaceDraftSubmissionStore.getState().setPending({
+          serverId: SERVER_ID, workspaceId: "workspace-1", draftId: "sibling", text: "Keep queued message",
+          attachments: [], cwd: "/repo", provider: "claude", clientMessageId: "queued", timestamp: 1,
+        });
+      }
+      const siblingInput = useDraftStore.getState().getDraftInput(siblingKey);
+      const closeResult = closeWorkspaceDraftTab({ serverId: SERVER_ID, workspaceKey, tabId: closingTab.tabId });
+      for (const workspaceId of resolveClosedTabWorkspaceArchives({
+        routeWorkspaceId: "other-tab-host", closingTarget: closingTab.target,
+        routeWorkspaceEmpty: closeResult === "workspace-empty",
+      })) {
+        const archived = await archiveEmptyWorkspace({
+          client: createClient(async () => { throw new Error("A sibling draft must prevent the request"); }),
+          workspace: { serverId: SERVER_ID, workspaceId }, closedDraftId: "closing",
+          hasPendingTerminalCreate: false, preserveDrafts: true,
+        });
+        expect(archived).toBe(false);
+      }
+      expect(storedWorkspace("workspace-1")).toBeDefined();
+      expect(store.getWorkspaceTabs(workspaceKey).flatMap((tab) => tab.target.kind === "draft" ? [tab.target.draftId] : [])).toEqual(["sibling"]);
+      expect(useDraftStore.getState().getDraftInput(siblingKey)).toEqual(siblingInput);
+      expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[buildDraftWorkspaceAttachmentScopeKey("closing")]).toBeUndefined();
+      expect(useWorkspaceDraftSubmissionStore.getState().pendingByDraftId.closing).toBeUndefined();
+      if (content === "scopeAttachment") {
+        expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[buildDraftWorkspaceAttachmentScopeKey("sibling")]).toEqual([
+          { kind: "forge.change_request_comment", id: "keep", title: "Keep", text: "Keep context" },
+        ]);
+      }
+      if (content === "submission") {
+        expect(useWorkspaceDraftSubmissionStore.getState().pendingByDraftId.sibling?.text).toBe("Keep queued message");
+      }
+    },
+  );
+
+  it("keeps workspace-scoped attachments and queued submissions even without a layout", async () => {
+    const scopeKey = buildWorkspaceAttachmentScopeKey({ serverId: SERVER_ID, workspaceId: "workspace-1", cwd: "/repo" });
+    const client = createClient(async () => { throw new Error("Unsent content must prevent archive"); });
+    useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({ scopeKey, attachments: [{ kind: "forge.change_request_comment", id: "context", title: "Context", text: "Keep context" }] });
+    expect(await archiveEmptyWorkspace({ client, workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true })).toBe(false);
+    useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
+    useWorkspaceDraftSubmissionStore.getState().setPending({
+      serverId: SERVER_ID, workspaceId: "workspace-1", draftId: "detached", text: "Queued",
+      attachments: [], cwd: "/repo", provider: "claude", clientMessageId: "queued", timestamp: 1,
+    });
+    expect(await archiveEmptyWorkspace({ client, workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true })).toBe(false);
+    expect(storedWorkspace("workspace-1")).toBeDefined();
+  });
+
+  it("closing the final draft keeps its outstanding agent creation protected", async () => {
+    const workspaceKey = buildProjectLayoutKey({ serverId: SERVER_ID, projectId: workspace().projectId })!;
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({ workspaceKey, target: { kind: "draft", draftId: "creating", workspaceId: "workspace-1" }, intent: "new" });
+    const tab = store.getWorkspaceTabs(workspaceKey).find((entry) => entry.target.kind === "draft")!;
+    useCreateFlowStore.getState().setPending({
+      serverId: SERVER_ID, workspaceId: "workspace-1", draftId: "creating", agentId: null,
+      clientMessageId: "pending", text: "Still creating", timestamp: 1,
+    });
+    closeWorkspaceDraftTab({ serverId: SERVER_ID, workspaceKey, tabId: tab.tabId });
+    expect(await archiveEmptyWorkspace({
+      client: createClient(async () => { throw new Error("The create may still complete"); }),
+      workspace: target(), closedDraftId: "creating", hasPendingTerminalCreate: false, preserveDrafts: true,
+    })).toBe(false);
+    expect(useCreateFlowStore.getState().pendingByDraftId.creating).toBeDefined();
+    expect(storedWorkspace("workspace-1")).toBeDefined();
+  });
+
+  it("does not let another host's same workspace ID block cleanup or lose its drafts", async () => {
+    useSessionStore.getState().initializeSession(SECOND_SERVER_ID, {} as DaemonClient);
+    useSessionStore.getState().mergeWorkspaces(SECOND_SERVER_ID, [workspace()]);
+    const workspaceKey = buildProjectLayoutKey({ serverId: SECOND_SERVER_ID, projectId: workspace().projectId })!;
+    useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey, target: { kind: "draft", draftId: "other-host", workspaceId: "workspace-1" }, intent: "new",
+    });
+    useWorkspaceDraftSubmissionStore.getState().setPending({
+      serverId: SECOND_SERVER_ID, workspaceId: "workspace-1", draftId: "other-host", text: "Keep queued",
+      attachments: [], cwd: "/repo", provider: "claude", clientMessageId: "other-queued", timestamp: 1,
+    });
+    expect(await archiveEmptyWorkspace({
+      client: createClient(async () => archivePayload({ workspaceId: "workspace-1" })),
+      workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true,
+    })).toBe(true);
+    expect(storedWorkspace("workspace-1")).toBeUndefined();
+    expect(storedWorkspaceOn(SECOND_SERVER_ID, "workspace-1")).toBeDefined();
+    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey).some(
+      (tab) => tab.target.kind === "draft" && tab.target.draftId === "other-host",
+    )).toBe(true);
+    expect(useWorkspaceDraftSubmissionStore.getState().pendingByDraftId["other-host"]).toBeDefined();
+  });
+
+  it("leaves a disconnected workspace available for a later conditional cleanup", async () => {
+    await expect(archiveEmptyWorkspace({
+      client: null, workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true,
+    })).rejects.toThrow();
+    expect(storedWorkspace("workspace-1")).toBeDefined();
+    expect(isWorkspaceArchivePending(target())).toBe(false);
+    expect(await archiveEmptyWorkspace({
+      client: createClient(async () => archivePayload({ workspaceId: "workspace-1" })),
+      workspace: target(), hasPendingTerminalCreate: false, preserveDrafts: true,
+    })).toBe(true);
+    expect(storedWorkspace("workspace-1")).toBeUndefined();
   });
 
   it("retains a workspace when the server finds history or other protected resources", async () => {

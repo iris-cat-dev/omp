@@ -31,6 +31,7 @@ import {
 } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
+import { areEquivalentPaths } from "./path.js";
 import { readGitBlobContents, readTrackedPatches } from "./git-diff-batch.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
@@ -953,6 +954,72 @@ async function getWorktreeRoot(cwd: string, context?: CheckoutContext): Promise<
   }
 }
 
+/**
+ * Resolve a Git administrative directory back to its primary source checkout.
+ * Only its own config is authoritative; another checkout or an enclosing repo
+ * must not turn an unverified core.worktree into a persisted project root.
+ */
+export async function getWorkingTreeRootForGitDir(gitDir: string): Promise<string | null> {
+  try {
+    const normalizedGitDir = realpathSync(gitDir);
+    const configPath = resolve(normalizedGitDir, "config");
+    if (!(await statFile(configPath)).isFile()) {
+      return null;
+    }
+    const { stdout } = await runGitCommand(
+      ["config", "--no-includes", "--file", configPath, "--get", "core.worktree"],
+      {
+        cwd: normalizedGitDir,
+        envOverlay: READ_ONLY_GIT_ENV,
+        acceptExitCodes: [0, 1],
+      },
+    );
+    const configuredWorktree = parseGitRevParsePath(stdout);
+    if (!configuredWorktree) {
+      return null;
+    }
+    const worktreeRoot = realpathSync(resolve(normalizedGitDir, configuredWorktree));
+    if (!(await statFile(worktreeRoot)).isDirectory()) {
+      return null;
+    }
+    // An enclosing checkout can redirect --show-toplevel via core.worktree.
+    // Resolve only this candidate's own .git, never ancestor discovery.
+    const { stdout: localGitDirOut } = await runGitCommand(
+      ["rev-parse", "--resolve-git-dir", resolve(worktreeRoot, ".git")],
+      { cwd: worktreeRoot, envOverlay: READ_ONLY_GIT_ENV },
+    );
+    const localGitDir = resolveGitRevParsePath(worktreeRoot, localGitDirOut);
+    if (!localGitDir || !areEquivalentPaths(realpathSync(localGitDir), normalizedGitDir)) {
+      return null;
+    }
+    const paths = await Promise.all(
+      ["--show-toplevel", "--git-common-dir", "--absolute-git-dir"].map(async (flag) => {
+        const result = await runGitCommand(["rev-parse", flag], {
+          cwd: worktreeRoot,
+          envOverlay: READ_ONLY_GIT_ENV,
+        });
+        const gitPath = resolveGitRevParsePath(worktreeRoot, result.stdout);
+        return gitPath ? realpathSync(gitPath) : null;
+      }),
+    );
+    const [topLevel, commonDir, absoluteGitDir] = paths;
+    if (
+      !topLevel ||
+      !commonDir ||
+      !absoluteGitDir ||
+      !areEquivalentPaths(topLevel, worktreeRoot) ||
+      !areEquivalentPaths(commonDir, normalizedGitDir) ||
+      !areEquivalentPaths(absoluteGitDir, normalizedGitDir)
+    ) {
+      return null;
+    }
+    return worktreeRoot;
+  } catch {
+    // Missing, stale or invalid Git metadata cannot justify changing a root.
+    return null;
+  }
+}
+
 export async function getMainRepoRoot(cwd: string): Promise<string> {
   const { stdout: commonDirOut } = await runGitCommand(["rev-parse", "--git-common-dir"], {
     cwd,
@@ -973,6 +1040,11 @@ async function getMainRepoRootFromCommonDir(
 
   if (basename(normalized) === ".git") {
     return dirname(normalized);
+  }
+
+  const configuredWorktree = await getWorkingTreeRootForGitDir(normalized);
+  if (configuredWorktree) {
+    return configuredWorktree;
   }
 
   const { stdout: worktreeOut } = await runGitCommand(["worktree", "list", "--porcelain"], {

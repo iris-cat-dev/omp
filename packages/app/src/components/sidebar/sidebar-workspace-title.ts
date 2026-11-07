@@ -1,6 +1,13 @@
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 
+export function resolveSidebarWorkspacePrimaryLabel(
+  workspace: Pick<SidebarWorkspaceEntry, "name" | "isUnstarted">,
+  unstartedLabel: string,
+): string {
+  return workspace.isUnstarted ? unstartedLabel : workspace.name;
+}
+
 export function resolveAgentTabPrimaryLabel(input: {
   agentTitle: string | null | undefined;
   isPrimaryAgent: boolean;
@@ -18,15 +25,16 @@ export function resolveAgentTabPrimaryLabel(input: {
 }
 
 export function resolveSidebarWorkspaceAccessibilityLabel(input: {
-  workspace: Pick<SidebarWorkspaceEntry, "name" | "statusBucket">;
+  workspace: Pick<SidebarWorkspaceEntry, "name" | "statusBucket" | "isUnstarted">;
   leadingProjectName?: string | null;
   hostBadgeLabel?: string | null;
   pullRequestLabel?: string | null;
   serviceLabel?: string | null;
+  unstartedLabel?: string;
 }): string {
   return [
     input.leadingProjectName,
-    input.workspace.name,
+    resolveSidebarWorkspacePrimaryLabel(input.workspace, input.unstartedLabel ?? input.workspace.name),
     input.hostBadgeLabel,
     input.pullRequestLabel,
     input.serviceLabel,

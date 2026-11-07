@@ -8,7 +8,7 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
-  clearWorkspaceArchivePending,
+  reconcileWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
 } from "@/contexts/session-workspace-upserts";
 
@@ -68,7 +68,11 @@ export class WorkspaceDirectoryReplica {
     const removedWorkspaceIds = deltas.flatMap((delta) =>
       delta.kind === "remove" && "id" in delta ? [delta.id] : [],
     );
-    this.commit(this.reconcile(snapshot, deltas), removedWorkspaceIds);
+    const state = this.reconcile(snapshot, deltas);
+    for (const workspaceId of state.workspaces.keys()) {
+      reconcileWorkspaceArchivePending({ serverId: this.serverId, workspaceId, kind: "upsert" });
+    }
+    this.commit(state, removedWorkspaceIds);
     useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, true);
   }
 
@@ -108,6 +112,7 @@ export class WorkspaceDirectoryReplica {
         continue;
       }
       const workspace = normalizeWorkspaceDescriptor(delta.workspace);
+      reconcileWorkspaceArchivePending({ serverId: this.serverId, workspaceId: workspace.id, kind: "upsert" });
       if (shouldSuppressWorkspaceForLocalArchive({ serverId: this.serverId, workspace })) {
         workspaces.delete(workspace.id);
       } else {
@@ -122,7 +127,7 @@ export class WorkspaceDirectoryReplica {
     store.setWorkspaces(this.serverId, snapshot.workspaces);
     store.setProjects(this.serverId, snapshot.projects.values());
     for (const workspaceId of removedWorkspaceIds) {
-      clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId });
+      reconcileWorkspaceArchivePending({ serverId: this.serverId, workspaceId, kind: "remove" });
       useWorkspaceSetupStore.getState().removeWorkspace({ serverId: this.serverId, workspaceId });
     }
   }

@@ -527,6 +527,7 @@ export function SidebarWorkspaceContextMenu({
     : null;
   const rowAccessibilityLabel = resolveSidebarWorkspaceAccessibilityLabel({
     workspace,
+    unstartedLabel: t("sidebar.workspace.status.unstarted"),
     leadingProjectName,
     hostBadgeLabel,
     pullRequestLabel,

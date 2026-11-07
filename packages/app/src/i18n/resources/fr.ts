@@ -1372,6 +1372,7 @@ export const fr: TranslationResources = {
         serviceRunning: "Service {{name}} en cours",
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
+        unstarted: "Conversation non démarrée",
       },
       actions: {
         menu: "ActionsWorkspace",
@@ -1388,6 +1389,7 @@ export const fr: TranslationResources = {
         unpin: "Désépingler",
         archive: "Archive",
         archiveWorkspace: "Archiver l’espace de travail",
+        removeUnused: "Supprimer l’espace de travail inutilisé",
         hideFromSidebar: "Masquer de la barre latérale",
         archiving: "Archivage...",
         delete: "Supprimer",
@@ -1433,7 +1435,7 @@ export const fr: TranslationResources = {
         hideFailed: "Échec du masquage de l'espace de travail",
         archiveFailed: "Échec de l'archivage de l'espace de travail",
         emptyArchiveFailed:
-          "Impossible de supprimer l’espace de travail inutilisé : {{reason}}. Il reste dans la barre latérale ; rouvrez-le et fermez l’onglet vide pour réessayer.",
+          "Impossible de supprimer l’espace de travail inutilisé : {{reason}}. Il reste dans la barre latérale ; utilisez Supprimer l’espace de travail inutilisé pour réessayer.",
         updateHostToArchiveEmpty:
           "Mettez à jour l’hôte pour supprimer les espaces de travail inutilisés en toute sécurité",
         deleteFailed: "Échec de la suppression de l’espace de travail",

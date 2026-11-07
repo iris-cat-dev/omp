@@ -1369,6 +1369,7 @@ export const ptBR: TranslationResources = {
         serviceRunning: "Serviço {{name}} em execução",
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",
+        unstarted: "Conversa não iniciada",
       },
       actions: {
         menu: "Ações do workspace",
@@ -1385,6 +1386,7 @@ export const ptBR: TranslationResources = {
         unpin: "Desafixar",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
+        removeUnused: "Remover workspace não utilizado",
         hideFromSidebar: "Ocultar da barra lateral",
         archiving: "Arquivando...",
         delete: "Excluir",
@@ -1430,7 +1432,7 @@ export const ptBR: TranslationResources = {
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
         emptyArchiveFailed:
-          "Não foi possível remover o workspace não utilizado: {{reason}}. Ele permanece na barra lateral; reabra-o e feche a aba vazia para tentar novamente.",
+          "Não foi possível remover o workspace não utilizado: {{reason}}. Ele permanece na barra lateral; use Remover workspace não utilizado para tentar novamente.",
         updateHostToArchiveEmpty:
           "Atualize o host para remover com segurança os workspaces não utilizados",
         deleteFailed: "Falha ao excluir workspace",

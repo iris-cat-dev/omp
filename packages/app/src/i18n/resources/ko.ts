@@ -1346,6 +1346,7 @@ export const ko: TranslationResources = {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
+        unstarted: "대화가 시작되지 않음",
       },
       actions: {
         menu: "워크스페이스 작업",
@@ -1362,6 +1363,7 @@ export const ko: TranslationResources = {
         unpin: "고정 해제",
         archive: "보관",
         archiveWorkspace: "워크스페이스 보관",
+        removeUnused: "사용하지 않은 워크스페이스 정리",
         hideFromSidebar: "사이드바에서 숨기기",
         archiving: "보관하는 중...",
         delete: "삭제",
@@ -1406,7 +1408,7 @@ export const ko: TranslationResources = {
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
         emptyArchiveFailed:
-          "사용하지 않은 워크스페이스를 제거하지 못했습니다: {{reason}}. 사이드바에 남아 있습니다. 다시 열고 빈 탭을 닫아 재시도하세요.",
+          "사용하지 않은 워크스페이스를 정리하지 못했습니다: {{reason}}. 사이드바의 사용하지 않은 워크스페이스 정리에서 재시도하세요.",
         updateHostToArchiveEmpty:
           "사용하지 않은 워크스페이스를 안전하게 제거하려면 호스트를 업데이트하세요",
         deleteFailed: "워크스페이스를 삭제하지 못했습니다",

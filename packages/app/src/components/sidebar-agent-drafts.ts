@@ -22,7 +22,10 @@ export interface SidebarAgentDraft {
 export function groupSidebarAgentDrafts(input: {
   projects: readonly SidebarProjectEntry[];
   workspaceLayouts: Readonly<Record<string, WorkspaceLayout>>;
-  workspaceEntriesByKey: ReadonlyMap<string, Pick<SidebarWorkspaceEntry, "title">>;
+  workspaceEntriesByKey: ReadonlyMap<
+    string,
+    Pick<SidebarWorkspaceEntry, "isUnstarted">
+  >;
   activeRouteSelection: ActiveWorkspaceSelection | null;
 }): ReadonlyMap<string, SidebarAgentDraft[]> {
   const projectLayoutKeyByWorkspaceKey = new Map<string, string>();
@@ -67,11 +70,8 @@ export function groupSidebarAgentDrafts(input: {
       if (!workspaceKey || projectLayoutKeyByWorkspaceKey.get(workspaceKey) !== layoutKey) {
         continue;
       }
-      // A draft row replaces its workspace row; a titled workspace (e.g. one created by an
-      // agent tool) must keep its own row, with the draft only serving as its composer.
-      if (input.workspaceEntriesByKey.get(workspaceKey)?.title?.trim()) {
-        continue;
-      }
+      // Reuse the hydrated, sessionless checkout classification used by workspace rows.
+      if (!input.workspaceEntriesByKey.get(workspaceKey)?.isUnstarted) continue;
       const tabHostWorkspaceId =
         routeInLayout && activeRoute ? activeRoute.workspaceId : workspaceId;
       const drafts = draftsByProjectViewKey.get(projectViewKey) ?? [];

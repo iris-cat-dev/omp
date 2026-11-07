@@ -1350,6 +1350,7 @@ export const ja: TranslationResources = {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
+        unstarted: "会話未開始",
       },
       actions: {
         menu: "ワークスペースアクション",
@@ -1366,6 +1367,7 @@ export const ja: TranslationResources = {
         unpin: "固定解除",
         archive: "アーカイブ",
         archiveWorkspace: "ワークスペースをアーカイブ",
+        removeUnused: "未使用のワークスペースを整理",
         hideFromSidebar: "サイドバーから非表示",
         archiving: "アーカイブ中...",
         delete: "削除",
@@ -1410,7 +1412,7 @@ export const ja: TranslationResources = {
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
         emptyArchiveFailed:
-          "未使用のワークスペースを削除できませんでした：{{reason}}。サイドバーに残っています。再度開いて空のタブを閉じると再試行できます。",
+          "未使用のワークスペースを整理できませんでした：{{reason}}。サイドバーの「未使用のワークスペースを整理」から再試行できます。",
         updateHostToArchiveEmpty:
           "未使用のワークスペースを安全に削除するにはホストを更新してください",
         deleteFailed: "ワークスペースの削除に失敗しました",

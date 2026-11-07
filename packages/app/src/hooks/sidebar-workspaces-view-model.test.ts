@@ -89,6 +89,63 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
   });
 });
 
+describe("unstarted local checkout presentation", () => {
+  it.each([
+    { name: "empty checkout", overrides: {}, agents: [], expected: true },
+    { name: "untitled conversation", overrides: {}, agents: [agent({ id: "root", workspaceId: "ws-1", status: "idle" })], expected: false },
+    { name: "subagent only", overrides: {}, agents: [agent({ id: "child", workspaceId: "ws-1", status: "idle", parentAgentId: "parent" })], expected: false },
+    { name: "archived conversation", overrides: {}, agents: [agent({ id: "history", workspaceId: "ws-1", status: "idle", archivedAt: new Date(1) })], expected: false },
+    { name: "server-known archived history", overrides: { hasOnlyArchivedAgents: true }, agents: [], expected: false },
+    { name: "named checkout", overrides: { title: "Keep this workspace" }, agents: [], expected: false },
+    { name: "worktree", overrides: { workspaceKind: "worktree" as const }, agents: [], expected: false },
+    { name: "owned worktree metadata", overrides: { worktreeSlug: "keep" }, agents: [], expected: false },
+    { name: "active workspace", overrides: { status: "running" as const }, agents: [], expected: false },
+  ])("classifies $name without losing its branch metadata", ({ overrides, agents, expected }) => {
+    const descriptor: WorkspaceDescriptor = {
+      ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceKind: "local_checkout", name: "main", githubRuntime: undefined,
+      gitRuntime: { currentBranch: "main" } as WorkspaceDescriptor["gitRuntime"],
+      ...overrides,
+    };
+    const entries = buildSidebarWorkspaceEntries({
+      placements: [workspacePlacement({ workspaceId: descriptor.id })],
+      sessions: [{
+        serverId: "srv", workspaces: new Map([[descriptor.id, descriptor]]),
+        workspaceAgentActivity: new Map(), agents: new Map(agents.map((entry) => [entry.id, entry])),
+        hasHydratedAgents: true,
+      }],
+    });
+    expect(entries.get("srv:ws-1")?.isUnstarted).toBe(expected);
+    expect(entries.get("srv:ws-1")?.currentBranch).toBe("main");
+    expect(entries.get("srv:ws-1")?.name).toBe("main");
+  });
+
+  it("does not claim a checkout is unused before its session catalog is available", () => {
+    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind: "local_checkout" as const };
+    const entries = buildSidebarWorkspaceEntries({
+      placements: [workspacePlacement({ workspaceId: descriptor.id })],
+      sessions: [{ serverId: "srv", workspaces: new Map([[descriptor.id, descriptor]]), workspaceAgentActivity: new Map() }],
+    });
+    expect(entries.get("srv:ws-1")?.isUnstarted).toBe(false);
+  });
+
+  it.each([false, undefined])("only labels an empty catalog as unstarted after hydration completes (%s)", (hydrated) => {
+    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind: "local_checkout" as const };
+    const placements = [workspacePlacement({ workspaceId: descriptor.id })];
+    const session = {
+      serverId: "srv", workspaces: new Map([[descriptor.id, descriptor]]), workspaceAgentActivity: new Map(),
+      agents: new Map<string, Agent>(), hasHydratedAgents: hydrated,
+    };
+    const previousEntries = buildSidebarWorkspaceEntries({ placements, sessions: [session] });
+    const nextEntries = buildSidebarWorkspaceEntries({
+      placements, sessions: [{ ...session, hasHydratedAgents: true }], previousEntries,
+    });
+    expect(previousEntries.get("srv:ws-1")?.isUnstarted).toBe(false);
+    expect(nextEntries.get("srv:ws-1")?.isUnstarted).toBe(true);
+    expect(nextEntries.get("srv:ws-1")).not.toBe(previousEntries.get("srv:ws-1"));
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

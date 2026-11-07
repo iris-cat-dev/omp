@@ -162,13 +162,7 @@ import { useSidebarRowItems } from "@/components/sidebar/display-preferences/mod
 import { openProjectWorkspaceDraft } from "@/utils/open-project-workspace-draft";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { groupSidebarAgentDrafts, type SidebarAgentDraft } from "@/components/sidebar-agent-drafts";
-import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useDraftStore } from "@/stores/draft-store";
-import { buildDraftStoreKey } from "@/stores/draft-keys";
-import {
-  buildDraftWorkspaceAttachmentScopeKey,
-  useWorkspaceAttachmentsStore,
-} from "@/attachments/workspace-attachments-store";
+import { closeWorkspaceDraftTab } from "@/workspace-tabs/close-cleanup";
 import { archiveEmptyWorkspace } from "@/workspace/workspace-archive";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { shouldFocusProjectOnPress } from "@/utils/project-row-interaction";
@@ -919,20 +913,8 @@ function SidebarAgentDraftRow({
       return;
     }
 
-    const result = layoutStore.closeTab(hostKey, tabId);
+    const result = closeWorkspaceDraftTab({ serverId, workspaceKey: hostKey, tabId });
     if (!result) return;
-    useDraftStore.getState().clearDraftInput({
-      draftKey: buildDraftStoreKey({ serverId, agentId: tabId, draftId }),
-      lifecycle: "abandoned",
-    });
-    useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({
-      scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
-    });
-    useWorkspaceDraftSubmissionStore.getState().consumePending({
-      serverId,
-      workspaceId,
-      draftId,
-    });
 
     const remainingLayouts = useWorkspaceLayoutStore.getState().layoutByWorkspace;
     const hasRemainingTabsForWorkspace = Object.entries(remainingLayouts).some(
@@ -947,18 +929,6 @@ function SidebarAgentDraftRow({
     // Keep in-flight create attempts: the server request can complete after the tab is closed,
     // and archiveEmptyWorkspace uses them to protect workspaces from premature archival.
     const archiveIfUnused = (candidateId: string) => {
-      const candidateLayoutKey = resolveProjectLayoutKey({ serverId, workspaceId: candidateId });
-      const hasOtherDraft = Object.entries(remainingLayouts).some(
-        ([key, layout]) =>
-          key.startsWith(`${serverId}:project:`) &&
-          collectAllTabs(layout.root).some(
-            (entry) =>
-              entry.target.kind === "draft" &&
-              (entry.target.workspaceId?.trim() === candidateId ||
-                (!entry.target.workspaceId && key === candidateLayoutKey)),
-          ),
-      );
-      if (hasOtherDraft) return;
       if (result !== "workspace-empty") {
         redirectIfArchivingActiveWorkspace({
           serverId,
@@ -1555,6 +1525,7 @@ function WorkspaceRowWithMenu({
     workspaceId: workspace.workspaceId,
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
+    onlyIfEmpty: workspace.isUnstarted,
     ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
@@ -1714,13 +1685,13 @@ function WorkspaceRowWithMenu({
       isCreating={isCreating}
       dragHandleProps={dragHandleProps}
       menuController={null}
-      archiveLabel={t("sidebar.workspace.actions.archive")}
+      archiveLabel={t(workspace.isUnstarted ? "sidebar.workspace.actions.removeUnused" : "sidebar.workspace.actions.archive")}
       archiveStatus={isArchiving ? "pending" : "idle"}
       archivePendingLabel={t("sidebar.workspace.actions.archiving")}
       onArchive={handleArchive}
       onFork={canFork ? handleFork : undefined}
       forkPending={isForking}
-      onDelete={handleDelete}
+      onDelete={workspace.isUnstarted ? undefined : handleDelete}
       deleteStatus={isDeleting ? "pending" : "idle"}
       deletePendingLabel={t("sidebar.workspace.actions.deleting")}
       onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}

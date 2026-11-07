@@ -1376,6 +1376,7 @@ export const zhCN: TranslationResources = {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
+        unstarted: "未开始对话",
       },
       actions: {
         menu: "工作区操作",
@@ -1392,6 +1393,7 @@ export const zhCN: TranslationResources = {
         unpin: "取消置顶",
         archive: "归档",
         archiveWorkspace: "归档工作区",
+        removeUnused: "回收空工作区",
         hideFromSidebar: "从侧边栏隐藏",
         archiving: "正在归档...",
         delete: "删除",
@@ -1435,7 +1437,7 @@ export const zhCN: TranslationResources = {
         hideFailed: "隐藏工作区失败",
         archiveFailed: "归档工作区失败",
         emptyArchiveFailed:
-          "未能回收空工作区：{{reason}}。工作区已保留在侧栏，可重新打开并关闭空白标签页以重试。",
+          "未能回收空工作区：{{reason}}。工作区已保留在侧栏，可使用“回收空工作区”重试。",
         updateHostToArchiveEmpty: "请更新主机，以安全回收未使用的工作区",
         deleteFailed: "删除工作区失败",
       },

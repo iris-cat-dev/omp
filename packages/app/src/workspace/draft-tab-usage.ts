@@ -5,6 +5,7 @@ import {
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
+import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
 /** Whether removing a draft tab would drop a pending submission, typed text, or attachments. */
 export function isDraftTabInUse(input: {
@@ -14,6 +15,12 @@ export function isDraftTabInUse(input: {
 }): boolean {
   const pending = useCreateFlowStore.getState().pendingByDraftId[input.draftId];
   if (pending?.serverId === input.serverId) {
+    return true;
+  }
+  if (
+    useWorkspaceDraftSubmissionStore.getState().pendingByDraftId[input.draftId]?.serverId ===
+    input.serverId
+  ) {
     return true;
   }
   const draft = useDraftStore.getState().getDraftInput(

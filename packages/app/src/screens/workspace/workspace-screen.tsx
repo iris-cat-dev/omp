@@ -89,7 +89,10 @@ import type {
 } from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
-import { resolveClosedTabWorkspaceArchives } from "@/workspace-tabs/close-cleanup";
+import {
+  closeWorkspaceDraftTab,
+  resolveClosedTabWorkspaceArchives,
+} from "@/workspace-tabs/close-cleanup";
 import { isWorkspaceSidePanelToolTarget } from "@/workspace-tabs/side-panel-target";
 import { useVisibleAgentIds } from "./visible-agent-ids";
 import {
@@ -1799,7 +1802,15 @@ function WorkspaceScreenContent({
             .setHidden(persistenceKey, input.target.terminalId, true);
         }
       }
-      const closeResult = closeWorkspaceTab(persistenceKey, normalizedTabId);
+      const closeResult =
+        closingTarget?.kind === "draft"
+          ? closeWorkspaceDraftTab({
+              serverId: normalizedServerId,
+              workspaceKey: persistenceKey,
+              tabId: normalizedTabId,
+            })
+          : closeWorkspaceTab(persistenceKey, normalizedTabId);
+      if (!closeResult) return;
       const routeWorkspaceEmpty = closeResult === "workspace-empty";
       const closedDraftId = closingTarget?.kind === "draft" ? closingTarget.draftId : undefined;
       resolveClosedTabWorkspaceArchives({
@@ -1816,6 +1827,7 @@ function WorkspaceScreenContent({
           closedDraftId,
           hasPendingTerminalCreate:
             createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
+          preserveDrafts: true,
         }).catch((error: unknown) => {
           console.error("[WorkspaceScreen] Failed to archive empty workspace", {
             error,

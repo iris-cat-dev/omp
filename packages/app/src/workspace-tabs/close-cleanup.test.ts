@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveClosedTabWorkspaceArchives } from "@/workspace-tabs/close-cleanup";
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
+}));
 
 describe("closed tab workspace cleanup", () => {
   it("archives a cross-workspace draft without archiving its non-empty tab host", () => {

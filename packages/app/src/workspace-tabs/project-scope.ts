@@ -543,8 +543,8 @@ export function ensureProjectLayoutsMigrated(
     serverId,
     layouts: result.layouts,
     workspaces: session.workspaces,
-    // Optimistic archives hide the record before the request completes and may
-    // restore it on failure; their drafts must survive that window.
+    // Directory events can arrive before archive/recovery responses. Keep the
+    // owner's tabs until the local operation has resolved.
     preservedWorkspaceIds,
   });
   const recoveredLayouts = recoverOrphanedProjectToolBindings({

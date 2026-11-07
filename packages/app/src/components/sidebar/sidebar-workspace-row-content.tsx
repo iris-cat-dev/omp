@@ -1,4 +1,6 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { Text, View, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { CircleAlert, Folder, FolderGit2, Monitor, Pin } from "lucide-react-native";
@@ -136,6 +138,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   rename?: SidebarWorkspaceRename;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
@@ -182,13 +185,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               <SidebarWorkspaceInlineRename workspaceKey={workspace.workspaceKey} rename={rename} />
             ) : (
               <Text style={workspaceTitleTextStyle} numberOfLines={1}>
-                {workspace.name}
+                {resolveSidebarWorkspacePrimaryLabel(workspace, t("sidebar.workspace.status.unstarted"))}
               </Text>
             )}
             {!rename ? <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View> : null}
           </View>
           <WorkspaceMetaRow
-            currentBranch={null}
+            currentBranch={workspace.isUnstarted ? workspace.currentBranch : null}
             projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
