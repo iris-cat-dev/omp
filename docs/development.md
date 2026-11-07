@@ -138,6 +138,32 @@ prerequisite, with no scanner fallback or host startup. Tests may select their
 independent built stage through `OMP_DESKTOP_TEST_SDK_ROOT`; production environment
 sanitization remains unchanged.
 
+The daemon retains at most an estimated 32 MiB of reloadable **closed-session**
+timeline bodies. Closing/recovering a session checks the native journal header
+and selected cold reader before admitting that history to the budget; oldest
+closed entries are evicted first. Resuming removes an entry from this cache and
+rehydrates evicted history through the existing provider path. Active timelines,
+memory-only sessions, missing/malformed journals and unavailable readers remain
+pinned rather than losing the only copy. This is not a hard RSS/heap limit for
+running conversations, and the optional `durableTimelineStore` is not assumed
+to be configured by production bootstrap. Tests may lower
+`closedTimelineCacheBytes` without changing the production budget.
+
+On Windows/macOS, native recursive file observation coalesces queued
+classifications by path and admits at most eight `stat` calls concurrently.
+Classification overflow requests a full audit instead of silently forgetting
+changes. Scans, inventory diffs, subtree removal and inventory merging yield
+every 512 entries; ignore-generation changes and shutdown fence delayed work.
+Subtree removal follows the directory index instead of rescanning every tracked
+file for each deleted child, and scoped diffs no longer copy the whole matching
+file set. Safety audits and the 250,000-entry observation limit remain enabled.
+
+The Windows real-filesystem smoke covered 6,000 files through full initial
+inventory, every rename create/delete pair, every subtree deletion, and empty
+inventory after unsubscribe. Its 10 ms event-loop probe observed a maximum
+34.8 ms gap on this machine; this is not a long-duration or multi-repository
+latency guarantee.
+
 The activity tool reads the full canonical history before applying its projected
 summary limit, preserving total counts and whole merged messages. Archived and
 unarchived unloaded conversations follow the same read-only path; unavailable

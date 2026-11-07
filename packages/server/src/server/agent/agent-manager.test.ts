@@ -1,7 +1,14 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -55,7 +62,11 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { streamOmpHistory, streamOmpSubagentHistory } from "./providers/omp/history.js";
+import {
+  readOmpHistoryPage,
+  streamOmpHistory,
+  streamOmpSubagentHistory,
+} from "./providers/omp/history.js";
 import { ompHistoryRuntimeSettings } from "./providers/omp/test-utils/history-sdk.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
@@ -12707,3 +12718,98 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });
+
+test.each(["reloadable", "missing"] as const)(
+  "closed timeline budget preserves %s native history on the next resume",
+  async (availability) => {
+    const workdir = mkdtempSync(join(tmpdir(), "closed-timeline-cache-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const sessionFile = join(workdir, "session.jsonl");
+    const header = { type: "session", id: "cache-session", cwd: workdir };
+    const user = {
+      type: "message",
+      id: "user-1",
+      parentId: "cache-session",
+      message: { role: "user", content: [{ type: "text", text: "keep my task" }] },
+    };
+    const answer = {
+      type: "message",
+      id: "answer-1",
+      parentId: "user-1",
+      message: { role: "assistant", content: [{ type: "text", text: "saved answer" }] },
+    };
+    writeFileSync(
+      sessionFile,
+      [header, user, answer].map((row) => JSON.stringify(row)).join("\n") + "\n",
+    );
+    class NativeSession extends TestAgentSession {
+      override describePersistence() {
+        return { ...super.describePersistence(), nativeHandle: sessionFile };
+      }
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield* streamOmpHistory({
+          sessionFile,
+          provider: "codex",
+          runtimeSettings: ompHistoryRuntimeSettings,
+        });
+      }
+    }
+    class NativeClient extends TestAgentClient {
+      readHistoryPage: NonNullable<AgentClient["readHistoryPage"]> = (input) =>
+        readOmpHistoryPage({ ...input, runtimeSettings: ompHistoryRuntimeSettings });
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new NativeSession(config);
+      }
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new NativeSession({ provider: "codex", cwd: workdir, ...config });
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new NativeClient() },
+      registry: storage,
+      closedTimelineCacheBytes: 1,
+      logger,
+    });
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      const before = manager.getTimeline(agent.id);
+      expect(before).toEqual([
+        expect.objectContaining({ type: "user_message", text: "keep my task" }),
+        expect.objectContaining({ type: "assistant_message", text: "saved answer" }),
+      ]);
+      if (availability === "missing") rmSync(sessionFile);
+      await manager.closeAgent(agent.id);
+      if (availability === "reloadable") {
+        appendFileSync(
+          sessionFile,
+          JSON.stringify({
+            type: "message",
+            id: "later-answer",
+            parentId: "answer-1",
+            message: { role: "assistant", content: [{ type: "text", text: "saved while closed" }] },
+          }) + "\n",
+        );
+      }
+      await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+      const resumed = manager.getTimeline(agent.id);
+      expect(resumed.slice(0, 2)).toEqual(before);
+      if (availability === "reloadable") {
+        expect(resumed[2]).toMatchObject({ type: "assistant_message", text: "saved while closed" });
+      } else {
+        expect(resumed).toEqual(before);
+      }
+    } finally {
+      manager.prepareForShutdown();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

@@ -59,6 +59,23 @@ interface AgentTimelineState {
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
+function estimateResidentBytes(value: unknown): number {
+  if (typeof value === "string") return 24 + value.length * 2;
+  if (typeof value !== "object" || value === null) return 8;
+  if (Array.isArray(value)) {
+    let bytes = 48;
+    for (const item of value) bytes += 8 + estimateResidentBytes(item);
+    return bytes;
+  }
+  let bytes = 64;
+  for (const key in value) {
+    if (Object.hasOwn(value, key)) {
+      bytes += key.length * 2 + 16 + estimateResidentBytes((value as Record<string, unknown>)[key]);
+    }
+  }
+  return bytes;
+}
+
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
 }
@@ -318,6 +335,16 @@ export class InMemoryAgentTimelineStore {
 
   delete(agentId: string): void {
     this.states.delete(agentId);
+  }
+
+  getRetainedBytes(agentId: string): number {
+    const state = this.requireState(agentId);
+    let bytes = estimateResidentBytes(state.rows);
+    for (const context of state.contextsAtBoundary.values())
+      bytes += estimateResidentBytes(context);
+    for (const context of state.pendingToolContexts.values())
+      bytes += estimateResidentBytes(context);
+    return bytes;
   }
 
   getItems(agentId: string): AgentTimelineItem[] {

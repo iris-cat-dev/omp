@@ -95,6 +95,7 @@ import { isSystemInjectedEnvelope, restorePromptSource } from "./agent-prompt.js
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
+import { inspectOmpSessionHistoryAvailability } from "./providers/omp/session-descriptor.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -105,6 +106,7 @@ const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 15_000;
 const IDLE_RUNTIME_TIMEOUT_MS = 5 * 60_000;
 const IDLE_RUNTIME_RECHECK_MS = 30_000;
+const CLOSED_TIMELINE_CACHE_BYTES = 32 * 1024 * 1024;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -343,6 +345,8 @@ export interface AgentManagerOptions {
   agentStreamCoalesceWindowMs?: number;
   /** OMP runtime inactivity timeout; zero disables automatic retirement. */
   idleRuntimeTimeoutMs?: number;
+  /** Reloadable closed timelines only; active and memory-only sessions stay pinned. */
+  closedTimelineCacheBytes?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
     agentId: string;
@@ -765,6 +769,8 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly closedTimelineCache = new Map<string, number>();
+  private readonly closedTimelineCacheBytes: number;
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly providerSubagentHistory = new WeakMap<AgentSession, Promise<void>>();
   private readonly providerSubagentReplayEvents = new Map<string, AgentStreamEvent[]>();
@@ -816,8 +822,9 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
+    this.registry = options.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
+    this.closedTimelineCacheBytes = options.closedTimelineCacheBytes ?? CLOSED_TIMELINE_CACHE_BYTES;
     this.idleRuntimeTimeoutMs = options.idleRuntimeTimeoutMs ?? IDLE_RUNTIME_TIMEOUT_MS;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1888,6 +1895,7 @@ export class AgentManager {
       const closed = this.prepareAgentForClosure(agent, "target runtime recovered");
       await this.persistSnapshot(closed);
       this.emitClosedAgent(closed, { persist: false });
+      await this.retainClosedTimeline(closed);
       this.recoveryBlockedAgentIds.delete(agentId);
     })();
     this.inFlightAgentCloses.set(agentId, recovery);
@@ -1992,6 +2000,7 @@ export class AgentManager {
       if (persistError !== undefined) throw persistError;
       this.recoveryBlockedAgentIds.delete(agentId);
       if (mode !== "close") this.discardRetainedAgentState(agentId);
+      else await this.retainClosedTimeline(closedAgent);
     } finally {
       for (let index = cancelUnloads.length - 1; index >= 0; index--) cancelUnloads[index]!();
     }
@@ -4526,6 +4535,7 @@ export class AgentManager {
       | undefined;
   }): Promise<{ durableTimelineHasRows: boolean }> {
     const { agentId, now, options } = params;
+    this.closedTimelineCache.delete(agentId);
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
     const shouldSeedFromDurable =
@@ -4683,10 +4693,41 @@ export class AgentManager {
   }
 
   private discardRetainedAgentState(agentId: string): void {
+    this.closedTimelineCache.delete(agentId);
     this.timelineStore.delete(agentId);
     this.pendingPromptSources.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
+    }
+  }
+
+  private async retainClosedTimeline(agent: ManagedAgentClosed): Promise<void> {
+    const nativeHandle = agent.persistence?.nativeHandle;
+    if (
+      !this.registry ||
+      agent.internal ||
+      !["omp", "pi", "codex"].includes(agent.provider) ||
+      !nativeHandle ||
+      !this.clients.get(agent.provider)?.readHistoryPage ||
+      !this.timelineStore.has(agent.id)
+    )
+      return;
+    // Do not evict the only remaining copy if its native journal disappeared.
+    try {
+      if ((await inspectOmpSessionHistoryAvailability(nativeHandle)).status !== "available") return;
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Retaining unavailable closed history");
+      return;
+    }
+    if (this.agents.has(agent.id) || !this.timelineStore.has(agent.id)) return;
+    this.closedTimelineCache.delete(agent.id);
+    this.closedTimelineCache.set(agent.id, this.timelineStore.getRetainedBytes(agent.id));
+    let bytes = 0;
+    for (const size of this.closedTimelineCache.values()) bytes += size;
+    for (const [id, size] of this.closedTimelineCache) {
+      if (bytes <= this.closedTimelineCacheBytes) break;
+      this.discardRetainedAgentState(id);
+      bytes -= size;
     }
   }
 
