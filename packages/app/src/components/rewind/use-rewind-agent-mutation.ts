@@ -46,9 +46,6 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
         case "message_sync_failed":
           toast.error(t("rewind.errors.syncFailed"));
           return;
-        default:
-          toast.error(t(`rewind.errors.${fallbackKey}`));
-          return;
       }
     }
     toast.error(error instanceof Error ? error.message : t(`rewind.errors.${fallbackKey}`));

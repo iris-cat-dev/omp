@@ -2,7 +2,7 @@ import React, { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
+import { DaemonRpcError, type DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { RewindComposerRestoreProvider, useRewindComposerRestore } from "./composer-restore";
@@ -302,6 +302,37 @@ describe("rewind composer restore", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
 
     await act(async () => resolveTimelineRefresh?.());
+    queryClient.clear();
+  });
+
+  it("reports the underlying RPC failure without restoring the composer", async () => {
+    const errorMessage = "Provider 'omp' is not available";
+    rewindAgentMock.mockRejectedValue(
+      new DaemonRpcError({ requestId: "rewind-error", error: errorMessage }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <RewindMutationHarness />
+        </QueryClientProvider>,
+      ),
+    );
+    const rewindButton = container.querySelector('[data-testid="rewind"]');
+    if (!(rewindButton instanceof HTMLButtonElement)) {
+      throw new Error("Rewind button did not render");
+    }
+    await act(async () => rewindButton.click());
+    await vi.waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith(errorMessage));
+    expect(container.querySelector('[data-testid="rewind-text"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="rewind-images"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="rewind-files"]')?.textContent).toBe("");
+    expect(fetchAgentTimelineMock).not.toHaveBeenCalled();
     queryClient.clear();
   });
 });

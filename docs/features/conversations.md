@@ -26,6 +26,10 @@ Forking a completed turn from reopened OMP history reads the same persisted time
 
 Conversation rewind removes the selected prompt from the new transcript, while preserving earlier messages, images, and outline anchors. Desktop reads the new persisted active tip; the removed checkpoint is not a valid branch leaf and must not turn the retained history into an empty snapshot.
 
+Opening OMP history only reads saved messages. Explicit **Rewind** and **Resync message** actions resume the original provider session when its runtime is unloaded, then operate on the hydrated timeline. Concurrent activation requests share the existing loader; archived conversations remain inactive and reject these actions.
+
+Rewind and resync failures display the underlying runtime or provider error. Message-pending, unavailable-identity, and synchronization failures retain their localized guidance.
+
 Each prompt's rewind control stays disabled while its native message identity is synchronizing and unlocks when confirmation arrives. Earlier confirmed prompts remain rewindable during a new turn; rewind still requires confirmed cancellation of active work. If the identity cannot be located, **Resync message** retries the association without stopping work, changing history, or restoring the composer. Successful resync enables an explicit rewind; an unresolved association remains visible and retryable.
 
 If an older Desktop build stays running after the final answer, save active work, update Desktop, and restart its daemon. Updating only the bundled OMP executable does not update Desktop's RPC adapter.

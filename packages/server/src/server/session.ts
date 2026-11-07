@@ -4052,6 +4052,12 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.rewind.request" }>,
   ): Promise<void> {
     try {
+      await ensureUnarchivedAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        broadcastTimeline: true,
+        logger: this.sessionLogger,
+      });
       await this.agentManager.rewind(msg.agentId, msg.messageId, msg.mode);
       this.emit({
         type: "agent.rewind.response",
@@ -4080,6 +4086,12 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.rewind.sync.request" }>,
   ): Promise<void> {
     try {
+      await ensureUnarchivedAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        broadcastTimeline: true,
+        logger: this.sessionLogger,
+      });
       const rewindStatus = await this.agentManager.syncAgentRewindMessage(
         msg.agentId,
         msg.messageId,

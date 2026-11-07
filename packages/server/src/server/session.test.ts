@@ -27,6 +27,8 @@ import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { OmpAgentClient } from "./agent/providers/omp/agent.js";
 import { ompHistoryRuntimeSettings } from "./agent/providers/omp/test-utils/history-sdk.js";
+import { FakeRewindSession } from "./agent/rewind/test-rewind-session.js";
+import type { AgentPersistenceHandle } from "./agent/agent-sdk-types.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -1018,6 +1020,194 @@ test("returns persisted OMP history when the configured model provider was remov
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.each(["rewind", "sync"] as const)(
+  "%s activates a history-only conversation before changing its timeline",
+  async (action) => {
+    const root = mkdtempSync(join(tmpdir(), "session-history-rewind-"));
+    const sessionFile = join(root, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "session-root", parentId: null, cwd: root },
+        {
+          type: "message",
+          id: "message-1",
+          parentId: "session-root",
+          message: { role: "user", content: "before" },
+        },
+        {
+          type: "message",
+          id: "message-2",
+          parentId: "message-1",
+          message: { role: "user", content: "after" },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const logger = pino({ level: "silent" });
+    const storage = new AgentStorage(join(root, "agents"), logger);
+    const runtime = new (class extends FakeRewindSession {
+      override readonly provider = "omp";
+      override async revertConversation(input: { messageId: string }): Promise<void> {
+        const index = this.history.findIndex(
+          (item) => item.type === "user_message" && item.messageId === input.messageId,
+        );
+        if (index < 0) throw new Error("Unknown rewind checkpoint");
+        this.history = this.history.slice(0, index);
+      }
+    })();
+    runtime.history = [
+      { type: "user_message", text: "before", messageId: "message-1" },
+      { type: "user_message", text: "after", messageId: "message-2" },
+    ];
+    const resume = vi.fn(async (_handle: AgentPersistenceHandle) => runtime);
+    const manager = new AgentManager({
+      logger,
+      registry: storage,
+      clients: {
+        omp: {
+          provider: "omp",
+          capabilities: runtime.capabilities,
+          createSession: async () => {
+            throw new Error("Rewind must resume the original session");
+          },
+          resumeSession: resume,
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+          isAvailable: async () => true,
+        },
+      },
+    });
+    const record = createStoredAgentRecord({
+      id: "11111111-1111-4111-8111-111111111194",
+      provider: "omp",
+      cwd: root,
+      persistence: { provider: "omp", sessionId: runtime.id, nativeHandle: sessionFile },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: manager.getAgent.bind(manager),
+        waitForAgentClose: manager.waitForAgentClose.bind(manager),
+        getRegisteredProviderIds: manager.getRegisteredProviderIds.bind(manager),
+        resumeAgentFromPersistence: manager.resumeAgentFromPersistence.bind(manager),
+        hydrateTimelineFromProvider: manager.hydrateTimelineFromProvider.bind(manager),
+        fetchTimeline: manager.fetchTimeline.bind(manager),
+        rewind: manager.rewind.bind(manager),
+        syncAgentRewindMessage: manager.syncAgentRewindMessage.bind(manager),
+      },
+      agentStorage: { get: storage.get.bind(storage) },
+    });
+    try {
+      await storage.upsert(record);
+      await session.handleMessage({
+        type: "fetch_agent_timeline_request",
+        agentId: record.id,
+        requestId: "history-before-rewind",
+        direction: "tail",
+      });
+      const history = messages.find((message) => message.type === "fetch_agent_timeline_response");
+      expect(history?.payload).toMatchObject({
+        error: null,
+        entries: [
+          { item: { type: "user_message", text: "before" } },
+          { item: { type: "user_message", text: "after" } },
+        ],
+      });
+      expect(manager.getAgent(record.id)).toBeNull();
+      expect(resume).not.toHaveBeenCalled();
+
+      if (action === "sync") {
+        await session.handleMessage({
+          type: "agent.rewind.sync.request",
+          agentId: record.id,
+          messageId: "message-2",
+          requestId: "history-sync",
+        });
+        expect(messages).toContainEqual({
+          type: "agent.rewind.sync.response",
+          payload: {
+            requestId: "history-sync",
+            agentId: record.id,
+            ok: true,
+            rewindStatus: "ready",
+            error: null,
+          },
+        });
+        expect(manager.fetchTimeline(record.id, { limit: 0 }).rows.map((row) => row.item)).toEqual(
+          runtime.history,
+        );
+      }
+      await session.handleMessage({
+        type: "agent.rewind.request",
+        agentId: record.id,
+        messageId: "message-2",
+        mode: "conversation",
+        requestId: "history-rewind",
+      });
+      expect(messages).toContainEqual({
+        type: "agent.rewind.response",
+        payload: { requestId: "history-rewind", agentId: record.id, ok: true, error: null },
+      });
+      expect(manager.fetchTimeline(record.id, { limit: 0 }).rows.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "before", messageId: "message-1" },
+      ]);
+      expect(resume).toHaveBeenCalledOnce();
+      expect(resume.mock.calls[0]?.[0]).toMatchObject(record.persistence);
+    } finally {
+      await session.cleanup();
+      if (manager.getAgent(record.id)) await manager.closeAgent(record.id);
+      await storage.flush();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["agent.rewind.request", "agent.rewind.sync.request"] as const)(
+  "%s leaves archived history inactive and unchanged",
+  async (type) => {
+    const record = createStoredAgentRecord({
+      id: "11111111-1111-4111-8111-111111111195",
+      provider: "omp",
+      archivedAt: "2026-11-03T00:00:00.000Z",
+      persistence: { provider: "omp", sessionId: "archived-history" },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const resume = vi.fn();
+    const rewind = vi.fn();
+    const sync = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: () => null,
+        resumeAgentFromPersistence: resume,
+        rewind,
+        syncAgentRewindMessage: sync,
+      },
+      agentStorage: { get: async () => record },
+    });
+    try {
+      await session.handleMessage({
+        type,
+        agentId: record.id,
+        messageId: "message-1",
+        mode: "conversation",
+        requestId: "archived-rewind",
+      });
+      expect(messages).toMatchObject([
+        { payload: { ok: false, error: `Agent is archived: ${record.id}` } },
+      ]);
+      expect(resume).not.toHaveBeenCalled();
+      expect(rewind).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+      expect(record.archivedAt).toBe("2026-11-03T00:00:00.000Z");
+    } finally {
+      await session.cleanup();
+    }
+  },
+);
 
 test("pages cold OMP history and indexes prompts without resuming the provider", async () => {
   const root = mkdtempSync(join(tmpdir(), "paseo-cold-omp-history-"));
