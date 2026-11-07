@@ -112,4 +112,35 @@ describe("agent activity grouping", () => {
     expect(projection.groupsByHostId.get("thought-1")?.isLoading).toBe(true);
     expect(projection.historyGroupUpdatesByHostId.has("thought-1")).toBe(true);
   });
+
+  it("groups process completions with tools but keeps ordinary custom replies visible", () => {
+    const completion: StreamItem = {
+      kind: "assistant_message",
+      id: "completion",
+      turnId: "turn-1",
+      text: "Supervised process smoke failed with exit code 1.",
+      customMessage: { customType: "launch-completion" },
+      timestamp,
+    };
+    const reply: StreamItem = {
+      ...completion,
+      id: "plugin-reply",
+      customMessage: { customType: "plugin-reply" },
+    };
+    const history = prepareAgentActivityHistory([tool("read"), completion, reply, tool("next")]);
+
+    expect(history.tail.map((item) => item.id)).toEqual(["read", "plugin-reply", "next"]);
+    expect(history.groupsByHostId.get("read")?.items).toEqual([tool("read"), completion]);
+    expect(history.groupsByHostId.get("read")?.isLoading).toBe(false);
+
+    const projection = projectAgentActivity({
+      history: prepareAgentActivityHistory([completion]),
+      head: [tool("live", "turn-1", "executing")],
+    });
+    expect(projection.head).toEqual([]);
+    expect(
+      projection.historyGroupUpdatesByHostId.get("completion")?.items.map((item) => item.id),
+    ).toEqual(["completion", "live"]);
+    expect(projection.groupsByHostId.get("completion")?.isLoading).toBe(true);
+  });
 });

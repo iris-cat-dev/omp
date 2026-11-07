@@ -94,6 +94,8 @@ Ordinary currency such as `$5 and $10` or `$ 5 and $ 10` remains prose. Inline f
 
 Collapsed activity groups display a compact theme-aware layers/count pill, updating as activity arrives. Expansion hides the pill and reveals items. Read-tool file buttons strip range selectors before opening; comma-separated selectors use the first range for preview selection. Expanded tools with no additional details show a compact centered hint with regular secondary text and consistent light/dark padding.
 
+OMP supervised-process completion notifications use the same collapsible rows as tools, with the process name, localized status, and exit code when supplied. Adjacent notifications, reasoning, and tools share a **Thinking and tool calls** group. Expand a process row to inspect its exit details; records without recognized process metadata retain their complete original notification in the expandable detail. These notifications do not become assistant-response footer anchors.
+
 Native plugin custom replies preserve original punctuation and do not complete a turn; see [Plugin management](tools-and-plugins.md#native-extension-replies-and-commands).
 
 ## Turn statistics

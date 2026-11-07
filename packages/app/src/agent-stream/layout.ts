@@ -3,6 +3,7 @@ import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
 import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
+import { isLaunchCompletionItem } from "./launch-completion";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -113,7 +114,7 @@ function findLatestAssistantInResponse(input: {
       if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return null;
       }
-      if (item.kind === "assistant_message") {
+      if (item.kind === "assistant_message" && !isLaunchCompletionItem(item)) {
         return { item, items, index };
       }
       laterItem = item;
@@ -198,10 +199,13 @@ function resolveCompletedFooter(input: {
   });
 }
 
-function isToolSequenceItem(
-  item: StreamItem | null,
-): item is Extract<StreamItem, { kind: "tool_call" | "thought" | "todo_list" }> {
-  return item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
+function isToolSequenceItem(item: StreamItem | null): boolean {
+  return (
+    item?.kind === "tool_call" ||
+    item?.kind === "thought" ||
+    item?.kind === "todo_list" ||
+    isLaunchCompletionItem(item)
+  );
 }
 
 function getToolSequence(input: {

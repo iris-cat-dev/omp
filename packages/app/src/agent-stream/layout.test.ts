@@ -151,6 +151,25 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
+  it.each(["web", "android"] as const)(
+    "keeps process notifications in the tool sequence without making them response footers on %s",
+    (platform) => {
+      const completion: StreamItem = {
+        ...assistantMessage("completion", 3),
+        customMessage: { customType: "launch-completion" },
+      };
+      const layout = layoutFor({
+        platform,
+        tail: [assistantMessage("answer", 1), toolCall("tool", 2), completion],
+      });
+
+      expect(footerAssistantIds(layout)).toEqual(["answer"]);
+      expect(findLayoutItem(layout, "completion").toolSequence).toBe("last");
+      expect(findLayoutItem(layout, "tool").gapBelow).toBe(0);
+      expect(footerAssistantIds(layoutFor({ platform, tail: [completion] }))).toEqual([]);
+    },
+  );
+
   it("places one response footer after an adjacent tagged tool-only turn", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const nextTool = toolCall("next-tool", 2, "turn-2");

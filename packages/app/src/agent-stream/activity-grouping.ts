@@ -1,8 +1,11 @@
 import type { StreamItem } from "@/types/stream";
 import { describeToolCall, hasInlineImagePreview } from "@/tool-calls/detail-level/grouping";
 import { continuesTurn } from "./turn-membership";
+import { isLaunchCompletionItem, type LaunchCompletionItem } from "./launch-completion";
 
-export type AgentActivityItem = Extract<StreamItem, { kind: "thought" | "tool_call" }>;
+export type AgentActivityItem =
+  | Extract<StreamItem, { kind: "thought" | "tool_call" }>
+  | LaunchCompletionItem;
 
 export interface AgentActivityGroup {
   id: string;
@@ -29,13 +32,14 @@ function isAgentActivityItem(item: StreamItem): item is AgentActivityItem {
   if (item.kind === "tool_call" && hasInlineImagePreview(describeToolCall(item).detail)) {
     return false;
   }
-  return item.kind === "thought" || item.kind === "tool_call";
+  return item.kind === "thought" || item.kind === "tool_call" || isLaunchCompletionItem(item);
 }
 
 function isActivityRunning(item: AgentActivityItem): boolean {
   if (item.kind === "thought") {
     return item.status !== "ready";
   }
+  if (item.kind === "assistant_message") return false;
   const status = describeToolCall(item).status;
   return status === "executing" || status === "running";
 }

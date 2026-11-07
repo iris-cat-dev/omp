@@ -1,5 +1,6 @@
 import type { StreamItem } from "@/types/stream";
 import { SPACING } from "@/styles/theme";
+import { isLaunchCompletionItem } from "./launch-completion";
 
 export function isSameAssistantBlockGroup(params: {
   item: StreamItem | null | undefined;
@@ -34,7 +35,10 @@ export function getAssistantBlockSpacing(params: {
 
 const isUserMessageItem = (item?: StreamItem | null) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem | null) =>
-  item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
+  item?.kind === "tool_call" ||
+  item?.kind === "thought" ||
+  item?.kind === "todo_list" ||
+  isLaunchCompletionItem(item);
 
 export function getGapBetweenStreamItems(
   item: StreamItem | null,
@@ -47,7 +51,11 @@ export function getGapBetweenStreamItems(
   if (isUserMessageItem(item) && isUserMessageItem(belowItem)) {
     return SPACING[1];
   }
-  if (item.kind === "user_message" && belowItem.kind === "assistant_message") {
+  if (
+    item.kind === "user_message" &&
+    belowItem.kind === "assistant_message" &&
+    !isToolSequenceItem(belowItem)
+  ) {
     return 0;
   }
   if (isToolSequenceItem(item) && isToolSequenceItem(belowItem)) {

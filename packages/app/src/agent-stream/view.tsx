@@ -116,6 +116,8 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { placePlanPermissions } from "./plan-permission-placement";
 import { collectDuplicateToolImagePreviewIds } from "./tool-image-previews";
+import { isLaunchCompletionItem } from "./launch-completion";
+import { LaunchCompletionView } from "./launch-completion-view";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -854,6 +856,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        if (isLaunchCompletionItem(item)) {
+          return (
+            <LaunchCompletionView item={item} isLastInSequence={layoutItem.isLastInToolSequence} />
+          );
+        }
         const isPlan = item.presentation === "plan";
         const message = (
           <AssistantMessage
@@ -1058,7 +1065,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     <React.Fragment key={activityItem.id}>
                       {activityItem.kind === "thought"
                         ? renderThoughtItem(childLayoutItem, activityItem)
-                        : renderToolCallItem(childLayoutItem, activityItem)}
+                        : activityItem.kind === "tool_call"
+                          ? renderToolCallItem(childLayoutItem, activityItem)
+                          : renderAssistantMessageItem(childLayoutItem, activityItem)}
                     </React.Fragment>
                   );
                 })
@@ -1066,7 +1075,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AgentActivityGroupView>
         );
       },
-      [expandedActivityGroupIds, renderThoughtItem, renderToolCallItem, setActivityGroupExpanded],
+      [
+        expandedActivityGroupIds,
+        renderThoughtItem,
+        renderToolCallItem,
+        renderAssistantMessageItem,
+        setActivityGroupExpanded,
+      ],
     );
 
     const renderStreamItemContent = useCallback(
