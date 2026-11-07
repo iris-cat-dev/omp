@@ -311,7 +311,9 @@ The Electron language allowlists retain all nine application languages and commo
 
 Desktop updates use the public [`iris-cat-dev/omp-desktop` GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases) feed. The app checks its configured Stable or Beta channel at startup, downloads a newer package in the background, verifies the SHA-512 value from electron-builder's update metadata, and installs it when the user chooses **Install & restart** or next quits the app.
 
-Every release must upload the updater metadata and payloads generated from the same build:
+Updates are upgrade-only, including when switching between Stable and Beta. Releases with the same or a lower semantic version are not downloaded or offered for installation.
+
+A Git tag alone does not publish an update. Stable checks use GitHub's latest published production release. Every release must upload the updater metadata and payloads generated from the same build:
 
 | Target                  | Required release assets                                                                                                                |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |

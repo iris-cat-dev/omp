@@ -52,6 +52,8 @@ function configureUpdater(releaseChannel: AppReleaseChannel): void {
 
   autoUpdater.allowPrerelease = releaseChannel === "beta";
   autoUpdater.channel = releaseChannel === "beta" ? "beta" : "latest";
+  // Setting channel enables downgrades in electron-updater; every check must remain upgrade-only.
+  autoUpdater.allowDowngrade = false;
 }
 
 function runUpdateOperation<T>(operation: () => Promise<T>): Promise<T> {
