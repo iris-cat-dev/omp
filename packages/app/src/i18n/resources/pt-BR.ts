@@ -1721,6 +1721,13 @@ export const ptBR: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "Mais usados",
+    deleteUsageRecord: "Excluir registro de uso de {{model}}",
+    usageCount: "{{count}}×",
+    thinkingUnsupported: "Raciocínio não compatível",
+    speedUnsupported: "Velocidade não compatível",
+    historyUnavailable:
+      "Este nível de raciocínio ou velocidade não está mais disponível. Escolha novas configurações.",
     title: "Selecionar provedor",
     selectModel: "Selecionar modelo",
     selectedModel: "Selecionar modelo ({{model}})",

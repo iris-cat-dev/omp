@@ -1695,6 +1695,13 @@ export const ko: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "자주 사용하는 조합",
+    deleteUsageRecord: "{{model}} 사용 기록 삭제",
+    usageCount: "{{count}}회",
+    thinkingUnsupported: "사고 수준 미지원",
+    speedUnsupported: "속도 설정 미지원",
+    historyUnavailable:
+      "이 사고 수준 또는 속도를 더 이상 사용할 수 없습니다. 설정을 다시 선택하세요.",
     title: "프로바이더 선택",
     selectModel: "모델 선택",
     selectedModel: "모델 선택 ({{model}})",

@@ -1794,6 +1794,12 @@ export const en = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "Frequently used",
+    deleteUsageRecord: "Delete usage record for {{model}}",
+    usageCount: "{{count}}×",
+    thinkingUnsupported: "Thinking unavailable",
+    speedUnsupported: "Speed unavailable",
+    historyUnavailable: "This thinking level or speed is no longer available. Choose new settings.",
     title: "Select provider",
     selectModel: "Select model",
     selectedModel: "Select model ({{model}})",

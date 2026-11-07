@@ -1,17 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
+import { useCallback, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
   Platform,
-  Pressable,
   ScrollView,
   Text,
   View,
-  type AccessibilityActionEvent,
-  type GestureResponderEvent,
   type PressableStateCallbackType,
-  type StyleProp,
-  type ViewStyle,
 } from "react-native";
 import { BottomSheetFlatList, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -42,6 +37,12 @@ import {
   type ModelBrowserView,
 } from "@/components/model-browser-view";
 import { isModelBrowserRowSelected } from "@/composer/agent-controls/model-sheet-flow";
+import {
+  IndependentScrollGestureContext,
+  ModelBrowserPressable,
+  ModelUsageHistory,
+  type ModelUsageHistoryProps,
+} from "@/components/model-usage-history";
 
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 560;
@@ -54,10 +55,6 @@ const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedSearch = withUnistyles(Search);
 const accentMapping = (theme: Theme) => ({ color: theme.colors.accent });
-
-const IndependentScrollGestureContext = createContext<ReturnType<typeof Gesture.Native> | null>(
-  null,
-);
 
 const foregroundMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -101,6 +98,7 @@ interface ModelBrowserProps {
   searchAllOnFocus?: boolean;
   /** Replaces provider rows only while the all-provider search is empty. */
   rootBrowseContent?: React.ReactNode;
+  history?: ModelUsageHistoryProps;
 }
 
 interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
@@ -305,106 +303,6 @@ function normalizeSearchQuery(value: string): string {
   return value.trim().toLowerCase();
 }
 
-interface ModelBrowserPressableProps {
-  children: React.ReactNode | ((state: PressableStateCallbackType) => React.ReactNode);
-  style?:
-    | StyleProp<ViewStyle>
-    | ((state: PressableStateCallbackType & { hovered?: boolean }) => StyleProp<ViewStyle>);
-  onPress: () => void;
-  hitSlop?: number;
-  accessibilityLabel?: string;
-  /** Only rows that can express selection pass this; the rest stay unannotated. */
-  accessibilitySelected?: boolean;
-  testID?: string;
-}
-
-function ModelBrowserPressable({
-  children,
-  style,
-  onPress,
-  hitSlop,
-  accessibilityLabel,
-  accessibilitySelected,
-  testID,
-}: ModelBrowserPressableProps) {
-  const independentScrollGesture = useContext(IndependentScrollGestureContext);
-  const [pressed, setPressed] = useState(false);
-  // Android's scroll handler must keep the pointer stream until release so a
-  // fling survives leaving the short viewport. A simultaneous Tap keeps rows
-  // interactive, while maxDistance makes a real scroll fail instead of select.
-  const tapGesture = useMemo(() => {
-    const gesture = Gesture.Tap()
-      .maxDistance(8)
-      .shouldCancelWhenOutside(true)
-      .runOnJS(true)
-      .onBegin(() => setPressed(true))
-      .onEnd((_event, success) => {
-        if (success) onPress();
-      })
-      .onFinalize(() => setPressed(false));
-    if (hitSlop !== undefined) gesture.hitSlop(hitSlop);
-    if (independentScrollGesture) {
-      gesture.simultaneousWithExternalGesture(independentScrollGesture);
-    }
-    return gesture;
-  }, [hitSlop, independentScrollGesture, onPress]);
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onPress();
-    },
-    [onPress],
-  );
-  const handleAccessibilityAction = useCallback(
-    (event: AccessibilityActionEvent) => {
-      if (event.nativeEvent.actionName === "activate") onPress();
-    },
-    [onPress],
-  );
-  const accessibilityState = useMemo(
-    () => (accessibilitySelected === undefined ? undefined : { selected: accessibilitySelected }),
-    [accessibilitySelected],
-  );
-
-  if (!independentScrollGesture) {
-    return (
-      <Pressable
-        onPress={handlePress}
-        hitSlop={hitSlop}
-        style={style}
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-        accessibilityState={accessibilityState}
-        aria-selected={accessibilitySelected}
-        testID={testID}
-      >
-        {children}
-      </Pressable>
-    );
-  }
-
-  const state = { pressed };
-  const resolvedStyle = typeof style === "function" ? style(state) : style;
-  const resolvedChildren = typeof children === "function" ? children(state) : children;
-  return (
-    <GestureDetector gesture={tapGesture}>
-      <View
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-        accessibilityState={accessibilityState}
-        aria-selected={accessibilitySelected}
-        accessibilityActions={[{ name: "activate" }]}
-        onAccessibilityAction={handleAccessibilityAction}
-        style={resolvedStyle}
-        testID={testID}
-      >
-        {resolvedChildren}
-      </View>
-    </GestureDetector>
-  );
-}
-
 function ModelBrowserRow({
   label,
   leadingSlot,
@@ -447,11 +345,13 @@ function ModelRow({
   isSelected,
   showProviderLabel = false,
   onPress,
+  disabled = false,
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
   showProviderLabel?: boolean;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : undefined;
   const contextWindowLabel =
@@ -471,6 +371,7 @@ function ModelRow({
       onPress={onPress}
       style={pressableStyle}
       accessibilitySelected={isSelected}
+      accessibilityDisabled={disabled}
       testID={`model-row-${row.provider}-${row.modelId}`}
     >
       <View style={styles.browserRowContent}>
@@ -500,21 +401,24 @@ function SelectableModelRow({
   isSelected,
   showProviderLabel,
   onSelect,
+  disabled = false,
 }: {
   row: ProviderSelectionModelRow;
   isSelected: boolean;
   showProviderLabel?: boolean;
   onSelect: (provider: string, modelId: string) => void;
+  disabled?: boolean;
 }) {
   const handlePress = useCallback(() => {
-    onSelect(row.provider, row.modelId);
-  }, [onSelect, row.modelId, row.provider]);
+    if (!disabled) onSelect(row.provider, row.modelId);
+  }, [disabled, onSelect, row.modelId, row.provider]);
   return (
     <ModelRow
       row={row}
       isSelected={isSelected}
       showProviderLabel={showProviderLabel}
       onPress={handlePress}
+      disabled={disabled}
     />
   );
 }
@@ -696,6 +600,7 @@ function ModelRowList({
   showProviderLabel = false,
   header,
   scrolling,
+  disabled = false,
 }: {
   rows: ProviderSelectionModelRow[];
   selectedProvider: string;
@@ -704,6 +609,7 @@ function ModelRowList({
   showProviderLabel?: boolean;
   header?: React.ReactElement;
   scrolling: "sheet" | "independent";
+  disabled?: boolean;
 }) {
   const isCompact = useIsCompactFormFactor();
   const renderItem = useCallback(
@@ -718,9 +624,10 @@ function ModelRowList({
         )}
         showProviderLabel={showProviderLabel}
         onSelect={onSelect}
+        disabled={disabled}
       />
     ),
-    [onSelect, selectedModel, selectedProvider, showProviderLabel],
+    [disabled, onSelect, selectedModel, selectedProvider, showProviderLabel],
   );
   const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
 
@@ -831,6 +738,8 @@ function ProviderModelBrowserContent({
   onRetryProvider,
   isRetryingProvider,
   scrolling,
+  historyHeader,
+  disabled = false,
 }: {
   view: Extract<ModelBrowserView, { kind: "provider" }>;
   provider: ProviderSelectorProvider | null;
@@ -841,6 +750,8 @@ function ProviderModelBrowserContent({
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider: boolean;
   scrolling: "sheet" | "independent";
+  historyHeader?: React.ReactElement;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   const visibleRows = useMemo(
@@ -850,16 +761,29 @@ function ProviderModelBrowserContent({
   const errorMessage =
     provider?.modelSelection.kind === "models" ? provider.modelSelection.error : undefined;
   const listHeader = useMemo(
-    () =>
-      errorMessage ? (
-        <ProviderErrorNotice
-          providerId={view.providerId}
-          message={errorMessage}
-          onRetryProvider={onRetryProvider}
-          isRetryingProvider={isRetryingProvider}
-        />
-      ) : undefined,
-    [errorMessage, isRetryingProvider, onRetryProvider, view.providerId],
+    () => (
+      <View>
+        {historyHeader}
+        {errorMessage ? (
+          <ProviderErrorNotice
+            providerId={view.providerId}
+            message={errorMessage}
+            onRetryProvider={onRetryProvider}
+            isRetryingProvider={isRetryingProvider}
+          />
+        ) : null}
+      </View>
+    ),
+    [errorMessage, historyHeader, isRetryingProvider, onRetryProvider, view.providerId],
+  );
+  const emptyListHeader = useMemo(
+    () => (
+      <View>
+        {listHeader}
+        <ModelSearchEmptyState />
+      </View>
+    ),
+    [listHeader],
   );
 
   if (!provider) return <ModelSearchEmptyState />;
@@ -885,7 +809,17 @@ function ProviderModelBrowserContent({
     );
   }
   if (visibleRows.length === 0) {
-    return <ModelSearchEmptyState />;
+    return (
+      <ModelRowList
+        rows={[]}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        onSelect={onSelect}
+        disabled={disabled}
+        scrolling={scrolling}
+        header={emptyListHeader}
+      />
+    );
   }
   return (
     <ModelRowList
@@ -893,6 +827,7 @@ function ProviderModelBrowserContent({
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
       onSelect={onSelect}
+      disabled={disabled}
       header={listHeader}
       scrolling={scrolling}
     />
@@ -913,6 +848,7 @@ function ModelBrowserContent({
   scrolling,
   searchAllOnFocus,
   rootBrowseContent,
+  history,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -933,6 +869,36 @@ function ModelBrowserContent({
     [isSearchFocused, normalizedQuery, providers, searchAllOnFocus],
   );
   const hasResults = providers.length > 0 || rootBrowseContent != null;
+  const historyRows = useMemo(() => {
+    if (view.kind === "all") return getAllProviderModelRows(providers);
+    return selectedViewProvider ? getProviderModelRows(selectedViewProvider) : [];
+  }, [providers, selectedViewProvider, view.kind]);
+  const historyHeader = useMemo(
+    () =>
+      history ? (
+        <ModelUsageHistory
+          {...history}
+          rows={historyRows}
+          searchQuery={normalizedQuery}
+          showProviderLabel={view.kind === "all"}
+        />
+      ) : undefined,
+    [history, historyRows, normalizedQuery, view.kind],
+  );
+  const emptyListHeader = useMemo(
+    () => (
+      <View>
+        {historyHeader}
+        <View style={styles.emptyState} testID="model-search-empty">
+          <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+          <Text style={styles.emptyStateText}>
+            {t("modelSelector.noMatchesForQuery", { query: searchQuery.trim() })}
+          </Text>
+        </View>
+      </View>
+    ),
+    [historyHeader, searchQuery, t],
+  );
 
   if (view.kind === "provider") {
     return (
@@ -946,18 +912,23 @@ function ModelBrowserContent({
         onRetryProvider={onRetryProvider}
         isRetryingProvider={isRetryingProvider}
         scrolling={scrolling}
+        historyHeader={historyHeader}
+        disabled={history?.disabled}
       />
     );
   }
 
   if (allView.kind === "noSearchMatches") {
     return (
-      <View style={styles.emptyState} testID="model-search-empty">
-        <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
-        <Text style={styles.emptyStateText}>
-          {t("modelSelector.noMatchesForQuery", { query: searchQuery.trim() })}
-        </Text>
-      </View>
+      <ModelRowList
+        rows={[]}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        onSelect={onSelect}
+        disabled={history?.disabled}
+        scrolling={scrolling}
+        header={emptyListHeader}
+      />
     );
   }
 
@@ -968,7 +939,9 @@ function ModelBrowserContent({
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         onSelect={onSelect}
+        disabled={history?.disabled}
         showProviderLabel
+        header={historyHeader}
         scrolling={scrolling}
       />
     );
@@ -976,6 +949,7 @@ function ModelBrowserContent({
 
   const allProvidersContent = (
     <View>
+      {historyHeader}
       {rootBrowseContent ??
         (providers.length > 0 ? (
           <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
@@ -1011,6 +985,7 @@ export function ModelBrowser({
   scrolling = "sheet",
   searchAllOnFocus = false,
   rootBrowseContent,
+  history,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -1027,6 +1002,7 @@ export function ModelBrowser({
       scrolling={scrolling}
       searchAllOnFocus={searchAllOnFocus}
       rootBrowseContent={rootBrowseContent}
+      history={history}
     />
   );
 }

@@ -20,6 +20,7 @@ import {
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
+import type { ModelUsageHistoryProps } from "@/components/model-usage-history";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -43,6 +44,7 @@ interface CompactModelSheetProps {
   disabled?: boolean;
   canSwitchProvider: boolean;
   children: ReactNode;
+  history?: ModelUsageHistoryProps;
 }
 
 function shortModelLabel(label: string): string {
@@ -113,6 +115,7 @@ export function CompactModelSheet({
   disabled = false,
   canSwitchProvider,
   children,
+  history,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
@@ -254,24 +257,33 @@ export function CompactModelSheet({
     [disabled, isOpen],
   );
   const mobileRootContent = useMemo(
-    () => (
-      <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
-        <View style={styles.controlsContent}>
-          <AgentControlTrigger
-            icon={Bot}
-            surface="sheet"
-            label={t("modelSelector.model")}
-            value={displayModelLabel}
-            disabled={disabled}
-            onPress={openModelBrowser}
-            accessibilityLabel={selectedModelAccessibilityLabel}
-            testID="agent-controls-model"
-          />
-          {children}
+    () =>
+      usesBottomSheet ? (
+        <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
+          <View style={styles.controlsContent}>
+            <AgentControlTrigger
+              icon={Bot}
+              surface="sheet"
+              label={t("modelSelector.model")}
+              value={displayModelLabel}
+              disabled={disabled}
+              onPress={openModelBrowser}
+              accessibilityLabel={selectedModelAccessibilityLabel}
+              testID="agent-controls-model"
+            />
+            {children}
+          </View>
         </View>
-      </View>
-    ),
-    [children, disabled, displayModelLabel, openModelBrowser, selectedModelAccessibilityLabel, t],
+      ) : undefined,
+    [
+      children,
+      disabled,
+      displayModelLabel,
+      openModelBrowser,
+      selectedModelAccessibilityLabel,
+      t,
+      usesBottomSheet,
+    ],
   );
 
   return (
@@ -333,7 +345,8 @@ export function CompactModelSheet({
             isRetryingProvider={isRetryingProvider}
             scrolling={modelBrowserScrolling}
             searchAllOnFocus={usesBottomSheet}
-            rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
+            rootBrowseContent={mobileRootContent}
+            history={history}
           />
         </View>
         {!usesBottomSheet ? (
@@ -375,6 +388,7 @@ export function CompactModelSheet({
               isRetryingProvider={isRetryingProvider}
               scrolling={modelBrowserScrolling}
               searchAllOnFocus
+              history={history}
             />
           </View>
         </AdaptiveModalSheet>

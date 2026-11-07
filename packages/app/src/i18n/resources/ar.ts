@@ -1679,6 +1679,12 @@ export const ar: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "الأكثر استخدامًا",
+    deleteUsageRecord: "حذف سجل استخدام {{model}}",
+    usageCount: "{{count}}×",
+    thinkingUnsupported: "مستوى التفكير غير مدعوم",
+    speedUnsupported: "إعداد السرعة غير مدعوم",
+    historyUnavailable: "مستوى التفكير أو السرعة لم يعد متاحًا. اختر إعدادات جديدة.",
     title: "حدد المزود",
     selectModel: "حدد النموذج",
     selectedModel: "اختر الموديل ({{model}})",

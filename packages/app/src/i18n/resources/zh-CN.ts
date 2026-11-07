@@ -1761,6 +1761,12 @@ export const zhCN: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "常用",
+    deleteUsageRecord: "删除 {{model}} 的使用记录",
+    usageCount: "{{count}} 次",
+    thinkingUnsupported: "不支持思考强度",
+    speedUnsupported: "不支持速度设置",
+    historyUnavailable: "此组合的思考强度或速度已不可用，请重新选择设置。",
     title: "选择 provider",
     selectModel: "选择模型",
     selectedModel: "选择模型（{{model}}）",

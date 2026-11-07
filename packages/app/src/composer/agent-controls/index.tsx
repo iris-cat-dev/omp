@@ -106,6 +106,9 @@ import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
 import { ModelSettingsPanel } from "@/composer/agent-controls/model-settings-panel";
 import { partitionModelFeatures } from "@/composer/agent-controls/utils";
 import { ModelContextWindowControl } from "@/composer/agent-controls/model-context-window-control";
+import type { ModelUsageHistoryProps } from "@/components/model-usage-history";
+import type { ModelUsageSelection } from "@/stores/model-usage-store";
+import { useModelUsageHistory } from "@/composer/agent-controls/use-model-usage-history";
 
 const OMP_OAUTH_ACCOUNT_FEATURE_ID = "oauth_account_credential";
 
@@ -148,6 +151,7 @@ interface ControlledAgentControlsProps {
   thinkingOptions?: AgentControlOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
+  onApplyModelConfiguration?: (selection: ModelUsageSelection) => Promise<void>;
   disabled?: boolean;
   accountSelectionDisabled?: boolean;
   isModelLoading?: boolean;
@@ -484,6 +488,7 @@ function ControlledAgentControls({
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
+  onApplyModelConfiguration,
   disabled = false,
   accountSelectionDisabled = false,
   isModelLoading = false,
@@ -507,6 +512,7 @@ function ControlledAgentControls({
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
   const [modelSelectionPending, setModelSelectionPending] = useState(false);
+  const [modelSettingsPending, setModelSettingsPending] = useState(false);
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const initialDensity: ComposerControlDensity = isCompact ? "tight" : "full";
   const [density, setDensity] = useState<ComposerControlDensity>(initialDensity);
@@ -667,8 +673,60 @@ function ControlledAgentControls({
     [onSelectProvider],
   );
 
+  const selectHistoryModel = useCallback(
+    (nextProviderId: string, modelId: string) =>
+      pickDesktopModel({
+        nextProviderId,
+        modelId,
+        currentProvider: provider,
+        onSelectModel,
+        onSelectProviderAndModel,
+      }),
+    [onSelectModel, onSelectProviderAndModel, provider],
+  );
+  const { history, restoring, markModelSelection, markSettingsChange } = useModelUsageHistory({
+    serverId: modelSelectorServerId,
+    provider,
+    modelId: normalizedSelectedModelId,
+    thinkingOptionId: selectedThinkingOptionId,
+    thinkingOptions,
+    fastMode: partitionedFeatures.fastMode,
+    metadataStatus: featureMetadataStatus,
+    open: modelSelectorOpen,
+    pending: modelSelectionPending || modelSettingsPending || isModelLoading,
+    disabled,
+    onSelectModel: selectHistoryModel,
+    onSelectThinkingOption,
+    onSetFeature,
+    onApplyConfiguration: onApplyModelConfiguration,
+  });
+  const handleThinkingSelect = useCallback(
+    async (id: string) => {
+      markSettingsChange();
+      setModelSettingsPending(true);
+      try {
+        await onSelectThinkingOption?.(id);
+      } finally {
+        setModelSettingsPending(false);
+      }
+    },
+    [markSettingsChange, onSelectThinkingOption],
+  );
+  const handleModelFeatureChange = useCallback(
+    async (id: string, value: unknown) => {
+      markSettingsChange();
+      setModelSettingsPending(true);
+      try {
+        await onSetFeature?.(id, value);
+      } finally {
+        setModelSettingsPending(false);
+      }
+    },
+    [markSettingsChange, onSetFeature],
+  );
   const handleDesktopModelSelect = useCallback(
     async (nextProviderId: string, modelId: string) => {
+      markModelSelection(nextProviderId, modelId);
       setModelSelectionPending(true);
       try {
         await pickDesktopModel({
@@ -682,7 +740,7 @@ function ControlledAgentControls({
         setModelSelectionPending(false);
       }
     },
-    [onSelectModel, onSelectProviderAndModel, provider],
+    [markModelSelection, onSelectModel, onSelectProviderAndModel, provider],
   );
 
   const providerPressableStyle = useMemo(
@@ -708,6 +766,7 @@ function ControlledAgentControls({
 
   const handleSheetModelSelect = useCallback(
     async (nextProviderId: string, modelId: string) => {
+      markModelSelection(nextProviderId, modelId);
       setModelSelectionPending(true);
       try {
         await pickSheetModel({
@@ -722,7 +781,7 @@ function ControlledAgentControls({
         setModelSelectionPending(false);
       }
     },
-    [onSelectModel, onSelectProvider, onSelectProviderAndModel, provider],
+    [markModelSelection, onSelectModel, onSelectProvider, onSelectProviderAndModel, provider],
   );
   const hasModelSettings =
     featureMetadataStatus !== undefined ||
@@ -735,10 +794,10 @@ function ControlledAgentControls({
     <ModelSettingsPanel
       thinkingOptions={formattedThinkingOptions}
       selectedThinkingOptionId={selectedThinkingOptionId}
-      onSelectThinkingOption={onSelectThinkingOption}
+      onSelectThinkingOption={handleThinkingSelect}
       fastMode={partitionedFeatures.fastMode}
       featureMetadataStatus={featureMetadataStatus}
-      onSetFeature={onSetFeature}
+      onSetFeature={handleModelFeatureChange}
       contextControl={
         <ModelContextWindowControl
           serverId={modelSelectorServerId}
@@ -746,21 +805,21 @@ function ControlledAgentControls({
           modelId={normalizedSelectedModelId}
           catalogContextWindowMaxTokens={selectedContextWindowMaxTokens}
           enabled={modelSelectorOpen}
-          disabled={disabled || modelSelectionPending}
+          disabled={disabled || modelSelectionPending || modelSettingsPending || restoring}
         />
       }
       disabled={disabled}
-      pending={modelSelectionPending}
+      pending={modelSelectionPending || modelSettingsPending || restoring}
     />
   ) : null;
   const compactModelSettings = hasModelSettings ? (
     <ModelSettingsPanel
       thinkingOptions={formattedThinkingOptions}
       selectedThinkingOptionId={selectedThinkingOptionId}
-      onSelectThinkingOption={onSelectThinkingOption}
+      onSelectThinkingOption={handleThinkingSelect}
       fastMode={partitionedFeatures.fastMode}
       featureMetadataStatus={featureMetadataStatus}
-      onSetFeature={onSetFeature}
+      onSetFeature={handleModelFeatureChange}
       contextControl={
         <ModelContextWindowControl
           serverId={modelSelectorServerId}
@@ -768,12 +827,12 @@ function ControlledAgentControls({
           modelId={normalizedSelectedModelId}
           catalogContextWindowMaxTokens={selectedContextWindowMaxTokens}
           enabled={modelSelectorOpen}
-          disabled={disabled || modelSelectionPending}
+          disabled={disabled || modelSelectionPending || modelSettingsPending || restoring}
           compact
         />
       }
       disabled={disabled}
-      pending={modelSelectionPending}
+      pending={modelSelectionPending || modelSettingsPending || restoring}
       compact
     />
   ) : null;
@@ -810,6 +869,7 @@ function ControlledAgentControls({
             displayThinking={canSelectThinking ? displayThinking : null}
             fastModeTier={getFastModeTier(partitionedFeatures.fastMode)}
             modelSettings={desktopModelSettings}
+            modelHistory={history}
             modelSelectorOpen={modelSelectorOpen}
             openSelector={openSelector}
             providerAnchorRef={providerAnchorRef}
@@ -850,6 +910,7 @@ function ControlledAgentControls({
             displayThinking={canSelectThinking ? displayThinking : null}
             fastModeTier={getFastModeTier(partitionedFeatures.fastMode)}
             modelSettings={compactModelSettings}
+            modelHistory={history}
             handleSheetModelSelect={handleSheetModelSelect}
             handleOpenChange={handleSheetOpenChange}
             modeControl={modeControl}
@@ -885,6 +946,7 @@ interface DesktopAgentControlsContentProps {
   displayThinking: string | null;
   fastModeTier: FastModeTier | null;
   modelSettings: ReactNode;
+  modelHistory: ModelUsageHistoryProps;
   modelSelectorOpen: boolean;
   openSelector: AgentControlSelector | null;
   providerAnchorRef: RefObject<View | null>;
@@ -933,6 +995,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     displayThinking,
     fastModeTier,
     modelSettings,
+    modelHistory,
     modelSelectorOpen,
     openSelector,
     providerAnchorRef,
@@ -1037,6 +1100,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 desktopMinWidth={400}
                 toolbar={modelToolbar}
                 footer={modelSettings}
+                history={modelHistory}
                 triggerAccessory={triggerAccessory}
                 dismissOnSelect={false}
                 open={modelSelectorOpen}
@@ -1160,6 +1224,7 @@ interface SheetAgentControlsContentProps {
   displayThinking: string | null;
   fastModeTier: FastModeTier | null;
   modelSettings: ReactNode;
+  modelHistory: ModelUsageHistoryProps;
   handleSheetModelSelect: (providerId: string, modelId: string) => void | Promise<void>;
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
   modeControl?: AgentModeControlValue | null;
@@ -1188,6 +1253,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     displayThinking,
     fastModeTier,
     modelSettings,
+    modelHistory,
     handleSheetModelSelect,
     handleOpenChange,
     modeControl,
@@ -1223,6 +1289,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       thinkingLabel={displayThinking}
       fastModeTier={fastModeTier}
       onSelect={handleSheetModelSelect}
+      history={modelHistory}
       isLoading={isModelLoading}
       disabled={modelDisabled}
       onOpen={onModelSelectorOpen}
@@ -1657,6 +1724,9 @@ export const AgentControls = memo(function AgentControls({
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const supportsConfigApply = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentConfigApply === true,
+  );
   const toast = useToast();
   const modeControl = useLiveAgentModeControl(serverId, agentId);
   const commandCenterModes = toCommandCenterModes(modeControl);
@@ -1771,7 +1841,7 @@ export const AgentControls = memo(function AgentControls({
           console.warn("[AgentControls] persist thinking preference failed", error);
         });
       }
-      void client
+      return client
         .setAgentThinkingOption(agentId, thinkingOptionId)
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
@@ -1816,6 +1886,52 @@ export const AgentControls = memo(function AgentControls({
       }
     },
     [agent?.status, agentId, agentProvider, client, t, toast, updatePreferences, workflowLocale],
+  );
+  const handleApplyModelConfiguration = useCallback(
+    async (selection: ModelUsageSelection) => {
+      if (!client || selection.provider !== agentProvider) {
+        throw new Error(t("modelSelector.historyUnavailable"));
+      }
+      const featureValues =
+        selection.speed === null
+          ? undefined
+          : {
+              [FAST_MODE_FEATURE_ID]:
+                selection.speed === "ultrafast" ? "ultrafast" : selection.speed === "on",
+            };
+      const config = {
+        modelId: selection.modelId,
+        thinkingOptionId: selection.thinkingOptionId,
+        featureValues,
+      };
+      if (supportsConfigApply) {
+        const notice = await client.applyAgentConfig(agentId, config);
+        showProviderNoticeToast(toast, notice);
+      } else {
+        await client.setAgentModel(agentId, selection.modelId);
+        const notice = await client.setAgentThinkingOption(agentId, selection.thinkingOptionId);
+        showProviderNoticeToast(toast, notice);
+        if (featureValues) {
+          await client.setAgentFeature(
+            agentId,
+            FAST_MODE_FEATURE_ID,
+            featureValues[FAST_MODE_FEATURE_ID],
+          );
+        }
+      }
+      await updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: selection.provider,
+          updates: {
+            model: selection.modelId,
+            thinkingByModel: { [selection.modelId]: selection.thinkingOptionId ?? "default" },
+            ...(featureValues ? { featureValues } : {}),
+          },
+        }),
+      );
+    },
+    [agentId, agentProvider, client, supportsConfigApply, t, toast, updatePreferences],
   );
 
   const commandCenterControls = useMemo<AgentControlCommandCenterSource>(
@@ -1893,9 +2009,10 @@ export const AgentControls = memo(function AgentControls({
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
         onSelectModel={handleSelectModel}
-        thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
+        thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
         selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
         onSelectThinkingOption={handleSelectThinkingOption}
+        onApplyModelConfiguration={handleApplyModelConfiguration}
         features={agent.features}
         featureMetadataStatus={agent.provider === "omp" ? featureMetadataStatus : undefined}
         onSetFeature={handleSetFeature}
@@ -2037,32 +2154,30 @@ export function DraftAgentControls({
     onRetryFeatureMetadata?.();
   }, [onModelSelectorOpen, onRetryFeatureMetadata]);
   return (
-    <>
-      <ControlledAgentControls
-        provider={selectedProvider ?? ""}
-        modelSelectorProviders={modelSelectorProviders}
-        modelOptions={modelOptions}
-        selectedModelId={selectedModel}
-        onSelectModel={onSelectModel}
-        onSelectProviderAndModel={onSelectProviderAndModel}
-        isModelLoading={isAllModelsLoading}
-        thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-        selectedThinkingOptionId={effectiveSelectedThinkingOption}
-        onSelectThinkingOption={onSelectThinkingOption}
-        features={features}
-        featureMetadataStatus={selectedProvider === "omp" ? featureMetadataStatus : undefined}
-        onSetFeature={onSetFeature}
-        onDropdownClose={onDropdownClose}
-        onModelSelectorOpen={handleDraftModelSelectorOpen}
-        onRetryModelProvider={onRetryModelProvider}
-        isRetryingModelProvider={isRetryingModelProvider}
-        disabled={disabled}
-        modeControl={modeControl}
-        modelSelectorServerId={modelSelectorServerId}
-        workflowQuotaAccounts={workflowQuotaAccounts}
-        isCompactLayout={isCompactLayout}
-      />
-    </>
+    <ControlledAgentControls
+      provider={selectedProvider ?? ""}
+      modelSelectorProviders={modelSelectorProviders}
+      modelOptions={modelOptions}
+      selectedModelId={selectedModel}
+      onSelectModel={onSelectModel}
+      onSelectProviderAndModel={onSelectProviderAndModel}
+      isModelLoading={isAllModelsLoading}
+      thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
+      selectedThinkingOptionId={effectiveSelectedThinkingOption}
+      onSelectThinkingOption={onSelectThinkingOption}
+      features={features}
+      featureMetadataStatus={selectedProvider === "omp" ? featureMetadataStatus : undefined}
+      onSetFeature={onSetFeature}
+      onDropdownClose={onDropdownClose}
+      onModelSelectorOpen={handleDraftModelSelectorOpen}
+      onRetryModelProvider={onRetryModelProvider}
+      isRetryingModelProvider={isRetryingModelProvider}
+      disabled={disabled}
+      modeControl={modeControl}
+      modelSelectorServerId={modelSelectorServerId}
+      workflowQuotaAccounts={workflowQuotaAccounts}
+      isCompactLayout={isCompactLayout}
+    />
   );
 }
 

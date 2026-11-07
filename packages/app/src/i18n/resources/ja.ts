@@ -1698,6 +1698,13 @@ export const ja: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "よく使う組み合わせ",
+    deleteUsageRecord: "{{model}} の使用履歴を削除",
+    usageCount: "{{count}} 回",
+    thinkingUnsupported: "思考レベル非対応",
+    speedUnsupported: "速度設定非対応",
+    historyUnavailable:
+      "この思考レベルまたは速度は利用できなくなりました。設定を選び直してください。",
     title: "プロバイダーを選択",
     selectModel: "モデルを選択",
     selectedModel: "モデルを選択（{{model}}）",

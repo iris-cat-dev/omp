@@ -17,6 +17,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveModelBrowserProviderId } from "@/composer/agent-controls/model-sheet-flow";
+import type { ModelUsageHistoryProps } from "@/components/model-usage-history";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -67,6 +68,7 @@ interface CombinedModelSelectorProps {
   triggerAccessory?: ReactNode;
   dismissOnSelect?: boolean;
   open?: boolean;
+  history?: ModelUsageHistoryProps;
 }
 
 export function CombinedModelSelector({
@@ -91,6 +93,7 @@ export function CombinedModelSelector({
   triggerAccessory,
   dismissOnSelect = true,
   open,
+  history,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
@@ -111,28 +114,17 @@ export function CombinedModelSelector({
     browseProviders,
   });
   const { prepareToOpen, reset, showAll } = browser;
-  const footerBaseHeightRef = useRef<number | null>(null);
-  const [footerHeightDelta, setFooterHeightDelta] = useState(0);
+  const [footerHeight, setFooterHeight] = useState(0);
   const desktopFixedHeight = useMemo(
     () =>
       browser.desktopFixedHeight == null
         ? undefined
-        : browser.desktopFixedHeight + footerHeightDelta,
-    [browser.desktopFixedHeight, footerHeightDelta],
+        : browser.desktopFixedHeight + (footer ? footerHeight : 0),
+    [browser.desktopFixedHeight, footer, footerHeight],
   );
 
   const handleFooterLayout = useCallback((event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height;
-    const baseHeight = footerBaseHeightRef.current;
-    if (baseHeight === null || height < baseHeight) {
-      footerBaseHeightRef.current = height;
-      setFooterHeightDelta(0);
-      return;
-    }
-    setFooterHeightDelta((current) => {
-      const next = height - baseHeight;
-      return current === next ? current : next;
-    });
+    setFooterHeight(event.nativeEvent.layout.height);
   }, []);
 
   const handleOpenChange = useCallback(
@@ -213,6 +205,7 @@ export function CombinedModelSelector({
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={isWeb ? "independent" : "sheet"}
+      history={history}
     />
   ) : (
     <View style={styles.sheetLoadingState}>

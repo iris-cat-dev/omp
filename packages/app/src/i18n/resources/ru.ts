@@ -1722,6 +1722,13 @@ export const ru: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "Часто используемые",
+    deleteUsageRecord: "Удалить запись использования {{model}}",
+    usageCount: "{{count}}×",
+    thinkingUnsupported: "Уровень размышления не поддерживается",
+    speedUnsupported: "Настройка скорости не поддерживается",
+    historyUnavailable:
+      "Этот уровень размышления или скорость больше недоступны. Выберите новые настройки.",
     title: "Выберите провайдера",
     selectModel: "Выберите модель",
     selectedModel: "Выберите модель ({{model}})",

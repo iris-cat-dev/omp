@@ -1728,6 +1728,13 @@ export const fr: TranslationResources = {
     },
   },
   modelSelector: {
+    frequentlyUsed: "Fréquemment utilisés",
+    deleteUsageRecord: "Supprimer l’enregistrement d’utilisation de {{model}}",
+    usageCount: "{{count}}×",
+    thinkingUnsupported: "Raisonnement non pris en charge",
+    speedUnsupported: "Vitesse non prise en charge",
+    historyUnavailable:
+      "Ce niveau de raisonnement ou cette vitesse n’est plus disponible. Choisissez de nouveaux réglages.",
     title: "Sélectionnez le fournisseur",
     selectModel: "Sélectionnez le modèle",
     selectedModel: "Sélectionnez le modèle ({{model}})",

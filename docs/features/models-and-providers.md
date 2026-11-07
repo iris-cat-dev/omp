@@ -7,6 +7,7 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 - [Getting started and host scope](#getting-started-and-host-scope)
 - [Custom provider names](#custom-provider-names)
 - [Catalog refresh and sign-in](#catalog-refresh-and-sign-in)
+- [Frequently used model combinations](#frequently-used-model-combinations)
 - [Thinking and Fast settings](#thinking-and-fast-settings)
 - [Subagent model overrides](#subagent-model-overrides)
 - [Proxy routing](#proxy-routing)
@@ -63,6 +64,16 @@ If a historical conversation's selected model or provider has been removed, choo
 When OMP offers both Codex sign-in methods, they appear under one Codex provider and share the same account list and models. Browser sign-in is recommended; use device-code sign-in for remote environments or when browser callbacks are unavailable. Either method can add another account.
 
 Official Codex OAuth accepts dynamic models only from the dedicated Codex catalog and requires Codex capability metadata per entry. Credentials are never sent to the generic ChatGPT model catalog as a fallback. Temporary failure, invalid JSON, or non-Codex responses preserve the last validated catalog or OMP's built-in models and reasoning options. When upgrading from affected older versions, legacy Codex cache entries whose endpoint/protocol cannot be proven are removed; credentials, other provider caches, and conversation settings are untouched.
+
+## Frequently used model combinations
+
+The conversation model picker shows **Frequently used** above the full model list. Each record stores a model, Thinking level, and Speed together. Select a record to restore all three; Standard, Fast, and Ultrafast remain distinct. Unsupported Thinking or Speed is labeled explicitly.
+
+Each menu visit with a model selection or changed settings records its final confirmed combination once when the picker closes. Simply opening the picker does not increase usage. Records sort by usage count, with most recently used first when counts match. They persist on this device, separately for each host, and are shared by drafts and existing conversations.
+
+The **×** on the right deletes only that combination's record and count; it leaves the current model and settings unchanged. Deleted records stay deleted until the combination is selected or changed again. Search filters both frequently used combinations and the full catalog. Models no longer in the current catalog are hidden from the frequently used section.
+
+Restoring a draft waits for the target model's confirmed speed capabilities. An unavailable Thinking level, unsupported speed tier, or rejected update reports a failure without counting it as successful usage or silently downgrading Ultrafast.
 
 ## Thinking and Fast settings
 
