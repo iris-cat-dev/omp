@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveNavigateToAgent, type NavigateToAgentDeps } from "./resolve";
 import {
   navigateToWorkspace,
+  navigateToWorkspaceTab,
   type NavigateToWorkspaceDeps,
 } from "@/stores/navigation-active-workspace-store/navigation";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
@@ -32,6 +33,7 @@ function createNavigation(agentWorkspaceId: string | null = OWNER_ID) {
   });
   let route = `/h/${SERVER_ID}/workspace/${HOST_ID}`;
   let remembered: ActiveWorkspaceSelection | null = null;
+  const readRequests: Array<{ serverId: string; agentId: string }> = [];
   const workspaceDeps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: (serverId) =>
       serverId === SERVER_ID
@@ -49,6 +51,8 @@ function createNavigation(agentWorkspaceId: string | null = OWNER_ID) {
           )
         : null,
     getSessionAgents: () => [],
+    getFocusedAgentId: () => null,
+    requestAgentAttentionRead: (serverId, agentId) => readRequests.push({ serverId, agentId }),
     openTab: (input) => store.getState().openTab(input),
     pinAgent: (key, id) => store.getState().pinAgent(key, id),
     rememberLastWorkspace: (selection) => {
@@ -77,7 +81,15 @@ function createNavigation(agentWorkspaceId: string | null = OWNER_ID) {
       .getState()
       .getWorkspaceTabs(key)
       .flatMap((tab) => (tab.target.kind === "agent" ? [tab.target.agentId] : []));
-  return { store, deps, openAgent, agentIds, route: () => route, remembered: () => remembered };
+  return {
+    store,
+    deps,
+    openAgent,
+    agentIds,
+    readRequests,
+    route: () => route,
+    remembered: () => remembered,
+  };
 }
 
 function notification(workspaceId = OWNER_ID) {
@@ -91,6 +103,64 @@ function notification(workspaceId = OWNER_ID) {
 }
 
 describe("resolveNavigateToAgent", () => {
+  it("acknowledges an already focused conversation without changing the layout", () => {
+    const nav = createNavigation();
+    nav.openAgent("background");
+    const tabId = nav.openAgent(AGENT_ID, OWNER_ID);
+    const before = nav.store.getState().layoutByWorkspace[HOST_KEY];
+
+    resolveNavigateToAgent(notification(), nav.deps);
+    resolveNavigateToAgent(notification(), nav.deps);
+
+    const after = nav.store.getState().layoutByWorkspace[HOST_KEY];
+    expect(after.root).toEqual(before.root);
+    expect(findPaneById(after.root, after.focusedPaneId)?.focusedTabId).toBe(tabId);
+    expect(nav.readRequests).toEqual([
+      { serverId: SERVER_ID, agentId: AGENT_ID },
+      { serverId: SERVER_ID, agentId: AGENT_ID },
+    ]);
+  });
+
+  it("acknowledges tab selection even on reselect and leaves non-agent tabs unread-neutral", () => {
+    const nav = createNavigation();
+    nav.openAgent("background");
+    const tabId = nav.openAgent(AGENT_ID);
+    const overviewId = nav.store.getState().openTab({
+      workspaceKey: HOST_KEY,
+      target: { kind: "workspace_overview", workspaceId: HOST_ID },
+      intent: "reveal",
+    })!;
+    const select = (selectedTabId: string) =>
+      navigateToWorkspaceTab(
+        { serverId: SERVER_ID, workspaceKey: HOST_KEY, tabId: selectedTabId },
+        { ...nav.store.getState(), requestAgentAttentionRead: nav.deps.requestAgentAttentionRead },
+      );
+
+    select(tabId);
+    select(tabId);
+    const layout = nav.store.getState().layoutByWorkspace[HOST_KEY];
+    expect(findPaneById(layout.root, layout.focusedPaneId)?.focusedTabId).toBe(tabId);
+    select(overviewId);
+    select("missing-tab");
+
+    const finalLayout = nav.store.getState().layoutByWorkspace[HOST_KEY];
+    expect(findPaneById(finalLayout.root, finalLayout.focusedPaneId)?.focusedTabId).toBe(overviewId);
+    expect(nav.readRequests).toEqual([
+      { serverId: SERVER_ID, agentId: AGENT_ID },
+      { serverId: SERVER_ID, agentId: AGENT_ID },
+    ]);
+    expect(nav.agentIds()).toEqual(["background", AGENT_ID]);
+  });
+
+  it("records a deep-link read intent before the owning workspace is resolved", () => {
+    const nav = createNavigation(null);
+    resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID }, nav.deps);
+
+    expect(nav.route()).toBe(`/h/${SERVER_ID}/agent/${AGENT_ID}`);
+    expect(nav.agentIds()).toEqual([]);
+    expect(nav.readRequests).toEqual([{ serverId: SERVER_ID, agentId: AGENT_ID }]);
+  });
+
   it.each([HOST_ID, OWNER_ID])(
     "reveals a notification in its existing pane without changing ownership (%s)",
     (ownerId) => {

@@ -6678,3 +6678,73 @@ describe("Quick Ask model selection", () => {
     expect(deleteAgentState).toHaveBeenCalledWith("quick-ask-agent");
   });
 });
+
+test("a failed persisted attention read responds immediately and can be retried", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-attention-read-failure-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(join(root, "agents"), logger);
+  const manager = new AgentManager({ clients: {}, registry: storage, logger });
+  const messages: SessionOutboundMessage[] = [];
+  const providers = createProviderSnapshotManagerStub();
+  providers.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  providers.hasProvider.mockImplementation((provider) => provider === "codex");
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providers.manager,
+    agentManager: {
+      getAgent: manager.getAgent.bind(manager),
+      clearAgentAttention: manager.clearAgentAttention.bind(manager),
+    },
+    agentStorage: { get: storage.get.bind(storage), list: storage.list.bind(storage) },
+  });
+  const record = createStoredAgentRecord({
+    id: "11111111-1111-4111-8111-111111111195",
+    cwd: root,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: "2026-11-01T00:00:00.000Z",
+  });
+  try {
+    await storage.upsert(record);
+    const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("disk unavailable"));
+    try {
+      await session.handleMessage({
+        type: "clear_agent_attention",
+        agentId: record.id,
+        requestId: "read-failed",
+      });
+    } finally {
+      rename.mockRestore();
+    }
+    expect(messages).toContainEqual({
+      type: "clear_agent_attention_response",
+      payload: {
+        requestId: "read-failed",
+        agentId: record.id,
+        agents: [],
+        error: "disk unavailable",
+      },
+    });
+    expect((await storage.get(record.id))?.requiresAttention).toBe(true);
+    await session.handleMessage({
+      type: "clear_agent_attention",
+      agentId: record.id,
+      requestId: "read-retried",
+    });
+    expect(messages).toContainEqual({
+      type: "clear_agent_attention_response",
+      payload: {
+        requestId: "read-retried",
+        agentId: record.id,
+        agents: [expect.objectContaining({ id: record.id, requiresAttention: false })],
+      },
+    });
+    expect(await new AgentStorage(join(root, "agents"), logger).get(record.id)).toMatchObject({
+      requiresAttention: false,
+    });
+  } finally {
+    await session.cleanup();
+    await manager.flush();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

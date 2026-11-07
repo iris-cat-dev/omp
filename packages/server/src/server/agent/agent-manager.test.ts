@@ -1,6 +1,7 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi, type MockInstance } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { promises as fs } from "node:fs";
 import {
   appendFileSync,
   mkdirSync,
@@ -12,6 +13,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
@@ -6035,14 +6037,14 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   await storage.upsert(before);
   expect(manager.getAgent(snapshot.id)).toBeNull();
 
-  const upsertSpy = vi.spyOn(storage, "upsert");
+  const updateSpy = vi.spyOn(storage, "updateRecord");
 
   await manager.updateAgentMetadata(snapshot.id, {
     title: "Stored title",
     labels: { role: "worker" },
   });
 
-  expect(upsertSpy).toHaveBeenCalledTimes(1);
+  expect(updateSpy).toHaveBeenCalledTimes(1);
   const after = await storage.get(snapshot.id);
   expect(after?.title).toBe("Stored title");
   expect(after?.labels).toEqual({ surface: "mobile", role: "worker" });
@@ -9283,6 +9285,178 @@ test("clearAgentAttention on errored agent stays cleared until a new error trans
   expect(persistedAfterSecondFailure?.requiresAttention).toBe(true);
   expect(persistedAfterSecondFailure?.attentionReason).toBe("error");
 });
+
+test.each(["title", "labels"] as const)(
+  "stored %s changes cannot resurrect attention while its atomic disk write is pending",
+  async (field) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-metadata-race-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const writeStarted = deferred<void>();
+    const writeAllowed = deferred<void>();
+    let renameSpy: MockInstance | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await manager.runAgent(agent.id, "finish before sleeping");
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      const before = (await storage.get(agent.id))!;
+      expect(before.requiresAttention).toBe(true);
+      const rename = fs.rename.bind(fs);
+      renameSpy = vi.spyOn(fs, "rename").mockImplementationOnce(async (from, to) => {
+        writeStarted.resolve();
+        await writeAllowed.promise;
+        await rename(from, to);
+      });
+      const clearing = manager.clearAgentAttention(agent.id);
+      await writeStarted.promise;
+      expect((await storage.get(agent.id))?.requiresAttention).toBe(true);
+      const patch = field === "title" ? { title: "Renamed while clearing" } : { labels: { read: "yes" } };
+      const updating = manager.updateAgentMetadata(agent.id, patch);
+      await waitForImmediate();
+      writeAllowed.resolve();
+      await Promise.all([clearing, updating]);
+      const persisted = await new AgentStorage(storagePath, logger).get(agent.id);
+      expect(persisted).toMatchObject({
+        ...patch,
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+      expect(Date.parse(persisted!.updatedAt)).toBeGreaterThan(Date.parse(before.updatedAt));
+    } finally {
+      writeAllowed.resolve();
+      renameSpy?.mockRestore();
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["provider-close", "snapshot-write"] as const)(
+  "attention acknowledged during unload at %s remains cleared on disk",
+  async (phase) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-unload-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const client = new HeldReloadCloseClient();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const writeStarted = deferred<void>();
+    const writeAllowed = deferred<void>();
+    let renameSpy: MockInstance | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await manager.runAgent(agent.id, "finish before unloading");
+      await manager.flush();
+      if (phase === "snapshot-write") {
+        const rename = fs.rename.bind(fs);
+        renameSpy = vi.spyOn(fs, "rename").mockImplementationOnce(async (from, to) => {
+          writeStarted.resolve();
+          await writeAllowed.promise;
+          await rename(from, to);
+        });
+        client.finishClosing();
+      }
+      const unloading = manager.unloadAgentRuntime(agent.id);
+      if (phase === "provider-close") await client.waitForCloseToStart();
+      else await writeStarted.promise;
+      const clearing = manager.clearAgentAttention(agent.id);
+      if (phase === "provider-close") {
+        await clearing;
+        expect((await storage.get(agent.id))?.requiresAttention).toBe(false);
+      }
+      client.finishClosing();
+      writeAllowed.resolve();
+      await Promise.all([unloading, clearing]);
+      await manager.flush();
+      expect(manager.getAgent(agent.id)).toBeNull();
+      expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
+        lastStatus: "closed",
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+    } finally {
+      client.finishClosing();
+      writeAllowed.resolve();
+      renameSpy?.mockRestore();
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["preparing", "closing", "new-completion", "new-error"] as const)(
+  "reload preserves the latest attention when a read arrives during %s",
+  async (phase) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-reload-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const resumeStarted = deferred<void>();
+    const resumeAllowed = deferred<void>();
+    const client = new (class extends HeldReloadCloseClient {
+      override async resumeSession(
+        handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        resumeStarted.resolve();
+        await resumeAllowed.promise;
+        return super.resumeSession(handle, config);
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    let reloading: Promise<ManagedAgent> | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await manager.runAgent(agent.id, "original completion");
+      await manager.flush();
+      reloading = manager.reloadAgentSession(agent.id);
+      await resumeStarted.promise;
+      if (phase === "closing") {
+        resumeAllowed.resolve();
+        await client.waitForCloseToStart();
+        expect(manager.getAgent(agent.id)).toBeNull();
+      }
+      await manager.clearAgentAttention(agent.id);
+      if (phase === "new-completion") {
+        await manager.runAgent(agent.id, "new completion after read");
+      } else if (phase === "new-error") {
+        const session = manager.getAgent(agent.id)!.session!;
+        vi.spyOn(session, "startTurn").mockRejectedValueOnce(new Error("new reload error"));
+        await expect(manager.runAgent(agent.id, "new failure after read")).rejects.toThrow(
+          "new reload error",
+        );
+      }
+      resumeAllowed.resolve();
+      client.finishClosing();
+      await reloading;
+      await manager.flush();
+      const expectsAttention = phase === "new-completion" || phase === "new-error";
+      expect(manager.getAgent(agent.id)?.attention.requiresAttention).toBe(expectsAttention);
+      expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
+        requiresAttention: expectsAttention,
+        attentionReason: expectsAttention ? (phase === "new-error" ? "error" : "finished") : null,
+      });
+    } finally {
+      resumeAllowed.resolve();
+      client.finishClosing();
+      await reloading?.catch(() => undefined);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
@@ -12809,6 +12983,176 @@ test.each(["reloadable", "missing"] as const)(
       await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
       await manager.flush();
       await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("reading attention preserves an actual pending permission and its unread notification", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-pending-permission-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.runAgent(agent.id, "finished work");
+    const request = { id: "still-pending", provider: "codex", kind: "tool" as const, name: "Write file" };
+    client.sessions[0]!.pushEvent({ type: "permission_requested", provider: "codex", request });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
+    await manager.clearAgentAttention(agent.id);
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.pendingPermissions.get(request.id)).toEqual(request);
+    expect(manager.getAgent(agent.id)?.attention.requiresAttention).toBe(true);
+    expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
+      requiresAttention: true,
+    });
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("successive completions have distinct persisted attention identities within one clock tick", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-01T00:00:00.000Z"));
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-same-tick-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.runAgent(agent.id, "first completion");
+    await manager.flush();
+    const first = (await storage.get(agent.id))!.attentionTimestamp!;
+    await manager.clearAgentAttention(agent.id);
+    await manager.runAgent(agent.id, "second completion");
+    await manager.flush();
+    const second = (await new AgentStorage(storagePath, logger).get(agent.id))!;
+    expect(second.requiresAttention).toBe(true);
+    expect(Date.parse(second.attentionTimestamp!)).toBeGreaterThan(Date.parse(first));
+  } finally {
+    await manager.flush();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["same-notification", "new-completion", "new-error", "pending-permission"] as const)(
+  "an attention read racing activation reconciles %s without resurrecting or erasing notifications",
+  async (notification) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-activation-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const diskCleared = Promise.withResolvers<void>();
+    const returnAllowed = Promise.withResolvers<void>();
+    let clearSpy: MockInstance<typeof storage.clearAttention> | undefined;
+    let clearing: Promise<void> | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await manager.runAgent(agent.id, "original completion before sleeping");
+      await manager.flush();
+      const capturedAttention = manager.getAgent(agent.id)!.attention;
+      expect(capturedAttention.requiresAttention).toBe(true);
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      const before = (await storage.get(agent.id))!;
+      const capturedRegistrationOptions = {
+        createdAt: new Date(before.createdAt),
+        updatedAt: new Date(before.updatedAt),
+        attention: capturedAttention,
+      };
+      const clearAttention = storage.clearAttention.bind(storage);
+      clearSpy = vi.spyOn(storage, "clearAttention").mockImplementation(async (id) => {
+        const result = await clearAttention(id);
+        diskCleared.resolve();
+        await returnAllowed.promise;
+        return result;
+      });
+      clearing = manager.clearAgentAttention(agent.id);
+      await diskCleared.promise;
+      expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
+        requiresAttention: false,
+      });
+
+      // Resume carries the notification captured before the disk acknowledgement.
+      // Let its real registration snapshots commit before returning that read.
+      await manager.resumeAgentFromPersistence(
+        before.persistence!,
+        { provider: "codex", cwd: workdir },
+        agent.id,
+        capturedRegistrationOptions,
+      );
+      expect(manager.getAgent(agent.id)?.attention).toEqual(capturedAttention);
+      expect((await storage.get(agent.id))?.requiresAttention).toBe(true);
+
+      if (notification === "new-completion") {
+        await manager.runAgent(agent.id, "a genuinely new completion");
+      } else if (notification === "new-error") {
+        const session = manager.getAgent(agent.id)!.session!;
+        vi.spyOn(session, "startTurn").mockRejectedValueOnce(new Error("new activation error"));
+        await expect(manager.runAgent(agent.id, "a genuinely new failure")).rejects.toThrow(
+          "new activation error",
+        );
+      } else if (notification === "pending-permission") {
+        const session = manager.getAgent(agent.id)!.session as TestAgentSession;
+        session.pushEvent({
+          type: "permission_requested",
+          provider: "codex",
+          request: { id: "activation-permission", provider: "codex", kind: "tool", name: "Write file" },
+        });
+        await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
+      }
+      await manager.flush();
+      const latestAttention = manager.getAgent(agent.id)!.attention;
+      if (notification === "new-completion" || notification === "new-error") {
+        expect(latestAttention).toMatchObject({
+          requiresAttention: true,
+          attentionReason: notification === "new-error" ? "error" : "finished",
+        });
+        expect(latestAttention).not.toEqual(capturedAttention);
+      }
+      returnAllowed.resolve();
+      await clearing;
+      await manager.flush();
+
+      const expectsAttention = notification !== "same-notification";
+      const live = manager.getAgent(agent.id)!;
+      expect(live.attention).toEqual(
+        expectsAttention ? latestAttention : { requiresAttention: false },
+      );
+      expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
+        requiresAttention: expectsAttention,
+        attentionReason: expectsAttention
+          ? (notification === "new-error" ? "error" : "finished")
+          : null,
+        attentionTimestamp: expectsAttention && latestAttention.requiresAttention
+          ? latestAttention.attentionTimestamp.toISOString()
+          : null,
+      });
+      if (notification === "pending-permission") {
+        expect(live.pendingPermissions.has("activation-permission")).toBe(true);
+      }
+    } finally {
+      returnAllowed.resolve();
+      await clearing?.catch(() => undefined);
+      clearSpy?.mockRestore();
+      await manager.flush();
       rmSync(workdir, { recursive: true, force: true });
     }
   },

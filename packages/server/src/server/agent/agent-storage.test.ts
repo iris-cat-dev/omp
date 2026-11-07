@@ -10,6 +10,7 @@ import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.j
 import type { ManagedAgent } from "./agent-manager.js";
 import { restorePromptSource } from "./agent-prompt.js";
 import { streamOmpHistory } from "./providers/omp/history.js";
+import { ompHistoryRuntimeSettings } from "./providers/omp/test-utils/history-sdk.js";
 import { buildTimelinePromptIndex } from "./timeline-prompt-index.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import type {
@@ -205,7 +206,11 @@ describe("AgentStorage", () => {
     await fs.writeFile(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n"));
     const original = await fs.readFile(sessionFile, "utf8");
     const rows: AgentTimelineRow[] = [];
-    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+    for await (const event of streamOmpHistory({
+      sessionFile,
+      provider: "omp",
+      runtimeSettings: ompHistoryRuntimeSettings,
+    })) {
       if (event.type !== "timeline") continue;
       rows.push({
         seq: rows.length + 1,
@@ -684,5 +689,103 @@ describe("AgentStorage", () => {
     const afterReload = new AgentStorage(storagePath, logger);
     const after = await afterReload.list();
     expect(after.some((r) => r.id === agentId)).toBe(false);
+  });
+
+  test("clearing persisted attention keeps permission notifications intact", async () => {
+    const agentId = "permission-unread";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        attention: {
+          requiresAttention: true,
+          attentionReason: "permission",
+          attentionTimestamp: new Date("2026-11-01T00:00:00.000Z"),
+        },
+      }),
+    );
+    await storage.clearAttention(agentId);
+    expect(await new AgentStorage(storagePath, logger).get(agentId)).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "permission",
+      attentionTimestamp: "2026-11-01T00:00:00.000Z",
+    });
+  });
+
+  test("a queued read does not erase a newer persisted completion", async () => {
+    const agentId = "newer-notification";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        attention: {
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date("2026-11-01T00:00:00.000Z"),
+        },
+      }),
+    );
+    const started = Promise.withResolvers<void>();
+    const allowed = Promise.withResolvers<void>();
+    const rename = fs.rename.bind(fs);
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementationOnce(async (from, to) => {
+      started.resolve();
+      await allowed.promise;
+      await rename(from, to);
+    });
+    try {
+      const notifying = storage.updateRecord(agentId, (record) => ({
+        ...record,
+        updatedAt: "2026-11-02T00:00:00.000Z",
+        attentionTimestamp: "2026-11-02T00:00:00.000Z",
+      }));
+      await started.promise;
+      const clearing = storage.clearAttention(agentId);
+      allowed.resolve();
+      await Promise.all([notifying, clearing]);
+      expect(await new AgentStorage(storagePath, logger).get(agentId)).toMatchObject({
+        requiresAttention: true,
+        attentionTimestamp: "2026-11-02T00:00:00.000Z",
+      });
+    } finally {
+      allowed.resolve();
+      renameSpy.mockRestore();
+    }
+  });
+
+  test("an attention read queued behind a failed disk write can still persist", async () => {
+    const agentId = "retry-failed-read";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        attention: {
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date("2026-11-01T00:00:00.000Z"),
+        },
+      }),
+    );
+    const started = Promise.withResolvers<void>();
+    const allowed = Promise.withResolvers<void>();
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementationOnce(async () => {
+      started.resolve();
+      await allowed.promise;
+      throw new Error("attention write interrupted");
+    });
+    try {
+      const first = storage.clearAttention(agentId);
+      const rejected = expect(first).rejects.toThrow("attention write interrupted");
+      await started.promise;
+      const retry = storage.clearAttention(agentId);
+      allowed.resolve();
+      await rejected;
+      await retry;
+      expect(await new AgentStorage(storagePath, logger).get(agentId)).toMatchObject({
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+    } finally {
+      allowed.resolve();
+      renameSpy.mockRestore();
+    }
   });
 });

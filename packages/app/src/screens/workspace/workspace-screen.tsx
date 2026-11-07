@@ -62,6 +62,8 @@ import {
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { requestAgentAttentionRead } from "@/stores/agent-attention-read-store";
+import { navigateToWorkspaceTab } from "@/stores/navigation-active-workspace-store/navigation";
 import {
   canDismissPaneInLayout,
   collectAllTabs,
@@ -2053,9 +2055,16 @@ function WorkspaceScreenContent({
       if (!tabId || !persistenceKey) {
         return;
       }
-      focusWorkspaceTab(persistenceKey, tabId);
+      navigateToWorkspaceTab(
+        { serverId: normalizedServerId, workspaceKey: persistenceKey, tabId },
+        {
+          focusTab: focusWorkspaceTab,
+          getWorkspaceTabs: useWorkspaceLayoutStore.getState().getWorkspaceTabs,
+          requestAgentAttentionRead,
+        },
+      );
     },
-    [focusWorkspaceTab, persistenceKey],
+    [focusWorkspaceTab, normalizedServerId, persistenceKey],
   );
   const handleImportedAgent = useCallback(
     (agentId: string) => {

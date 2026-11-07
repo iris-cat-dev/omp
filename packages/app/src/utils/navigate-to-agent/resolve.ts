@@ -23,7 +23,7 @@ export interface AgentNavTarget {
 
 export interface NavigateToAgentDeps extends Pick<
   NavigateToSidebarWorkspaceDeps,
-  "getSessionWorkspaces"
+  "getSessionWorkspaces" | "requestAgentAttentionRead"
 > {
   readAgentNavTarget: (input: { serverId: string; agentId: string }) => AgentNavTarget;
   navigateToHostAgent: (route: string) => void;
@@ -42,6 +42,7 @@ export function resolveNavigateToAgent(
 
   if (!workspaceId) {
     const route = buildHostAgentDetailRoute(input.serverId, input.agentId);
+    deps.requestAgentAttentionRead(input.serverId, input.agentId);
     deps.navigateToHostAgent(route);
     return route;
   }

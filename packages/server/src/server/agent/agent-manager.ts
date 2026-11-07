@@ -230,6 +230,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "stored_agent_state"; record: StoredAgentRecord }
   | { type: "agent_deleted"; agentId: string; workspaceId: string | null; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | {
@@ -799,6 +800,9 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Map<Promise<void>, string | undefined>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  // Keep the detached snapshot addressable until close/reload finishes persisting
+  // it, so reads during that gap update the same object as the final write.
+  private readonly closingAgentSnapshots = new Map<string, ManagedAgentClosed>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly idleRuntimeTimers = new Map<string, NodeJS.Timeout>();
   private readonly idleRuntimeTimeoutMs: number;
@@ -1751,7 +1755,6 @@ export class AgentManager {
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
-    const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
@@ -1770,11 +1773,12 @@ export class AgentManager {
     await this.requireExternalMcpSupport(session, storedConfig);
 
     let handedToRegistration = false;
+    let closedExisting: ManagedAgentClosed | undefined;
     try {
       this.assertAcceptingAgentRegistrations();
 
       this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
@@ -1792,19 +1796,22 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
+      return await this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
         createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
+        updatedAt: closedExisting.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
-        attention: preservedAttention,
+        attention: closedExisting.attention,
       });
     } finally {
+      if (closedExisting && this.closingAgentSnapshots.get(agentId) === closedExisting) {
+        this.closingAgentSnapshots.delete(agentId);
+      }
       if (!handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
@@ -1888,11 +1895,12 @@ export class AgentManager {
     // but new input must not race a process or host side effect of uncertain ownership.
     this.recoveryBlockedAgentIds.add(agentId);
     this.stopEpochs.set(agentId, (this.stopEpochs.get(agentId) ?? 0) + 1);
+    let closed: ManagedAgentClosed | undefined;
     const recovery = (async () => {
       await agent.session.terminate!();
       await this.drainSessionEvents(agentId);
       this.cancelRunningProviderSubagents(agentId);
-      const closed = this.prepareAgentForClosure(agent, "target runtime recovered");
+      closed = this.prepareAgentForClosure(agent, "target runtime recovered");
       await this.persistSnapshot(closed);
       this.emitClosedAgent(closed, { persist: false });
       await this.retainClosedTimeline(closed);
@@ -1901,6 +1909,9 @@ export class AgentManager {
     this.inFlightAgentCloses.set(agentId, recovery);
     const settled = () => {
       if (this.inFlightAgentCloses.get(agentId) === recovery) {
+        if (closed && this.closingAgentSnapshots.get(agentId) === closed) {
+          this.closingAgentSnapshots.delete(agentId);
+        }
         this.inFlightAgentCloses.delete(agentId);
       }
     };
@@ -1960,6 +1971,7 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     const cancelUnloads: Array<() => void> = [];
+    let closedAgent: ManagedAgentClosed | undefined;
     try {
       this.beginRunTreeRuntimeUnload(agentId, cancelUnloads);
       if (mode !== "close") {
@@ -1981,7 +1993,7 @@ export class AgentManager {
         throw error;
       }
       await this.drainSessionEvents(agentId);
-      const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+      closedAgent = this.prepareAgentForClosure(agent, "agent closed");
       let persistError: unknown;
       try {
         await this.persistSnapshot(closedAgent);
@@ -2002,6 +2014,9 @@ export class AgentManager {
       if (mode !== "close") this.discardRetainedAgentState(agentId);
       else await this.retainClosedTimeline(closedAgent);
     } finally {
+      if (closedAgent && this.closingAgentSnapshots.get(agentId) === closedAgent) {
+        this.closingAgentSnapshots.delete(agentId);
+      }
       for (let index = cancelUnloads.length - 1; index >= 0; index--) cancelUnloads[index]!();
     }
   }
@@ -2560,19 +2575,12 @@ export class AgentManager {
     patch: AgentMetadataPatch,
   ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
-    const record = await registry.get(agentId);
-    if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    const nextRecord = {
+    return registry.updateRecord(agentId, (record) => ({
       ...record,
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
-    };
-    await registry.upsert(nextRecord);
-    return nextRecord;
+    }));
   }
 
   async detachAgent(agentId: string): Promise<{
@@ -2634,11 +2642,49 @@ export class AgentManager {
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    if (agent.attention.requiresAttention) {
-      agent.attention = { requiresAttention: false };
+    const agent = this.agents.get(agentId) ?? this.closingAgentSnapshots.get(agentId);
+    if (agent) {
+      if (
+        (agent.attention.requiresAttention && agent.attention.attentionReason === "permission") ||
+        agent.pendingPermissions.size > 0
+      ) {
+        return;
+      }
+      if (agent.attention.requiresAttention) {
+        agent.attention = { requiresAttention: false };
+        this.touchUpdatedAt(agent);
+      }
       await this.persistSnapshot(agent);
-      this.emitState(agent, { persist: false });
+      const current = this.agents.get(agentId) ?? this.closingAgentSnapshots.get(agentId);
+      if (current === agent) this.emitState(agent, { persist: false });
+      return;
+    }
+
+    const { record, clearedAttention } = await this.requireRegistry().clearAttention(agentId);
+    const current = this.agents.get(agentId) ?? this.closingAgentSnapshots.get(agentId);
+    if (current) {
+      // An in-flight activation may have restored the notification acknowledged
+      // on disk. Clear only that same notification, not a later completion or a
+      // pending permission, and persist after its registration snapshots.
+      if (
+        clearedAttention &&
+        current.attention.requiresAttention &&
+        current.pendingPermissions.size === 0 &&
+        current.attention.attentionReason === clearedAttention.attentionReason &&
+        current.attention.attentionTimestamp.toISOString() === clearedAttention.attentionTimestamp
+      ) {
+        current.attention = { requiresAttention: false };
+        const persistedUpdatedAt = Date.parse(record.updatedAt);
+        if (current.updatedAt.getTime() < persistedUpdatedAt) {
+          current.updatedAt = new Date(persistedUpdatedAt);
+        }
+        this.touchUpdatedAt(current);
+        await this.persistSnapshot(current);
+      }
+      const latest = this.agents.get(agentId) ?? this.closingAgentSnapshots.get(agentId);
+      if (latest) this.emitState(latest, { persist: false });
+    } else {
+      this.dispatch({ type: "stored_agent_state", record });
     }
   }
 
@@ -4418,6 +4464,7 @@ export class AgentManager {
         now,
         options,
       });
+      const closingSnapshot = this.closingAgentSnapshots.get(resolvedAgentId);
 
       const managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
@@ -4425,7 +4472,11 @@ export class AgentManager {
         config,
         now,
         durableTimelineHasRows,
-        options,
+        options: {
+          ...options,
+          attention: closingSnapshot?.attention ?? options?.attention,
+          updatedAt: closingSnapshot?.updatedAt ?? options?.updatedAt,
+        },
       });
 
       this.assertAcceptingAgentRegistrations();
@@ -4668,7 +4719,7 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
-    return {
+    const closed: ManagedAgentClosed = {
       ...agent,
       lifecycle: "closed",
       session: null,
@@ -4690,6 +4741,8 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
     };
+    this.closingAgentSnapshots.set(agent.id, closed);
+    return closed;
   }
 
   private discardRetainedAgentState(agentId: string): void {
@@ -6040,8 +6093,12 @@ export class AgentManager {
       return;
     }
 
-    // Skip if already requires attention
-    if (agent.attention.requiresAttention) {
+    // Permissions retain priority. Other unread notifications are refreshed by
+    // each new completion/error edge so an older in-flight read cannot erase it.
+    if (
+      agent.pendingPermissions.size > 0 ||
+      (agent.attention.requiresAttention && agent.attention.attentionReason === "permission")
+    ) {
       return;
     }
 
@@ -6050,7 +6107,7 @@ export class AgentManager {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
-        attentionTimestamp: new Date(),
+        attentionTimestamp: new Date(agent.updatedAt),
       };
       this.broadcastAgentAttention(agent, "finished");
       return;
@@ -6061,7 +6118,7 @@ export class AgentManager {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "error",
-        attentionTimestamp: new Date(),
+        attentionTimestamp: new Date(agent.updatedAt),
       };
       this.broadcastAgentAttention(agent, "error");
       return;
@@ -6268,6 +6325,13 @@ export class AgentManager {
       }
       if (
         subscriber.agentId &&
+        event.type === "stored_agent_state" &&
+        subscriber.agentId !== event.record.id
+      ) {
+        continue;
+      }
+      if (
+        subscriber.agentId &&
         event.type === "provider_subagent" &&
         subscriber.agentId !==
           (event.event.type === "upsert"
@@ -6286,6 +6350,7 @@ export class AgentManager {
 
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
     if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "stored_agent_state") return event.record.internal === true;
     if (event.type === "agent_deleted") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
     if (event.type !== "provider_subagent") return false;

@@ -101,6 +101,11 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+
+export interface AgentAttentionClearResult {
+  record: StoredAgentRecord;
+  clearedAttention: Pick<StoredAgentRecord, "attentionReason" | "attentionTimestamp"> | null;
+}
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   const record = STORED_AGENT_SCHEMA.parse(value);
   if (record.provider === "omp" || record.persistence?.provider === "omp") {
@@ -184,6 +189,21 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async updateRecord(
+    agentId: string,
+    mutate: (existing: StoredAgentRecord) => StoredAgentRecord,
+  ): Promise<StoredAgentRecord> {
+    await this.load();
+    let updated: StoredAgentRecord | undefined;
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) throw new Error(`Agent ${agentId} not found`);
+      updated = mutate(existing);
+      return updated;
+    });
+    if (!updated) throw new Error(`Agent ${agentId} is being deleted`);
+    return updated;
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
@@ -193,7 +213,7 @@ export class AgentStorage {
     mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
-    const next = prev.then(async () => {
+    const next = prev.catch(() => undefined).then(async () => {
       if (this.deleting.has(agentId)) {
         return undefined;
       }
@@ -307,17 +327,34 @@ export class AgentStorage {
     });
   }
 
-  async clearAttention(agentId: string): Promise<void> {
+  async clearAttention(agentId: string): Promise<AgentAttentionClearResult> {
     await this.load();
-    await this.queueRecordMutation(agentId, (existing) => {
-      if (!existing) throw new Error(`Agent ${agentId} not found`);
+    const observed = this.cache.get(agentId);
+    let clearedAttention: AgentAttentionClearResult["clearedAttention"] = null;
+    const record = await this.updateRecord(agentId, (existing) => {
+      // Only acknowledge the observed notification, never a newer completion or
+      // permission request that reached the write queue first.
+      if (
+        existing.attentionReason === "permission" ||
+        !existing.requiresAttention ||
+        existing.attentionReason !== observed?.attentionReason ||
+        existing.attentionTimestamp !== observed?.attentionTimestamp
+      ) {
+        return existing;
+      }
+      clearedAttention = {
+        attentionReason: existing.attentionReason,
+        attentionTimestamp: existing.attentionTimestamp,
+      };
       return {
         ...existing,
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(existing.updatedAt) + 1)).toISOString(),
         requiresAttention: false,
         attentionReason: null,
         attentionTimestamp: null,
       };
     });
+    return { record, clearedAttention };
   }
 
   async getPromptSources(agentId: string): Promise<Readonly<Record<string, string>> | undefined> {
@@ -338,13 +375,7 @@ export class AgentStorage {
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
-    await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.updateRecord(agentId, (record) => ({ ...record, title }));
   }
 
   async flush(): Promise<void> {

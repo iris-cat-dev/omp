@@ -36,6 +36,7 @@ describe("project focus", () => {
     await rehydrated.hydrate();
     const routes: string[] = [];
     const opened: string[] = [];
+    const readRequests: string[] = [];
     const deps: NavigateToWorkspaceDeps & {
       getProjectLastWorkspace: typeof rehydrated.get;
     } = {
@@ -51,6 +52,8 @@ describe("project focus", () => {
       getSessionAgents: () => [
         { id: "attention", workspaceId: "first-workspace", requiresAttention: true } as Agent,
       ],
+      getFocusedAgentId: (_serverId, workspaceId) => `focused:${workspaceId}`,
+      requestAgentAttentionRead: (_serverId, agentId) => readRequests.push(agentId),
       openTab: ({ workspaceKey }) => {
         opened.push(workspaceKey);
         return null;
@@ -70,6 +73,11 @@ describe("project focus", () => {
       "/h/host/workspace/first-workspace",
     ]);
     expect(opened).toEqual([]);
+    expect(readRequests).toEqual([
+      "focused:first-workspace",
+      "focused:second-workspace",
+      "focused:first-workspace",
+    ]);
   });
 
   it("focuses a project with no workspace without allocating backend resources", () => {
@@ -79,6 +87,10 @@ describe("project focus", () => {
       getProjectLastWorkspace: store.get,
       getSessionWorkspaces: () => new Map(),
       getSessionAgents: () => [],
+      getFocusedAgentId: () => null,
+      requestAgentAttentionRead: () => {
+        throw new Error("No conversation should be marked read");
+      },
       openTab: () => {
         throw new Error("No tabs should open");
       },

@@ -1651,6 +1651,16 @@ export class Session {
           return;
         }
 
+        if (event.type === "stored_agent_state") {
+          void this.agentUpdates.forwardStoredRecord(event.record).catch((error) => {
+            this.sessionLogger.error(
+              { err: error, agentId: event.record.id },
+              "Failed to forward stored agent update",
+            );
+          });
+          return;
+        }
+
         if (event.type === "agent_deleted") {
           void this.agentUpdates.removeAgent(event.agentId);
           if (event.workspaceId) {
@@ -4188,22 +4198,7 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map(async (id) => {
-          if (this.agentManager.getAgent(id)) {
-            await this.agentManager.clearAgentAttention(id);
-            return;
-          }
-          await this.agentStorage.clearAttention(id);
-          // An explicit prompt may have activated this agent during the disk write.
-          if (this.agentManager.getAgent(id)) {
-            await this.agentManager.clearAgentAttention(id);
-          } else {
-            const record = await this.agentStorage.get(id);
-            if (record) await this.agentUpdates.emitStoredRecord(record);
-          }
-        }),
-      );
+      await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
           await Promise.all(agentIds.map((id) => this.getAgentPayloadById(id)))
@@ -4219,7 +4214,12 @@ export class Session {
       }
     } catch (error) {
       this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
-      // Don't throw - this is not critical
+      if (requestId) {
+        this.emit({
+          type: "clear_agent_attention_response",
+          payload: { requestId, agentId, agents: [], error: getErrorMessage(error) },
+        });
+      }
     }
   }
 
@@ -4650,7 +4650,13 @@ export class Session {
 
     let agents = [...liveAgents, ...persistedAgents];
 
-    agents = agents.filter((agent) => this.isProviderVisibleToClient(agent.provider));
+    agents = agents.filter(
+      (agent) =>
+        this.isProviderVisibleToClient(agent.provider) ||
+        (filter?.includeUnavailablePersisted === true &&
+          !liveIds.has(agent.id) &&
+          agent.providerUnavailable === true),
+    );
     if (!includeArchived) {
       agents = agents.filter((agent) => !agent.archivedAt);
     }
@@ -4730,7 +4736,9 @@ export class Session {
       return null;
     }
     const payload = this.buildStoredAgentPayload(record);
-    return this.isProviderVisibleToClient(payload.provider) ? payload : null;
+    return this.isProviderVisibleToClient(payload.provider) || payload.providerUnavailable === true
+      ? payload
+      : null;
   }
 
   private async inspectUnavailablePersistedOmpHistory(
@@ -7256,40 +7264,7 @@ export class Session {
           .map((agent) => agent.id);
 
         for (const agentId of clearableAgentIds) {
-          const liveAgent = this.agentManager.getAgent(agentId);
-          if (liveAgent) {
-            await this.agentManager.clearAgentAttention(agentId);
-            clearedAgentIds.push(agentId);
-            continue;
-          }
-
-          const record = await this.agentStorage.get(agentId);
-          if (
-            !record ||
-            record.internal ||
-            record.archivedAt ||
-            record.requiresAttention !== true
-          ) {
-            continue;
-          }
-          const nextRecord: StoredAgentRecord = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            requiresAttention: false,
-            attentionReason: null,
-            attentionTimestamp: null,
-          };
-          await this.agentStorage.upsert(nextRecord);
-          const agent = this.buildStoredAgentPayload(nextRecord);
-          const project = await this.buildProjectPlacementForWorkspace(workspace);
-          this.emit({
-            type: "agent_update",
-            payload: {
-              kind: "upsert",
-              agent,
-              project,
-            },
-          });
+          await this.agentManager.clearAgentAttention(agentId);
           clearedAgentIds.push(agentId);
         }
 

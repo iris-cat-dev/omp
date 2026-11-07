@@ -6929,3 +6929,41 @@ test("a client that declined compression rejects compressed input instead of sil
   expect(client.getConnectionState().status).toBe("disconnected");
   expect(close).toHaveBeenCalledWith(1002, expect.any(String));
 });
+
+test("attention read rejects a correlated daemon failure and accepts a later successful retry", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "attention-read-failure",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  const failed = client.clearAgentAttention("attention-agent");
+  const rejected = expect(failed).rejects.toThrow("disk unavailable");
+  const first = parseSentFrame(mock.sent.at(-1));
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "clear_agent_attention_response",
+      payload: {
+        requestId: first.requestId,
+        agentId: "attention-agent",
+        agents: [],
+        error: "disk unavailable",
+      },
+    }),
+  );
+  await rejected;
+  const retry = client.clearAgentAttention("attention-agent");
+  const second = parseSentFrame(mock.sent.at(-1));
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "clear_agent_attention_response",
+      payload: { requestId: second.requestId, agentId: "attention-agent", agents: [] },
+    }),
+  );
+  await expect(retry).resolves.toBeUndefined();
+});

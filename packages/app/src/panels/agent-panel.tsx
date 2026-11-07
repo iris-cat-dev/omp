@@ -79,6 +79,7 @@ import {
   type HostRuntimeConnectionStatus,
   getHostRuntimeConnectionStatusSince,
   getHostRuntimeStore,
+  useHostRuntimeAgentDirectoryStatus,
   useHostRuntimeClient,
   useHostRuntimeConnectionStatus,
   useHostRuntimeIsConnected,
@@ -782,6 +783,7 @@ function ChatAgentContent({
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
+  const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
     (state) => {
@@ -850,13 +852,22 @@ function ChatAgentContent({
   const hasHydratedHistoryBefore =
     hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted";
 
+  const handleAttentionClearError = useCallback(
+    (error: unknown) => toastApi.error(toErrorMessage(error)),
+    [toastApi],
+  );
   const attentionController = useAgentAttentionClear({
+    serverId,
     agentId,
     client,
     isConnected,
+    isAgentReady:
+      agentState.id !== null &&
+      (agentDirectoryStatus === "ready" || agentState.requiresAttention),
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,
+    onClearError: handleAttentionClearError,
   });
   useEffect(() => {
     clearOnAgentBlurRef.current = attentionController.clearOnAgentBlur;

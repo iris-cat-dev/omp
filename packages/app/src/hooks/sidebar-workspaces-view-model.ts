@@ -15,6 +15,7 @@ import {
   normalizeWorkspaceOpaqueId,
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
+import { isWorkspaceRootAgent } from "@/subagents/workspace-root-policy";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -417,12 +418,15 @@ function buildSidebarWorkspaceAgentIndex(agents: ReadonlyMap<string, Agent> | un
     if (agent.archivedAt || !workspaceId) {
       continue;
     }
+    const isRoot = isWorkspaceRootAgent(
+      agent,
+      agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined,
+    );
     hasOnlySubagents.set(
       workspaceId,
       (hasOnlySubagents.get(workspaceId) ?? true) && Boolean(agent.parentAgentId),
     );
-    // Workspace ownership is independent of top-level conversation presentation.
-    if (agent.parentAgentId) continue;
+    if (!isRoot) continue;
     const roots = rootsByWorkspaceId.get(workspaceId) ?? [];
     roots.push({ agent, createdAt: agent.createdAt.getTime() });
     rootsByWorkspaceId.set(workspaceId, roots);

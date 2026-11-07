@@ -107,6 +107,21 @@ describe("shouldClearAgentAttention", () => {
     ).toBe(false);
   });
 
+  it("allows navigation to acknowledge deferred attention while preserving permissions", () => {
+    for (const attentionReason of ["finished", "error", "permission"] as const) {
+      expect(
+        shouldClearAgentAttention({
+          agentId: "agent-1",
+          isConnected: true,
+          requiresAttention: true,
+          attentionReason,
+          trigger: "navigation",
+          hasDeferredFocusEntryClear: true,
+        }),
+      ).toBe(attentionReason !== "permission");
+    }
+  });
+
   it("returns true for explicit follow-up entrypoints after deferred focus clear", () => {
     expect(
       shouldClearAgentAttention({
@@ -246,6 +261,30 @@ describe("pickAttentionAgent", () => {
         }),
       ]),
     ).toBeNull();
+  });
+
+  it("selects an unread cross-workspace child but excludes same-workspace children", () => {
+    const parent = createAgent({ id: "parent", workspaceId: "other-workspace" });
+    const root = createAgent({ id: "root", workspaceId: "workspace" });
+    const crossWorkspaceChild = createAgent({
+      id: "cross-workspace-child",
+      workspaceId: "workspace",
+      parentAgentId: parent.id,
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+    const sameWorkspaceChild = createAgent({
+      id: "same-workspace-child",
+      workspaceId: "workspace",
+      parentAgentId: root.id,
+      requiresAttention: true,
+      attentionReason: "permission",
+    });
+    const candidates = [root, sameWorkspaceChild, crossWorkspaceChild];
+    const agentsById = new Map([parent, ...candidates].map((agent) => [agent.id, agent]));
+
+    expect(pickAttentionAgent(candidates, agentsById)).toBe(crossWorkspaceChild.id);
+    expect(pickAttentionAgent([root, sameWorkspaceChild], agentsById)).toBeNull();
   });
 
   it("ignores agents with requiresAttention true but null reason", () => {

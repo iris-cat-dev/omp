@@ -526,6 +526,7 @@ describe("shared sidebar workspace model", () => {
       id: "root-attention",
       workspaceId: "legacy",
       status: "idle",
+      parentAgentId: "foreign-parent",
       title: "Finished handoff",
       createdAt: new Date(2_000),
       requiresAttention: true,
@@ -537,7 +538,14 @@ describe("shared sidebar workspace model", () => {
       status: "running",
       parentAgentId: primary.id,
     });
-    const agents = new Map([primary, additional, child].map((entry) => [entry.id, entry] as const));
+    const foreignParent = agent({
+      id: "foreign-parent",
+      workspaceId: "other",
+      status: "idle",
+    });
+    const agents = new Map(
+      [primary, additional, child, foreignParent].map((entry) => [entry.id, entry] as const),
+    );
 
     const entries = buildSidebarWorkspaceEntries({
       placements: [workspacePlacement({ workspaceId: "legacy", projectViewKey: "project" })],

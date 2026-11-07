@@ -705,3 +705,44 @@ describe("subscription lifecycle", () => {
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });
 });
+
+test("stored attention reads honor the bootstrap filter and sequence removal while updating the workspace", async () => {
+  const h = buildHarness();
+  h.service.beginSubscription({
+    subscriptionId: "unread-only",
+    filter: { requiresAttention: true },
+    syncEnabled: true,
+  });
+  h.register(makeAgentPayload({ id: "read-agent", workspaceId: "ws-read", requiresAttention: false }));
+  await h.service.forwardStoredRecord(h.stored("read-agent"));
+  expect(h.agentUpdates()).toEqual([]);
+  expect(h.workspaceUpdates).toEqual(["ws-read"]);
+  h.service.flushBootstrapped("unread-only");
+  expect(h.agentUpdates()).toEqual([
+    expect.objectContaining({
+      kind: "remove",
+      agentId: "read-agent",
+      generation: "test-generation",
+      seq: expect.any(Number),
+    }),
+  ]);
+});
+
+test("a stored attention read follows an in-flight live update instead of being overwritten by it", async () => {
+  const h = buildHarness();
+  h.service.beginSubscription({ subscriptionId: "read-race", filter: {} });
+  h.service.flushBootstrapped("read-race");
+  const oldPayload = h.register(
+    makeAgentPayload({ id: "race-agent", workspaceId: "ws-race", requiresAttention: true }),
+  );
+  const pendingLive = deferred<AgentSnapshotPayload>();
+  h.queuePayloadBuilds(pendingLive.promise);
+  const live = h.service.forwardLiveAgent(h.managed("race-agent"));
+  h.register(makeAgentPayload({ id: "race-agent", workspaceId: "ws-race", requiresAttention: false }));
+  const read = h.service.forwardStoredRecord(h.stored("race-agent"));
+  pendingLive.resolve(oldPayload);
+  await Promise.all([live, read]);
+  expect(h.agentUpdates().map((update) => update.kind === "upsert" && update.agent.requiresAttention))
+    .toEqual([true, false]);
+  expect(h.workspaceUpdates).toEqual(["ws-race", "ws-race"]);
+});

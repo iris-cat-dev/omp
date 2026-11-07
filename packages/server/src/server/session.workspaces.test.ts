@@ -59,7 +59,7 @@ import {
   asDaemonConfigStore,
   asTerminalManager,
   asSessionInternals,
-  createProviderSnapshotManagerStub,
+  createProviderSnapshotManagerStub as createBaseProviderSnapshotManagerStub,
   isSessionOutboundMessage,
   filterByType,
   findByType,
@@ -117,6 +117,7 @@ interface SessionTestAccess {
   agentManager: {
     listAgents(): unknown[];
     getAgent(agentId: string): unknown;
+    clearAgentAttention(agentId: string): Promise<void>;
     reloadAgentSession(agentId: string, overrides?: unknown, options?: unknown): Promise<unknown>;
     listImportableSessions(options?: unknown): Promise<unknown[]>;
     importProviderSession(input: unknown): Promise<unknown>;
@@ -151,6 +152,7 @@ interface SessionTestAccess {
   }>;
   handleArchiveAgentRequest(agentId: string, requestId: string): Promise<unknown>;
   handleMessage(message: unknown): Promise<unknown>;
+  cleanup(): Promise<void>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
@@ -540,6 +542,15 @@ class CreateAgentTestClient implements AgentClient {
   }
 }
 
+function createProviderSnapshotManagerStub() {
+  const stub = createBaseProviderSnapshotManagerStub();
+  stub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  stub.hasProvider.mockImplementation((provider) =>
+    stub.listRegisteredProviderIds().includes(provider),
+  );
+  return stub;
+}
+
 function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
@@ -646,29 +657,8 @@ function createSessionForWorkspaceTests(
       worktreesRoot: options.worktreesRoot,
       agentManager,
       agentStorage: asAgentStorage({
-        list: async () => [
-          createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          }),
-        ],
-        get: async (workspaceId: string) =>
-          workspaceId === "ws-repo-running"
-            ? createPersistedWorkspaceRecord({
-                workspaceId: "ws-repo-running",
-                projectId: "proj-repo-running",
-                cwd: REPO_CWD,
-                kind: "directory",
-                displayName: "repo",
-                createdAt: "2026-03-01T12:00:00.000Z",
-                updatedAt: "2026-03-01T12:00:00.000Z",
-              })
-            : null,
+        list: async () => [],
+        get: async () => null,
         upsert: async () => {},
         ...options.agentStorage,
       }),
@@ -1718,78 +1708,128 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
   });
 });
 
-test("workspace clear attention clears stored-only agents and responds", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: REPO_CWD,
-    projectId: REPO_CWD,
-    cwd: REPO_CWD,
-    kind: "directory",
-    displayName: "repo",
-    createdAt: "2026-03-30T15:00:00.000Z",
-    updatedAt: "2026-03-30T15:00:00.000Z",
-  });
-  const project = createPersistedProjectRecord({
-    projectId: REPO_CWD,
-    rootPath: REPO_CWD,
-    kind: "non_git",
-    displayName: "repo",
-    createdAt: "2026-03-30T15:00:00.000Z",
-    updatedAt: "2026-03-30T15:00:00.000Z",
-  });
-  let storedRecord = makeStoredAgent({
-    id: "stored-agent-1",
-    cwd: REPO_CWD,
-    updatedAt: "2026-03-30T15:00:00.000Z",
-    requiresAttention: true,
-    attentionReason: "finished",
-  });
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
-
-  session.workspaceRegistry.list = async () => [workspace];
-  session.workspaceRegistry.get = async (id: string) =>
-    id === workspace.workspaceId ? workspace : null;
-  session.projectRegistry.list = async () => [project];
-  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.agentStorage.get = async (agentId: string) =>
-    agentId === storedRecord.id ? storedRecord : null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    storedRecord = record as StoredAgentRecord;
-  };
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: storedRecord.id,
-      cwd: storedRecord.cwd,
+test.each(["agent", "workspace"] as const)(
+  "%s attention reads update both subscribed sessions and recompute the owning workspace without loading",
+  async (target) => {
+    const root = mkdtempSync(path.join(tmpdir(), "session-attention-read-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({ clients: {}, registry: storage, logger });
+    const resume = vi.spyOn(manager, "resumeAgentFromPersistence");
+    const timestamp = "2026-03-30T15:00:00.000Z";
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-attention-read",
+      projectId: "project-attention-read",
+      cwd: root,
+      kind: "directory",
+      displayName: "repo",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const project = createPersistedProjectRecord({
+      projectId: workspace.projectId,
+      rootPath: root,
+      kind: "non_git",
+      displayName: "repo",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const record = {
+      ...makeStoredAgent({
+        id: "11111111-1111-4111-8111-111111111194",
+        cwd: root,
+        updatedAt: timestamp,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
       workspaceId: workspace.workspaceId,
-      status: "closed",
-      updatedAt: storedRecord.updatedAt,
-      requiresAttention: true,
-      attentionReason: "finished",
-    }),
-  ];
-
-  await session.handleMessage({
-    type: "workspace.clear_attention.request",
-    workspaceId: workspace.workspaceId,
-    requestId: "req-1",
-  });
-
-  expect(storedRecord.requiresAttention).toBe(false);
-  expect(storedRecord.attentionReason).toBeNull();
-  expect(storedRecord.attentionTimestamp).toBeNull();
-  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
-    requestId: "req-1",
-    workspaceId: workspace.workspaceId,
-    clearedAgentIds: [storedRecord.id],
-    success: true,
-    error: null,
-  });
-  const agentUpdate = findByType(emitted, "agent_update");
-  expect(agentUpdate.payload.kind).toBe("upsert");
-  if (agentUpdate.payload.kind === "upsert") {
-    expect(agentUpdate.payload.agent.requiresAttention).toBe(false);
-  }
-});
+    };
+    const providerSnapshot = createProviderSnapshotManagerStub();
+    providerSnapshot.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    const clients = [1, 2].map((index) => {
+      const emitted: SessionOutboundMessage[] = [];
+      const session = createSessionForWorkspaceTests({
+        onMessage: (message) => emitted.push(message),
+        providerSnapshotManager: providerSnapshot.manager,
+        agentManager: {
+          subscribe: manager.subscribe.bind(manager),
+          listAgents: manager.listAgents.bind(manager),
+          getAgent: manager.getAgent.bind(manager),
+          clearAgentAttention: manager.clearAgentAttention.bind(manager),
+        },
+        agentStorage: { get: storage.get.bind(storage), list: storage.list.bind(storage) },
+      });
+      session.workspaceRegistry.list = async () => [workspace];
+      session.workspaceRegistry.get = async (id: string) =>
+        id === workspace.workspaceId ? workspace : null;
+      session.projectRegistry.list = async () => [project];
+      session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+      return { session, emitted, index };
+    });
+    try {
+      await storage.upsert(record);
+      for (const { session, emitted, index } of clients) {
+        await session.handleMessage({
+          type: "fetch_agents_request",
+          scope: "active",
+          requestId: `agents-${index}`,
+          subscribe: { subscriptionId: `agents-${index}` },
+          sync: {},
+        });
+        await session.handleMessage({
+          type: "fetch_workspaces_request",
+          requestId: `workspaces-${index}`,
+          subscribe: { subscriptionId: `workspaces-${index}` },
+          sync: {},
+        });
+        expect(findByType(emitted, "fetch_agents_response")?.payload.entries).toEqual([
+          expect.objectContaining({ agent: expect.objectContaining({ requiresAttention: true }) }),
+        ]);
+        emitted.splice(0);
+      }
+      await clients[0]!.session.handleMessage(
+        target === "agent"
+          ? { type: "clear_agent_attention", agentId: record.id, requestId: "read" }
+          : {
+              type: "workspace.clear_attention.request",
+              workspaceId: workspace.workspaceId,
+              requestId: "read",
+            },
+      );
+      for (const { emitted } of clients) {
+        await vi.waitFor(() => {
+          expect(emitted).toContainEqual({
+            type: "agent_update",
+            payload: expect.objectContaining({
+              kind: "upsert",
+              agent: expect.objectContaining({ id: record.id, requiresAttention: false }),
+              seq: expect.any(Number),
+            }),
+          });
+          expect(emitted).toContainEqual({
+            type: "workspace_update",
+            payload: expect.objectContaining({
+              kind: "upsert",
+              workspace: expect.objectContaining({ id: workspace.workspaceId, status: "done" }),
+              seq: expect.any(Number),
+            }),
+          });
+        });
+      }
+      expect(await new AgentStorage(path.join(root, "agents"), logger).get(record.id)).toMatchObject({
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+      expect(resume).not.toHaveBeenCalled();
+      expect(manager.listAgents()).toEqual([]);
+    } finally {
+      for (const { session } of clients) await session.cleanup();
+      await manager.flush();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("workspace clear attention responds with an error instead of timing out", async () => {
   const emitted: SessionOutboundMessage[] = [];
@@ -1864,9 +1904,14 @@ test("workspace clear attention can clear multiple workspaces in one request", a
   session.projectRegistry.get = async (id: string) =>
     projects.find((project) => project.projectId === id) ?? null;
   session.agentStorage.get = async (agentId: string) => storedRecords.get(agentId) ?? null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    const storedRecord = record as StoredAgentRecord;
-    storedRecords.set(storedRecord.id, storedRecord);
+  session.agentManager.clearAgentAttention = async (agentId: string) => {
+    const record = storedRecords.get(agentId)!;
+    storedRecords.set(agentId, {
+      ...record,
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    });
   };
   session.listAgentPayloads = async () =>
     Array.from(storedRecords.values()).map((record) => {
@@ -2125,6 +2170,7 @@ test("close_items_request archives stored agents that are not currently loaded",
       storedRecord.attentionTimestamp = record.attentionTimestamp;
     }
   });
+  const cancelAgentRun = vi.fn(async () => ({ status: "not_running" as const }));
 
   const session = asTestSession(
     new Session({
@@ -2140,6 +2186,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         listAgents: () => [],
         getAgent: (agentId: string) => (agentId === "agent-live" ? { id: agentId } : null),
         hasInFlightRun: () => false,
+        cancelAgentRun,
         archiveAgent: async (agentId: string) => {
           if (agentId !== "agent-live") {
             throw new Error(`Unexpected live archive: ${agentId}`);
@@ -2258,6 +2305,7 @@ test("close_items_request archives stored agents that are not currently loaded",
     terminals: [],
     requestId: "req-close-stored",
   });
+  expect(cancelAgentRun).toHaveBeenCalledWith("agent-live");
   expect(sessionLogger.warn).not.toHaveBeenCalled();
 });
 
@@ -2283,6 +2331,7 @@ test("close_items_request continues after an archive failure", async () => {
     archivedAt: null as string | null,
   };
   const killTerminalBestEffort = vi.fn();
+  const cancelAgentRun = vi.fn(async () => ({ status: "not_running" as const }));
   const session = asTestSession(
     new Session({
       clientId: "test-client",
@@ -2298,6 +2347,7 @@ test("close_items_request continues after an archive failure", async () => {
         getAgent: (agentId: string) =>
           agentId === "agent-bad" || agentId === "agent-good" ? { id: agentId } : null,
         hasInFlightRun: () => false,
+        cancelAgentRun,
         archiveAgent: async (agentId: string) => {
           if (agentId === "agent-bad") {
             throw new Error("archive failed");
@@ -2403,6 +2453,8 @@ test("close_items_request continues after an archive failure", async () => {
     terminals: [{ terminalId: "term-1", success: true }],
     requestId: "req-close-best-effort",
   });
+  expect(cancelAgentRun).toHaveBeenCalledWith("agent-bad");
+  expect(cancelAgentRun).toHaveBeenCalledWith("agent-good");
   expect(emitted.find((message) => message.type === "agent_update")?.payload).toMatchObject({
     kind: "upsert",
     agent: {
@@ -9598,4 +9650,58 @@ test("workspace.create.request reports an archived explicit project", async () =
     workspace: null,
     errorCode: "archived_project",
   });
+});
+
+test("explicit unavailable history retains cold records without exposing hidden live or registered providers", async () => {
+  const providers = createProviderSnapshotManagerStub();
+  providers.listRegisteredProviderIds.mockReturnValue(["codex", "hidden-provider"]);
+  providers.hasProvider.mockImplementation((provider) => provider === "codex");
+  const timestamp = "2026-11-01T00:00:00.000Z";
+  const live = {
+    ...makeManagedAgent({
+      id: "hidden-live",
+      cwd: REPO_CWD,
+      lifecycle: "running",
+      updatedAt: timestamp,
+    }),
+    provider: "hidden-provider",
+    config: { provider: "hidden-provider", cwd: REPO_CWD },
+  };
+  const records = [
+    {
+      ...makeStoredAgent({ id: "hidden-stored", cwd: REPO_CWD, updatedAt: timestamp }),
+      provider: "hidden-provider",
+    },
+    {
+      ...makeStoredAgent({ id: "unavailable-stored", cwd: REPO_CWD, updatedAt: timestamp }),
+      provider: "missing-provider",
+    },
+  ];
+  const session = createSessionForWorkspaceTests({
+    providerSnapshotManager: providers.manager,
+    agentManager: {
+      listAgents: () => [live],
+      getAgent: (id: string) => id === live.id ? live : null,
+    },
+    agentStorage: {
+      list: async () => records,
+      get: async (id: string) => records.find((record) => record.id === id) ?? null,
+    },
+  });
+  try {
+    await expect(session.listAgentPayloads()).resolves.toEqual([]);
+    await expect(
+      session.listAgentPayloads({ includeArchived: true, includeUnavailablePersisted: true }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "unavailable-stored", providerUnavailable: true }),
+    ]);
+    await expect(session.getAgentPayloadById("hidden-live")).resolves.toBeNull();
+    await expect(session.getAgentPayloadById("hidden-stored")).resolves.toBeNull();
+    await expect(session.getAgentPayloadById("unavailable-stored")).resolves.toMatchObject({
+      id: "unavailable-stored",
+      providerUnavailable: true,
+    });
+  } finally {
+    await session.cleanup();
+  }
 });

@@ -43,6 +43,7 @@ import {
   type WorkspaceToolSelection,
 } from "@/workspace-tabs/tool-workspace-selection";
 import { isDraftTabInUse } from "@/workspace/draft-tab-usage";
+import { requestAgentAttentionRead } from "@/stores/agent-attention-read-store";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 export type { NavigateToWorkspaceInput } from "./navigation";
@@ -84,6 +85,20 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
+    getFocusedAgentId: (serverId, workspaceId) => {
+      const workspaceKey = resolveProjectLayoutKey({ serverId, workspaceId });
+      const layout = workspaceKey
+        ? useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]
+        : null;
+      if (!layout) return null;
+      const pane = findPaneById(layout.root, layout.focusedPaneId);
+      if (!pane || pane.hidden === true) return null;
+      const target = collectAllTabs(layout.root).find(
+        (tab) => tab.tabId === pane.focusedTabId,
+      )?.target;
+      return target?.kind === "agent" ? target.agentId : null;
+    },
+    requestAgentAttentionRead,
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     pinAgent: (workspaceKey, agentId) =>
       useWorkspaceLayoutStore.getState().pinAgent(workspaceKey, agentId),

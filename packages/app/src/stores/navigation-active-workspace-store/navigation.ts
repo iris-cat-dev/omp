@@ -45,6 +45,8 @@ export interface NavigateToSidebarWorkspaceInput extends NavigateToWorkspaceInpu
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
+  getFocusedAgentId: (serverId: string, workspaceId: string) => string | null;
+  requestAgentAttentionRead: (serverId: string, agentId: string) => void;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
 }
@@ -117,6 +119,21 @@ export function parseActiveWorkspaceSelection(
   return parseWorkspaceSelectionFromRouteParams(input.params);
 }
 
+export function navigateToWorkspaceTab(
+  input: { serverId: string; workspaceKey: string; tabId: string },
+  deps: Pick<NavigateToWorkspaceDeps, "requestAgentAttentionRead"> & {
+    getWorkspaceTabs: (workspaceKey: string) => readonly WorkspaceTab[];
+    focusTab: (workspaceKey: string, tabId: string) => void;
+  },
+): void {
+  const tab = deps.getWorkspaceTabs(input.workspaceKey).find((tab) => tab.tabId === input.tabId);
+  if (!tab) return;
+  deps.focusTab(input.workspaceKey, input.tabId);
+  if (tab.target.kind === "agent") {
+    deps.requestAgentAttentionRead(input.serverId, tab.target.agentId);
+  }
+}
+
 export function navigateToWorkspace(
   input: NavigateToWorkspaceInput,
   deps: NavigateToWorkspaceDeps,
@@ -149,6 +166,7 @@ export function navigateToWorkspace(
           workspaces,
         })
       : null;
+  let selectedAgentId = input.target?.kind === "agent" ? input.target.agentId : null;
   if (input.target) {
     if (projectKey && !input.deferAgentTargetUntilNavigation) {
       prepareWorkspaceTab(
@@ -157,18 +175,23 @@ export function navigateToWorkspace(
       );
     }
   } else if (!input.restoreProjectSelection) {
+    const allAgents = Array.from(deps.getSessionAgents(input.serverId));
     const workspaceAgents = resolvedWorkspaceId
-      ? Array.from(deps.getSessionAgents(input.serverId)).filter(
+      ? allAgents.filter(
           (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === resolvedWorkspaceId,
         )
       : [];
-    const attentionAgentId = pickAttentionAgent(workspaceAgents);
+    const attentionAgentId = pickAttentionAgent(
+      workspaceAgents,
+      new Map(allAgents.map((agent) => [agent.id, agent])),
+    );
     if (attentionAgentId && resolvedWorkspaceId && projectKey) {
       deps.openTab({
         workspaceKey: projectKey,
         target: { kind: "agent", agentId: attentionAgentId, workspaceId: resolvedWorkspaceId },
         intent: "reveal",
       });
+      selectedAgentId = attentionAgentId;
     }
   }
 
@@ -180,6 +203,12 @@ export function navigateToWorkspace(
           `agent:${input.target.agentId}`,
         )
       : buildHostWorkspaceRoute(input.serverId, routeWorkspaceId);
+  if (!input.target && !selectedAgentId && resolvedWorkspaceId) {
+    selectedAgentId = deps.getFocusedAgentId(input.serverId, resolvedWorkspaceId);
+  }
+  if (selectedAgentId) {
+    deps.requestAgentAttentionRead(input.serverId, selectedAgentId);
+  }
   deps.rememberLastWorkspace({ serverId: input.serverId, workspaceId: routeWorkspaceId });
   deps.navigateToRoute(route);
   return route;
@@ -259,20 +288,19 @@ export async function navigateToSidebarWorkspace(
     return navigateToWorkspace(input, deps);
   }
 
-  const activeAgents = Array.from(deps.getSessionAgents(input.serverId)).filter(
-    (agent) => !agent.archivedAt,
-  );
+  const allAgents = Array.from(deps.getSessionAgents(input.serverId));
+  const activeAgents = allAgents.filter((agent) => !agent.archivedAt);
   const activeWorkspaceAgents = activeAgents.filter(
     (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId,
   );
-  const rootAgentIds = listActiveWorkspaceRootAgentIds(activeAgents, workspaceId);
+  const rootAgentIds = listActiveWorkspaceRootAgentIds(allAgents, workspaceId);
   if (rootAgentIds.length > 0) {
-    const activeAgentById = new Map(activeAgents.map((agent) => [agent.id, agent]));
+    const agentsById = new Map(allAgents.map((agent) => [agent.id, agent]));
     const rootAgents = rootAgentIds.flatMap((agentId) => {
-      const agent = activeAgentById.get(agentId);
+      const agent = agentsById.get(agentId);
       return agent ? [agent] : [];
     });
-    const focusedAgentId = pickAttentionAgent(rootAgents) ?? rootAgentIds[0];
+    const focusedAgentId = pickAttentionAgent(rootAgents, agentsById) ?? rootAgentIds[0];
     if (!focusedAgentId) {
       return navigateToWorkspace(input, deps);
     }
@@ -284,6 +312,7 @@ export async function navigateToSidebarWorkspace(
       for (const agentId of revealOrder) {
         revealSidebarAgentInTabHost(tabHost, workspaceId, agentId, deps);
       }
+      deps.requestAgentAttentionRead(input.serverId, focusedAgentId);
       return buildHostWorkspaceRoute(tabHost.serverId, tabHost.workspaceId);
     }
 
@@ -312,6 +341,7 @@ export async function navigateToSidebarWorkspace(
   if (activeWorkspaceAgents.length > 0) {
     const agentId = pickWorkspacePrimaryAgentId(activeAgents, workspaceId);
     if (agentId && tabHost) {
+      deps.requestAgentAttentionRead(input.serverId, agentId);
       return revealSidebarAgentInTabHost(tabHost, workspaceId, agentId, deps);
     }
     if (agentId) {
@@ -333,6 +363,7 @@ export async function navigateToSidebarWorkspace(
     const agentId = pickWorkspacePrimaryAgentId(history, workspaceId);
     if (agentId) {
       if (tabHost) {
+        deps.requestAgentAttentionRead(input.serverId, agentId);
         return revealSidebarAgentInTabHost(tabHost, workspaceId, agentId, deps);
       }
       return navigateToWorkspace(

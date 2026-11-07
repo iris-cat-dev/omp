@@ -148,6 +148,10 @@ In project grouping, pinned chats stay above unpinned chats. Within each section
 
 Hover a sidebar conversation for **Delete** and **Archive** before its three-dot menu, in both project and status groupings. Delete still asks for confirmation. **Fork** remains in the conversation menu and opens a draft with the source history without changing the source. The right-click and three-dot menus also offer **Copy Agent ID**, which copies that conversation's primary Agent ID, not its workspace ID or the currently selected conversation's ID. It prefers an active primary Agent and can resolve an archived conversation from history. Shortcut clicks do not open, drag, or rename the row. See [Conversation names and navigation](workspaces-files-git.md#conversation-names-and-navigation) for rename behavior.
 
+Selecting a conversation, including its already active sidebar row or tab, marks its completion notification as read. If the connection or initial conversation state is not ready, the acknowledgement waits for it. This also works after runtime unload without activating the provider, and updates other connected clients.
+
+A completion received while you are already viewing the conversation stays visible until you explicitly select it again, focus the composer, send another prompt, or leave the conversation. Permission requests still require a response, and marking attention as read does not change a failed task's lifecycle state. The workspace indicator can remain when another conversation or terminal has finished work to review; **Mark as read** acknowledges all clearable conversation notifications in that workspace.
+
 ### Replay and permanent deletion
 
 OMP `model_usage` records, including background-memory usage, are metadata rather than chat messages. Replay preserves their original JSONL and usage values without an unsupported-record notice; surrounding messages remain visible. Truly unknown record types still produce diagnostics.
@@ -175,7 +179,7 @@ A new workspace starts without a conversation. `create_workspace` instructs the 
 
 Managed children remain in their parent's subagent track, including children in another worktree. Child-only workspaces do not add sidebar conversation rows or automatically open tabs. Opening a child in the same project keeps it with the parent pane while preserving its own working directory and workspace; children in another project open in that project's layout. Detaching restores independent conversation visibility; empty workspaces and workspaces with an active independent root remain visible.
 
-Older workspaces with multiple active roots restore each root as a tab and focus the one needing attention. Their workspace menu can open or archive each root without global history. Archiving retains history. A shared workspace does not isolate concurrent file edits.
+Older workspaces with multiple active roots restore each root as a tab and focus the one needing attention. Their workspace menu can open or archive each root without global history. In a visible workspace, the menu and attention selection also include children owned by that workspace whose parent belongs to another workspace. Archiving retains history. A shared workspace does not isolate concurrent file edits.
 
 `notifyOnFinish: true` can notify the creator when an independent agent finishes, fails, or needs permission without creating a parent relationship. It does not revive an archived creator. Ordinary child agents retain parent-owned notifications, which cease if the child is detached.
 

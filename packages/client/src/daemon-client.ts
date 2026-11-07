@@ -1971,7 +1971,7 @@ export class DaemonClient {
       agentId,
       requestId,
     });
-    await this.sendRequest({
+    const response = await this.sendRequest({
       requestId,
       message,
       options: { skipQueue: true },
@@ -1985,6 +1985,7 @@ export class DaemonClient {
         return msg.payload;
       },
     });
+    if (response.error) throw new Error(response.error);
   }
 
   async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {

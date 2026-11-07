@@ -1,4 +1,5 @@
 import type { Agent } from "@/stores/session-store";
+import { isWorkspaceRootAgent } from "@/subagents/workspace-root-policy";
 
 interface ShouldClearAgentAttentionInput {
   agentId: string | null | undefined;
@@ -11,6 +12,7 @@ interface ShouldClearAgentAttentionInput {
 
 export type AgentAttentionClearTrigger =
   | "focus-entry"
+  | "navigation"
   | "input-focus"
   | "prompt-send"
   | "agent-blur";
@@ -28,7 +30,10 @@ function getAttentionPriority(reason: Agent["attentionReason"]): number | null {
   return ATTENTION_REASON_PRIORITY[reason];
 }
 
-export function pickAttentionAgent(agents: Agent[]): string | null {
+export function pickAttentionAgent(
+  agents: readonly Agent[],
+  agentsById: ReadonlyMap<string, Agent> = new Map(agents.map((agent) => [agent.id, agent])),
+): string | null {
   let selectedAgentId: string | null = null;
   let selectedPriority = Number.POSITIVE_INFINITY;
   let selectedTimestamp = Number.POSITIVE_INFINITY;
@@ -38,7 +43,12 @@ export function pickAttentionAgent(agents: Agent[]): string | null {
       continue;
     }
 
-    if (agent.parentAgentId) {
+    if (
+      !isWorkspaceRootAgent(
+        agent,
+        agent.parentAgentId ? agentsById.get(agent.parentAgentId) : undefined,
+      )
+    ) {
       continue;
     }
 

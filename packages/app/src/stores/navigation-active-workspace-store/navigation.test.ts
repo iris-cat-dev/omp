@@ -23,6 +23,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
   const pinnedAgents: Array<{ workspaceKey: string; agentId: string }> = [];
+  const readRequests: Array<{ serverId: string; agentId: string }> = [];
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () =>
       new Map(
@@ -45,6 +46,8 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
         ),
       ),
     getSessionAgents: () => [] as Agent[],
+    getFocusedAgentId: () => null,
+    requestAgentAttentionRead: (serverId, agentId) => readRequests.push({ serverId, agentId }),
     openTab: ({ workspaceKey, target }) => {
       openedTabs.push({ workspaceKey, target });
       return target.kind === "agent" ? target.agentId : null;
@@ -54,7 +57,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs, pinnedAgents };
+  return { deps, navigations, remembered, openedTabs, pinnedAgents, readRequests };
 }
 
 function createSidebarFakeDeps(overrides: Partial<NavigateToSidebarWorkspaceDeps> = {}) {
@@ -96,6 +99,71 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("acknowledges a selected agent again without reading another conversation", () => {
+    const selected = {
+      id: "selected",
+      workspaceId: "workspace-a",
+      requiresAttention: true,
+      attentionReason: "finished",
+    } as Agent;
+    const other = { ...selected, id: "other" };
+    const unread = new Set([selected.id, other.id]);
+    const { deps, openedTabs, readRequests } = createFakeDeps({
+      getSessionAgents: () => [selected, other],
+    });
+    const recordRead = deps.requestAgentAttentionRead;
+    deps.requestAgentAttentionRead = (serverId, agentId) => {
+      recordRead(serverId, agentId);
+      unread.delete(agentId);
+    };
+    const input = {
+      serverId: "server-1",
+      workspaceId: "workspace-a",
+      target: { kind: "agent" as const, agentId: selected.id },
+    };
+
+    navigateToWorkspace(input, deps);
+    unread.add(selected.id);
+    navigateToWorkspace(input, deps);
+
+    expect(unread).toEqual(new Set([other.id]));
+    expect(readRequests).toEqual([
+      { serverId: "server-1", agentId: selected.id },
+      { serverId: "server-1", agentId: selected.id },
+    ]);
+    expect(
+      openedTabs.every((tab) => tab.target.kind === "agent" && tab.target.agentId === selected.id),
+    ).toBe(true);
+  });
+
+  it("selects an unread cross-workspace root instead of a same-workspace child", () => {
+    const parent = { id: "parent", workspaceId: "workspace-other", parentAgentId: null } as Agent;
+    const root = { id: "root-a", workspaceId: "workspace-a", parentAgentId: null } as Agent;
+    const crossWorkspaceChild = {
+      id: "root-b",
+      workspaceId: "workspace-a",
+      parentAgentId: parent.id,
+      requiresAttention: true,
+      attentionReason: "finished",
+    } as Agent;
+    const child = {
+      ...crossWorkspaceChild,
+      id: "child",
+      parentAgentId: root.id,
+      attentionReason: "permission",
+    } as Agent;
+    const { deps, openedTabs, readRequests } = createFakeDeps({
+      getSessionAgents: () => [parent, root, child, crossWorkspaceChild],
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+
+    expect(openedTabs.map((tab) => tab.target)).toEqual([
+      { kind: "agent", agentId: crossWorkspaceChild.id, workspaceId: "workspace-a" },
+    ]);
+    expect(readRequests).toEqual([{ serverId: "server-1", agentId: crossWorkspaceChild.id }]);
+  });
+
   it("reports when no last workspace is known", () => {
     const { deps } = createLastSelectionDeps(null);
 
@@ -341,7 +409,9 @@ describe("workspace navigation", () => {
       parentAgentId: null,
       createdAt: new Date("2026-03-01T00:00:00.000Z"),
       archivedAt: null,
-      requiresAttention: false,
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date("2026-03-04T00:00:00.000Z"),
     } as Agent;
     const hiddenAttentionRoot = {
       id: "root-hidden-attention",
@@ -353,7 +423,7 @@ describe("workspace navigation", () => {
       attentionReason: "finished",
       attentionTimestamp: new Date("2026-03-03T00:00:00.000Z"),
     } as Agent;
-    const { deps, openedTabs, pinnedAgents, navigations } = createSidebarFakeDeps({
+    const { deps, openedTabs, pinnedAgents, navigations, readRequests } = createSidebarFakeDeps({
       getSessionAgents: () => [hiddenAttentionRoot, primary],
     });
 
@@ -386,6 +456,7 @@ describe("workspace navigation", () => {
       { workspaceKey: "server-1:project:project-a", agentId: "root-hidden-attention" },
     ]);
     expect(navigations).toEqual([]);
+    expect(readRequests).toEqual([{ serverId: "server-1", agentId: hiddenAttentionRoot.id }]);
   });
 
   it("switches layouts instead of hosting another project's conversation", async () => {
