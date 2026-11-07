@@ -1,13 +1,5 @@
-import { createHash } from "node:crypto";
 import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
-import type { ClaudeAccountQuotaCredential } from "./claude-account-quota.js";
 import { parseClaudeRetryAt } from "./claude-oauth-api.js";
-
-interface ClaudeCredentialIdentity extends ClaudeAccountQuotaCredential {
-  credentialId: number;
-  provider: string;
-  identityKey?: string;
-}
 
 interface ClaudeModelCompletion {
   provider?: string;
@@ -35,26 +27,6 @@ interface QuotaRead {
   state: AccountState;
   revision: number;
   sequence: number;
-}
-// The digest is internal only. Stable identity survives token refresh; token
-// identity is a fallback only for credentials with no account metadata.
-export function claudeQuotaAccountKey(
-  databasePath: string,
-  account: ClaudeCredentialIdentity,
-): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        databasePath,
-        account.provider,
-        account.credentialId,
-        account.identityKey ?? null,
-        account.accountId ?? null,
-        account.orgId ?? null,
-        account.identityKey || account.accountId || account.orgId ? null : account.accessToken,
-      ]),
-    )
-    .digest("hex");
 }
 
 function isFreshReset(resetsAt: string | null, now: number): boolean {

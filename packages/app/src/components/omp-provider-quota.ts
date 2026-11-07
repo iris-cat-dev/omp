@@ -51,6 +51,10 @@ export function resolveOmpRemainingQuotaPct(usedPct: number | null | undefined):
   return 100 - normalizedUsedPct;
 }
 
+export function isOmpQuotaStale(quota: OmpProviderAccountQuota | null | undefined): boolean {
+  return quota?.status !== "available" && quota?.lastSuccessfulAt != null;
+}
+
 export function formatOmpQuotaResetTime(
   iso: string | null | undefined,
   locale: string,

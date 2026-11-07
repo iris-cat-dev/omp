@@ -161,6 +161,7 @@ describe("fetchCodexAccountQuota", () => {
     });
     expect(quota.status).toBe("unavailable");
     expect(quota.credits).toBeUndefined();
+    expect(quota.queryError).toEqual({ kind: "authentication" });
     expect(fetchApi).not.toHaveBeenCalled();
   });
 
@@ -307,23 +308,27 @@ describe("fetchCodexAccountQuota", () => {
     });
   });
 
-  it("marks expired credentials unavailable without attempting refresh", async () => {
-    const fetchApi = vi.fn(async () => new Response(null, { status: 401 }));
+  it.each([401, 403])(
+    "classifies HTTP %s as expired authentication without refreshing",
+    async (httpStatus) => {
+      const fetchApi = vi.fn(async () => new Response(null, { status: httpStatus }));
 
-    await expect(
-      fetchCodexAccountQuota({
-        credential: { accessToken: "expired-token" },
-        fetch: fetchApi,
-        now: () => NOW,
-      }),
-    ).resolves.toMatchObject({
-      status: "unavailable",
-      fiveHourLimitReached: null,
-      error: "Codex account authentication expired",
-    });
-  });
+      await expect(
+        fetchCodexAccountQuota({
+          credential: { accessToken: "expired-token" },
+          fetch: fetchApi,
+          now: () => NOW,
+        }),
+      ).resolves.toMatchObject({
+        status: "unavailable",
+        fiveHourLimitReached: null,
+        error: "Codex account authentication expired",
+        queryError: { kind: "authentication", httpStatus },
+      });
+    },
+  );
 
-  it("rejects a successful response that has no five-hour window", async () => {
+  it("keeps absent five-hour usage unknown when only the weekly window is returned", async () => {
     const fetchApi = vi.fn(async () =>
       jsonResponse({ rate_limit: { secondary_window: { used_percent: 20 } } }),
     );
@@ -335,10 +340,10 @@ describe("fetchCodexAccountQuota", () => {
         now: () => NOW,
       }),
     ).resolves.toMatchObject({
-      status: "error",
+      status: "available",
       fiveHourUsedPct: null,
       fiveHourLimitReached: null,
-      error: "Codex usage response did not include the five-hour limit",
+      weeklyUsedPct: 20,
     });
   });
   it("keeps reset cards available when the independent usage request fails", async () => {
@@ -492,5 +497,113 @@ describe("fetchCodexAccountQuota", () => {
         error: "Codex reset card request failed (HTTP 503)",
       },
     });
+  });
+
+  it.each([
+    { status: 429, retryAfter: "39", kind: "rate_limited", retryAt: "2026-08-29T00:00:39.000Z" },
+    {
+      status: 429,
+      retryAfter: "Sat, 29 Aug 2026 00:02:00 GMT",
+      kind: "rate_limited",
+      retryAt: "2026-08-29T00:02:00.000Z",
+    },
+    { status: 429, retryAfter: "-1", kind: "rate_limited", retryAt: null },
+    { status: 429, retryAfter: "private-response-text", kind: "rate_limited", retryAt: null },
+    { status: 503, retryAfter: "15", kind: "http", retryAt: "2026-08-29T00:00:15.000Z" },
+  ])(
+    "classifies HTTP $status without using it as quota exhaustion",
+    async ({ status, retryAfter, kind, retryAt }) => {
+      const quota = await fetchCodexAccountQuota({
+        credential: { accessToken: "private-token" },
+        now: () => NOW,
+        fetch: async (url) =>
+          url === CODEX_USAGE_ENDPOINT
+            ? new Response("private-token backend details", {
+                status,
+                headers: { "Retry-After": retryAfter },
+              })
+            : jsonResponse({ available_count: 0, credits: [] }),
+      });
+      expect(quota).toMatchObject({
+        status: "error",
+        fiveHourUsedPct: null,
+        fiveHourLimitReached: null,
+        weeklyUsedPct: null,
+        queryError: { kind, httpStatus: status, retryAt },
+      });
+      expect(JSON.stringify(quota)).not.toContain("private-token");
+      expect(JSON.stringify(quota)).not.toContain("backend details");
+    },
+  );
+
+  it.each([
+    { name: "network", error: new TypeError("private-token network address"), kind: "network" },
+    { name: "abort", error: new DOMException("private-token", "AbortError"), kind: "timeout" },
+  ])("sanitizes $name exceptions", async ({ error, kind }) => {
+    const quota = await fetchCodexAccountQuota({
+      credential: { accessToken: "private-token" },
+      now: () => NOW,
+      fetch: async (url) => {
+        if (url === CODEX_USAGE_ENDPOINT) throw error;
+        return jsonResponse({ available_count: 0, credits: [] });
+      },
+    });
+    expect(quota).toMatchObject({ status: "error", fiveHourUsedPct: null, queryError: { kind } });
+    expect(JSON.stringify(quota)).not.toContain("private-token");
+  });
+
+  it.each(["invalid JSON private-token", JSON.stringify({ rate_limit: "private-token" })])(
+    "classifies invalid payloads without echoing their body",
+    async (body) => {
+      const quota = await fetchCodexAccountQuota({
+        credential: { accessToken: "private-token" },
+        now: () => NOW,
+        fetch: async (url) =>
+          url === CODEX_USAGE_ENDPOINT
+            ? new Response(body)
+            : jsonResponse({ available_count: 0, credits: [] }),
+      });
+      expect(quota).toMatchObject({
+        status: "error",
+        fiveHourUsedPct: null,
+        fiveHourLimitReached: null,
+        queryError: { kind: "invalid_response" },
+      });
+      expect(JSON.stringify(quota)).not.toContain("private-token");
+    },
+  );
+
+  it.each(["fetch", "body"])("keeps the timeout through stalled %s consumption", async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const started = Promise.withResolvers<void>();
+      const stalled = Promise.withResolvers<Response>();
+      const body = Promise.withResolvers<string>();
+      const pending = fetchCodexAccountQuota({
+        credential: { accessToken: "private-token" },
+        now: () => NOW,
+        timeoutMs: 10,
+        fetch: async (url) => {
+          if (url !== CODEX_USAGE_ENDPOINT)
+            return jsonResponse({ available_count: 0, credits: [] });
+          started.resolve();
+          if (stage === "fetch") return stalled.promise;
+          const response = new Response();
+          vi.spyOn(response, "text").mockReturnValue(body.promise);
+          return response;
+        },
+      });
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(10);
+      await expect(pending).resolves.toMatchObject({
+        status: "error",
+        fiveHourUsedPct: null,
+        queryError: { kind: "timeout" },
+      });
+      stalled.resolve(new Response("{}"));
+      body.resolve("{}");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

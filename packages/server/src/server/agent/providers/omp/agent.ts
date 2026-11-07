@@ -211,7 +211,9 @@ import {
 } from "./claude-account-quota.js";
 import { consumeCodexResetCredit } from "./codex-reset-credits.js";
 import { consumeClaudeLimitReset } from "./claude-limit-resets.js";
-import { ClaudeQuotaState, claudeQuotaAccountKey } from "./claude-quota-state.js";
+import { ClaudeQuotaState } from "./claude-quota-state.js";
+import { CodexQuotaState } from "./codex-quota-state.js";
+import { quotaAccountKey } from "./quota-account-key.js";
 import { OmpClaudeLimitResetConsumeRequestMessageSchema } from "@omp-desktop/protocol/messages";
 import { createProxyFetch } from "../../../../services/quota-fetcher/proxy-fetch.js";
 
@@ -5284,6 +5286,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly runtime: OmpRuntime;
   private readonly localModelBridge?: LocalModelBridge;
   private readonly claudeQuotaState: ClaudeQuotaState;
+  private readonly codexQuotaState = new CodexQuotaState();
   private readonly oauthAccountsOverride?: readonly StoredOmpOAuthAccount[];
   private readonly sessionCredentialReader?: (
     providerId: string,
@@ -5431,7 +5434,7 @@ export class OmpAgentClient implements AgentClient {
     try {
       initialKeys = new Set(
         readStoredOmpOAuthAccountCredentials(databasePath, "anthropic").map((account) =>
-          claudeQuotaAccountKey(databasePath, account),
+          quotaAccountKey(databasePath, account),
         ),
       );
     } catch {
@@ -5453,11 +5456,11 @@ export class OmpAgentClient implements AgentClient {
         if (!credentialId) return;
         const accounts = readStoredOmpOAuthAccountCredentials(databasePath, "anthropic");
         this.claudeQuotaState.retainAccounts(
-          new Set(accounts.map((account) => claudeQuotaAccountKey(databasePath, account))),
+          new Set(accounts.map((account) => quotaAccountKey(databasePath, account))),
         );
         const account = accounts.find((candidate) => candidate.credentialId === credentialId);
         if (!account) return;
-        const key = claudeQuotaAccountKey(databasePath, account);
+        const key = quotaAccountKey(databasePath, account);
         if (!initialKeys.has(key)) return;
         this.claudeQuotaState.observeCompletion(key, message);
       } catch {
@@ -6453,14 +6456,26 @@ export class OmpAgentClient implements AgentClient {
         new Set(
           [...storedAccountCredentialsById.values()]
             .filter((account) => account.provider === "anthropic")
-            .map((account) => claudeQuotaAccountKey(databasePath, account)),
+            .map((account) => quotaAccountKey(databasePath, account)),
         ),
       );
-      await Promise.all(
+      this.codexQuotaState.retainAccounts(
+        new Set(
+          [...storedAccountCredentialsById.values()]
+            .filter((account) => account.provider === "openai-codex")
+            .map((account) => quotaAccountKey(databasePath, account)),
+        ),
+      );
+      const quotaReads = await Promise.all(
         [...storedAccountCredentialsById.values()].map(async (account) => {
+          const accountKey = quotaAccountKey(databasePath, account);
           const claudeRead =
             account.provider === "anthropic"
-              ? this.claudeQuotaState.beginRead(claudeQuotaAccountKey(databasePath, account))
+              ? this.claudeQuotaState.beginRead(accountKey)
+              : undefined;
+          const codexRead =
+            account.provider === "openai-codex"
+              ? this.codexQuotaState.beginRead(accountKey)
               : undefined;
           const fetchQuota =
             account.provider === "anthropic" ? fetchClaudeAccountQuota : fetchCodexAccountQuota;
@@ -6469,12 +6484,34 @@ export class OmpAgentClient implements AgentClient {
             fetch: this.quotaFetchForProvider(account.provider),
             now: this.quotaNow,
           });
-          quotaByCredentialId.set(
-            account.credentialId,
-            claudeRead ? this.claudeQuotaState.completeRead(claudeRead, quota) : quota,
-          );
+          if (claudeRead) {
+            quotaByCredentialId.set(
+              account.credentialId,
+              this.claudeQuotaState.completeRead(claudeRead, quota),
+            );
+          }
+          return { account, codexRead, quota };
         }),
       );
+      // Credentials can be removed or replaced while the requests are in flight.
+      const currentCodexAccounts = readStoredOmpOAuthAccountCredentials(
+        databasePath,
+        "openai-codex",
+      );
+      this.codexQuotaState.retainAccounts(
+        new Set(currentCodexAccounts.map((account) => quotaAccountKey(databasePath, account))),
+      );
+      storedAccountsByProvider.set(
+        "openai-codex",
+        readStoredOmpOAuthAccounts(databasePath).filter(
+          (account) => account.provider === "openai-codex",
+        ),
+      );
+      for (const { account, codexRead, quota } of quotaReads) {
+        if (!codexRead) continue;
+        const current = this.codexQuotaState.completeRead(codexRead, quota);
+        if (current) quotaByCredentialId.set(account.credentialId, current);
+      }
       // eslint-disable-next-line oxc/no-map-spread
       loginProviders = providers.map((provider) => {
         const accounts = sortStoredOmpOAuthAccounts(
@@ -6554,7 +6591,11 @@ export class OmpAgentClient implements AgentClient {
         active.creditId === creditId &&
         active.redeemRequestId === redeemRequestId
       ) {
-        return await active.promise;
+        const result = await active.promise;
+        if (result.code === "reset" || result.code === "already_redeemed") {
+          this.codexQuotaState.invalidate(quotaAccountKey(agentDb, credential));
+        }
+        return result;
       }
       throw new Error("A reset card is already being consumed for this Codex account");
     }
@@ -6564,6 +6605,11 @@ export class OmpAgentClient implements AgentClient {
       redeemRequestId,
       fetch: this.quotaFetchForProvider("openai-codex"),
       now: this.quotaNow,
+    }).then((result) => {
+      if (result.code === "reset" || result.code === "already_redeemed") {
+        this.codexQuotaState.invalidate(quotaAccountKey(agentDb, credential));
+      }
+      return result;
     });
     const consumption = { creditId, redeemRequestId, promise };
     codexResetConsumptions.set(key, consumption);
@@ -7019,6 +7065,15 @@ export class OmpAgentClient implements AgentClient {
       }
       throw new Error(
         `No stored credentials found for ${providerId}; remove environment or config credentials at their source`,
+      );
+    }
+    if (providerId === "openai-codex") {
+      this.codexQuotaState.retainAccounts(
+        new Set(
+          readStoredOmpOAuthAccountCredentials(agentDb, providerId).map((account) =>
+            quotaAccountKey(agentDb, account),
+          ),
+        ),
       );
     }
     return await this.getOmpProviderManagement();

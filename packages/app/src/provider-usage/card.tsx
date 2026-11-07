@@ -12,6 +12,8 @@ import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
 import { OmpExtraUsageDetails } from "./extra-usage";
 import { OmpClaudeQuotaNotices } from "@/components/omp-claude-quota-notices";
+import { OmpCodexQuotaNotices } from "@/components/omp-codex-quota-notices";
+import { isOmpQuotaStale } from "@/components/omp-provider-quota";
 
 interface ProviderUsageIconProps {
   iconKey: string;
@@ -36,7 +38,7 @@ function statusText(usage: ProviderUsage, t: TFunction): string | null {
 }
 
 function footerText(usage: ProviderUsage, t: TFunction): string | null {
-  const updated = formatAgo(usage.fetchedAt, t);
+  const updated = isOmpQuotaStale(usage.accountQuota) ? null : formatAgo(usage.fetchedAt, t);
   const parts = [
     usage.sourceLabel,
     updated ? t("providerUsage.updated", { time: updated }) : null,
@@ -56,8 +58,18 @@ export function ProviderUsageCard({
   const { t } = useTranslation();
   const status = statusText(usage, t);
   const footer = footerText(usage, t);
+  const stale = isOmpQuotaStale(usage.accountQuota);
   const balances = usage.balances ?? [];
   const details = usage.details ?? [];
+  let notices: ReactNode = null;
+  if (usage.accountQuota) {
+    notices =
+      usage.providerId.split(":")[0] === "openai-codex" ? (
+        <OmpCodexQuotaNotices quota={usage.accountQuota} />
+      ) : (
+        <OmpClaudeQuotaNotices quota={usage.accountQuota} />
+      );
+  }
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -93,7 +105,7 @@ export function ProviderUsageCard({
         ) : null}
       </View>
 
-      {usage.accountQuota ? <OmpClaudeQuotaNotices quota={usage.accountQuota} /> : null}
+      {notices}
       {!usage.accountQuota && usage.error ? (
         <Text style={styles.error} numberOfLines={3}>
           {usage.error}
@@ -107,6 +119,7 @@ export function ProviderUsageCard({
               key={window.id}
               window={window}
               showReset={!compact || window.percentageDisplay === "remaining"}
+              stale={stale}
             />
           ))}
           {balances.map((balance) => (

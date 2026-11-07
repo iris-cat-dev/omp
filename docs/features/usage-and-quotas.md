@@ -154,6 +154,16 @@ Percentages mean **remaining quota**; unknown is not 100% remaining. Context too
 
 **Credits** in host Usage and provider account details preserve the authenticated API's exact decimal balance string without rounding or interpreting it as currency, or display the reported unlimited/disabled state. Missing balances are unavailable, not zero. Credits, five-hour/weekly quota, and banked reset cards are separate. Desktop neither infers a currency nor scrapes ChatGPT browser cookies.
 
+### Failed refreshes and recovery
+
+When a Codex usage query fails, Desktop keeps the last successful usage for that actual account and labels it **Last query result** with the successful observation time and the latest refresh failure. Retained percentages use muted bars; an old exhausted observation is not presented as freshly confirmed exhaustion. Accounts without a successful observation stay unknown. Authentication failures show a login warning and clear retained usage.
+
+Network errors, timeouts, query HTTP 429, authentication, other HTTP failures, and malformed responses have distinct messages. A usage-query 429 is separate from an actual returned exhausted quota; its Retry-After deadline is not a quota reset. Credit balances and reset-card inventories are always from the current attempt, never restored from usage history.
+
+Visible quota views share at most two accelerated recovery checks: after 30 seconds, then 60 seconds. Continued failures return to the normal five-minute polling interval; successful recovery rearms the short checks for a later failure. Server Retry-After deadlines take precedence. **Refresh** in host Usage or provider settings requests new data without waiting for the cache to expire. The 750-ms cold-start follow-up applies only when account quota has not arrived, not to an already classified query failure.
+
+Successful usage is daemon-local memory and is lost on restart. History is isolated by database/profile, provider, credential and actual account identity, survives token renewal when identity is known, and is invalidated by credential removal/replacement or a confirmed reset. Superseded in-flight reads cannot restore pre-reset usage.
+
 ### Reset cards
 
 Each account lists banked cards, server-reported available count, status, and timezone-qualified grant/expiry timestamps. **Use reset card** requires confirmation of account, card, and applicable windows. Only available, unexpired `codex_rate_limits` cards can be submitted.

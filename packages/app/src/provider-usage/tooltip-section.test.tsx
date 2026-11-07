@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { en } from "@/i18n/resources/en";
 import { ProviderUsageTooltipSection } from "./tooltip-section";
 import type { ProviderUsage, ProviderUsageView } from "./types";
+import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
 import { buildOmpAccountProviderUsage } from "./omp-account";
 import { formatOmpQuotaResetTime } from "@/components/omp-provider-quota";
 
@@ -154,5 +155,73 @@ describe("provider usage tooltip account selection", () => {
     expect(html).not.toContain("Limit reached");
     expect(html).not.toContain("100%");
     expect(html).not.toContain("0%");
+  });
+
+  test("dates retained Codex values as the last observation and replaces them on recovery", async () => {
+    const observedAt = "2026-01-01T08:00:00.000Z";
+    const failedAt = "2026-01-01T09:00:00.000Z";
+    function codexUsage(quota: OmpProviderAccountQuota) {
+      return buildOmpAccountProviderUsage(
+        {
+          provider: { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+          accounts: [{ credentialId: 71, quota }],
+          error: null,
+          updatedAt: failedAt,
+        },
+        {
+          providerId: "openai-codex",
+          providerName: "Codex",
+          accountFallback: (number) => `Account ${number}`,
+          fiveHour: "5-hour",
+          weekly: "Weekly",
+          modelWeekly: (model) => model,
+          codexCreditsLabel: "Credits",
+          codexCreditsSummary: () => "Unknown",
+        },
+      );
+    }
+    const retained = codexUsage({
+      status: "error",
+      weeklyUsedPct: 46,
+      lastSuccessfulAt: observedAt,
+      fetchedAt: failedAt,
+      queryError: { kind: "network" },
+    });
+    const failedHtml = await renderUsage("openai-codex", retained);
+    expect(failedHtml).toContain("54%");
+    expect(failedHtml).toContain(formatOmpQuotaResetTime(observedAt, "en"));
+    expect(failedHtml).not.toContain(formatOmpQuotaResetTime(failedAt, "en"));
+    const recoveredHtml = await renderUsage(
+      "openai-codex",
+      codexUsage({ status: "available", weeklyUsedPct: 49, fetchedAt: failedAt }),
+    );
+    expect(recoveredHtml).toContain("51%");
+    expect(recoveredHtml).not.toContain("54%");
+    expect(recoveredHtml).not.toContain(formatOmpQuotaResetTime(observedAt, "en"));
+    const exhaustedHtml = await renderUsage(
+      "openai-codex",
+      codexUsage({
+        status: "error",
+        weeklyUsedPct: 100,
+        fiveHourLimitReached: true,
+        lastSuccessfulAt: observedAt,
+        fetchedAt: failedAt,
+        queryError: { kind: "network" },
+      }),
+    );
+    expect(exhaustedHtml).toContain("0%");
+    expect(exhaustedHtml).toContain(formatOmpQuotaResetTime(observedAt, "en"));
+    expect(exhaustedHtml).not.toContain("Limit reached");
+    const authHtml = await renderUsage(
+      "openai-codex",
+      codexUsage({
+        status: "unavailable",
+        weeklyUsedPct: null,
+        queryError: { kind: "authentication" },
+      }),
+    );
+    expect(authHtml).not.toContain("0%");
+    expect(authHtml).not.toContain("100%");
+    expect(authHtml).not.toContain(formatOmpQuotaResetTime(observedAt, "en"));
   });
 });

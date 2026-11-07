@@ -133,6 +133,7 @@ function accountWindows(
       label: copy.weekly,
       usedPct: quota?.weeklyUsedPct,
       resetsAt: quota?.weeklyResetsAt,
+      alwaysShow: copy.providerId === "openai-codex",
     }),
     ...(quota?.modelWindows ?? []).map((window) => {
       const remainingPct = resolveOmpRemainingQuotaPct(window.usedPct);
@@ -151,10 +152,8 @@ function accountWindows(
 
 function accountQuotaObservation(
   source: OmpAccountUsageSource,
-  copy: OmpAccountUsageCopy,
   quota: OmpProviderAccountQuota | undefined,
 ): OmpProviderAccountQuota | undefined {
-  if (copy.providerId !== "anthropic") return undefined;
   return {
     ...quota,
     status: source.error ? "error" : (quota?.status ?? "unavailable"),
@@ -221,7 +220,7 @@ export function buildOmpAccountProviderUsage(
             ]
           : [],
       extraUsage: quota?.extraUsage,
-      accountQuota: accountQuotaObservation(source, copy, quota),
+      accountQuota: accountQuotaObservation(source, quota),
       error: source.error ?? quota?.error ?? null,
     };
   });

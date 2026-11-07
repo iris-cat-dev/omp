@@ -59,11 +59,13 @@ import {
 } from "@/components/omp-provider-accounts";
 import {
   formatOmpAccountPlanLabel,
+  isOmpQuotaStale,
   resolveOmpRemainingQuotaPct,
   shouldShowOmpFiveHourQuota,
 } from "@/components/omp-provider-quota";
 import { OmpQuotaCountdown } from "@/components/omp-codex-quota-details";
 import { OmpClaudeQuotaNotices } from "@/components/omp-claude-quota-notices";
+import { OmpCodexQuotaNotices } from "@/components/omp-codex-quota-notices";
 import { ProviderUsageBalanceBar } from "@/provider-usage/balance-bar";
 import { ProviderUsageCard } from "@/provider-usage/card";
 import { selectProviderUsages } from "@/provider-usage/login-usage";
@@ -568,16 +570,18 @@ function SidebarQuotaMeter({
   usedPct,
   limitReached,
   resetsAt,
+  stale = false,
 }: {
   label: string;
   usedPct: number | null | undefined;
   limitReached?: boolean | null;
   resetsAt?: string | null;
+  stale?: boolean;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const remainingPct = resolveOmpRemainingQuotaPct(usedPct);
-  const reached = limitReached === true || remainingPct === 0;
+  const reached = !stale && (limitReached === true || remainingPct === 0);
   const accessibilityValue = useMemo(
     () => (remainingPct === null ? undefined : { min: 0, max: 100, now: Math.round(remainingPct) }),
     [remainingPct],
@@ -585,9 +589,9 @@ function SidebarQuotaMeter({
   let color = theme.colors.foregroundMuted;
   if (reached) {
     color = theme.colors.destructive;
-  } else if (remainingPct !== null && remainingPct <= 30) {
+  } else if (!stale && remainingPct !== null && remainingPct <= 30) {
     color = theme.colors.palette.amber[500];
-  } else if (remainingPct !== null) {
+  } else if (!stale && remainingPct !== null) {
     color = theme.colors.palette.green[500];
   }
   let percentage = t("providerUsage.usageUnknown");
@@ -939,7 +943,8 @@ function useSidebarSelectedAccountQuotaRefresh(
   serverId: AgentControlCommandCenterSource["serverId"],
   selectedAccount: SidebarAccount | null,
 ) {
-  const quotaNow = useOmpQuotaClock(Boolean(selectedAccount));
+  const enabled = Boolean(selectedAccount) && !isOmpQuotaStale(selectedAccount?.quota);
+  const quotaNow = useOmpQuotaClock(enabled);
   useOmpQuotaReachedRefresh(
     serverId,
     [
@@ -951,7 +956,7 @@ function useSidebarSelectedAccountQuotaRefresh(
       selectedAccount?.quota?.modelRateLimit?.resetsAt,
     ],
     quotaNow,
-    Boolean(selectedAccount),
+    enabled,
   );
 }
 
@@ -1178,6 +1183,7 @@ function SidebarProviderAccountDetails({
   selectedAccount: SidebarAccount | null | undefined;
 }) {
   const { t } = useTranslation();
+  const stale = isOmpQuotaStale(selectedAccount?.quota);
   if (!visible) return null;
   return (
     <>
@@ -1256,10 +1262,14 @@ function SidebarProviderAccountDetails({
           />
           {selectedAccount ? (
             <View style={styles.sidebarQuota}>
+              {selectedProviderUsageId === "openai-codex" ? (
+                <OmpCodexQuotaNotices quota={selectedAccount.quota} />
+              ) : null}
               <SidebarQuotaMeter
                 label={t("agentControls.quota.weekly")}
                 usedPct={selectedAccount.quota?.weeklyUsedPct}
                 resetsAt={selectedAccount.quota?.weeklyResetsAt}
+                stale={stale}
               />
               {shouldShowOmpFiveHourQuota(selectedAccount.quota, selectedProviderUsageId) ? (
                 <SidebarQuotaMeter
@@ -1267,6 +1277,7 @@ function SidebarProviderAccountDetails({
                   usedPct={selectedAccount.quota?.fiveHourUsedPct}
                   resetsAt={selectedAccount.quota?.fiveHourResetsAt}
                   limitReached={selectedAccount.quota?.fiveHourLimitReached}
+                  stale={stale}
                 />
               ) : null}
               {(selectedAccount.quota?.modelWindows ?? []).map((window) => (

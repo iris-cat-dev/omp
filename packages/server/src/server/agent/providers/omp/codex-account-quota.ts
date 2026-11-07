@@ -100,6 +100,7 @@ function failure(
   status: "unavailable" | "error",
   error: string,
   now: () => number,
+  queryError: OmpProviderAccountQuota["queryError"] = { kind: "invalid_response" },
 ): OmpProviderAccountQuota {
   return {
     status,
@@ -110,6 +111,7 @@ function failure(
     weeklyResetsAt: null,
     fetchedAt: new Date(now()).toISOString(),
     error,
+    queryError,
   };
 }
 
@@ -140,9 +142,6 @@ function resolveQuotaWindows(
   );
   if (!fiveHour && !weekly) {
     return { error: "Codex usage response did not include a recognized quota window" };
-  }
-  if (!fiveHour && hasFiveHourLimit && !primary && secondary && !secondary.hasDuration) {
-    return { error: "Codex usage response did not include the five-hour limit" };
   }
   return { fiveHour, weekly };
 }
@@ -185,51 +184,85 @@ function parseUsageResponse(payload: unknown, now: () => number): OmpProviderAcc
   };
 }
 
+function parseRetryAt(headers: Headers, now: number): string | null {
+  const value = headers.get("retry-after")?.trim();
+  if (!value) return null;
+  const seconds = Number(value);
+  let deadline = Date.parse(value);
+  if (Number.isFinite(seconds)) deadline = seconds >= 0 ? now + seconds * 1_000 : NaN;
+  return Number.isFinite(deadline) && Math.abs(deadline) <= 8.64e15
+    ? new Date(deadline).toISOString()
+    : null;
+}
+
 async function fetchCodexUsage(
   options: CodexAccountQuotaFetchOptions,
 ): Promise<OmpProviderAccountQuota> {
   const now = options.now ?? Date.now;
   const accessToken = options.credential.accessToken.trim();
   if (!accessToken) {
-    return failure("unavailable", "Codex account credential is unavailable", now);
+    return failure("unavailable", "Codex account credential is unavailable", now, {
+      kind: "authentication",
+    });
   }
 
   const fetchApi = options.fetch ?? fetch;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const { promise: deadline, resolve: expire } = Promise.withResolvers<OmpProviderAccountQuota>();
+  const timeout = setTimeout(() => {
+    controller.abort();
+    expire(failure("error", "Codex usage request timed out", now, { kind: "timeout" }));
+  }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    };
-    if (options.credential.accountId) {
-      headers["ChatGPT-Account-Id"] = options.credential.accountId;
-    }
-    const response = await fetchApi(CODEX_USAGE_ENDPOINT, {
-      headers,
-      signal: controller.signal,
-      cache: "no-store",
-      redirect: "error",
-    });
-    if (response.status === 401 || response.status === 403) {
-      return failure("unavailable", "Codex account authentication expired", now);
-    }
-    if (!response.ok) {
-      return failure("error", `Codex usage request failed (HTTP ${response.status})`, now);
-    }
+    return await Promise.race([
+      deadline,
+      (async () => {
+        const headers: Record<string, string> = {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        };
+        if (options.credential.accountId) {
+          headers["ChatGPT-Account-Id"] = options.credential.accountId;
+        }
+        const response = await fetchApi(CODEX_USAGE_ENDPOINT, {
+          headers,
+          signal: controller.signal,
+          cache: "no-store",
+          redirect: "error",
+        });
+        if (response.status === 401 || response.status === 403) {
+          return failure("unavailable", "Codex account authentication expired", now, {
+            kind: "authentication",
+            httpStatus: response.status,
+          });
+        }
+        if (!response.ok) {
+          return failure("error", `Codex usage request failed (HTTP ${response.status})`, now, {
+            kind: response.status === 429 ? "rate_limited" : "http",
+            httpStatus: response.status,
+            retryAt: parseRetryAt(response.headers, now()),
+          });
+        }
 
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      return failure("error", "Codex usage response was not valid JSON", now);
-    }
-    return parseUsageResponse(payload, now);
+        // Keep the deadline through body consumption; body-reader failures are network errors.
+        const body = await response.text();
+        let payload: unknown;
+        try {
+          payload = JSON.parse(body);
+        } catch {
+          return failure("error", "Codex usage response was not valid JSON", now, {
+            kind: "invalid_response",
+            httpStatus: response.status,
+          });
+        }
+        return parseUsageResponse(payload, now);
+      })(),
+    ]);
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return failure("error", "Codex usage request timed out", now);
+    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      return failure("error", "Codex usage request timed out", now, { kind: "timeout" });
     }
-    return failure("error", "Codex usage request failed", now);
+    return failure("error", "Codex usage request failed", now, { kind: "network" });
   } finally {
     clearTimeout(timeout);
   }

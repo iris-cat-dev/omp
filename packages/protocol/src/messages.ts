@@ -6731,6 +6731,8 @@ export const OmpProviderAccountQuotaSchema = z.object({
     })
     .optional(),
   fetchedAt: z.string().nullable().optional(),
+  // Present when quota values are retained after a failed refresh; fetchedAt is the latest attempt.
+  lastSuccessfulAt: z.string().nullable().optional(),
   error: z.string().nullable().optional(),
   queryError: z
     .object({

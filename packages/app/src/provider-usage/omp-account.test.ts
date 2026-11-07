@@ -162,7 +162,7 @@ describe("buildOmpAccountProviderUsage", () => {
     ).toEqual([]);
   });
 
-  test("only creates reported windows and never treats unknown usage as 100% remaining", () => {
+  test("keeps weekly usage visibly unknown while creating only reported five-hour windows", () => {
     const accounts = [
       {
         credentialId: 1,
@@ -228,6 +228,11 @@ describe("buildOmpAccountProviderUsage", () => {
         usedPct: null,
         remainingPct: null,
         resetsAt: "2026-09-03T01:00:00.000Z",
+      }),
+      expect.objectContaining({
+        id: "codex_weekly",
+        usedPct: null,
+        remainingPct: null,
       }),
     ]);
   });

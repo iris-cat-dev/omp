@@ -23,6 +23,7 @@ import {
   formatOmpCodexCreditBalance,
   isOmpCodexResetCreditUsable,
   shouldShowOmpFiveHourQuota,
+  isOmpQuotaStale,
 } from "./omp-provider-quota";
 
 type Account = NonNullable<OmpProviderManagement["loginProviders"][number]["accounts"]>[number];
@@ -324,7 +325,10 @@ function OmpCodexAutoResetSetting({ serverId }: { serverId: string | null }) {
     retry: false,
   });
   const saving = useIsMutating({ mutationKey, exact: true }) > 0;
-  const handleChange = useCallback((enabled: boolean) => mutation.mutate(enabled), [mutation.mutate]);
+  const handleChange = useCallback(
+    (enabled: boolean) => mutation.mutate(enabled),
+    [mutation.mutate],
+  );
   const handleRetry = useCallback(() => void query.refetch(), [query.refetch]);
   const mode = query.data?.autoRedeem;
   const error = mutation.error ?? query.error;
@@ -456,6 +460,7 @@ export function OmpCodexQuotaDetails({
       shouldShowOmpFiveHourQuota(account.quota) ? account.quota?.fiveHourResetsAt : null,
     ],
     now,
+    !isOmpQuotaStale(account.quota),
   );
   return (
     <View style={styles.details}>

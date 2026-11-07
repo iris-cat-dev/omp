@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { QueryClient } from "@tanstack/react-query";
+import type { Query, QueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
+import { isOmpQuotaStale } from "@/components/omp-provider-quota";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { resolveOmpModelProviderNamespace } from "@/provider-selection/omp-model-provider";
 import { useSessionStore } from "@/stores/session-store";
@@ -15,6 +16,7 @@ export type OmpAccountQuotaDisplayAccount = OmpAccountQuotaAccount & { note?: st
 
 export const OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS = 300_000;
 export const OMP_PROVIDER_MANAGEMENT_GC_TIME_MS = 1_800_000;
+const CODEX_QUOTA_RECOVERY_INTERVALS_MS = [30_000, 60_000] as const;
 
 export function ompProviderManagementQueryKey(serverId: string) {
   return ["ompProviderManagement", serverId] as const;
@@ -59,7 +61,7 @@ export function refreshOmpAccountQuotaManagement(
     await queryClient.cancelQueries({ queryKey, exact: true });
     return queryClient.fetchQuery({
       queryKey,
-      queryFn: () => client.getOmpProviderManagement(),
+      queryFn: () => fetchOmpAccountQuotaManagement(client),
       staleTime: 0,
       gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
     });
@@ -107,7 +109,7 @@ function needsInitialQuotaRetry(management: OmpProviderManagement): boolean {
   const codex = management.loginProviders.find((provider) => provider.id === "openai-codex");
   if (!codex?.authenticated) return false;
   if (!codex.accounts || codex.accounts.length === 0) return true;
-  return codex.accounts.some((account) => account.quota?.status !== "available");
+  return codex.accounts.some((account) => account.quota === undefined);
 }
 
 function waitForInitialQuotaRetry(): Promise<void> {
@@ -129,6 +131,74 @@ export async function fetchOmpAccountQuotaManagement(
   return client.getOmpProviderManagement().catch(() => first);
 }
 
+function retryableCodexQuotas(management: OmpProviderManagement | undefined) {
+  const codex = management?.loginProviders.find((provider) => provider.id === "openai-codex");
+  if (!codex?.authenticated) return [];
+  return (codex.accounts ?? []).flatMap((account) => {
+    const quota = account.quota;
+    if (quota?.status !== "error") return [];
+    const kind = quota.queryError?.kind;
+    const retryable =
+      kind === undefined ||
+      kind === "network" ||
+      kind === "timeout" ||
+      kind === "rate_limited" ||
+      (kind === "http" && (quota.queryError?.httpStatus ?? 0) >= 500);
+    return retryable ? [quota] : [];
+  });
+}
+
+export function ompProviderManagementStaleTime(
+  management: OmpProviderManagement | undefined,
+): number {
+  const quotas = retryableCodexQuotas(management);
+  if (quotas.length === 0) return OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS;
+  return quotas.reduce(
+    (staleTime, quota) =>
+      Math.max(
+        staleTime,
+        (Date.parse(quota.queryError?.retryAt ?? "") || 0) -
+          (Date.parse(quota.fetchedAt ?? "") || Date.now()),
+      ),
+    CODEX_QUOTA_RECOVERY_INTERVALS_MS[0] as number,
+  );
+}
+
+const quotaRecoveryRuns = new WeakMap<
+  Pick<Query<OmpProviderManagement>, "state">,
+  { dataUpdateCount: number; errorUpdateCount: number; failures: number }
+>();
+
+export function ompProviderManagementRefetchInterval(
+  query: Pick<Query<OmpProviderManagement>, "state">,
+): number {
+  const quotas = retryableCodexQuotas(query.state.data);
+  let run = quotaRecoveryRuns.get(query);
+  if (!run) {
+    run = { dataUpdateCount: -1, errorUpdateCount: -1, failures: 0 };
+    quotaRecoveryRuns.set(query, run);
+  }
+  // Multiple mounted surfaces share one burst, rather than each resetting its retry budget.
+  if (
+    run.dataUpdateCount !== query.state.dataUpdateCount ||
+    run.errorUpdateCount !== query.state.errorUpdateCount
+  ) {
+    run.dataUpdateCount = query.state.dataUpdateCount;
+    run.errorUpdateCount = query.state.errorUpdateCount;
+    run.failures = quotas.length > 0 ? run.failures + 1 : 0;
+  }
+  const interval =
+    quotas.length > 0
+      ? (CODEX_QUOTA_RECOVERY_INTERVALS_MS[run.failures - 1] ??
+        OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS)
+      : OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS;
+  const retryAt = quotas.reduce(
+    (latest, quota) => Math.max(latest, Date.parse(quota.queryError?.retryAt ?? "") || 0),
+    0,
+  );
+  return Math.max(interval, retryAt - Date.now());
+}
+
 export interface OmpProviderAccountQuotaResult {
   accounts: OmpAccountQuotaDisplayAccount[];
   provider: OmpProviderManagement["loginProviders"][number] | null;
@@ -144,6 +214,7 @@ export function useOmpProviderAccountQuota(
   enabled = true,
 ): OmpProviderAccountQuotaResult {
   const queryClient = useQueryClient();
+  const queryKey = ompProviderManagementQueryKey(serverId ?? "");
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
   const supportsOmpProviderManagement = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.ompProviderManagement === true,
@@ -153,17 +224,19 @@ export function useOmpProviderAccountQuota(
     enabled && canFetch && (providerId === "openai-codex" || providerId === "anthropic");
   const accountNotes = useOmpProviderAccountNotes(active ? serverId : null);
   const query = useFetchQuery({
-    queryKey: ompProviderManagementQueryKey(serverId ?? ""),
+    queryKey,
     dataShape: "value",
     queryFn: async () => {
       if (!client) throw new Error("OMP provider management is unavailable");
       return fetchOmpAccountQuotaManagement(client);
     },
     enabled: active,
-    staleTimeMs: OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
+    staleTimeMs: ompProviderManagementStaleTime(
+      queryClient.getQueryData<OmpProviderManagement>(queryKey),
+    ),
     refetchOnMount: true,
     gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
-    refetchInterval: 300_000,
+    refetchInterval: ompProviderManagementRefetchInterval,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
@@ -179,12 +252,15 @@ export function useOmpProviderAccountQuota(
       note: accountNotes.notes[String(account.credentialId)],
     }),
   );
-  const resetTimes = accounts.flatMap((account) => [
-    account.quota?.weeklyResetsAt,
-    account.quota?.fiveHourResetsAt,
-    account.quota?.modelRateLimit?.resetsAt,
-    ...(account.quota?.modelWindows ?? []).map((window) => window.resetsAt),
-  ]);
+  const resetTimes = accounts.flatMap((account) => {
+    if (isOmpQuotaStale(account.quota)) return [];
+    return [
+      account.quota?.weeklyResetsAt,
+      account.quota?.fiveHourResetsAt,
+      account.quota?.modelRateLimit?.resetsAt,
+      ...(account.quota?.modelWindows ?? []).map((window) => window.resetsAt),
+    ];
+  });
   const now = useOmpQuotaClock(active && resetTimes.some(Boolean));
   useOmpQuotaReachedRefresh(serverId, resetTimes, now, active);
   const updatedAtMs = query.dataUpdatedAt || query.errorUpdatedAt;

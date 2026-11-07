@@ -46,7 +46,8 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import {
   OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
-  OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
+  fetchOmpAccountQuotaManagement,
+  ompProviderManagementStaleTime,
   ompProviderManagementQueryKey,
   refreshOmpAccountQuotaManagement,
 } from "@/hooks/use-omp-account-quota";
@@ -1772,7 +1773,7 @@ function OmpManagementPanel({
       if (
         !force &&
         cachedState?.data &&
-        Date.now() - cachedState.dataUpdatedAt < OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS
+        Date.now() - cachedState.dataUpdatedAt < ompProviderManagementStaleTime(cachedState.data)
       ) {
         setLoading(false);
         setError(null);
@@ -1785,8 +1786,8 @@ function OmpManagementPanel({
           ? refreshOmpAccountQuotaManagement(queryClient, client, serverId)
           : queryClient.fetchQuery({
               queryKey: managementQueryKey,
-              queryFn: () => client.getOmpProviderManagement(),
-              staleTime: OMP_PROVIDER_MANAGEMENT_STALE_TIME_MS,
+              queryFn: () => fetchOmpAccountQuotaManagement(client),
+              staleTime: ompProviderManagementStaleTime(cachedState?.data),
               gcTime: OMP_PROVIDER_MANAGEMENT_GC_TIME_MS,
             }));
         if (force) onSaved();

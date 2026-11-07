@@ -12,6 +12,7 @@ import {
   ompProviderManagementQueryKey,
   useOmpProviderAccountQuota,
 } from "@/hooks/use-omp-account-quota";
+import { OmpCodexQuotaDetails, OmpQuotaServerContext } from "./omp-codex-quota-details";
 
 type ManagementClient = Pick<
   DaemonClient,
@@ -567,5 +568,63 @@ describe("OMP provider account reordering quota synchronization", () => {
     expect(screen.getByTestId("quota-account-order").textContent).toBe("1,2");
     expect(screen.getByTestId("quota-status").textContent).toBe("idle");
     expect(queryClient.getQueryData(ompProviderManagementQueryKey("server-1"))).toEqual(initial);
+  });
+});
+
+describe("Codex stale reset deadlines", () => {
+  it("keeps expired historical reset times out of the bounded recovery scheduler", async () => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-11-07T00:00:00Z");
+    vi.setSystemTime(now);
+    const failed = management([1]);
+    const account = failed.loginProviders[0]!.accounts![0]!;
+    account.quota = {
+      status: "error",
+      weeklyUsedPct: 46,
+      weeklyResetsAt: new Date(now - 1_000).toISOString(),
+      fetchedAt: new Date(now).toISOString(),
+      lastSuccessfulAt: new Date(now - 120_000).toISOString(),
+      queryError: { kind: "network" },
+    };
+    const getOmpProviderManagement = vi.fn(async () => failed);
+    runtime.client = { getOmpProviderManagement, reorderOmpProviderAccounts: vi.fn() };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClients.push(queryClient);
+    queryClient.setQueryData(ompProviderManagementQueryKey("server-1"), failed);
+    try {
+      await act(async () => {
+        render(
+          <QueryClientProvider client={queryClient}>
+            <QuotaConsumer />
+            <OmpQuotaServerContext.Provider value="server-1">
+              <OmpCodexQuotaDetails account={account} accountLabel="Account 1" />
+            </OmpQuotaServerContext.Provider>
+          </QueryClientProvider>,
+        );
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(getOmpProviderManagement).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(getOmpProviderManagement).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(getOmpProviderManagement).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180_000);
+      });
+      expect(getOmpProviderManagement).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(getOmpProviderManagement).toHaveBeenCalledTimes(3);
+      expect(queryClient.getQueryData(ompProviderManagementQueryKey("server-1"))).toEqual(failed);
+    } finally {
+      cleanup();
+      queryClient.clear();
+      vi.useRealTimers();
+    }
   });
 });

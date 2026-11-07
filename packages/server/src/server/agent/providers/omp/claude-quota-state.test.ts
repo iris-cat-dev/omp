@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OmpProviderAccountQuota } from "@omp-desktop/protocol/messages";
-import { ClaudeQuotaState, claudeQuotaAccountKey } from "./claude-quota-state.js";
+import { ClaudeQuotaState } from "./claude-quota-state.js";
+import { quotaAccountKey } from "./quota-account-key.js";
 
 const NOW = Date.parse("2026-10-11T00:00:00Z");
 const RESET = "2026-10-11T05:00:00.000Z";
@@ -192,21 +193,19 @@ describe("Claude account restriction evidence", () => {
       accessToken: "secret",
       identityKey: "account-one",
     };
-    const key = claudeQuotaAccountKey("one/agent.db", account);
-    expect(claudeQuotaAccountKey("one/agent.db", { ...account, accessToken: "refreshed" })).toBe(
+    const key = quotaAccountKey("one/agent.db", account);
+    expect(quotaAccountKey("one/agent.db", { ...account, accessToken: "refreshed" })).toBe(key);
+    expect(quotaAccountKey("one/agent.db", { ...account, identityKey: "account-two" })).not.toBe(
       key,
     );
+    expect(quotaAccountKey("two/agent.db", account)).not.toBe(key);
     expect(
-      claudeQuotaAccountKey("one/agent.db", { ...account, identityKey: "account-two" }),
-    ).not.toBe(key);
-    expect(claudeQuotaAccountKey("two/agent.db", account)).not.toBe(key);
-    expect(
-      claudeQuotaAccountKey("one/agent.db", {
+      quotaAccountKey("one/agent.db", {
         ...account,
         identityKey: undefined,
         accessToken: "new",
       }),
-    ).not.toBe(claudeQuotaAccountKey("one/agent.db", { ...account, identityKey: undefined }));
+    ).not.toBe(quotaAccountKey("one/agent.db", { ...account, identityKey: undefined }));
     const state = new ClaudeQuotaState(() => NOW);
     state.observeCompletion(key, modelError);
     state.retainAccounts(new Set());

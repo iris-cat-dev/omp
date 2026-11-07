@@ -45,8 +45,9 @@ function formatWindowValue(
   percentage: number | null,
   showRemaining: boolean,
   t: TFunction,
+  stale: boolean,
 ): string {
-  if (reached) return t("providerUsage.limitReached");
+  if (reached && !stale) return t("providerUsage.limitReached");
   if (percentage !== null) return formatPct(percentage);
   return showRemaining ? t("providerUsage.usageUnknown") : "—";
 }
@@ -54,9 +55,11 @@ function formatWindowValue(
 export function ProviderUsageWindowBar({
   window,
   showReset = true,
+  stale = false,
 }: {
   window: ProviderUsageWindow;
   showReset?: boolean;
+  stale?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const now = useOmpQuotaClock(showReset && Boolean(window.resetsAt));
@@ -64,8 +67,9 @@ export function ProviderUsageWindowBar({
   const remainingPct = resolveRemainingPct(window);
   const showRemaining = window.percentageDisplay === "remaining";
   const displayedPct = showRemaining ? remainingPct : usedPct;
-  const tone =
-    window.tone ?? (showRemaining ? deriveRemainingTone(remainingPct) : deriveTone(usedPct));
+  const tone = stale
+    ? "default"
+    : (window.tone ?? (showRemaining ? deriveRemainingTone(remainingPct) : deriveTone(usedPct)));
 
   const fillWidth = clampPct(displayedPct ?? 0);
   const fillStyle = useMemo<StyleProp<ViewStyle>>(
@@ -93,7 +97,7 @@ export function ProviderUsageWindowBar({
           {formatProviderUsageLabel(window.id, window.label, t)}
         </Text>
         <Text style={styles.value}>
-          {formatWindowValue(window.limitReached === true, displayedPct, showRemaining, t)}
+          {formatWindowValue(window.limitReached === true, displayedPct, showRemaining, t, stale)}
           {trailing ? (
             <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
           ) : null}

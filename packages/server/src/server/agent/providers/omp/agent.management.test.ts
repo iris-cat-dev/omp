@@ -341,6 +341,333 @@ providers:
         .sort(),
     ).toEqual(["acct-a", "acct-b"]);
   });
+
+  test("keeps same-account Codex usage dated through transient failures, auth invalidation and recovery", async () => {
+    const successfulAt = Date.parse("2026-10-11T00:00:00Z");
+    let now = successfulAt;
+    let round = 0;
+    const { agentDir, client, runtime } = await createClient({
+      quotaNow: () => now,
+      quotaFetch: async (url, init) => {
+        if (String(url) === CODEX_RESET_CREDITS_ENDPOINT) {
+          return new Response(
+            JSON.stringify({ available_count: Math.max(0, 3 - round), credits: [] }),
+          );
+        }
+        expect(String(url)).toBe(CODEX_USAGE_ENDPOINT);
+        const selected = new Headers(init?.headers).get("ChatGPT-Account-Id");
+        if (selected === "acct-a" && [1, 2, 4].includes(round)) {
+          throw new TypeError("private-token upstream address");
+        }
+        if (selected === "acct-a" && round === 3) return new Response(null, { status: 401 });
+        return new Response(
+          JSON.stringify({
+            plan_type: "plus",
+            rate_limit: {
+              primary_window: {
+                used_percent:
+                  selected === "acct-a" ? (round === 5 ? 49 : 46) : round === 0 ? 70 : 75,
+              },
+              secondary_window: { used_percent: 20 },
+            },
+            credits: { has_credits: true, unlimited: false, balance: "99" },
+          }),
+        );
+      },
+    });
+    const database = new DatabaseSync(path.join(agentDir, "agent.db"));
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (1, 'openai-codex', 'oauth', '{"access":"private-a","accountId":"acct-a"}', NULL, 'account-a'),
+        (2, 'openai-codex', 'oauth', '{"access":"private-b","accountId":"acct-b"}', NULL, 'account-b');
+    `);
+    database.close();
+    async function query() {
+      runtime.queueModels([]);
+      runtime.queueLoginProviders([
+        { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+      ]);
+      return (await client.getOmpProviderManagement()).loginProviders[0]!.accounts!;
+    }
+    expect((await query()).map((account) => account.quota?.fiveHourUsedPct)).toEqual([46, 70]);
+    for (round = 1; round <= 2; round++) {
+      now = successfulAt + round * 1_000;
+      const accounts = await query();
+      expect(accounts[0]?.quota).toMatchObject({
+        status: "error",
+        fiveHourUsedPct: 46,
+        fiveHourLimitReached: false,
+        fetchedAt: new Date(now).toISOString(),
+        lastSuccessfulAt: new Date(successfulAt).toISOString(),
+        queryError: { kind: "network" },
+        resetCredits: { status: "available", availableCount: 3 - round },
+      });
+      expect(accounts[0]?.quota).not.toHaveProperty("credits");
+      expect(accounts[1]?.quota).toMatchObject({ status: "available", fiveHourUsedPct: 75 });
+      expect(accounts[1]?.quota).not.toHaveProperty("lastSuccessfulAt");
+      expect(JSON.stringify(accounts)).not.toContain("private-token");
+    }
+    now = successfulAt + round * 1_000;
+    const expired = (await query())[0]?.quota;
+    expect(expired).toMatchObject({
+      status: "unavailable",
+      fiveHourUsedPct: null,
+      fiveHourLimitReached: null,
+      queryError: { kind: "authentication", httpStatus: 401 },
+    });
+    expect(expired).not.toHaveProperty("lastSuccessfulAt");
+    round = 4;
+    now += 1_000;
+    const afterAuth = (await query())[0]?.quota;
+    expect(afterAuth?.fiveHourUsedPct).toBeNull();
+    expect(afterAuth).not.toHaveProperty("lastSuccessfulAt");
+    round = 5;
+    now += 1_000;
+    const recovered = (await query())[0]?.quota;
+    expect(recovered).toMatchObject({ status: "available", fiveHourUsedPct: 49 });
+    expect(recovered).not.toHaveProperty("lastSuccessfulAt");
+    expect(recovered).not.toHaveProperty("queryError");
+  });
+
+  test("returns the newest Codex query state when older responses finish out of order", async () => {
+    let mode: "success" | "stalled" | "failed" = "success";
+    let used = 46;
+    let started = Promise.withResolvers<void>();
+    let release = Promise.withResolvers<Response>();
+    const { agentDir, client, runtime } = await createClient({
+      quotaNow: () => Date.parse("2026-10-11T00:00:00Z"),
+      quotaFetch: async (url) => {
+        if (String(url) === CODEX_RESET_CREDITS_ENDPOINT) {
+          return new Response(JSON.stringify({ available_count: 0, credits: [] }));
+        }
+        if (mode === "stalled") {
+          started.resolve();
+          return release.promise;
+        }
+        if (mode === "failed") throw new TypeError("private details");
+        return new Response(
+          JSON.stringify({ rate_limit: { primary_window: { used_percent: used } } }),
+        );
+      },
+    });
+    const database = new DatabaseSync(path.join(agentDir, "agent.db"));
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (1, 'openai-codex', 'oauth', '{"access":"private-one","accountId":"acct-a"}', NULL, 'account-a');
+    `);
+    database.close();
+    async function query() {
+      runtime.queueModels([]);
+      runtime.queueLoginProviders([
+        { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+      ]);
+      return (await client.getOmpProviderManagement()).loginProviders[0]!.accounts![0]!.quota;
+    }
+    await query();
+    mode = "stalled";
+    const oldSuccess = query();
+    await started.promise;
+    mode = "failed";
+    const newestFailure = await query();
+    release.resolve(
+      new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 100 } } })),
+    );
+    expect(await oldSuccess).toEqual(newestFailure);
+    expect(newestFailure).toMatchObject({
+      status: "error",
+      fiveHourUsedPct: 46,
+      queryError: { kind: "network" },
+    });
+    started = Promise.withResolvers<void>();
+    release = Promise.withResolvers<Response>();
+    mode = "stalled";
+    const oldFailure = query();
+    await started.promise;
+    mode = "success";
+    used = 49;
+    const newestSuccess = await query();
+    release.resolve(new Response(null, { status: 503 }));
+    expect(await oldFailure).toEqual(newestSuccess);
+    expect(newestSuccess).toMatchObject({ status: "available", fiveHourUsedPct: 49 });
+    expect(newestSuccess).not.toHaveProperty("lastSuccessfulAt");
+  });
+
+  test.each(["deleted", "replaced"])(
+    "drops old in-flight Codex usage when a credential is %s",
+    async (change) => {
+      let mode: "success" | "stalled" | "failed" = "success";
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<Response>();
+      const { agentDir, client, runtime } = await createClient({
+        quotaNow: () => Date.parse("2026-10-11T00:00:00Z"),
+        quotaFetch: async (url) => {
+          if (String(url) === CODEX_RESET_CREDITS_ENDPOINT) {
+            return new Response(JSON.stringify({ available_count: 1, credits: [] }));
+          }
+          if (mode === "stalled") {
+            started.resolve();
+            return release.promise;
+          }
+          if (mode === "failed") throw new TypeError("private details");
+          return new Response(
+            JSON.stringify({ rate_limit: { primary_window: { used_percent: 46 } } }),
+          );
+        },
+      });
+      const databasePath = path.join(agentDir, "agent.db");
+      const database = new DatabaseSync(databasePath);
+      database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (1, 'openai-codex', 'oauth', '{"access":"private-one","accountId":"acct-a"}', NULL, 'account-a');
+    `);
+      database.close();
+      async function query() {
+        runtime.queueModels([]);
+        runtime.queueLoginProviders([
+          { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+        ]);
+        return (await client.getOmpProviderManagement()).loginProviders[0]!.accounts;
+      }
+      expect((await query())?.[0]?.quota?.fiveHourUsedPct).toBe(46);
+      mode = "stalled";
+      const pending = query();
+      await started.promise;
+      const changed = new DatabaseSync(databasePath);
+      changed.exec(
+        change === "deleted"
+          ? "DELETE FROM auth_credentials WHERE id = 1"
+          : `UPDATE auth_credentials SET data = '{"access":"private-two","accountId":"acct-b"}', identity_key = 'account-b' WHERE id = 1`,
+      );
+      changed.close();
+      release.resolve(
+        new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 100 } } })),
+      );
+      const accounts = await pending;
+      if (change === "deleted") {
+        expect(accounts).toBeUndefined();
+      } else {
+        expect(accounts).toMatchObject([{ credentialId: 1, identityKey: "account-b" }]);
+        expect(accounts?.[0]).not.toHaveProperty("quota");
+        mode = "failed";
+        const unknown = (await query())?.[0]?.quota;
+        expect(unknown?.fiveHourUsedPct).toBeNull();
+        expect(unknown).not.toHaveProperty("lastSuccessfulAt");
+      }
+    },
+  );
+
+  test("invalidates consumed Codex usage and pre-reset inventory without clearing another account", async () => {
+    let mode: "success" | "stalled" | "failed" | "recovered" = "success";
+    let cardCount = 1;
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<Response>();
+    const { agentDir, client, runtime } = await createClient({
+      quotaNow: () => Date.parse("2026-10-11T00:00:00Z"),
+      quotaFetch: async (url, init) => {
+        if (init?.method === "POST") {
+          expect(String(url)).toBe(`${CODEX_RESET_CREDITS_ENDPOINT}/consume`);
+          cardCount = 0;
+          return new Response(JSON.stringify({ code: "reset", windows_reset: 2 }));
+        }
+        if (String(url) === CODEX_RESET_CREDITS_ENDPOINT) {
+          return new Response(
+            JSON.stringify({
+              available_count: cardCount,
+              credits: cardCount
+                ? [
+                    {
+                      id: "selected",
+                      reset_type: "codex_rate_limits",
+                      status: "available",
+                      granted_at: "2026-10-01T00:00:00Z",
+                      expires_at: null,
+                    },
+                  ]
+                : [],
+            }),
+          );
+        }
+        const account = new Headers(init?.headers).get("ChatGPT-Account-Id");
+        if (account === "acct-a" && mode === "stalled") {
+          started.resolve();
+          return release.promise;
+        }
+        if (mode === "failed") throw new TypeError("private network details");
+        return new Response(
+          JSON.stringify({
+            rate_limit: {
+              primary_window: {
+                used_percent: account === "acct-a" ? (mode === "recovered" ? 0 : 100) : 70,
+              },
+            },
+          }),
+        );
+      },
+    });
+    const database = new DatabaseSync(path.join(agentDir, "agent.db"));
+    database.exec(`
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL,
+        data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT
+      );
+      INSERT INTO auth_credentials VALUES
+        (1, 'openai-codex', 'oauth', '{"access":"private-a","accountId":"acct-a"}', NULL, 'account-a'),
+        (2, 'openai-codex', 'oauth', '{"access":"private-b","accountId":"acct-b"}', NULL, 'account-b');
+    `);
+    database.close();
+    async function query() {
+      runtime.queueModels([]);
+      runtime.queueLoginProviders([
+        { id: "openai-codex", name: "Codex", available: true, authenticated: true },
+      ]);
+      return (await client.getOmpProviderManagement()).loginProviders[0]!.accounts!;
+    }
+    await query();
+    mode = "stalled";
+    const pending = query();
+    await started.promise;
+    await expect(
+      client.consumeOmpCodexResetCredit(1, "selected", "fake-reset-request"),
+    ).resolves.toEqual({ code: "reset", windowsReset: 2 });
+    release.resolve(
+      new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 100 } } })),
+    );
+    const outdated = await pending;
+    expect(outdated[0]).not.toHaveProperty("quota");
+    expect(outdated[1]?.quota).toMatchObject({ status: "available", fiveHourUsedPct: 70 });
+    mode = "failed";
+    const failed = await query();
+    expect(failed[0]?.quota).toMatchObject({
+      status: "error",
+      fiveHourUsedPct: null,
+      fiveHourLimitReached: null,
+      resetCredits: { status: "available", availableCount: 0 },
+    });
+    expect(failed[0]?.quota).not.toHaveProperty("lastSuccessfulAt");
+    expect(failed[1]?.quota).toMatchObject({
+      status: "error",
+      fiveHourUsedPct: 70,
+      lastSuccessfulAt: "2026-10-11T00:00:00.000Z",
+    });
+    mode = "recovered";
+    expect((await query())[0]?.quota).toMatchObject({
+      status: "available",
+      fiveHourUsedPct: 0,
+      fiveHourLimitReached: false,
+    });
+  });
   test("isolates Claude usage and keeps Codex reset credits separate without changing credentials", async () => {
     const quotaFetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const authorization = new Headers(init?.headers).get("Authorization");
