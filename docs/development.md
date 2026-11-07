@@ -4,7 +4,7 @@ All shell and PowerShell commands in this guide run from the repository root unl
 
 ## Start development
 
-Build prerequisites: Node.js 24+, Bun, Rustup with the SDK's pinned Rust toolchain, and a native C/C++ toolchain (Xcode Command Line Tools on macOS; Visual Studio C++ Build Tools on Windows). Bun and Rust are build tools, not installed-application requirements.
+Build prerequisites: Node.js 24+ (CI uses 24.14.0), Bun, Rustup with [the SDK's pinned Rust toolchain](../omp-sdk/rust-toolchain.toml), and a native C/C++ toolchain (Xcode Command Line Tools on macOS; Visual Studio C++ Build Tools on Windows). Bun and Rust are build tools, not installed-application requirements. Desktop and Web development do not require Java or an Android SDK.
 
 ```bash
 git submodule update --init --recursive
@@ -36,6 +36,8 @@ The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift a
 | [`packages/relay`](../packages/relay)         | Shared E2EE relay transport         |
 | [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                   |
 | [`packages/highlight`](../packages/highlight) | Code and diff highlighting          |
+
+The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace uses its own TypeScript configuration; `npm run typecheck` checks those workspaces. To check root configuration files, run `npm exec --no -- tsgo --noEmit -p tsconfig.json`.
 
 ## Runtime and protocol notes
 

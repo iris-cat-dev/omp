@@ -16,7 +16,7 @@ See the [documentation index](docs/README.md) for feature guides and operational
 
 ## Requirements
 
-- Node.js 24+ from [`.tool-versions`](.tool-versions), npm, Bun, Rustup, and a native compiler toolchain for source builds.
+- Node.js 24+ (CI uses 24.14.0), npm, Bun, Rustup, and a native compiler toolchain for source builds.
 - The pinned `omp-sdk/` submodule, initialized recursively. Development and packages use its Node SDK, not a system OMP executable.
 - A configured OMP model provider to run conversations; provider settings and sign-in can open without one.
 

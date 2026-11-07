@@ -95,7 +95,7 @@ The workflow invokes `build:desktop` directly with `mac.identity=null`, `mac.not
 
 These CI packages do not satisfy Gatekeeper's signed and notarized distribution requirements and may be blocked on other Macs. Artifact creation alone does not establish launchability or native application acceptance.
 
-CI checks out recursive submodules, uses Node.js from `.tool-versions`, and installs Desktop dependencies with `npm ci`. Only native SDK builds install Bun and the SDK's pinned Rust toolchain: Windows SDK compilation runs on Windows, while optional macOS SDK compilation runs on its native Mac runner. Windows installer construction runs on Mac with the prebuilt Windows SDK. The lockfile pins the mini-electron installer, which selects its current target runtime; rebuilding a tag later may select a different runtime.
+CI checks out recursive submodules, pins Node.js to 24.14.0, and installs Desktop dependencies with `npm ci`. Only native SDK builds install Bun and the SDK's pinned Rust toolchain: Windows SDK compilation runs on Windows, while optional macOS SDK compilation runs on its native Mac runner. Windows installer construction runs on Mac with the prebuilt Windows SDK. The lockfile pins the mini-electron installer, which selects its current target runtime; rebuilding a tag later may select a different runtime.
 
 Commit the root `package-lock.json` together with dependency changes. Both the setup-node npm cache and `npm ci` require it in a fresh checkout; a lockfile present only on the developer's machine is insufficient. Nested/generated lockfiles remain ignored. After fixing a workflow dependency, start a new run on the updated commit: rerunning an older failed run still uses its original commit.
 

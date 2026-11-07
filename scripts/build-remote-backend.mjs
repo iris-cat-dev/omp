@@ -109,7 +109,6 @@ async function collectSourceFiles(directory, relativeRoot, files) {
 
 async function calculateBundleHash(releaseConfig, releaseIndex) {
   const files = [
-    { absolutePath: path.join(rootDir, ".tool-versions"), relativePath: ".tool-versions" },
     { absolutePath: path.join(rootDir, "package-lock.json"), relativePath: "package-lock.json" },
   ];
   for (const [, directoryName] of workspacePackages) {
