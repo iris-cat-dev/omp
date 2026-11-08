@@ -391,6 +391,8 @@ export function useAssistantImage({
   visible = true,
   retryKey = 0,
 }: UseAssistantImageInput): AssistantImageResult {
+  "use no memo";
+  // Metadata is mutable; compiler caching must not retain an initial miss across renders.
   const { t } = useTranslation();
   const persistedAsset = useMemo(() => parseTimelineImageAsset(source), [source]);
   const resolution = useMemo(

@@ -8,13 +8,30 @@ import {
   setAssistantImageMetadata,
 } from "@/utils/assistant-image-metadata";
 import { useAssistantImage } from "./use-assistant-image";
+import { getImagePreviewResidencyStats } from "@/attachments/preview-resource";
+
+const previewStore = vi.hoisted(() => ({
+  resolvePreviewUrl: vi.fn<() => Promise<string>>(),
+  releasePreviewUrl: vi.fn(),
+}));
+
+vi.mock("@/attachments/service", () => ({
+  resolveAttachmentPreviewUrl: previewStore.resolvePreviewUrl,
+  releaseAttachmentPreviewUrl: previewStore.releasePreviewUrl,
+  persistAttachmentFromBytes: vi.fn(),
+  persistAttachmentFromDataUrl: vi.fn(),
+}));
 
 vi.mock("react-i18next", () => {
   const t = (key: string) => key;
   return { useTranslation: () => ({ t }) };
 });
 
-beforeEach(clearAssistantImageMetadataCache);
+beforeEach(() => {
+  clearAssistantImageMetadataCache();
+  previewStore.resolvePreviewUrl.mockReset();
+  previewStore.releasePreviewUrl.mockReset();
+});
 afterEach(cleanup);
 
 const portraitLoad = {
@@ -75,5 +92,53 @@ describe("assistant image geometry across visibility changes", () => {
 
     rerender({ source: "https://example.com/new-landscape.png", visible: false });
     expect(result.current).toEqual({ status: "loading", binding: null, aspectRatio: null });
+  });
+
+  it("retains learned geometry while a released blob preview is rebuilt asynchronously", async () => {
+    const source = `omp-attachment:${encodeURIComponent(JSON.stringify({
+      id: "async-portrait",
+      mimeType: "image/png",
+      storageType: "desktop-file",
+      storageKey: "/images/async-portrait.png",
+      byteSize: 100,
+      createdAt: 0,
+    }))}`;
+    const first = Promise.withResolvers<string>();
+    const rebuilt = Promise.withResolvers<string>();
+    previewStore.resolvePreviewUrl
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(rebuilt.promise);
+    const observed: Array<number | null> = [];
+    const { result, rerender, unmount } = renderHook(
+      ({ visible }) => {
+        const image = useAssistantImage({ source, occurrenceKey: "async-portrait", previewWidth: 600, visible });
+        if (image.status !== "failed") observed.push(image.aspectRatio);
+        return image;
+      },
+      { initialProps: { visible: true } },
+    );
+    expect(result.current).toMatchObject({ status: "loading", binding: null, aspectRatio: null });
+    await act(async () => first.resolve("blob:first"));
+    const binding = result.current.status !== "failed" ? result.current.binding : null;
+    expect(binding?.uri).toBe("blob:first");
+    act(() => binding!.onLoad(portraitLoad));
+    expect(result.current).toMatchObject({ status: "loaded", aspectRatio: 0.5 });
+    expect(getImagePreviewResidencyStats().previews).toBe(1);
+
+    observed.length = 0;
+    rerender({ visible: false });
+    expect(result.current).toEqual({ status: "loading", binding: null, aspectRatio: 0.5 });
+    expect(getImagePreviewResidencyStats()).toEqual({ previews: 0, encodedBytes: 0, decodedBytes: 0 });
+
+    rerender({ visible: true });
+    expect(result.current).toEqual({ status: "loading", binding: null, aspectRatio: 0.5 });
+    expect(getImagePreviewResidencyStats().previews).toBe(0);
+    await act(async () => rebuilt.resolve("blob:rebuilt"));
+    expect(result.current).toMatchObject({ status: "loading", binding: { uri: "blob:rebuilt" }, aspectRatio: 0.5 });
+    expect(getImagePreviewResidencyStats().previews).toBe(1);
+    expect(observed.every((aspectRatio) => aspectRatio === 0.5)).toBe(true);
+
+    unmount();
+    expect(getImagePreviewResidencyStats()).toEqual({ previews: 0, encodedBytes: 0, decodedBytes: 0 });
   });
 });

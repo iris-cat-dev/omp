@@ -368,6 +368,12 @@ an initial metadata miss makes offscreen images collapse to 160-pixel placeholde
 and expand again on return. Changing the source must not reuse the previous
 image's dimensions; offscreen bindings still release normally.
 
+`useAssistantImage` uses `"use no memo"` to keep mutable metadata reads live
+under React Compiler; its explicit `useMemo`/`useCallback` calls and offscreen
+resource release remain intact. Geometry regressions compile the hook with the
+production Expo/Babel configuration and cover delayed Blob preview reacquisition
+as well as source changes. TypeScript-only tests miss compiler-cached metadata.
+
 Window clipping and background LRU removal must not mutate previously published
 session snapshots. They share privately owned map copies until one state
 publication. Head pages, unacknowledged input, and active history fetches fence
