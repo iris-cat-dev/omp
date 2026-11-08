@@ -54,6 +54,7 @@ import type {
   FetchAgentTimelineProjection,
   WaitForFinishResult,
 } from "./daemon-client.js";
+export type { AgentPromptContextPayload } from "./daemon-client.js";
 
 /**
  * Coding turns routinely run for minutes, so the handle waits far longer than

@@ -280,6 +280,7 @@ function renderContextWindowMeter(
   accountFeature: AgentFeature | undefined,
   pending: boolean,
   glyphSize: number,
+  onOpenPromptAnalysis?: () => void,
 ): ReactElement | null {
   const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
   if (!hasData && !pending && provider !== "anthropic") {
@@ -305,6 +306,7 @@ function renderContextWindowMeter(
       }
       pending={pending}
       glyphSize={glyphSize}
+      onOpenPromptAnalysis={onOpenPromptAnalysis}
     />
   );
 }
@@ -948,6 +950,7 @@ interface ComposerProps {
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
+  onOpenPromptAnalysis?: () => void;
   /** Controlled agent controls rendered in input area (draft flows). */
   agentControls?: DraftAgentControlsProps;
   /** Extra styles merged onto the message input wrapper (e.g. elevated background). */
@@ -1091,6 +1094,7 @@ function ComposerContentImpl({
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
+  onOpenPromptAnalysis,
   agentControls,
   inputWrapperStyle,
   externalKeyboardShift,
@@ -2091,6 +2095,7 @@ function ComposerContentImpl({
         agentState.accountFeature,
         contextWindowPending,
         contextWindowMeterGlyphSize,
+        onOpenPromptAnalysis,
       ),
     [
       contextWindowMaxTokens,
@@ -2102,6 +2107,7 @@ function ComposerContentImpl({
       agentState.accountFeature,
       contextWindowPending,
       contextWindowMeterGlyphSize,
+      onOpenPromptAnalysis,
     ],
   );
   const rightLeadingContent = useMemo(

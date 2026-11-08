@@ -135,7 +135,7 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
 /** Square image preview pill body. */
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
   const visibility = useImageVisibility();
-  const uri = useAttachmentPreviewUrl(visibility.visible ? metadata : null, 96);
+  const uri = useAttachmentPreviewUrl(visibility.visible ? metadata : null, { width: 96, height: 96 });
   const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
   return <View ref={visibility.ref} style={styles.thumbnail}>
     {uri ? <Image source={source} style={styles.thumbnail} /> : <View style={styles.thumbnailPlaceholder} />}

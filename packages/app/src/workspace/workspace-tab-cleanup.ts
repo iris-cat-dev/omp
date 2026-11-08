@@ -50,7 +50,9 @@ export function closeWorkspaceAgentTabs(snapshot: WorkspaceTabCleanupSnapshot): 
     for (const tab of collectAllTabs(layout.root)) {
       const target = tab.target;
       const ownerAgentId =
-        target.kind === "agent" || target.kind === "background_process"
+        target.kind === "agent" ||
+        target.kind === "background_process" ||
+        target.kind === "prompt_analysis"
           ? target.agentId
           : target.kind === "provider_subagent"
             ? target.parentAgentId

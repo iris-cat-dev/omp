@@ -28,6 +28,7 @@ import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ImageGenerationRuntimeConfig } from "../daemon-config-store.js";
 import type { OmpLocalModelGateway } from "./providers/omp/local-model-gateway.js";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
 import type { OmpHistoryInput, OmpHistoryPageInput } from "./providers/omp/history.js";
 import type { AgentTimelineFetchResult } from "./agent-timeline-store-types.js";
 
@@ -741,6 +742,7 @@ export interface AgentSession {
   stopBackgroundProcess?(processId: string): Promise<boolean>;
   stopAllBackgroundProcesses?(): Promise<number>;
   getRuntimeResources?(): Promise<RuntimeResource[]>;
+  getPromptContext?(): Promise<AgentPromptContext>;
   releaseRuntimeResource?(resourceId: string): Promise<void>;
   hasBackgroundOwnershipTransition?(): boolean;
   beginRuntimeUnload?(): () => void;

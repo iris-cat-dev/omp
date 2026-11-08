@@ -2216,6 +2216,8 @@ export class Session {
       case "agent.background_processes.output.request":
       case "agent.background_processes.stop.request":
         return this.handleBackgroundProcessRequest(msg, source);
+      case "agent_prompt_context_request":
+        return this.handlePromptContextRequest(msg, source);
       case "agent_runtime_resources_request":
       case "agent_runtime_resource_release_request":
         return this.handleRuntimeResourceRequest(msg, source);
@@ -7734,6 +7736,46 @@ export class Session {
             agentId: msg.agentId,
             epoch: "",
             prompts: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+        source,
+      );
+    }
+  }
+
+  private async handlePromptContextRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent_prompt_context_request" }>,
+    source?: object,
+  ): Promise<void> {
+    try {
+      const agent = this.agentManager.getAgent(msg.agentId);
+      if (!agent && !(await this.agentStorage.get(msg.agentId))) throw new Error("Agent not found");
+      // Read the resident session only; inspection must never hydrate an agent or start a runtime.
+      if (!agent?.session) {
+        throw new Error(
+          "Prompt context is unavailable while this agent is unloaded. Resume the conversation before inspecting its current context.",
+        );
+      }
+      if (!agent.session.getPromptContext) {
+        throw new Error("This agent provider does not support prompt context inspection.");
+      }
+      const context = await agent.session.getPromptContext();
+      this.emitForSource(
+        {
+          type: "agent_prompt_context_response",
+          payload: { requestId: msg.requestId, agentId: msg.agentId, context, error: null },
+        },
+        source,
+      );
+    } catch (error) {
+      this.emitForSource(
+        {
+          type: "agent_prompt_context_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            context: null,
             error: error instanceof Error ? error.message : String(error),
           },
         },

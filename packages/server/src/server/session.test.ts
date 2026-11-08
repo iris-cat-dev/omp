@@ -690,6 +690,36 @@ test("cold commands without a snapshot report unavailability without resuming", 
   session.cleanup();
 });
 
+test("cold prompt context reports unavailability without loading the persisted agent", async () => {
+  const resume = vi.fn();
+  const messages: SessionOutboundMessage[] = [];
+  const record = createStoredAgentRecord({ id: "cold-prompt-context", provider: "omp" });
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: () => null, resumeAgentFromPersistence: resume },
+    agentStorage: { get: async () => record },
+  });
+  try {
+    await session.handleMessage({
+      type: "agent_prompt_context_request",
+      agentId: record.id,
+      requestId: "prompt-context-cold",
+    });
+    expect(messages).toContainEqual({
+      type: "agent_prompt_context_response",
+      payload: {
+        requestId: "prompt-context-cold",
+        agentId: record.id,
+        context: null,
+        error: expect.stringContaining("unloaded"),
+      },
+    });
+    expect(resume).not.toHaveBeenCalled();
+  } finally {
+    session.cleanup();
+  }
+});
+
 test("timeline requests replay progress per request and detach observers without cancelling shared work", async () => {
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
   const session = createSessionForTest({ targetedMessages });

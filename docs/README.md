@@ -17,12 +17,13 @@
 
 ## Development and operations
 
-| Guide                                     | Topics                                                                                                         |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| [Development](development.md)             | Local setup, development state, workspace packages, runtime notes, and verification                            |
-| [Packaging](packaging.md)                 | Build commands, packaging scripts, mini-electron runtimes, signing, installers, updates, and bundled resources |
-| [SSH remote hosts](remote-hosts.md)       | Provisioning, pairing, managed updates, supported targets, and credential handling                             |
-| [Web and relay deployment](deployment.md) | Web exports, Cloudflare Pages, self-hosted relay configuration, and network boundaries                         |
+| Guide                                                       | Topics                                                                                                         |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [Development](development.md)                               | Local setup, development state, workspace packages, runtime notes, and verification                            |
+| [Packaging](packaging.md)                                   | Build commands, packaging scripts, mini-electron runtimes, signing, installers, updates, and bundled resources |
+| [SSH remote hosts](remote-hosts.md)                         | Provisioning, pairing, managed updates, supported targets, and credential handling                             |
+| [Web and relay deployment](deployment.md)                   | Web exports, Cloudflare Pages, self-hosted relay configuration, and network boundaries                         |
+| [Agent and harness benchmarks](agent-harness-benchmarks.md) | Benchmark selection, OMP integration, controlled comparisons, and the next evaluation run                      |
 
 Commands in these guides run from the repository root unless a section says otherwise.
 Keep detailed feature and operational notes in the relevant guide; the root README is the project entry point.

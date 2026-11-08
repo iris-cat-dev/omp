@@ -1453,6 +1453,46 @@ describe("workspace-layout-store actions", () => {
     expect(state.sidePanelPaneIdByWorkspace[workspaceKey]).toBe(sidePanelPaneId);
   });
 
+  it("restores a focused prompt analysis tab without dropping its conversation owner", async () => {
+    await AsyncStorage.removeItem("workspace-layout-state");
+    const workspaceKey = createWorkspaceKey();
+    const source = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await source.persist.rehydrate();
+    const chatTarget = { kind: "agent", agentId: "conversation", workspaceId: "checkout" } as const;
+    const analysisTarget = {
+      kind: "prompt_analysis",
+      agentId: "conversation",
+      workspaceId: "checkout",
+    } as const;
+    const chatId = source
+      .getState()
+      .openTab({ workspaceKey, target: chatTarget, intent: "reveal" });
+    const analysisId = source
+      .getState()
+      .openTab({ workspaceKey, target: analysisTarget, intent: "reveal" });
+    await vi.waitFor(async () => {
+      const stored = JSON.parse((await AsyncStorage.getItem("workspace-layout-state")) ?? "{}");
+      expect(collectAllTabs(stored.state.layoutByWorkspace[workspaceKey].root)).toMatchObject([
+        { target: chatTarget },
+        { target: analysisTarget },
+      ]);
+    });
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await restored.persist.rehydrate();
+    const layout = restored.getState().layoutByWorkspace[workspaceKey];
+    expect(
+      contentTabs(restored.getState().getWorkspaceTabs(workspaceKey)).map((tab) => tab.target),
+    ).toEqual([chatTarget, analysisTarget]);
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(analysisId);
+    expect(
+      restored.getState().openTab({ workspaceKey, target: analysisTarget, intent: "reveal" }),
+    ).toBe(analysisId);
+    restored.getState().closeTab(workspaceKey, analysisId!);
+    expect(
+      findPaneById(restored.getState().layoutByWorkspace[workspaceKey].root, "main")?.focusedTabId,
+    ).toBe(chatId);
+  });
+
   it("persists and rehydrates independent Changes state through validated storage", async () => {
     await AsyncStorage.removeItem("workspace-layout-state");
     const workspaceKey = createWorkspaceKey();

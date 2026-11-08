@@ -67,6 +67,10 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const agentId = trimNonEmpty(value.agentId);
       return agentId ? { kind: "agent", agentId } : null;
     }
+    case "prompt_analysis": {
+      const agentId = trimNonEmpty(value.agentId);
+      return agentId ? { kind: "prompt_analysis", agentId } : null;
+    }
     case "terminal": {
       const terminalId = trimNonEmpty(value.terminalId);
       return terminalId ? { kind: "terminal", terminalId } : null;
@@ -139,6 +143,9 @@ export function workspaceTabTargetsEqual(
   }
   if (left.kind === "provider_subagent" && right.kind === "provider_subagent") {
     return left.parentAgentId === right.parentAgentId && left.subagentId === right.subagentId;
+  }
+  if (left.kind === "prompt_analysis" && right.kind === "prompt_analysis") {
+    return left.agentId === right.agentId;
   }
   if (left.kind === "terminal" && right.kind === "terminal") {
     return left.terminalId === right.terminalId;
@@ -252,6 +259,9 @@ function buildUnboundWorkspaceTabId(target: WorkspaceTabTarget): string {
   }
   if (target.kind === "agent") {
     return `agent_${target.agentId}`;
+  }
+  if (target.kind === "prompt_analysis") {
+    return `prompt_analysis_${target.agentId}`;
   }
   if (target.kind === "provider_subagent") {
     return `provider_subagent_${target.parentAgentId.length}_${target.parentAgentId}_${target.subagentId.length}_${target.subagentId}`;

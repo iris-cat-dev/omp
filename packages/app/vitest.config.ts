@@ -3,9 +3,14 @@ import { playwright } from "@vitest/browser-playwright";
 import type { BrowserCommand } from "vitest/node";
 import path from "path";
 import fs from "fs";
+import { transformSync } from "@babel/core";
+import { normalizePath } from "vite";
 
 const appNodeModules = path.resolve(__dirname, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
+const assistantImageHookPath = normalizePath(
+  path.resolve(__dirname, "src/assistant-image/use-assistant-image.ts"),
+);
 const resolvePackageEntry = (packageName: string) => {
   const appPackagePath = path.resolve(appNodeModules, packageName);
   return fs.existsSync(appPackagePath)
@@ -39,6 +44,36 @@ const dragPointerWithinElement: BrowserCommand<
 };
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "assistant-image-production-compiler",
+      enforce: "pre",
+      transform(code, id) {
+        if (id !== assistantImageHookPath) return;
+        // Exercise the shipped compiler path, not only Vite's TypeScript transform.
+        const caller = {
+          name: "metro",
+          bundler: "metro",
+          platform: "web",
+          isDev: false,
+          supportsReactCompiler: true,
+          supportsStaticESM: true,
+        };
+        const result = transformSync(code, {
+          filename: id,
+          cwd: __dirname,
+          configFile: path.resolve(__dirname, "babel.config.js"),
+          babelrc: false,
+          envName: "production",
+          compact: false,
+          sourceMaps: true,
+          caller,
+        });
+        if (!result?.code) throw new Error("Assistant image production compilation failed");
+        return { code: result.code, map: result.map };
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],

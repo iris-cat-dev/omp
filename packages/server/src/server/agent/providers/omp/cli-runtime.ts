@@ -14,6 +14,10 @@ import {
   RuntimeResourceSchema,
   type RuntimeResource,
 } from "@omp-desktop/protocol/runtime-resources";
+import {
+  AgentPromptContextSchema,
+  type AgentPromptContext,
+} from "@omp-desktop/protocol/prompt-context";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -819,6 +823,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
           (await this.supportsUltrafastCommand()),
       };
     });
+  }
+
+  async getPromptContext(): Promise<AgentPromptContext> {
+    return AgentPromptContextSchema.parse(await this.request({ type: "get_prompt_context" }));
   }
 
   async getRuntimeResources(): Promise<RuntimeResource[]> {

@@ -28,6 +28,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
+import { i18n } from "@/i18n/i18next";
 import { ChevronDown, PanelRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -352,6 +353,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "provider_subagent") {
     return labels.agent;
+  }
+  if (tab.target.kind === "prompt_analysis") {
+    return i18n.t("promptAnalysis.title");
   }
   if (tab.target.kind === "commit_diff") {
     return tab.target.sha.slice(0, 7);
@@ -1497,7 +1501,9 @@ function WorkspaceScreenContent({
       if (target.workspaceId) return target;
       const session = useSessionStore.getState().sessions[normalizedServerId];
       const agentId =
-        target.kind === "agent" || target.kind === "background_process"
+        target.kind === "agent" ||
+        target.kind === "background_process" ||
+        target.kind === "prompt_analysis"
           ? target.agentId
           : target.kind === "provider_subagent"
             ? target.parentAgentId

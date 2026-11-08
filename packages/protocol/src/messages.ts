@@ -16,6 +16,10 @@ import {
   UnloadAgentRuntimeRequestSchema,
   UnloadAgentRuntimeResponseSchema,
 } from "./runtime-resources.js";
+import {
+  AgentPromptContextRequestSchema,
+  AgentPromptContextResponseSchema,
+} from "./prompt-context.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -3816,6 +3820,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
   AgentRuntimeResourcesRequestSchema,
+  AgentPromptContextRequestSchema,
   AgentRuntimeResourceReleaseRequestSchema,
   UnloadAgentRuntimeRequestSchema,
   AgentTimelineListPromptsRequestMessageSchema,
@@ -7729,6 +7734,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   AgentRuntimeResourcesResponseSchema,
+  AgentPromptContextResponseSchema,
   AgentRuntimeResourceReleaseResponseSchema,
   UnloadAgentRuntimeResponseSchema,
   AgentTimelineListPromptsResponseMessageSchema,

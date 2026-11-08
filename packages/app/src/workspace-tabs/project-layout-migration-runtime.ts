@@ -17,6 +17,7 @@ function referencedAgentId(tab: WorkspaceTab): string | undefined {
   const target = tab.target;
   return target.kind === "agent" ||
     target.kind === "background_process" ||
+    target.kind === "prompt_analysis" ||
     (target.kind === "plugin" && target.context === "agent")
     ? target.agentId
     : target.kind === "provider_subagent"

@@ -4,6 +4,7 @@ import type {
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
@@ -2097,6 +2098,7 @@ export class OmpAgentSession implements AgentSession {
     if (this.closed || this.backgroundOwnershipTransition)
       throw new Error("OMP runtime cannot unload during another lifecycle transition");
     this.runtimeUnloading++;
+    this.modelControlRevision += 1;
     let released = false;
     return () => {
       if (released) return;
@@ -2505,6 +2507,10 @@ export class OmpAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     await this.refreshState();
+    return this.getCachedRuntimeInfo();
+  }
+
+  private getCachedRuntimeInfo(): AgentRuntimeInfo {
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
@@ -2515,6 +2521,15 @@ export class OmpAgentSession implements AgentSession {
       ),
       modeId: this.currentModeId,
     };
+  }
+
+  async getPromptContext(): Promise<AgentPromptContext> {
+    if (!this.runtimeSession.getPromptContext) {
+      throw new Error(
+        "OMP runtime does not support prompt context inspection. Update OMP to inspect the current context.",
+      );
+    }
+    return this.runtimeSession.getPromptContext();
   }
 
   async getRuntimeResources(): Promise<RuntimeResource[]> {
@@ -3465,6 +3480,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    await this.runModelControl(() => this.setThinkingSelection(thinkingOptionId));
+  }
+
+  private async setThinkingSelection(thinkingOptionId: string | null): Promise<void> {
     const thinkingLevel =
       normalizeOmpThinkingOption(thinkingOptionId) ?? DEFAULT_OMP_THINKING_LEVEL;
     await this.runtimeSession.setThinkingLevel(thinkingLevel);
@@ -4286,6 +4305,22 @@ export class OmpAgentSession implements AgentSession {
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
     if (this.closed) return;
+    if (event.type === "model_changed") {
+      if (this.runtimeUnloading) return;
+      void this.runModelControl(async () => {
+        const revision = this.modelControlRevision;
+        if (!(await this.refreshState())) return;
+        if (this.closed || this.runtimeUnloading || revision !== this.modelControlRevision) return;
+        this.emit({
+          type: "model_changed",
+          provider: this.provider,
+          runtimeInfo: this.getCachedRuntimeInfo(),
+        });
+      }).catch((error) => {
+        this.logger.warn({ err: error }, "OMP model metadata refresh failed");
+      });
+      return;
+    }
     if (event.type === "extension_error") {
       const source = event.extensionPath.replaceAll("\\", "/").split("/").pop() ?? "extension";
       const safeSource = source.replace(/[^a-z\d_.-]/giu, "_");
@@ -5227,7 +5262,8 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private async refreshState(): Promise<void> {
+  private async refreshState(): Promise<boolean> {
+    if (this.closed || this.runtimeUnloading) return false;
     const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
     const previousFastMode = this.features.find(
       (feature) => feature.id === OMP_FAST_MODE_FEATURE_ID,
@@ -5236,7 +5272,8 @@ export class OmpAgentSession implements AgentSession {
     const previousFastType = previousFastMode?.type;
     const revision = this.modelControlRevision;
     const state = await this.runtimeSession.getState();
-    if (revision !== this.modelControlRevision) return;
+    if (this.closed || this.runtimeUnloading || revision !== this.modelControlRevision)
+      return false;
     this.state = {
       ...state,
       activeCredential: state.activeCredential ?? this.state.activeCredential,
@@ -5259,6 +5296,7 @@ export class OmpAgentSession implements AgentSession {
     ) {
       this.emit({ type: "features_changed", provider: this.provider });
     }
+    return true;
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {

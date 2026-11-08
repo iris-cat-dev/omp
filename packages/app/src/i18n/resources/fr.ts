@@ -13,6 +13,7 @@ export const fr: TranslationResources = {
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
+  promptAnalysis: en.promptAnalysis,
   externalFilePreview: en.externalFilePreview,
   common: {
     back: "Dos",

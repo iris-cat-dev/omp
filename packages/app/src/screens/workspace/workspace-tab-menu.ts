@@ -3,6 +3,9 @@ import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import { openRuntimeResourceSheet } from "@/stores/runtime-resource-sheet-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useSessionStore } from "@/stores/session-store";
+import { resolveProjectLayoutKey } from "@/workspace-tabs/project-scope";
 
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 
@@ -143,6 +146,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "agent") {
     return `workspace-agent-close-${tab.target.agentId}`;
   }
+  if (tab.target.kind === "prompt_analysis") {
+    return `workspace-prompt-analysis-close-${tab.target.agentId}`;
+  }
   if (tab.target.kind === "terminal") {
     return `workspace-terminal-close-${tab.target.terminalId}`;
   }
@@ -180,6 +186,36 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
     return `workspace-local-file-close-${tab.target.previewId}`;
   }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
+}
+
+function buildPromptAnalysisMenuEntry(input: {
+  serverId: string;
+  agentId: string;
+  workspaceId?: string;
+  menuTestIDBase: string;
+}): WorkspaceTabMenuEntry {
+  const { serverId, agentId, menuTestIDBase } = input;
+  const session = useSessionStore.getState().sessions[serverId];
+  const workspaceId =
+    input.workspaceId ??
+    session?.agents.get(agentId)?.workspaceId ??
+    session?.agentDetails.get(agentId)?.workspaceId;
+  const workspaceKey = workspaceId ? resolveProjectLayoutKey({ serverId, workspaceId }) : null;
+  return {
+    kind: "item",
+    key: "prompt-analysis",
+    label: i18n.t("promptAnalysis.title"),
+    disabled: !workspaceKey,
+    testID: `${menuTestIDBase}-prompt-analysis`,
+    onSelect: () => {
+      if (!workspaceKey) return;
+      useWorkspaceLayoutStore.getState().openTab({
+        workspaceKey,
+        target: { kind: "prompt_analysis", agentId, workspaceId },
+        intent: "reveal",
+      });
+    },
+  };
 }
 
 export function buildWorkspaceTabMenuEntries(
@@ -242,6 +278,16 @@ export function buildWorkspaceTabMenuEntries(
         testID: `${menuTestIDBase}-runtime-resources`,
         onSelect: () => openRuntimeResourceSheet(input.serverId!, agentId),
       });
+    if (input.serverId) {
+      entries.push(
+        buildPromptAnalysisMenuEntry({
+          serverId: input.serverId,
+          agentId,
+          workspaceId: tab.target.workspaceId,
+          menuTestIDBase,
+        }),
+      );
+    }
   }
 
   if (tab.target.kind === "terminal") {
