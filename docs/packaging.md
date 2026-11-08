@@ -180,6 +180,104 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\packaging\buil
 
 SDK native compilation still requires Windows x64. Installer construction can run on Windows x64 or on Mac using the complete Windows SDK artifact; Linux cross-builds remain unsupported. Selecting a Windows mini-electron distribution alone cannot make Mac SDK addons compatible.
 
+### Native Windows packaging checklist
+
+Use PowerShell from the repository root. Run the steps individually and stop on any nonzero native-command exit code; Windows PowerShell 5.1 does not automatically throw for failed Git, Node, or npm commands. Do not interpret an existing EXE in `release/` as proof that the current build succeeded.
+
+#### 1. Check the toolchain before changing PATH
+
+```powershell
+Get-Command node,npm,bun,rustup,tar | Select-Object Name,Source
+node -p "JSON.stringify({execPath:process.execPath,node:process.versions.node,bun:process.versions.bun ?? null})"
+bun --version
+rustup show
+```
+
+Prefer the Node.js version in `.tool-versions`; the SDK requires Node.js 24 or newer. `node` must resolve to a genuine Node.js installation, and the diagnostic's `bun` value must be `null`. Bun's temporary `bun-node-*` directories can contain both `bun.exe` and a Bun-backed `node.exe`. Prepending that directory can silently run npm's Node scripts under Bun. Keep the real Node.js directory ahead of it, or use a Bun installation that does not shadow `node`; rerun the diagnostics after every PATH change.
+
+Check Visual Studio C++ Build Tools and the SDK's pinned Rust toolchain before a source build. A matching prebuilt SDK artifact is the alternative described in [Mac-to-Windows packaging](#mac-to-windows-packaging), not a reason to substitute Bun for Node.
+
+#### 2. Synchronize source without discarding local changes
+
+```powershell
+git status --short
+git -C omp-sdk status --short
+git fetch origin
+git merge --ff-only origin/main
+git submodule update --init --recursive
+```
+
+Preserve or commit local work before resolving any overlap; do not reset or clean the checkout to make a pull succeed. The last command selects the SDK revision recorded by Desktop, which is the reproducible default. Only when intentionally updating to the upstream submodule branch, use `git submodule update --init --recursive --remote`, review compatibility, and commit the changed gitlink with the Desktop changes.
+
+On a fresh checkout or after dependency/lockfile changes, run `npm ci` before proceeding. SDK source builds install their own dependencies with `bun install --frozen-lockfile` during SDK preparation; a separate manual SDK build is not required before the standard packaging command.
+
+#### 3. Refresh and record the native runtime
+
+```powershell
+npx --no-install mini-electron --update-runtime
+node -p "JSON.stringify(require('./node_modules/@iriscat/mini-electron/dist/version.json'),null,2)"
+```
+
+Record `runtimeVersion`, `platform`, `arch`, and the capability markers alongside the source commit and SDK revision. Packaging uses this installed runtime; ordinary npm installation is not an update request. See [native runtime selection](#native-runtime-selection) for immutable versions and local distributions. If GitHub downloads fail, resolve connectivity before rebuilding; an application rebuild cannot repair the runtime download.
+
+#### 4. Build the complete installer payload
+
+```powershell
+$watch = [Diagnostics.Stopwatch]::StartNew()
+npm run build:windows
+if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed: $LASTEXITCODE" }
+$watch.Stop()
+Write-Output ("Packaging: {0:N2}s" -f $watch.Elapsed.TotalSeconds)
+```
+
+The current pipeline runs these stages in order:
+
+1. Clean/build frontend workspace dependencies, then export the Electron web UI through Expo.
+2. Prepare the release `desktop/core` SDK, reusing content-validated native, bundle, or complete-stage caches where possible.
+3. Clean/build server dependencies, server and CLI; generate the remote-backend payload for all four supported remote targets.
+4. Compile the desktop main process and stage Windows native dependencies.
+5. Validate the mini-electron distribution and release SDK, assemble `win-unpacked`, run after-pack checks/pruning, and build NSIS, ZIP and blockmap artifacts.
+6. Merge the Windows update metadata after the requested architecture finishes.
+
+Use the high-level command for a complete build. Running `packages/desktop/scripts/run-electron-builder.mjs` alone does not refresh frontend, server, SDK or remote-backend inputs. A successful Expo `Exported: dist` message is only one completed stage, not installer completion.
+
+#### 5. Qualify the actual packaged application
+
+```powershell
+node packages/desktop/e2e/packaged-app-smoke.js --app packages/desktop/release/win-unpacked
+if ($LASTEXITCODE -ne 0) { throw "Packaged application smoke failed: $LASTEXITCODE" }
+```
+
+Keep the interactive Windows desktop unlocked and avoid mouse/keyboard input during the native window scenarios. The smoke uses a disposable application copy and isolated profiles, exercises the embedded runtime, CLI/daemon, SDK/native tools, terminal, window gestures, Chinese Usage and companion behavior, and prints its evidence directory. To retain evidence under a chosen directory, set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside `win-unpacked` before running it. A passing build without this smoke is not native acceptance; see [the Windows acceptance scope and limitations](development.md#packaged-windows-application).
+
+#### 6. Check and hand off the new artifacts
+
+```powershell
+$version = node -p "require('./packages/desktop/package.json').version"
+Get-Item "packages/desktop/release/OMP-Desktop-Setup-$version-x64.exe",
+  "packages/desktop/release/OMP-Desktop-Setup-$version-x64.zip" |
+  Select-Object Name,Length,LastWriteTime
+Get-FileHash "packages/desktop/release/OMP-Desktop-Setup-$version-x64.exe" -Algorithm SHA256
+Get-Content packages/desktop/release/win-unpacked/version.json
+```
+
+Standard stable builds produce the EXE, ZIP, EXE `.blockmap`, `latest.yml`, and `win-unpacked` under `packages/desktop/release/`. Prereleases use their channel's update YAML. Verify the packaged runtime version, installer size/hash against the matching update metadata, and the smoke's passing report. If supplying a SHA-256 checksum file, regenerate it from this build; the packaging command does not maintain `SHA256SUMS.txt`. Keep update metadata with its exact installer, and record build time separately from acceptance time. Local packaging defaults to `--publish never`; committing source does not push it or publish installers.
+
+### Timing and stalled-build diagnosis
+
+One Windows x64 run on 2026-11-07 took **162.94 seconds** for complete packaging and **123.12 seconds** for the separate native smoke. SDK preparation within that build took 28.74 seconds; a separate same-environment complete-cache hit took 1.75 seconds. Remote-backend generation measured separately took 19.12 seconds. These are observations from one machine, not deadlines or additive stage measurements.
+
+If output stops after Expo reports `Exported: dist`, first check which executable `node` resolves to and whether the export process has actually exited. A Bun-backed `node.exe` caused an observed post-export hang and an SDK dependency-resolution failure; putting genuine Node.js first restored a successful complete build. Do not assume silent time is compression work or wait for an hour-long whole-pipeline timeout before inspecting a stalled stage. Diagnose or stop only the build's owned processes, not every Node/Bun process on the workstation.
+
+Preserve the last completed stage, command/exit code and elapsed time before retrying. Reuse generated inputs only when their source, dependencies, target and runtime remain valid; otherwise rerun the complete pipeline. Do not fabricate cache markers or skip SDK/runtime validation to advance a failed build.
+
+The following are optimization opportunities, **not behavior already implemented by the commands above**:
+
+- Build shared dependencies once in a single dependency order. The current full pipeline builds `protocol` four times and `client`, `relay` and `highlight` twice each, including repeated clean builds.
+- Keep the toolchain/environment stable to retain SDK cache hits. Current cache inputs include PATH and broad build context; refine native, bundle and staging keys independently without removing content-integrity checks.
+- Cache the six workspace archives and four remote-target lockfiles by their actual inputs instead of recreating them on every package. Preserve all supported remote targets.
+- For a local EXE-only candidate, select NSIS without ZIP using the [unsigned local candidate command](#unsigned-local-candidate). Full release builds still need their complete target artifacts and update metadata.
+
 ### Mac-to-Windows packaging
 
 1. Commit the build scripts and pinned SDK submodule revision to GitHub, then run **Actions → Package release → Run workflow** on that commit.
@@ -227,7 +325,7 @@ npm exec -- cross-env CSC_IDENTITY_AUTO_DISCOVERY=false \
   npm run build:desktop -- --win nsis --x64 --publish never
 ```
 
-The output includes `OMP-Desktop-Setup-<version>-x64.exe`, its `.blockmap`, a `.zip`, and `latest.yml` (or the prerelease channel's metadata) in `packages/desktop/release`.
+Standard Windows builds include `OMP-Desktop-Setup-<version>-x64.exe`, its `.blockmap`, a `.zip`, and `latest.yml` (or the prerelease channel's metadata) in `packages/desktop/release`. The explicit NSIS-only command above does not produce a ZIP.
 
 Windows runtime builds disable Inspector/CDP. Qualify the real native window, bundled Desktop CLI, daemon, and SDK using the [Windows packaged application smoke](development.md#packaged-windows-application); do not enable Inspector or bypass IPC frame checks.
 
