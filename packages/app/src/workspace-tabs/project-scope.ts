@@ -218,7 +218,9 @@ function correctKnownProjectResourceOwners(input: MigrationInput): {
     for (const tab of allTabs) {
       const target = tab.target;
       const agentId =
-        target.kind === "agent" || target.kind === "background_process"
+        target.kind === "agent" ||
+        target.kind === "background_process" ||
+        target.kind === "prompt_analysis"
           ? target.agentId
           : target.kind === "provider_subagent"
             ? target.parentAgentId
@@ -343,6 +345,7 @@ export function migrateLegacyProjectLayouts(input: MigrationInput): {
       tab.target.kind === "agent" ||
       tab.target.kind === "provider_subagent" ||
       tab.target.kind === "background_process" ||
+      tab.target.kind === "prompt_analysis" ||
       tab.target.kind === "terminal" ||
       (tab.target.kind === "plugin" && tab.target.context === "agent");
     if (
@@ -371,7 +374,9 @@ export function migrateLegacyProjectLayouts(input: MigrationInput): {
     const { target } = tab;
     const bound = normalizeWorkspaceOpaqueId(target.workspaceId);
     const agentId =
-      target.kind === "agent" || target.kind === "background_process"
+      target.kind === "agent" ||
+      target.kind === "background_process" ||
+      target.kind === "prompt_analysis"
         ? target.agentId
         : target.kind === "provider_subagent"
           ? target.parentAgentId

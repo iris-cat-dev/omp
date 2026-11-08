@@ -4,6 +4,7 @@ import type {
   BackgroundProcessOutput,
 } from "@omp-desktop/protocol/background-processes";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
+import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
@@ -2520,6 +2521,15 @@ export class OmpAgentSession implements AgentSession {
       ),
       modeId: this.currentModeId,
     };
+  }
+
+  async getPromptContext(): Promise<AgentPromptContext> {
+    if (!this.runtimeSession.getPromptContext) {
+      throw new Error(
+        "OMP runtime does not support prompt context inspection. Update OMP to inspect the current context.",
+      );
+    }
+    return this.runtimeSession.getPromptContext();
   }
 
   async getRuntimeResources(): Promise<RuntimeResource[]> {

@@ -12,6 +12,7 @@ import { providerSubagentPanelRegistration } from "@/panels/provider-subagent-pa
 import { pullRequestPanelRegistration } from "@/panels/pull-request-panel";
 import { newTabPanelRegistration } from "@/panels/new-tab-panel";
 import { workspaceOverviewPanelRegistration } from "@/panels/workspace-overview-panel";
+import { promptAnalysisPanelRegistration } from "@/panels/prompt-analysis-panel";
 
 let panelsRegistered = false;
 
@@ -23,6 +24,7 @@ export function ensurePanelsRegistered(): void {
   registerPanel(newTabPanelRegistration);
   registerPanel(agentPanelRegistration);
   registerPanel(providerSubagentPanelRegistration);
+  registerPanel(promptAnalysisPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(workspaceOverviewPanelRegistration);
   registerPanel(terminalPanelRegistration);

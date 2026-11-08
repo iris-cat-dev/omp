@@ -85,6 +85,37 @@ describe("checkout-bound resource identity", () => {
   });
 });
 
+describe("prompt analysis tab identity", () => {
+  it("restores its conversation owner and keeps analysis separate from the chat", () => {
+    const target = normalizeWorkspaceTabTarget({
+      kind: "prompt_analysis",
+      agentId: " conversation-a ",
+      workspaceId: " checkout-a ",
+    });
+    expect(target).toEqual({
+      kind: "prompt_analysis",
+      agentId: "conversation-a",
+      workspaceId: "checkout-a",
+    });
+    const analysis = {
+      kind: "prompt_analysis",
+      agentId: "conversation-a",
+      workspaceId: "checkout-a",
+    } as const;
+    expect(workspaceTabTargetsEqual(analysis, analysis)).toBe(true);
+    expect(workspaceTabTargetsEqual(analysis, { ...analysis, agentId: "conversation-b" })).toBe(
+      false,
+    );
+    expect(workspaceTabTargetsEqual(analysis, { ...analysis, workspaceId: "checkout-b" })).toBe(
+      false,
+    );
+    expect(buildDeterministicWorkspaceTabId(analysis)).not.toBe(
+      buildDeterministicWorkspaceTabId({ kind: "agent", agentId: analysis.agentId }),
+    );
+    expect(normalizeWorkspaceTabTarget({ kind: "prompt_analysis", agentId: " " })).toBeNull();
+  });
+});
+
 describe("provider subagent tab identity", () => {
   test("normalizes and compares the parent and provider child as one tab identity", () => {
     const target = normalizeWorkspaceTabTarget({

@@ -743,6 +743,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     args: z.string().optional(),
   }),
   z.object({ ...OmpCommandBase, type: z.literal("get_runtime_resources") }),
+  z.object({ ...OmpCommandBase, type: z.literal("get_prompt_context") }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("release_runtime_resource"),

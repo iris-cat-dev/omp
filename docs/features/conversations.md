@@ -6,6 +6,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 
 - [Completion and failures](#completion-and-failures)
 - [Context compaction](#context-compaction)
+- [Prompt analysis](#prompt-analysis)
 - [Turn usage and speed](#turn-usage-and-speed)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
@@ -43,6 +44,16 @@ Provider-request failures after the Agent runtime starts appear as sanitized sys
 `/compact` shows a progress marker and explains that compaction may take a few minutes. New messages submitted during compaction wait for it to finish; they do not need to be resent. Desktop does not apply the short 30-second control-plane deadline to prompt admission, because OMP may still be compacting or preparing that input. Runtime exit and genuine submission errors remain failures.
 
 Native manual-compaction progress updates the marker even before a model turn starts. The completion event or successful RPC result clears the loading state without duplicate markers. The waiting explanation disappears when compaction finishes.
+
+## Prompt analysis
+
+Click **Prompt analysis** (the layers icon beside context usage in the composer), or choose it from the conversation tab menu. Desktop opens a separate workspace tab; opening it again reveals the same conversation's analysis tab without replacing the chat.
+
+The composition view separates `systemPrompt`, `messages`, and `tools`. Select a fragment to inspect its complete snapshot text, token estimate, character count, and available SDK source metadata. Messages include developer input, assistant text/thinking, tool calls, and tool output present in the current context. **Copy raw** copies the selected text; **Refresh** samples the current context again and retains the selected fragment when it still exists. Wide panes show the inspector beside the composition; narrow panes stack independently scrollable views.
+
+This is the SDK's current context snapshot, not a capture of the final provider request. Inspection does not call a model or run provider/extension transformation hooks. Category and fragment token attribution are local estimates and can differ from SDK total usage; the skill listing is counted separately without duplicating system-block text. Images and encrypted fields use SDK summaries rather than binary contents.
+
+Inspection requires a resident OMP runtime with `get_prompt_context` support. An unloaded or unsupported conversation reports why the current context is unavailable; opening analysis never activates it. Resume the conversation explicitly, then refresh. A failed refresh or disconnected host leaves the previous snapshot visible with its timestamp and error.
 
 ## Turn usage and speed
 

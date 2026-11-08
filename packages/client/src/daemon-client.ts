@@ -641,6 +641,10 @@ type ScheduleUpdatePayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
+export type AgentPromptContextPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent_prompt_context_response" }
+>["payload"];
 export type AgentRuntimeResourcesPayload = Extract<
   SessionOutboundMessage,
   { type: "agent_runtime_resources_response" }
@@ -3068,6 +3072,23 @@ export class DaemonClient {
         }
         return null;
       },
+    });
+  }
+
+  async getAgentPromptContext(agentId: string): Promise<AgentPromptContextPayload> {
+    const requestId = this.createRequestId();
+    return this.sendRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({
+        type: "agent_prompt_context_request",
+        requestId,
+        agentId,
+      }),
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent_prompt_context_response" && msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
     });
   }
 

@@ -862,8 +862,7 @@ function ChatAgentContent({
     client,
     isConnected,
     isAgentReady:
-      agentState.id !== null &&
-      (agentDirectoryStatus === "ready" || agentState.requiresAttention),
+      agentState.id !== null && (agentDirectoryStatus === "ready" || agentState.requiresAttention),
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,
@@ -1796,11 +1795,15 @@ function ActiveAgentComposer({
     { initialIsBelow: isCompactFormFactor },
   );
   const paneContext = usePaneContext();
-  const { workspaceId, tabId, retargetCurrentTab } = paneContext;
+  const { workspaceId, tabId, retargetCurrentTab, openTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
+  const handleOpenPromptAnalysis = useCallback(
+    () => openTab({ kind: "prompt_analysis", agentId, workspaceId }),
+    [agentId, openTab, workspaceId],
+  );
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd,
@@ -1900,6 +1903,7 @@ function ActiveAgentComposer({
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
+        onOpenPromptAnalysis={handleOpenPromptAnalysis}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
