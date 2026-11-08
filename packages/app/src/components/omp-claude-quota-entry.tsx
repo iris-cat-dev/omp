@@ -21,6 +21,7 @@ interface OmpClaudeQuotaEntryProps {
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
+  onOpenPromptAnalysis?: () => void;
 }
 
 function ContextUsageDetails({ maxTokens, usedTokens, totalCostUsd }: OmpClaudeQuotaEntryProps) {
@@ -55,13 +56,17 @@ function ContextUsageDetails({ maxTokens, usedTokens, totalCostUsd }: OmpClaudeQ
 }
 
 export function OmpClaudeQuotaEntry(props: OmpClaudeQuotaEntryProps) {
-  const { serverId, accountCredentialId, accountCredentialIds } = props;
+  const { serverId, accountCredentialId, accountCredentialIds, onOpenPromptAnalysis } = props;
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const accountQuota = useOmpProviderAccountQuota(serverId, "anthropic", open);
   const { refresh } = accountQuota;
   const openSheet = useCallback(() => setOpen(true), []);
   const closeSheet = useCallback(() => setOpen(false), []);
+  const openPromptAnalysis = useCallback(() => {
+    setOpen(false);
+    onOpenPromptAnalysis?.();
+  }, [onOpenPromptAnalysis]);
   const refreshQuota = useCallback(() => {
     void refresh().catch(() => {});
   }, [refresh]);
@@ -131,6 +136,16 @@ export function OmpClaudeQuotaEntry(props: OmpClaudeQuotaEntryProps) {
             <ProviderUsageTooltipSection view={view} activeProviderId="anthropic" />
           )}
           <ContextUsageDetails {...props} />
+          {props.onOpenPromptAnalysis ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onPress={openPromptAnalysis}
+              testID="context-window-prompt-analysis"
+            >
+              {t("promptAnalysis.title")}
+            </Button>
+          ) : null}
         </View>
       </AdaptiveModalSheet>
     </>

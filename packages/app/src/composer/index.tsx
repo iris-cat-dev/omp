@@ -28,7 +28,6 @@ import {
   Paperclip,
   Quote,
   ScanLine,
-  Layers3,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import Animated from "react-native-reanimated";
@@ -281,6 +280,7 @@ function renderContextWindowMeter(
   accountFeature: AgentFeature | undefined,
   pending: boolean,
   glyphSize: number,
+  onOpenPromptAnalysis?: () => void,
 ): ReactElement | null {
   const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
   if (!hasData && !pending && provider !== "anthropic") {
@@ -306,6 +306,7 @@ function renderContextWindowMeter(
       }
       pending={pending}
       glyphSize={glyphSize}
+      onOpenPromptAnalysis={onOpenPromptAnalysis}
     />
   );
 }
@@ -2094,6 +2095,7 @@ function ComposerContentImpl({
         agentState.accountFeature,
         contextWindowPending,
         contextWindowMeterGlyphSize,
+        onOpenPromptAnalysis,
       ),
     [
       contextWindowMaxTokens,
@@ -2105,42 +2107,23 @@ function ComposerContentImpl({
       agentState.accountFeature,
       contextWindowPending,
       contextWindowMeterGlyphSize,
+      onOpenPromptAnalysis,
     ],
   );
   const rightLeadingContent = useMemo(
-    () => (
-      <View style={styles.contextActions}>
-        {onOpenPromptAnalysis && hasAgent ? (
-          <Tooltip enabledOnDesktop enabledOnMobile={false}>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                leftIcon={Layers3}
-                onPress={onOpenPromptAnalysis}
-                accessibilityLabel={t("promptAnalysis.title")}
-                testID="composer-prompt-analysis"
-              />
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <Text style={styles.tooltipText}>{t("promptAnalysis.title")}</Text>
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-        {resolveContextWindowPlacement(
-          contextWindowMeter,
-          hasAgent,
-          Boolean(
-            agentState.provider &&
-            resolveModelBrowserProviderNamespaceId(
-              agentState.provider,
-              agentState.model ?? undefined,
-            ) === "anthropic",
-          ),
-        )}
-      </View>
-    ),
-    [contextWindowMeter, hasAgent, agentState.provider, agentState.model, onOpenPromptAnalysis, t],
+    () =>
+      resolveContextWindowPlacement(
+        contextWindowMeter,
+        hasAgent,
+        Boolean(
+          agentState.provider &&
+          resolveModelBrowserProviderNamespaceId(
+            agentState.provider,
+            agentState.model ?? undefined,
+          ) === "anthropic",
+        ),
+      ),
+    [contextWindowMeter, hasAgent, agentState.provider, agentState.model],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2679,11 +2662,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-  },
-  contextActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
   },
   contextWindowMeterSlot: {
     width: 28,

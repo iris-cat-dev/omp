@@ -4,6 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { useOmpProviderAccountQuota } from "@/hooks/use-omp-account-quota";
@@ -31,6 +32,7 @@ interface ContextWindowMeterProps {
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
+  onOpenPromptAnalysis?: () => void;
 }
 
 const SVG_SIZE = 14;
@@ -113,6 +115,7 @@ function TokenContextWindowMeter({
   accountCredentialIds,
   pending = false,
   glyphSize,
+  onOpenPromptAnalysis,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -155,6 +158,10 @@ function TokenContextWindowMeter({
     },
     [quotaProviderId, refreshProviderUsage],
   );
+  const openPromptAnalysis = useCallback(() => {
+    setIsTooltipOpen(false);
+    onOpenPromptAnalysis?.();
+  }, [onOpenPromptAnalysis]);
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
@@ -202,6 +209,7 @@ function TokenContextWindowMeter({
       open={isTooltipOpen}
       onOpenChange={handleTooltipOpenChange}
       delayDuration={0}
+      interactive={Boolean(onOpenPromptAnalysis)}
       openOnPress={showPersistentActions}
       enabledOnDesktop
       enabledOnMobile
@@ -250,7 +258,7 @@ function TokenContextWindowMeter({
           ) : null}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
+      <TooltipContent side="top" align="center" offset={8} testID="context-window-tooltip">
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
           <Text style={styles.tooltipText}>
@@ -268,6 +276,18 @@ function TokenContextWindowMeter({
             </Text>
           ) : null}
           <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
+          {onOpenPromptAnalysis ? (
+            <View style={styles.tooltipAction}>
+              <Button
+                size="sm"
+                variant="outline"
+                onPress={openPromptAnalysis}
+                testID="context-window-prompt-analysis"
+              >
+                {t("promptAnalysis.title")}
+              </Button>
+            </View>
+          ) : null}
         </View>
       </TooltipContent>
     </Tooltip>
@@ -307,6 +327,12 @@ const styles = StyleSheet.create((theme) => ({
   tooltipContent: {
     gap: theme.spacing[1.5],
     minWidth: 200,
+  },
+  tooltipAction: {
+    borderTopWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: theme.spacing[1],
+    paddingTop: theme.spacing[2],
   },
   tooltipTitle: {
     color: theme.colors.foreground,

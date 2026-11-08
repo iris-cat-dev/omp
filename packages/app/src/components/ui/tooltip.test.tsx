@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Tooltip, TooltipTrigger } from "./tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 vi.mock("@/constants/platform", () => ({
   isWeb: true,
@@ -25,10 +25,29 @@ vi.mock("@gorhom/bottom-sheet", () => ({
 
 vi.mock("react-native-reanimated", () => ({
   default: {
-    View: "div",
+    View: React.forwardRef<
+      HTMLDivElement,
+      React.HTMLAttributes<HTMLDivElement> & { testID?: string }
+    >(function AnimatedView(
+      { children, testID, onPointerEnter, onPointerLeave, onFocus, onBlur },
+      ref,
+    ) {
+      return (
+        <div
+          ref={ref}
+          data-testid={testID}
+          onPointerEnter={onPointerEnter}
+          onPointerLeave={onPointerLeave}
+          onFocus={onFocus}
+          onBlur={onBlur}
+        >
+          {children}
+        </div>
+      );
+    }),
   },
-  FadeIn: {},
-  FadeOut: {},
+  FadeIn: { duration: () => undefined },
+  FadeOut: { duration: () => undefined },
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -64,6 +83,7 @@ afterEach(() => {
   root = null;
   container = null;
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function renderTrigger({
@@ -130,5 +150,86 @@ describe("TooltipTrigger", () => {
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
     pressTrigger();
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps its action reachable across the hover gap and dismisses on Escape or outside input", async () => {
+    vi.useFakeTimers();
+    const onPress = vi.fn();
+    await act(async () => {
+      root?.render(
+        <Tooltip interactive openOnPress>
+          <TooltipTrigger testID="trigger">
+            <Text>Context window</Text>
+          </TooltipTrigger>
+          <TooltipContent testID="content">
+            <Pressable testID="action" onPress={onPress}>
+              <Text>Prompt analysis</Text>
+            </Pressable>
+          </TooltipContent>
+        </Tooltip>,
+      );
+    });
+    pressTrigger();
+    await act(async () => {});
+    const trigger = container!.querySelector('[data-testid="trigger"]')!;
+    act(() => {
+      trigger.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+      trigger.dispatchEvent(new window.MouseEvent("pointerout", { bubbles: true }));
+      vi.advanceTimersByTime(100);
+    });
+    const content = document.querySelector('[data-testid="content"]')!;
+    act(() => {
+      content.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+    });
+    const action = document.querySelector('[data-testid="action"]')!;
+    act(() => action.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    expect(onPress).toHaveBeenCalledOnce();
+    act(() =>
+      document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    expect(document.querySelector('[data-testid="action"]')).toBeNull();
+    pressTrigger();
+    await act(async () => {});
+    expect(document.querySelector('[data-testid="action"]')).not.toBeNull();
+    act(() => document.body.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true })));
+    expect(document.querySelector('[data-testid="action"]')).toBeNull();
+  });
+
+  it("moves keyboard focus into its action and restores the trigger on Escape", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      root?.render(
+        <Tooltip interactive defaultOpen>
+          <TooltipTrigger testID="trigger" accessibilityRole="button">
+            <Text>Context window</Text>
+          </TooltipTrigger>
+          <TooltipContent testID="content">
+            <Pressable testID="action" accessibilityRole="button">
+              <Text>Prompt analysis</Text>
+            </Pressable>
+          </TooltipContent>
+        </Tooltip>,
+      );
+    });
+    const trigger = container!.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+    const action = document.querySelector<HTMLElement>('[data-testid="action"]')!;
+    act(() => trigger.focus());
+    const tab = new window.KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => trigger.dispatchEvent(tab));
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(action);
+    act(() => vi.advanceTimersByTime(300));
+    expect(document.activeElement).toBe(action);
+    expect(document.querySelector('[data-testid="action"]')).toBe(action);
+    act(() =>
+      action.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    expect(document.activeElement).toBe(trigger);
+    expect(document.querySelector('[data-testid="action"]')).toBeNull();
   });
 });

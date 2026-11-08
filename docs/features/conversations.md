@@ -47,7 +47,9 @@ Native manual-compaction progress updates the marker even before a model turn st
 
 ## Prompt analysis
 
-Click **Prompt analysis** (the layers icon beside context usage in the composer), or choose it from the conversation tab menu. Desktop opens a separate workspace tab; opening it again reveals the same conversation's analysis tab without replacing the chat.
+Hover over the composer's context meter and click **Prompt analysis** at the bottom of the **Context window** tooltip. For Claude, open its usage panel and select **Prompt analysis** there. The conversation tab menu also includes this action.
+
+Desktop opens a separate workspace tab; opening it again reveals the same conversation's analysis tab without replacing the chat.
 
 The composition view separates `systemPrompt`, `messages`, and `tools`. Select a fragment to inspect its complete snapshot text, token estimate, character count, and available SDK source metadata. Messages include developer input, assistant text/thinking, tool calls, and tool output present in the current context. **Copy raw** copies the selected text; **Refresh** samples the current context again and retains the selected fragment when it still exists. Wide panes show the inspector beside the composition; narrow panes stack independently scrollable views.
 
