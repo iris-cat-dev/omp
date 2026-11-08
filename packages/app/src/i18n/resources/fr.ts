@@ -1896,6 +1896,7 @@ export const fr: TranslationResources = {
     },
     relayAddress: {
       label: "Adresse du serveur relais",
+      history: "Historique des adresses Relay",
       description:
         "Utilisée lors de l'ajout d'hôtes depuis des liens d'appairage. L'application Web et le daemon doivent se connecter au même relais. Utilisez ws:// ou wss://, ou laissez vide pour employer l'adresse du lien. Le trafic reste chiffré de bout en bout.",
       invalid:

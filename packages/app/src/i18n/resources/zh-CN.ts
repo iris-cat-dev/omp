@@ -2021,6 +2021,7 @@ export const zhCN: TranslationResources = {
     },
     relayAddress: {
       label: "Relay 服务器地址",
+      history: "历史 Relay 地址",
       description:
         "添加配对链接中的 Host 时使用。Web 应用和 Daemon 必须连接同一个 Relay。请输入 ws:// 或 wss:// 地址；留空则使用配对链接中的地址。配对流量始终端到端加密。",
       invalid: "请输入有效的 ws:// 或 wss:// 地址，不含凭据、查询参数或片段。路径仅支持 / 或 /ws。",
@@ -2028,7 +2029,7 @@ export const zhCN: TranslationResources = {
       saving: "正在保存...",
       saved: "Relay 设置已保存，将在下次添加 Host 时使用。",
       desktopDescription:
-        "桌面端保存时会写入本机 Daemon 的 config.json，启用 Relay 并立即生效。请输入非空的 ws:// 或 wss:// 地址。Web 应用必须使用同一个 Relay，流量始终端到端加密。",
+        "从历史记录中选择地址即刻切换；输入新地址后点击保存。桌面端会写入本机 Daemon 的 config.json，启用 Relay，无需重启。请输入非空的 ws:// 或 wss:// 地址。Web 应用必须使用同一个 Relay，流量始终端到端加密。",
       desktopSaved:
         "已写入本机 Daemon 的 config.json 并立即生效，无需重启。新的配对链接将使用此地址。",
       desktopUnavailable: "本机 Daemon 未连接，暂时无法保存配置。",

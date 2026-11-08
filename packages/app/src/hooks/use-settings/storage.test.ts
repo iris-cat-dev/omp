@@ -109,12 +109,44 @@ describe("loadAppSettingsFromStorage", () => {
 
     expect(result.theme).toBe("dark");
   });
-  it("defaults the Relay address to the hosted WSS endpoint", async () => {
-    const deps = makeDeps();
+  it("loads canonical history without losing settings to malformed entries", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          language: "zh-CN",
+          relayServerAddress: " ws://localhost:4000/ws ",
+          relayServerHistory: [
+            "wss://relay.example.com:443",
+            "ws://localhost:4000/",
+            "ws://user:password@relay.example.com",
+            null,
+            "",
+            "wss://relay.example.com:443/ws",
+          ],
+        }),
+      }),
+    });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      language: "zh-CN",
+      relayServerAddress: "ws://localhost:4000",
+      relayServerHistory: ["ws://localhost:4000", "wss://relay.example.com:443"],
+    });
+  });
 
-    const result = await loadAppSettingsFromStorage(deps);
-
-    expect(result.relayServerAddress).toBe("wss://relay.paseo.sh:443");
+  it("preserves other settings when the entire history field is corrupt", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          language: "ja",
+          relayServerAddress: "ws://localhost:4000",
+          relayServerHistory: "corrupt",
+        }),
+      }),
+    });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      language: "ja",
+      relayServerHistory: ["ws://localhost:4000"],
+    });
   });
 
   it.each(THEME_OPTIONS)("loads the persisted $name theme", async ({ name }) => {
@@ -442,6 +474,87 @@ describe("loadSettingsFromStorage", () => {
 });
 
 describe("saveAppSettings", () => {
+  it("orders the active daemon address ahead of a stale client preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ relayServerAddress: "ws://localhost:4000" }),
+      }),
+    });
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: {
+        relayServerAddress: "ws://localhost:4002",
+        relayServerHistory: ["ws://localhost:4001", "ws://localhost:4000"],
+      },
+      deps,
+    });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      relayServerAddress: "ws://localhost:4002",
+      relayServerHistory: ["ws://localhost:4002", "ws://localhost:4001", "ws://localhost:4000"],
+    });
+  });
+
+  it("retains previous addresses and moves repeated selections to the front after reload", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ relayServerAddress: "ws://localhost:4000" }),
+      }),
+    });
+    const queryClient = new QueryClient();
+    for (const address of [
+      "wss://relay.example.com:443",
+      "wss://localhost:4000",
+      " ws://localhost:4000/ws ",
+    ]) {
+      await saveAppSettings({ queryClient, updates: { relayServerAddress: address }, deps });
+    }
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      relayServerAddress: "ws://localhost:4000",
+      relayServerHistory: [
+        "ws://localhost:4000",
+        "wss://localhost:4000",
+        "wss://relay.example.com:443",
+      ],
+    });
+    await saveAppSettings({ queryClient, updates: { relayServerAddress: "" }, deps });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      relayServerAddress: "",
+      relayServerHistory: [
+        "ws://localhost:4000",
+        "wss://localhost:4000",
+        "wss://relay.example.com:443",
+      ],
+    });
+  });
+
+  it("does not remember an address whose settings write failed", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ relayServerAddress: "ws://localhost:4000" }),
+      }),
+    });
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, await loadAppSettingsFromStorage(deps));
+    deps.storage.setItem = async () => {
+      throw new Error("disk full");
+    };
+    await expect(
+      saveAppSettings({
+        queryClient,
+        updates: { relayServerAddress: "ws://localhost:4001" },
+        deps,
+      }),
+    ).rejects.toThrow("disk full");
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toMatchObject({
+      relayServerAddress: "ws://localhost:4000",
+      relayServerHistory: ["ws://localhost:4000"],
+    });
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({
+      relayServerAddress: "ws://localhost:4000",
+      relayServerHistory: ["ws://localhost:4000"],
+    });
+  });
+
   it("saves terminal scrollback through app settings persistence", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
