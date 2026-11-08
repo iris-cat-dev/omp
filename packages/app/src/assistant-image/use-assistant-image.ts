@@ -81,6 +81,7 @@ export type AssistantImageResult =
 interface UseAssistantImageInput {
   source: string;
   occurrenceKey: string;
+  previewWidth: number;
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
@@ -256,14 +257,14 @@ function createDataImageAcquisition(input: {
   };
 }
 
-function usePreviewUrl(attachment: AttachmentMetadata | null | undefined, retryKey: number): PreviewUrlState {
+function usePreviewUrl(attachment: AttachmentMetadata | null | undefined, retryKey: number, previewWidth: number): PreviewUrlState {
   const id = attachment?.id;
   const storageType = attachment?.storageType;
   const storageKey = attachment?.storageKey;
   const mimeType = attachment?.mimeType;
   const previewKey =
-    id && storageType && storageKey && mimeType
-      ? `${id}:${storageType}:${storageKey}:${mimeType}:attempt:${retryKey}`
+    id && storageType && storageKey && mimeType && previewWidth > 0
+      ? `${id}:${storageType}:${storageKey}:${mimeType}:width:${previewWidth}:attempt:${retryKey}`
       : null;
   const [entry, setEntry] = useState<{ key: string | null; state: PreviewUrlState }>(() => {
     return {
@@ -287,7 +288,7 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined, retryK
       releaseCurrent?.();
       const retained = previewUrlCache.acquireRetained(previewKey, async () => ({
         attachment: current,
-        ...await acquireAttachmentPreviewResource(current, 512),
+        ...await acquireAttachmentPreviewResource(current, { width: previewWidth }),
       }));
       releaseCurrent = retained.release;
       return retained;
@@ -327,7 +328,7 @@ function usePreviewUrl(attachment: AttachmentMetadata | null | undefined, retryK
       disposed = true;
       releaseCurrent?.();
     };
-  }, [getCurrentAttachment, previewKey]);
+  }, [getCurrentAttachment, previewKey, previewWidth]);
 
   if (!previewKey) {
     return { status: "waiting" };
@@ -383,6 +384,7 @@ function getAcquisitionFailure(input: {
 export function useAssistantImage({
   source,
   occurrenceKey,
+  previewWidth,
   client,
   workspaceRoot,
   serverId,
@@ -420,10 +422,12 @@ export function useAssistantImage({
   const filePreview = usePreviewUrl(
     visible && fileAttachment.status === "loaded" ? fileAttachment.attachment : null,
     retryKey,
+    previewWidth,
   );
   const dataImagePreview = usePreviewUrl(
     visible ? persistedAsset ?? (dataImageAttachment.status === "loaded" ? dataImageAttachment.attachment : null) : null,
     retryKey,
+    previewWidth,
   );
   const directUri = visible && resolution?.kind === "direct" && !dataImage && !persistedAsset ? resolution.uri : null;
   const preview = dataImage || persistedAsset ? dataImagePreview : filePreview;

@@ -33,6 +33,8 @@ Complete `File` attachment bodies remain persisted and available for source rere
 
 Click an image attachment or generated image to open a full-window preview. Loaded assistant images, including `generate_image` and `present_image`, also show **View full screen** at the upper-right; loading/failed images do not. Use mouse wheel or **Zoom in / Zoom out**, drag an enlarged image to pan, and choose **Fit to window** or **Actual size (100%)**. Close or **Esc** returns to chat. Desktop's window-close-choice dialog stays above the preview; canceling leaves the image open.
 
+Chat previews match the image's displayed width and screen pixel density, updating when the pane is resized. Portrait images retain proportional height, and smaller originals are not resampled. Off-screen previews release their decoded resources; fullscreen loads the original image for inspecting fine text and details.
+
 Image-tool badges follow interface language and show one action label without repeated status text. When multiple tools preview the same image in one turn, Desktop keeps the first preview and both tool records. Standalone tools, different images, and images repeated in a later turn retain previews.
 
 Native generation/publication previews are copied into private content-addressed image files. History also understands OMP image-blob references, avoiding dependence on native temporary files. Workspace tabs preview ICO (case-insensitive `.ico`) alongside PNG, JPEG, GIF, WebP, and SVG; see [File discovery](workspaces-files-git.md#file-discovery-and-editing).

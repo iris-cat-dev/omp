@@ -27,7 +27,7 @@ describe("assistant image geometry across visibility changes", () => {
     const renders: Array<{ visible: boolean; aspectRatio: number | null }> = [];
     const { result, rerender } = renderHook(
       ({ visible }) => {
-        const image = useAssistantImage({ source, occurrenceKey: "portrait", visible });
+        const image = useAssistantImage({ source, occurrenceKey: "portrait", previewWidth: 600, visible });
         if (image.status !== "failed") {
           renders.push({ visible, aspectRatio: image.aspectRatio });
         }
@@ -54,7 +54,7 @@ describe("assistant image geometry across visibility changes", () => {
     const observed: Array<number | null> = [];
     const { rerender } = renderHook(
       ({ visible }) => {
-        const image = useAssistantImage({ source, occurrenceKey: "cached", visible });
+        const image = useAssistantImage({ source, occurrenceKey: "cached", previewWidth: 600, visible });
         if (image.status !== "failed") observed.push(image.aspectRatio);
         return image;
       },
@@ -66,7 +66,7 @@ describe("assistant image geometry across visibility changes", () => {
 
   it("does not reuse the previous source's dimensions when the source changes", () => {
     const { result, rerender } = renderHook(
-      ({ source, visible }) => useAssistantImage({ source, occurrenceKey: "replaced", visible }),
+      ({ source, visible }) => useAssistantImage({ source, occurrenceKey: "replaced", previewWidth: 600, visible }),
       { initialProps: { source: "https://example.com/old-portrait.png", visible: true } },
     );
     const binding = result.current.status !== "failed" ? result.current.binding : null;

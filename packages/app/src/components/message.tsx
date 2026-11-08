@@ -6,6 +6,7 @@ import {
   Text,
   Image,
   Pressable,
+  useWindowDimensions,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   StyleProp,
@@ -868,6 +869,11 @@ export function AssistantMarkdownImage({
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
   const imageVisibility = useImageVisibility();
+  const { scale: pixelRatio } = useWindowDimensions();
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const handleImageLayout = useCallback((event: LayoutChangeEvent) => {
+    setAvailableWidth(event.nativeEvent.layout.width);
+  }, []);
   const panelActive = useRetainedPanelActive();
   const [imageRetryKey, setImageRetryKey] = useState(0);
   useEffect(() => {
@@ -888,6 +894,7 @@ export function AssistantMarkdownImage({
   const image = useAssistantImage({
     source,
     occurrenceKey,
+    previewWidth: Math.ceil(availableWidth * pixelRatio),
     client,
     workspaceRoot,
     serverId,
@@ -925,7 +932,7 @@ export function AssistantMarkdownImage({
 
   if (image.status === "failed") {
     return (
-      <View ref={imageVisibility.ref} style={stateFrameStyle}>
+      <View ref={imageVisibility.ref} onLayout={handleImageLayout} style={stateFrameStyle}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
         <Pressable
           accessibilityRole="button"
@@ -939,14 +946,14 @@ export function AssistantMarkdownImage({
 
   if (!binding) {
     return (
-      <View ref={imageVisibility.ref} style={stateFrameStyle}>
+      <View ref={imageVisibility.ref} onLayout={handleImageLayout} style={stateFrameStyle}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
 
   return (
-    <View ref={imageVisibility.ref} style={frameStyle}>
+    <View ref={imageVisibility.ref} onLayout={handleImageLayout} style={frameStyle}>
       <View style={surfaceStyle}>
         <Image
           ref={binding.onRef}
