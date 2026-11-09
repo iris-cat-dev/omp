@@ -646,6 +646,35 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
     .passthrough(),
 ]);
 
+export const OmpAskQuestionSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  header: z.string().optional(),
+  options: z.array(
+    z.object({
+      label: z.string(),
+      description: z.string().optional(),
+      preview: z.string().optional(),
+    }),
+  ),
+  multi: z.boolean().optional(),
+  recommended: z.number().optional(),
+});
+
+export const OmpAskAnswerSchema = z.object({
+  id: z.string(),
+  selectedOptions: z.array(z.string()),
+  customInput: z.string().optional(),
+});
+export type OmpAskQuestion = z.infer<typeof OmpAskQuestionSchema>;
+export type OmpAskAnswer = z.infer<typeof OmpAskAnswerSchema>;
+export interface OmpExtensionUiResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  answers?: OmpAskAnswer[];
+}
+
 const OmpExtensionUiRequestSchema = z
   .object({
     type: z.literal("extension_ui_request"),
@@ -755,6 +784,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     mode: OmpApprovalModeSchema,
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_ask_dialog"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("set_proxy_policy"), policy: ProxyPolicySchema }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),

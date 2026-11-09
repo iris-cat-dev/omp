@@ -139,6 +139,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       const startStartedAt = performance.now();
       const session = await startOmpRpcSession({
         launch,
+        enableAskDialog: true,
         // This is our Node host, not an external provider command. The shared
         // transport's default spawn strips ELECTRON_RUN_AS_NODE, which makes a
         // packaged Desktop executable re-enter its GUI/CLI dispatch instead.

@@ -127,7 +127,7 @@ After normal completion, the next queued message starts automatically, even if c
 
 ## Questions and background processes
 
-Grouped OMP questions use labeled tabs that can be visited in any order. Selections and typed answers survive switching. **Submit** sends the whole group once every required question is answered.
+Grouped OMP questions use labeled tabs that can be visited in any order, including returning from the third question to the first or second. Selections and typed answers survive switching and editing earlier answers. For multi-select questions, **Other** can supplement the selected options. **Submit** sends the whole group once every required question is answered; **Close** cancels the group.
 
 Background work started by the current Agent, including Bash commands and `eval` cells, appears beside the workspace branch above the composer. The active indicator shows a count; opening it lists live and recently completed jobs. Select a job for read-only terminal output in a bottom pane, or **Stop** that job with the neutral borderless square control. Closing output does not stop work.
 

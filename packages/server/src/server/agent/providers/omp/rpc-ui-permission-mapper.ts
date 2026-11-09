@@ -5,7 +5,13 @@ import type {
   AgentProvider,
   ToolCallDetail,
 } from "../../agent-sdk-types.js";
-import type { OmpRuntimeEvent } from "./rpc-types.js";
+import {
+  OmpAskAnswerSchema,
+  OmpAskQuestionSchema,
+  type OmpAskQuestion,
+  type OmpExtensionUiResponse,
+  type OmpRuntimeEvent,
+} from "./rpc-types.js";
 
 const OMP_PROVIDER = "omp";
 const OMP_RPC_UI_TOOL_APPROVAL_METADATA = "omp_rpc_ui_tool_approval";
@@ -77,6 +83,31 @@ export function mapOmpRpcUiPermissionRequest(
   event: ExtensionUiRequestEvent,
   options: { provider?: AgentProvider } = {},
 ): AgentPermissionRequest | null {
+  if (event.method === "ask") {
+    const questions = OmpAskQuestionSchema.array().nonempty().parse(event.questions);
+    return {
+      id: event.id,
+      provider: options.provider ?? OMP_PROVIDER,
+      name: "OMP ask",
+      kind: "question",
+      title: readString(event.title) ?? "Answer questions",
+      input: {
+        questions: questions.map((question) => ({
+          id: question.id,
+          header: question.header?.trim() ? question.header : question.id,
+          question: question.question,
+          options: question.options.map((option, index) => ({
+            ...option,
+            recommended: index === question.recommended,
+          })),
+          multiSelect: question.multi ?? false,
+          allowOther: true,
+        })),
+      },
+      metadata: { extensionUiMethod: "ask", questions },
+    };
+  }
+
   const classification = classifyOmpRpcUiPermissionRequest(event, options);
   return classification.kind === "tool" ? classification.request : null;
 }
@@ -84,7 +115,11 @@ export function mapOmpRpcUiPermissionRequest(
 export function buildOmpRpcUiPermissionResponse(
   request: AgentPermissionRequest,
   response: AgentPermissionResponse,
-): { value?: string; confirmed?: boolean; cancelled?: boolean } | null {
+): OmpExtensionUiResponse | null {
+  if (request.kind === "question" && request.metadata?.extensionUiMethod === "ask") {
+    return buildGroupedAskResponse(request.metadata.questions as OmpAskQuestion[], response);
+  }
+
   if (
     request.kind !== "tool" ||
     request.metadata?.toolApproval !== OMP_RPC_UI_TOOL_APPROVAL_METADATA
@@ -95,6 +130,41 @@ export function buildOmpRpcUiPermissionResponse(
   const approveValue = readString(request.metadata.approveValue) ?? TOOL_APPROVAL_APPROVE_VALUE;
   const denyValue = readString(request.metadata.denyValue) ?? TOOL_APPROVAL_DENY_VALUE;
   return { value: response.behavior === "allow" ? approveValue : denyValue };
+}
+
+function buildGroupedAskResponse(
+  questions: OmpAskQuestion[],
+  response: AgentPermissionResponse,
+): OmpExtensionUiResponse {
+  if (response.behavior !== "allow") {
+    return { cancelled: true };
+  }
+
+  const answers = OmpAskAnswerSchema.array().parse(response.updatedInput?.answers);
+  if (answers.length !== questions.length) {
+    throw new Error("OMP ask requires an answer for every question");
+  }
+  for (const [index, answer] of answers.entries()) {
+    const question = questions[index]!;
+    if (answer.id !== question.id) {
+      throw new Error("OMP ask answer IDs must match the question order");
+    }
+    const labels = new Set(question.options.map((option) => option.label));
+    if (answer.selectedOptions.some((label) => !labels.has(label))) {
+      throw new Error(`OMP ask answer '${answer.id}' contains an unknown option`);
+    }
+    if (new Set(answer.selectedOptions).size !== answer.selectedOptions.length) {
+      throw new Error(`OMP ask answer '${answer.id}' contains duplicate selections`);
+    }
+    const answerCount = answer.selectedOptions.length + (answer.customInput?.trim() ? 1 : 0);
+    if (answerCount === 0) {
+      throw new Error(`OMP ask answer '${answer.id}' is empty`);
+    }
+    if (!question.multi && answerCount > 1) {
+      throw new Error(`OMP ask answer '${answer.id}' requires a single selection or custom input`);
+    }
+  }
+  return { answers };
 }
 
 function parseToolApprovalDescriptor(

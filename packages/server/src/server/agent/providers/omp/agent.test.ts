@@ -12,6 +12,23 @@ import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
 
+const GROUPED_ASK_QUESTIONS = [
+  {
+    id: "deployment",
+    header: "Choice",
+    question: "Where should we deploy?",
+    options: [{ label: "East, West (Recommended)" }, { label: "Staging" }],
+    recommended: 0,
+  },
+  {
+    id: "features",
+    header: "Choice",
+    question: "Which features should ship?",
+    options: [{ label: "Search" }, { label: "Export, CSV" }],
+    multi: true,
+  },
+];
+
 let profileDirectory: string;
 beforeEach(async () => {
   profileDirectory = await mkdtemp(join(tmpdir(), "omp-agent-test-profile-"));
@@ -2910,6 +2927,142 @@ describe("OMP agent client and session", () => {
     expect(omp.extensionUiResponses()).toEqual([
       { id: "approval-1", response: { value: "Approve" } },
     ]);
+  });
+
+  test.each(["ask", "full"])(
+    "keeps the whole business ask pending in %s mode and sends ordered answers",
+    async (modeId) => {
+      const omp = new OmpHarness();
+      await omp.start({ modeId });
+      omp.emitExtensionUiRequest({
+        type: "extension_ui_request",
+        id: "grouped-ask",
+        method: "ask",
+        questions: GROUPED_ASK_QUESTIONS,
+      });
+      expect(omp.extensionUiResponses()).toEqual([]);
+      expect(omp.pendingPermissions()).toEqual([
+        expect.objectContaining({
+          id: "grouped-ask",
+          kind: "question",
+          input: {
+            questions: [
+              expect.objectContaining({ id: "deployment", header: "Choice", multiSelect: false }),
+              expect.objectContaining({ id: "features", header: "Choice", multiSelect: true }),
+            ],
+          },
+        }),
+      ]);
+      expect(
+        omp.permissionEvents().filter((event) => event.type === "permission_requested"),
+      ).toEqual([
+        expect.objectContaining({
+          request: expect.objectContaining({ id: "grouped-ask", kind: "question" }),
+        }),
+      ]);
+
+      const answers = [
+        { id: "deployment", selectedOptions: ["East, West (Recommended)"] },
+        {
+          id: "features",
+          selectedOptions: ["Search", "Export, CSV"],
+          customInput: "Live collaboration",
+        },
+      ];
+      await omp.respondToPermission("grouped-ask", {
+        behavior: "allow",
+        updatedInput: { answers },
+      });
+      expect(omp.extensionUiResponses()).toEqual([{ id: "grouped-ask", response: { answers } }]);
+      expect(omp.pendingPermissions()).toEqual([]);
+      expect(
+        omp.permissionEvents().filter((event) => event.type === "permission_resolved"),
+      ).toEqual([
+        expect.objectContaining({
+          requestId: "grouped-ask",
+          resolution: { behavior: "allow", updatedInput: { answers } },
+        }),
+      ]);
+    },
+  );
+
+  test("leaves malformed answer groups pending and accepts a corrected complete response", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emitExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "grouped-ask",
+      method: "ask",
+      questions: GROUPED_ASK_QUESTIONS,
+    });
+    const validAnswers = [
+      { id: "deployment", selectedOptions: ["Staging"] },
+      { id: "features", selectedOptions: ["Search"] },
+    ];
+    for (const answers of [
+      { Choice: "Staging" },
+      validAnswers.slice(0, 1),
+      validAnswers.toReversed(),
+      [validAnswers[0], { id: "features", selectedOptions: ["Search", "Search"] }],
+      [validAnswers[0], { id: "features", selectedOptions: ["Unknown"] }],
+      [{ id: "deployment", selectedOptions: [] }, validAnswers[1]],
+      [{ id: "deployment", selectedOptions: ["Staging"], customInput: "Other" }, validAnswers[1]],
+    ]) {
+      await expect(
+        omp.respondToPermission("grouped-ask", {
+          behavior: "allow",
+          updatedInput: { answers },
+        }),
+      ).rejects.toThrow();
+      expect(omp.pendingPermissions()).toHaveLength(1);
+      expect(omp.extensionUiResponses()).toEqual([]);
+      expect(
+        omp.permissionEvents().filter((event) => event.type === "permission_resolved"),
+      ).toEqual([]);
+    }
+    await omp.respondToPermission("grouped-ask", {
+      behavior: "allow",
+      updatedInput: { answers: validAnswers },
+    });
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "grouped-ask", response: { answers: validAnswers } },
+    ]);
+  });
+
+  test.each(["deny", "withdraw"])("removes the entire grouped ask on %s", async (cancellation) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emitExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "grouped-ask",
+      method: "ask",
+      questions: GROUPED_ASK_QUESTIONS,
+    });
+    if (cancellation === "deny") {
+      await omp.respondToPermission("grouped-ask", { behavior: "deny" });
+      expect(omp.extensionUiResponses()).toEqual([
+        { id: "grouped-ask", response: { cancelled: true } },
+      ]);
+    } else {
+      omp.emitExtensionUiRequest({
+        type: "extension_ui_request",
+        id: "withdraw-ask",
+        method: "cancel",
+        targetId: "grouped-ask",
+      });
+      expect(omp.extensionUiResponses()).toEqual([]);
+    }
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.permissionEvents().filter((event) => event.type === "permission_resolved")).toEqual([
+      expect.objectContaining({
+        requestId: "grouped-ask",
+        resolution: expect.objectContaining({ behavior: "deny" }),
+      }),
+    ]);
+    await expect(omp.respondToPermission("grouped-ask", { behavior: "allow" })).rejects.toThrow(
+      "No pending permission request",
+    );
   });
 
   test("all approval modes can change during a turn without replacing or interrupting it", async () => {

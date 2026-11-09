@@ -39,6 +39,46 @@ const permission: PendingPermission = {
   },
 };
 
+const groupedPermission: PendingPermission = {
+  key: "grouped-ask",
+  agentId: "agent",
+  request: {
+    id: "ask-dialog",
+    provider: "omp",
+    name: "OMP ask",
+    kind: "question",
+    metadata: { extensionUiMethod: "ask" },
+    input: {
+      questions: [
+        {
+          id: "deadline",
+          header: "Policy",
+          question: "How should the deadline work?",
+          options: [
+            { label: "Keep, original deadline", recommended: true },
+            { label: "Reset deadline" },
+          ],
+          allowOther: true,
+        },
+        {
+          id: "scope",
+          header: "Policy",
+          question: "Which orders are included?",
+          options: [{ label: "Personal, unpaid" }, { label: "Business (Recommended)" }],
+          multiSelect: true,
+          allowOther: true,
+        },
+        {
+          id: "unpaid",
+          header: "Unpaid",
+          question: "What happens to unpaid orders?",
+          options: [{ label: "Keep pending" }, { label: "Close orders" }],
+          allowOther: true,
+        },
+      ],
+    },
+  },
+};
 afterEach(async () => {
   for (const item of mounted.splice(0)) {
     await act(async () => item.root.unmount());
@@ -94,4 +134,70 @@ it("switches without selecting tab text and preserves the complete answer group"
       },
     },
   });
+});
+
+it("keeps three RPC ask answers intact when revisiting and editing earlier questions", async () => {
+  const onRespond = vi.fn();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  await act(async () => {
+    root.render(
+      <QuestionFormCard
+        permission={groupedPermission}
+        onRespond={onRespond}
+        isResponding={false}
+      />,
+    );
+  });
+
+  const option = (label: string) => container.querySelector(`[aria-label="${label}"]`)!;
+  const tab = (index: number) =>
+    container.querySelector(`[data-testid="question-form-question-nav-${index}"]`)!;
+  const primary = container.querySelector('[data-testid="question-form-primary-action"]')!;
+  const custom = () =>
+    container.querySelector('[data-testid="question-form-other-input"]') as HTMLInputElement;
+
+  await userEvent.click(option("Keep, original deadline (Recommended)"));
+  await expect.poll(() => container.textContent).toContain("Which orders are included?");
+  await userEvent.click(option("Business (Recommended)"));
+  await userEvent.click(option("Personal, unpaid"));
+  await userEvent.fill(custom(), "Plus follow-up");
+  await userEvent.click(primary);
+  await expect.poll(() => container.textContent).toContain("What happens to unpaid orders?");
+  await userEvent.click(option("Keep pending"));
+  expect(onRespond).not.toHaveBeenCalled();
+
+  await userEvent.click(tab(2));
+  expect(option("Business (Recommended)").getAttribute("aria-checked")).toBe("true");
+  expect(option("Personal, unpaid").getAttribute("aria-checked")).toBe("true");
+  expect(custom().value).toBe("Plus follow-up");
+  await userEvent.click(tab(1));
+  expect(option("Keep, original deadline (Recommended)").getAttribute("aria-checked")).toBe("true");
+  await userEvent.click(option("Reset deadline"));
+  await expect.poll(() => container.textContent).toContain("Which orders are included?");
+  expect(custom().value).toBe("Plus follow-up");
+  await userEvent.click(tab(3));
+  expect(option("Keep pending").getAttribute("aria-checked")).toBe("true");
+  await userEvent.click(primary);
+  expect(onRespond.mock.calls).toEqual([
+    [
+      {
+        behavior: "allow",
+        updatedInput: {
+          ...groupedPermission.request.input,
+          answers: [
+            { id: "deadline", selectedOptions: ["Reset deadline"] },
+            {
+              id: "scope",
+              selectedOptions: ["Personal, unpaid", "Business (Recommended)"],
+              customInput: "Plus follow-up",
+            },
+            { id: "unpaid", selectedOptions: ["Keep pending"] },
+          ],
+        },
+      },
+    ],
+  ]);
 });
