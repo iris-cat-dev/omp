@@ -1519,7 +1519,8 @@ export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
   cwd: z.string().optional(),
   providers: z.array(z.string()).optional(),
   since: z.string().optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  /** Null lists the complete importable history; omitted keeps the recent-session default. */
+  limit: z.number().int().positive().max(200).nullable().optional(),
 });
 
 export const FetchAgentRequestMessageSchema = z.object({

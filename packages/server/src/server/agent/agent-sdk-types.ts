@@ -598,7 +598,8 @@ export interface AgentSlashCommand {
 }
 
 export interface ListImportableSessionsOptions {
-  limit?: number;
+  /** Null lists all sessions; omitted uses the provider's recent-session default. */
+  limit?: number | null;
   /**
    * Optional cwd hint. Providers that can cheaply pre-filter importable
    * sessions by working directory should do so before doing expensive work.

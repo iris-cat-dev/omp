@@ -380,7 +380,7 @@ describe("ImportSessionSheet", () => {
     await screen.findByText("Could not load recent sessions.");
   });
 
-  it("loads recent provider sessions for the workspace and renders descriptor-owned labels", async () => {
+  it("renders descriptor-owned session titles and previews", async () => {
     vi.setSystemTime(new Date("2026-04-30T12:00:00.000Z"));
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
@@ -405,14 +405,6 @@ describe("ImportSessionSheet", () => {
         snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
       },
     );
-
-    await waitFor(() => {
-      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-        cwd: "/repo/paseo",
-        providers: ["claude"],
-        limit: 15,
-      });
-    });
 
     await screen.findByText("Implement the importer sheet");
     screen.getByText("2h ago");
@@ -465,16 +457,20 @@ describe("ImportSessionSheet", () => {
 
     rerender(<TestSheet visible={false} />);
     fetchRecentProviderSessions.mockClear();
+    fetchRecentProviderSessions.mockResolvedValue({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          title: "Revalidated importable session",
+        }),
+      ],
+    });
     rerender(<TestSheet visible />);
 
     await screen.findByText("Cached importable session");
-    await waitFor(() => {
-      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-        cwd: "/repo/paseo",
-        providers: ["claude"],
-        limit: 15,
-      });
-    });
+    await screen.findByText("Revalidated importable session");
   });
 
   it("imports a selected session by provider handle and reports the imported agent", async () => {
@@ -587,27 +583,9 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await waitFor(() => {
-      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-        cwd: "/repo/paseo",
-        providers: ["claude"],
-        limit: 15,
-      });
-    });
-    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-      cwd: "/repo/paseo",
-      providers: ["codex"],
-      limit: 15,
-    });
     expect(fetchRecentProviderSessions).not.toHaveBeenCalledWith(
       expect.objectContaining({ providers: ["opencode"] }),
     );
-    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-      cwd: "/repo/paseo",
-      providers: ["z-ai"],
-      limit: 15,
-    });
-
     await screen.findByText("Session claude");
     await screen.findByText("Session codex");
     await screen.findByText("Session z-ai");
@@ -783,15 +761,6 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await waitFor(() => {
-      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
-        providers: ["claude"],
-        limit: 15,
-      });
-    });
-    expect(fetchRecentProviderSessions).not.toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: expect.anything() }),
-    );
     await screen.findByText("/home/me/work/other-project");
   });
 

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -74,6 +74,30 @@ describe("OMP session descriptor", () => {
     ).resolves.toEqual([
       expect.objectContaining({ providerHandleId: requestedFile, cwd: requestedCwd }),
     ]);
+  });
+
+  test("lists the complete history beyond the recent window when limit is null", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-all-"));
+    try {
+      const files = await Promise.all(
+        Array.from({ length: 405 }, async (_, index) => {
+          const timestamp = new Date(Date.UTC(2026, 5, 1, 0, 0, index));
+          const file = await writeSession(root, `project/${index}/session.jsonl`, [
+            { type: "session", id: `session-${index}`, timestamp, cwd: root },
+          ]);
+          await utimes(file, timestamp, timestamp);
+          return file;
+        }),
+      );
+      const options = { sessionDir: path.join(root, "sessions") };
+      const newestFirst = files.toReversed();
+      const recent = await listOmpImportableSessions({ ...options, limit: 15 });
+      expect(recent.map((session) => session.providerHandleId)).toEqual(newestFirst.slice(0, 15));
+      const all = await listOmpImportableSessions({ ...options, limit: null });
+      expect(all.map((session) => session.providerHandleId)).toEqual(newestFirst);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("reads title-first sessions and OMP combined model identifiers", async () => {

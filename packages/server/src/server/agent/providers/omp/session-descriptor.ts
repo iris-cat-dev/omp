@@ -19,9 +19,8 @@ const OMP_SESSION_DIR_ENV = "OMP_SESSION_DIR";
 const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
-// Rank all discovered files cheaply, then parse only a bounded recent window.
-// OMP keeps nested completed-subagent transcripts importable, so discovery
-// remains recursive rather than applying Pi's historical parent-only depth cap.
+// Recent queries parse a bounded window; complete-history queries parse every
+// discovered file. Discovery includes nested completed-subagent transcripts.
 const IMPORT_CANDIDATE_OVERSCAN = 40;
 const IMPORT_CANDIDATE_MIN = 400;
 
@@ -103,8 +102,10 @@ export async function listOmpImportableSessions(
   const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
   const ranked = await rankSessionFilesByMtime(files);
-  const candidateLimit = Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN);
-  const candidates = matchesCwd ? ranked : ranked.slice(0, candidateLimit);
+  const candidates =
+    matchesCwd || options.limit === null
+      ? ranked
+      : ranked.slice(0, Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN));
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {
@@ -112,7 +113,7 @@ export async function listOmpImportableSessions(
     if (!session) continue;
     if (matchesCwd && !matchesCwd(session.cwd)) continue;
     sessions.push(session);
-    if (sessions.length >= limit) {
+    if (options.limit !== null && sessions.length >= limit) {
       break;
     }
   }

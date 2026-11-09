@@ -25,7 +25,6 @@ import {
   computeEmptyState,
   getPromptPreview,
   getSessionTitle,
-  PER_PROVIDER_LIMIT,
   resolveProvidersToFetch,
   requiresImportSessionsHostUpgrade,
   sumFilteredAlreadyImportedCount,
@@ -84,7 +83,7 @@ function buildSessionsQueriesConfig(args: {
       return await client.fetchRecentProviderSessions({
         ...(cwd ? { cwd } : {}),
         providers: [provider],
-        limit: PER_PROVIDER_LIMIT,
+        limit: null,
       });
     },
   }));
@@ -293,8 +292,8 @@ export function ImportSessionSheet({
   );
 
   const sessionsQueryRoot = useMemo(
-    () => ["recent-provider-sessions", cwd ?? null] as const,
-    [cwd],
+    () => ["recent-provider-sessions", serverId, cwd ?? null] as const,
+    [serverId, cwd],
   );
 
   const queriesConfig = useMemo(

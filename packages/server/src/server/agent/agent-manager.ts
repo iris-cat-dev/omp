@@ -1085,10 +1085,8 @@ export class AgentManager {
     );
     const sessions: ManagedImportableProviderSession[] = sessionLists.flat();
 
-    const limit = options?.limit ?? 20;
-    return sessions
-      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
-      .slice(0, limit);
+    sessions.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
+    return options?.limit === null ? sessions : sessions.slice(0, options?.limit ?? 20);
   }
 
   private isProviderImportable(

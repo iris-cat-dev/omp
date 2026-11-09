@@ -287,8 +287,8 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
     cwd,
     lastActivityAt: "2026-04-30T12:01:00.000Z",
   });
-  const listImportableSessions = vi.fn(async (options?: { limit?: number }) =>
-    [imported, available].slice(0, options?.limit),
+  const listImportableSessions = vi.fn(async (options?: { limit?: number | null }) =>
+    [imported, available].slice(0, options?.limit ?? undefined),
   );
 
   const result = await listImportableProviderSessions({
@@ -315,6 +315,50 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
   });
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["available"]);
   expect(result.filteredAlreadyImportedCount).toBe(1);
+});
+
+test("lists complete history after filtering imported and metadata sessions", async () => {
+  const sessions = Array.from({ length: 225 }, (_, index) =>
+    makeImportableSession({
+      sessionId: `session-${index}`,
+      cwd: index % 2 === 0 ? "/tmp/project" : "/tmp/other",
+      lastActivityAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      firstPrompt:
+        index >= 220
+          ? "Generate metadata for a coding agent based on the user prompt."
+          : `User prompt ${index}`,
+    }),
+  ).reverse();
+  const input = {
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions: async (options?: { limit?: number | null }) =>
+        options?.limit === null ? sessions : sessions.slice(0, options?.limit ?? 20),
+    },
+    agentStorage: {
+      list: async () => [
+        {
+          provider: "codex",
+          persistence: { provider: "codex", sessionId: "session-219" },
+        } as StoredAgentRecord,
+      ],
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+  };
+  const all = await listImportableProviderSessions({
+    ...input,
+    request: makeRequest({ limit: null }),
+  });
+  const expected = Array.from({ length: 219 }, (_, index) => `session-${218 - index}`);
+  expect(all.entries.map((entry) => entry.providerHandleId)).toEqual(expected);
+  expect(all.filteredAlreadyImportedCount).toBe(1);
+  const scoped = await listImportableProviderSessions({
+    ...input,
+    request: makeRequest({ limit: null, cwd: "/tmp/project" }),
+  });
+  expect(scoped.entries.map((entry) => entry.providerHandleId)).toEqual(
+    expected.filter((_, index) => index % 2 === 0),
+  );
 });
 
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {

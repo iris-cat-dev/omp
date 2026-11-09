@@ -165,6 +165,12 @@ Selecting a conversation, including its already active sidebar row or tab, marks
 
 A completion received while you are already viewing the conversation stays visible until you explicitly select it again, focus the composer, send another prompt, or leave the conversation. Permission requests still require a response, and marking attention as read does not change a failed task's lifecycle state. The workspace indicator can remain when another conversation or terminal has finished work to review; **Mark as read** acknowledges all clearable conversation notifications in that workspace.
 
+### Import complete provider history
+
+**Import session** in the Desktop home or sidebar lists discoverable history across projects for enabled providers, newest first. Workspace and draft import actions keep the current working-directory scope. The provider filter changes the displayed provider, not the time range; scroll to reach older sessions and use **Refresh** to rescan.
+
+The list has no 15-session or recent-candidate cutoff. OMP scans its configured session directory recursively, including nested subagent transcripts. Active sessions already imported into Desktop and internal metadata-generation sessions are excluded; archived Desktop sessions remain eligible for reimport. Listing reads source transcripts without changing them.
+
 ### Replay and permanent deletion
 
 OMP `model_usage` records, including background-memory usage, are metadata rather than chat messages. Replay preserves their original JSONL and usage values without an unsupported-record notice; surrounding messages remain visible. Truly unknown record types still produce diagnostics.

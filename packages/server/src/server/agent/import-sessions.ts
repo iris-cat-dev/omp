@@ -121,7 +121,7 @@ export async function listImportableProviderSessions(
   input: ListImportableProviderSessionsInput,
 ): Promise<ListImportableProviderSessionsResult> {
   const { request, agentManager, agentStorage, providerSnapshotManager } = input;
-  const limit = request.limit ?? 20;
+  const limit = request.limit === undefined ? 20 : request.limit;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
   const importedSessions = await collectImportedProviderSessions(
@@ -132,7 +132,7 @@ export async function listImportableProviderSessions(
   const importedHandles = importedSessions.handles;
 
   const sessions = await agentManager.listImportableSessions({
-    limit: limit + importedSessions.count,
+    limit: limit === null ? null : limit + importedSessions.count,
     providerFilter,
     cwd: request.cwd,
   });
@@ -158,14 +158,13 @@ export async function listImportableProviderSessions(
     candidates.push(session);
   }
 
-  const entries = candidates
-    .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
-    .slice(0, limit)
-    .map((descriptor) =>
-      toRecentProviderSessionDescriptorPayload(descriptor, {
-        providerLabel: providerSnapshotManager.getProviderLabel(descriptor.provider),
-      }),
-    );
+  candidates.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
+  const selected = limit === null ? candidates : candidates.slice(0, limit);
+  const entries = selected.map((descriptor) =>
+    toRecentProviderSessionDescriptorPayload(descriptor, {
+      providerLabel: providerSnapshotManager.getProviderLabel(descriptor.provider),
+    }),
+  );
 
   return { entries, filteredAlreadyImportedCount };
 }
