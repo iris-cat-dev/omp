@@ -559,12 +559,16 @@ export async function refreshAndReadOmpStats(
   if (options.sdkInstallation) {
     // Freeze the same resolved native directories for both the writer and reader.
     // The SDK host does not run the standalone CLI's profile/dotenv bootstrap.
+    const { agentDir } = resolveStatsDirectories(resolved.scope);
     for (const key of Object.keys(env)) {
       if (SCOPE_ENV_KEYS[process.platform === "win32" ? key.toUpperCase() : key]) delete env[key];
     }
     Object.assign(env, resolved.scope.env, {
       OMP_PROFILE: resolved.source.profile,
       PI_PROFILE: resolved.source.profile,
+      // Preserve the effective directory when replacing a legacy profile fallback.
+      OMP_CODING_AGENT_DIR: agentDir,
+      PI_CODING_AGENT_DIR: agentDir,
       ELECTRON_RUN_AS_NODE: "1",
     });
   }

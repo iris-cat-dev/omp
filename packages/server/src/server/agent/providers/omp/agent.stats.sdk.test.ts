@@ -1,23 +1,31 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import type * as NodeOs from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { OmpAgentClient } from "./agent.js";
 import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
+vi.mock("node:os", async (importOriginal) => {
+  const native = await importOriginal<typeof NodeOs>();
+  return { ...native, homedir: vi.fn(native.homedir) };
+});
+
 const directories: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
-async function fixture() {
+async function fixture(profile: "default" | "work" = "work") {
   const home = await mkdtemp(join(tmpdir(), "omp-sdk-stats-"));
   directories.push(home);
-  const root = join(home, ".omp", "profiles", "work");
+  vi.mocked(homedir).mockReturnValue(home);
+  const root = profile === "default" ? join(home, ".omp") : join(home, ".omp", "profiles", profile);
   const sessions = join(root, "agent", "sessions", "--fixture--");
   await mkdir(sessions, { recursive: true });
   const env = {
@@ -25,10 +33,13 @@ async function fixture() {
     USERPROFILE: home,
     OMP_CONFIG_DIR: ".omp",
     PI_CONFIG_DIR: ".omp",
-    OMP_PROFILE: "work",
-    PI_PROFILE: "work",
-    OMP_CODING_AGENT_DIR: join(root, "agent"),
-    PI_CODING_AGENT_DIR: join(root, "agent"),
+    OMP_PROFILE: profile,
+    PI_PROFILE: profile,
+    OMP_CODING_AGENT_DIR: profile === "default" ? "" : join(root, "agent"),
+    PI_CODING_AGENT_DIR: profile === "default" ? "" : join(root, "agent"),
+    XDG_DATA_HOME: "",
+    XDG_STATE_HOME: "",
+    XDG_CACHE_HOME: "",
     PATH: "",
   };
   const agent = new OmpAgentClient({
@@ -100,6 +111,49 @@ describe("SDK native statistics synchronization", () => {
     expect(repeated.overall).toEqual(refreshed.overall);
     expect(existsSync(join(home, ".omp", "stats.db"))).toBe(false);
     expect(JSON.stringify(refreshed)).not.toContain("PRIVATE_FIXTURE_BODY");
+  });
+
+  it("keeps default and named profiles isolated from lower-priority dotenv agent overrides", async () => {
+    const { home, root, agent, session, env } = await fixture("default");
+    await appendFile(session, request("default-request", null, 123));
+    const workAgent = join(root, "profiles", "work", "agent");
+    const workSessions = join(workAgent, "sessions", "--fixture--");
+    await mkdir(workSessions, { recursive: true });
+    await writeFile(
+      join(workSessions, "work.jsonl"),
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "work-fixture",
+        cwd: home,
+        timestamp: new Date().toISOString(),
+      })}\n${request("work-request", null, 900)}`,
+    );
+    await writeFile(join(home, ".env"), `PI_PROFILE=work\nPI_CODING_AGENT_DIR=${workAgent}\n`);
+
+    expect(await agent.getOmpStats("all")).toMatchObject({
+      status: "available",
+      scope: { profile: "default" },
+      overall: { totalRequests: 1, totalTokens: 123, totalCostUsd: 1.25 },
+    });
+    const work = new OmpAgentClient({
+      logger: createTestLogger(),
+      runtimeSettings: {
+        ...ompHistoryRuntimeSettings,
+        ompBackend: "sdk",
+        env: { ...env, OMP_PROFILE: "work", PI_PROFILE: "work" },
+      },
+    });
+    expect(await work.getOmpStats("all")).toMatchObject({
+      status: "available",
+      scope: { profile: "work" },
+      overall: { totalRequests: 1, totalTokens: 900, totalCostUsd: 1.25 },
+    });
+    expect(await agent.getOmpStats("24h")).toMatchObject({
+      status: "available",
+      scope: { profile: "default" },
+      overall: { totalRequests: 1, totalTokens: 123, totalCostUsd: 1.25 },
+    });
   });
 
   it.each(["reported-error", "exit-without-done"])(
