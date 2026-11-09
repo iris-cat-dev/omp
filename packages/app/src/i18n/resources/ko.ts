@@ -1860,6 +1860,7 @@ export const ko: TranslationResources = {
     },
     relayAddress: {
       label: "릴레이 서버 주소",
+      history: "Relay 주소 기록",
       description:
         "페어링 링크에서 호스트를 추가할 때 사용합니다. Web 앱과 데몬은 같은 릴레이에 연결해야 합니다. ws:// 또는 wss://를 입력하거나 비워 두어 링크의 주소를 사용하세요. 트래픽은 종단 간 암호화됩니다.",
       invalid:

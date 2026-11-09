@@ -79,6 +79,7 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   /** Relay used when adding a host; users may clear it to trust each pairing offer. */
   relayServerAddress: string;
+  relayServerHistory: string[];
   terminalScrollbackLines: number;
   useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
@@ -132,6 +133,7 @@ const StoredAppSettingsSchema = z.strictObject({
   // COMPAT(serviceUrlBehavior): tolerate any retired value without invalidating other settings.
   serviceUrlBehavior: z.unknown().optional(),
   relayServerAddress: z.string().optional(),
+  relayServerHistory: z.unknown().optional(),
   terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
   useLegacyTerminalRenderer: z.boolean().optional(),
   uiFontFamily: z.string().optional(),
@@ -179,6 +181,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   language: "system",
   sendBehavior: "steer",
   relayServerAddress: DEFAULT_RELAY_SERVER_ADDRESS,
+  relayServerHistory: [DEFAULT_RELAY_SERVER_ADDRESS],
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
   uiFontFamily: "",
@@ -267,8 +270,19 @@ async function runQueuedAppSettingsSave(
     input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage({ ...input.deps, wallpaper: undefined }));
   const current = normalizeAppSettings(storedCurrent);
-  const next = normalizeAppSettings({ ...current, ...input.updates });
-  input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+  const next = normalizeAppSettings({
+    ...current,
+    ...input.updates,
+    ...(input.updates.relayServerAddress !== undefined
+      ? {
+          relayServerHistory: input.updates.relayServerHistory ?? [
+            current.relayServerAddress,
+            ...current.relayServerHistory,
+          ],
+        }
+      : {}),
+  });
+  const optimistic = input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   try {
     // An explicit selection (including null) takes precedence over any in-flight import.
     const pending = pendingWallpaperInputs.get(input.deps.storage);
@@ -284,7 +298,7 @@ async function runQueuedAppSettingsSave(
       throw error;
     }
   } catch (error) {
-    if (input.queryClient.getQueryData(APP_SETTINGS_QUERY_KEY) === next) {
+    if (input.queryClient.getQueryData(APP_SETTINGS_QUERY_KEY) === optimistic) {
       input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, current);
     }
     throw error;
@@ -572,20 +586,39 @@ function pickWallpaperMediaAppSettings(stored: StoredAppSettings): Partial<AppSe
   return result;
 }
 
+function pickRelayAppSettings(
+  stored: StoredAppSettings,
+): Pick<AppSettings, "relayServerAddress" | "relayServerHistory"> {
+  let relayServerAddress = DEFAULT_RELAY_SERVER_ADDRESS;
+  if (typeof stored.relayServerAddress === "string") {
+    try {
+      relayServerAddress = stored.relayServerAddress.trim()
+        ? formatRelayServerAddress(parseRelayServerAddress(stored.relayServerAddress))
+        : "";
+    } catch {
+      // Invalid persisted overrides fall back to the default relay.
+    }
+  }
+  const relayHistory = new Set<string>();
+  for (const address of [
+    relayServerAddress,
+    ...(Array.isArray(stored.relayServerHistory) ? stored.relayServerHistory : []),
+  ]) {
+    if (typeof address !== "string" || !address.trim()) continue;
+    try {
+      relayHistory.add(formatRelayServerAddress(parseRelayServerAddress(address)));
+    } catch {
+      // A corrupt history entry must not discard the remaining addresses or settings.
+    }
+  }
+  return { relayServerAddress, relayServerHistory: [...relayHistory] };
+}
+
 function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  Object.assign(result, pickEnumAppSettings(stored));
+  Object.assign(result, pickEnumAppSettings(stored), pickRelayAppSettings(stored));
   if (typeof stored.pluginThemeId === "string") {
     result.pluginThemeId = stored.pluginThemeId;
-  }
-  if (typeof stored.relayServerAddress === "string" && stored.relayServerAddress.trim()) {
-    try {
-      result.relayServerAddress = formatRelayServerAddress(
-        parseRelayServerAddress(stored.relayServerAddress),
-      );
-    } catch {
-      // Invalid persisted overrides fall back to the relay advertised by the pairing offer.
-    }
   }
   if (stored.sidebarRowItems !== undefined) {
     result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);

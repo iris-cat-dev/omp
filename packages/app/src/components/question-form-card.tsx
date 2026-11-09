@@ -15,6 +15,7 @@ import {
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  buildQuestionFormStructuredAnswers,
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
@@ -99,10 +100,14 @@ function QuestionOptionRow({
 }: QuestionOptionRowProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const displayLabel = resolveQuestionOptionLabel(option.label, {
+  const optionLabel = resolveQuestionOptionLabel(option.label, {
     approve: t("agentStream.permission.accept"),
     deny: t("agentStream.permission.deny"),
   });
+  const displayLabel =
+    option.recommended && !optionLabel.endsWith(" (Recommended)")
+      ? `${optionLabel} (Recommended)`
+      : optionLabel;
 
   const handlePress = useCallback(() => {
     onToggle(qIndex, optIndex, multiSelect);
@@ -149,6 +154,7 @@ function QuestionOptionRow({
           {option.description ? (
             <Text style={optionDescriptionStyle}>{option.description}</Text>
           ) : null}
+          {option.preview ? <Text style={optionDescriptionStyle}>{option.preview}</Text> : null}
         </View>
       </View>
     </Pressable>
@@ -259,7 +265,7 @@ function QuestionNav({
     >
       {questions.map((question, qIndex) => (
         <QuestionNavButton
-          key={question.header}
+          key={question.id ?? question.header}
           index={qIndex}
           total={questions.length}
           header={question.header}
@@ -376,6 +382,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     () => parseQuestionFormQuestions(permission.request.input),
     [permission.request.input],
   );
+  const isGroupedAsk = permission.request.metadata?.extensionUiMethod === "ask";
 
   const [selections, setSelections] = useState<Record<number, Set<number>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
@@ -401,7 +408,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
       setSelections((prev) => ({ ...prev, [qIndex]: next }));
       setOtherTexts((prev) => {
-        if (!prev[qIndex]) return prev;
+        if ((isGroupedAsk && multiSelect) || !prev[qIndex]) return prev;
         const nextTexts = { ...prev };
         delete nextTexts[qIndex];
         return nextTexts;
@@ -411,18 +418,21 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
       }
     },
-    [activeQuestionIndex, questions, selections],
+    [activeQuestionIndex, isGroupedAsk, questions, selections],
   );
 
-  const setOtherText = useCallback((qIndex: number, text: string) => {
-    setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-    if (text.length > 0) {
-      setSelections((prev) => {
-        if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
-        return { ...prev, [qIndex]: new Set<number>() };
-      });
-    }
-  }, []);
+  const setOtherText = useCallback(
+    (qIndex: number, text: string) => {
+      setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
+      if (text.length > 0 && !(isGroupedAsk && questions?.[qIndex].multiSelect)) {
+        setSelections((prev) => {
+          if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
+          return { ...prev, [qIndex]: new Set<number>() };
+        });
+      }
+    },
+    [isGroupedAsk, questions],
+  );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
   const resolvedActiveQuestionIndex = questions
@@ -441,12 +451,15 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       behavior: "allow",
       updatedInput: {
         ...permission.request.input,
-        answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+        answers: isGroupedAsk
+          ? buildQuestionFormStructuredAnswers(questions, selections, otherTexts)
+          : buildQuestionFormAnswers(questions, selections, otherTexts),
       },
     });
   }, [
     questions,
     allAnswered,
+    isGroupedAsk,
     isResponding,
     selections,
     otherTexts,
@@ -462,7 +475,9 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         behavior: "allow",
         updatedInput: {
           ...permission.request.input,
-          answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+          answers: isGroupedAsk
+            ? buildQuestionFormStructuredAnswers(questions, selections, otherTexts)
+            : buildQuestionFormAnswers(questions, selections, otherTexts),
         },
       });
       return;
@@ -471,7 +486,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       behavior: "deny",
       message: "Dismissed by user",
     });
-  }, [questions, onRespond, otherTexts, permission.request.input, selections]);
+  }, [questions, isGroupedAsk, onRespond, otherTexts, permission.request.input, selections]);
 
   const handleSelectQuestion = useCallback((index: number) => {
     setActiveQuestionIndex(index);
@@ -585,7 +600,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
       </View>
 
       {activeQuestion ? (
-        <View key={activeQuestion.question} style={styles.questionBlock}>
+        <View key={resolvedActiveQuestionIndex} style={styles.questionBlock}>
           {activeQuestion.options.length > 0 ? (
             <View style={styles.optionsWrap} {...optionsGroupAccessibility}>
               {activeQuestion.options.map((opt, optIndex) => (

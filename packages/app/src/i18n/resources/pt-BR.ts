@@ -1889,6 +1889,7 @@ export const ptBR: TranslationResources = {
     },
     relayAddress: {
       label: "Endereço do servidor de relay",
+      history: "Histórico de endereços Relay",
       description:
         "Usado ao adicionar hosts por links de pareamento. O aplicativo Web e o daemon devem usar o mesmo relay. Use ws:// ou wss://, ou deixe em branco para usar o endereço do link. O tráfego continua criptografado de ponta a ponta.",
       invalid:

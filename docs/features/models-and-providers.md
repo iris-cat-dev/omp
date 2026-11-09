@@ -19,6 +19,8 @@ A configured OMP model provider is required to run conversations, but not to ope
 
 Fresh configurations can list built-in sign-in providers without API keys or custom providers. If OMP exits with `No models available` or `No default model selected`, Desktop retries RPC startup with an internal keyless bootstrap model while preserving existing provider settings and YAML comments. That hidden entry is excluded from provider settings, the YAML editor, and selectable catalogs; it cannot run conversations.
 
+**Add custom provider** treats a missing, empty, comment-only, or explicitly `null` `models.yml` as an empty configuration and initializes a YAML mapping without requiring a manual edit. Existing root settings, providers, models, and comments are preserved. Other scalar/sequence roots, non-object `providers` values, and duplicate provider IDs are rejected without overwriting the file.
+
 Providers, credentials, and model catalogs are shared by all projects and conversations on a host through its active OMP configuration/profile. New conversations and project switches reuse that catalog instead of loading an empty project-specific list. The project working directory determines execution location, not provider scope. Different hosts have separate catalogs.
 
 On touch/compact interfaces, **Settings → Providers** for the selected host manages models, sign-in accounts, and connection state. App-level **Settings → Chat behavior** holds conversation defaults; host projects and providers remain host-scoped. Relay and pairing controls are under host connections/Connections, not provider settings; see [Remote hosts](../remote-hosts.md).

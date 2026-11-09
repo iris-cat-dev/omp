@@ -127,7 +127,7 @@ After normal completion, the next queued message starts automatically, even if c
 
 ## Questions and background processes
 
-Grouped OMP questions use labeled tabs that can be visited in any order. Selections and typed answers survive switching. **Submit** sends the whole group once every required question is answered.
+Grouped OMP questions use labeled tabs that can be visited in any order, including returning from the third question to the first or second. Selections and typed answers survive switching and editing earlier answers. For multi-select questions, **Other** can supplement the selected options. **Submit** sends the whole group once every required question is answered; **Close** cancels the group.
 
 Background work started by the current Agent, including Bash commands and `eval` cells, appears beside the workspace branch above the composer. The active indicator shows a count; opening it lists live and recently completed jobs. Select a job for read-only terminal output in a bottom pane, or **Stop** that job with the neutral borderless square control. Closing output does not stop work.
 
@@ -164,6 +164,12 @@ Hover a sidebar conversation for **Delete** and **Archive** before its three-dot
 Selecting a conversation, including its already active sidebar row or tab, marks its completion notification as read. If the connection or initial conversation state is not ready, the acknowledgement waits for it. This also works after runtime unload without activating the provider, and updates other connected clients.
 
 A completion received while you are already viewing the conversation stays visible until you explicitly select it again, focus the composer, send another prompt, or leave the conversation. Permission requests still require a response, and marking attention as read does not change a failed task's lifecycle state. The workspace indicator can remain when another conversation or terminal has finished work to review; **Mark as read** acknowledges all clearable conversation notifications in that workspace.
+
+### Import complete provider history
+
+**Import session** in the Desktop home or sidebar lists discoverable history across projects for enabled providers, newest first. Workspace and draft import actions keep the current working-directory scope. The provider filter changes the displayed provider, not the time range; scroll to reach older sessions and use **Refresh** to rescan.
+
+The list has no 15-session or recent-candidate cutoff. OMP scans its configured session directory recursively, including nested subagent transcripts. Active sessions already imported into Desktop and internal metadata-generation sessions are excluded; archived Desktop sessions remain eligible for reimport. Listing reads source transcripts without changing them.
 
 ### Replay and permanent deletion
 

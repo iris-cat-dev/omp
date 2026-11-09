@@ -6,6 +6,7 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 
 - [Native OMP statistics](#native-omp-statistics)
 - [Local OMP performance monitor](#local-omp-performance-monitor)
+- [Custom provider balances](#custom-provider-balances)
 - [Zhipu Coding Plan](#zhipu-coding-plan)
 - [Claude official accounts](#claude-official-accounts)
 - [Codex accounts](#codex-accounts)
@@ -14,7 +15,9 @@ For the selected host, **Settings → Usage** includes native OMP `/stats`, prov
 
 ## Native OMP statistics
 
-The Usage view reads OMP's native `stats.db` for the resolved host/profile, across projects rather than only Desktop-created agents. In the bundled SDK-only backend, Desktop reads an existing index: opening Usage does not build a missing index, and **Refresh** invalidates the host's cached ranges and reads the index again without invoking an OMP CLI or synchronizing transcripts. The index must already have been generated or updated by OMP's native statistics tooling. Desktop receives numeric aggregates and never exposes prompts, transcript paths, credentials, CLI output, or raw database errors. Labels/explanations follow the interface language, including Chinese.
+The Usage view synchronizes OMP's native `stats.db` for the resolved host/profile before reading totals, across projects rather than only Desktop-created agents. The bundled SDK backend runs its native statistics activity worker in a short-lived Node child: opening Usage builds a missing index, and **Refresh** invalidates cached ranges, ingests new or appended session logs, then reads the index. It does not invoke an external OMP CLI or make model requests. Desktop receives numeric aggregates and never exposes prompts, transcript paths, credentials, worker/CLI output, or raw database errors. Labels/explanations follow the interface language, including Chinese.
+
+An explicitly selected default profile stays isolated from another profile's legacy `PI_PROFILE`/`PI_CODING_AGENT_DIR` values in `.env`. Default-profile custom agent directories and migrated XDG locations retain their native scope.
 
 Ranges are 1 hour, 24 hours, 7 days, 30 days, 90 days, and all indexed time. Counts, failures, input/output/cache tokens, native total tokens, and API-equivalent USD costs include provider, model, and agent-type breakdowns.
 
@@ -32,9 +35,9 @@ Interpret these values carefully:
 - Unpriced requests remain unknown; recorded zero cost remains zero.
 - Provider quotas and current-session usage are separate.
 
-For an explicitly configured standalone CLI backend, before an uncached read or refresh Desktop runs that configured OMP's `stats --summary` to synchronize its local index, using the same environment and profile. This performs native transcript indexing, not model requests. Refresh then invalidates the host's cached ranges. Concurrent requests share a synchronization only when their scope and invocation match. Only direct OMP commands with no prefix arguments other than `--profile` are eligible; ambiguous wrappers or other flags return scope unavailable instead of executing a possible model request. These CLI synchronization rules do not apply to the SDK-only read path.
+For an explicitly configured standalone CLI backend, before an uncached read or refresh Desktop runs that configured OMP's `stats --summary` to synchronize its local index, using the same environment and profile. This performs native transcript indexing, not model requests. Concurrent requests share a synchronization only when their scope and invocation match, for both SDK and CLI backends. Only direct OMP CLI commands with no prefix arguments other than `--profile` are eligible; ambiguous wrappers or other flags return scope unavailable instead of executing a possible model request.
 
-Latest indexed-request time and index-read time are shown separately. Missing, unsupported, unreadable, failed-refresh, and timed-out sources are not shown as zero use. For the standalone CLI backend, native synchronization has a 40-second deadline with up to 2 seconds waiting for process-tree cleanup; if cleanup cannot finish, the failed flight remains reserved until the writer exits rather than starting another writer. Only a successful CLI synchronization proceeds to its numeric SQLite scan, which runs in a short-lived child with a 15-second deadline, not on the daemon event loop. SDK-only reads do not run that CLI synchronization.
+Latest indexed-request time and index-read time are shown separately. Missing, unsupported, unreadable, failed-refresh, and timed-out sources are not shown as zero use. Native synchronization has a 40-second deadline with up to 2 seconds waiting for process-tree cleanup; if cleanup cannot finish, the failed flight remains reserved until the writer exits rather than starting another writer. SDK synchronization requires the worker's explicit completion message and confirmed worker exit; an early clean exit is still a failed refresh. Only successful synchronization proceeds to the numeric SQLite scan, which runs in a short-lived child with a 15-second deadline, not on the daemon event loop.
 
 ## Local OMP performance monitor
 
@@ -96,6 +99,12 @@ The global **Allow public-data updates** permission applies to manual and schedu
 The renderer is sandboxed with no network or Node access. Only numeric facts and safe metadata reach it; prompts, message bodies, credentials, and raw transcript paths do not. Performance collection extracts native request/tool timing, counts and fixed outcome flags, discarding raw log lines without task-text grading. Opening is restricted to registered application main frames, and each surface's IPC requires its exact authenticated main frame. Only Settings selects another existing orb; each board can edit only its own configuration. The collector starts on demand, polls less often when every surface is hidden/minimized, and stops when no monitor surfaces remain. No other-app adapters, unpriced-diagnostics feature, usage telemetry/WebSocket reporting, online rankings, device accounts, privileged traffic service, or taskbar hooks are included. Agent Speed and Ashima Arts / Stefan Gustavson MIT notices and the full license are available in About.
 
 Settings exposes the original source enable/folder/reset controls; explicitly injected roots never fall back to a user's default transcripts. Settings close flushes title drafts before allowing the native close, and closing the last orb, closing all surfaces, quitting or installing an update waits for acknowledged queued settings writes and worker shutdown. A failed durable save vetoes that transition and retains the editor/worker for explicit recovery, rather than reporting success or destroying unsaved input. Corrupt-setting recovery preserves an exclusive evidence copy before atomic replacement.
+
+## Custom provider balances
+
+Expand the sidebar's provider details to see balances from custom `/v1/usage` providers, including Sub2API services such as MintCat. The first request shows a loading message immediately. Background refreshes keep the existing balance visible with a **Refreshing** message; request failures also remain visible.
+
+Balance queries share a five-minute frontend cache per host and provider, including across new conversations. Refreshing is on demand, not periodic polling; opening a new conversation within the cache period reuses the existing result.
 
 ## Zhipu Coding Plan
 

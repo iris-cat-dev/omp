@@ -873,18 +873,21 @@ function shouldShowSidebarProviderUsage({
   selectableAccountCount,
   canFetchProviderUsage,
   selectedProviderUsageId,
-  isOmpProviderSelected,
-  hasSelectedProviderUsage,
+  providerUsageEnabled,
+  providerUsageView,
 }: {
   selectableAccountCount: number;
   canFetchProviderUsage: boolean;
   selectedProviderUsageId: string;
-  isOmpProviderSelected: boolean;
-  hasSelectedProviderUsage: boolean;
+  providerUsageEnabled: boolean;
+  providerUsageView: ProviderUsageView;
 }): boolean {
-  if (selectableAccountCount > 0 || !canFetchProviderUsage) return false;
-  if (selectedProviderUsageId === "cursor") return true;
-  return isOmpProviderSelected && hasSelectedProviderUsage;
+  if (selectableAccountCount > 0 || !canFetchProviderUsage || !providerUsageEnabled) return false;
+  return (
+    selectedProviderUsageId === "cursor" ||
+    providerUsageView.kind !== "ready" ||
+    selectProviderUsages(providerUsageView.payload.providers, selectedProviderUsageId).length > 0
+  );
 }
 
 function selectSidebarAccount(
@@ -981,20 +984,18 @@ function useSidebarAccountModel({
     controls.provider,
     selectedModelId,
   );
+  const providerUsageEnabled =
+    selectedProviderUsageId === "cursor" ||
+    (isOmpProviderSelected &&
+      selectedProviderUsageId !== "openai-codex" &&
+      selectedProviderUsageId !== "anthropic");
   const { view: providerUsageView, canFetch: canFetchProviderUsage } = useProviderUsage(
     controls.serverId,
     {
-      enabled:
-        selectedProviderUsageId === "cursor" ||
-        (isOmpProviderSelected &&
-          selectedProviderUsageId !== "openai-codex" &&
-          selectedProviderUsageId !== "anthropic"),
+      enabled: providerUsageEnabled,
       providerId: isOmpProviderSelected ? selectedProviderUsageId : undefined,
     },
   );
-  const hasSelectedProviderUsage =
-    providerUsageView.kind === "ready" &&
-    selectProviderUsages(providerUsageView.payload.providers, selectedProviderUsageId).length > 0;
   const selectableAccounts = useMemo(() => {
     if (!accountFeature || accountFeature.type !== "select") return accounts;
     const ids = new Set(accountFeature.options.map((option) => option.id));
@@ -1004,8 +1005,8 @@ function useSidebarAccountModel({
     selectableAccountCount: selectableAccounts.length,
     canFetchProviderUsage,
     selectedProviderUsageId,
-    isOmpProviderSelected,
-    hasSelectedProviderUsage,
+    providerUsageEnabled,
+    providerUsageView,
   });
   const accountSelection =
     accountFeature?.type === "select" ? resolveOmpAccountFeatureSelection(accountFeature) : null;
@@ -1191,6 +1192,9 @@ function SidebarProviderAccountDetails({
         <>
           <View style={styles.sidebarProviderDivider} />
           <View style={styles.sidebarQuota}>
+            {providerUsageView.kind === "ready" && providerUsageView.isRefreshing ? (
+              <Text style={styles.sidebarQuotaLoading}>{t("providerUsage.refreshing")}</Text>
+            ) : null}
             <SidebarProviderUsageDetails
               providerId={selectedProviderUsageId}
               view={providerUsageView}

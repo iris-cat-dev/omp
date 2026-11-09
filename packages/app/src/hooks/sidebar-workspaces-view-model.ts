@@ -51,6 +51,7 @@ export interface SidebarWorkspaceRootAgent {
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
+  worktreeSlug?: string;
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
@@ -191,6 +192,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceDirectory: input.workspace.workspaceDirectory,
     workspaceDirectoryLabel:
       input.workspace.worktreeSlug ?? shortenPath(input.workspace.workspaceDirectory),
+    worktreeSlug: input.workspace.worktreeSlug,
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
@@ -205,7 +207,8 @@ export function createSidebarWorkspaceEntry(input: {
     hasOnlySubagents: input.hasOnlySubagents ?? false,
     hasAssociatedAgents: input.hasAssociatedAgents,
     isUnstarted:
-      input.workspace.workspaceKind === "local_checkout" &&
+      (input.workspace.workspaceKind === "local_checkout" ||
+        input.workspace.workspaceKind === "directory") &&
       !input.workspace.title?.trim() &&
       !input.workspace.worktreeSlug &&
       !input.workspace.hasOnlyArchivedAgents &&

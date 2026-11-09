@@ -1443,6 +1443,31 @@ describe("OMP CLI runtime", () => {
     }
   });
 
+  test.each([false, undefined])(
+    "closes the newly owned host when grouped ask enablement returns %s",
+    async (enabled) => {
+      const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+      const commands: string[] = [];
+      replyToCommands(child, (command) => {
+        commands.push(command.type as string);
+        if (command.type === "negotiate_protocol") return { protocolVersion: 2 };
+        return { enabled };
+      });
+
+      await expect(
+        startOmpRpcSession({
+          launch: { cwd: tmpdir(), argv: [process.execPath] },
+          logger: pino({ level: "silent" }),
+          spawnProcess: () => child,
+          enableAskDialog: true,
+        }),
+      ).rejects.toThrow("OMP did not enable grouped ask dialogs");
+
+      expect(commands).toEqual(["negotiate_protocol", "set_ask_dialog"]);
+      expect(child.killedSignals).toEqual(["SIGTERM"]);
+    },
+  );
+
   test("negotiates RPC protocol v2 when OMP advertises it", async () => {
     const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
     const commands: Record<string, unknown>[] = [];

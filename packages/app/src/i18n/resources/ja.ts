@@ -1865,6 +1865,7 @@ export const ja: TranslationResources = {
     },
     relayAddress: {
       label: "リレーサーバーのアドレス",
+      history: "Relay アドレス履歴",
       description:
         "ペアリングリンクからホストを追加するときに使用します。Web アプリとデーモンは同じリレーに接続する必要があります。ws:// または wss:// を入力するか、空欄にしてリンク内のアドレスを使用します。通信はエンドツーエンドで暗号化されます。",
       invalid:

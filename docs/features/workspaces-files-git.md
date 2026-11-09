@@ -57,11 +57,13 @@ Archiving closes only that conversation's tabs, without creating drafts or relab
 
 Repeated ordinary **New conversation** clicks for the same host and project share one pending workspace creation. Once it finishes, a later click creates an independent workspace. Forks and custom setups stay independent, and a failed creation can be retried.
 
-Untitled ordinary checkouts with a hydrated empty conversation inventory show **Conversation not started**, keeping the branch visible. Their menu offers **Remove unused workspace**. Existing empty records are not automatically archived merely because their names match a branch such as `main`.
+In the project list, an open draft for an untitled ordinary Git checkout or non-Git directory keeps the localized **New workspace** label while conversation metadata loads, initial creation runs, or the project has configured scripts. Saved titles, known conversation history, and worktree ownership keep their workspace rows; draft naming does not use the unused-workspace classification.
+
+Untitled ordinary Git checkouts and non-Git directories with a hydrated empty conversation inventory show **Conversation not started**, keeping any branch visible. Their menu offers **Remove unused workspace**. Existing empty records are not automatically archived merely because their names match a branch such as `main`.
 
 Close an unsent draft with its tab **Close** button or sidebar **Delete new workspace** action. Both discard only the selected draft's input, attachments, and queued submission. Other drafts remain, including untouched siblings sharing the same workspace; outstanding agent creation also prevents cleanup.
 
-Closing the last empty conversation tab returns to the project page. Supported hosts conditionally archive the unused workspace record without deleting project files or the project. Cleanup preserves history (including archived agents), live/pending resources, custom titles, pins, labels, and worktree ownership. Older hosts need updates; failed cleanup leaves the entry available for **Remove unused workspace** to retry.
+Closing the last empty conversation tab returns to the project page. Supported hosts conditionally archive the unused workspace record without deleting project files or the project. Sidebar deletion completes in one action when cleanup succeeds, without a replacement draft restoring the workspace during navigation. Cleanup preserves history (including archived agents), live/pending resources, custom titles, pins, labels, and worktree ownership. Older hosts need updates; failed cleanup leaves the entry available for **Remove unused workspace** to retry.
 
 **Files**, **Changes**, and **Pull request** companions do not keep an empty conversation alive and close only after daemon archive confirmation. If another draft, input, attachment, submission, or creation claims that workspace during the request, its tabs and ownership survive early directory events and the workspace is restored instead. A failed restore preserves those tabs for the existing workspace-recovery action to retry.
 

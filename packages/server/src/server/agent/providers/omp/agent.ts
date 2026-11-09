@@ -26,14 +26,14 @@ import type {
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
-import { readOmpStats, refreshAndReadOmpStats } from "./stats.js";
+import { refreshAndReadOmpStats } from "./stats.js";
 import {
   LOCAL_MODEL_PROVIDER,
   LOCAL_MODEL_UNAVAILABLE_STATUS,
 } from "@omp-desktop/protocol/local-models";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { startOmpLocalModelGateway, type OmpLocalModelGateway } from "./local-model-gateway.js";
-import { isMap, parseDocument } from "yaml";
+import { type Document, isMap, parseDocument } from "yaml";
 
 import {
   type AgentCapabilityFlags,
@@ -1312,6 +1312,75 @@ const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z\d+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?
 const PROXY_AUTHORIZATION_PATTERN =
   /\b(Proxy-Authorization\s*[:=]\s*)(?:Basic|Bearer)\s+[^\s,;)]+/giu;
 
+// Mirror the SDK's media-budget evidence locally for external CLI runtimes.
+const OMP_IMAGE_BUDGET_EVIDENCE_PATTERN =
+  /\btoo many (?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\s*(?:count|limit)\b|\blimit of \d+\s*(?:images?|frames?|pixels?)\b|\bmaximum(?: of \d+)? (?:images?|frames?|pixels?)\b|\b(?:number|count) of (?:images?|frames?|pixels?)\b|\bat most \d+\s*(?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\b[^\n.;]{0,20}\bexceeds?\b[^\n.;]{0,20}\bmaximum\b|\b(?:images?|frames?) (?:is |are )?too (?:large|big)\b|\b(?:images?|frames?) (?:size|dimensions?|resolution)\b[^\n.;]{0,80}\b(?:exceeds?|maximum|limit|too large|too big|must not exceed|must be (?:less|smaller) than)\b/iu;
+
+function isOmpImageInputValidationError(
+  message: Extract<OmpAgentMessage, { role: "assistant" }>,
+): boolean {
+  const error = message.errorMessage ?? "";
+  const embeddedStatus =
+    /\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+status(?:\s+code)?)?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /^\s*(?:Error\s*:?\s*)?(\d{3})\b/iu.exec(error)?.[1] ??
+    /\berror\s+code\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /["']?status(?:Code|_code|\s+code)?["']?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1];
+  const status = message.errorStatus ?? (embeddedStatus ? Number(embeddedStatus) : undefined);
+  if (status !== undefined && status !== 400 && status !== 413 && status !== 422) return false;
+  if (
+    /\b(?:unauthorized|forbidden|authentication|auth[_ ]?unavailable|no auth available|(?:invalid|no)[_ ]?api[_ ]?key)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:quota|usage[_ -]?limit|insufficient[_ -]?balance|billing|credits?|spending[_ -]?limit)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:service[_ -]?unavailable|server[_ -]?error|internal[_ -]?error|overloaded|temporar(?:y|ily)[_ -]?unavailable|rate[_ -]?limit|too many requests)\b/iu.test(
+      error,
+    )
+  ) {
+    return false;
+  }
+  if (/\b(?:image[_ -]?generation|generat(?:e|ed|ing)\s+(?:an?\s+)?image)\b/iu.test(error)) {
+    return false;
+  }
+  if (
+    /\b(?:invalid|unsupported)\s+image\s+model\b/iu.test(error) ||
+    /\b(?:model|endpoint)\b[^\n.;]{0,80}\b(?:does not support|doesn't support|cannot accept|can't accept)\b[^\n.;]{0,40}\b(?:images?|vision)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:unsupported\s+image(?:[_ -]input)?|image[_ -]input\s+(?:is\s+)?(?:unsupported|not supported))\b[^\n.;]{0,60}\b(?:model|endpoint)\b/iu.test(
+      error,
+    )
+  ) {
+    return false;
+  }
+  const isImageBudgetRejection =
+    OMP_IMAGE_BUDGET_EVIDENCE_PATTERN.test(error) &&
+    /\b(?:too many|too large|too big|exceeds?|maximum|limit|at most|must not exceed|must be (?:less|smaller) than)\b/iu.test(
+      error,
+    );
+  return (
+    isImageBudgetRejection ||
+    /\b(?:uploaded|provided|input)\b[^\n.]{0,100}\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image\b/iu.test(
+      error,
+    ) ||
+    /\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image(?:[_ -](?:input|data|format|encoding))?\b/iu.test(
+      error,
+    ) ||
+    /\bimage[_ -](?:input|data|format|encoding)\b[^\n.]{0,80}\b(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
+      error,
+    ) ||
+    /\bimage(?:[_ -](?:input|data|format|encoding))?\s+(?:is\s+)?(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
+      error,
+    ) ||
+    /\bimage[_ -]format\s+(?:is\s+)?not\s+supported\b/iu.test(error) ||
+    /\b(?:cannot|could not|unable to|failed to)\s+(?:decode|parse)\s+(?:the\s+)?image\b/iu.test(
+      error,
+    ) ||
+    /\bimage\b[^\n.]{0,80}\b(?:cannot|could not|failed to)\s+be\s+decoded\b/iu.test(error)
+  );
+}
+
 function formatOmpErrorMessage(message: Extract<OmpAgentMessage, { role: "assistant" }>): string {
   const rawError = message.errorMessage?.trim() ?? "";
   const reportedStatus = message.errorStatus;
@@ -1376,9 +1445,14 @@ function parseOmpYamlDocument(configYaml: string) {
 }
 
 function parseOmpModelsDocument(configYaml: string) {
-  const document = parseOmpYamlDocument(configYaml);
+  const document: Document = parseOmpYamlDocument(configYaml);
   const root = document.toJS() as unknown;
-  if (root !== null && !isRecord(root)) {
+  if (root === null) {
+    const mapping = document.createNode({});
+    mapping.commentBefore = document.contents?.commentBefore;
+    mapping.comment = document.contents?.comment;
+    document.contents = mapping;
+  } else if (!isRecord(root)) {
     throw new Error("OMP models.yml root must be an object");
   }
   const providers = isRecord(root) ? root.providers : undefined;
@@ -1418,13 +1492,7 @@ function isOmpRpcMissingModelError(error: unknown): boolean {
 }
 
 export function mergeOmpDesktopRpcBootstrapIntoModelsYaml(configYaml: string): string {
-  const document = parseOmpYamlDocument(configYaml.trim() === "" ? "providers: {}\n" : configYaml);
-  const providersNode = document.get("providers");
-  if (providersNode == null) {
-    document.set("providers", {});
-  } else if (!isMap(providersNode)) {
-    throw new Error("OMP models.yml providers must be an object");
-  }
+  const { document } = parseOmpModelsDocument(configYaml);
   if (document.hasIn(["providers", OMP_DESKTOP_RPC_BOOTSTRAP_PROVIDER_ID])) {
     return document.toString(YAML_TO_STRING_OPTIONS);
   }
@@ -1444,11 +1512,6 @@ export function stripOmpDesktopRpcBootstrapFromModelsYaml(configYaml: string): s
       return configYaml;
     }
     document.deleteIn(["providers", OMP_DESKTOP_RPC_BOOTSTRAP_PROVIDER_ID]);
-    const remaining = document.toJS() as unknown;
-    const remainingProviders = isRecord(remaining) ? remaining.providers : undefined;
-    if (!isRecord(remainingProviders) || Object.keys(remainingProviders).length === 0) {
-      return "providers: {}\n";
-    }
     return formatOmpModelsYaml(document.toString());
   } catch {
     return configYaml;
@@ -4567,6 +4630,7 @@ export class OmpAgentSession implements AgentSession {
             terminalAssistant.provider === LOCAL_MODEL_PROVIDER &&
             terminalAssistant.errorStatus === LOCAL_MODEL_UNAVAILABLE_STATUS
           ) &&
+          !isOmpImageInputValidationError(terminalAssistant) &&
           this.scheduleModelErrorContinuation(turnId, terminalMessages)
         ) {
           return;
@@ -6364,12 +6428,12 @@ export class OmpAgentClient implements AgentClient {
 
   async getOmpStats(range: OmpStatsRange): Promise<OmpStatsResult> {
     if (this.runtime instanceof OmpSdkRuntime) {
-      await this.runtime.getInstallation();
-      // Read the existing native index without invoking the CLI to refresh it.
-      return readOmpStats({
+      const sdkInstallation = await this.runtime.getInstallation();
+      return refreshAndReadOmpStats({
         range,
         env: { ...process.env, ...this.runtimeSettings?.env },
         cwd: homedir(),
+        sdkInstallation,
       });
     }
     return refreshAndReadOmpStats({
@@ -6866,9 +6930,6 @@ export class OmpAgentClient implements AgentClient {
     const { document, providers } = parseOmpModelsDocument(management.configYaml);
     if (providers && Object.hasOwn(providers, input.providerId)) {
       throw new Error(`OMP provider '${input.providerId}' already exists`);
-    }
-    if (!providers) {
-      document.set("providers", {});
     }
     const name = input.name?.trim();
     document.setIn(["providers", input.providerId], {

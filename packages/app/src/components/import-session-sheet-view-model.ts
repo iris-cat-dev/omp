@@ -2,7 +2,6 @@ import type { FetchRecentProviderSessionEntry } from "@omp-desktop/client/intern
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 
-export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
 export function requiresImportSessionsHostUpgrade(input: {

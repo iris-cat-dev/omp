@@ -1,9 +1,12 @@
 export interface QuestionOption {
   label: string;
   description?: string;
+  preview?: string;
+  recommended?: boolean;
 }
 
 export interface QuestionFormQuestion {
+  id?: string;
   question: string;
   header: string;
   options: QuestionOption[];
@@ -12,6 +15,12 @@ export interface QuestionFormQuestion {
   allowEmpty: boolean;
   placeholder?: string;
   dismissLabel?: string;
+}
+
+export interface QuestionFormStructuredAnswer {
+  id: string;
+  selectedOptions: string[];
+  customInput?: string;
 }
 
 export interface QuestionOptionLabels {
@@ -51,9 +60,12 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       options.push({
         label: o.label,
         description: typeof o.description === "string" ? o.description : undefined,
+        preview: readOptionalString(o, "preview"),
+        recommended: o.recommended === true,
       });
     }
     questions.push({
+      id: readOptionalString(q, "id"),
       question: q.question,
       header: q.header,
       options,
@@ -67,10 +79,7 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
   return questions.length > 0 ? questions : null;
 }
 
-export function resolveQuestionOptionLabel(
-  label: string,
-  localized: QuestionOptionLabels,
-): string {
+export function resolveQuestionOptionLabel(label: string, localized: QuestionOptionLabels): string {
   if (label === "Approve") return localized.approve;
   if (label === "Deny") return localized.deny;
   return label;
@@ -143,6 +152,25 @@ export function buildQuestionFormAnswers(
     }
   }
   return answers;
+}
+
+export function buildQuestionFormStructuredAnswers(
+  questions: QuestionFormQuestion[],
+  selections: QuestionSelections,
+  otherTexts: QuestionOtherTexts,
+): QuestionFormStructuredAnswer[] {
+  return questions.map((question, index) => {
+    if (question.id === undefined) throw new Error("Grouped ask question is missing its id");
+    const selected = selections[index];
+    const customInput = otherTexts[index]?.trim();
+    return {
+      id: question.id,
+      selectedOptions: question.options
+        .filter((_, optionIndex) => selected?.has(optionIndex))
+        .map((option) => option.label),
+      ...(customInput ? { customInput } : {}),
+    };
+  });
 }
 
 export function shouldSubmitEmptyOnDismiss(questions: QuestionFormQuestion[]): boolean {

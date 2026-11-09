@@ -24,7 +24,10 @@ export function groupSidebarAgentDrafts(input: {
   workspaceLayouts: Readonly<Record<string, WorkspaceLayout>>;
   workspaceEntriesByKey: ReadonlyMap<
     string,
-    Pick<SidebarWorkspaceEntry, "isUnstarted">
+    Pick<
+      SidebarWorkspaceEntry,
+      "title" | "workspaceKind" | "worktreeSlug" | "hasOnlyArchivedAgents" | "hasAssociatedAgents"
+    >
   >;
   activeRouteSelection: ActiveWorkspaceSelection | null;
 }): ReadonlyMap<string, SidebarAgentDraft[]> {
@@ -70,8 +73,19 @@ export function groupSidebarAgentDrafts(input: {
       if (!workspaceKey || projectLayoutKeyByWorkspaceKey.get(workspaceKey) !== layoutKey) {
         continue;
       }
-      // Reuse the hydrated, sessionless checkout classification used by workspace rows.
-      if (!input.workspaceEntriesByKey.get(workspaceKey)?.isUnstarted) continue;
+      // An explicit draft is visible even while catalogs hydrate or scripts/create requests run.
+      // Existing conversation and worktree ownership still keep their named workspace row.
+      const workspace = input.workspaceEntriesByKey.get(workspaceKey);
+      if (
+        !workspace ||
+        workspace.title?.trim() ||
+        (workspace.workspaceKind !== "local_checkout" && workspace.workspaceKind !== "directory") ||
+        workspace.worktreeSlug ||
+        workspace.hasOnlyArchivedAgents ||
+        workspace.hasAssociatedAgents
+      ) {
+        continue;
+      }
       const tabHostWorkspaceId =
         routeInLayout && activeRoute ? activeRoute.workspaceId : workspaceId;
       const drafts = draftsByProjectViewKey.get(projectViewKey) ?? [];

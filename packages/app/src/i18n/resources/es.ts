@@ -1896,6 +1896,7 @@ export const es: TranslationResources = {
     },
     relayAddress: {
       label: "Dirección del servidor de retransmisión",
+      history: "Historial de direcciones Relay",
       description:
         "Se usa al añadir hosts desde enlaces de emparejamiento. La aplicación web y el daemon deben conectarse al mismo servidor. Usa ws:// o wss://, o déjalo vacío para usar la dirección del enlace. El tráfico sigue cifrado de extremo a extremo.",
       invalid:

@@ -8,6 +8,7 @@ import type {
   OmpAbortAndRestoreQueueResult,
   OmpApprovalMode,
   OmpAgentMessage,
+  OmpExtensionUiResponse,
   OmpFastModeResult,
   OmpFastModeSelection,
   OmpModel,
@@ -145,10 +146,7 @@ export interface OmpRuntimeSession {
     options?: OmpUserMessageOptions,
   ): void;
   handoff(customInstructions?: string): Promise<void>;
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void;
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }

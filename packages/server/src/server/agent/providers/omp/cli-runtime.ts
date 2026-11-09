@@ -83,6 +83,7 @@ import {
   type OmpFastModeSelection,
   type OmpAgentMessage,
   type OmpLoginProvider,
+  type OmpExtensionUiResponse,
   type OmpModel,
   type OmpPromptAck,
   type OmpRpcCommand,
@@ -408,6 +409,8 @@ export interface OmpRpcSessionOptions {
   launch: OmpRuntimeLaunch;
   logger: Logger;
   commandsRpcName?: "get_available_commands";
+  /** SDK hosts must enable grouped ask before exposing a usable session. */
+  enableAskDialog?: boolean;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
   signal?: AbortSignal;
   onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void;
@@ -456,6 +459,16 @@ export async function startOmpRpcSession(
     options.onRetirementCreated?.(session);
     await negotiateOmpProtocolV2(process, logger);
     options.signal?.throwIfAborted();
+    if (options.enableAskDialog) {
+      const response = (await process.request(
+        { type: "set_ask_dialog", enabled: true },
+        JSONL_RPC_DEFAULT_TIMEOUT_MS,
+      )) as { enabled?: unknown } | undefined;
+      if (response?.enabled !== true) {
+        throw new Error("OMP did not enable grouped ask dialogs");
+      }
+      options.signal?.throwIfAborted();
+    }
     await session.refreshImageSettings();
     return session;
   } catch (error) {
@@ -1240,10 +1253,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
   }
 
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void {
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void {
     this.process.send({ type: "extension_ui_response", id, ...response });
   }
 

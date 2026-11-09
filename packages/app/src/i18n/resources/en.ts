@@ -2058,6 +2058,7 @@ export const en = {
     },
     relayAddress: {
       label: "Relay server address",
+      history: "Relay address history",
       description:
         "Used when adding hosts from pairing links. The Web app and daemon must connect to the same relay. Use ws:// or wss://; leave blank to use the address in the link. Pairing traffic stays end-to-end encrypted.",
       invalid:
@@ -2066,7 +2067,7 @@ export const en = {
       saving: "Saving...",
       saved: "Relay setting saved. It will be applied the next time you add a host.",
       desktopDescription:
-        "Desktop saves this address to the local daemon's config.json, enables Relay, and applies it immediately. Enter a non-empty ws:// or wss:// address. The Web app must use the same Relay. Traffic remains end-to-end encrypted.",
+        "Select a previous address to switch immediately, or enter a new address and save. Desktop writes to the local daemon's config.json and enables Relay without restarting. Enter a non-empty ws:// or wss:// address. The Web app must use the same Relay. Traffic remains end-to-end encrypted.",
       desktopSaved:
         "Saved to the local daemon's config.json and applied immediately; no restart is needed. New pairing links will use this address.",
       desktopUnavailable: "The local daemon is disconnected. Its configuration cannot be saved.",

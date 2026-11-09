@@ -2258,7 +2258,7 @@ export class DaemonClient {
       ...(options?.cwd ? { cwd: options.cwd } : {}),
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
-      ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.limit !== undefined ? { limit: options.limit } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,

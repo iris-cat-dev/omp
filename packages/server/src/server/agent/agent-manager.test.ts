@@ -12676,6 +12676,33 @@ test("listImportableSessions skips providers that lack supportsSessionListing ev
   expect(result.map((d) => d.provider)).toEqual(["claude"]);
 });
 
+test("listImportableSessions keeps all providers' history when limit is null", async () => {
+  const omp = new RecordingPersistedAgentsClient("omp");
+  const codex = new RecordingPersistedAgentsClient("codex");
+  const sessions = Array.from({ length: 225 }, (_, index) => ({
+    providerHandleId: `session-${index}`,
+    cwd: "/tmp/recent",
+    title: null,
+    lastActivityAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)),
+    firstPromptPreview: null,
+    lastPromptPreview: null,
+  }));
+  vi.spyOn(omp, "listImportableSessions").mockResolvedValue(sessions.slice(0, 200));
+  vi.spyOn(codex, "listImportableSessions").mockResolvedValue(sessions.slice(200));
+  const manager = new AgentManager({ clients: { omp, codex }, logger });
+  const all = await manager.listImportableSessions({ limit: null });
+  expect(all.map((session) => session.providerHandleId)).toEqual(
+    sessions.toReversed().map((session) => session.providerHandleId),
+  );
+  const recent = await manager.listImportableSessions({ limit: 15 });
+  expect(recent.map((session) => session.providerHandleId)).toEqual(
+    sessions
+      .toReversed()
+      .slice(0, 15)
+      .map((session) => session.providerHandleId),
+  );
+});
+
 test("user_message events wrapping a paseo-system envelope are not added to the timeline", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-envelope-live-"));
   const storagePath = join(workdir, "agents");

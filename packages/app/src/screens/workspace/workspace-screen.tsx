@@ -118,6 +118,7 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { archiveEmptyWorkspace } from "@/workspace/workspace-archive";
+import { isWorkspaceArchivePending } from "@/contexts/session-workspace-upserts";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
@@ -1993,6 +1994,11 @@ function WorkspaceScreenContent({
       return;
     }
     if (!hasHydratedWorkspaceLayoutStore) {
+      return;
+    }
+    // Sidebar deletion can archive before this route finishes leaving. Read the
+    // shared state at effect time so reconciliation cannot recreate its draft.
+    if (isWorkspaceArchivePending({ serverId: normalizedServerId, workspaceId: normalizedWorkspaceId })) {
       return;
     }
 
