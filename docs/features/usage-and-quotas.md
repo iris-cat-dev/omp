@@ -6,6 +6,7 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 
 - [Native OMP statistics](#native-omp-statistics)
 - [Local OMP performance monitor](#local-omp-performance-monitor)
+- [Custom provider balances](#custom-provider-balances)
 - [Zhipu Coding Plan](#zhipu-coding-plan)
 - [Claude official accounts](#claude-official-accounts)
 - [Codex accounts](#codex-accounts)
@@ -96,6 +97,12 @@ The global **Allow public-data updates** permission applies to manual and schedu
 The renderer is sandboxed with no network or Node access. Only numeric facts and safe metadata reach it; prompts, message bodies, credentials, and raw transcript paths do not. Performance collection extracts native request/tool timing, counts and fixed outcome flags, discarding raw log lines without task-text grading. Opening is restricted to registered application main frames, and each surface's IPC requires its exact authenticated main frame. Only Settings selects another existing orb; each board can edit only its own configuration. The collector starts on demand, polls less often when every surface is hidden/minimized, and stops when no monitor surfaces remain. No other-app adapters, unpriced-diagnostics feature, usage telemetry/WebSocket reporting, online rankings, device accounts, privileged traffic service, or taskbar hooks are included. Agent Speed and Ashima Arts / Stefan Gustavson MIT notices and the full license are available in About.
 
 Settings exposes the original source enable/folder/reset controls; explicitly injected roots never fall back to a user's default transcripts. Settings close flushes title drafts before allowing the native close, and closing the last orb, closing all surfaces, quitting or installing an update waits for acknowledged queued settings writes and worker shutdown. A failed durable save vetoes that transition and retains the editor/worker for explicit recovery, rather than reporting success or destroying unsaved input. Corrupt-setting recovery preserves an exclusive evidence copy before atomic replacement.
+
+## Custom provider balances
+
+Expand the sidebar's provider details to see balances from custom `/v1/usage` providers, including Sub2API services such as MintCat. The first request shows a loading message immediately. Background refreshes keep the existing balance visible with a **Refreshing** message; request failures also remain visible.
+
+Balance queries share a five-minute frontend cache per host and provider, including across new conversations. Refreshing is on demand, not periodic polling; opening a new conversation within the cache period reuses the existing result.
 
 ## Zhipu Coding Plan
 
