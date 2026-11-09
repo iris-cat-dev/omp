@@ -26,7 +26,7 @@ import type {
   OmpMemorySettingsPatch,
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
-import { readOmpStats, refreshAndReadOmpStats } from "./stats.js";
+import { refreshAndReadOmpStats } from "./stats.js";
 import {
   LOCAL_MODEL_PROVIDER,
   LOCAL_MODEL_UNAVAILABLE_STATUS,
@@ -6428,12 +6428,12 @@ export class OmpAgentClient implements AgentClient {
 
   async getOmpStats(range: OmpStatsRange): Promise<OmpStatsResult> {
     if (this.runtime instanceof OmpSdkRuntime) {
-      await this.runtime.getInstallation();
-      // Read the existing native index without invoking the CLI to refresh it.
-      return readOmpStats({
+      const sdkInstallation = await this.runtime.getInstallation();
+      return refreshAndReadOmpStats({
         range,
         env: { ...process.env, ...this.runtimeSettings?.env },
         cwd: homedir(),
+        sdkInstallation,
       });
     }
     return refreshAndReadOmpStats({
