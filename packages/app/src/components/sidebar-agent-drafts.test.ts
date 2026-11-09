@@ -109,13 +109,15 @@ function workspaceEntries(overrides: Partial<WorkspaceDescriptor> = {}, hasHydra
   };
   return buildSidebarWorkspaceEntries({
     placements: [targetWorkspace],
-    sessions: [{
-      serverId: targetWorkspace.serverId,
-      workspaces: new Map([[descriptor.id, descriptor]]),
-      workspaceAgentActivity: new Map(),
-      agents: new Map<string, Agent>(),
-      hasHydratedAgents,
-    }],
+    sessions: [
+      {
+        serverId: targetWorkspace.serverId,
+        workspaces: new Map([[descriptor.id, descriptor]]),
+        workspaceAgentActivity: new Map(),
+        agents: new Map<string, Agent>(),
+        hasHydratedAgents,
+      },
+    ],
   });
 }
 
@@ -198,11 +200,26 @@ describe("sidebar agent drafts", () => {
     expect(grouped.get("project-target")).toBeUndefined();
   });
 
+  it("keeps an existing conversation on its workspace row when another draft is open", () => {
+    const entries = workspaceEntries();
+    entries.set(targetWorkspace.workspaceKey, {
+      ...entries.get(targetWorkspace.workspaceKey)!,
+      hasAssociatedAgents: true,
+    });
+    const grouped = groupSidebarAgentDrafts({
+      projects,
+      workspaceLayouts: { "server-1:project:project-target": hostLayout },
+      workspaceEntriesByKey: entries,
+      activeRouteSelection: { serverId: "server-1", workspaceId: targetWorkspace.workspaceId },
+    });
+
+    expect(grouped.get("project-target")).toBeUndefined();
+  });
+
   it.each([
     { name: "archived history", overrides: { hasOnlyArchivedAgents: true }, hydrated: true },
     { name: "worktree", overrides: { workspaceKind: "worktree" as const }, hydrated: true },
     { name: "worktree metadata", overrides: { worktreeSlug: "keep" }, hydrated: true },
-    { name: "unhydrated checkout", overrides: {}, hydrated: false },
   ])("keeps a $name on its workspace row", ({ overrides, hydrated }) => {
     const grouped = groupSidebarAgentDrafts({
       projects,
@@ -212,4 +229,52 @@ describe("sidebar agent drafts", () => {
     });
     expect(grouped.get("project-target")).toBeUndefined();
   });
+
+  it.each([
+    { name: "unhydrated checkout", overrides: {}, hydrated: false },
+    { name: "running workspace", overrides: { status: "running" as const }, hydrated: true },
+    {
+      name: "configured scripts",
+      overrides: {
+        scripts: [
+          {
+            scriptName: "dev",
+            type: "script" as const,
+            hostname: "dev.paseo.localhost",
+            port: null,
+            proxyUrl: null,
+            lifecycle: "stopped" as const,
+            health: null,
+            exitCode: null,
+            terminalId: null,
+          },
+        ],
+      },
+      hydrated: true,
+    },
+  ])(
+    "keeps a new draft visible for a $name without treating it as recyclable",
+    ({ overrides, hydrated }) => {
+      const entries = workspaceEntries(overrides, hydrated);
+      expect(entries.get(targetWorkspace.workspaceKey)?.isUnstarted).toBe(false);
+
+      const grouped = groupSidebarAgentDrafts({
+        projects,
+        workspaceLayouts: { "server-1:project:project-target": hostLayout },
+        workspaceEntriesByKey: entries,
+        activeRouteSelection: { serverId: "server-1", workspaceId: targetWorkspace.workspaceId },
+      });
+
+      expect(grouped.get("project-target")).toEqual([
+        {
+          serverId: "server-1",
+          workspaceId: "workspace-target",
+          tabHostWorkspaceId: "workspace-target",
+          draftId: "draft-new",
+          tabId: "tab-draft-new",
+          selected: true,
+        },
+      ]);
+    },
+  );
 });

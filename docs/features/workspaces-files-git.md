@@ -57,6 +57,8 @@ Archiving closes only that conversation's tabs, without creating drafts or relab
 
 Repeated ordinary **New conversation** clicks for the same host and project share one pending workspace creation. Once it finishes, a later click creates an independent workspace. Forks and custom setups stay independent, and a failed creation can be retried.
 
+In the project list, an open draft for an untitled ordinary checkout keeps the localized **New workspace** label while conversation metadata loads, initial creation runs, or the project has configured scripts. Saved titles, known conversation history, and worktree ownership keep their workspace rows; draft naming does not use the unused-workspace classification.
+
 Untitled ordinary checkouts with a hydrated empty conversation inventory show **Conversation not started**, keeping the branch visible. Their menu offers **Remove unused workspace**. Existing empty records are not automatically archived merely because their names match a branch such as `main`.
 
 Close an unsent draft with its tab **Close** button or sidebar **Delete new workspace** action. Both discard only the selected draft's input, attachments, and queued submission. Other drafts remain, including untouched siblings sharing the same workspace; outstanding agent creation also prevents cleanup.
