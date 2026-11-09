@@ -326,6 +326,28 @@ geometry while their original progress key is unchanged, not against an intermed
 estimated spacer. The real-browser regression is
 `src/agent-stream/strategy-web.browser.test.tsx` in the app workspace.
 
+Windows #139 qualification used the publicly installed mini-electron `0.1.37`
+with application source `2f15a7f5986fa4ffa03dd222307dd8b9210997d9`, including
+upstream `793e0a403f020a2acbb0a9fe329594e11987a406` and SDK submodule
+`682e4e293804151603386ef3374a6f7dec5249ce`. The unsigned Windows x64 NSIS
+installer retains application version `0.6.0`; it is a local repaired build, not
+a separately published Desktop release.
+
+The actual EXE payload was extracted and passed all 12 groups of
+`packages/desktop/e2e/packaged-app-smoke.js`, including native maximize/restore,
+continuous restore-drag/Snap, OS/runtime/DOM geometry, guarded native screenshots,
+bundled SDK/terminal and daemon lifecycle. Evidence is retained locally under
+`.dev/issue-139-smoke/omp-native-packaged-evidence-TOW8qx/`.
+The disposable copy's main entry and early metadata provide the smoke controls;
+its renderer, preloads, daemon and SDK remain real. Existing user profiles were
+not used, and the owned processes and temporary profile were removed.
+
+The installer at `.dev/issue-139-fixed-app/OMP-Desktop-Setup-0.6.0-x64.exe` is
+91,521,656 bytes, SHA-256
+`8f77850338bc93b446dfc3cfba08c1bdf77da59c1c697294bbd4182164134aef`.
+This verifies its extracted application, not interactive installer/uninstaller
+flows or a long-session Windows 11 stutter timeline.
+
 Replica persistence serializes only the latest 50 serializable canonical timeline
 items. Pending local messages do not count toward that window; omitted canonical
 rows still prevent authoritative coverage. Older rows are inspected only when

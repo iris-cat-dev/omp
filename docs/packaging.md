@@ -126,8 +126,16 @@ npx mini-electron --update-runtime
 
 Normal dependency installation reuses an already valid native runtime; updating the npm installer alone does not refresh it. Verify the selected native version in `node_modules/@iriscat/mini-electron/dist/version.json`.
 
-For reproducible Windows x64 builds, select an immutable distribution that carries
-all required capability markers, or use the locally verified distribution below.
+For reproducible Windows x64 builds, select published
+[runtime `0.1.37`](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.37),
+which carries all required capability markers, or use a newer qualified/local
+distribution. An existing installation can select the immutable release with:
+
+```bash
+npx mini-electron --update-runtime 0.1.37
+```
+
+For fresh reproducible installs, set `MINI_ELECTRON_RUNTIME_VERSION=0.1.37`.
 Unmodified runtime `0.1.36` lacks `asyncStoragePersistence`; rebuilding only the
 frontend or updating the npm installer cannot qualify it.
 
