@@ -156,6 +156,28 @@ describe("packaging runtime compatibility", () => {
     },
   );
 
+  test.each([undefined, true, 0, 2])(
+    "rejects Windows runtimes without asynchronous broker storage persistence (%j)",
+    async (asyncStoragePersistence) => {
+      const fixture = createPackagingFixture("win32", "99.0.0");
+      try {
+        await expect(
+          createQualifiedPackager(
+            fixture.runtimeDist,
+            {
+              ...fixture.runtime,
+              features: { ...fixture.runtime.features, asyncStoragePersistence },
+            },
+            fixture.args,
+            fixture.directory,
+          ),
+        ).rejects.toThrow("asyncStoragePersistence=1");
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   test.each([
     {
       name: "installer protocol",
@@ -207,7 +229,10 @@ function createPackagingFixture(
     runtimeVersion,
     electronApiVersion: "41.2.0",
     installerProtocol: 1,
-    features: platform === "win32" ? { nativeClipboardFiles: 1, asyncContextPropagation: 1 } : {},
+    features:
+      platform === "win32"
+        ? { nativeClipboardFiles: 1, asyncContextPropagation: 1, asyncStoragePersistence: 1 }
+        : {},
     files: {
       [executable]: createHash("sha256").update(executableBytes).digest("hex"),
     },

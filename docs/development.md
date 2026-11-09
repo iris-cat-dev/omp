@@ -310,6 +310,20 @@ Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster s
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
 
+Draft text changes keep the 200 ms checkpoint interval without scheduling attachment
+GC. GC is scheduled when active image references change, including nested visual
+feedback originals/previews, or when lifecycle changes release references. Equivalent
+normalized saves and unchanged GC pruning do not submit another checkpoint. Directory
+and workspace-file additions do not require a scan of every loaded session.
+
+Web history measurements are invalidated when the active scroll pane's available
+width changes, including split-pane resizing; height-only changes retain the cache.
+Refresh TanStack's lazy measurements before computing the saved reading offset.
+Pending history-prepend anchors are rebased against committed width-dependent
+geometry while their original progress key is unchanged, not against an intermediate
+estimated spacer. The real-browser regression is
+`src/agent-stream/strategy-web.browser.test.tsx` in the app workspace.
+
 Replica persistence serializes only the latest 50 serializable canonical timeline
 items. Pending local messages do not count toward that window; omitted canonical
 rows still prevent authoritative coverage. Older rows are inspected only when

@@ -167,19 +167,28 @@ async function qualifyRuntime(runtimeDist, runtime, normalized) {
   if (hash.digest("hex") !== expectedHash) {
     throw new Error(`mini-electron executable SHA256 mismatch at ${runtimeDist}/${executable}`);
   }
-  if (runtime.platform === "win32" && runtime.features?.nativeClipboardFiles !== 1) {
-    throw new Error(
-      "Windows packaging requires nativeClipboardFiles=1 in the verified mini-electron " +
-        "version.json. Select the rebuilt clipboard-file runtime with MINI_ELECTRON_DIST_PATH; " +
-        "runtime 0.1.32 and earlier do not implement authorized DOM File paste.",
-    );
-  }
-  if (runtime.platform === "win32" && runtime.features?.asyncContextPropagation !== 1) {
-    throw new Error(
-      "Windows packaging requires asyncContextPropagation=1 in the verified mini-electron " +
-        "version.json. Select a runtime that passed the native AsyncLocalStorage/Promise-hook " +
-        "main-thread and Worker smoke; a runtime version bump alone is not sufficient.",
-    );
+  if (runtime.platform === "win32") {
+    if (runtime.features?.nativeClipboardFiles !== 1) {
+      throw new Error(
+        "Windows packaging requires nativeClipboardFiles=1 in the verified mini-electron " +
+          "version.json. Select the rebuilt clipboard-file runtime with MINI_ELECTRON_DIST_PATH; " +
+          "runtime 0.1.32 and earlier do not implement authorized DOM File paste.",
+      );
+    }
+    if (runtime.features?.asyncContextPropagation !== 1) {
+      throw new Error(
+        "Windows packaging requires asyncContextPropagation=1 in the verified mini-electron " +
+          "version.json. Select a runtime that passed the native AsyncLocalStorage/Promise-hook " +
+          "main-thread and Worker smoke; a runtime version bump alone is not sufficient.",
+      );
+    }
+    if (runtime.features?.asyncStoragePersistence !== 1) {
+      throw new Error(
+        "Windows packaging requires asyncStoragePersistence=1 in the verified mini-electron " +
+          "version.json. Select the rebuilt storage runtime with MINI_ELECTRON_DIST_PATH; " +
+          "synchronous broker file writes can stall short input and viewport updates.",
+      );
+    }
   }
   return target;
 }

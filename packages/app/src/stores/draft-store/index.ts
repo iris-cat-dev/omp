@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import equal from "fast-deep-equal";
 import type {
   AttachmentMetadata,
   DirectoryComposerAttachment,
@@ -97,6 +98,36 @@ function createDraftRecord(input: {
   };
 }
 
+function attachmentReferencesChanged(
+  previous: DraftRecord | null | undefined,
+  next: DraftRecord | null,
+): boolean {
+  if (previous?.lifecycle === "active" && !Array.isArray(previous.input.attachments)) {
+    return true;
+  }
+  if (!previous?.input.attachments?.length && !next?.input.attachments.length) {
+    return false;
+  }
+  const previousIds = new Set<string>();
+  const nextIds = new Set<string>();
+  for (const [record, ids] of [
+    [previous, previousIds],
+    [next, nextIds],
+  ] as const) {
+    if (record?.lifecycle !== "active") continue;
+    for (const attachment of record.input.attachments ?? []) {
+      for (const image of getComposerAttachmentImages(attachment)) {
+        ids.add(image.id);
+      }
+    }
+  }
+  if (previousIds.size !== nextIds.size) return true;
+  for (const id of previousIds) {
+    if (!nextIds.has(id)) return true;
+  }
+  return false;
+}
+
 const migrateLegacyImages: MigrateLegacyImages = async (images) => {
   if (images.length === 0) {
     return [];
@@ -140,16 +171,11 @@ async function runAttachmentGc(): Promise<void> {
   gcScheduled = false;
   const nowMs = Date.now();
 
-  useDraftStore.setState((state) => {
-    const prunedDrafts = pruneFinalizedDraftRecords({ drafts: state.drafts, nowMs });
-    if (prunedDrafts === state.drafts) {
-      return state;
-    }
-    return {
-      ...state,
-      drafts: prunedDrafts,
-    };
-  });
+  const state = useDraftStore.getState();
+  const prunedDrafts = pruneFinalizedDraftRecords({ drafts: state.drafts, nowMs });
+  if (prunedDrafts !== state.drafts) {
+    useDraftStore.setState({ drafts: prunedDrafts });
+  }
 
   const referencedIds = new Set<string>();
   for (const id of useDraftStore.getState().collectActiveAttachmentIds()) {
@@ -288,66 +314,66 @@ export const useDraftStore = create<DraftStore>()(
           { migrateLegacyImages },
         );
 
-        set((state) => {
-          const existing = state.drafts[draftKey];
-          if (!existing || existing.version !== current.version) {
-            return state;
-          }
-          return {
-            drafts: {
-              ...state.drafts,
-              [draftKey]: createDraftRecord({
-                draft: migratedDraft,
-                lifecycle: existing.lifecycle,
-                previousVersion: existing.version,
-              }),
-            },
-          };
-        });
+        const existing = get().drafts[draftKey];
+        if (!existing || existing.version !== current.version) {
+          return migratedDraft;
+        }
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [draftKey]: createDraftRecord({
+              draft: migratedDraft,
+              lifecycle: existing.lifecycle,
+              previousVersion: existing.version,
+            }),
+          },
+        }));
 
         scheduleAttachmentGc();
         return migratedDraft;
       },
 
       saveDraftInput: ({ draftKey, draft }) => {
-        set((state) => {
-          const existing = state.drafts[draftKey];
-          return {
-            drafts: {
-              ...state.drafts,
-              [draftKey]: createDraftRecord({
-                draft,
-                lifecycle: "active",
-                previousVersion: existing?.version,
-              }),
-            },
-          };
+        const existing = get().drafts[draftKey];
+        const next = createDraftRecord({
+          draft,
+          lifecycle: "active",
+          previousVersion: existing?.version,
         });
-        scheduleAttachmentGc();
+        if (existing?.lifecycle === "active" && equal(existing.input, next.input)) {
+          return;
+        }
+        set((state) => ({
+          drafts: { ...state.drafts, [draftKey]: next },
+        }));
+        if (attachmentReferencesChanged(existing, next)) {
+          scheduleAttachmentGc();
+        }
       },
 
       markDraftLifecycle: ({ draftKey, lifecycle }) => {
-        set((state) => {
-          const existing = state.drafts[draftKey];
-          if (!existing || existing.lifecycle === lifecycle) {
-            return state;
-          }
-          return {
-            drafts: {
-              ...state.drafts,
-              [draftKey]: {
-                ...existing,
-                lifecycle,
-                updatedAt: Date.now(),
-                version: existing.version + 1,
-              },
+        const existing = get().drafts[draftKey];
+        if (!existing || existing.lifecycle === lifecycle) {
+          return;
+        }
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [draftKey]: {
+              ...existing,
+              lifecycle,
+              updatedAt: Date.now(),
+              version: existing.version + 1,
             },
-          };
-        });
+          },
+        }));
         scheduleAttachmentGc();
       },
 
       clearDraftInput: ({ draftKey, lifecycle }) => {
+        if (!get().drafts[draftKey] && !lifecycle) {
+          return;
+        }
         set((state) => {
           const existing = state.drafts[draftKey];
           if (!existing) {
@@ -407,7 +433,6 @@ export const useDraftStore = create<DraftStore>()(
             },
           };
         });
-        scheduleAttachmentGc();
       },
 
       attachDirectory: async ({ draftKey, attachment }) => {
@@ -433,7 +458,6 @@ export const useDraftStore = create<DraftStore>()(
             },
           };
         });
-        scheduleAttachmentGc();
       },
 
       getCreateModalDraft: () => {
@@ -442,19 +466,24 @@ export const useDraftStore = create<DraftStore>()(
       },
 
       saveCreateModalDraft: (draft) => {
-        set((state) => {
-          if (!draft) {
-            return { createModalDraft: null };
-          }
-          return {
-            createModalDraft: createDraftRecord({
+        const existing = get().createModalDraft;
+        const next = draft
+          ? createDraftRecord({
               draft,
               lifecycle: "active",
-              previousVersion: state.createModalDraft?.version,
-            }),
-          };
-        });
-        scheduleAttachmentGc();
+              previousVersion: existing?.version,
+            })
+          : null;
+        if (
+          existing === next ||
+          (existing?.lifecycle === "active" && next && equal(existing.input, next.input))
+        ) {
+          return;
+        }
+        set({ createModalDraft: next });
+        if (attachmentReferencesChanged(existing, next)) {
+          scheduleAttachmentGc();
+        }
       },
 
       collectActiveAttachmentIds: () => {

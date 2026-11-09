@@ -111,6 +111,13 @@ Windows distributions must also declare `version.json.features.nativeClipboardFi
 
 Windows distributions must also declare `version.json.features.asyncContextPropagation === 1`. The native build earns that marker by running the main-thread and Worker AsyncLocalStorage/Promise-hook probe against the actual executable; changing only a version number does not qualify a runtime.
 
+Windows distributions must also declare `version.json.features.asyncStoragePersistence === 1`.
+Runtime staging earns this marker by exercising the actual executable's broker-storage
+regression: ordered background persistence, no-op suppression, restart/quit/exit
+durability, and explicit disk-error recovery. This avoids shipping the synchronous
+whole-file write path that can stall even short drafts. Do not add the marker to an
+older executable by editing metadata.
+
 Packaging uses the installed runtime (or `MINI_ELECTRON_DIST_PATH`) without downloading or downgrading it to a fixed release. Before packaging, refresh an existing installation with:
 
 ```bash
@@ -119,11 +126,10 @@ npx mini-electron --update-runtime
 
 Normal dependency installation reuses an already valid native runtime; updating the npm installer alone does not refresh it. Verify the selected native version in `node_modules/@iriscat/mini-electron/dist/version.json`.
 
-For a reproducible Windows x64 build using the [0.1.35 runtime and matching full PDB](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.35), select that immutable runtime explicitly:
-
-```bash
-npx mini-electron --update-runtime 0.1.35
-```
+For reproducible Windows x64 builds, select an immutable distribution that carries
+all required capability markers, or use the locally verified distribution below.
+Unmodified runtime `0.1.36` lacks `asyncStoragePersistence`; rebuilding only the
+frontend or updating the npm installer cannot qualify it.
 
 The installer checks the downloaded archive and every declared runtime file before atomic replacement. This changes the native runtime, not the pinned npm installer version. The separate upstream symbols ZIP must match the EXE's RSDS GUID and Age; symbols from a previous runtime release are not interchangeable.
 
@@ -303,6 +309,13 @@ Windows packages use `@iriscat/mini-electron` installer 0.1.12. Screen-coordinat
 Windows distributions must also advertise `features.asyncContextPropagation: 1`. The repaired native build emits this capability only after running `test/node-async-context-smoke.js` against the staged executable: concurrent/nested ALS scopes, Promise/foreign-realm callbacks, timers, Workers, both Node ALS implementations, and ordered single Promise-hook notifications must pass. Do not add this field to an older binary or treat a newer runtime version as semantic proof.
 
 The Windows packaged-app smoke additionally runs `scripts/packaging/runtime-async-context-probe.cjs` with the actual packaged EXE in `ELECTRON_RUN_AS_NODE=1` mode. SDK artifact smoke exercises synchronous and post-`await` printing, an object final expression, and explicit Eval errors in a real shared-host child. Cross-building an installer on Mac does not execute these Windows checks; qualify the exact executable on Windows before distribution.
+
+The storage repair additionally requires `features.asyncStoragePersistence: 1`.
+Until a qualifying native release is selected, rebuild mini-electron with
+`python build.py --package-dist` and use `MINI_ELECTRON_DIST_PATH` below.
+The staging step runs `node test/broker-storage-persistence-smoke.js --runtime <staged-exe>`
+before publishing its local metadata. Its explicit storage flush and shutdown barrier
+drain accepted mutations; a forced process kill is not a persistence guarantee.
 
 To package an unpublished local runtime instead, build its checkout with `python build.py --package-dist` and select that distribution explicitly (PowerShell):
 
