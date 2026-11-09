@@ -89,7 +89,7 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
   });
 });
 
-describe("unstarted local checkout presentation", () => {
+describe.each(["local_checkout", "directory"] as const)("unstarted %s presentation", (workspaceKind) => {
   it.each([
     { name: "empty checkout", overrides: {}, agents: [], expected: true },
     { name: "untitled conversation", overrides: {}, agents: [agent({ id: "root", workspaceId: "ws-1", status: "idle" })], expected: false },
@@ -103,8 +103,11 @@ describe("unstarted local checkout presentation", () => {
   ])("classifies $name without losing its branch metadata", ({ overrides, agents, expected }) => {
     const descriptor: WorkspaceDescriptor = {
       ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
-      workspaceKind: "local_checkout", name: "main", githubRuntime: undefined,
-      gitRuntime: { currentBranch: "main" } as WorkspaceDescriptor["gitRuntime"],
+      projectKind: workspaceKind === "directory" ? "non_git" : "git",
+      workspaceKind,
+      name: workspaceKind === "directory" ? "new-biz" : "main",
+      githubRuntime: undefined,
+      gitRuntime: workspaceKind === "directory" ? undefined : { currentBranch: "main" } as WorkspaceDescriptor["gitRuntime"],
       ...overrides,
     };
     const entries = buildSidebarWorkspaceEntries({
@@ -116,12 +119,12 @@ describe("unstarted local checkout presentation", () => {
       }],
     });
     expect(entries.get("srv:ws-1")?.isUnstarted).toBe(expected);
-    expect(entries.get("srv:ws-1")?.currentBranch).toBe("main");
-    expect(entries.get("srv:ws-1")?.name).toBe("main");
+    expect(entries.get("srv:ws-1")?.currentBranch).toBe(workspaceKind === "directory" ? null : "main");
+    expect(entries.get("srv:ws-1")?.name).toBe(descriptor.name);
   });
 
   it("does not claim a checkout is unused before its session catalog is available", () => {
-    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind: "local_checkout" as const };
+    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind };
     const entries = buildSidebarWorkspaceEntries({
       placements: [workspacePlacement({ workspaceId: descriptor.id })],
       sessions: [{ serverId: "srv", workspaces: new Map([[descriptor.id, descriptor]]), workspaceAgentActivity: new Map() }],
@@ -130,7 +133,7 @@ describe("unstarted local checkout presentation", () => {
   });
 
   it.each([false, undefined])("only labels an empty catalog as unstarted after hydration completes (%s)", (hydrated) => {
-    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind: "local_checkout" as const };
+    const descriptor = { ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"), workspaceKind };
     const placements = [workspacePlacement({ workspaceId: descriptor.id })];
     const session = {
       serverId: "srv", workspaces: new Map([[descriptor.id, descriptor]]), workspaceAgentActivity: new Map(),

@@ -207,7 +207,8 @@ export function createSidebarWorkspaceEntry(input: {
     hasOnlySubagents: input.hasOnlySubagents ?? false,
     hasAssociatedAgents: input.hasAssociatedAgents,
     isUnstarted:
-      input.workspace.workspaceKind === "local_checkout" &&
+      (input.workspace.workspaceKind === "local_checkout" ||
+        input.workspace.workspaceKind === "directory") &&
       !input.workspace.title?.trim() &&
       !input.workspace.worktreeSlug &&
       !input.workspace.hasOnlyArchivedAgents &&

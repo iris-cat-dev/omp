@@ -79,7 +79,7 @@ export function groupSidebarAgentDrafts(input: {
       if (
         !workspace ||
         workspace.title?.trim() ||
-        workspace.workspaceKind !== "local_checkout" ||
+        (workspace.workspaceKind !== "local_checkout" && workspace.workspaceKind !== "directory") ||
         workspace.worktreeSlug ||
         workspace.hasOnlyArchivedAgents ||
         workspace.hasAssociatedAgents

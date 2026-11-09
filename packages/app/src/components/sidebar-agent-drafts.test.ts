@@ -122,11 +122,11 @@ function workspaceEntries(overrides: Partial<WorkspaceDescriptor> = {}, hasHydra
 }
 
 describe("sidebar agent drafts", () => {
-  it("groups a draft under its owning project", () => {
+  it.each(["local_checkout", "directory"] as const)("groups a %s draft under its owning project", (workspaceKind) => {
     const grouped = groupSidebarAgentDrafts({
       projects,
       workspaceLayouts: { "server-1:project:project-target": hostLayout },
-      workspaceEntriesByKey: workspaceEntries(),
+      workspaceEntriesByKey: workspaceEntries({ workspaceKind }),
       activeRouteSelection: {
         serverId: targetWorkspace.serverId,
         workspaceId: targetWorkspace.workspaceId,
