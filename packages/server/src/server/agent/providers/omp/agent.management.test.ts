@@ -232,6 +232,61 @@ providers:
     expect(onDisk).toContain("omp-desktop-bootstrap");
   });
 
+  test("initializes an explicit null root when RPC needs a bootstrap model", async () => {
+    const { agentDir, client, runtime } = await createClient();
+    const configPath = path.join(agentDir, "models.yml");
+    await writeFile(configPath, "# Provider notes\nnull # Keep this note\n", "utf8");
+    runtime.failNextStart(new Error("No models available"));
+    runtime.queueModels([
+      { provider: "omp-desktop-bootstrap", id: "bootstrap", name: "bootstrap" },
+    ]);
+    runtime.queueLoginProviders([
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+    ]);
+
+    const management = await client.getOmpProviderManagement();
+    expect(management.runtimeError).toBeUndefined();
+    expect(management.providerModels).toEqual([]);
+    expect(management.loginProviders).toEqual([
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+    ]);
+    expect(management.configYaml).not.toContain("omp-desktop-bootstrap");
+    expect(management.configYaml).toContain("# Provider notes");
+    expect(management.configYaml).toContain("# Keep this note");
+    const onDisk = await readFile(configPath, "utf8");
+    expect(parse(onDisk).providers["omp-desktop-bootstrap"]).toMatchObject({
+      auth: "none",
+      models: [{ id: "bootstrap" }],
+    });
+    expect(onDisk).toContain("# Provider notes");
+    expect(onDisk).toContain("# Keep this note");
+  });
+
+  test("preserves root settings when adding the first provider after RPC bootstrap", async () => {
+    const { agentDir, client, runtime } = await createClient();
+    const configPath = path.join(agentDir, "models.yml");
+    await writeFile(
+      configPath,
+      "# Keep root settings\ntask:\n  speculativeLaunch: false\n",
+      "utf8",
+    );
+    runtime.failNextStart(new Error("No models available"));
+
+    const management = await client.addOmpProvider({
+      providerId: "mintcat",
+      baseUrl: "https://api.example.test/v1",
+      apiKey: "test-key",
+      api: "openai-responses",
+      models: [{ id: "gpt-test" }],
+    });
+
+    const onDisk = await readFile(configPath, "utf8");
+    expect(parse(onDisk).task).toEqual({ speculativeLaunch: false });
+    expect(Object.keys(parse(onDisk).providers)).toEqual(["mintcat"]);
+    expect(onDisk).toContain("# Keep root settings");
+    expect(parse(management.configYaml)).toEqual(parse(onDisk));
+  });
+
   test("reports every active OAuth account without exposing credential data", async () => {
     const quotaFetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -1422,8 +1477,18 @@ providers:
     });
     await expect(readFile(path.join(agentDir, "models.yml"), "utf8")).resolves.toBe(configYaml);
   });
-  test("adds an endpoint, API key, and multiple models to native models.yml", async () => {
+  test.each([
+    { name: "a missing file", configYaml: undefined },
+    { name: "an empty file", configYaml: "" },
+    { name: "a comment-only file", configYaml: "# Custom providers\n" },
+    { name: "an explicit null root", configYaml: "null\n" },
+    { name: "an empty mapping", configYaml: "{}\n" },
+    { name: "an empty providers mapping", configYaml: "providers: {}\n" },
+  ])("adds an endpoint, API key, and multiple models from $name", async ({ configYaml }) => {
     const { agentDir, client } = await createClient();
+    if (configYaml !== undefined) {
+      await writeFile(path.join(agentDir, "models.yml"), configYaml, "utf8");
+    }
 
     await client.addOmpProvider({
       providerId: "mintcat",
@@ -1480,6 +1545,72 @@ providers:
       },
     });
   });
+
+  test("preserves existing configuration and rejects duplicate provider IDs without rewriting", async () => {
+    const { agentDir, client } = await createClient();
+    const configPath = path.join(agentDir, "models.yml");
+    const originalYaml = `# Keep this comment
+task:
+  speculativeLaunch: false
+providers:
+  existing:
+    baseUrl: https://existing.example.test/v1
+    headers:
+      X-Custom-Header: keep
+    models:
+      - id: existing-model
+        contextWindow: 64000
+`;
+    await writeFile(configPath, originalYaml, "utf8");
+    const input = {
+      providerId: "mintcat",
+      baseUrl: "https://api.example.test/v1",
+      apiKey: "test-key",
+      api: "openai-responses" as const,
+      models: [{ id: "gpt-test" }],
+    };
+
+    await client.addOmpProvider(input);
+    const savedYaml = await readFile(configPath, "utf8");
+    const saved = parse(savedYaml);
+    const original = parse(originalYaml);
+    expect(saved.task).toEqual(original.task);
+    expect(saved.providers.existing).toEqual(original.providers.existing);
+    expect(Object.keys(saved.providers)).toEqual(["existing", "mintcat"]);
+    expect(savedYaml).toContain("# Keep this comment");
+
+    await expect(client.addOmpProvider(input)).rejects.toThrow(
+      "OMP provider 'mintcat' already exists",
+    );
+    expect(await readFile(configPath, "utf8")).toBe(savedYaml);
+  });
+
+  test.each([
+    { configYaml: "not-an-object\n", field: "root" },
+    { configYaml: "42\n", field: "root" },
+    { configYaml: "true\n", field: "root" },
+    { configYaml: "- provider\n", field: "root" },
+    { configYaml: "providers: null\n", field: "providers" },
+    { configYaml: "providers: []\n", field: "providers" },
+  ])(
+    "rejects invalid provider configuration without overwriting: $configYaml",
+    async ({ configYaml, field }) => {
+      const { agentDir, client } = await createClient();
+      const configPath = path.join(agentDir, "models.yml");
+      await writeFile(configPath, configYaml, "utf8");
+
+      await expect(
+        client.addOmpProvider({
+          providerId: "mintcat",
+          baseUrl: "https://api.example.test/v1",
+          apiKey: "test-key",
+          api: "openai-responses",
+          models: [{ id: "gpt-test" }],
+        }),
+      ).rejects.toThrow(`OMP models.yml ${field} must be an object`);
+      expect(await readFile(configPath, "utf8")).toBe(configYaml);
+    },
+  );
 
   test("persists Unicode provider names and refreshes catalog display after a name-only edit", async () => {
     const { agentDir, client, runtime } = await createClient();

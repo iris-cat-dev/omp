@@ -33,7 +33,7 @@ import {
 } from "@omp-desktop/protocol/local-models";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { startOmpLocalModelGateway, type OmpLocalModelGateway } from "./local-model-gateway.js";
-import { isMap, parseDocument } from "yaml";
+import { type Document, isMap, parseDocument } from "yaml";
 
 import {
   type AgentCapabilityFlags,
@@ -1376,9 +1376,14 @@ function parseOmpYamlDocument(configYaml: string) {
 }
 
 function parseOmpModelsDocument(configYaml: string) {
-  const document = parseOmpYamlDocument(configYaml);
+  const document: Document = parseOmpYamlDocument(configYaml);
   const root = document.toJS() as unknown;
-  if (root !== null && !isRecord(root)) {
+  if (root === null) {
+    const mapping = document.createNode({});
+    mapping.commentBefore = document.contents?.commentBefore;
+    mapping.comment = document.contents?.comment;
+    document.contents = mapping;
+  } else if (!isRecord(root)) {
     throw new Error("OMP models.yml root must be an object");
   }
   const providers = isRecord(root) ? root.providers : undefined;
@@ -1418,13 +1423,7 @@ function isOmpRpcMissingModelError(error: unknown): boolean {
 }
 
 export function mergeOmpDesktopRpcBootstrapIntoModelsYaml(configYaml: string): string {
-  const document = parseOmpYamlDocument(configYaml.trim() === "" ? "providers: {}\n" : configYaml);
-  const providersNode = document.get("providers");
-  if (providersNode == null) {
-    document.set("providers", {});
-  } else if (!isMap(providersNode)) {
-    throw new Error("OMP models.yml providers must be an object");
-  }
+  const { document } = parseOmpModelsDocument(configYaml);
   if (document.hasIn(["providers", OMP_DESKTOP_RPC_BOOTSTRAP_PROVIDER_ID])) {
     return document.toString(YAML_TO_STRING_OPTIONS);
   }
@@ -1444,11 +1443,6 @@ export function stripOmpDesktopRpcBootstrapFromModelsYaml(configYaml: string): s
       return configYaml;
     }
     document.deleteIn(["providers", OMP_DESKTOP_RPC_BOOTSTRAP_PROVIDER_ID]);
-    const remaining = document.toJS() as unknown;
-    const remainingProviders = isRecord(remaining) ? remaining.providers : undefined;
-    if (!isRecord(remainingProviders) || Object.keys(remainingProviders).length === 0) {
-      return "providers: {}\n";
-    }
     return formatOmpModelsYaml(document.toString());
   } catch {
     return configYaml;
@@ -6866,9 +6860,6 @@ export class OmpAgentClient implements AgentClient {
     const { document, providers } = parseOmpModelsDocument(management.configYaml);
     if (providers && Object.hasOwn(providers, input.providerId)) {
       throw new Error(`OMP provider '${input.providerId}' already exists`);
-    }
-    if (!providers) {
-      document.set("providers", {});
     }
     const name = input.name?.trim();
     document.setIn(["providers", input.providerId], {
