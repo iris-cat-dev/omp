@@ -15,6 +15,7 @@ import {
 import { assertBundledOmpHost } from "../../../bundled-omp-host.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
+import type { OmpSdkInstallation } from "./sdk-installation.js";
 
 const moduleRequire = createRequire(import.meta.url);
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -385,6 +386,7 @@ async function runNativeStatsRefresh(
   env: NodeJS.ProcessEnv,
   cwd: string,
   onStopped: () => void,
+  sdk = false,
 ): Promise<StatsRefreshFailure | null> {
   const { promise, resolve: resolveResult } = Promise.withResolvers<StatsRefreshFailure | null>();
   const { promise: exited, resolve: markExited } = Promise.withResolvers<void>();
@@ -401,10 +403,12 @@ async function runNativeStatsRefresh(
     const releaseFlight = () => {
       child?.off("error", onError);
       child?.off("exit", onExit);
+      child?.off("message", onMessage);
       onStopped();
     };
-    if (reason && child?.pid && child.exitCode === null && child.signalCode === null) {
+    if ((reason || sdk) && child?.pid && child.exitCode === null && child.signalCode === null) {
       const writer = child;
+      let stopped = false;
       const cleanup = (async () => {
         try {
           await terminateWithTreeKill(writer, {
@@ -420,6 +424,7 @@ async function runNativeStatsRefresh(
         }
         await exited;
         releaseFlight();
+        stopped = true;
       })();
       // Bound the RPC even when OS cleanup fails, without allowing another
       // writer or a stale SQL read while the owned process may still be alive.
@@ -431,6 +436,7 @@ async function runNativeStatsRefresh(
         }),
       ]);
       clearTimeout(cleanupDeadline);
+      if (!stopped) reason ??= "index_refresh_failed";
     } else {
       releaseFlight();
     }
@@ -441,25 +447,83 @@ async function runNativeStatsRefresh(
   }
   function onExit(code: number | null, signal: NodeJS.Signals | null): void {
     markExited();
-    void finish(code === 0 && signal === null ? null : "index_refresh_failed");
+    void finish(!sdk && code === 0 && signal === null ? null : "index_refresh_failed");
+  }
+  function onMessage(message: unknown): void {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      !("id" in message) ||
+      message.id !== "desktop-stats" ||
+      !("type" in message)
+    )
+      return;
+    if (message.type === "done") void finish(null);
+    else if (message.type === "error") onError();
   }
 
-  void assertBundledOmpHost(launch.command, env)
+  void (sdk ? Promise.resolve() : assertBundledOmpHost(launch.command, env))
     .then(() => {
       // Verification may outlast the deadline; never spawn after reporting timeout.
       if (finishing) return undefined;
-      child = spawnProcess(launch.command, [...launch.args, "stats", "--summary"], {
-        env,
-        cwd,
-        shell: false,
-        stdio: "ignore",
-      });
+      child = sdk
+        ? spawn(launch.command, launch.args, {
+            env,
+            cwd,
+            windowsHide: true,
+            serialization: "advanced",
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+          })
+        : spawnProcess(launch.command, [...launch.args, "stats", "--summary"], {
+            env,
+            cwd,
+            shell: false,
+            stdio: "ignore",
+          });
       child.on("error", onError);
       child.once("exit", onExit);
+      if (sdk) {
+        child.on("message", onMessage);
+        child.once("spawn", () => {
+          child?.send({ type: "load", id: "desktop-stats" }, (error) => {
+            if (error) onError();
+          });
+        });
+      }
       return undefined;
     })
     .catch(onError);
   return promise;
+}
+
+function resolveLaunchedStatsScope(
+  options: StatsSourceOptions,
+  launch: ResolvedProviderLaunch,
+  resolved: ResolvedStatsScope,
+): ResolvedStatsScope {
+  const command = { mode: "replace" as const, argv: [launch.command, ...launch.args] };
+  assertSafeStatsCommand(command);
+  let configuredArgs: readonly string[] = [];
+  if (options.command?.mode === "replace") {
+    configuredArgs = options.command.argv.slice(1);
+  } else if (options.command?.mode === "append") {
+    configuredArgs = options.command.args ?? [];
+  }
+  if (
+    (options.command?.mode === "replace" && launch.command !== options.command.argv[0]) ||
+    launch.args.length !== configuredArgs.length ||
+    launch.args.some((arg, index) => arg !== configuredArgs[index])
+  ) {
+    throw new Error("Unknown OMP statistics launch invocation");
+  }
+  const launched = resolveStatsScope({ ...options, command });
+  if (
+    launched.source.path !== resolved.source.path ||
+    launched.source.profile !== resolved.source.profile
+  ) {
+    throw new Error("Unknown OMP statistics launch scope");
+  }
+  return launched;
 }
 
 /**
@@ -469,8 +533,10 @@ async function runNativeStatsRefresh(
 export async function refreshAndReadOmpStats(
   options: Pick<StatsSourceOptions, "env" | "command" | "cwd"> & {
     range: OmpStatsRange;
-    resolveLaunch: () => Promise<ResolvedProviderLaunch>;
-  },
+  } & (
+      | { resolveLaunch: () => Promise<ResolvedProviderLaunch>; sdkInstallation?: never }
+      | { sdkInstallation: OmpSdkInstallation; resolveLaunch?: never }
+    ),
 ): Promise<OmpStatsResult> {
   const env = createProviderEnv({ baseEnv: options.env });
   const sourceOptions = { ...options, env };
@@ -484,44 +550,46 @@ export async function refreshAndReadOmpStats(
   try {
     // In particular, read-only source resolution alone is insufficient to
     // authorize executing arbitrary extra flags such as --print or --mode.
-    assertSafeStatsCommand(options.command);
+    if (!options.sdkInstallation) assertSafeStatsCommand(options.command);
     resolved = resolveStatsScope(sourceOptions);
     metadata.scope.profile = resolved.source.profile;
   } catch {
     return { ...metadata, status: "unavailable", reason: "scope_unavailable" };
   }
+  if (options.sdkInstallation) {
+    // Freeze the same resolved native directories for both the writer and reader.
+    // The SDK host does not run the standalone CLI's profile/dotenv bootstrap.
+    for (const key of Object.keys(env)) {
+      if (SCOPE_ENV_KEYS[process.platform === "win32" ? key.toUpperCase() : key]) delete env[key];
+    }
+    Object.assign(env, resolved.scope.env, {
+      OMP_PROFILE: resolved.source.profile,
+      PI_PROFILE: resolved.source.profile,
+      ELECTRON_RUN_AS_NODE: "1",
+    });
+  }
   let launch: ResolvedProviderLaunch;
   try {
-    launch = await options.resolveLaunch();
+    launch = options.sdkInstallation
+      ? {
+          command: process.execPath,
+          args: [
+            "--experimental-vm-modules",
+            options.sdkInstallation.workerEntry,
+            "__omp_worker_stats_activity",
+          ],
+          source: "default",
+        }
+      : await options.resolveLaunch();
   } catch {
     return { ...metadata, status: "error", reason: "index_refresh_failed" };
   }
-  try {
-    const command = { mode: "replace" as const, argv: [launch.command, ...launch.args] };
-    assertSafeStatsCommand(command);
-    let configuredArgs: readonly string[] = [];
-    if (options.command?.mode === "replace") {
-      configuredArgs = options.command.argv.slice(1);
-    } else if (options.command?.mode === "append") {
-      configuredArgs = options.command.args ?? [];
+  if (!options.sdkInstallation) {
+    try {
+      resolved = resolveLaunchedStatsScope(sourceOptions, launch, resolved);
+    } catch {
+      return { ...metadata, status: "unavailable", reason: "scope_unavailable" };
     }
-    if (
-      (options.command?.mode === "replace" && launch.command !== options.command.argv[0]) ||
-      launch.args.length !== configuredArgs.length ||
-      launch.args.some((arg, index) => arg !== configuredArgs[index])
-    ) {
-      throw new Error("Unknown OMP statistics launch invocation");
-    }
-    const launched = resolveStatsScope({ ...sourceOptions, command });
-    if (
-      launched.source.path !== resolved.source.path ||
-      launched.source.profile !== resolved.source.profile
-    ) {
-      throw new Error("Unknown OMP statistics launch scope");
-    }
-    resolved = launched;
-  } catch {
-    return { ...metadata, status: "unavailable", reason: "scope_unavailable" };
   }
   // Hash the full invocation/env rather than retaining credentials in map keys.
   // Include native dotenv scope too: matching DB paths alone do not imply that
@@ -542,9 +610,13 @@ export async function refreshAndReadOmpStats(
     .digest("hex");
   let pending = pendingRefreshes.get(key);
   if (!pending) {
-    pending = runNativeStatsRefresh(launch, env, resolved.scope.cwd, () => {
-      pendingRefreshes.delete(key);
-    });
+    pending = runNativeStatsRefresh(
+      launch,
+      env,
+      resolved.scope.cwd,
+      () => pendingRefreshes.delete(key),
+      Boolean(options.sdkInstallation),
+    );
     pendingRefreshes.set(key, pending);
   }
   const reason = await pending;
