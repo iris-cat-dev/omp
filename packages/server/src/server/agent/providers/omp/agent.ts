@@ -1312,6 +1312,75 @@ const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z\d+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?
 const PROXY_AUTHORIZATION_PATTERN =
   /\b(Proxy-Authorization\s*[:=]\s*)(?:Basic|Bearer)\s+[^\s,;)]+/giu;
 
+// Mirror the SDK's media-budget evidence locally for external CLI runtimes.
+const OMP_IMAGE_BUDGET_EVIDENCE_PATTERN =
+  /\btoo many (?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\s*(?:count|limit)\b|\blimit of \d+\s*(?:images?|frames?|pixels?)\b|\bmaximum(?: of \d+)? (?:images?|frames?|pixels?)\b|\b(?:number|count) of (?:images?|frames?|pixels?)\b|\bat most \d+\s*(?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\b[^\n.;]{0,20}\bexceeds?\b[^\n.;]{0,20}\bmaximum\b|\b(?:images?|frames?) (?:is |are )?too (?:large|big)\b|\b(?:images?|frames?) (?:size|dimensions?|resolution)\b[^\n.;]{0,80}\b(?:exceeds?|maximum|limit|too large|too big|must not exceed|must be (?:less|smaller) than)\b/iu;
+
+function isOmpImageInputValidationError(
+  message: Extract<OmpAgentMessage, { role: "assistant" }>,
+): boolean {
+  const error = message.errorMessage ?? "";
+  const embeddedStatus =
+    /\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+status(?:\s+code)?)?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /^\s*(?:Error\s*:?\s*)?(\d{3})\b/iu.exec(error)?.[1] ??
+    /\berror\s+code\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /["']?status(?:Code|_code|\s+code)?["']?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1];
+  const status = message.errorStatus ?? (embeddedStatus ? Number(embeddedStatus) : undefined);
+  if (status !== undefined && status !== 400 && status !== 413 && status !== 422) return false;
+  if (
+    /\b(?:unauthorized|forbidden|authentication|auth[_ ]?unavailable|no auth available|(?:invalid|no)[_ ]?api[_ ]?key)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:quota|usage[_ -]?limit|insufficient[_ -]?balance|billing|credits?|spending[_ -]?limit)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:service[_ -]?unavailable|server[_ -]?error|internal[_ -]?error|overloaded|temporar(?:y|ily)[_ -]?unavailable|rate[_ -]?limit|too many requests)\b/iu.test(
+      error,
+    )
+  ) {
+    return false;
+  }
+  if (/\b(?:image[_ -]?generation|generat(?:e|ed|ing)\s+(?:an?\s+)?image)\b/iu.test(error)) {
+    return false;
+  }
+  if (
+    /\b(?:invalid|unsupported)\s+image\s+model\b/iu.test(error) ||
+    /\b(?:model|endpoint)\b[^\n.;]{0,80}\b(?:does not support|doesn't support|cannot accept|can't accept)\b[^\n.;]{0,40}\b(?:images?|vision)\b/iu.test(
+      error,
+    ) ||
+    /\b(?:unsupported\s+image(?:[_ -]input)?|image[_ -]input\s+(?:is\s+)?(?:unsupported|not supported))\b[^\n.;]{0,60}\b(?:model|endpoint)\b/iu.test(
+      error,
+    )
+  ) {
+    return false;
+  }
+  const isImageBudgetRejection =
+    OMP_IMAGE_BUDGET_EVIDENCE_PATTERN.test(error) &&
+    /\b(?:too many|too large|too big|exceeds?|maximum|limit|at most|must not exceed|must be (?:less|smaller) than)\b/iu.test(
+      error,
+    );
+  return (
+    isImageBudgetRejection ||
+    /\b(?:uploaded|provided|input)\b[^\n.]{0,100}\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image\b/iu.test(
+      error,
+    ) ||
+    /\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image(?:[_ -](?:input|data|format|encoding))?\b/iu.test(
+      error,
+    ) ||
+    /\bimage[_ -](?:input|data|format|encoding)\b[^\n.]{0,80}\b(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
+      error,
+    ) ||
+    /\bimage(?:[_ -](?:input|data|format|encoding))?\s+(?:is\s+)?(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
+      error,
+    ) ||
+    /\bimage[_ -]format\s+(?:is\s+)?not\s+supported\b/iu.test(error) ||
+    /\b(?:cannot|could not|unable to|failed to)\s+(?:decode|parse)\s+(?:the\s+)?image\b/iu.test(
+      error,
+    ) ||
+    /\bimage\b[^\n.]{0,80}\b(?:cannot|could not|failed to)\s+be\s+decoded\b/iu.test(error)
+  );
+}
+
 function formatOmpErrorMessage(message: Extract<OmpAgentMessage, { role: "assistant" }>): string {
   const rawError = message.errorMessage?.trim() ?? "";
   const reportedStatus = message.errorStatus;
@@ -4561,6 +4630,7 @@ export class OmpAgentSession implements AgentSession {
             terminalAssistant.provider === LOCAL_MODEL_PROVIDER &&
             terminalAssistant.errorStatus === LOCAL_MODEL_UNAVAILABLE_STATUS
           ) &&
+          !isOmpImageInputValidationError(terminalAssistant) &&
           this.scheduleModelErrorContinuation(turnId, terminalMessages)
         ) {
           return;

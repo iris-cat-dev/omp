@@ -41,6 +41,12 @@ Native generation/publication previews are copied into private content-addressed
 
 To annotate a screenshot or revise text before sending it back to AI, choose **+ → Screenshot annotation**. See [Screenshot annotation and text feedback](tools-and-plugins.md#screenshot-annotation-and-text-feedback) for the editor, AI tool, capture permissions, and submission behavior.
 
+### Continuing after an image error
+
+In SDK-backed conversations, an invalid, unsupported, undecodable, or over-limit image input ends the failed turn once instead of repeatedly resending it. The warning explains that images from the rejected request's history were removed while text and tool results were kept. Continue in the same conversation, or upload valid images within the provider's format, size, and count limits.
+
+The cleanup is persisted. Previously stuck conversations also recover on their next message after reopening. Images attached after the failed turn and later uploads remain usable. Enhanced workflow stops automatic continuation for these image-input validation errors; authentication, quota, and service failures keep their existing handling.
+
 ### Copy and save
 
 On Desktop, right-click generated/displayed images, including fullscreen previews, for **Copy Image** or **Save Image As…**. Copy writes image pixels to the system clipboard; save preserves the original file, including `data:`/`blob:` previews. Native menus follow interface language.

@@ -1611,6 +1611,84 @@ describe("OMP agent client and session", () => {
       expect(omp.runtime().followUpRequests).toEqual([]);
     });
 
+    test.each([
+      [
+        "the reported unsupported image request",
+        400,
+        "400 invalid_request_error: uploaded unsupported image at input[510].image[0]",
+      ],
+      [
+        "an HTTP status embedded in the provider error",
+        undefined,
+        "HTTP 400 invalid_request_error: input[510].image[0]: unsupported image",
+      ],
+      [
+        "an embedded JSON validation status",
+        undefined,
+        '{"status_code":422,"message":"Invalid image data"}',
+      ],
+      ["invalid image data", 422, "Invalid image data in the request"],
+      ["a rejected image input", 400, "Image input rejected: invalid image format"],
+      ["an unsupported format without a status", undefined, "Unsupported image format"],
+      ["an image decoding failure", 400, "Unable to decode image"],
+      ["corrupted image input", 400, "Corrupted image data"],
+      ["a postposed image decoding failure", 400, "Image data cannot be decoded"],
+      ["an oversized image", 413, "Image size exceeds the maximum allowed size"],
+      ["too many image inputs", 400, "Too many images in the request"],
+    ] as const)(
+      "finishes %s and accepts the next user turn without continuation",
+      async (_label, errorStatus, errorMessage) => {
+        const omp = await startFailedTurn({
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          ...(errorStatus === undefined ? {} : { errorStatus }),
+          errorMessage,
+        });
+
+        expect(omp.failedTurnCount()).toBe(1);
+        expect(omp.completedTurnCount()).toBe(0);
+        expect(omp.streamEvents()).toContainEqual(
+          expect.objectContaining({
+            type: "turn_failed",
+            error: expect.stringContaining(errorMessage),
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(omp.runtime().followUpRequests).toEqual([]);
+        expect(omp.failedTurnCount()).toBe(1);
+
+        await expect(omp.requireStartTurn("continue without the image")).resolves.toEqual(
+          expect.any(String),
+        );
+        const runtime = omp.runtime();
+        runtime.beginTurn();
+        runtime.acceptPrompt("continue without the image", "user-2");
+        runtime.streamAssistantText("recovered", "recovery");
+        runtime.finishTurn({
+          role: "assistant",
+          content: [{ type: "text", text: "recovered" }],
+          stopReason: "stop",
+        });
+        await waitForImmediate();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(omp.runtime().followUpRequests).toEqual([]);
+        expect(omp.failedTurnCount()).toBe(1);
+        expect(omp.completedTurnCount()).toBe(1);
+        expect(
+          omp
+            .timeline()
+            .filter((item) => item.type === "user_message")
+            .map((item) => item.text),
+        ).toEqual(["finish the task", "continue without the image"]);
+        expect(omp.timeline()).toContainEqual({
+          type: "assistant_message",
+          text: "recovered",
+          messageId: "recovery",
+        });
+      },
+    );
+
     test.each([400, 401, 403, 429, 499, 500, 503, 599])(
       "keeps HTTP %i active until a continuation recovers after five seconds",
       async (errorStatus) => {
@@ -1661,6 +1739,44 @@ describe("OMP agent client and session", () => {
         undefined,
         "Retry budget exhausted after 10 retries: Error Code server_error: invalid param",
       ],
+      ["an image service outage", 503, "Image input rejected: service unavailable"],
+      ["an image rate limit", 429, "Image input rejected: rate limit exceeded"],
+      ["an embedded image service outage", undefined, "HTTP 503: Image input rejected"],
+      ["an image generation rejection", 400, "Image generation rejected"],
+      ["a non-image input rejection", 400, "invalid_request_error: unsupported text input"],
+      [
+        "a status-code image outage",
+        undefined,
+        "Request failed with status code 503: Image input rejected",
+      ],
+      ["an error-prefixed image outage", undefined, "Error: 503 unsupported image input"],
+      ["an error-code image outage", undefined, "Error Code: 503 unsupported image input"],
+      [
+        "a non-image invalid parameter mentioning an image",
+        400,
+        "invalid text parameter with image attachment",
+      ],
+      ["an image model mismatch", 400, "Unsupported image model"],
+      ["an image-incapable model", 400, "Model does not support images: invalid image input"],
+      ["an unsupported image endpoint", 400, "Image input is unsupported by this endpoint"],
+      [
+        "an image service rejection without a status",
+        undefined,
+        "Invalid image input: service unavailable",
+      ],
+      [
+        "an internal image service error without a status",
+        undefined,
+        "Invalid image input: internal error",
+      ],
+      ["a rejected image without validation evidence", undefined, "Image input rejected"],
+      [
+        "an image authentication failure without a status",
+        undefined,
+        "Invalid image input: authentication failed",
+      ],
+      ["an image quota failure without a status", undefined, "Invalid image input: quota exceeded"],
+      ["a text payload budget rejection", 413, "Request payload too large"],
       ["a non-HTTP status", 600, "upstream failure"],
       ["a missing error message", undefined, undefined],
     ])("continues after %s", async (_label, errorStatus, errorMessage) => {
