@@ -170,12 +170,13 @@ export class Gateway {
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const selected=state.presetSelections[key]??this.config.defaultPreset;const preset=this.config.presets.find(p=>p.name===selected);if(!preset)throw new Error(`所选 preset 不存在：${selected}`);
     if(preset.config.provider.split('/')[0]!=='omp')throw new Error('QQ 强制沙箱仅支持 OMP provider；请保留模型偏好并选择 OMP preset');
-    const workspace=await this.ctx.paseo.workspaces.open(cwd);
+    const title=`QQ ${scope} ${openid.slice(-8)}`;
+    const workspace=await this.ctx.paseo.workspaces.create({source:{kind:'directory',path:cwd},title});
     const prompt=[preset.qq.prompt,scope==='group'?this.config.groupPrompt:this.config.directPrompt,`QQ ${scope} 对话。只在当前获准目标回复。未知 QQ 斜杠命令不能操作宿主插件。`].filter(Boolean).join('\n\n');
     const model=state.modelSelections[key];
     const config={...preset.config,provider:model?`${preset.config.provider.split('/')[0]}/${model}`:preset.config.provider,cwd,modeId:'ask',sandbox:{root:cwd},systemPrompt:[preset.config.systemPrompt,prompt].filter(Boolean).join('\n\n')};
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
-    const agent=await workspace.agents.create({config,title:`QQ ${scope} ${openid.slice(-8)}`,labels:{'qqbot.installation':this.ctx.installation.id,'qqbot.appId':this.config.appId,'qqbot.scope':scope,'qqbot.peer':openid}});
+    const agent=await workspace.agents.create({config,title,labels:{'qqbot.installation':this.ctx.installation.id,'qqbot.appId':this.config.appId,'qqbot.scope':scope,'qqbot.peer':openid}});
     const peer:Peer={appId:this.config.appId,scope,openid,hostId:this.ctx.paseo.hostId,workspaceId:workspace.id,agentId:agent.id,cwd,sandbox:{root:cwd},preset:selected,template:preset,protocolPrompt:prompt,lastDeliveredSequence:0};
     try {
       await this.store.mutate(s=>{if(this.signal.aborted||s.config.appId!==this.config.appId||s.config.sandboxPath!==this.config.sandboxPath)throw new Error('QQ peer 创建结果已失效');s.peers[key]=peer;});

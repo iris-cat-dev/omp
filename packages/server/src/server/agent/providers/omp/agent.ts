@@ -2168,7 +2168,8 @@ export class OmpAgentSession implements AgentSession {
         ownerId: this.backgroundOwnerId,
         legacyOwnerIds: this.legacyBackgroundOwnerIds,
       }) ?? [],
-      this.runtimeSession.listBackgroundJobs?.() ?? [],
+      // Sandboxed SDK sessions cannot load the jobs extension; retained owned daemons remain visible.
+      this.config.sandbox ? [] : (this.runtimeSession.listBackgroundJobs?.() ?? []),
     ]);
     return [...daemons, ...jobs];
   }
@@ -2228,7 +2229,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async stopAllBackgroundProcesses(): Promise<number> {
-    const jobsStopped = (await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0;
+    const jobsStopped = this.config.sandbox ? 0 : ((await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0);
     const daemons = (await this.listBackgroundProcesses()).filter(
       (process) =>
         process.source === "omp-daemon" &&

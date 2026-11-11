@@ -21,7 +21,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 interface AgentDirectoryFixture {
-  entries: Array<{ agent: { id: string; sandbox: undefined } }>;
+  entries: Array<{ agent: { id: string; sandbox?: { root: string } } }>;
   pageInfo: { nextCursor: string | null; prevCursor: null; hasMore: boolean };
 }
 async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false) {
@@ -38,30 +38,64 @@ async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = 
   const unsubscribe = vi.fn();
   const fresh = { id: 'new-agent', stop: vi.fn(async () => {}), observe: vi.fn(async () => ({ snapshot: { sandbox: { root }, pendingPermissions: [], activeTurn: null }, timeline: { window: { maxSeq: 0 }, entries: [] }, unsubscribe } as unknown as PaseoAgentObservation)) };
   const create = vi.fn(async (_options: PaseoAgentCreateOptions) => fresh as unknown as PaseoAgentHandle);
-  const open = vi.fn(async (_path: string) => ({ id: 'workspace', agents: { create } }));
+  const occupiedWorkspaces = new Set<string>();
+  let workspaceSequence = 0;
+  const workspace = (id: string) => ({ id, agents: { create: async (options: PaseoAgentCreateOptions) => {
+    if (occupiedWorkspaces.has(id)) throw new Error('Workspace already has an unarchived root agent');
+    const agent = await create(options);
+    occupiedWorkspaces.add(id);
+    return agent;
+  } } });
+  const open = vi.fn(async (_path: string) => workspace('directory-workspace'));
+  const createWorkspace = vi.fn(async () => workspace(`workspace-${++workspaceSequence}`));
   const native = { invoke: vi.fn(async (_operation: string, input: unknown):Promise<unknown> => { if(!input||typeof input!=='object'||!('action' in input))throw new Error('Missing native action');if(input.action==='open')return{handle:'pinned-handle'};if(input.action==='close')return{ok:true};if(input.action==='read')return{contentBase64:Buffer.from('inside-media').toString('base64')};throw new Error(`Unexpected native action: ${String(input.action)}`); }) };
   const scope = createActivationScope(1);
   cleanups.push(() => scope.dispose());
   const installation: PluginInstallation = { id: 'installation', packageId: packageMetadata.name, owner: 'daemon', version: packageMetadata.version, generation: scope.generation, enabled: true, declaredCapabilities: packageMetadata.ompDesktop.capabilities, grantedCapabilities: packageMetadata.ompDesktop.capabilities };
-  const paseo = createPluginPaseoApi({ hostId: 'host', agents: { list, ref: vi.fn(() => old) }, workspaces: { open } } as unknown as PaseoApi, installation, scope, { mode: 'active' });
+  const paseo = createPluginPaseoApi({ hostId: 'host', agents: { list, ref: vi.fn(() => old) }, workspaces: { open, create: createWorkspace } } as unknown as PaseoApi, installation, scope, { mode: 'active' });
   const ctx = { signal: scope.signal, installation, native, paseo } as unknown as PluginServiceContext;
   const gateway = new Gateway(ctx, store, new Pairing(store), values.config, 'fixture-secret', { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, vi.fn());
   cleanups.push(() => gateway.dispose());
   const internal = gateway as unknown as { getOrCreate(scope: 'c2c' | 'group', openid: string, reset?: boolean): Promise<{ peer: Peer; agent: PaseoAgentHandle }>; routes: Map<string, unknown>; event(route: unknown, stream: PaseoAgentStream): Promise<void>; deliverFile(route:unknown,path:string,type:string,target:unknown):Promise<void>; sender: { sendMarkdown: (...args: unknown[]) => Promise<unknown> }; bot: { start():Promise<void>;sendImage:(...args:unknown[])=>Promise<unknown>;apiClient: { request: (...args: unknown[]) => Promise<unknown> } }; deliveryRoute: { run<T>(route: unknown, callback: () => T): T } };
   const saved = (sandbox?: { root: string }): Peer => ({ appId: 'saved-app', scope: 'c2c', openid: 'peer', hostId: 'host', workspaceId: 'old-workspace', agentId: old.id, cwd: sandbox?.root ?? root, sandbox, preset: 'default', template: values.config.presets[0]!, protocolPrompt: 'Old QQ context', lastDeliveredSequence: 4 });
-  return { root, key, store, old, fresh, create, open, internal, gateway, unsubscribe, saved, native, list };
+  return { root, key, store, old, fresh, create, internal, gateway, unsubscribe, saved, native, list, occupiedWorkspaces };
 }
 
 it('creates mandatory sandbox with safe approval while preserving saved model and prompts', async () => {
   const f = await fixture();
   const route = await f.internal.getOrCreate('c2c', 'peer');
-  expect(f.open).toHaveBeenCalledWith(f.root);
   expect(f.create.mock.calls[0]?.[0].config).toMatchObject({ cwd: f.root, sandbox: { root: f.root }, modeId: 'ask', provider: 'omp/provider/model', thinkingOptionId: 'high' });
   expect(f.create.mock.calls[0]?.[0].config?.systemPrompt).toContain('Keep prompt');
   expect(f.create.mock.calls[0]?.[0].config?.systemPrompt).toContain('QQ context');
   expect(f.create.mock.calls[0]?.[0].config?.systemPrompt).not.toContain(f.root);
   expect(route.peer.sandbox).toEqual({ root: f.root });
   await expect(f.gateway.sendFile(route.peer.agentId, '../outside', 'file')).rejects.toThrow('qqbot_send_file');
+});
+
+it('keeps private and group peers independent in one sandbox, including group reset', async () => {
+  const f = await fixture();
+  const snapshots: AgentDirectoryFixture['entries'] = [];
+  f.create.mockImplementation(async () => {
+    const agent = { ...f.fresh, id: `peer-agent-${snapshots.length + 1}`, stop: vi.fn(async () => {}) };
+    snapshots.push({ agent: { id: agent.id, sandbox: { root: f.root } } });
+    return agent as unknown as PaseoAgentHandle;
+  });
+  f.list.mockImplementation(async () => ({ entries: snapshots, pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } }));
+  const direct = await f.internal.getOrCreate('c2c', 'peer');
+  const group = await f.internal.getOrCreate('group', 'peer');
+  expect(group.peer.agentId).not.toBe(direct.peer.agentId);
+  expect(group.peer.workspaceId).not.toBe(direct.peer.workspaceId);
+  expect(group.peer.sandbox).toEqual(direct.peer.sandbox);
+  expect((await f.internal.getOrCreate('group', 'peer')).peer.agentId).toBe(group.peer.agentId);
+  const reset = await f.internal.getOrCreate('group', 'peer', true);
+  expect(reset.peer.workspaceId).not.toBe(group.peer.workspaceId);
+  expect(reset.peer.workspaceId).not.toBe(direct.peer.workspaceId);
+  expect(reset.peer.agentId).not.toBe(group.peer.agentId);
+  expect(f.occupiedWorkspaces.has(group.peer.workspaceId)).toBe(true);
+  const saved = (await f.store.read()).values.peers;
+  expect(saved[f.key]?.agentId).toBe(direct.peer.agentId);
+  expect(saved[peerKey('saved-app', 'group', 'peer')]?.agentId).toBe(reset.peer.agentId);
+  expect(saved[peerKey('saved-app', 'group', 'peer')]?.sandbox).toEqual({ root: f.root });
 });
 
 it.each(['legacy', 'moved-root', 'unsupported-agent'] as const)('stops %s peer before replacement without deleting its history', async kind => {
@@ -207,7 +241,6 @@ it('blank path creates a dedicated private directory in an isolated home', async
   f.fresh.observe.mockResolvedValue({snapshot:{sandbox:{root:expected},pendingPermissions:[],activeTurn:null},timeline:{window:{maxSeq:0},entries:[]},unsubscribe:f.unsubscribe} as unknown as PaseoAgentObservation);
   const route=await f.internal.getOrCreate('c2c','peer');
   expect(route.peer.sandbox?.root).toBe(expected);
-  expect(f.open).toHaveBeenCalledWith(expected);
   expect((await stat(expected)).mode&0o077).toBe(0);
   expect(f.native.invoke).toHaveBeenCalledWith('files.sandbox',{action:'open',root:expected,maxBytes:200*1024*1024});
 });
