@@ -32,7 +32,6 @@ import { CloseChoiceDialogHost } from "@/components/close-choice-dialog-host";
 import { ExternalFileDropPreview } from "@/components/file-drop/external-file-drop-preview";
 import { VisualFeedbackHost } from "@/visual-feedback/host";
 import { PairingLinkListener } from "@/components/pairing-link-listener";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
@@ -85,13 +84,15 @@ import { getDesktopHost } from "@/desktop/host";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { DesktopUpdateProvider } from "@/desktop/updates/desktop-update-provider";
-import { DesktopPetActivitySync } from "@/desktop/pets/activity-sync";
+import { PluginRuntime } from "@/plugins/runtime";
+import { PluginOverlays } from "@/plugins/overlays";
+import { PluginCommandCenterActions } from "@/plugins/commands";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
-import { WallpaperBackground } from "@/wallpaper/WallpaperBackground";
+import { PluginBackground } from "@/plugins/background";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -480,7 +481,7 @@ function DesktopStartupReadySignal() {
   });
 
   useEffect(() => {
-    const notify = getDesktopHost()?.pet?.startupReady;
+    const notify = getDesktopHost()?.plugins?.startupReady;
     if (!ready || !notify || notified.current) return;
     const signalStartupReady = notify;
     async function notifyStartupReady(): Promise<void> {
@@ -488,7 +489,7 @@ function DesktopStartupReadySignal() {
       try {
         await signalStartupReady();
       } catch (error) {
-        console.error("[startup] Pet readiness failed", error);
+        console.error("[startup] Plugin readiness failed", error);
       }
     }
     let secondFrame = 0;
@@ -661,6 +662,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <DownloadToast />
       <CommandCenterRootActions />
       <CommandCenterWorkspaceActions />
+      <PluginCommandCenterActions />
       <WorkspacePinShortcutHandler />
       <CommandCenter />
       <AddProjectFlowHost />
@@ -790,7 +792,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <DesktopWindowControlsSync />
       <HostSessionManager />
       <FaviconStatusSync />
-      <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+      {children}
     </AppearanceProvider>
   );
 }
@@ -974,6 +976,7 @@ function RootStack() {
         <Stack.Screen name="sessions" />
         <Stack.Screen name="schedules" />
         <Stack.Screen name="file-preview" />
+        <Stack.Screen name="plugin/[pluginId]/[contributionKind]/[contributionId]" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
@@ -1013,12 +1016,12 @@ function AppShell() {
 function RuntimeProviders({ children }: { children: ReactNode }) {
   return (
     <HostRuntimeBootstrapProvider>
+      <PluginRuntime />
       <PushNotificationRouter />
       <DesktopStartupReadySignal />
-      <DesktopPetActivitySync />
       <SidebarCalloutProvider>
         <DesktopUpdateProvider>
-          <ProvidersWrapper>{children}</ProvidersWrapper>
+          <ProvidersWrapper><PluginOverlays />{children}</ProvidersWrapper>
         </DesktopUpdateProvider>
       </SidebarCalloutProvider>
     </HostRuntimeBootstrapProvider>
@@ -1061,7 +1064,7 @@ function RootAppTree() {
       onTouchEnd={recordUserActivity}
       onTouchCancel={recordUserActivity}
     >
-      <WallpaperBackground />
+      <PluginBackground />
       <View style={[layoutStyles.surfaceFill, layoutStyles.wallpaperContent]}>
         <RootProviders>
           <RuntimeProviders>

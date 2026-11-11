@@ -1,0 +1,108 @@
+/**
+ * 配对码认领协议 —— Web 与 QQ 两端共享的契约。
+ *
+ * 背景：官方 QQ 机器人 API 只给 openid（AppID 维度、匿名、群/私两套），用户看不到也拿不到。
+ * Web 生成限时配对码，允许多人或多群连续认领同一用途的白名单：
+ *   Web 生成码 → 用户在 QQ 直接发送该码 → 机器人把该消息的 openid 记为目标身份。
+ *
+ * 本模块只含类型 + 常量 + 纯函数（码生成/校验格式），零 node 依赖，
+ * 客户端 bundle 会内联。运行期状态（谁生成了哪个码、TTL、是否已用）由配对服务持有。
+ */
+
+
+/** 认领目标用途：决定把 openid 记到哪一类名单。 */
+export type PairPurpose = 'owner' | 'allow-c2c' | 'allow-group';
+
+export const PAIR_PURPOSE_LABEL: Record<PairPurpose, string> = {
+  owner: '斜杠命令白名单',
+  'allow-c2c': '私聊白名单',
+  'allow-group': '群白名单',
+};
+
+/** 一个进行中的配对码（Web 侧展示 + 轮询）。 */
+export interface PairChallenge {
+  readonly code: string;
+  readonly purpose: PairPurpose;
+  /** 过期时间戳（毫秒）。 */
+  readonly expiresAt: number;
+  readonly createdAt: number;
+  /** 只记录服务端已确认的结果；同一身份在一个批次中只出现一次。 */
+  readonly claims: PairClaimResult[];
+}
+
+/** 已认领的成员（用于页面展示和导出；openid 保留完整值）。 */
+export interface ClaimedMember {
+  readonly openid: string;
+  readonly nickname: string;
+  /** 'group' | 'c2c' */
+  readonly scene: 'group' | 'c2c';
+  /** 目标会话名（群名/私聊对象），便于辨认。 */
+  readonly sceneName: string;
+  readonly claimedAt: number;
+}
+
+export interface PairClaimResult extends ClaimedMember {
+  readonly state: 'added' | 'existing' | 'revoked';
+}
+
+export interface ManualPairResult {
+  readonly ok: boolean;
+  readonly message: string;
+  readonly added: number;
+  readonly results: PairClaimResult[];
+  readonly errors: Array<{ input: string; message: string }>;
+}
+
+/** Web 端读取的完整配对状态。 */
+export interface PairStatusWire {
+  readonly challenges: PairChallenge[];
+  readonly owners: ClaimedMember[];
+  readonly allowC2c: ClaimedMember[];
+  readonly allowGroup: ClaimedMember[];
+}
+
+
+/** 归一化用户输入的码（大小写、空格、连字符不影响）。 */
+export function normalizePairCode(raw: string): string {
+  return raw.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+}
+
+/** openid 尾号展示（保留后 4 位，其余打码）。 */
+export function openidTail(openid: string): string {
+  const tail = openid.slice(-4);
+  return `…${tail}`;
+}
+
+type WhitelistEntry = { input: string; openid: string; nickname: string } | ManualPairResult['errors'][number];
+
+export function formatWhitelistEntry(openid: string, nickname: string): string {
+  const name = nickname.trim();
+  if (!name) return openid;
+  return openid + ':' + (/[,，;；"\r\n]/.test(name) ? JSON.stringify(name) : name);
+}
+
+export function parseWhitelistEntries(text: string): WhitelistEntry[] {
+  const entry = (input: string, openid: string, nickname: string): WhitelistEntry => {
+    const id = openid.trim();
+    return !id || id.length > 1024 || /\s|\0/.test(id)
+      ? { input, message: 'OpenID 无效' }
+      : { input, openid: id, nickname: nickname.trim() };
+  };
+  return text.split(/\r?\n/).flatMap((line): WhitelistEntry[] => {
+    const input = line.trim();
+    if (!input) return [];
+    // A quoted nickname occupies one line so its punctuation cannot become another OpenID.
+    if (/[:：]\s*"/.test(input)) {
+      const quoted = /^([^:：,，;；]+)[:：]\s*("(?:[^"\\]|\\.)*")$/.exec(input);
+      if (quoted?.[1] && quoted[2]) {
+        try { return [entry(input, quoted[1], JSON.parse(quoted[2]) as string)]; }
+        catch { /* malformed quoted nickname; never fall back to splitting it */ }
+      }
+      return [{ input, message: '带引号的昵称格式无效，请每行填写一个 OpenID。' }];
+    }
+    return input.split(/[,，;；]+/).map(part => part.trim()).filter(Boolean).map(part => {
+      const colon = part.search(/[:：]/);
+      return colon < 0 ? entry(part, part, '') : entry(part, part.slice(0, colon), part.slice(colon + 1));
+    });
+  });
+}

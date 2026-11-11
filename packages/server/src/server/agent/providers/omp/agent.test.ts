@@ -2667,6 +2667,34 @@ describe("OMP agent client and session", () => {
     });
     expect(omp.completedTurnCount()).toBe(1);
   });
+
+  test("waits for the real local submission annotation before completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const { promise, resolve: release } = Promise.withResolvers<void>();
+    omp.runtime().annotationBarrier = promise;
+    const attachment = { type: "text" as const, mimeType: "text/plain", title: "External snapshot", text: "Full snapshot\nSurvives source removal", externalResource: { provider: "fixture/source", providerLabel: "Fixture", resourceType: "document", id: "42", identifier: "DOC-42", title: "External snapshot", url: "https://example.com/42" } };
+    let completed = false;
+    const completion = omp.runPromptWithoutTurn([{ type: "text", text: "/local save" }, attachment]).then((result) => { completed = true; return result; });
+    await vi.waitFor(() => expect(omp.runtime().annotationCalls).toBe(1));
+    expect(completed).toBe(false);
+    expect(omp.completedTurnCount()).toBe(0);
+    release();
+    await completion;
+    expect(omp.runtime().sessionAnnotations).toEqual([{ customType: "desktop-local-submission", data: { type: "user_message", text: "/local save", rewindStatus: "unavailable", attachments: [attachment] } }]);
+    expect(omp.timeline()).toContainEqual({ type: "user_message", text: "/local save", rewindStatus: "unavailable", attachments: [attachment] });
+    await omp.close();
+  });
+
+  test("reports local submission persistence failure without a successful completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().annotationError = new Error("Local annotation write failed");
+    await expect(omp.runPromptWithoutTurn("/local save")).rejects.toThrow("Local annotation write failed");
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.runtime().sessionAnnotations).toEqual([]);
+    await omp.close();
+  });
   test("keeps workflow directives out of local-only timeline messages", async () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });

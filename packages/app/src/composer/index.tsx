@@ -168,6 +168,7 @@ import {
   VisualFeedbackAttachmentPill,
   VisualFeedbackAttachmentPreview,
 } from "@/visual-feedback/attachment-card";
+import { ExternalTextAttachmentPill, usePluginAttachmentPicker } from "@/plugins/attachments";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -400,6 +401,7 @@ interface RenderComposerAttachmentPillArgs {
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
   const { attachment, index, disabled, onOpen, onRemove, labels } = args;
+  if (attachment.kind === "external_text") return <ExternalTextAttachmentPill key={attachment.id} attachment={attachment} index={index} disabled={disabled} onRemove={onRemove} />;
   if (attachment.kind === "visual_feedback") {
     return (
       <VisualFeedbackAttachmentPill
@@ -2192,6 +2194,7 @@ function ComposerContentImpl({
     });
   }, [addFiles, agentId, focusInput, serverId, t]);
 
+  const pluginAttachments = usePluginAttachmentPicker({ hostId: serverId, disabled: isComposerLocked || isProcessing || isSubmitLoading || !isConnected, onAttach: (attachment) => setSelectedAttachments([...attachments, attachment]) });
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
     const items: AttachmentMenuItem[] = [
       {
@@ -2270,7 +2273,7 @@ function ComposerContentImpl({
         },
       });
     }
-    return items;
+    return [...items, ...pluginAttachments.menuItems];
   }, [
     canPickDirectory,
     isComposerLocked,
@@ -2286,6 +2289,7 @@ function ComposerContentImpl({
     handlePickImage,
     runOmpToolCommand,
     supportsOmpToolCommands,
+    pluginAttachments.menuItems,
     t,
   ]);
 
@@ -2477,6 +2481,7 @@ function ComposerContentImpl({
 
   return (
     <>
+      {pluginAttachments.picker}
       <ComposerKeyboardRegistration
         handlerId={keyboardHandlerIdRef.current}
         messageInputRef={messageInputRef}

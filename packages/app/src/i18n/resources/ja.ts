@@ -7,6 +7,8 @@ import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ja: TranslationResources = {
+  plugins: en.plugins,
+  nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ja,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ja,
@@ -2123,6 +2125,7 @@ export const ja: TranslationResources = {
       connections: "ホスト接続",
       chatBehavior: "チャットの動作",
       appearance: "外観",
+      plugins: "プラグイン",
       editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",

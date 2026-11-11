@@ -41,6 +41,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { useTranslation } from "react-i18next";
+import { PluginMenuIcon, usePluginTabMenuEntries } from "@/plugins/menus";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -366,6 +367,7 @@ function TabContextMenuItem({
   entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
 }) {
   const leading = useMemo(() => {
+    if (entry.pluginIcon) return <PluginMenuIcon name={entry.pluginIcon} />;
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -388,7 +390,7 @@ function TabContextMenuItem({
       default:
         return undefined;
     }
-  }, [entry.icon]);
+  }, [entry.icon, entry.pluginIcon]);
   const trailing = useMemo(
     () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
     [entry.hint],
@@ -1553,6 +1555,7 @@ function ResolvedDesktopTabChip({
     },
     [ownerWorkspaceId, revealExplorerFile, serverId, workspaceRoot],
   );
+  const pluginEntries = usePluginTabMenuEntries({ hostId: serverId, workspaceId: ownerWorkspaceId, target: item.tab.target });
   const presentation = item.presentation;
   const resolvedTab = useMemo(
     () =>
@@ -1574,6 +1577,7 @@ function ResolvedDesktopTabChip({
         onCloseTabsToRight,
         onCloseOtherTabs,
         labels,
+        pluginEntries,
       }),
     [
       serverId,
@@ -1593,6 +1597,7 @@ function ResolvedDesktopTabChip({
       canRevealFileInExplorer,
       onRenameTab,
       tabCount,
+      pluginEntries,
     ],
   );
 

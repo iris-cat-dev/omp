@@ -22,9 +22,12 @@ import type { PluginPageState } from "@/screens/settings/plugins-page-state";
 import { settingsStyles } from "@/styles/settings";
 import { getMarketplacePluginState } from "./marketplace-plugin-state";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { NativePluginDetails } from "./native-plugin-details";
 
 interface OmpPluginsPageProps {
   serverId: string;
+  view?: "installed" | "discover";
+  query?: string;
 }
 
 interface PluginRowProps {
@@ -33,6 +36,8 @@ interface PluginRowProps {
   disabled: boolean;
   onToggle: (plugin: OmpPluginInfo, enabled: boolean) => void;
   onRemove: (plugin: OmpPluginInfo) => void;
+  onConfigure: (plugin: OmpPluginInfo) => void;
+  onUpgrade: (plugin: OmpPluginInfo) => void;
   removeLabel: string;
   toggleLabel: string;
 }
@@ -282,12 +287,16 @@ function OmpPluginRow({
   disabled,
   onToggle,
   onRemove,
+  onConfigure,
+  onUpgrade,
   removeLabel,
   toggleLabel,
 }: PluginRowProps) {
   const { t } = useTranslation();
   const handleToggle = useCallback((value: boolean) => onToggle(plugin, value), [onToggle, plugin]);
   const handleRemove = useCallback(() => onRemove(plugin), [onRemove, plugin]);
+  const configure = useCallback(() => onConfigure(plugin), [onConfigure, plugin]);
+  const upgrade = useCallback(() => onUpgrade(plugin), [onUpgrade, plugin]);
   let shadowedLabel = "";
   if (plugin.shadowedBy === "project") {
     shadowedLabel = ` · ${t("settings.host.ompPlugins.scope.shadowed")}`;
@@ -313,6 +322,8 @@ function OmpPluginRow({
             : t("settings.host.ompPlugins.scope.user")}
           {shadowedLabel}
         </Text>
+        {plugin.source ? <Text style={styles.pluginPath}>{plugin.source}</Text> : null}
+        {plugin.linked ? <Text style={settingsStyles.rowHint}>{t("plugins.linked", { defaultValue: "链接来源，无法升级" })}</Text> : null}
         {plugin.path ? (
           <Text style={styles.pluginPath} numberOfLines={1}>
             {plugin.path}
@@ -320,6 +331,8 @@ function OmpPluginRow({
         ) : null}
       </View>
       <View style={styles.pluginActions}>
+        <Button size="sm" variant="outline" disabled={disabled} onPress={configure}>{t("plugins.configure", { defaultValue: "配置" })}</Button>
+        {!plugin.linked ? <Button size="sm" variant="outline" disabled={disabled} onPress={upgrade}>{t("settings.host.ompPlugins.actions.upgrade")}</Button> : null}
         <Switch
           accessibilityLabel={toggleLabel}
           value={plugin.enabled === true}
@@ -395,12 +408,8 @@ function FieldControlRow({
   );
 }
 
-/**
- * Management page for the OMP runtime's own plugin ecosystem (`omp plugin`).
- * Distinct from the daemon plugin runtime page (`plugins` slug): this talks to
- * the OMP CLI through the ompPlugins.* RPC family.
- */
-export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
+/** Native SDK management projected into the unified plugin manager. */
+export function OmpPluginsPage({ serverId, view = "installed", query = "" }: OmpPluginsPageProps) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
@@ -458,6 +467,8 @@ export function OmpPluginsPage({ serverId }: OmpPluginsPageProps) {
         key={`${identity.current.generation}:${cwd ?? ""}:${connected}`}
         serverId={serverId}
         cwd={cwd}
+        view={view}
+        query={query}
         onBusyChange={setBusy}
       />
     </View>
@@ -468,6 +479,8 @@ function OmpPluginsContextPage({
   serverId,
   cwd,
   onBusyChange,
+  view = "installed",
+  query = "",
 }: OmpPluginsPageProps & {
   cwd?: string;
   onBusyChange: (busy: boolean) => void;
@@ -493,6 +506,11 @@ function OmpPluginsContextPage({
   const [marketplaces, setMarketplaces] = useState<OmpPluginMarketplaceInfo[]>([]);
   const [expandedMarketplace, setExpandedMarketplace] = useState<string | null>(null);
   const [mktSource, setMktSource] = useState("");
+  const [details, setDetails] = useState<OmpPluginInfo | null>(null);
+  const filteredPlugins = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return search ? plugins.filter((plugin) => `${getPluginOperationId(plugin)} ${plugin.name} ${plugin.description ?? ""}`.toLowerCase().includes(search)) : plugins;
+  }, [plugins, query]);
 
   // Context/client changes remount this page. Old completions can never publish
   // into the new context; the guard also stops chained RPCs after unmount.
@@ -625,6 +643,15 @@ function OmpPluginsContextPage({
       }),
     [client, cwd, load, runOperation, t],
   );
+  const handleUpgrade = useCallback((plugin: OmpPluginInfo) => {
+    if (plugin.linked) return;
+    void runOperation(getPluginRowId(plugin), async () => {
+      if (!client) return;
+      const result = await client.upgradeOmpPlugin(getPluginOperationId(plugin), plugin.scope, cwd);
+      if (!result.ok) throw new Error(result.output || t("settings.host.ompPlugins.feedback.upgradeFailed", { id: plugin.name }));
+      if (active.current) { setNotice("applied"); await load(); }
+    });
+  }, [client, cwd, load, runOperation, t]);
 
   const handleInstall = useCallback(async () => {
     if (!client || !installSpec.trim()) return;
@@ -856,6 +883,7 @@ function OmpPluginsContextPage({
   } else {
     body = (
       <>
+        {view === "installed" ? <>
         <SettingsSection title={t("settings.host.ompPlugins.listTitle")}>
           <View style={settingsStyles.card} testID="omp-plugins-list-card">
             {pageState === "empty" ? (
@@ -865,7 +893,7 @@ function OmpPluginsContextPage({
                 </Text>
               </View>
             ) : (
-              plugins.map((plugin) => {
+              filteredPlugins.map((plugin) => {
                 const rowId = getPluginRowId(plugin);
                 return (
                   <OmpPluginRow
@@ -875,6 +903,8 @@ function OmpPluginsContextPage({
                     disabled={controlsDisabled || (plugin.scope === "project" && !cwd)}
                     onToggle={handleToggle}
                     onRemove={handleRemove}
+                    onConfigure={setDetails}
+                    onUpgrade={handleUpgrade}
                     removeLabel={t("settings.host.ompPlugins.actions.remove")}
                     toggleLabel={t("settings.host.ompPlugins.toggleLabel", { id: plugin.name })}
                   />
@@ -888,7 +918,14 @@ function OmpPluginsContextPage({
             ) : null}
           </View>
         </SettingsSection>
+        {details && client ? <SettingsSection title={getPluginOperationId(details)}>
+          <View style={settingsStyles.card}><View style={settingsStyles.row}>
+            <NativePluginDetails client={client} name={getPluginOperationId(details)} scope={details.scope} cwd={cwd} onChanged={() => { void load(); }} />
+          </View></View>
+        </SettingsSection> : null}
+        </> : null}
 
+        {view === "discover" ? <>
         <SettingsSection title={t("settings.host.ompPlugins.installTitle")}>
           <View style={settingsStyles.card} testID="omp-plugins-install-card">
             <View style={[settingsStyles.row, styles.installRow]}>
@@ -990,6 +1027,7 @@ function OmpPluginsContextPage({
             </View>
           </View>
         </SettingsSection>
+        </> : null}
 
         <SettingsSection title={t("settings.host.ompPlugins.doctorTitle")}>
           <View style={settingsStyles.card} testID="omp-plugins-doctor-card">
@@ -1000,6 +1038,7 @@ function OmpPluginsContextPage({
                 </Text>
                 <Text style={settingsStyles.rowHint}>
                   {t("settings.host.ompPlugins.doctorHint")}
+                  <Text style={settingsStyles.rowHint}>{t("plugins.doctorEffect", { defaultValue: "此操作会执行插件 factory，并可能持久化禁用失败插件。" })}</Text>
                 </Text>
               </View>
               <View style={styles.doctorButtons}>
@@ -1047,7 +1086,7 @@ function OmpPluginsContextPage({
 
   return (
     <View style={styles.container}>
-      <SettingsSection title={t("settings.host.ompPlugins.scope.title")}>
+      {view === "discover" ? <SettingsSection title={t("settings.host.ompPlugins.scope.title")}>
         <View style={settingsStyles.card}>
           <View style={[settingsStyles.row, styles.installRow]}>
             <View style={styles.pluginActions}>
@@ -1076,7 +1115,7 @@ function OmpPluginsContextPage({
             </Text>
           </View>
         </View>
-      </SettingsSection>
+      </SettingsSection> : null}
       {notice ? (
         <View style={settingsStyles.card} testID={`omp-plugins-notice-${notice}`}>
           <View style={settingsStyles.row}>

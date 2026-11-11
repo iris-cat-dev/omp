@@ -167,6 +167,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly steerUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly followUpUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
+  readonly sessionAnnotations: Array<{ customType: string; data: unknown }> = [];
+  annotationError: Error | null = null;
+  annotationCalls = 0;
+  annotationBarrier: Promise<void> | null = null;
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentMessageRequests: OmpSubagentMessagesSelector[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
@@ -377,6 +381,14 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   async getMessages(): Promise<OmpAgentMessage[]> {
     return this.messages;
+  }
+
+  async appendSessionAnnotation(customType: string, data: unknown): Promise<string> {
+    this.annotationCalls += 1;
+    await this.annotationBarrier;
+    if (this.annotationError) throw this.annotationError;
+    this.sessionAnnotations.push({ customType, data });
+    return `annotation-${this.sessionAnnotations.length}`;
   }
 
   async getAvailableModels(_timeoutMs?: number | null): Promise<OmpModel[]> {

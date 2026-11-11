@@ -221,6 +221,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
       protocolMode: launch.protocolMode,
       model: launch.model,
+      desktopPluginPrompts: true,
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,

@@ -5,6 +5,7 @@ import { open, rm } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -185,6 +186,7 @@ import type {
   PluginSource,
   TerminalProfile,
 } from "@omp-desktop/protocol/messages";
+import { PluginService } from "./plugins/index.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -399,6 +401,7 @@ export interface PaseoDaemonConfig {
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
+  bundledPluginDirectories?: string[];
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -743,6 +746,7 @@ export async function createPaseoDaemon(
     appBaseUrl = typeof value === "string" ? value : DEFAULT_APP_BASE_URL;
   });
   let wsServer: PaseoWebSocketServer | null = null;
+  const pluginService = new PluginService(logger, daemonConfigStore, undefined, config.paseoHome);
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
@@ -1347,6 +1351,8 @@ export async function createPaseoDaemon(
     providerSnapshotManager,
     visualFeedbackService,
     daemonConfigStore,
+    pluginAgentTools: agentId => pluginService.agentToolDefinitions(agentId,()=>agentManager.getAgent(agentId)?.activeForegroundTurnId??null),
+    pluginAgentPrompt: agentId=>pluginService.agentPromptContributions(agentId,agentManager.getAgent(agentId)?.activeForegroundTurnId??null),
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
@@ -1657,12 +1663,14 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               null,
               workspaceSetupRuntime,
-              undefined,
+              pluginService,
               orchestrationSkills,
               workspaceLabelService,
               localModelBridge,
               visualFeedbackService,
             );
+            pluginService.bindPaseoSessionHost(wsServer);
+            void Promise.resolve().then(()=>pluginService.registerBundledDirectories(config.bundledPluginDirectories??[path.dirname(createRequire(import.meta.url).resolve("@omp-desktop/plugin-qqbot/package.json"))])).then(()=>pluginService.start()).catch(error => {logger.error({err:error}, "Bundled plugin registration failed");return pluginService.start();});
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
               config: getRelayConfig(),
@@ -1714,6 +1722,7 @@ export async function createPaseoDaemon(
     configureGitCredentialEnvironmentProvider(null);
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    await pluginService.stopAllPlugins();
     agentManager.prepareForShutdown();
     visualFeedbackService.close();
     const relayStopped = relayRuntime?.stop().catch((error) => {

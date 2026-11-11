@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
+export const OmpSessionAnnotationResultSchema = z.object({ entryId: z.string().min(1) });
 
 export const OmpThinkingLevelSchema = z.enum([
   "off",
@@ -713,6 +714,7 @@ const OmpSubagentEventSchema = z
 export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   ...OmpAgentSessionEventSchema.options,
   OmpExtensionUiRequestSchema,
+  z.object({type:z.literal("desktop_plugin_prompt_request"),id:z.string()}),
   z.object({
     type: z.literal("extension_error"),
     extensionPath: z.string(),
@@ -740,6 +742,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
 
 const OmpCommandBase = { id: z.string().optional() };
 export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
+  z.object({ ...OmpCommandBase, type: z.literal("append_session_annotation"), customType: z.string().min(1), data: z.unknown() }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("prompt"),

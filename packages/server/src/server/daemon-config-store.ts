@@ -572,6 +572,10 @@ export class DaemonConfigStore {
     return this.current;
   }
 
+  public storageDirectory(): string {
+    return this.paseoHome;
+  }
+
   public getImageGenerationRuntimeConfig(): ImageGenerationRuntimeConfig | null {
     const publicConfig = this.current.imageGeneration;
     if (!publicConfig) return null;

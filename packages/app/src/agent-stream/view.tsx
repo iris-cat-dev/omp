@@ -85,7 +85,7 @@ import {
   type AssistantTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
-import { useNativeOutputTokenSpeed } from "./token-output-speed";
+import type { PluginTurnMetricProps } from "@omp-desktop/plugin";
 import { deriveTurnTokenStats, type TurnTokenStats } from "./turn-token-stats";
 import { toGitPathspec } from "./turn-file-changes";
 import { resolveBottomOverlayTailInset } from "./bottom-overlay-inset";
@@ -169,6 +169,7 @@ function renderStreamItemWithTurnFooter(input: {
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   resolveTurnTokenStats?: (host: TurnFooterHost) => TurnTokenStats | null;
+  resolveTurnMetricProps?: (host: TurnFooterHost) => PluginTurnMetricProps;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
   if (!input.content) {
@@ -184,6 +185,7 @@ function renderStreamItemWithTurnFooter(input: {
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
       turnTokenStats={input.resolveTurnTokenStats?.(footerHost) ?? null}
+      metricProps={input.resolveTurnMetricProps?.(footerHost)}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
@@ -566,13 +568,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isActive,
     );
     const isTurnActive = effectiveTurnPresentation.isActive;
-    const outputTokenSpeed = useTurnOutputTokenSpeed(
-      resolvedServerId,
-      agentId,
-      effectiveTurnPresentation,
-      isActive,
-      agentTurnUsageMap,
-    );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
       () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
@@ -1171,6 +1166,40 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [agentTurnUsageMap],
     );
+    const resolveTurnMetricProps = useCallback(
+      (host: TurnFooterHost): PluginTurnMetricProps => {
+        const turnId = resolveHostTurnId(host);
+        const replayed = host.items[host.startIndex];
+        return {
+          hostId: resolvedServerId,
+          agentId,
+          turnId,
+          visible: isActive,
+          active: false,
+          cancelling: false,
+          recordedUsage: turnId === null ? null : agentTurnUsageMap?.get(turnId) ?? null,
+          replayedUsage: replayed?.kind === "assistant_message" ? replayed.nativeUsage ?? null : null,
+        };
+      },
+      [resolvedServerId, agentId, isActive, agentTurnUsageMap],
+    );
+    const bottomTurnMetricProps = useMemo<PluginTurnMetricProps>(
+      () => bottomTurnFooterHost && !isTurnActive
+        ? resolveTurnMetricProps(bottomTurnFooterHost)
+        : {
+            hostId: resolvedServerId,
+            agentId,
+            turnId: effectiveTurnPresentation.turnId,
+            visible: isActive,
+            active: isTurnActive,
+            cancelling: effectiveTurnPresentation.isCancelling,
+            recordedUsage: effectiveTurnPresentation.turnId
+              ? agentTurnUsageMap?.get(effectiveTurnPresentation.turnId) ?? null : null,
+            replayedUsage: null,
+          },
+      [bottomTurnFooterHost, isTurnActive, resolveTurnMetricProps, resolvedServerId, agentId,
+        effectiveTurnPresentation, isActive, agentTurnUsageMap],
+    );
 
     const renderStreamItem = useCallback(
       (layoutItem: StreamLayoutItem) => {
@@ -1181,6 +1210,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           resolveTurnTokenStats: resolveTurnTokenStats,
+          resolveTurnMetricProps,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
         });
       },
@@ -1189,6 +1219,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         readOnly,
         renderStreamItemContent,
         resolveTurnTokenStats,
+        resolveTurnMetricProps,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
@@ -1210,7 +1241,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <TurnFooter
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
-            outputTokenSpeed={outputTokenSpeed}
+            metricProps={bottomTurnMetricProps}
             workingMessage={workingMessage ?? undefined}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
@@ -1228,7 +1259,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
-        outputTokenSpeed,
+        bottomTurnMetricProps,
         workingMessage,
         bottomTurnFooterHost,
         bottomTurnTokenStats,
@@ -1894,20 +1925,6 @@ function resolveTurnTokenStatsForHost(input: {
   );
 }
 
-function useTurnOutputTokenSpeed(
-  serverId: string,
-  agentId: string,
-  presentation: TurnPresentation,
-  active: boolean,
-  usageMap: Map<string, AgentUsage> | null,
-) {
-  const metrics = presentation.turnId ? usageMap?.get(presentation.turnId)?.nativeMetrics : null;
-  return useNativeOutputTokenSpeed(
-    `${serverId}:${agentId}:${presentation.turnId ?? ""}`,
-    active && presentation.isActive && !presentation.isCancelling,
-    metrics,
-  );
-}
 
 // The footer host anchors on the turn's final assistant message, which newer
 // daemons stamp with the canonical turnId. Older timelines only carry it on

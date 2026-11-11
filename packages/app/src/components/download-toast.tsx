@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, X, XCircle } from "lucide-react-native";
 import { useDownloadStore, formatSpeed, formatEta, type Download } from "@/stores/download-store";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "@/appearance/color"
 
 const AUTO_DISMISS_DELAY = 3000;
 

@@ -1,0 +1,22 @@
+{
+  "name": "@omp-desktop/plugin-wallpaper",
+  "version": "0.6.1",
+  "private": true,
+  "type": "module",
+  "files": ["dist", "src", "!src/**/*.test.*"],
+  "scripts": { "build": "npm run build --workspace=@omp-desktop/plugin && node ../../../scripts/build-desktop-plugins.mjs plugins/wallpaper", "prepack": "npm run build" },
+  "exports": {
+    ".": { "types": "./dist/types/client.d.ts", "source": "./src/client.tsx", "import": "./dist/esm/client.js", "require": "./dist/cjs/client.js", "default": "./dist/esm/client.js" },
+    "./builtin": { "types": "./dist/types/builtin.d.ts", "source": "./src/builtin.ts", "import": "./dist/esm/builtin.js", "require": "./dist/cjs/builtin.js", "default": "./dist/esm/builtin.js" },
+    "./package.json": "./package.json"
+  },
+  "ompDesktop": {
+    "apiVersion": 1,
+    "id": "wallpaper",
+    "owner": "desktop",
+    "entries": { "client": "./dist/esm/client.js" },
+    "capabilities": ["storage.scoped", "wallpaper.media", "ui.background", "ui.settings"]
+  },
+  "peerDependencies": { "@omp-desktop/plugin": "0.6.1", "react": "19.1.0", "react-i18next": "*" },
+  "dependencies": { "@omp-desktop/protocol": "0.6.1", "@tanstack/react-virtual": "^3.13.21", "zod": "^4.4.3" }
+}

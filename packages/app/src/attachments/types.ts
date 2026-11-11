@@ -119,6 +119,15 @@ export interface QuotedContentComposerAttachment {
   text: string;
 }
 
+export interface ExternalTextComposerAttachment {
+  kind: "external_text";
+  id: string;
+  title: string;
+  subtitle?: string;
+  text: string;
+  externalResource: NonNullable<Extract<AgentAttachment, { type: "text" }>["externalResource"]>;
+}
+
 export interface VisualFeedbackAttachmentImage {
   metadata: AttachmentMetadata;
   width: number;
@@ -142,6 +151,7 @@ export type UserComposerAttachment =
   | WorkspaceFileComposerAttachment
   | QuotedContentComposerAttachment
   | VisualFeedbackComposerAttachment
+  | ExternalTextComposerAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }
   // COMPAT(githubAttachmentKinds): added in v0.1.106, remove after 2026-12-28 once daemon floor >= v0.1.106

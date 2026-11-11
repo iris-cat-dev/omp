@@ -241,6 +241,7 @@ export interface AgentRunOptions {
   clientMessageId?: string;
   /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
   sourceAgentId?: string;
+  sourceKind?: "user" | "service" | "agent";
 }
 
 export type AgentInterruptReason = "user" | "replacement" | "reload" | "rewind";
@@ -437,9 +438,11 @@ export type AgentTimelineItem =
       clientMessageId?: string;
       rewindStatus?: AgentUserMessageRewindStatus;
       sourceAgentId?: string;
+      sourceKind?: "user" | "service" | "agent";
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;
+      attachments?: AgentAttachment[];
     }
   | {
       type: "assistant_message";

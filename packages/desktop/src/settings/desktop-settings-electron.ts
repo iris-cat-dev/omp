@@ -3,7 +3,6 @@ import { app } from "electron";
 import { createLaunchAtLoginController } from "./launch-at-login.js";
 import {
   createDesktopSettingsStore,
-  type DesktopSettings,
   type DesktopSettingsStore,
 } from "./desktop-settings.js";
 import { wallpaperMediaRegistry } from "../wallpaper/media-registry.js";
@@ -19,6 +18,12 @@ export function getDesktopSettingsStore(): DesktopSettingsStore {
   });
   if (!wallpaperLibrarySubscribed) {
     wallpaperLibrarySubscribed = true;
+    desktopSettingsStore.subscribe((settings) => {
+      for (const window of getMainWindows()) {
+        try { if (!window.webContents.isDestroyed()) window.webContents.send("paseo:event:desktop-settings-changed", settings); }
+        catch { /* A closed renderer cannot block committed settings broadcasts. */ }
+      }
+    });
     desktopSettingsStore.subscribeWallpaperLibrary((library) => {
       for (const window of getMainWindows()) {
         try {
@@ -32,11 +37,6 @@ export function getDesktopSettingsStore(): DesktopSettingsStore {
   return desktopSettingsStore;
 }
 
-export function subscribeDesktopSettingsChanges(
-  listener: (settings: DesktopSettings) => void,
-): () => void {
-  return getDesktopSettingsStore().subscribe(listener);
-}
 
 export const launchAtLoginController = createLaunchAtLoginController({
   platform: process.platform,

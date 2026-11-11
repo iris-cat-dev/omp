@@ -22,6 +22,22 @@ import { buildToolCallDisplayModel } from "@omp-desktop/protocol/tool-call-displ
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+const externalSnapshotAttachment = {
+  type: "text",
+  mimeType: "text/plain",
+  title: "Persistent external text",
+  text: "Full external resource snapshot\nSecond line survives source removal.\nSearch: durable-query-20261110",
+  externalResource: {
+    provider: "ui-smoke/external",
+    providerLabel: "External snapshot demo",
+    resourceType: "document",
+    id: "resource",
+    identifier: "DEMO-42",
+    title: "Persistent external text",
+    url: "https://example.com/resource/42",
+  },
+} as const;
+
 describe("user message identity", () => {
   it("keeps a local canonical ID pending until a distinct native ID arrives", () => {
     const timestamp = new Date(1000);
@@ -200,6 +216,67 @@ describe("user message identity", () => {
     },
   );
 
+  it.each(["tail", "head"] as const)(
+    "retains attachment-only canonical snapshots inserted into the %s",
+    (unmatchedUserMessageInsert) => {
+      const result = applyStreamEvent({
+        tail: [],
+        head: [],
+        unmatchedUserMessageInsert,
+        event: {
+          type: "timeline",
+          provider: "omp",
+          item: {
+            type: "user_message",
+            clientMessageId: "local-snapshot",
+            rewindStatus: "unavailable",
+            text: "",
+            attachments: [externalSnapshotAttachment],
+          },
+        },
+        timestamp: new Date("2026-11-10T11:00:00.000Z"),
+      });
+
+      expect([...result.tail, ...result.head]).toHaveLength(1);
+      const message = result[unmatchedUserMessageInsert][0];
+      invariant(message?.kind === "user_message");
+      expect(message.text).toBe("");
+      expect(message.attachments).toEqual([externalSnapshotAttachment]);
+    },
+  );
+
+  it.each(["incoming", "existing"] as const)(
+    "fills missing snapshot attachments while preserving %s presentation",
+    (presentation) => {
+      const timestamp = new Date("2026-11-10T11:00:00.000Z");
+      const existing = createUserMessage({
+        clientMessageId: "local-snapshot",
+        text: "existing presentation",
+        timestamp,
+        ...(presentation === "incoming" ? { attachments: [externalSnapshotAttachment] } : {}),
+      });
+      const incoming = createUserMessage({
+        clientMessageId: "local-snapshot",
+        text: "incoming presentation",
+        timestamp,
+        ...(presentation === "existing" ? { attachments: [externalSnapshotAttachment] } : {}),
+      });
+      const result = upsertUserMessageAcrossStream({
+        tail: [existing],
+        head: [],
+        message: incoming,
+        insert: "none",
+        presentation,
+      });
+
+      expect(result.tail).toHaveLength(1);
+      const message = result.tail[0];
+      invariant(message?.kind === "user_message");
+      expect(message.text).toBe(`${presentation} presentation`);
+      expect(message.attachments).toEqual([externalSnapshotAttachment]);
+    },
+  );
+
   it("preserves optimistic image-only thumbnails without duplicating canonical images", () => {
     const timestamp = new Date("2026-09-05T10:00:00Z");
     const optimistic = createUserMessage({
@@ -263,6 +340,42 @@ describe("user message identity", () => {
     expect(message.images).toEqual([
       expect.objectContaining({ storageType: "inline-data", storageKey: "AAEC" }),
     ]);
+  });
+
+  it("restores a complete cold snapshot on a canonical row with no cached attachments", () => {
+    const timestamp = new Date("2026-11-10T11:00:00.000Z");
+    const timelineCursor = { epoch: "persisted-omp:agent-1", seq: 1 };
+    const existing = createUserMessage({
+      clientMessageId: "local-snapshot",
+      text: "/ui-attachment-save durable-ui-snapshot",
+      rewindStatus: "unavailable",
+      timestamp,
+      timelineCursor,
+    });
+    const result = applyStreamEvent({
+      tail: [existing],
+      head: [],
+      timestamp,
+      timelineCursor,
+      event: {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          clientMessageId: existing.clientMessageId,
+          text: existing.text,
+          rewindStatus: "unavailable",
+          attachments: [externalSnapshotAttachment],
+        },
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    const message = result.tail[0];
+    invariant(message?.kind === "user_message");
+    expect(message.text).toBe(existing.text);
+    expect(message.attachments).toEqual([externalSnapshotAttachment]);
+    expect(message.timelineCursor).toEqual(timelineCursor);
   });
 
   it("replaces provisional optimistic turn membership with canonical membership", () => {

@@ -30,7 +30,7 @@ if (!process.versions.electron) {
   try {
     const entry = path.join(temporary, path.basename(__filename));
     fs.copyFileSync(__filename, entry);
-    fs.cpSync(path.join(desktopRoot, "assets", "pets"), path.join(temporary, "assets", "pets"), {
+    fs.cpSync(path.join(desktopRoot, "..", "plugins", "desktop-pet", "assets", "pets"), path.join(temporary, "assets", "pets"), {
       recursive: true,
     });
     // Use an owned copy of the official runtime so every native process can be
@@ -139,11 +139,10 @@ async function runNativeSmoke() {
     app.setPath(name, directory);
   }
   assert.equal(
-    path.resolve(app.getPath("home")),
-    path.resolve(process.env.HOME),
+    fs.realpathSync(app.getPath("home")),
+    fs.realpathSync(process.env.HOME),
     "Native home must stay in the owned profile",
   );
-  app.setName("OMP Pet Layout Smoke");
   protocol.registerSchemesAsPrivileged([
     {
       scheme: "omp-desktop",
@@ -157,25 +156,27 @@ async function runNativeSmoke() {
     },
   ]);
   const product = (relative) => require(path.join(desktopRoot, "dist", relative));
-  const { PET_HTML } = product("pets/html.js");
-  const { DesktopPetController } = product("pets/controller.js");
-  const { DEFAULT_PET_ACTIVITY } = product("pets/activity.js");
-  const { getPetLibrary } = product("pets/library.js");
+  const { DEFAULT_PET_ACTIVITY, petWindowSize, PET_SPRITE_SIZE } = require("@omp-desktop/plugin-desktop-pet/rendering");
+  const { getLocalPluginRuntime, setupBuiltinLocalPlugins, handleBuiltinPluginResource, createLocalPluginCommandHandlers } = product("plugins/local-runtime-electron.js");
   const { getDesktopSettingsStore } = product("settings/desktop-settings-electron.js");
-  const { registerMainWindow } = product("window/main-windows.js");
-  const { petWindowSize, PET_SPRITE_SIZE } = product("pets/geometry.js");
+  const { registerMainWindow, getMainWindows } = product("window/main-windows.js");
+  const { registerWallpaperWindow } = product("wallpaper/commands.js");
+  const { wallpaperMediaRegistry } = product("wallpaper/media-registry.js");
+  const { getNativeProtocolRequestIdentity, bindWallpaperProtocolDocument } = product("wallpaper/media-request-authorization.js");
   const preload = path.join(desktopRoot, "dist", "preload.js");
   assert.ok(
     fs.existsSync(preload),
     "Use the actual production desktop preload, never a test replacement bridge",
   );
   await app.whenReady();
+  await setupBuiltinLocalPlugins({ openApp() {}, openAgent() {}, startupBarrier: Promise.resolve(), resourceRoot: path.join(ownedRoot, "assets") });
   protocol.handle("omp-desktop", async (request) => {
-    const pathname = new URL(request.url).pathname;
-    if (pathname === "/desktop-pet") {
-      return new Response(PET_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    const { hostname, pathname } = new URL(request.url);
+    const identity = getNativeProtocolRequestIdentity(request);
+    if (hostname === "app" && identity?.isDocument) {
+      assert.ok(bindWallpaperProtocolDocument(identity, wallpaperMediaRegistry, getMainWindows()), "The native main document must bind its actual owner before returning its body");
     }
-    const resource = await getPetLibrary().handleResource(pathname);
+    const resource = await handleBuiltinPluginResource(hostname, pathname);
     return resource || new Response("<!doctype html><title>Pet layout smoke controls</title>");
   });
   const main = new BrowserWindow({
@@ -183,23 +184,30 @@ async function runNativeSmoke() {
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   registerMainWindow(main);
+  registerWallpaperWindow(main);
   await main.loadURL("omp-desktop://app/pet-layout-smoke");
   const workArea = screen.getPrimaryDisplay().workArea;
-  await getDesktopSettingsStore().patch({
-    pet: {
-      enabled: true,
-      selectedId: "iris",
-      size: "medium",
-      position: { x: workArea.x + 16, y: workArea.y + 16 },
-    },
-  });
-  const controller = new DesktopPetController({ openApp() {}, openTask() {} });
+  const settings = getDesktopSettingsStore();
+  const patchPet = async (patch) => {
+    const current = (await settings.getPlugins()).installations.find(({ id }) => id === "desktop-pet");
+    return settings.patchPlugin({ installationId: current.id, expectedRevision: current.revision, patch });
+  };
+  await patchPet({ enabled: true, config: { selectedId: "iris", size: "medium", position: { x: workArea.x + 16, y: workArea.y + 16 } } });
+  const controller = getLocalPluginRuntime();
   try {
-    await controller.initialize();
-    await controller.start();
-    const pet = BrowserWindow.getAllWindows().find(
-      (window) => new URL(window.webContents.getURL()).pathname === "/desktop-pet",
-    );
+    controller.startupReady();
+    await controller.whenIdle();
+    const binding = controller.getSnapshot().installations.find(({ id }) => id === "desktop-pet");
+    const clientActivationId = "owned-pet-layout-smoke";
+    await evaluateRenderer(main.webContents, `window.paseoDesktop.plugins.openClientScope(${JSON.stringify({ installationId: binding.id, generation: binding.generation, clientActivationId, mode: "active" })})`);
+    const publishActivity = (activity) => evaluateRenderer(main.webContents, `window.paseoDesktop.plugins.publish(${JSON.stringify({ installationId: binding.id, generation: binding.generation, clientActivationId, method: "pet.activity", input: activity })})`);
+    let pet;
+    await until(() => {
+      pet = BrowserWindow.getAllWindows().find(
+        (window) => window.webContents.getURL().startsWith("omp-desktop://overlay/plugin-overlay/"),
+      );
+      return Boolean(pet);
+    });
     assert.ok(pet, "The real companion window must open");
     let sequence = 0;
     const labels = {
@@ -224,10 +232,7 @@ async function runNativeSmoke() {
           updatedAt: ++sequence,
         })),
       };
-      await evaluateRenderer(
-        main.webContents,
-        `window.paseoDesktop.pet.publishActivity(${JSON.stringify(activity)})`,
-      );
+      await publishActivity(activity);
       const caption = count ? labels.ready + (count > 1 ? ` · ${count} 个任务` : "") : labels.idle;
       await until(
         async () => (await evaluateRenderer(pet.webContents, "bubble.textContent")) === caption,
@@ -283,7 +288,7 @@ async function runNativeSmoke() {
       return offset;
     };
     for (const size of ["small", "medium", "large"]) {
-      await getDesktopSettingsStore().patch({ pet: { size } });
+      await patchPet({ config: { size } });
       await publish(0);
       const anchor = check(await settled(size), `${size}: idle`);
       for (const count of [1, 3, 12]) {
@@ -291,7 +296,7 @@ async function runNativeSmoke() {
         check(await settled(size), `${size}: ${count} conversations`, anchor);
       }
     }
-    await getDesktopSettingsStore().patch({ pet: { size: "medium" } });
+    await patchPet({ config: { size: "medium" } });
     const anchor = check(await settled("medium"), "medium restored");
     for (const level of [1, -1, 0]) {
       main.webContents.setZoomLevel(level);
@@ -330,7 +335,7 @@ async function runNativeSmoke() {
       [points.art, true],
       [points.blank, false],
     ]) {
-      pet.webContents.send("paseo:pet:pointer", point);
+      pet.webContents.send("paseo:overlay:pointer", point);
       await until(
         async () => (await evaluateRenderer(pet.webContents, "interactive")) === expected,
       );
@@ -340,18 +345,19 @@ async function runNativeSmoke() {
       app,
       main,
       BrowserWindow,
-      library: getPetLibrary(),
-      settings: getDesktopSettingsStore(),
+      library: { importDirectory: (directory) => createLocalPluginCommandHandlers().import_desktop_pet({ directory }) },
+      settings: { patchPet },
       labels,
+      publishActivity,
     });
   } finally {
-    controller.dispose();
+    await controller.dispose();
     main.destroy();
   }
   app.exit(0);
 }
 
-async function smokeCustomBubbles({ app, main, BrowserWindow, library, settings, labels }) {
+async function smokeCustomBubbles({ app, main, BrowserWindow, library, settings, labels, publishActivity }) {
   const states = [
     "idle",
     "offline",
@@ -439,19 +445,16 @@ async function smokeCustomBubbles({ app, main, BrowserWindow, library, settings,
           ]
         : [],
     };
-    await evaluateRenderer(
-      main.webContents,
-      `window.paseoDesktop.pet.publishActivity(${JSON.stringify(activity)})`,
-    );
+    await publishActivity(activity);
   };
   const select = async (id) => {
-    await settings.patch({ pet: { selectedId: id } });
+    await settings.patchPet({ config: { selectedId: id } });
     let window;
     await until(async () => {
       window = BrowserWindow.getAllWindows().find(
         (item) =>
           !item.isDestroyed() &&
-          new URL(item.webContents.getURL() || "about:blank").pathname === "/desktop-pet",
+          new URL(item.webContents.getURL() || "about:blank").pathname.startsWith("/plugin-overlay/"),
       );
       return (
         window &&

@@ -60,6 +60,7 @@ export type WorkspaceTabMenuEntry =
         | "pencil"
         | "x"
         | "folder-tree";
+      pluginIcon?: string;
       hint?: string;
       tooltip?: string;
       disabled?: boolean;
@@ -92,6 +93,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   labels?: WorkspaceTabMenuLabels;
+  pluginEntries?: WorkspaceTabMenuEntry[];
 }
 
 interface BuildWorkspaceDesktopTabActionsInput {
@@ -112,6 +114,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   labels?: WorkspaceTabMenuLabels;
+  pluginEntries?: WorkspaceTabMenuEntry[];
 }
 
 export interface WorkspaceDesktopTabActions {
@@ -349,6 +352,11 @@ export function buildWorkspaceTabMenuEntries(
     });
   }
 
+  if (input.pluginEntries?.length) {
+    if (entries.length && entries[entries.length - 1].kind !== "separator") entries.push({ kind: "separator", key: "plugin-actions-start" });
+    entries.push(...input.pluginEntries, { kind: "separator", key: "plugin-actions-end" });
+  }
+
   entries.push({
     kind: "item",
     key: "close-before",
@@ -436,6 +444,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
       labels: input.labels,
+      pluginEntries: input.pluginEntries,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),
   };

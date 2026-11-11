@@ -19,6 +19,10 @@ import {
   resolveTerminalProfiles,
 } from "@omp-desktop/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import { usePluginContributions } from "@/plugins/hooks";
+import { resolvePluginIcon } from "@/plugins/icons";
+import { resolveProjectLayoutKey } from "@/workspace-tabs/project-scope";
+import { collectAllTabs, findPaneById, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -46,7 +50,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "terminal-profiles";
+  id: "tabs" | "terminal-profiles" | "plugins";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -87,6 +91,12 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const router = useRouter();
   const launcher = useNewTabLauncher();
   const { config } = useDaemonConfig(serverId);
+  const pluginPanels = usePluginContributions("panel");
+  const workspaceKey = resolveProjectLayoutKey({ serverId, workspaceId: launcher.workspaceId });
+  const layout = useWorkspaceLayoutStore((state) => workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined);
+  const focusedPane = layout ? findPaneById(layout.root, layout.focusedPaneId) : null;
+  const target = layout ? collectAllTabs(layout.root).find((tab) => tab.tabId === focusedPane?.focusedTabId)?.target : null;
+  const agentId = target?.kind === "agent" ? target.agentId : target?.kind === "plugin" && target.context === "agent" ? target.agentId : undefined;
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {
@@ -167,8 +177,20 @@ export function useWorkspaceTabLaunchCatalog(input: {
         },
       });
     }
+    const panelItems: WorkspaceTabLaunchItem[] = pluginPanels.filter(({ instance }) => instance.installation.owner === "desktop" || instance.hostId === serverId).map(({ key, instance, contribution }) => ({
+      id: key, label: contribution.title, description: `${instance.installation.id} · ${instance.hostId}`, Icon: resolvePluginIcon(contribution.icon),
+      disabled: contribution.context === "agent" && !agentId,
+      launch(destination) {
+        instance.scope.assertCurrent();
+        if (contribution.context === "agent" && !agentId) throw new Error("Plugin panel requires agent context");
+        const target = { kind: "plugin" as const, pluginId: instance.installation.id, panelId: contribution.id, owner: instance.installation.owner,
+          ...(contribution.context === "agent" ? { context: "agent" as const, agentId: agentId! } : { context: "workspace" as const }) };
+        launcher.launch({ kind: "target", target }, destination);
+      },
+    }));
+    if (panelItems.length) groups.push({ id: "plugins", label: t("settings.sections.plugins"), items: panelItems });
     return groups;
-  }, [config?.terminalProfiles, editTerminalProfiles, launchSelection, launcher, purpose, t]);
+  }, [config?.terminalProfiles, editTerminalProfiles, launchSelection, launcher, purpose, t, pluginPanels, serverId, agentId]);
 }
 
 export { getBuiltInLaunchOrder } from "./internal/catalog";

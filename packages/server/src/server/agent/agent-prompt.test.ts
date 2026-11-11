@@ -15,6 +15,7 @@ import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
+  sendPromptToAgent,
   startAgentRun,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
@@ -1197,3 +1198,43 @@ test.each([
     }
   },
 );
+
+test.each([
+  { sourceKind: undefined, sourceAgentId: undefined, expected: "service" },
+  { sourceKind: "user", sourceAgentId: undefined, expected: "user" },
+  { sourceKind: "service", sourceAgentId: undefined, expected: "service" },
+  { sourceKind: "user", sourceAgentId: "caller-agent", expected: "agent" },
+] as const)("host assigns canonical prompt origin $expected", async ({ sourceKind, sourceAgentId, expected }) => {
+  const scenario = await createAdmissionScenario();
+  const messages: AgentStreamEvent[] = [];
+  const unsubscribe = scenario.manager.subscribe((event) => {
+    if (event.type === "agent_stream" && event.agentId === scenario.first.id) messages.push(event.event);
+  });
+  try {
+    const submitted = sendPromptToAgent({
+      agentManager: scenario.manager,
+      agentStorage: scenario.storage,
+      agentId: scenario.first.id,
+      prompt: "origin regression",
+      sourceKind,
+      sourceAgentId,
+      logger: scenario.logger,
+    });
+    await scenario.sessions[0]!.startEntered.promise;
+    scenario.sessions[0]!.startGate.resolve();
+    await submitted;
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: "timeline",
+      item: expect.objectContaining({
+        type: "user_message",
+        text: "origin regression",
+        clientMessageId: expect.any(String),
+        sourceKind: expected,
+        ...(sourceAgentId ? { sourceAgentId } : {}),
+      }),
+    }));
+  } finally {
+    unsubscribe();
+    await scenario.cleanup();
+  }
+});

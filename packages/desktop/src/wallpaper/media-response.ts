@@ -1,7 +1,7 @@
 import { open, realpath, type FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { getWallpaperMediaType } from "@omp-desktop/protocol/desktop-wallpaper";
-import type { RegisteredWallpaperMedia, WallpaperMediaRegistry } from "./media-registry.js";
+import type { RegisteredWallpaperMedia, WallpaperDocumentOwner, WallpaperMediaRegistry } from "./media-registry.js";
 
 function parseByteRange(header: string, size: number): { start: number; end: number } | null {
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
@@ -99,15 +99,30 @@ async function createWallpaperRangeResponse(
 export async function createWallpaperMediaResponse(
   request: Request,
   registry: WallpaperMediaRegistry,
+  authorizedOwner: WallpaperDocumentOwner | null,
   developmentOrigin: string | null,
 ): Promise<Response> {
   const headers = createWallpaperMediaHeaders(request, developmentOrigin);
+  if (!authorizedOwner || !registry.isCurrent(authorizedOwner)) return new Response("Not found", { status: 404, headers });
+  if (!authorizedOwner.nativeIdentity) return new Response("Native document identity is unavailable for local wallpaper media", { status: 501, headers });
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (request.method !== "GET" && request.method !== "HEAD") {
     headers.set("allow", "GET, HEAD, OPTIONS");
     return new Response(null, { status: 405, headers });
   }
-  const media = registry.get(new URL(request.url).searchParams.get("id") ?? "");
+  const query = new URL(request.url).searchParams;
+  const generation = Number(query.get("generation"));
+  const purpose = query.get("purpose");
+  if (!query.has("generation") || !Number.isSafeInteger(generation) || generation < 0 ||
+      (purpose !== "background" && purpose !== "previews") || query.get("epoch") !== authorizedOwner.epoch) {
+    return new Response("Not found", { status: 404, headers });
+  }
+  const media = registry.get(query.get("id") ?? "", {
+    installationId: query.get("installationId") ?? "",
+    generation,
+    epoch: query.get("epoch") ?? "",
+    purpose,
+  });
   if (!media) return new Response("Not found", { status: 404, headers });
   // Capture immutable authorization before I/O. Later release prevents new reads,
   // but does not truncate an already accepted video range or thumbnail response.

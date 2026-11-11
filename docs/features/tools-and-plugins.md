@@ -91,11 +91,37 @@ This is an original implementation inspired by [EditHere's feedback workflow](ht
 
 ## Plugin management and native commands
 
-**Host Settings → OMP plugins** browses registered marketplaces and manages native runtime plugins. Marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
+**Settings → Plugins** is the shared entry for built-in plugins, Desktop-local installations, daemon plugins and native OMP plugin management. The installed/discovery views show each installation's owner, source, scope, version and runtime state; configuration, permissions and logs belong to that exact installation.
 
-Installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.
+Select a host for daemon and native operations. Desktop-owned controls stay local: changing hosts or losing a remote connection does not move their configuration or resources to that daemon. Two installation IDs using the same source directory remain independent. Disabling/removing an installation keeps its data unless you explicitly choose **Clear data**; disabled installations can still be configured. Pausing source plugins preserves their individual enabled selections.
+
+When Desktop is moved or replaced, the daemon rebases bundled plugin directories to the current App when it starts. This preserves enabled selections, host pause, removed-installation state, execution approvals and stored data; user-installed packages with the same ID are not replaced. New versions or additional capabilities still need matching approval. Client trust remains bound to the source: confirm the relocated client under **Permissions** before opening its account page.
+
+After installing a daemon-side fix, restart the built-in daemon from the new App when no tasks are running. Closing the App alone can leave the detached daemon running old code; the plugin's **Restart/reload** action does not reload the daemon implementation.
+
+For **QQ connection (`qqbot`)**, select its daemon installation, grant its declared capabilities under **Permissions**, then open **Configure**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
+
+Choose **Scan to bind** to request a QR code; opening the settings page alone does not generate one. The selected daemon needs internet access to obtain a Tencent binding URL, which it converts to the displayed QR image. You do not need to enter AppID/AppSecret first. Binding failures appear on the account page; **Refresh QR code** requests a replacement after expiry.
+
+To use the **QQ connection** sidebar entry and plugin application menu, enable both **Allow host plugins to run** and the QQ installation's own switch. They appear below **Scheduled tasks** in the main sidebar; the puzzle button opens actions such as **Restart QQ connection** (`重启 QQ 连接`). An enabled connection waiting for account credentials keeps these entries available so you can bind the account. Pausing host execution hides execution entries but retains the QQ switch selection and account configuration.
+
+Native marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
+
+Native installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.
 
 Management operations use the selected project's cwd, native `.env` discovery, and configured provider profile/environment. Explicit leading `launch` in a provider command is omitted for management only. Omitting enable/disable scope preserves native unique-scope inference; explicit user/project scope remains exact.
+
+Native configuration uses the selected installation's schema without executing its factory. **Configure** edits non-secret values and optional features, including while disabled. Default features (`null`) and an explicit empty selection (`[]`) remain distinct; project overrides retain precedence. Changes apply to new or resumed sessions, without restarting running conversations. Secret values are never displayed or accepted here; the page shows configured markers and directs sensitive input to the selected OMP CLI.
+
+The matching native CLI operation is:
+
+```sh
+omp plugin manage plugin-name@marketplace-name --scope project --json
+omp plugin manage plugin-name@marketplace-name --scope project \
+  --set '{"enabledFeatures":[],"settings":{"count":4}}'
+```
+
+Setting names and values must match that plugin's schema. `deleteSettings` removes specified non-secret overrides; omitted keys remain unchanged. Linked installations expose their actual source and cannot be upgraded from a catalog.
 
 Busy actions, including **Remove** while confirmation is open, preserve button dimensions and adjacent spacing; progress overlays the existing icon/text footprint. A recovered catalog retry clears its old error without dismissing feedback from an operation's own refresh.
 

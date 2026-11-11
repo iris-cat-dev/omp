@@ -267,6 +267,7 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   messageId?: string;
   sourceAgentId?: string;
+  sourceKind?: "user" | "service" | "agent";
   activeTurnBehavior?: ActiveTurnBehavior;
   /**
    * Defaults true. Set false for prompts whose delivery must not cancel the
@@ -371,13 +372,9 @@ export async function sendPromptToAgent(
     params.sourceAgentId && params.sourceAgentId !== params.agentId
       ? params.sourceAgentId
       : undefined;
-  const clientMessageId =
-    params.messageId ||
-    params.runOptions?.clientMessageId ||
-    (sourceAgentId ? randomUUID() : undefined);
-  const runOptions = clientMessageId
-    ? { ...params.runOptions, clientMessageId, ...(sourceAgentId ? { sourceAgentId } : {}) }
-    : params.runOptions;
+  const sourceKind = sourceAgentId ? "agent" : (params.sourceKind ?? "service");
+  const clientMessageId = params.messageId || params.runOptions?.clientMessageId || randomUUID();
+  const runOptions = { ...params.runOptions, clientMessageId, sourceKind, ...(sourceAgentId ? { sourceAgentId } : {}) };
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,

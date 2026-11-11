@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@omp-desktop/highlight";
 import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES, type Theme } from "@/styles/theme";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "@/appearance/color"
 import { applyAppearance, type AppearanceInput } from "./apply";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -69,8 +69,8 @@ function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
     contentFontSize: 15,
     codeFontSize: 13,
     syntaxTheme: "one",
-    wallpaperActive: false,
-    wallpaperOpacity: 0.85,
+    backgroundActive: false,
+    backgroundOpacity: 0.85,
     ...overrides,
   };
 }
@@ -199,7 +199,7 @@ describe("applyAppearance", () => {
   });
 
   it("removes panel and composer backgrounds at 100% without changing text colors", () => {
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 1 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 1 }));
 
     const { colors } = runCapturedUpdater();
     expect(colors.surface0).toBe("rgba(24, 24, 24, 0)");
@@ -227,7 +227,7 @@ describe("applyAppearance", () => {
   });
 
   it("keeps floating panels opaque over a transparent wallpaper canvas", () => {
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 1 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 1 }));
 
     const { colors } = runCapturedUpdater();
     expect(colors.popover).toBe(REGISTERED_THEMES.dark.colors.popover);
@@ -235,9 +235,9 @@ describe("applyAppearance", () => {
   });
 
   it("previews intermediate transparency and restores solid panels without compounding", () => {
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 0.5 }));
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 1 }));
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 0 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 0.5 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 1 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 0 }));
 
     expect(runCapturedUpdater().colors.surface1).toBe("rgba(35, 35, 35, 0.5)");
     expect(runCapturedUpdater(ALL_THEME_KEYS.length).colors.surface1).toBe("rgba(35, 35, 35, 0)");
@@ -250,8 +250,8 @@ describe("applyAppearance", () => {
   });
 
   it("restores authored surfaces when wallpaper is disabled", () => {
-    applyAppearance(makeInput({ wallpaperActive: true, wallpaperOpacity: 1 }));
-    applyAppearance(makeInput({ wallpaperActive: false, wallpaperOpacity: 1 }));
+    applyAppearance(makeInput({ backgroundActive: true, backgroundOpacity: 1 }));
+    applyAppearance(makeInput({ backgroundActive: false, backgroundOpacity: 1 }));
 
     const restored = runCapturedUpdater(ALL_THEME_KEYS.length);
     expect(restored.colors.surface0).toBe(REGISTERED_THEMES.dark.colors.surface0);

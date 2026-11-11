@@ -1,31 +1,26 @@
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 import { UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings } from "@/hooks/use-settings";
-import { PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES, type Theme } from "@/styles/theme";
-import { getEffectiveWallpaperSourceKey } from "@/wallpaper/source";
-import { useWallpaperLibrary } from "@/wallpaper/desktop-client";
-import { useWallpaperLoadStatus } from "@/wallpaper/load-state";
-import { applyAppearance } from "./apply";
+import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES, type Theme } from "@/styles/theme";
+import { usePluginBackgroundState } from "@/plugins/background";
+import { useContributedPluginThemes } from "@/plugins/themes";
+import { applyAppearance, setAuthoredThemeColors } from "./apply";
 
 export interface ContributedThemeOption {
   id: string;
   serverId: string;
+  owner: "desktop" | "daemon";
   name: string;
   swatch: string;
   theme: Theme;
 }
 
 interface ContributedThemes {
-  options: ContributedThemeOption[];
+  sources: ContributedThemeOption[];
   selected: ContributedThemeOption | null;
-  select: (option: ContributedThemeOption) => void;
+  select: (option: ContributedThemeOption) => Promise<void>;
 }
 
-const EMPTY_CONTRIBUTED_THEMES: ContributedThemes = {
-  options: [],
-  selected: null,
-  select: () => undefined,
-};
 
 const ContributedThemesContext = createContext<ContributedThemes | null>(null);
 
@@ -44,15 +39,21 @@ const DocumentColorScheme = withUnistyles(DocumentColorSchemeBase, (theme) => ({
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, isLoading } = useAppSettings();
-  const { library, error: libraryError } = useWallpaperLibrary();
-  const wallpaperKey = getEffectiveWallpaperSourceKey(settings, libraryError ? null : library);
-  const wallpaperActive = useWallpaperLoadStatus(wallpaperKey) === "ready";
+  const contributedThemes = useContributedPluginThemes();
+  const background = usePluginBackgroundState();
+  const backgroundActive = background.status === "ready";
 
   useEffect(() => {
     if (isLoading) return;
-    const preference =
-      settings.theme === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : settings.theme;
-    if (preference === "auto") {
+    const selectedTheme = contributedThemes.selected;
+    const preference = settings.theme === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : settings.theme;
+    if (selectedTheme) {
+      const slot = PLUGIN_THEME_NAMES[selectedTheme.theme.colorScheme];
+      setAuthoredThemeColors(slot, selectedTheme.theme.colors);
+      UnistylesRuntime.updateTheme(slot, () => selectedTheme.theme);
+      UnistylesRuntime.setAdaptiveThemes(false);
+      UnistylesRuntime.setTheme(slot);
+    } else if (preference === "auto") {
       UnistylesRuntime.setAdaptiveThemes(true);
     } else {
       UnistylesRuntime.setAdaptiveThemes(false);
@@ -65,8 +66,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       contentFontSize: settings.contentFontSize,
       codeFontSize: settings.codeFontSize,
       syntaxTheme: settings.syntaxTheme,
-      wallpaperActive,
-      wallpaperOpacity: settings.wallpaperOpacity,
+      backgroundActive,
+      backgroundOpacity: background.opacity,
     });
   }, [
     isLoading,
@@ -77,12 +78,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     settings.contentFontSize,
     settings.codeFontSize,
     settings.syntaxTheme,
-    settings.wallpaperOpacity,
-    wallpaperActive,
+    contributedThemes.selected,
+    background.opacity,
+    backgroundActive,
   ]);
 
   return (
-    <ContributedThemesContext.Provider value={EMPTY_CONTRIBUTED_THEMES}>
+    <ContributedThemesContext.Provider value={contributedThemes}>
       <DocumentColorScheme />
       {children}
     </ContributedThemesContext.Provider>

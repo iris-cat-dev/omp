@@ -63,7 +63,7 @@
 
 OMP 原生市场插件的身份必须保持为精确的 `plugin-name@marketplace-name`。不能合并不同市场的同名项、抹平用户／项目作用域，或仅因名称相同就把 Desktop 包与 OMP 插件认定为配套组件。混合插件包显式关联组件，并保留每个原生安装标识。
 
-Desktop ID 继续兼容现有 `PluginIdSchema` 的小写、连字符格式；OMP 原生标识保留自身格式。UI 扩展键包含安装身份与扩展项 ID；面板还携带工作区或 agent 上下文。包名本身不能充当 UI 键。
+Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连字符格式；OMP 原生标识保留自身格式。UI 扩展项 ID 允许点分命名空间，例如 `qqbot.settings`、`qqbot.open`：每个非空分段以小写字母开头，其后允许小写字母、数字和连字符，不接受路径分隔符、冒号、空段或空格。UI 扩展键仍包含完整安装身份与扩展项 ID；面板还携带工作区或 agent 上下文。包名本身不能充当 UI 键。
 
 权威数据保留在真实归属方：
 
@@ -199,7 +199,9 @@ Desktop 静态校验检查 manifest、入口路径、API 兼容性和交付依�
 应用或 daemon 退出 → 撤销授权 → 停止 → 进程退出，保留用户期望的启用状态
 ```
 
-激活前配置已经持久化。等待 QQ 凭据或 Desktop 就绪信号不能延迟宿主 ready 响应，也不能阻塞设置界面；管理器显示等待原因。
+激活前配置已经持久化。等待 QQ 凭据或 Desktop 就绪信号不能延迟宿主 ready 响应，也不能阻塞设置界面；管理器显示等待原因。已授权且 `effectiveEnabled` 的服务在 `waiting` 和 `running` 时均保留 active 客户端，等待账号时仍可打开登录侧栏和菜单。相同 generation 的 waiting → running 不重建客户端，不丢页面状态或在途 RPC。真正禁用或全局暂停则切回 manage，只保留配置入口。
+
+daemon 启动时将已有 `bundled: true` 安装项的目录重新定位到当前 App 分发包；只更新来源路径，保留 enabled、installed、trustRevoked、approval 与按安装 ID 保存的数据，不覆盖同 ID 的用户安装源。搬迁操作按安装 ID 串行化，撤销旧 generation 并停止旧 worker 后再发现／激活新来源；同路径重复注册不重启实例。版本变化或新增能力仍受原授权检查约束，客户端信任仍要求确认当前 source path。
 
 所有权规则：
 
@@ -232,6 +234,8 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 宿主绑定安装实例、角色、进程或 `webContents/mainFrame`、文档 epoch 和激活实例，调用方不能自行选择 owner 字段。明确批准的 Node 代码仍拥有运行用户的系统权限。受控接口能阻止协议内跨所有者操作，但不能让高权限 Node worker 或可信渲染代码变成无害代码。
 
 插件 API 不提供任意 Electron 主进程执行、`executeJavaScript`、导航／preload 覆盖、全局输入 hook 或通用设置 patch。将当前原生实现放到受控接口后复用。悬浮窗口使用 `nodeIntegration:false`、`contextIsolation:true`、严格 CSP 和现有独立 origin 行为。
+
+悬浮窗口 preload 只能绑定本次生成的目标文档；初始空文档不能先占有 lease。目标 URL 是额外资格，不能替代 owner／mainFrame／文档 epoch／activation／installation guard。`onState` 或 PNG 加载成功不能替代真实 bind／`ready` Promise 成功。
 
 设置协议不把 QQ AppSecret／模型凭据作为普通配置返回。secret 通过专用操作提交，读取只返回已配置状态。secret 句柄和签名不能进入日志、agent 上下文、面板状态或其他客户端。宠物资源不能授予能力或引入可执行内容。
 
@@ -285,6 +289,8 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 保留 `/preset` 作为 QQ 插件命令，使用 `qqbot` 管理的具名、经 schema 校验的 agent 配置模板。模板包含受支持的 Desktop agent 创建设置与 QQ prompt／skill／tool 选择，切换只作用于下一次 `/new` 或 reset，不重建运行中对话。它不是权限模式别名。只有 DSH preset 设置和 Cordis 服务挂载已有等价原生实现时才导入，无法映射的服务需明确报告，不能静默丢弃。
 
 secret 和绑定轮询留在 daemon。缺少凭据是非阻塞等待状态。插件页面保留真实的绑定、刷新、手动替换／解绑、三类访问名单、配对／撤销／导出、access-revision 冲突处理。QQ 文本不能通过转发未知斜杠命令调用任意宿主插件管理操作。
+
+账号入口为 Settings → Plugins → 对应 daemon 的 QQ 连接 → 权限授权 → 配置。运行侧栏和应用菜单要求“允许主机插件运行”与 QQ 单项开关同时开启；未绑定账号显示等待原因，仍可进入“QQ 连接”绑定页。暂停全局执行保留单项启用选择与账号配置，撤销运行型入口。
 
 peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／workspace／agent ID。不能把 DSH session 标识复用为 OMP 标识，也不能把 DSH 事件日志当作原生 OMP 历史。导入账号／偏好时保留旧 DSH 数据；转换历史对话需要独立校验过的 importer。
 
@@ -357,15 +363,15 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 
 ## 证据与当前验证范围
 
-支持本设计的当前源码事实：
+当前实现与验收使用的入口：
 
-- [daemon 运行时接口与分发](../packages/server/src/server/session.ts)、[当前缺失的 bootstrap 注入](../packages/server/src/server/bootstrap.ts)、[Desktop／原生插件协议](../packages/protocol/src/messages.ts)。
+- [daemon 运行时接口与分发](../packages/server/src/server/session.ts)、[bootstrap 插件注入](../packages/server/src/server/bootstrap.ts)、[Desktop／原生插件协议](../packages/protocol/src/messages.ts)。
 - [插件 Tab 类型](../packages/app/src/workspace-tabs/model.ts)、[面板注册表](../packages/app/src/panels/panel-registry.ts)、[内置注册](../packages/app/src/panels/register-panels.ts)、[命令中心注册表](../packages/app/src/command-center/registry.ts)、[设置路由](../packages/app/src/utils/host-routes.ts)。
 - [OMP 原生管理语义](features/tools-and-plugins.md)、[原生管理适配器](../packages/server/src/server/omp-plugin-cli-service.ts)、[现有迁移指南](omp-desktop-plugin-migration.md)。
-- [宠物 controller 与共享设置耦合](../packages/desktop/src/pets/controller.ts)、[宠物创作](../packages/app/src/desktop/pets/creation.ts)、[资源 manifest](../packages/desktop/src/pets/manifest.ts)、[宠物使用指南](features/desktop-pet.md)。
-- [壁纸媒体所有权](../packages/desktop/src/wallpaper/media-registry.ts)、[Range 响应](../packages/desktop/src/wallpaper/media-response.ts)、[本机客户端](../packages/app/src/wallpaper/desktop-client.ts)、[背景层](../packages/app/src/wallpaper/WallpaperBackground.tsx)、[外观策略](../packages/app/src/appearance/apply.ts)。
-- [原生用量事实](../packages/server/src/server/agent/providers/omp/native-usage.ts)、[实时速度算法](../packages/app/src/agent-stream/token-output-speed.ts)、[完成速度算法](../packages/app/src/agent-stream/turn-token-stats.ts)、[速度来源说明](features/usage-and-quotas.md)。
-- QQ 适配基于相邻 DSH 插件真实的 Cordis 入口、网关、会话管理器、事件适配、访问／配对、问答／审批、文件工具。
+- [宠物插件](../packages/plugins/desktop-pet)、[本机创作工作区](../packages/plugins/desktop-pet/src/creation-workspace.ts)、[资源 manifest](../packages/plugins/desktop-pet/src/manifest.ts)、[宠物使用指南](features/desktop-pet.md)。
+- [壁纸内置入口](../packages/plugins/wallpaper/src/builtin.ts)、[客户端](../packages/plugins/wallpaper/src/client.tsx)、[背景控制器](../packages/plugins/wallpaper/src/controller.ts)、[壁纸使用指南](features/appearance.md#wallpaper)。
+- [速度内置插件](../packages/plugins/agent-speed/src/index.tsx)、[实时算法](../packages/plugins/agent-speed/src/metrics.ts)、[刷新订阅](../packages/plugins/agent-speed/src/use-output-rate.ts)、[完成值](../packages/plugins/agent-speed/src/completed.ts)、[turn-token-stats](../packages/app/src/agent-stream/turn-token-stats.ts)。
+- [QQ 插件](../packages/plugins/qqbot)包含独立网关、会话与事件适配、访问／配对、问答／审批和文件工具；当前 producer 将有效 QQ SDK 内联到 CJS／MJS 服务产物。
 
 历史 [插件 SDK 契约](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/plugin/src/contracts.ts)、[服务运行时](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/server/src/server/plugins/runtime.ts)、[插件面板](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/app/src/plugins/workspace-panels/panel.tsx)构成旧契约基线，不能据此认定文件是在最近一次合并时被删除。Agent Speed 是从独立原生应用移植的算法／功能，尚未证实存在对应历史 Paseo 插件包。
 
@@ -380,4 +386,30 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 
 一个完成回合包含 10 个 input token、150 个总 output token，但只有 120 个实测 output token／3,000 ms，结果为**总计 160 token，实测速度 40 t/s**。另外 30 个 output token 未用于抬高实测吞吐率。
 
-此前有界探测导入了当前 Node Desktop SDK，运行内部命令中心注册表、QQ 回复限额模块，并确认当前依赖条件下 DSH 入口无法作为 OMP 扩展加载。尚未运行重新设计后的插件实现、原生悬浮窗口／媒体流程、旧插件加载、QQ 登录或真实 provider。
+此前有界探测确认 DSH Cordis 入口不能直接作为 OMP 扩展加载；迁移后的 QQ 服务已由真实 compiler／isolated worker 消费。两个客户端和两个 SDK 会话的离线管理、独立安装、禁用／重启用／reload／移除与退出保持 enabled 均通过。生产 QQ SDK 的 owned loopback 验证每安装一个真实 socket，释放互不影响；这不替代 Tencent 登录或投递。
+
+本次 QQ 入口回归先复现真实分发 factory 注册 `qqbot.settings` 时抛出 `Invalid plugin settings id`，以及 enabled／waiting 插件没有 active surface。修正统一贡献 ID 校验与 catalog 的 waiting 语义后，两个相关测试文件共 11 项通过，覆盖真实 QQ factory 的 manage／active 账号控件、非法 ID 边界和 waiting → running 的实例／在途 RPC 保持；应用类型检查与正式 renderer 导出通过。
+
+实现后的真实 GUI 已通过菜单／命令的主机与 workspace／agent 上下文、不可用 Tab 的布局与状态恢复、同 ID 主题的主机引用及输入 DOM／焦点／选区／草稿／滚动保持。新 idle SDK 会话在发送前已有原生 header；实际提交的 local-only command annotation 在服务重启、v7 replica 冷恢复和来源禁用后仍保留完整附件卡片、全文与 metadata。AOT transformed discriminator、canonical 附件传递和旧损失 cache 的迁移均有消费者回归。
+
+原生 owning frame／navigation identity、严格 Range 和跨窗口媒体 lease 隔离已由 mini-electron 真实 GUI 验证。宠物空 bootstrap frame 不再抢占正式文档的绑定；主屏 zoom 1／1.5 的 30 项真实输入通过，覆盖 3 px 不拖、4／5 px 拖动与持久化、释放不 pat／open、opaque 命中、透明穿透和不抢焦点。zoom 1.5 的三尺寸 × 0／1／12 气泡九组 bounds／scale 与截图均通过。
+
+此前已验收分发产物的 `native-qualified-production-43My0r` 完整通过真实任务导航与关闭验收：两个实际 daemon／SDK 会话先确认无模型 command 注册，再生成真实待办；NSEvent 点击打开最高优先任务的精确主机／workspace／完整会话。已读后该主机 revision 从 seq 8 到 9，待办从两项降为一项；关闭发布窗口后再次点击仍打开另一主机的剩余任务。正式 App 的 `production-agent-navigation.png` 和宠物的 `production-two-task-pet.png` 已逐张检视；主窗实际 visible／key、scale 2、2400 × 1600。
+
+此前 `native-qualified-production-xta1dd` 已真实复现 Overlay `closed` 回调访问失效 `webContents.id` 的退出失败。按既有主窗模式在创建期缓存 ID，并新增关闭后文档与旧 action 撤销回归；`native-overlay.test.ts` 九项测试、主进程构建及最新 Native 关闭均通过。owned windows 归零、光标／原应用恢复请求成功，两套私有 daemon 均由同 profile CLI 正常停止。原生 IPC 恢复标准 EventEmitter listener 身份后，真实 `removeListener`／`once`、frame 授权、导航 detach 和定向投递回归通过。
+
+本轮证据根目录为 `/tmp/omp-unified-plugin-smoke-2s3uFs`。此前完成 Native 验收的分发产物为 `package-output-qualified/mac-arm64/OMP Desktop.app`，使用 mini-electron 0.1.38 与当前源码 SDK 18.14.0 desktop/core；未签名、公证或发布。checkout 外消费者已验证旧 compiler／worker、QQ CJS／MJS 管理、SILK／MPEG Wasm、SDK Native 读写、旧 prepare／manage 入口、独立 helper 工作区和资源安装闭包。严格禁全局 Node／Python 的 NodeMode 消费者通过 29 项资源／CLI 边界检查。
+
+前次 QQ 入口修复分发产物为同一证据根目录下的 `package-output-qq-fix/mac-arm64/OMP Desktop.app`，复用上述 Native／SDK，仅重建 renderer 与 macOS 分发目录，未替换用户 Desktop。`qq-native-ui-yj95TF` 已实际启动 packaged main、独立 daemon，确认 bundled `qqbot` 精确来源，并通过真实 NSEvent 权限确认、QQ 单项启用／全局暂停、恢复执行后的无凭据 waiting、侧栏打开账号页、AppID 原生输入、拼图菜单显示与收起、再次暂停撤销运行入口但保留单项选择与配置。三张 2400 × 1600 Native 截图 `qq-paused-configuration.png`、`qq-login-surface.png`、`qq-application-menu.png` 已逐张检视。初次锁屏阻塞在用户解锁后解除；验收未绕 owning-window 输入资格或 TCC，外网保持隔离，不计作 Tencent 登录／投递。退出后 owned windows 为零，光标恢复、原应用恢复请求成功，私有 daemon 由同 profile CLI 正常停止。上述历史 GUI 证据保留各自产物归属，不计作新候选的重跑结果。
+
+最新 QQ 搬迁修复产物为 `package-output-qq-relocation-fix/mac-arm64/OMP Desktop.app`，包含重建后的 daemon 与四目标 remote-backend 分发，复用 mini-electron 0.1.38、既有 renderer 和源码 SDK 18.14.0 desktop/core。本地产物已补 ad-hoc 签名并通过 `codesign --verify --deep --strict`，没有公证或发布。此前配置仍指向已删除的桌面 App 时，注册逻辑跳过已有 ID，导致查询 `paseo-plugin.json` 失败；修复后 18 项安装生命周期回归、服务类型检查和构建通过，覆盖搬迁、暂停／配置保留、撤销信任、已移除状态、新版本拒绝隐式授权、用户同 ID 来源隔离与旧 generation 撤销。
+
+`qq-relocation-native-EF2fEM` 已将真实新 App 复制到隔离的 Applications 目录，以不存在的 Desktop 插件路径和全局暂停／QQ 单项启用配置启动实际 packaged GUI。真实 renderer 启动私有 daemon 后，catalog 与持久配置均迁移至新目录，QQ 版本为 1.0.0，无清单错误，暂停和单项选择保留。真实 NSEvent 完成当前来源权限确认并打开 QQ 配置；AppID／AppSecret 控件及扫码／刷新操作可见，无 alert，真实公开客户端 `qqbot.status` RPC 返回无凭据管理状态。`qq-relocated-account.png`（2400 × 1600）已检视，最终 `result.json` 为 PASS；owned windows 归零，光标／原应用恢复请求成功，私有 daemon PID 41749 由同 profile CLI 正常停止。未替换／重启用户 App 或 daemon，未恢复真实腾讯绑定或投递。
+
+安装该修复包后，需在无运行任务时从新 App 重启内置 daemon 才能加载新服务实现；只关闭 App 或点 QQ 的重启／重载按钮不会更新仍在运行的旧 daemon。路径变化后，在插件权限页确认当前客户端来源；不自动搬移旧 source path 的客户端信任。
+
+未修改生产 main 入口、无 `--app` 的真实 GUI 在 `native-qualified-production-cJPeQD` 通过：packaged renderer／preload bridge、私有 daemon 启动及实际 generated shell → bundled NodeMode helper → Desktop CLI → Native 图片转换均可用。转换前后 daemon PID／serverId／完整设置相同，退出后 owned windows 为零，私有 daemon 由同 profile CLI 正常停止。外层 `sandbox-exec` 禁解释器策略下，生产 renderer sandbox 初始化返回 EPERM；完整 Native 转换的严格策略验收仍受该环境限制，未禁用 renderer sandbox 绕过。
+
+壁纸真实 file／URL decode、透明度 0／0.85／1、off／none／null、加载前 opaque、A→B→A 迟到回调与输入保持已有 GUI 证据。双窗／关闭隔离、项目切换、本机归属、预览 48／49 上限及竞争／释放通过。最新 Native 验证通过真实附件菜单实体 opaque、同媒体 lease 解码，以及实际 Cmd+Alt+T → 生产 theme.cycle → light／dark／auto；同 composer DOM、焦点、3190 字草稿、选区和滚动保持。Native async file dialog 已通过实际 panel 可见后的 Node ticks、owner／queued close／destroy／shutdown 和 exact-once 清理；程序调用 cancel 不记作真实 Escape，人工接受／取消和候选添加／删除／同路径重加仍暂停。
+
+完整系统验收仍未完成，上表验收条件全部保留。官方配置的 `sdk-v18.14.0-desktop-core.1` 已经真实 RPC 返回 `Unknown command: append_session_annotation`；本地新产物已证明 durable ack、原生 header／全文落盘及 cold resume 无模型 messages，四目标 remote-backend 构建成功不能替代新 SDK 发布。发布负责人需发布匹配合同、更新实际 release 配置，再验收下载后的远端闭包。用户选择继续暂停模型创作、真实 QQ、人工文件对话框／壁纸选图、Windows／Linux 和真实负坐标外接屏验收；Native 当前仅枚举主屏。严格外层解释器策略的完整 Native 转换另有上述 EPERM 环境阻塞。

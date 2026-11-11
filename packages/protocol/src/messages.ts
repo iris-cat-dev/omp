@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { DesktopPluginMetadataSchema, DesktopPluginApprovalSchema, DesktopPluginCatalogEntrySchema, DesktopPluginApproveRequestSchema, DesktopPluginStorageGetRequestSchema, DesktopPluginStoragePatchRequestSchema, DesktopPluginSecretRequestSchema, DesktopPluginDataClearRequestSchema, DesktopPluginApproveResponseSchema, DesktopPluginStorageGetResponseSchema, DesktopPluginStoragePatchResponseSchema, DesktopPluginSecretResponseSchema, DesktopPluginDataClearResponseSchema, OmpPluginManagementGetRequestMessageSchema, OmpPluginManagementUpdateRequestMessageSchema, OmpPluginManagementGetResponseMessageSchema, OmpPluginManagementUpdateResponseMessageSchema } from "./desktop-plugins.js";
+export * from "./desktop-plugins.js";
+import { DesktopPluginRevokeTrustRequestSchema,DesktopPluginRevokeTrustResponseSchema } from "./desktop-plugins.js";
 import {
   BackgroundProcessListRequestSchema,
   BackgroundProcessOutputRequestSchema,
@@ -224,6 +227,10 @@ export const DirectoryPluginSourceSchema = z
     source: z.literal("directory"),
     path: z.string().min(1),
     enabled: z.boolean().optional(),
+    approval: DesktopPluginApprovalSchema.optional(),
+    trustRevoked: z.boolean().optional(),
+    bundled: z.boolean().optional(),
+    installed: z.boolean().optional(),
   })
   .strict();
 
@@ -839,8 +846,10 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     clientMessageId: z.string().optional(),
     rewindStatus: AgentUserMessageRewindStatusSchema.optional(),
     sourceAgentId: z.string().min(1).optional(),
+    sourceKind: z.enum(["user","service","agent"]).optional(),
     workingStartedAt: z.string().optional(),
     images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
+    attachments: z.array(z.lazy(() => AgentAttachmentSchema)).optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),
@@ -1623,6 +1632,9 @@ export const PluginDirectoryInstallRequestSchema = z.object({
   requestId: z.string(),
   path: z.string().min(1),
   id: PluginIdSchema.optional(),
+  trusted: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+  approval: DesktopPluginApprovalSchema.optional(),
 });
 
 export const PluginDirectoryInspectRequestSchema = z.object({
@@ -1646,6 +1658,7 @@ export const PluginRpcInvokeRequestSchema = z.object({
   pluginId: PluginIdSchema,
   method: z.string().min(1),
   input: z.unknown(),
+  generation: z.number().int().nonnegative(),
 });
 
 export const AgentSkillOperationSchema = z.discriminatedUnion("kind", [
@@ -2092,6 +2105,8 @@ export const OmpPluginInfoSchema = z
     version: z.string(),
     path: z.string().optional(),
     scope: z.enum(["user", "project"]).optional(),
+    source: z.string().optional(),
+    linked: z.boolean().optional(),
     shadowedBy: z.enum(["project"]).optional(),
     enabled: z.boolean().optional(),
     description: z.string().optional(),
@@ -3760,6 +3775,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  DesktopPluginApproveRequestSchema,
+  DesktopPluginStorageGetRequestSchema,
+  DesktopPluginStoragePatchRequestSchema,
+  DesktopPluginSecretRequestSchema,
+  DesktopPluginDataClearRequestSchema,
+  DesktopPluginRevokeTrustRequestSchema,
+  OmpPluginManagementGetRequestMessageSchema,
+  OmpPluginManagementUpdateRequestMessageSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
   AgentSkillsUninstallRequestSchema,
@@ -4289,6 +4312,8 @@ export const DaemonConfigChangedStatusPayloadSchema = z
 export const PluginCatalogChangedStatusPayloadSchema = z.object({
   status: z.literal("plugin_catalog_changed"),
   pluginId: PluginIdSchema,
+  generation: z.number().int().nonnegative().optional(),
+  revision: z.number().int().nonnegative().optional(),
 });
 
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
@@ -4549,6 +4574,7 @@ export const AgentStreamMessageSchema = z.object({
     timestamp: z.string(),
     // Present for timeline events. Maps 1:1 to canonical in-memory timeline rows.
     seq: z.number().int().nonnegative().optional(),
+    contentVersion: z.number().int().nonnegative().optional(),
     epoch: z.string().optional(),
   }),
 });
@@ -7509,16 +7535,13 @@ export const PluginCatalogGetResponseSchema = z.object({
   type: z.literal("plugin.catalog.get.response"),
   payload: z.object({
     requestId: z.string(),
-    plugins: z.array(
-      z.object({
-        id: PluginIdSchema,
-        clientBundle: z.string(),
-      }),
-    ),
+    plugins: z.array(DesktopPluginCatalogEntrySchema),
+    revision: z.number().int().nonnegative().default(0),
+    pluginsEnabled: z.boolean().default(false),
   }),
 });
 
-export const PluginStatusSchema = z.enum(["running", "disabled", "failed"]);
+export const PluginStatusSchema = z.enum(["running", "disabled", "failed", "waiting", "starting"]);
 export type PluginStatus = z.infer<typeof PluginStatusSchema>;
 
 export const PluginListItemSchema = z.object({
@@ -7527,6 +7550,16 @@ export const PluginListItemSchema = z.object({
   enabled: z.boolean(),
   status: PluginStatusSchema,
   error: z.string().optional(),
+  packageId: z.string().optional(),
+  owner: z.enum(["desktop", "daemon"]).optional(),
+  version: z.string().optional(),
+  generation: z.number().int().nonnegative().optional(),
+  trusted: z.boolean().optional(),
+  effectiveEnabled: z.boolean().optional(),
+  declaredCapabilities: z.array(z.string()).optional(),
+  grantedCapabilities: z.array(z.string()).optional(),
+  revision: z.number().int().nonnegative().optional(),
+  waitingReason: z.string().optional(),
 });
 export type PluginListItem = z.infer<typeof PluginListItemSchema>;
 
@@ -7559,7 +7592,7 @@ export const PluginDirectoryInstallResponseSchema = z.object({
 
 export const PluginDirectoryInspectResponseSchema = z.object({
   type: z.literal("plugin.directory.inspect.response"),
-  payload: z.object({ requestId: z.string(), id: PluginIdSchema }),
+  payload: z.object({ requestId: z.string(), id: PluginIdSchema, version: z.string().optional(), metadata: DesktopPluginMetadataSchema.nullable().optional(), capabilities: z.array(z.string()).optional(), format: z.enum(["legacy", "package"]).optional() }),
 });
 
 function pluginActionResponse<const Type extends string>(type: Type) {
@@ -7688,6 +7721,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  DesktopPluginApproveResponseSchema,
+  DesktopPluginStorageGetResponseSchema,
+  DesktopPluginStoragePatchResponseSchema,
+  DesktopPluginSecretResponseSchema,
+  DesktopPluginDataClearResponseSchema,
+  DesktopPluginRevokeTrustResponseSchema,
+  OmpPluginManagementGetResponseMessageSchema,
+  OmpPluginManagementUpdateResponseMessageSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
   AgentSkillsUninstallResponseSchema,

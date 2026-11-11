@@ -45,6 +45,15 @@ export function mapOmpToolDetail(
   return mapOmpCoreToolDetail(toolCall, result);
 }
 
+export function mapOmpPresentedFiles(toolCall:OmpTrackedToolCall,result:OmpToolResult,status:string):Array<{path:string;mimeType?:string;name:string}>{
+  const dispatch=resolveXdevToolCall(toolCall,result);
+  const actualTool=dispatch?.toolCall??toolCall;const actualResult=dispatch?.result??result;
+  if(status!=="completed"||actualTool.toolName!=="present_image")return [];
+  const details=resultDetails(actualResult);const filePath=firstString(details?.filePath);
+  if(firstString(details?.status)!=="published"||!filePath)return [];
+  return [{path:filePath,mimeType:firstString(details?.mimeType),name:filePath.split(/[\\/]/).at(-1)??filePath}];
+}
+
 function mapOmpImageGenerationDetail(
   args: unknown,
   result: OmpToolResult,

@@ -2176,9 +2176,7 @@ export class HostRuntimeStore {
             markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
             markAgentReady: () => controller.markAgentDirectorySyncReady(),
             markAgentError: (error) => controller.markAgentDirectorySyncError(error),
-            ...(getDesktopHost()?.pet?.publishActivity
-              ? { onAgentDirectoryCommitted: () => this.emit(host.serverId) }
-              : {}),
+            onAgentDirectoryCommitted: () => this.emit(host.serverId),
           },
           this.replicaCache,
         ),

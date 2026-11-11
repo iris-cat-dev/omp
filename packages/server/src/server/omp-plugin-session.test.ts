@@ -248,4 +248,10 @@ describe("OmpPluginSession", () => {
     });
     await rm(dirname(registryPath), { recursive: true, force: true });
   });
+  it("correlates unsupported config management without leaking CLI secrets", async () => {
+    const { session, emitted } = makeSession(async () => ({ stdout: '{"token":"private-token"}', stderr: "private-token" }));
+    await session.handleInboundMessage({ type: "ompPlugins.management.get.request", requestId: "safe-config", name: "fixture" });
+    expect(emitted).toEqual([{ type: "rpc_error", payload: { requestId: "safe-config", requestType: "ompPlugins.management.get.request", error: "The selected OMP runtime does not support safe Desktop configuration management." } }]);
+    expect(JSON.stringify(emitted)).not.toContain("private-token");
+  });
 });

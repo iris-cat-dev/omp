@@ -17,6 +17,10 @@ const discriminatedUnionPath = resolve(
   zodAotRoot,
   "dist/core/codegen/schemas/discriminated-union.js",
 );
+const discriminatedUnionExtractorPath = resolve(
+  zodAotRoot,
+  "dist/core/extract/extractors/union.js",
+);
 
 async function ensureZodAotRuntimeImportExtensionPatch() {
   const emitter = await readFile(emitterPath, "utf8");
@@ -68,9 +72,26 @@ async function ensureZodAotDiscriminatedUnionOutputPatch() {
   await writeFile(discriminatedUnionPath, discriminatedUnionEmitter);
 }
 
+async function ensureZodAotDiscriminatedUnionInputPipePatch() {
+  const extractor = await readFile(discriminatedUnionExtractorPath, "utf8");
+  const before = "const optDef = opt._zod.def;";
+  // The discriminator belongs to the incoming object, even when a branch's
+  // output is transformed. Preserve the full branch IR for output normalization.
+  const after =
+    'let optDef = opt._zod.def;\n            while (optDef.type === "pipe") {\n                optDef = optDef.in._zod.def;\n            }';
+  if (extractor.includes(after)) {
+    return;
+  }
+  if (!extractor.includes(before)) {
+    throw new Error("zod-aot union extractor shape changed; update the input pipe patch");
+  }
+  await writeFile(discriminatedUnionExtractorPath, extractor.replace(before, after));
+}
+
 await Promise.all([
   ensureZodAotRuntimeImportExtensionPatch(),
   ensureZodAotDiscriminatedUnionOutputPatch(),
+  ensureZodAotDiscriminatedUnionInputPipePatch(),
 ]);
 
 const [

@@ -1751,11 +1751,11 @@ export class PaseoWebSocketServer {
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: true,
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
-        plugins: true,
-        pluginManagement: true,
-        pluginLogs: true,
+        plugins: !!this.pluginRuntime,
+        pluginManagement: !!this.pluginRuntime,
+        pluginLogs: !!this.pluginRuntime,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
-        pluginThemes: true,
+        pluginThemes: !!this.pluginRuntime,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.

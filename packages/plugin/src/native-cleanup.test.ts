@@ -1,0 +1,6 @@
+import {describe,expect,it} from "vitest";
+import {isPluginReleaseOperation} from "./native-cleanup.js";
+describe("revoked activation cleanup-only operations",()=>{
+ it("permits precise wallpaper clears without permitting any acquisition",()=>{expect(isPluginReleaseOperation("wallpaper:setBackground",{candidateId:null,epoch:"document",revision:2})).toBe(true);expect(isPluginReleaseOperation("wallpaper:setPreviews",{candidateIds:[],epoch:"document",revision:3})).toBe(true);expect(isPluginReleaseOperation("wallpaper:setBackground",{candidateId:"new-media"})).toBe(false);expect(isPluginReleaseOperation("wallpaper:setPreviews",{candidateIds:["new-media"]})).toBe(false);expect(isPluginReleaseOperation("wallpaper:setBackground",{candidateId:null,acquire:true})).toBe(false);});
+ it("classifies opaque lease releases but never arbitrary native calls",()=>{expect(isPluginReleaseOperation("overlay.release",{leaseId:"owned-lease"})).toBe(true);expect(isPluginReleaseOperation("menu.unregister",{leaseId:"owned-menu"})).toBe(true);expect(isPluginReleaseOperation("overlay.acquire",{leaseId:"owned-lease"})).toBe(false);expect(isPluginReleaseOperation("overlay.release",{leaseId:""})).toBe(false);});
+});

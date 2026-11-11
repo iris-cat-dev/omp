@@ -3,6 +3,7 @@ const path = require("node:path");
 
 const packageName = "lucide-react-native";
 let runtimeExports;
+let runtimeEntry;
 
 module.exports = function ({ template, types: t }) {
   function getRuntimeExports() {
@@ -12,6 +13,7 @@ module.exports = function ({ template, types: t }) {
     const packageInfo = JSON.parse(fs.readFileSync(packageFile, "utf8"));
     const entry = packageInfo.module;
     if (!entry) throw new Error(`${packageName} must provide an ESM entry point`);
+    runtimeEntry = entry;
 
     // Read Lucide's own declarations: legacy aliases and digits do not follow
     // a reliable PascalCase-to-filename convention. Keep its licensed modules intact.
@@ -20,8 +22,26 @@ module.exports = function ({ template, types: t }) {
       { syntacticPlaceholders: false, placeholderPattern: false },
     );
     const exports = new Map();
+    const namespaceImports = new Map();
     for (const declaration of Array.isArray(declarations) ? declarations : [declarations]) {
-      if (!t.isExportNamedDeclaration(declaration) || !declaration.source) continue;
+      if (t.isImportDeclaration(declaration)) {
+        for (const specifier of declaration.specifiers) {
+          if (t.isImportNamespaceSpecifier(specifier)) namespaceImports.set(specifier.local.name, {
+            source: path.posix.join(packageName, path.posix.dirname(entry), declaration.source.value),
+            imported: "*",
+          });
+        }
+        continue;
+      }
+      if (!t.isExportNamedDeclaration(declaration)) continue;
+      if (!declaration.source) {
+        for (const specifier of declaration.specifiers) {
+          if (!t.isExportSpecifier(specifier)) continue;
+          const target = namespaceImports.get(specifier.local.name);
+          if (target) exports.set(specifier.exported.name ?? specifier.exported.value, target);
+        }
+        continue;
+      }
       const source = path.posix.join(
         packageName,
         path.posix.dirname(entry),
@@ -59,9 +79,14 @@ module.exports = function ({ template, types: t }) {
             typeSpecifiers.push(specifier);
             continue;
           }
+          if (t.isImportNamespaceSpecifier(specifier)) {
+            getRuntimeExports();
+            imports.push(t.importDeclaration([t.cloneNode(specifier)], t.stringLiteral(path.posix.join(packageName, runtimeEntry))));
+            continue;
+          }
           if (!t.isImportSpecifier(specifier)) {
             throw importPath.buildCodeFrameError(
-              "Use named Lucide imports instead of default/namespace imports.",
+              "Use named or namespace Lucide imports instead of default imports.",
             );
           }
           const name = specifier.imported.name ?? specifier.imported.value;
@@ -72,9 +97,11 @@ module.exports = function ({ template, types: t }) {
             );
           }
           const binding =
-            target.imported === "default"
-              ? t.importDefaultSpecifier(t.cloneNode(specifier.local))
-              : t.importSpecifier(t.cloneNode(specifier.local), t.identifier(target.imported));
+            target.imported === "*"
+              ? t.importNamespaceSpecifier(t.cloneNode(specifier.local))
+              : target.imported === "default"
+                ? t.importDefaultSpecifier(t.cloneNode(specifier.local))
+                : t.importSpecifier(t.cloneNode(specifier.local), t.identifier(target.imported));
           imports.push(t.importDeclaration([binding], t.stringLiteral(target.source)));
         }
         // Source types continue resolving against Lucide's public .d.ts exports.

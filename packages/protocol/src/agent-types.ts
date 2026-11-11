@@ -400,9 +400,12 @@ export type AgentTimelineItem =
       rewindStatus?: AgentUserMessageRewindStatus;
       /** Sending agent for an agent-to-agent prompt; absent for direct user/tool input. */
       sourceAgentId?: string;
+      /** Assigned by the host prompt initiator; legacy rows may have no origin. */
+      sourceKind?: "user" | "service" | "agent";
       /** Original work start retained when a steer continues through a replacement turn. */
       workingStartedAt?: string;
       images?: Array<{ data: string; mimeType: string }>;
+      attachments?: AgentAttachment[];
     }
   | {
       type: "assistant_message";

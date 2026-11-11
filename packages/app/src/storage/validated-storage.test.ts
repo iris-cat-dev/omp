@@ -39,6 +39,13 @@ describe("validated storage reads", () => {
     expect(storage.values.has("channel")).toBe(false);
   });
 
+  it.each(["{", JSON.stringify({ enabled: "yes" })])("preserves invalid data when the owner requires an error: %s", async (raw) => {
+    const storage = new MemoryStorage();
+    storage.values.set("profile", raw);
+    await expect(readValidatedJson(storage, "profile", z.strictObject({ enabled: z.boolean() }), { invalid: "throw" })).rejects.toThrow();
+    expect(storage.values.get("profile")).toBe(raw);
+  });
+
   it("returns only schema-validated values", async () => {
     const storage = new MemoryStorage();
     storage.values.set("settings", JSON.stringify({ enabled: true }));

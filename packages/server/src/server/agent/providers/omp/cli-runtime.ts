@@ -19,6 +19,7 @@ import {
   type AgentPromptContext,
 } from "@omp-desktop/protocol/prompt-context";
 import type { Logger } from "pino";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
@@ -70,6 +71,7 @@ import {
   OmpHostToolsResultSchema,
   OmpLoginProvidersResultSchema,
   OmpMessagesResultSchema,
+  OmpSessionAnnotationResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpNativeServiceTierSnapshotSchema,
@@ -1061,6 +1063,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
+  async appendSessionAnnotation(customType: string, data: unknown): Promise<string> {
+    return OmpSessionAnnotationResultSchema.parse(await this.request({ type: "append_session_annotation", customType, data })).entryId;
+  }
+
   async getSubagents(): Promise<OmpSubagentSnapshot[]> {
     const command = OmpSubagentRpcCommandSchema.parse({ type: "get_subagents" });
     return OmpSubagentsResultSchema.parse(await this.process.request(command)).subagents;
@@ -1170,6 +1176,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void {
     this.process.send({ ...update });
+  }
+
+  sendPluginPromptResult(id:string,contributions:PluginAgentPromptSelection[],error?:string):void {
+    this.process.send({type:"desktop_plugin_prompt_response",id,contributions,error});
   }
 
   async branch(entryId: string): Promise<{ text: string }> {

@@ -32,6 +32,7 @@ import type {
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
@@ -116,6 +117,7 @@ export interface OmpRuntimeSession {
     model: { provider: string; id: string },
   ): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
+  appendSessionAnnotation(customType: string, data: unknown): Promise<string>;
   getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
@@ -132,6 +134,7 @@ export interface OmpRuntimeSession {
   setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]>;
   sendHostToolResult(result: OmpRpcHostToolResult): void;
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;
+  sendPluginPromptResult?(id:string,contributions:PluginAgentPromptSelection[],error?:string):void;
   branch(entryId: string): Promise<{ text: string }>;
   getBranchMessages(): Promise<OmpBranchMessage[]>;
   activeBranchEntryId?: string;

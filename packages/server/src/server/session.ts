@@ -181,6 +181,7 @@ import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
 import { OmpPluginSession } from "./omp-plugin-session.js";
+import type { PluginService } from "./plugins/index.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
@@ -461,28 +462,7 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
-  pluginRuntime?: {
-    listPlugins(): import("@omp-desktop/protocol/messages").PluginListItem[];
-    getLogs(pluginId: string): import("@omp-desktop/protocol/messages").PluginLogEntry[];
-    installDirectory(input: {
-      path: string;
-      id?: string;
-    }): Promise<import("@omp-desktop/protocol/messages").PluginListItem>;
-    inspectDirectory(path: string): Promise<{ id: string }>;
-    reloadPlugin(
-      pluginId: string,
-    ): Promise<import("@omp-desktop/protocol/messages").PluginListItem>;
-    enablePlugin(
-      pluginId: string,
-    ): Promise<import("@omp-desktop/protocol/messages").PluginListItem>;
-    disablePlugin(
-      pluginId: string,
-    ): Promise<import("@omp-desktop/protocol/messages").PluginListItem>;
-    removePlugin(pluginId: string): Promise<void>;
-    subscribe(listener: (pluginId: string) => void): () => void;
-    catalog(): Array<{ id: string; clientBundle: string }>;
-    invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
-  };
+  pluginRuntime?: Pick<PluginService, "listPlugins" | "getLogs" | "installDirectory" | "inspectDirectory" | "reloadPlugin" | "enablePlugin" | "disablePlugin" | "removePlugin" | "subscribe" | "catalog" | "invokePluginRpc" | "getRevision" | "getGeneration" | "pluginsEnabled" | "approvePlugin" | "revokePluginTrust" | "storageGet" | "storagePatch" | "secret" | "clearData">;
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
   terminalManager: TerminalManager | null;
@@ -1782,6 +1762,7 @@ export class Session {
       event: serializedEvent,
       timestamp: event.timestamp ?? new Date().toISOString(),
       ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
+      ...(typeof event.contentVersion === "number" ? { contentVersion: event.contentVersion } : {}),
       ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
     };
   }
@@ -2102,6 +2083,8 @@ export class Session {
         payload: {
           requestId: msg.requestId,
           plugins: this.pluginRuntime?.catalog() ?? [],
+          revision: this.pluginRuntime?.getRevision() ?? 0,
+          pluginsEnabled: this.pluginRuntime?.pluginsEnabled() ?? false,
         },
       });
       return undefined;
@@ -2109,7 +2092,7 @@ export class Session {
     if (msg.type === "plugin.rpc.invoke.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
       return this.pluginRuntime
-        .invokePluginRpc(msg.pluginId, msg.method, msg.input)
+        .invokePluginRpc(msg.pluginId, msg.method, msg.input, msg.generation)
         .then((output) => {
           this.emit({
             type: "plugin.rpc.invoke.response",
@@ -2122,9 +2105,32 @@ export class Session {
   }
 
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if(msg.type==="plugin.trust.revoke.request"){
+      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.revokePluginTrust(msg.pluginId).then(plugin=>{this.emit({type:"plugin.trust.revoke.response",payload:{requestId:msg.requestId,plugin}});});
+    }
+    if(msg.type==="plugin.approve.request") {
+      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.approvePlugin(msg.pluginId,msg.approval,msg.expectedInstallation).then(plugin=>{this.emit({type:"plugin.approve.response",payload:{requestId:msg.requestId,plugin}});});
+    }
+    if(msg.type==="plugin.storage.get.request" || msg.type==="plugin.storage.patch.request") {
+      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
+      const snapshot=msg.type==="plugin.storage.get.request"?this.pluginRuntime.storageGet(msg.pluginId,msg.generation):this.pluginRuntime.storagePatch(msg.pluginId,msg.patch,msg.expectedRevision,msg.generation);
+      this.emit({type:msg.type==="plugin.storage.get.request"?"plugin.storage.get.response":"plugin.storage.patch.response",payload:{requestId:msg.requestId,snapshot}});
+      return;
+    }
+    if(msg.type==="plugin.secret.request") {
+      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
+      const configured=this.pluginRuntime.secret(msg.pluginId,msg.key,msg.operation,msg.value,msg.generation);
+      this.emit({type:"plugin.secret.response",payload:{requestId:msg.requestId,configured}});return;
+    }
+    if(msg.type==="plugin.data.clear.request") {
+      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
+      this.pluginRuntime.clearData(msg.pluginId);this.emit({type:"plugin.data.clear.response",payload:{requestId:msg.requestId}});return;
+    }
     if (msg.type === "plugin.directory.install.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.installDirectory({ path: msg.path, id: msg.id }).then((plugin) => {
+      return this.pluginRuntime.installDirectory({ path: msg.path, id: msg.id, trusted: msg.trusted, enabled: msg.enabled, approval: msg.approval }).then((plugin) => {
         this.emit({
           type: "plugin.directory.install.response",
           payload: { requestId: msg.requestId, plugin },
@@ -2134,10 +2140,10 @@ export class Session {
     }
     if (msg.type === "plugin.directory.inspect.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.inspectDirectory(msg.path).then(({ id }) => {
+      return this.pluginRuntime.inspectDirectory(msg.path).then((inspection) => {
         this.emit({
           type: "plugin.directory.inspect.response",
-          payload: { requestId: msg.requestId, id },
+          payload: { requestId: msg.requestId, ...inspection },
         });
         return undefined;
       });
@@ -2150,7 +2156,7 @@ export class Session {
   ): (() => void) | null {
     if (!pluginRuntime) return null;
     return pluginRuntime.subscribe((pluginId) => {
-      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId } });
+      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId, generation: pluginRuntime.getGeneration(pluginId), revision: pluginRuntime.getRevision() } });
     });
   }
 
@@ -8212,6 +8218,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          sourceKind: this.clientId.startsWith("plugin:") ? "service" : "user",
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           // A human message answers any permission the agent is blocked on.
           clearPendingPermissions: true,

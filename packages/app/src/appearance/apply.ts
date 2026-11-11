@@ -7,11 +7,15 @@ import {
   REGISTERED_THEMES,
   type Theme,
 } from "@/styles/theme";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "./color";
 import { applyRootUiFont } from "./apply-root-font";
 
 const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES) as (keyof typeof REGISTERED_THEMES)[];
 const authoredColorsByTheme = new Map<string, Theme["colors"]>();
+
+export function setAuthoredThemeColors(key: string, colors: Theme["colors"]): void {
+  authoredColorsByTheme.set(key, colors);
+}
 
 export interface AppearanceInput {
   uiFontFamily: string; // "" -> default stack
@@ -20,8 +24,8 @@ export interface AppearanceInput {
   contentFontSize: number; // already clamped
   codeFontSize: number; // already clamped
   syntaxTheme: SyntaxThemeId;
-  wallpaperActive: boolean;
-  wallpaperOpacity: number;
+  backgroundActive: boolean;
+  backgroundOpacity: number;
 }
 
 /**
@@ -51,14 +55,14 @@ function scaleFontSize(
     code: codeSize, // absolute, NOT scaled
   };
 }
-function applyWallpaperSurfaces<TColors extends Theme["colors"]>(
+function applyBackgroundSurfaces<TColors extends Theme["colors"]>(
   colors: TColors,
   active: boolean,
   opacity: number,
 ): TColors {
   if (!active) return colors;
-  // One control reveals the media and removes the interface veil. Surface RGB
-  // stays unchanged so AppearanceStyleBoundary preserves focused controls.
+  // One control reveals the media and removes the interface veil while preserving
+  // the authored surface RGB for repeated opacity previews.
   const surfaceAlpha = 1 - opacity;
   return {
     ...colors,
@@ -95,7 +99,7 @@ function getAuthoredColors<TColors extends Theme["colors"]>(
  * always current and makes ordering vs `setTheme`/`setAdaptiveThemes` irrelevant.
  *
  * The updater starts from authored colors so repeated previews never compound
- * opacity. Base canvases stay transparent while media is ready. The wallpaper
+ * opacity. Base canvases stay transparent while media is ready. The background
  * value fades media in and panel backgrounds out; 100% reveals the original image.
  * Floating popovers retain their authored backing; other overlays restore opacity locally.
  */
@@ -121,10 +125,10 @@ export function applyAppearance(input: AppearanceInput): void {
       );
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
       if (t.colorScheme === "light") {
-        const colors = applyWallpaperSurfaces(
+        const colors = applyBackgroundSurfaces(
           getAuthoredColors(key, t.colors),
-          input.wallpaperActive,
-          input.wallpaperOpacity,
+          input.backgroundActive,
+          input.backgroundOpacity,
         );
         return {
           ...t,
@@ -137,10 +141,10 @@ export function applyAppearance(input: AppearanceInput): void {
           },
         };
       }
-      const colors = applyWallpaperSurfaces(
+      const colors = applyBackgroundSurfaces(
         getAuthoredColors(key, t.colors),
-        input.wallpaperActive,
-        input.wallpaperOpacity,
+        input.backgroundActive,
+        input.backgroundOpacity,
       );
       return {
         ...t,

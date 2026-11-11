@@ -1,5 +1,4 @@
 import { readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { z } from "zod";
@@ -10,6 +9,8 @@ import {
   OmpPluginInfoSchema,
   OmpPluginMarketplaceCatalogEntrySchema,
   OmpPluginMarketplaceInfoSchema,
+  OmpPluginManagementSchema,
+  type OmpPluginManagement,
 } from "@omp-desktop/protocol/messages";
 
 import type { Logger } from "pino";
@@ -60,10 +61,7 @@ export interface OmpPluginCliServiceOptions {
   runner?: OmpPluginRunner;
   /** Defaults to resolving `omp` via OMP_COMMAND env or PATH lookup. */
   resolveOmpCommand?: () => Promise<string | null>;
-  /**
-   * Overrides the omp marketplaces registry location for tests. Defaults to
-   * `~/.omp/marketplaces.json` (the runtime's own config root).
-   */
+  /** Explicit registry override for deterministic tests only. */
   marketplacesRegistryPath?: string;
   /** Live provider settings; management must target the same profile as sessions. */
   getProviderConfig?: () => ProviderOverride | undefined;
@@ -202,6 +200,28 @@ function normalizeMarketplacePlugins(
   return plugins;
 }
 
+/** Native list metadata can include secret defaults in manifest.settings. */
+function redactNativeMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactNativeMetadata);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record)
+    .filter(([key]) => !(record.secret === true && ["default", "value"].includes(key)))
+    .map(([key, item]) => [key, redactNativeMetadata(item)]));
+}
+
+export interface OmpPluginManagementInput {
+  name: string;
+  scope?: "user" | "project";
+  cwd?: string;
+}
+
+export interface OmpPluginManagementPatch {
+  enabledFeatures?: string[] | null;
+  settings?: Record<string, string | number | boolean>;
+  deleteSettings?: string[];
+}
+
 export class OmpPluginCliService {
   private readonly logger: Logger;
   private readonly runner: OmpPluginRunner;
@@ -226,6 +246,50 @@ export class OmpPluginCliService {
       options.resolveOmpCommand ??
       (async () => process.env.OMP_COMMAND?.trim() || (await findExecutable("omp")) || null);
     this.marketplacesRegistryPath = options.marketplacesRegistryPath;
+  }
+
+  async getManagement(input: OmpPluginManagementInput): Promise<{ management: OmpPluginManagement }> {
+    return this.runExclusive(() => this.runManagement(input));
+  }
+
+  async updateManagement(input: OmpPluginManagementInput & { patch: OmpPluginManagementPatch }): Promise<{ management: OmpPluginManagement }> {
+    return this.runExclusive(async () => {
+      const { management } = await this.runManagement(input);
+      for (const key of [...Object.keys(input.patch.settings ?? {}), ...(input.patch.deleteSettings ?? [])]) {
+        const definition = management.schema[key];
+        if (!definition) throw new Error("Unknown native setting");
+        if (definition.secret) throw new Error("Secret input is unavailable in Desktop; use the selected OMP CLI");
+      }
+      return this.runManagement(input, input.patch);
+    });
+  }
+
+  private async runManagement(input: OmpPluginManagementInput, patch?: OmpPluginManagementPatch): Promise<{ management: OmpPluginManagement }> {
+    const args = ["manage", input.name, "--json"];
+    if (input.scope) args.push("--scope", input.scope);
+    if (patch) args.push("--set", JSON.stringify(patch));
+    let output: string;
+    try {
+      output = await this.runCli(args, ACTION_TIMEOUT_MS, input.cwd, input.scope);
+    } catch {
+      // Never relay stdout/stderr from a config command: older CLIs print secrets.
+      throw new OmpPluginUnavailableError("Native management failed or is unsupported by the selected OMP runtime. Use its CLI for settings, or update the SDK.");
+    }
+    const parsed = OmpPluginManagementSchema.safeParse(parseTrailingJson(output));
+    if (!parsed.success) throw new OmpPluginUnavailableError("The selected OMP runtime does not support safe Desktop configuration management.");
+    const management = parsed.data;
+    management.schema = OmpPluginManagementSchema.shape.schema.parse(redactNativeMetadata(management.schema));
+    management.settings = Object.fromEntries(Object.entries(management.settings).filter(([key, value]) => {
+      const definition = management.schema[key];
+      if (!definition || definition.secret) return false;
+      switch (definition.type) {
+        case "string": return typeof value === "string";
+        case "boolean": return typeof value === "boolean";
+        case "enum": return typeof value === "string" && definition.values.includes(value);
+        case "number": return typeof value === "number" && Number.isFinite(value) && (definition.min === undefined || value >= definition.min) && (definition.max === undefined || value <= definition.max);
+      }
+    }));
+    return { management };
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -355,7 +419,7 @@ export class OmpPluginCliService {
           rawOutput: truncateOutput((error as Error).message),
         };
       }
-      const parsed = OmpPluginListJsonSchema.safeParse(parseTrailingJson(output));
+      const parsed = OmpPluginListJsonSchema.safeParse(redactNativeMetadata(parseTrailingJson(output)));
       if (parsed.success) {
         const fromMarketplace = normalizeMarketplacePlugins(parsed.data.marketplace);
         return {
@@ -363,11 +427,11 @@ export class OmpPluginCliService {
           marketplace: parsed.data.marketplace,
         };
       }
-      this.logger.warn({ output: output.slice(0, 500) }, "Unparseable omp plugin list output");
+      this.logger.warn("Unparseable omp plugin list output");
       return {
         plugins: [],
         marketplace: [],
-        rawOutput: truncateOutput(output),
+        rawOutput: "The selected OMP runtime returned invalid plugin metadata.",
       };
     });
   }
@@ -388,12 +452,12 @@ export class OmpPluginCliService {
       } catch (error) {
         return { ok: false, output: truncateOutput((error as Error).message) };
       }
-      const json = parseTrailingJson(output);
+      const json = redactNativeMetadata(parseTrailingJson(output));
       const asList = TrailingJsonSchema.safeParse(json);
       if (asList.success) {
         const name = extractPluginName(input.spec);
         const plugin = asList.data.npm.find((entry) => entry.name === name) ?? null;
-        return { ok: true, plugin, output: truncateOutput(output) };
+        return { ok: true, plugin };
       }
       // Some omp versions print the installed plugin object itself.
       const asPlugin = OmpPluginInfoSchema.safeParse(json);
@@ -401,10 +465,10 @@ export class OmpPluginCliService {
         return {
           ok: true,
           plugin: asPlugin.data,
-          output: truncateOutput(output),
+          output: input.dryRun ? "Native installation preview completed." : undefined,
         };
       }
-      return { ok: true, plugin: null, output: truncateOutput(output) };
+      return { ok: true, plugin: null, output: input.dryRun ? "Native installation preview completed." : undefined };
     });
   }
 
@@ -512,16 +576,17 @@ export class OmpPluginCliService {
   private async resolveMarketplacesRegistryPath(cwd?: string): Promise<string> {
     if (this.marketplacesRegistryPath) return this.marketplacesRegistryPath;
     const output = await this.runCli(["list", "--json"], ACTION_TIMEOUT_MS, cwd);
-    const nativePaths = z
-      .object({
-        paths: z.object({ pluginsRoot: z.string().refine(isAbsolute) }),
-      })
-      .safeParse(parseTrailingJson(output));
-    if (nativePaths.success)
-      return join(dirname(nativePaths.data.paths.pluginsRoot), "marketplaces.json");
-    if (hasBundledOmpPlugins())
-      throw new Error("The private OMP host did not return authoritative plugin paths.");
-    return join(homedir(), ".omp", "marketplaces.json");
+    const nativePaths = z.object({
+      paths: z.object({
+        marketplacesRegistry: z.string().refine(isAbsolute).optional(),
+        pluginsRoot: z.string().refine(isAbsolute).optional(),
+      }),
+    }).safeParse(parseTrailingJson(output));
+    if (nativePaths.success) {
+      if (nativePaths.data.paths.marketplacesRegistry) return nativePaths.data.paths.marketplacesRegistry;
+      if (nativePaths.data.paths.pluginsRoot) return join(dirname(nativePaths.data.paths.pluginsRoot), "marketplaces.json");
+    }
+    throw new OmpPluginUnavailableError("The selected OMP runtime does not expose authoritative marketplace paths; update its native management SDK.");
   }
 
   /**

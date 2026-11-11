@@ -44,6 +44,9 @@ import type {
   WorkspaceCreateRequest,
 } from "@omp-desktop/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
+import { createDesktopPluginActions, type DesktopPluginActions } from "./desktop-plugins.js";
+import type { AgentPermissionResponse } from "@omp-desktop/protocol/agent-types";
+export type { DesktopPluginActions, PluginCatalogSnapshot, PluginConfigurationSnapshot, PluginApproval, PluginExpectedInstallation } from "./desktop-plugins.js";
 import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
@@ -269,6 +272,7 @@ export interface PaseoAgentTimelineHandle {
    */
   subscribe(handler: (event: PaseoAgentStream) => void): () => void;
 }
+export interface PaseoAgentObservation { snapshot:PaseoAgent;timeline:FetchAgentTimelinePayload;unsubscribe:()=>void }
 
 export interface PaseoAgentHandle {
   readonly id: string;
@@ -286,6 +290,11 @@ export interface PaseoAgentHandle {
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
+  stop():Promise<void>;
+  compact():Promise<void>;
+  setModel(modelId:string|null):Promise<void>;
+  respondToPermission(requestId:string,response:AgentPermissionResponse):Promise<void>;
+  observe(handler:(stream:PaseoAgentStream)=>void):Promise<PaseoAgentObservation>;
 }
 
 export interface PaseoAgentActions {
@@ -378,7 +387,25 @@ export interface PaseoConfigActions {
     requestId?: string,
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
+export interface OmpNativePluginActions {
+  list: DaemonClient["listOmpPlugins"];
+  install: DaemonClient["installOmpPlugin"];
+  upgrade: DaemonClient["upgradeOmpPlugin"];
+  remove: DaemonClient["removeOmpPlugin"];
+  setEnabled: DaemonClient["setOmpPluginEnabled"];
+  doctor: DaemonClient["runOmpPluginDoctor"];
+  getManagement: DaemonClient["getOmpPluginManagement"];
+  updateManagement: DaemonClient["updateOmpPluginManagement"];
+  marketplaces: {
+    list: DaemonClient["listOmpPluginMarketplaces"];
+    add: DaemonClient["addOmpPluginMarketplace"];
+    remove: DaemonClient["removeOmpPluginMarketplace"];
+    update: DaemonClient["updateOmpPluginMarketplace"];
+  };
+}
+
 export interface OmpProviderActions {
+  plugins: OmpNativePluginActions;
   getProviderManagement(options?: {
     requestId?: string;
   }): Promise<OmpProviderManagementGetResponseMessage["payload"]>;
@@ -474,6 +501,8 @@ export interface PaseoForgeAuthActions {
 }
 
 export interface PaseoApi {
+  readonly hostId:string;
+  readonly plugins:DesktopPluginActions;
   readonly workspaces: PaseoWorkspaceActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
@@ -495,13 +524,12 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
     clientId: config.clientId ?? createGeneratedClientId(),
     clientType: "cli",
   });
-  return {
-    ...createPaseoApi(daemonClient),
+  return Object.assign(createPaseoApi(daemonClient), {
     connect: () => daemonClient.connect(),
     close: () => daemonClient.close(),
     ensureConnected: () => daemonClient.ensureConnected(),
     getConnectionState: () => daemonClient.getConnectionState(),
-  };
+  });
 }
 
 export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
@@ -533,6 +561,8 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
   const createWorkspaceHandle = createWorkspaceHandleFactory(daemonClient, createAgent);
 
   return {
+    get hostId(){const host=daemonClient.getLastServerInfoMessage()?.serverId;if(!host)throw new Error("Selected daemon host is not connected");return host;},
+    plugins:createDesktopPluginActions(daemonClient),
     workspaces: {
       list: (options) => daemonClient.fetchWorkspaces(options),
       ref: (workspace) => createWorkspaceHandle(workspace),
@@ -583,6 +613,22 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
     },
     omp: {
+      plugins: {
+        list: (cwd) => daemonClient.listOmpPlugins(cwd),
+        install: (input) => daemonClient.installOmpPlugin(input),
+        upgrade: (name, scope, cwd) => daemonClient.upgradeOmpPlugin(name, scope, cwd),
+        remove: (name, scope, cwd) => daemonClient.removeOmpPlugin(name, scope, cwd),
+        setEnabled: (name, enabled, scope, cwd) => daemonClient.setOmpPluginEnabled(name, enabled, scope, cwd),
+        doctor: (fix, cwd) => daemonClient.runOmpPluginDoctor(fix, cwd),
+        getManagement: (input) => daemonClient.getOmpPluginManagement(input),
+        updateManagement: (input) => daemonClient.updateOmpPluginManagement(input),
+        marketplaces: {
+          list: (cwd) => daemonClient.listOmpPluginMarketplaces(cwd),
+          add: (source, cwd) => daemonClient.addOmpPluginMarketplace(source, cwd),
+          remove: (name, cwd) => daemonClient.removeOmpPluginMarketplace(name, cwd),
+          update: (name, cwd) => daemonClient.updateOmpPluginMarketplace(name, cwd),
+        },
+      },
       getProviderManagement: (options) => daemonClient.getOmpProviderManagement(options),
       getCodexResetSettings: (options) => daemonClient.getOmpCodexResetSettings(options),
       updateCodexResetSettings: (enabled, options) =>
@@ -782,6 +828,56 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       detach: async () => {
         await daemonClient.detachAgent(id);
+      },
+      stop:()=>daemonClient.cancelAgent(id),
+      compact:()=>daemonClient.sendAgentMessage(id,"/compact"),
+      setModel:modelId=>daemonClient.setAgentModel(id,modelId),
+      respondToPermission:(requestId,response)=>daemonClient.respondToPermission(id,requestId,response),
+      observe: async (handler) => {
+        let ready = false;
+        let disposed = false;
+        let flush: ReturnType<typeof setTimeout> | undefined;
+        let release: (() => void) | undefined;
+        const buffered: PaseoAgentStream[] = [];
+        const unsubscribe = daemonClient.on("agent_stream", (message) => {
+          if (message.payload.agentId !== id || disposed) return;
+          if (ready) handler(message.payload);
+          else buffered.push(message.payload);
+        });
+        const dispose = () => {
+          if (disposed) return;
+          disposed = true;
+          clearTimeout(flush);
+          buffered.length = 0;
+          unsubscribe();
+          release?.();
+        };
+        try {
+          release = await daemonClient.acquireAgentTimelineSubscription(id);
+          const timeline = await daemonClient.fetchAgentTimeline(id, { direction: "tail", limit: 0, projection: "canonical" });
+          const fetched = await daemonClient.fetchAgent({ agentId: id });
+          if (!fetched?.agent) throw new Error(`Agent is unavailable: ${id}`);
+          current = fetched.agent;
+          const boundary = timeline.endCursor;
+          const contentVersion = boundary?.contentVersion ?? timeline.contentVersion ?? 0;
+          // Promise-wrapped SDK callers must hydrate the snapshot before buffered live delivery.
+          flush = setTimeout(() => {
+            flush = undefined;
+            if (disposed) return;
+            ready = true;
+            for (const event of buffered) {
+              if (disposed) break;
+              if (event.seq !== undefined && boundary && event.epoch === boundary.epoch &&
+                  event.seq <= boundary.seq && (event.contentVersion ?? 0) <= contentVersion) continue;
+              handler(event);
+            }
+            buffered.length = 0;
+          }, 0);
+          return { snapshot: fetched.agent, timeline, unsubscribe: dispose };
+        } catch (error) {
+          dispose();
+          throw error;
+        }
       },
       subscribe: (handler) =>
         daemonClient.on("agent_update", (message) => {

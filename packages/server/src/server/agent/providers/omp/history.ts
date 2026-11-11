@@ -17,6 +17,7 @@ import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
 import { resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { buildOmpModelId, readOmpAssistantModel } from "./subagent-model.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
+import { readLocalSubmission } from "./local-submission.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -123,7 +124,7 @@ interface OmpSubagentDiscoveryCatalog {
   branchChecksums: string[];
   messages: OmpAgentMessage[];
 }
-const coldHistoryProjectionKey = (provider: AgentProvider): string => `desktop-timeline-v3:${provider}`;
+const coldHistoryProjectionKey = (provider: AgentProvider): string => `desktop-timeline-v4:${provider}`;
 const subagentDiscoveryProjectionKey = "desktop-subagent-discovery-v1";
 const coldJournals = new Map<string, OmpIndexedJournal>();
 const coldJournalModules = new Map<string, Promise<{ IndexedSessionJournal: { open(file: string): Promise<OmpIndexedJournal> } }>>();
@@ -196,6 +197,8 @@ export function getOmpColdHistoryStats(sessionFile: string): OmpColdHistoryStats
 
 function coldHistoryEvents(entry: OmpSessionEntry, mapper: OmpHistoryMapper, provider: AgentProvider, nativeHeaderMs: number | null): AgentStreamEvent[] {
   const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+  const localSubmission = readLocalSubmission(entry);
+  if (localSubmission) return [{ type: "timeline", provider, item: localSubmission, ...(timestamp ? { timestamp } : {}) }];
   if (entry.type === "compaction") return [{ type: "timeline", provider, item: { type: "compaction", status: "completed", ...(typeof entry.tokensBefore === "number" ? { preTokens: entry.tokensBefore } : {}) }, ...(timestamp ? { timestamp } : {}) }];
   const message = mapEntryMessage(entry);
   if (!message) return [];
@@ -476,6 +479,11 @@ async function* streamOmpHistoryEntries(
   });
   for (const entry of entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+    const localSubmission = readLocalSubmission(entry);
+    if (localSubmission) {
+      yield { type: "timeline", provider: input.provider, item: localSubmission, ...(timestamp ? { timestamp } : {}) };
+      continue;
+    }
     if (entry.type === "compaction") {
       const event: AgentStreamEvent = {
         type: "timeline",

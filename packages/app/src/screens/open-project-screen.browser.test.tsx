@@ -6,7 +6,6 @@ import { View as NativeView } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { saveAppSettings } from "@/hooks/use-settings";
 import {
   APP_SETTINGS_KEY,
   APP_SETTINGS_QUERY_KEY,
@@ -21,6 +20,8 @@ const state = vi.hoisted(() => ({
   values: new Map<string, string>(),
   pendingRead: null as Promise<string | null> | null,
   theme: null as Theme | null,
+  backgroundStatus: "idle" as "idle" | "loading" | "ready" | "error",
+  backgroundListeners: new Set<() => void>(),
   openPicker: vi.fn(),
   openAgentList: vi.fn(),
   push: vi.fn(),
@@ -53,7 +54,14 @@ vi.mock("@/desktop/settings/desktop-settings", () => ({
   migrateLegacyDesktopSettings: vi.fn(),
   useDesktopSettings: vi.fn(),
 }));
-vi.mock("@/wallpaper/desktop-client", () => ({ importLegacyWallpaper: vi.fn() }));
+vi.mock("@/desktop/plugins/local-plugins", () => ({ migrateLegacyWallpaperPlugin: vi.fn() }));
+vi.mock("@/plugins/background", () => ({
+  usePluginBackgroundState: () => ({ status: React.useSyncExternalStore(
+    listener => { state.backgroundListeners.add(listener); return () => { state.backgroundListeners.delete(listener); }; },
+    () => state.backgroundStatus,
+    () => state.backgroundStatus,
+  ), opacity: 0.85 }),
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => (key === "openProject.motion.accessibilityLabel" ? "Home animations" : key),
@@ -117,6 +125,7 @@ beforeEach(() => {
   state.values.clear();
   state.pendingRead = null;
   state.theme = darkTheme;
+  state.backgroundStatus = "idle";
   state.createStencil.mockImplementation(() => ({
     free: state.freeStencil,
     render: vi.fn(),
@@ -177,17 +186,18 @@ function hasScanlines(): boolean {
   );
 }
 
-async function setWallpaperEnabled(wallpaperEnabled: boolean): Promise<void> {
-  await act(async () => saveAppSettings({ queryClient, updates: { wallpaperEnabled } }));
-  await vi.waitFor(() => {
-    expect(motionSwitch() !== null).toBe(!wallpaperEnabled);
+async function setBackgroundActive(active: boolean): Promise<void> {
+  await act(async () => {
+    state.backgroundStatus = active ? "ready" : "idle";
+    for (const listener of state.backgroundListeners) listener();
   });
+  await vi.waitFor(() => { expect(motionSwitch() !== null).toBe(!active); });
 }
 
 it.each([true, false])(
   "hides wallpaper-conflicting effects and restores the saved animation choice (%s)",
   async (storedPreference) => {
-    await renderHome({ wallpaperEnabled: false, homeAnimationsEnabled: storedPreference });
+    await renderHome({ homeAnimationsEnabled: storedPreference });
     expect(motionSwitch()?.getAttribute("aria-checked")).toBe(String(storedPreference));
     expect(homeBackground()).toContain("radial-gradient");
     expect(hasScanlines()).toBe(true);
@@ -207,7 +217,7 @@ it.each([true, false])(
       await vi.waitFor(() => expect(state.createStencil).toHaveBeenCalledOnce());
     expect(container.querySelector("canvas") !== null).toBe(chosenPreference);
 
-    await setWallpaperEnabled(true);
+    await setBackgroundActive(true);
     expect(motionSwitch()).toBeNull();
     expect(container.querySelector('[data-testid="omp-dot-cloud"]')).toBeNull();
     expect(container.querySelector("canvas")).toBeNull();
@@ -230,7 +240,7 @@ it.each([true, false])(
     expect(state.openPicker).toHaveBeenCalledOnce();
     expect(state.push).toHaveBeenCalledOnce();
 
-    await setWallpaperEnabled(false);
+    await setBackgroundActive(false);
     expect(motionSwitch()?.getAttribute("aria-checked")).toBe(String(chosenPreference));
     expect(homeBackground()).toContain("radial-gradient");
     expect(getComputedStyle(addProject).transitionProperty.includes("transform")).toBe(
@@ -242,7 +252,7 @@ it.each([true, false])(
       expect(state.createStencil).toHaveBeenCalledTimes(chosenPreference ? 2 : 1);
     });
 
-    await setWallpaperEnabled(true);
+    await setBackgroundActive(true);
     expect(motionSwitch()).toBeNull();
     expect(container.querySelector("canvas")).toBeNull();
     expect(hasScanlines()).toBe(false);
@@ -264,26 +274,27 @@ it("does not flash a switch or initialize the poster before wallpaper settings l
   expect(state.initPoster).not.toHaveBeenCalled();
 
   await act(async () => {
-    finishRead(JSON.stringify({ ...DEFAULT_CLIENT_SETTINGS, wallpaperEnabled: true }));
+    state.backgroundStatus = "ready";
+    for (const listener of state.backgroundListeners) listener();
+    finishRead(JSON.stringify(DEFAULT_CLIENT_SETTINGS));
   });
   await vi.waitFor(() => {
-    expect(queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)?.wallpaperEnabled).toBe(
-      true,
-    );
+    expect(queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)?.homeAnimationsEnabled).toBe(true);
   });
   expect(motionSwitch()).toBeNull();
   expect(hasScanlines()).toBe(false);
   expect(state.initPoster).not.toHaveBeenCalled();
   state.pendingRead = null;
-  await setWallpaperEnabled(false);
+  await setBackgroundActive(false);
   expect(motionSwitch()?.getAttribute("aria-checked")).toBe("true");
 });
 
 it("retains light-theme behavior when wallpaper is disabled again", async () => {
   state.theme = lightTheme;
-  await renderHome({ wallpaperEnabled: true, homeAnimationsEnabled: true });
+  state.backgroundStatus = "ready";
+  await renderHome({ homeAnimationsEnabled: true });
   expect(motionSwitch()).toBeNull();
-  await setWallpaperEnabled(false);
+  await setBackgroundActive(false);
   expect(motionSwitch()?.getAttribute("aria-checked")).toBe("true");
   expect(container.querySelector('[data-testid="omp-dot-cloud"]')).toBeNull();
   expect(container.querySelector("canvas")).toBeNull();

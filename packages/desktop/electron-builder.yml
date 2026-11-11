@@ -19,7 +19,10 @@ directories:
   output: release
 files:
   - dist/**/*
-  - assets/pets/**/*
+  - from: ../plugins/desktop-pet/assets/pets
+    to: assets/pets
+    filter:
+      - "**/*"
   - "!**/*.map"
   - "!sdk-dist{,/**/*}"
   - "!**/*.d.{ts,cts,mts}"

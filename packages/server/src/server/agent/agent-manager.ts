@@ -238,6 +238,7 @@ export type AgentManagerEvent =
       agentId: string;
       event: AgentStreamEvent;
       seq?: number;
+      contentVersion?: number;
       epoch?: string;
       timestamp?: string;
     };
@@ -779,6 +780,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly pendingPromptSources = new Map<string, Map<string, string>>();
+  private readonly pendingPromptKinds = new Map<string,Map<string,"user"|"service"|"agent">>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly startingForegroundRunTokens = new Set<string>();
@@ -2926,6 +2928,7 @@ export class AgentManager {
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
         sourceAgentId: options.sourceAgentId,
+        sourceKind: options.sourceKind,
       });
       this.emitState(agent);
     }
@@ -2940,6 +2943,7 @@ export class AgentManager {
           { ...event, item: row.item },
           {
             seq: row.seq,
+            contentVersion: row.contentVersion,
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
           },
@@ -2977,6 +2981,7 @@ export class AgentManager {
       },
       {
         seq: row.seq,
+        contentVersion: row.contentVersion,
         epoch: this.timelineStore.getEpoch(agentId),
         timestamp: row.timestamp,
       },
@@ -3127,6 +3132,7 @@ export class AgentManager {
           messageId: options.clientMessageId,
           turnId,
           sourceAgentId: options.sourceAgentId,
+          sourceKind: options.sourceKind,
           ...(workingStartedAt ? { workingStartedAt: workingStartedAt.toISOString() } : {}),
           providerMessageId:
             stagedSubmittedPromptEcho?.item.type === "user_message"
@@ -3466,6 +3472,7 @@ export class AgentManager {
     const clientMessageId = options?.clientMessageId;
     if (!clientMessageId) return;
     if (admission.userMessageEcho === "provider") {
+      if(options?.sourceKind){const kinds=this.pendingPromptKinds.get(agent.id)??new Map();kinds.set(clientMessageId,options.sourceKind);this.pendingPromptKinds.set(agent.id,kinds);}
       if (options?.sourceAgentId) {
         let sources = this.pendingPromptSources.get(agent.id);
         if (!sources) {
@@ -3480,6 +3487,7 @@ export class AgentManager {
       messageId: clientMessageId,
       turnId: expectedTurnId,
       sourceAgentId: options?.sourceAgentId,
+      sourceKind: options?.sourceKind,
       ...(agent.activeTurnStartedAt
         ? { workingStartedAt: agent.activeTurnStartedAt.toISOString() }
         : {}),
@@ -4747,6 +4755,7 @@ export class AgentManager {
     this.closedTimelineCache.delete(agentId);
     this.timelineStore.delete(agentId);
     this.pendingPromptSources.delete(agentId);
+    this.pendingPromptKinds.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -5136,6 +5145,7 @@ export class AgentManager {
           { ...event, item: row.item },
           {
             seq: row.seq,
+            contentVersion: row.contentVersion,
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
           },
@@ -5193,6 +5203,7 @@ export class AgentManager {
             { ...event, item: row.item },
             {
               seq: row.seq,
+              contentVersion: row.contentVersion,
               epoch: this.timelineStore.getEpoch(agent.id),
               timestamp: row.timestamp,
             },
@@ -5218,6 +5229,7 @@ export class AgentManager {
         { ...event, item: row.item },
         {
           seq: row.seq,
+          contentVersion: row.contentVersion,
           epoch: this.timelineStore.getEpoch(agent.id),
           timestamp: row.timestamp,
         },
@@ -5784,6 +5796,7 @@ export class AgentManager {
     };
     this.dispatchStream(agentId, event, {
       seq: row.seq,
+      contentVersion: row.contentVersion,
       epoch: this.timelineStore.getEpoch(agentId),
       timestamp: row.timestamp,
     });
@@ -5814,6 +5827,7 @@ export class AgentManager {
       rewindStatus?: AgentUserMessageRewindStatus;
       workingStartedAt?: string;
       sourceAgentId?: string;
+      sourceKind?: "user"|"service"|"agent";
     },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
@@ -5822,17 +5836,20 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     agent.lastUserMessageAt = new Date();
     let images: Array<{ data: string; mimeType: string }> | undefined;
+    let attachments: Extract<AgentTimelineItem, { type: "user_message" }>["attachments"];
     if (typeof prompt !== "string") {
       for (const block of prompt) {
         if (block.type === "image") {
           (images ??= []).push({ data: block.data, mimeType: block.mimeType });
         }
+        else if (block.type !== "text" || "mimeType" in block) (attachments ??= []).push(block);
       }
     }
     const item: AgentTimelineItem = {
       type: "user_message",
       text: submittedPromptText(prompt),
       ...(images ? { images } : {}),
+      ...(attachments ? { attachments } : {}),
       clientMessageId,
       rewindStatus: options?.providerMessageId
         ? "ready"
@@ -5840,6 +5857,7 @@ export class AgentManager {
       ...(options?.workingStartedAt ? { workingStartedAt: options.workingStartedAt } : {}),
       ...(options?.messageId ? { messageId: options.messageId } : {}),
       ...(options?.sourceAgentId ? { sourceAgentId: options.sourceAgentId } : {}),
+      ...(options?.sourceKind ? {sourceKind:options.sourceKind} : {}),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
     if (options?.providerMessageId && options.sourceAgentId) {
@@ -5860,6 +5878,9 @@ export class AgentManager {
     const sourceAgentId = item.sourceAgentId ?? sources?.get(clientMessageId);
     sources?.delete(clientMessageId);
     if (sources?.size === 0) this.pendingPromptSources.delete(agent.id);
+    const kinds=this.pendingPromptKinds.get(agent.id);
+    const sourceKind=kinds?.get(clientMessageId)??(existing?.item.type==="user_message"?existing.item.sourceKind:undefined)??(sourceAgentId?"agent":undefined);
+    kinds?.delete(clientMessageId);if(kinds?.size===0)this.pendingPromptKinds.delete(agent.id);
     if (!existing) {
       const prompt: AgentPromptInput = item.images?.length
         ? [
@@ -5873,6 +5894,7 @@ export class AgentManager {
         ...(item.rewindStatus ? { rewindStatus: item.rewindStatus } : {}),
         ...(turnId ? { turnId } : {}),
         ...(sourceAgentId ? { sourceAgentId } : {}),
+        ...(sourceKind?{sourceKind}:{}),
       });
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
@@ -5911,6 +5933,7 @@ export class AgentManager {
       },
       {
         seq: row.seq,
+        contentVersion: row.contentVersion,
         epoch: this.timelineStore.getEpoch(agent.id),
         timestamp: row.timestamp,
       },
@@ -5975,6 +5998,7 @@ export class AgentManager {
       },
       {
         seq: row.seq,
+        contentVersion: row.contentVersion,
         epoch: this.timelineStore.getEpoch(agent.id),
         timestamp: row.timestamp,
       },
@@ -6280,6 +6304,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     metadata?: {
       seq?: number;
+      contentVersion?: number;
       epoch?: string;
       timestamp?: string;
     },

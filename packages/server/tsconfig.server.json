@@ -28,6 +28,7 @@
     "dist",
     "src/server/**/test-utils/**",
     "src/server/daemon-e2e/**",
+    "src/server/plugins/test-fixtures/**",
     "src/server/**/*.e2e.ts",
     "src/server/**/*.e2e.tsx",
     "src/**/*.test.ts",

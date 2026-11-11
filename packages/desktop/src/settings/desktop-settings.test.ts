@@ -15,6 +15,7 @@ import type {
   WallpaperLibrary,
   WallpaperValidatedFile,
 } from "@omp-desktop/protocol/desktop-wallpaper";
+import type { DesktopPetSettings } from "@omp-desktop/plugin-desktop-pet/types";
 
 import {
   DEFAULT_DESKTOP_SETTINGS,
@@ -58,23 +59,21 @@ describe("desktop-settings", () => {
     directories.clear();
   });
 
-  it("serializes concurrent pet and unrelated patches without losing either change", async () => {
+  it("serializes a plugin field patch with unrelated settings without duplicating desired state", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
     const store = createDesktopSettingsStore({ userDataPath });
+    const pet = (await store.getPlugins()).installations.find(({ id }) => id === "desktop-pet")!;
     await Promise.all([
-      store.patch({ pet: { enabled: true, selectedId: "custom-cat" } }),
-      store.patch({ pet: { position: { x: -1240, y: 420 }, size: "large" } }),
+      store.patchPlugin({ installationId: pet.id, expectedRevision: pet.revision, patch: { enabled: true, config: { selectedId: "custom-cat", position: { x: -1240, y: 420 }, size: "large" } } }),
       store.patch({ notifications: { playSound: false } }),
     ]);
-    const restarted = await createDesktopSettingsStore({ userDataPath }).get();
-    expect(restarted.pet).toEqual({
-      enabled: true,
-      selectedId: "custom-cat",
-      size: "large",
-      position: { x: -1240, y: 420 },
-    });
-    expect(restarted.notifications.playSound).toBe(false);
+    const restarted = createDesktopSettingsStore({ userDataPath });
+    const record = (await restarted.getPlugins()).installations.find(({ id }) => id === pet.id)!;
+    expect(record.enabled).toBe(true);
+    expect(record.config).toEqual({ selectedId: "custom-cat", size: "large", position: { x: -1240, y: 420 } });
+    expect((await restarted.get()).notifications.playSound).toBe(false);
+    expect(JSON.parse(await readFile(settingsFilePath(userDataPath), "utf8")).settings).not.toHaveProperty("pet");
   });
 
   it("notifies only committed writes and leaves cached preferences unchanged after failure", async () => {
@@ -87,40 +86,34 @@ describe("desktop-settings", () => {
     const file = settingsFilePath(userDataPath);
     await rename(file, `${file}.saved`);
     await mkdir(file);
-    await expect(store.patch({ pet: { enabled: true } })).rejects.toThrow();
+    await expect(store.patch({ notifications: { playSound: false } })).rejects.toThrow();
     expect(notifications).toEqual([]);
-    expect((await store.get()).pet.enabled).toBe(false);
+    expect((await store.get()).notifications.playSound).toBe(true);
     await rm(file, { recursive: true });
     await rename(`${file}.saved`, file);
-    const committed = await store.patch({ pet: { enabled: true } });
+    const committed = await store.patch({ notifications: { playSound: false } });
     expect(notifications).toEqual([committed]);
-    expect(JSON.parse(await readFile(file, "utf8")).settings.pet.enabled).toBe(true);
+    expect(JSON.parse(await readFile(file, "utf8")).settings.notifications.playSound).toBe(false);
     unsubscribe();
-    await store.patch({ pet: { enabled: false } });
+    await store.patch({ notifications: { playSound: true } });
     expect(notifications).toHaveLength(1);
     expect(await readdir(userDataPath)).toEqual(["desktop-settings.json"]);
   });
 
-  it("rejects invalid pet fields and isolates returned objects from persisted state", async () => {
+  it("rejects invalid plugin fields and isolates returned configuration from persisted state", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
     const store = createDesktopSettingsStore({ userDataPath });
-    await store.patch({ pet: { selectedId: "custom", position: { x: -100, y: 50 } } });
-    const settings = await store.patch({
-      pet: { enabled: "yes", size: "huge", selectedId: "", position: { x: Infinity, y: 0 } },
-    });
-    expect(settings.pet).toEqual({
-      enabled: false,
-      size: "medium",
-      selectedId: "custom",
-      position: { x: -100, y: 50 },
-    });
-    settings.pet.position!.x = 999;
-    settings.pet.selectedId = "mutated";
-    expect((await store.get()).pet.selectedId).toBe("custom");
-    expect((await store.get()).pet.position!.x).toBe(-100);
-    await store.patch({ pet: { position: null } });
-    expect((await createDesktopSettingsStore({ userDataPath }).get()).pet.position).toBeNull();
+    await store.patchPlugin({ installationId: "desktop-pet", expectedRevision: 0, patch: { config: { selectedId: "custom", position: { x: -100, y: 50 } } } });
+    await expect(store.patchPlugin({ installationId: "desktop-pet", expectedRevision: 1, patch: { config: { size: "huge", selectedId: "", position: { x: Infinity, y: 0 } } } })).rejects.toThrow();
+    const record = (await store.getPlugins()).installations.find(({ id }) => id === "desktop-pet")!;
+    const config = record.config as unknown as DesktopPetSettings; // The builtin schema validates this in-process snapshot.
+    config.position!.x = 999;
+    config.selectedId = "mutated";
+    const persisted = (await store.getPlugins()).installations.find(({ id }) => id === record.id)!;
+    expect(persisted.config).toMatchObject({ selectedId: "custom", position: { x: -100, y: 50 } });
+    await store.patchPlugin({ installationId: record.id, expectedRevision: persisted.revision, patch: { config: { position: null } } });
+    expect((await createDesktopSettingsStore({ userDataPath }).getPlugins()).installations.find(({ id }) => id === record.id)!.config.position).toBeNull();
   });
 
   it("persists default settings for new users", async () => {
@@ -817,7 +810,7 @@ describe("desktop-settings", () => {
     await expect(store.importLegacyWallpaper(null, null)).rejects.toThrow();
     await expect(store.addWallpaperCandidates([])).rejects.toThrow();
     await expect(store.removeWallpaperCandidates([])).rejects.toThrow();
-    await expect(store.patch({ pet: { enabled: true } })).rejects.toThrow();
+    await expect(store.patch({ notifications: { playSound: false } })).rejects.toThrow();
     expect(core).toEqual([]);
     expect(await readFile(file, "utf8")).toBe(raw);
     expect(await readdir(userDataPath)).toEqual(["desktop-settings.json"]);

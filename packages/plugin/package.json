@@ -1,0 +1,65 @@
+{
+  "name": "@omp-desktop/plugin",
+  "version": "0.6.1",
+  "description": "OMP Desktop unified plugin SDK",
+  "files": ["dist", "src", "!src/**/*.test.*", "!dist/**/*.map"],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
+    },
+    "./server": {
+      "types": "./dist/types/server.d.ts",
+      "source": "./src/server.ts",
+      "import": "./dist/esm/server.js",
+      "require": "./dist/cjs/server.js",
+      "default": "./dist/esm/server.js"
+    },
+    "./compiler": { "types": "./dist/types/compiler-entry.d.ts", "source": "./src/compiler-entry.ts", "import": "./dist/esm/compiler-entry.js", "require": "./dist/cjs/compiler-entry.js", "default": "./dist/esm/compiler-entry.js" },
+    "./worker": { "types": "./dist/types/worker.d.ts", "source": "./src/worker.ts", "import": "./dist/esm/worker.js", "require": "./dist/cjs/worker.js", "default": "./dist/esm/worker.js" },
+    "./host": {
+      "types": "./dist/types/host.d.ts",
+      "source": "./src/host.ts",
+      "import": "./dist/esm/host.js",
+      "require": "./dist/cjs/host.js",
+      "default": "./dist/esm/host.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
+    "build": "npm run build --workspace=@omp-desktop/client && node ../../scripts/build-desktop-plugins.mjs plugin",
+    "build:clean": "npm run clean && npm run build",
+    "prepack": "npm run build:clean",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.28.5",
+    "esbuild": "0.28.2",
+    "use-sync-external-store": "^1.6.0"
+  },
+  "devDependencies": {
+    "@omp-desktop/client": "0.6.1",
+    "@omp-desktop/protocol": "0.6.1",
+    "@types/node": "^20.9.0",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@omp-desktop/client": "0.6.1",
+    "@omp-desktop/protocol": "0.6.1",
+    "react": "19.1.0",
+    "zod": "^4.4.3"
+  }
+}

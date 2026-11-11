@@ -20,7 +20,7 @@ import {
   type BrowserTargetId,
   type CustomBrowserConfig,
 } from "../features/browser-targets.js";
-import type { DesktopPetSettings, PetPosition } from "../pets/types.js";
+import { applyLocalPluginPatch, clonePluginDocument, createLocalPluginDocument, LegacyPluginMigrationSchema, parseLocalPluginDocument, validatePluginConfig, type LocalPluginDocument, type LocalPluginRecord, type LocalPluginPatch } from "../plugins/records.js";
 
 export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
@@ -38,7 +38,6 @@ export interface DesktopSettings {
   window: {
     closeBehavior: "ask" | "background" | "quit";
   };
-  pet: DesktopPetSettings;
 }
 
 interface DesktopSettingsPatch {
@@ -47,13 +46,13 @@ interface DesktopSettingsPatch {
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
   window?: Partial<DesktopSettings["window"]>;
-  pet?: Partial<DesktopPetSettings>;
 }
 
 interface PersistedDesktopSettingsDocument {
   version: 1;
   settings: DesktopSettings;
   wallpaperLibrary: WallpaperLibrary;
+  plugins: LocalPluginDocument;
   migrations: {
     legacyRendererSettingsImported: boolean;
     // Installs created before the stop-on-quit default persisted the old
@@ -62,6 +61,7 @@ interface PersistedDesktopSettingsDocument {
     // persists this flag and is never overridden again.
     daemonStopOnQuitDefaultApplied: boolean;
     wallpaperImported: WallpaperMigration | null;
+    wallpaperRecovery: { directory: string | null; path: string | null } | null;
   };
 }
 
@@ -70,6 +70,17 @@ export interface DesktopSettingsStore {
   patch(patch: unknown): Promise<DesktopSettings>;
   migrateLegacyRendererSettings(legacySettings: unknown): Promise<DesktopSettings>;
   subscribe(listener: (settings: DesktopSettings) => void): () => void;
+  getPlugins(): Promise<LocalPluginDocument>;
+  patchPlugin(patch: LocalPluginPatch, authorize?: () => void): Promise<LocalPluginDocument>;
+  migrateLegacyPlugins(input: unknown): Promise<LocalPluginDocument>;
+  selectPluginBackground(provider: LocalPluginDocument["backgroundProvider"], expectedRevision: number): Promise<LocalPluginDocument>;
+  advancePluginGeneration(installationId: string): Promise<LocalPluginDocument>;
+  setPluginInstalled(installationId: string, installed: boolean, expectedRevision: number): Promise<LocalPluginDocument>;
+  installPlugin(record: LocalPluginRecord, expectedRevision: number): Promise<LocalPluginDocument>;
+  resetPluginConfiguration(installationId: string, config: Record<string, unknown>, expectedRevision: number): Promise<LocalPluginDocument>;
+  getWallpaperMigrationStatus(): Promise<{ reason: string | null; pending: boolean }>;
+  subscribePlugins(listener: (plugins: LocalPluginDocument) => void): () => void;
+  getLegacyWallpaperRecovery(): Promise<{ directory: string | null; path: string | null } | null>;
   getWallpaperLibrary(): Promise<WallpaperLibrary>;
   addWallpaperCandidates(
     files: readonly WallpaperValidatedFile[],
@@ -98,7 +109,6 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   window: {
     closeBehavior: "ask",
   },
-  pet: { enabled: false, size: "medium", selectedId: "iris", position: null },
 };
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
@@ -128,36 +138,6 @@ function coerceCloseBehavior(value: unknown): DesktopSettings["window"]["closeBe
   return null;
 }
 
-function coercePetPosition(value: unknown): PetPosition | null {
-  if (
-    !isRecord(value) ||
-    typeof value.x !== "number" ||
-    typeof value.y !== "number" ||
-    !Number.isFinite(value.x) ||
-    !Number.isFinite(value.y)
-  )
-    return null;
-  return { x: Math.round(value.x), y: Math.round(value.y) };
-}
-
-function coercePetPatch(value: unknown): Partial<DesktopPetSettings> {
-  if (!isRecord(value)) return {};
-  const pet: Partial<DesktopPetSettings> = {};
-  if (typeof value.enabled === "boolean") pet.enabled = value.enabled;
-  const size =
-    value.size === "small" || value.size === "medium" || value.size === "large" ? value.size : null;
-  if (size) pet.size = size;
-  if (
-    typeof value.selectedId === "string" &&
-    value.selectedId.trim() &&
-    value.selectedId.length <= 128
-  ) {
-    pet.selectedId = value.selectedId;
-  }
-  const position = coercePetPosition(value.position);
-  if (value.position === null || position) pet.position = position;
-  return pet;
-}
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error;
@@ -179,13 +159,14 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
       browser: copyBrowserSettings(DEFAULT_DESKTOP_SETTINGS.browser),
       daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
       window: { ...DEFAULT_DESKTOP_SETTINGS.window },
-      pet: { ...DEFAULT_DESKTOP_SETTINGS.pet },
     },
     wallpaperLibrary: { version: 1, revision: 0, items: [] },
+    plugins: createLocalPluginDocument(),
     migrations: {
       legacyRendererSettingsImported: false,
       daemonStopOnQuitDefaultApplied: true,
       wallpaperImported: null,
+      wallpaperRecovery: null,
     },
   };
 }
@@ -197,7 +178,6 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
     window: { ...DEFAULT_DESKTOP_SETTINGS.window },
-    pet: { ...DEFAULT_DESKTOP_SETTINGS.pet },
   };
 
   if (!isRecord(input)) {
@@ -249,7 +229,6 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
       result.window.closeBehavior = closeBehavior;
     }
   }
-  result.pet = { ...result.pet, ...coercePetPatch(input.pet) };
 
   return result;
 }
@@ -307,7 +286,6 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
       patch.window = { closeBehavior };
     }
   }
-  if (isRecord(input.pet)) patch.pet = coercePetPatch(input.pet);
 
   return patch;
 }
@@ -343,7 +321,6 @@ function mergeDesktopSettings(
     notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
     window: { ...current.window, ...patch.window },
-    pet: { ...current.pet, ...patch.pet },
   };
 }
 
@@ -358,6 +335,13 @@ class InvalidWallpaperDataError extends Error {
   ) {
     super("Invalid persisted wallpaper data.", { cause });
     this.name = "InvalidWallpaperDataError";
+  }
+}
+
+class InvalidLocalPluginDataError extends Error {
+  constructor(readonly settings: DesktopSettings, cause: unknown) {
+    super("Invalid persisted local plugin data.", { cause });
+    this.name = "InvalidLocalPluginDataError";
   }
 }
 
@@ -397,12 +381,19 @@ function coerceDocument(input: unknown): PersistedDesktopSettingsDocument {
     // Ordinary read-only preferences remain usable, but no invalid library is cached or written.
     throw new InvalidWallpaperDataError(settings, error);
   }
+  let plugins: LocalPluginDocument;
+  let wallpaperRecovery: PersistedDesktopSettingsDocument["migrations"]["wallpaperRecovery"];
+  try {
+    plugins = Object.hasOwn(input, "plugins") ? parseLocalPluginDocument(input.plugins) : createLocalPluginDocument(isRecord(input.settings) ? input.settings.pet : undefined);
+    wallpaperRecovery = isRecord(input.migrations) && input.migrations.wallpaperRecovery ? LegacyPluginMigrationSchema.shape.wallpaper.unwrap().shape.recovery.unwrap().parse(input.migrations.wallpaperRecovery) : null;
+  } catch (error) { throw new InvalidLocalPluginDataError(settings, error); }
 
   return {
     version: 1,
     settings,
     wallpaperLibrary,
-    migrations: { ...migrations, wallpaperImported },
+    plugins,
+    migrations: { ...migrations, wallpaperImported, wallpaperRecovery },
   };
 }
 
@@ -418,6 +409,7 @@ export function createDesktopSettingsStore({
   let operationQueue: Promise<unknown> = Promise.resolve();
   const listeners = new Set<(settings: DesktopSettings) => void>();
   const wallpaperListeners = new Set<(library: WallpaperLibrary) => void>();
+  const pluginListeners = new Set<(plugins: LocalPluginDocument) => void>();
 
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const queued = operationQueue.then(operation, operation);
@@ -432,10 +424,6 @@ export function createDesktopSettingsStore({
       browser: copyBrowserSettings(settings.browser),
       daemon: { ...settings.daemon },
       window: { ...settings.window },
-      pet: {
-        ...settings.pet,
-        position: settings.pet.position ? { ...settings.pet.position } : null,
-      },
     };
   }
 
@@ -546,8 +534,8 @@ export function createDesktopSettingsStore({
       return document;
     }
     const document = coerceDocument(JSON.parse(raw));
-    cachedDocument = document;
-    publishLibrary(document.wallpaperLibrary, false);
+    // Persist migration before exposing any installation or starting its factory.
+    await persistDocument(document, "load");
     return document;
   }
 
@@ -557,7 +545,7 @@ export function createDesktopSettingsStore({
         try {
           return copySettings((await loadDocument()).settings);
         } catch (error) {
-          if (error instanceof InvalidWallpaperDataError) return copySettings(error.settings);
+          if (error instanceof InvalidWallpaperDataError || error instanceof InvalidLocalPluginDataError) return copySettings(error.settings);
           throw error;
         }
       });
@@ -599,6 +587,121 @@ export function createDesktopSettingsStore({
         });
         notify(next);
         return copySettings(next);
+      });
+    },
+
+    getPlugins(): Promise<LocalPluginDocument> {
+      return serialize(async () => clonePluginDocument((await loadDocument()).plugins));
+    },
+
+    patchPlugin(patch, authorize): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        authorize?.();
+        const plugins = applyLocalPluginPatch(current.plugins, patch);
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    migrateLegacyPlugins(input): Promise<LocalPluginDocument> {
+      const legacy = LegacyPluginMigrationSchema.parse(input);
+      return serialize(async () => {
+        const current = await loadDocument();
+        const wallpaper = current.plugins.installations.find(({ id }) => id === "wallpaper");
+        if (!legacy.wallpaper || !wallpaper || wallpaper.migrationVersion >= 1) return clonePluginDocument(current.plugins);
+        const plugins = applyLocalPluginPatch(current.plugins, { installationId: wallpaper.id, expectedRevision: wallpaper.revision, patch: { enabled: legacy.wallpaper.enabled, config: legacy.wallpaper.config } });
+        if (legacy.wallpaper.enabled && legacy.wallpaper.config.source !== "none" && !plugins.backgroundSelectionEdited && !plugins.backgroundProvider) plugins.backgroundProvider = { installationId: "wallpaper", extensionId: "wallpaper" };
+        await persistDocument({ ...current, plugins, migrations: { ...current.migrations, wallpaperRecovery: legacy.wallpaper.recovery ?? current.migrations.wallpaperRecovery } });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    subscribePlugins(listener): () => void {
+      pluginListeners.add(listener);
+      return () => { pluginListeners.delete(listener); };
+    },
+
+    selectPluginBackground(provider, expectedRevision): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        if (current.plugins.revision !== expectedRevision) throw new Error("Plugin registry changed. Reload it before selecting a background.");
+        if (provider && !current.plugins.installations.some(({ id }) => id === provider.installationId)) throw new Error("Background provider is not installed.");
+        const plugins = clonePluginDocument(current.plugins);
+        plugins.backgroundProvider = provider ? { ...provider } : null;
+        plugins.backgroundSelectionEdited = true;
+        plugins.revision = incrementRevision(plugins.revision);
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    advancePluginGeneration(installationId): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        const plugins = clonePluginDocument(current.plugins);
+        const record = plugins.installations.find(({ id }) => id === installationId);
+        if (!record) throw new Error("Plugin installation is not installed.");
+        record.generation = incrementRevision(record.generation);
+        plugins.revision = incrementRevision(plugins.revision);
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    setPluginInstalled(installationId, installed, expectedRevision): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        const plugins = applyLocalPluginPatch(current.plugins, { installationId, expectedRevision, patch: { enabled: false } });
+        const record = plugins.installations.find(({ id }) => id === installationId)!;
+        record.installed = installed;
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    getLegacyWallpaperRecovery() {
+      return serialize(async () => structuredClone((await loadDocument()).migrations.wallpaperRecovery));
+    },
+
+    installPlugin(record, expectedRevision): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        if (current.plugins.revision !== expectedRevision) throw new Error("Plugin registry changed. Reload it before installing.");
+        const plugins = clonePluginDocument(current.plugins);
+        const existing = plugins.installations.find(({ id }) => id === record.id);
+        if (existing?.source.type === "builtin") throw new Error("A directory installation cannot replace a builtin identity.");
+        const installation = { ...record, config: existing?.config ?? record.config, revision: existing ? incrementRevision(existing.revision) : 0, generation: existing?.generation ?? 0 };
+        if (existing) plugins.installations = plugins.installations.map((value) => value.id === installation.id ? installation : value);
+        else plugins.installations.push(installation);
+        plugins.revision = incrementRevision(plugins.revision);
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    resetPluginConfiguration(installationId, config, expectedRevision): Promise<LocalPluginDocument> {
+      return serialize(async () => {
+        const current = await loadDocument();
+        const plugins = applyLocalPluginPatch(current.plugins, { installationId, expectedRevision, patch: { enabled: false } });
+        const record = plugins.installations.find(({ id }) => id === installationId)!;
+        record.config = validatePluginConfig(record.packageId, config);
+        await persistDocument({ ...current, plugins });
+        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
+        return clonePluginDocument(plugins);
+      });
+    },
+
+    getWallpaperMigrationStatus() {
+      return serialize(async () => {
+        const { migrations } = await loadDocument();
+        return { reason: migrations.wallpaperImported?.reason ?? null, pending: migrations.wallpaperRecovery !== null && migrations.wallpaperImported === null };
       });
     },
 

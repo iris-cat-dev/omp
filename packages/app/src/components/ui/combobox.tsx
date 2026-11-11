@@ -53,7 +53,7 @@ import {
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
 import { isWeb } from "@/constants/platform";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "@/appearance/color"
 import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,

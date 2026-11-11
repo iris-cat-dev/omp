@@ -86,6 +86,8 @@ Node SDK 不提供插件 TypeScript/JSX 的运行时编译。源码可以继续�
 
 第三方 JavaScript 依赖可以编译进插件，或作为生产依赖随插件安装。外置依赖必须能从插件实际安装位置解析，不能依赖开发仓库偶然存在的 `node_modules`。
 
+同时核对第三方包的 `exports` 条件：只有 `import` 的 ESM 包不能直接成为 CJS 产物中的 `require()`。这种纯 JavaScript 依赖应在构建时编译进对应入口；带相对 WASM／worker 资源的加载器保留完整 npm 包及其真实入口，不能只复制一个 JS 文件。Desktop QQ 服务按此方式内联 QQ SDK，另行交付 connector、WebSocket 与音频 codec 的运行闭包。
+
 原生 addon 需要匹配目标 OS、架构与 Node/Electron ABI 或 Node-API，并满足宿主的打包布局要求。插件可用不等于任意原生依赖都可用；需要逐平台验证。
 
 ## 4. 替换 Bun 专用运行时能力

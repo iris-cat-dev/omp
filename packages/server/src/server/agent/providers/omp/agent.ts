@@ -186,6 +186,7 @@ import {
   type OmpHistoryInput,
   type OmpHistoryPageInput,
 } from "./history.js";
+import { captureLocalSubmission, LOCAL_SUBMISSION_ANNOTATION } from "./local-submission.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -197,7 +198,7 @@ import {
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
-import { mapOmpToolDetail } from "./tool-call-mapper.js";
+import { mapOmpToolDetail, mapOmpPresentedFiles } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
@@ -1917,7 +1918,9 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnHasUserMessage = false;
   private hasConversationUserMessage = false;
   private readonly resumedSession: boolean;
-  private activeNoTurnPromptText: string | null = null;
+  private activeNoTurnPromptItem: Extract<AgentTimelineItem, { type: "user_message" }> | null = null;
+  private activeNoTurnPersistence: Promise<string> | null = null;
+  private activeNoTurnPromptInput: AgentPromptInput | null = null;
   private readonly pendingNoTurnOutputs: Array<{
     turnId: string;
     message: string;
@@ -2359,7 +2362,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
-    this.activeNoTurnPromptText = displayPromptText;
+    this.activeNoTurnPromptInput = prompt;
     this.nativeUsage.startTurn(turnId, Date.now(), this.state.model);
     this.usagePoller.startTurn();
     this.startAutomaticCredentialResolution();
@@ -2387,41 +2390,30 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
       } catch (error) {
-        if (this.activeTurnId !== turnId) {
-          return;
-        }
-        if (this.activeInterrupt?.turnId === turnId) return;
-        this.terminalizeActiveWork();
-        this.cancelModelErrorContinuation();
-        this.usagePoller.stopTurn();
-        this.finishNativeUsage(turnId);
-        this.stopAutomaticCredentialResolution();
-        this.activeTurnId = null;
-        this.activeClientMessageId = null;
-        this.activeTurnStarted = false;
-        this.activeTurnHasUserMessage = false;
-        this.activeAssistantMessageId = null;
-        this.activeTurnTerminalAssistantMessage = null;
-        this.clearNoTurnBuffers();
-        if (isOmpRequestAbortError(error)) {
-          this.emit({
-            type: "turn_canceled",
-            provider: this.provider,
-            turnId,
-            reason: toDiagnosticErrorMessage(error),
-          });
-          return;
-        }
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: toDiagnosticErrorMessage(error),
-        });
+        this.failActivePrompt(turnId, error);
       }
     })();
 
     return { turnId };
+  }
+
+  private failActivePrompt(turnId: string, error: unknown): void {
+    if (this.activeTurnId !== turnId || this.activeInterrupt?.turnId === turnId) return;
+    this.terminalizeActiveWork();
+    this.cancelModelErrorContinuation();
+    this.usagePoller.stopTurn();
+    this.finishNativeUsage(turnId);
+    this.stopAutomaticCredentialResolution();
+    this.activeTurnId = null;
+    this.activeClientMessageId = null;
+    this.activeTurnStarted = false;
+    this.activeTurnHasUserMessage = false;
+    this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
+    this.clearNoTurnBuffers();
+    this.emit(isOmpRequestAbortError(error)
+      ? { type: "turn_canceled", provider: this.provider, turnId, reason: toDiagnosticErrorMessage(error) }
+      : { type: "turn_failed", provider: this.provider, turnId, error: toDiagnosticErrorMessage(error) });
   }
 
   async steerActiveTurn(
@@ -3658,7 +3650,7 @@ export class OmpAgentSession implements AgentSession {
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
-          this.logger.debug({ err: error }, "OMP local-only settle wait failed");
+          this.failActivePrompt(turnId, error);
         }
       });
   }
@@ -3679,23 +3671,33 @@ export class OmpAgentSession implements AgentSession {
     ) {
       return;
     }
+    const item = this.activeNoTurnPromptItem ?? (this.activeNoTurnPromptInput !== null
+      ? (this.activeNoTurnPromptItem = captureLocalSubmission(this.activeNoTurnPromptInput, this.activeClientMessageId))
+      : null);
+    if (item && (item.text || item.images?.length || item.attachments?.length)) {
+      this.activeNoTurnPersistence ??= this.runtimeSession.appendSessionAnnotation(LOCAL_SUBMISSION_ANNOTATION, item);
+      await this.activeNoTurnPersistence;
+    }
+    if (this.closed || this.activeTurnId !== turnId || this.activeTurnStarted || this.activePromptAgentInvoked || this.activeTurnHasUserMessage) return;
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
 
   private clearNoTurnBuffers(): void {
     this.cancelNoTurnPromptCompletion();
-    this.activeNoTurnPromptText = null;
+    this.activeNoTurnPromptItem = null;
+    this.activeNoTurnPersistence = null;
+    this.activeNoTurnPromptInput = null;
     this.activePromptRequestId = null;
     this.activePromptAgentInvoked = null;
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
   private emitBufferedNoTurnOutputs(turnId: string): void {
-    const promptText = this.activeNoTurnPromptText;
+    const promptItem = this.activeNoTurnPromptItem;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
-    if (promptText) {
+    if (promptItem && (promptItem.text || promptItem.images?.length || promptItem.attachments?.length)) {
       const submitted = this.activeClientMessageId
         ? this.submittedUserMessages.get(this.activeClientMessageId)
         : undefined;
@@ -3704,12 +3706,7 @@ export class OmpAgentSession implements AgentSession {
         type: "timeline",
         provider: this.provider,
         turnId,
-        item: {
-          type: "user_message",
-          text: promptText,
-          rewindStatus: "unavailable",
-          ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
-        },
+        item: promptItem,
       });
     }
     for (const output of outputs) {
@@ -4093,6 +4090,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if(event.type==="desktop_plugin_prompt_request"){
+      void (this.paseoTools?.pluginPrompt?.()??Promise.resolve([])).then(contributions=>this.runtimeSession.sendPluginPromptResult?.(event.id,contributions),error=>this.runtimeSession.sendPluginPromptResult?.(event.id,[],error instanceof Error?error.message:String(error)));
+      return true;
+    }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
     this.updateWorkflowModeFromRuntimeEvent(event);
     if (
@@ -5189,12 +5190,16 @@ export class OmpAgentSession implements AgentSession {
     if (!detail) {
       return false;
     }
+    const presentedFiles=mapOmpPresentedFiles(toolCall,result,status);
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
       name: resolveToolCallName(toolCall, result),
       detail,
-      ...(toolCall.intent ? { metadata: { intent: toolCall.intent } } : {}),
+      metadata: {
+        ...(toolCall.intent ? {intent:toolCall.intent} : {}),
+        ...(presentedFiles.length ? {presentedFiles,presentedFilesSource:"omp-present-image"} : {}),
+      },
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };

@@ -6,6 +6,7 @@ import { createJiti } from "jiti";
 import { describe, expect, it } from "vitest";
 import { compileSharedSchemas } from "../../scripts/compile-shared-validation.mjs";
 import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../../src/generated/validation/ws-outbound.aot.js";
+import { validateWSOutboundMessage } from "../../src/validation/ws-outbound.js";
 
 interface GeneratedSchema {
   safeParse(input: unknown): { success: boolean; data?: unknown };
@@ -262,6 +263,125 @@ const SourceSchema = z.object({
     expect(GeneratedWSOutboundMessageSchema.safeParse({ type: "not_a_message" }).success).toBe(
       false,
     );
+  });
+
+  it.each([
+    { name: "absent", contextKind: undefined, expectedContextKind: undefined },
+    { name: "chat history", contextKind: "chat_history", expectedContextKind: "chat_history" },
+    { name: "directory", contextKind: "directory", expectedContextKind: "directory" },
+    { name: "future", contextKind: "future_context", expectedContextKind: undefined },
+  ])("decodes complete external text in warm and cold envelopes with $name context", ({
+    contextKind,
+    expectedContextKind,
+  }) => {
+    const timestamp = "2026-11-10T11:00:00.000Z";
+    const attachment = {
+      type: "text",
+      mimeType: "text/plain",
+      title: "Persistent external text",
+      text: "Full external resource snapshot\nSecond line survives source removal.\nSearch: durable-query-20261110",
+      externalResource: {
+        provider: "ui-smoke/external",
+        providerLabel: "External snapshot demo",
+        resourceType: "document",
+        id: "resource",
+        identifier: "DEMO-42",
+        title: "Persistent external text",
+        url: "https://example.com/resource/42",
+      },
+    };
+    const item = {
+      type: "user_message",
+      text: "/ui-attachment-save durable-ui-snapshot",
+      messageId: "local-submission-1",
+      clientMessageId: "submitted-1",
+      rewindStatus: "unavailable",
+    };
+    const envelopes = (timelineItem: unknown) => [
+      {
+        type: "session",
+        message: {
+          type: "agent_stream",
+          payload: {
+            agentId: "agent-1",
+            timestamp,
+            event: { type: "timeline", provider: "omp", item: timelineItem },
+          },
+        },
+      },
+      {
+        type: "session",
+        message: {
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId: "cold-timeline-1",
+            agentId: "agent-1",
+            agent: null,
+            direction: "tail",
+            projection: "projected",
+            epoch: "timeline-1",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+            startCursor: { epoch: "timeline-1", seq: 1 },
+            endCursor: { epoch: "timeline-1", seq: 1 },
+            hasOlder: false,
+            hasNewer: false,
+            entries: [{
+              provider: "omp",
+              item: timelineItem,
+              timestamp,
+              seqStart: 1,
+              seqEnd: 1,
+              sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+              collapsed: [],
+            }],
+            error: null,
+          },
+        },
+      },
+    ];
+    const inputs = envelopes({
+      ...item,
+      attachments: [{ ...attachment, ...(contextKind ? { contextKind } : {}) }],
+    });
+    const expected = envelopes({
+      ...item,
+      attachments: [{
+        ...attachment,
+        ...(expectedContextKind ? { contextKind: expectedContextKind } : {}),
+      }],
+    });
+
+    for (const [index, envelope] of inputs.entries()) {
+      expect(validateWSOutboundMessage(envelope)).toEqual({
+        success: true,
+        data: expected[index],
+      });
+    }
+  });
+
+  it("rejects malformed text in a transformed attachment branch", () => {
+    expect(validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "agent_stream",
+        payload: {
+          agentId: "agent-1",
+          timestamp: "2026-11-10T11:00:00.000Z",
+          event: {
+            type: "timeline",
+            provider: "omp",
+            item: {
+              type: "user_message",
+              text: "Local submission",
+              attachments: [{ type: "text", mimeType: "text/plain", text: 42 }],
+            },
+          },
+        },
+      },
+    }).success).toBe(false);
   });
 
   it("accepts project config responses with and without setup commit status", () => {

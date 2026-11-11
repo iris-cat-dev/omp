@@ -15,6 +15,8 @@ const workspacePackages = [
   ["@omp-desktop/protocol", "protocol"],
   ["@omp-desktop/relay", "relay"],
   ["@omp-desktop/client", "client"],
+  ["@omp-desktop/plugin", "plugin"],
+  ["@omp-desktop/plugin-qqbot", "plugins/qqbot"],
   ["@omp-desktop/server", "server"],
   ["@omp-desktop/cli", "cli"],
 ];
@@ -158,7 +160,7 @@ try {
       ),
     );
     if (packed.length !== 1) throw new Error(`Expected one npm archive for ${packageName}`);
-    const archiveName = `${directoryName}.tgz`;
+    const archiveName = `${path.basename(directoryName)}.tgz`;
     await rename(path.join(packageDir, packed[0].filename), path.join(packageDir, archiveName));
     dependencies[packageName] = `file:packages/${archiveName}`;
     commonFiles[`packages/${archiveName}`] = await sha256(path.join(packageDir, archiveName));

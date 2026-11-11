@@ -6,7 +6,7 @@ const path = require("path");
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
-const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
+const workspacePackagesRoot = path.resolve(projectRoot, "..");
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
   "expo-camera": path.resolve(appSrcRoot, "fdroid/expo-camera.tsx"),
@@ -18,6 +18,7 @@ const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .toLowerCase();
 
 const config = getDefaultConfig(projectRoot);
+config.resolver.unstable_conditionNames = [...new Set([...(config.resolver.unstable_conditionNames ?? []), "source"])];
 config.resolver.assetExts.push("woff2");
 if (customWebPlatform === "electron") {
   config.transformer.minifierConfig.output = {
@@ -89,11 +90,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
 
   const origin = context.originModulePath;
-  if (origin && origin.startsWith(relaySrcRoot) && moduleName.endsWith(".js")) {
-    const tsModuleName = moduleName.replace(/\.js$/, ".ts");
-    const candidatePath = path.resolve(path.dirname(origin), tsModuleName);
-    if (fs.existsSync(candidatePath)) {
-      return resolveWithCustomWebOverlay(context, tsModuleName, platform);
+  if (origin && origin.startsWith(`${workspacePackagesRoot}${path.sep}`) && !origin.includes(`${path.sep}node_modules${path.sep}`) && /\.tsx?$/.test(origin) && moduleName.startsWith(".") && moduleName.endsWith(".js")) {
+    for (const extension of [".ts", ".tsx"]) {
+      const tsModuleName = moduleName.replace(/\.js$/, extension);
+      const candidatePath = path.resolve(path.dirname(origin), tsModuleName);
+      if (fs.existsSync(candidatePath)) return resolveWithCustomWebOverlay(context, tsModuleName, platform);
     }
   }
 
