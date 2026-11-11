@@ -280,7 +280,7 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 
 ### QQ 连接
 
-`qqbot` 负责一个 daemon 级网关、QQ connector／绑定状态、账号／身份访问、peer 队列、QQ 事件格式化／媒体投递，以及持久的 peer 到 Desktop agent 映射。客户端入口提供完整配置／绑定页、菜单动作和插件面板。可选 OMP hooks／工具提供 QQ prompt 上下文与文件投递，复用已有网关，不再创建连接。
+`qqbot` 负责一个 daemon 级网关、QQ connector／绑定状态、账号／身份访问、peer 队列、QQ 事件格式化／媒体投递，以及持久的 peer 到 Desktop agent 映射。客户端入口提供完整配置／绑定页、设置页操作按钮和插件面板。可选 OMP hooks／工具提供 QQ prompt 上下文与文件投递，复用已有网关，不再创建连接。
 
 复用当前 QQ SDK 和协议模块。用 Desktop 公开服务 bridge 与 OMP 原生工具／hooks 替换 DSH `ctx.agents`、`session/event`、system-prompt sections、审批／问答、模型发现及 Cordis 持久化。为需要的控制补齐受支持客户端 API，不长期依赖 `internal/*`。
 
@@ -290,7 +290,7 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 
 secret 和绑定轮询留在 daemon。缺少凭据是非阻塞等待状态。插件页面保留真实的绑定、刷新、手动替换／解绑、三类访问名单、配对／撤销／导出、access-revision 冲突处理。QQ 文本不能通过转发未知斜杠命令调用任意宿主插件管理操作。
 
-账号入口为 Settings → Plugins → 对应 daemon 的 QQ 连接 → 权限授权 → 配置。运行侧栏和应用菜单要求“允许主机插件运行”与 QQ 单项开关同时开启；未绑定账号显示等待原因，仍可进入“QQ 连接”绑定页。暂停全局执行保留单项启用选择与账号配置，撤销运行型入口。
+账号入口为 Settings → Plugins → 对应 daemon 的 QQ 连接 → 权限授权 → 配置。“重启 QQ 连接”等应用级操作直接显示在所选安装实例的设置页，不在侧栏增加拼图菜单。运行侧栏和设置页操作要求“允许主机插件运行”与 QQ 单项开关同时开启；未绑定账号显示等待原因，仍可进入“QQ 连接”绑定页。暂停全局执行保留单项启用选择与账号配置，撤销运行型入口。
 
 peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／workspace／agent ID。不能把 DSH session 标识复用为 OMP 标识，也不能把 DSH 事件日志当作原生 OMP 历史。导入账号／偏好时保留旧 DSH 数据；转换历史对话需要独立校验过的 importer。
 

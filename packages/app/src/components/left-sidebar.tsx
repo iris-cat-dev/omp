@@ -51,7 +51,6 @@ import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { PluginSidebarItems } from "@/plugins/sidebar-items";
-import { PluginApplicationMenu } from "@/plugins/menus";
 import {
   formatOmpAccountIdentity,
   formatOmpAccountSelectionLabel,
@@ -1688,7 +1687,6 @@ function MobileSidebar({
             variant="compact"
           />
           <PluginSidebarItems onNavigate={closeSidebar} />
-          <PluginApplicationMenu />
         </View>
         <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
           <Pressable
@@ -1902,7 +1900,6 @@ function DesktopSidebar({
             variant="compact"
           />
           <PluginSidebarItems />
-          <PluginApplicationMenu />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (

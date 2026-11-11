@@ -19,6 +19,7 @@ import { usePluginClientSnapshot, usePluginContributions } from "@/plugins/hooks
 import { pluginInstanceKey } from "@/plugins/registry";
 import { approvePluginClientTrust, revokePluginClientTrust } from "@/plugins/client-trust";
 import { PluginView, usePluginHostProps } from "@/plugins/view";
+import { PluginSettingsActions } from "@/plugins/menus";
 import { getLocalPluginControl } from "@/plugins/local-control";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { settingsStyles } from "@/styles/settings";
@@ -89,6 +90,7 @@ function ManagedPluginSettings({ plugin, onChanged }: { plugin: ManagedPlugin; o
   const host = usePluginHostProps(plugin.hostId, plugin.entry.owner);
   const matches = pages.filter(({ instance }) => instance.installation.id === plugin.entry.id);
   return <View style={{ gap: 16 }}>
+    <PluginSettingsActions hostId={plugin.hostId} owner={plugin.entry.owner} installationId={plugin.entry.id} />
     {matches.length ? matches.map(({ key, instance, contribution }) => <PluginView key={key} instance={instance}><contribution.Component {...host} installation={instance.installation} mode={instance.mode} /></PluginView>) : <PluginStorageSettings key={JSON.stringify([plugin.entry.owner, plugin.hostId, plugin.entry.id, plugin.entry.generation])} plugin={plugin} onChanged={onChanged} />}
   </View>;
 }

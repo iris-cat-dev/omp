@@ -1,10 +1,12 @@
 import { useEffect, useMemo } from "react";
+import { View } from "react-native";
 import { Puzzle } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { useUnistyles } from "react-native-unistyles";
 import { z } from "zod";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem } from "@/components/ui/context-menu";
+import { Button } from "@/components/ui/button";
 import type { PluginMenuItemContribution } from "@omp-desktop/plugin";
 import { usePluginContributions } from "./hooks";
 import { pluginClientRegistry, type PluginClientInstance } from "./registry";
@@ -52,12 +54,13 @@ export function PluginMenuItems({ position, hostId, workspaceId, agentId, surfac
   });
 }
 
-export function PluginApplicationMenu() {
-  const entries = usePluginContributions("menu");
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
-  if (!entries.some(({ contribution }) => contribution.position === "application")) return null;
-  return <DropdownMenu><DropdownMenuTrigger accessibilityRole="button" accessibilityLabel={t("settings.sections.plugins")} testID="plugin-application-menu" style={{ padding: 8 }}><Puzzle size={18} color={theme.colors.foregroundMuted} /></DropdownMenuTrigger><DropdownMenuContent><PluginMenuItems position="application" /></DropdownMenuContent></DropdownMenu>;
+export function PluginSettingsActions({ hostId, owner, installationId }: { hostId: string; owner: "desktop" | "daemon"; installationId: string }) {
+  const entries = usePluginContributions("menu", hostId, owner);
+  const actions = entries.filter(({ instance, contribution }) => instance.installation.id === installationId && contribution.position === "application");
+  if (!actions.length) return null;
+  return <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+    {actions.map(({ key, instance, contribution }) => <Button key={key} size="sm" variant="outline" leftIcon={contribution.icon ? resolvePluginIcon(contribution.icon) : undefined} testID={`plugin-settings-action-${key}`} onPress={() => { void runPluginMenuItem(instance, contribution, {}).catch((error) => pluginClientRegistry.fail(instance.key, error, instance.scope)); }}>{contribution.title}</Button>)}
+  </View>;
 }
 
 const menuAction = z.object({ installationId: z.string(), generation: z.number().int(), clientActivationId: z.string(), actionId: z.string() });
