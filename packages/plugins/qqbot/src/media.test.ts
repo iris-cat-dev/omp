@@ -46,6 +46,19 @@ it('downloads only bounded HTTPS QQ bytes with exclusive descriptor-bound writes
   expect(fetch).toHaveBeenCalledOnce();
 });
 
+it('accepts QQ multimedia downloads without trusting lookalike or unrelated hosts',async()=>{
+  const f=await fixture();
+  const bytes=Buffer.from('official-qq-image');
+  const fetch=vi.fn(async()=>new Response(bytes));vi.stubGlobal('fetch',fetch);
+  const attachment={filename:'photo.png',content_type:'image/png',size:0,url:'https://multimedia.nt.qq.com.cn/download?appid=local&fileid=canary&rkey=local-only&spec=0'};
+  const file=await downloadAttachment(attachment,root,config,new AbortController().signal,f.files);
+  expect(file.size).toBe(bytes.length);
+  for(const url of ['http://multimedia.nt.qq.com.cn/download','https://multimedia.nt.qq.com.cn.attacker.invalid/download','https://other.qq.com.cn/download','https://multimedia.nt.qq.com.cn@attacker.invalid/download']){
+    await expect(downloadAttachment({...attachment,url},root,config,new AbortController().signal,f.files)).rejects.toThrow('QQ HTTPS');
+  }
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
 it('oversized media never starts a file write',async()=>{
   const f=await fixture();vi.stubGlobal('fetch',vi.fn(async()=>new Response(Buffer.alloc(1024*1024+1))));
   await expect(downloadAttachment({filename:'large',content_type:'application/octet-stream',size:0,url:'https://qpic.cn/large'},root,config,new AbortController().signal,f.files)).rejects.toThrow('下载上限');

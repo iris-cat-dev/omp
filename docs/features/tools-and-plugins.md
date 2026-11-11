@@ -119,6 +119,10 @@ For an isolated integration check, use `packages/plugins/qqbot/tests/sandbox-smo
 
 To use the **QQ connection** sidebar entry, enable both **Allow host plugins to run** and the QQ installation's own switch. It appears below **Scheduled tasks** in the main sidebar. The shared QQ page in **Configure**, the sidebar surface, and workspace panels shows **Connection status** (`连接状态`) separately from error details. In active mode, **Restart QQ connection** (`重启 QQ 连接`) appears on that page, scoped to the selected host and installation; there is no sidebar puzzle menu or QQ application-menu action. An enabled connection waiting for account credentials keeps its sidebar entry and settings actions available. Pausing host execution hides execution entries and actions but retains the QQ switch selection and account configuration.
 
+To ask about a QQ image, attach it to the message and @ the bot in a group. With `media.enabled` and `vision.enabled`, the service downloads supported images into `.qqbot-media` inside the configured sandbox and includes their image content in the model input.
+
+Supported HTTPS media origins include the exact `multimedia.nt.qq.com.cn` host shown in [Tencent's group-message attachment example](https://bot.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html). Downloads remain size-limited and reject redirects, lookalike hostnames and unrelated `qq.com.cn` subdomains. This trusted service operation does not require enabling sandbox JavaScript or public-network access.
+
 Native marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
 
 Native installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.

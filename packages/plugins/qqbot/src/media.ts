@@ -18,7 +18,7 @@ export interface RawAttachment { filename: string; content_type: string; size: n
 export async function downloadAttachment(attachment: RawAttachment, cwd: string, config: Config, signal: AbortSignal, files: SandboxFiles): Promise<{ path: string; relativePath: string; mimeType: string; size: number }> {
   if (!config.media.enabled) throw new Error('QQ 富媒体接收已关闭');
   const url = new URL(attachment.url.startsWith('//') ? `https:${attachment.url}` : attachment.url);
-  if (url.protocol !== 'https:' || !['qq.com','qpic.cn','myqcloud.com'].some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))) throw new Error('附件不是受支持的 QQ HTTPS 媒体地址');
+  if (url.protocol !== 'https:' || (url.hostname !== 'multimedia.nt.qq.com.cn' && !['qq.com','qpic.cn','myqcloud.com'].some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`)))) throw new Error('附件不是受支持的 QQ HTTPS 媒体地址');
   const max = config.media.maxMB * 1024 * 1024; if (attachment.size > max) throw new Error('附件超过下载上限');
   await files.mkdir('.qqbot-media');
   const name=basename((attachment.filename||'attachment').replaceAll('\\','/')).replaceAll('\0','_').slice(0,64);
