@@ -12,6 +12,7 @@ import type {
 } from "@omp-desktop/protocol/agent-types";
 import type {
   AgentAttachment,
+  AgentSandbox,
   OmpCustomProviderInput,
   OmpInstallationStatus,
   OmpProviderAccountQuota,
@@ -646,6 +647,7 @@ export interface ImportedProviderSession {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  sandbox?: AgentSandbox;
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.

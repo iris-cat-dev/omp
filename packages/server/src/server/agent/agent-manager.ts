@@ -215,6 +215,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   if (record.config.proxyPolicy !== undefined) config.proxyPolicy = record.config.proxyPolicy;
+  if (record.config.sandbox) config.sandbox = { ...record.config.sandbox };
   return stripInternalPaseoMcpServer(config);
 }
 
@@ -1610,6 +1611,7 @@ export class AgentManager {
     const mergedConfig = {
       ...metadata,
       ...overrides,
+      sandbox: metadata.sandbox ?? overrides?.sandbox,
       provider: handle.provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
@@ -1761,6 +1763,7 @@ export class AgentManager {
     const refreshConfig = {
       ...existing.config,
       ...overrides,
+      sandbox: existing.config.sandbox ?? overrides?.sandbox,
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
@@ -6388,7 +6391,9 @@ export class AgentManager {
     config: AgentSessionConfig,
     options: NormalizeConfigOptions = {},
   ): Promise<AgentSessionConfig> {
+    if (config.sandbox && config.provider !== "omp") throw new Error("Mandatory sandbox requires the OMP provider");
     const normalized: AgentSessionConfig = { ...config };
+    if (normalized.sandbox) normalized.cwd = normalized.sandbox.root;
 
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
@@ -6485,7 +6490,7 @@ export class AgentManager {
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const launchConfig = this.applyDaemonAppendSystemPrompt(
+    const launchConfig = storedConfig.sandbox ? { ...storedConfig } : this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
         agentId,

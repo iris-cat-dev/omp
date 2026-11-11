@@ -1,43 +1,52 @@
 import { expect, it, vi } from 'vitest';
-import type { PluginServiceContext, PluginStorage } from '@omp-desktop/plugin/server';
+import { readFileSync } from 'node:fs';
+import { createActivationScope, createPluginPaseoApi } from '@omp-desktop/plugin/server';
+import type { PluginInstallation, PluginServiceContext, PluginStorage } from '@omp-desktop/plugin/server';
 import type { MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
-import type { PaseoAgentStream } from '@omp-desktop/client';
+import type { PaseoApi, PaseoAgentStream } from '@omp-desktop/client';
 import { Gateway } from './gateway.ts';
 import { Pairing, StateSchema, StateStore, peerKey } from './state.ts';
+
+const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 it('disable settles the owned QQ route before a native send acknowledgement without stopping the agent', async () => {
   const values = StateSchema.parse({ config: { appId: 'test-account' } });
   const storage = { get: async () => ({ revision: 0, values: structuredClone(values) }), patch: vi.fn() } as unknown as PluginStorage;
   const store = new StateStore(storage);
-  const controller = new AbortController();
-  const context = { signal: controller.signal, installation: { id: 'installation', generation: 2 }, paseo: {} } as unknown as PluginServiceContext;
+  const scope = createActivationScope(2);
+  const installation: PluginInstallation = { id: 'installation', packageId: packageMetadata.name, owner: 'daemon', version: packageMetadata.version, generation: scope.generation, enabled: true, declaredCapabilities: packageMetadata.ompDesktop.capabilities, grantedCapabilities: packageMetadata.ompDesktop.capabilities };
+  const context = { signal: scope.signal, installation, paseo: {} } as unknown as PluginServiceContext;
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const gateway = new Gateway(context, store, new Pairing(store), values.config, 'fixture-only-secret', logger, vi.fn());
   const acknowledged = Promise.withResolvers<void>();
   const sent = Promise.withResolvers<void>();
   const agent = { send: vi.fn(() => { sent.resolve(); return acknowledged.promise; }), stop: vi.fn() };
-  const route = { peer: { scope: 'c2c', openid: 'peer', cwd: '/workspace' }, agent, pending: new Map() };
-  const internal = gateway as unknown as { getOrCreate: () => Promise<typeof route>; message: (context: MiddlewareContext) => Promise<void> };
+  const paseo = createPluginPaseoApi({ agents: { ref: () => agent } } as unknown as PaseoApi, installation, scope, { mode: 'active' });
+  const route = { peer: { appId: 'test-account', scope: 'c2c', openid: 'peer', cwd: '/workspace' }, agent: paseo.agents.ref('agent'), pending: new Map() };
+  const internal = gateway as unknown as { routes: Map<string, typeof route>; getOrCreate: () => Promise<typeof route>; message: (context: MiddlewareContext) => Promise<void> };
   vi.spyOn(internal, 'getOrCreate').mockResolvedValue(route);
+  internal.routes.set(peerKey('test-account','c2c','peer'),route);
   const message = { replyTarget: { scope: 'c2c', targetId: 'peer', msgId: 'message' }, message: { kind: 'c2c', content: 'hello', senderId: 'peer' }, state: {} } as unknown as MiddlewareContext;
   const work = internal.message(message);
   const settled = work.then(() => null, error => error);
-  await sent.promise;
-  gateway.dispose();
   try {
+    await Promise.race([sent.promise, work]);
+    gateway.dispose();
     const result = await Promise.race([settled, new Promise<null>(resolve => setImmediate(() => resolve(null)))]);
     expect(result).toBeInstanceOf(Error);
     expect((result as Error).message).toContain('QQ 路由取消');
     expect(agent.stop).not.toHaveBeenCalled();
   } finally {
+    gateway.dispose();
     acknowledged.resolve();
     await settled;
     vi.restoreAllMocks();
+    await scope.dispose();
   }
 });
 
 it('newer native tool metadata preserves inspected MIME and delivers extensionless image artifacts', async () => {
-  const values = StateSchema.parse({ config: { appId: 'test-account' } });
+  const values = StateSchema.parse({ config: { appId: 'test-account', sendFile: { sendPresentedFiles: true } } });
   const storage = { get: async () => ({ revision: 0, values: structuredClone(values) }), patch: vi.fn() } as unknown as PluginStorage;
   const store = new StateStore(storage);
   const context = { signal: new AbortController().signal, installation: { id: 'installation', generation: 2 }, paseo: {} } as unknown as PluginServiceContext;

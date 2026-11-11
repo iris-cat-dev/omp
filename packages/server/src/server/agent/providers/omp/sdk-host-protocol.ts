@@ -7,6 +7,9 @@ export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
 export const OmpSdkHostLaunchSchema = z
   .object({
     cwd: z.string().min(1),
+    sandbox: z.object({ root: z.string().min(1) }).strict().optional(),
+    systemPrompt: z.string().optional(),
+    modelBridgeExtension: z.string().optional(),
     proxyPolicy: ProxyPolicySchema.optional(),
     protocolMode: z.enum(["rpc", "rpc-ui"]).optional(),
     model: z.string().optional(),

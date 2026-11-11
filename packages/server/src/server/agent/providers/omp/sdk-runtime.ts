@@ -14,6 +14,7 @@ import {
   OMP_SERVICE_TIER_TOKEN_ENV,
   startOmpRpcSession,
 } from "./cli-runtime.js";
+import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 import { prepareOmpImageSettingsLaunch, OMP_IMAGE_SETTINGS_TOKEN_ENV } from "./image-settings.js";
 import {
   resolveOmpSdkInstallation,
@@ -117,9 +118,9 @@ export class OmpSdkRuntime implements OmpRuntime {
       input,
       this.options.localModelBridge,
     );
-    const extensions = [resolveOmpServiceTierExtensionPath()];
-    if (launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
-    const imageLaunch = input.getImageGenerationConfig
+    const extensions = input.sandbox ? [] : [resolveOmpServiceTierExtensionPath()];
+    if (!input.sandbox && launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
+    const imageLaunch = !input.sandbox && input.getImageGenerationConfig
       ? await prepareOmpImageSettingsLaunch(command, input.cwd, {
           ...process.env,
           ...launch.env,
@@ -139,7 +140,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       const startStartedAt = performance.now();
       const session = await startOmpRpcSession({
         launch,
-        enableAskDialog: true,
+        enableAskDialog: !input.sandbox,
         // This is our Node host, not an external provider command. The shared
         // transport's default spawn strips ELECTRON_RUN_AS_NODE, which makes a
         // packaged Desktop executable re-enter its GUI/CLI dispatch instead.
@@ -156,9 +157,9 @@ export class OmpSdkRuntime implements OmpRuntime {
         logger: this.options.logger,
         signal: input.signal,
         onRetirementCreated: input.onRetirementCreated,
-        getImageGenerationConfig: input.getImageGenerationConfig,
+        getImageGenerationConfig: input.sandbox ? undefined : input.getImageGenerationConfig,
         imageSettingsToken: imageLaunch?.token,
-        imageToolAllowed: !denied.includes("generate_image"),
+        imageToolAllowed: !input.sandbox && !denied.includes("generate_image"),
         localModelBridge: bridge,
         localModelsEnabled: enabled,
         serviceTierToken,
@@ -218,21 +219,24 @@ export class OmpSdkRuntime implements OmpRuntime {
     const systemPrompt = input.systemPrompt?.trim();
     const payload = OmpSdkHostLaunchSchema.parse({
       cwd: input.cwd,
+      sandbox: input.sandbox,
+      systemPrompt: input.sandbox ? input.systemPrompt : undefined,
+      modelBridgeExtension: input.sandbox && launch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE ? resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url) : undefined,
       proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
       protocolMode: launch.protocolMode,
       model: launch.model,
-      desktopPluginPrompts: true,
+      desktopPluginPrompts: !input.sandbox,
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,
-      extraArgs: [
+      extraArgs: input.sandbox ? [] : [
         ...(input.extraArgs ?? []),
         ...launch.argv.slice(command.length),
         ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
       ],
-      extensions,
+      extensions: input.sandbox ? [] : extensions,
       disallowedTools: input.localModelGateway ? [] : denied,
-      configFiles: imageLaunch ? [imageLaunch.configPath] : [],
+      configFiles: !input.sandbox && imageLaunch ? [imageLaunch.configPath] : [],
     });
     launch.argv = [...command];
     launch.env = {

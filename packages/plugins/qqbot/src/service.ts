@@ -32,8 +32,6 @@ class Runtime {
     this.ctx.handle(exportAccess,value=>this.serial(async()=>{const state=(await this.store.read()).values;if(state.access.revision!==value.accessRevision)throw new Error('ACCESS_REVISION_CONFLICT');return{appId:state.config.appId,revision:state.access.revision,text:state.access[listKey(value.purpose)].map(member=>formatWhitelistEntry(member.openid,member.nickname)).join('\n')};}));
     if(this.ctx.role==='service'){
       this.ctx.handle(sendFile,async value=>{if(!this.gateway)throw new Error('QQ 网关尚未就绪');await this.gateway.sendFile(value.agentId,value.path,value.type,value.target);return{sent:true as const};});
-      this.ctx.addAgentTool({name:'qqbot_send_file',description:'将工作区中已授权的图片、视频、语音或文件投递到当前 QQ 对话；使用安装实例已有网关。',input:sendFile.input.omit({agentId:true}),handler:async(value,context)=>{if(!this.gateway||context.signal.aborted)throw new Error('QQ 网关未启用或工具调用已取消');await this.gateway.sendFile(context.agentId,value.path,value.type,value.target);return{sent:true};}});
-      this.ctx.addAgentPrompt({id:'qqbot.context',handler:async({agentId,signal})=>signal.aborted||!this.gateway?null:this.gateway.agentPrompt(agentId)});
       void this.poll();
     }
     this.ctx.signal.addEventListener('abort',()=>this.dispose(),{once:true});
@@ -58,7 +56,7 @@ class Runtime {
       case 'bind':case 'refresh':this.accountEpoch++;this.binding.start();break;
       case 'unbind':{const state=(await this.store.read()).values;const appId=state.config.appId;const version=state.credentialVersions[appId];await this.store.mutate(s=>{switchAccount(s,'');delete s.credentialVersions[appId];s.access.revision++;},value.accessRevision);this.accountEpoch++;this.binding.dispose();this.stopGateway();this.pairing.clear();if(appId&&version!==undefined)await this.ctx.secrets.delete(`app-secret:${appId}:${version}`);break;}
       case 'replace':{const secret=value.credentialKey?await this.ctx.secrets.get(value.credentialKey):undefined;if(value.credentialKey&&secret===null)throw new Error('凭据提交已过期，请重新输入');try{await this.commit(value.appId,secret??undefined,value.accessRevision,s=>{switchAccount(s,value.appId);s.access.revision++;});}finally{if(value.credentialKey)await this.ctx.secrets.delete(value.credentialKey);}this.accountEpoch++;this.binding.dispose();this.stopGateway();this.lastConfig='';this.pairing.clear();break;}
-      case 'configure':await this.store.mutate(s=>{if(s.config.appId!==value.config.appId)throw new Error('账号替换请使用专用账号操作');s.config=value.config;s.access.revision++;},value.accessRevision);break;
+      case 'configure':{const previous=(await this.store.read()).values.config.sandboxPath;await this.store.mutate(s=>{if(s.config.appId!==value.config.appId)throw new Error('账号替换请使用专用账号操作');s.config=value.config;s.access.revision++;},value.accessRevision);if(previous!==value.config.sandboxPath)this.stopGateway();break;}
       case 'access':await this.store.mutate(s=>{s.access={...value.access,revision:s.access.revision+1};},value.accessRevision);break;
       case 'pair':if(this.ctx.role!=='service')throw new Error('启用 QQ 网关后才能生成可认领的配对码');if((await this.store.read()).values.access.revision!==value.accessRevision)throw new Error('ACCESS_REVISION_CONFLICT');await this.pairing.issue(value.purpose);break;
       case 'end-pair':this.pairing.challenges.delete(value.code);break;

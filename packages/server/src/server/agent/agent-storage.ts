@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import {
   AgentFeatureSchema,
+  AgentSandboxSchema,
   AgentSnapshotPayloadSchema,
   AgentStatusSchema,
 } from "../messages.js";
@@ -34,6 +35,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
     proxyPolicy: ProxyPolicySchema.optional(),
+    sandbox: AgentSandboxSchema.optional(),
   })
   .nullable()
   .optional();
@@ -98,6 +100,7 @@ export type SerializableAgentConfig = Pick<
   | "systemPrompt"
   | "mcpServers"
   | "proxyPolicy"
+  | "sandbox"
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;

@@ -7,11 +7,15 @@ export const Scope = z.enum(['c2c', 'group']);
 export const AccessMode = z.enum(['open', 'allowlist', 'disabled']);
 export const AgentPresetSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  config: z.object({ provider: z.string().min(1), modeId: z.string().optional(), thinkingOptionId: z.string().optional(), featureValues: z.record(z.string(), z.unknown()).optional(), options: z.record(z.string(), z.json()).optional(), systemPrompt: z.string().optional(), toolPolicy: z.object({ preapproved: z.array(z.object({ kind: z.literal('mcp'), server: z.string().min(1), tool: z.string().min(1) }).strict()) }).strict().optional(), mcpServers: z.record(z.string(), z.discriminatedUnion('type', [z.object({ type: z.literal('stdio'), command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string(), z.string()).optional(), alwaysLoad: z.boolean().optional() }).strict(), z.object({ type: z.literal('http'), url: z.string().url(), headers: z.record(z.string(), z.string()).optional(), alwaysLoad: z.boolean().optional() }).strict(), z.object({ type: z.literal('sse'), url: z.string().url(), headers: z.record(z.string(), z.string()).optional(), alwaysLoad: z.boolean().optional() }).strict()])).optional() }).strict(),
-  qq: z.object({ prompt: z.string().default(''), skills: z.array(z.string()).default([]), tools: z.array(z.enum(['qqbot_send_file'])).default([]) }).strict().default({ prompt: '', skills: [], tools: [] }),
+  config: z.object({ provider: z.string().min(1), modeId: z.string().optional(), thinkingOptionId: z.string().optional(), systemPrompt: z.string().optional(), toolPolicy: z.object({ preapproved: z.array(z.never()).max(0) }).strict().optional() }).strict(),
+  qq: z.object({ prompt: z.string().default(''), skills: z.array(z.never()).max(0, 'QQ 沙箱不允许加载宿主 skill').default([]), tools: z.array(z.never()).max(0, 'QQ 沙箱不允许加载宿主工具，包括 qqbot_send_file').default([]) }).strict().default({ prompt: '', skills: [], tools: [] }),
 }).strict();
-export const ConfigSchema = z.object({
-  appId: z.string().default(''), cwd: z.string().default(''), defaultPreset: z.string().default('default'),
+export const ConfigSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { cwd, ...config } = value as Record<string, unknown>;
+  return { ...config, sandboxPath: config.sandboxPath ?? cwd };
+}, z.object({
+  appId: z.string().default(''), sandboxPath: z.string().trim().refine(path => !path.includes('\0'), '沙箱路径不能包含 NUL').default(''), defaultPreset: z.string().default('default'),
   presets: z.array(AgentPresetSchema).default([{ name: 'default', config: { provider: 'omp' }, qq: { prompt: '', skills: [], tools: [] } }]),
   requireMention: z.boolean().default(true), groupPrompt: z.string().default(''), directPrompt: z.string().default(''),
   textChunkLimit: z.number().int().min(200).max(4500).default(4500), streaming: z.boolean().default(true),
@@ -21,12 +25,45 @@ export const ConfigSchema = z.object({
   showToolResults: z.boolean().default(false),
   vision: z.object({ enabled: z.boolean().default(true), maxBytes: z.number().int().min(1).max(20971520).default(10485760) }).strict().default({enabled:true,maxBytes:10485760}),
   media: z.object({ enabled: z.boolean().default(true), maxMB: z.number().min(1).max(200).default(200), ttlHours: z.number().min(0).max(720).default(24) }).default({ enabled: true, maxMB: 200, ttlHours: 24 }),
-  sendFile: z.object({ extraRoots: z.array(z.string()).default([]), maxFiles: z.number().int().min(1).max(20).default(4), sendPresentedFiles: z.boolean().default(true) }).default({ extraRoots: [], maxFiles: 4, sendPresentedFiles: true }),
-}).strict().superRefine((c, ctx) => { const names = c.presets.map(p => p.name); if (new Set(names).size !== names.length || !names.includes(c.defaultPreset)) ctx.addIssue({ code: 'custom', message: 'Preset 名称必须唯一且默认 preset 必须存在' }); });
+  sendFile: z.object({ extraRoots: z.array(z.string()).default([]), maxFiles: z.number().int().min(1).max(20).default(4), sendPresentedFiles: z.boolean().default(false) }).default({ extraRoots: [], maxFiles: 4, sendPresentedFiles: false }),
+}).strict().superRefine((c, ctx) => { const names = c.presets.map(p => p.name); if (new Set(names).size !== names.length || !names.includes(c.defaultPreset)) ctx.addIssue({ code: 'custom', message: 'Preset 名称必须唯一且默认 preset 必须存在' }); }));
 export const MemberSchema = z.object({ openid: OpenId, nickname: z.string().default(''), scene: Scope, sceneName: z.string().default(''), claimedAt: z.number() });
 export const AccessSchema = z.object({ revision: z.number().int().default(0), c2cMode: AccessMode.default('open'), groupMode: AccessMode.default('open'), commandMode: AccessMode.default('open'), owners: z.array(MemberSchema).default([]), allowC2c: z.array(MemberSchema).default([]), allowGroup: z.array(MemberSchema).default([]) }).strict();
-export const PeerSchema = z.object({ appId: z.string(), scope: Scope, openid: OpenId, hostId: z.string(), workspaceId: z.string(), agentId: z.string(), cwd: z.string(), preset: z.string(), template: AgentPresetSchema, protocolPrompt: z.string(), lastDeliveredSequence: z.number().default(0) });
-export const StateSchema = z.object({ schemaVersion: z.literal(1).default(1), config: ConfigSchema.default(() => ConfigSchema.parse({})), credentialVersions:z.record(z.string(),z.number().int().nonnegative()).default({}), access: AccessSchema.default(() => AccessSchema.parse({})), accountAccess: z.record(z.string(), AccessSchema).default({}), peers: z.record(z.string(), PeerSchema).default({}), presetSelections: z.record(z.string(), z.string()).default({}), modelSelections: z.record(z.string(), z.string().nullable()).default({}), importReport: z.array(z.string()).default([]) });
+export const PeerSchema = z.object({ appId: z.string(), scope: Scope, openid: OpenId, hostId: z.string(), workspaceId: z.string(), agentId: z.string(), cwd: z.string(), sandbox: z.object({ root: z.string().min(1) }).strict().optional(), preset: z.string(), template: AgentPresetSchema, protocolPrompt: z.string(), lastDeliveredSequence: z.number().default(0) });
+function migrateStoredPreset(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const preset = value as Record<string, unknown>;
+  const config = preset.config as Record<string, unknown> | undefined;
+  const qq = preset.qq as Record<string, unknown> | undefined;
+  if (!config || typeof config !== 'object') return value;
+  const { options, featureValues, mcpServers, toolPolicy, sandbox, ...safe } = config;
+  return { ...preset, config: safe, qq: { ...qq, skills: [], tools: [] } };
+}
+export const StateSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const state = value as Record<string, unknown>;
+  const config = state.config as Record<string, unknown> | undefined;
+  const peers = state.peers as Record<string, Record<string, unknown>> | undefined;
+  const templates = [...(Array.isArray(config?.presets) ? config.presets : []), ...Object.values(peers ?? {}).map(peer => peer.template)];
+  const removed = templates.some(value => {
+    if (!value || typeof value !== 'object') return false;
+    if ('config' in value && value.config && typeof value.config === 'object') {
+      const preset = value.config;
+      if (['options','featureValues','mcpServers','sandbox'].some(key => key in preset)) return true;
+      if ('toolPolicy' in preset && preset.toolPolicy && typeof preset.toolPolicy === 'object' && 'preapproved' in preset.toolPolicy && Array.isArray(preset.toolPolicy.preapproved) && preset.toolPolicy.preapproved.length) return true;
+    }
+    if ('qq' in value && value.qq && typeof value.qq === 'object') {
+      return ('skills' in value.qq && Array.isArray(value.qq.skills) && value.qq.skills.length > 0) || ('tools' in value.qq && Array.isArray(value.qq.tools) && value.qq.tools.length > 0);
+    }
+    return false;
+  });
+  const notice = 'QQ 强制沙箱迁移已移除旧 preset 的宿主 skills、tools、MCP 与运行选项；模型、prompt、账号与历史保留。';
+  return { ...state,
+    ...(removed && (state.importReport === undefined || Array.isArray(state.importReport)) ? { importReport: [...new Set([...(state.importReport as string[] ?? []), notice])] } : {}),
+    ...(config ? { config: { ...config, ...(Array.isArray(config.presets) ? { presets: config.presets.map(migrateStoredPreset) } : {}) } } : {}),
+    ...(peers ? { peers: Object.fromEntries(Object.entries(peers).map(([key, peer]) => [key, { ...peer, template: migrateStoredPreset(peer.template) }])) } : {}),
+  };
+}, z.object({ schemaVersion: z.literal(1).default(1), config: ConfigSchema.default(() => ConfigSchema.parse({})), credentialVersions:z.record(z.string(),z.number().int().nonnegative()).default({}), access: AccessSchema.default(() => AccessSchema.parse({})), accountAccess: z.record(z.string(), AccessSchema).default({}), peers: z.record(z.string(), PeerSchema).default({}), presetSelections: z.record(z.string(), z.string()).default({}), modelSelections: z.record(z.string(), z.string().nullable()).default({}), importReport: z.array(z.string()).default([]) }));
 export type Config = z.infer<typeof ConfigSchema>;
 export type State = z.infer<typeof StateSchema>;
 export type Peer = z.infer<typeof PeerSchema>;

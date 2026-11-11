@@ -2,6 +2,9 @@ const metadataKeys:Record<string,true>={epoch:true,revision:true,installationId:
 /** Classification is not authorization: the owner must still match the exact revoked lease binding. */
 export function isPluginReleaseOperation(operation:string,input:unknown):boolean {
  if(!input||typeof input!=="object"||Array.isArray(input))return false;
+ if(operation==="files.sandbox"){
+  return "action" in input&&input.action==="close"&&"handle" in input&&typeof input.handle==="string"&&input.handle.length>0&&Object.keys(input).every(key=>key==="action"||key==="handle");
+ }
  if(operation==="wallpaper:setBackground"){
   return "candidateId" in input&&input.candidateId===null&&Object.keys(input).every(key=>key==="candidateId"||metadataKeys[key]);
  }

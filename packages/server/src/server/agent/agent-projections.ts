@@ -114,6 +114,7 @@ export function toAgentPayload(
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
+    ...(agent.config.sandbox ? { sandbox: { ...agent.config.sandbox } } : {}),
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: runtimeInfo?.model ?? agent.config.model ?? null,
     thinkingOptionId,
@@ -240,6 +241,7 @@ export function buildStoredAgentPayload(
     id: record.id,
     provider: record.provider,
     cwd: record.cwd,
+    ...(record.config?.sandbox ? { sandbox: { ...record.config.sandbox } } : {}),
     workspaceId: record.workspaceId,
     model: runtimeInfo?.model ?? record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
@@ -372,6 +374,7 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.proxyPolicy !== undefined) {
     serializable.proxyPolicy = structuredClone(config.proxyPolicy);
   }
+  if (config.sandbox) serializable.sandbox = { ...config.sandbox };
   return Object.keys(serializable).length ? serializable : null;
 }
 

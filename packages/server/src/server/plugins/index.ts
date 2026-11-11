@@ -9,6 +9,7 @@ import { inspectPluginPackage, compilePlugin, compilePackageEntries, type Inspec
 import { PluginDataStore } from "./storage.js";
 import type { PaseoToolDefinition } from "../agent/tools/types.js";
 import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
+import { SandboxFileLeases } from "./sandbox-file-leases.js";
 
 type Approval=z.infer<typeof DesktopPluginApprovalSchema>;
 export interface PluginRuntimePort {
@@ -42,10 +43,12 @@ export class PluginService {
  private revision=0;
  private unsubscribeConfig:(()=>void)|undefined;
  private readonly data:PluginDataStore;
+ private readonly sandboxFiles:SandboxFileLeases;
  constructor(private readonly logger:pino.Logger,private readonly configStore:DaemonConfigStore,runtime:PluginRuntimePort=new PluginRuntime(logger),home?:string) {
   this.runtime=runtime;
   for(const [id,source] of Object.entries(configStore.get().plugins??{}))if(source.enabled!==false&&!source.approval)this.inheritedTrust.add(id);
   this.data=new PluginDataStore(home??configStore.storageDirectory());
+  this.sandboxFiles=new SandboxFileLeases(()=>configStore.get().providers.omp);
   runtime.bindHostCall?.((id,operation,input)=>this.hostOperation(id,operation,input));
   runtime.subscribe((id,error)=>{if(error){this.revoke(id);this.errors.set(id,error);}this.notify(id);});
  }
@@ -198,6 +201,11 @@ export class PluginService {
   return contributions;
  }
  private hostOperation(id:string,operation:string,input:unknown){
+  if(operation==="files.sandbox"){
+   if(!this.grants(id).includes("files.scoped"))throw new Error("Plugin sandbox files require files.scoped approval");
+   const generation=this.getGeneration(id);const epoch=this.epochs.get(id)??0;
+   return this.sandboxFiles.invoke(id,generation,input,()=>this.canRun(id)&&this.getGeneration(id)===generation&&(this.epochs.get(id)??0)===epoch);
+  }
   const args=input as {patch:Record<string,unknown>;expectedRevision:number;key:string;operation:"get"|"configured"|"set"|"delete";value?:string};
   if(operation==="storage.get")return this.storageGet(id);
   if(operation==="storage.patch")return this.storagePatch(id,args.patch,args.expectedRevision);
@@ -214,7 +222,7 @@ export class PluginService {
   }
   throw new Error(`Host operation is unsupported by daemon: ${operation}`);
  }
- async stopAllPlugins(){this.closing=true;this.globalStartsBlocked=true;this.unsubscribeConfig?.();for(const id of this.epochs.keys())this.revoke(id);await this.runtime.stopAll();await Promise.allSettled(this.operations.values());await this.runtime.stopAll();}
+ async stopAllPlugins(){this.closing=true;this.globalStartsBlocked=true;this.unsubscribeConfig?.();for(const id of this.epochs.keys())this.revoke(id);this.sandboxFiles.close();await this.runtime.stopAll();await Promise.allSettled(this.operations.values());await this.runtime.stopAll();}
  private canRun(id:string){const source=this.configStore.get().plugins?.[id];const info=this.descriptions.get(id);return !this.closing&&!this.globalStartsBlocked&&this.pluginsEnabled()&&!!source&&source.installed!==false&&source.enabled!==false&&!!info&&this.approved(id,info);}
  private async activate(id:string){
   if(this.managementWorkers.delete(id))await this.runtime.stopPluginById(id);
@@ -227,7 +235,7 @@ export class PluginService {
  }
  private handleGlobalSwitch(enabled:boolean){this.globalStartsBlocked=!enabled;if(!enabled){for(const id of Object.keys(this.configStore.get().plugins??{}))this.revoke(id);void this.runtime.stopAll().catch(error=>this.logger.error({err:error},"Failed to stop plugins"));}else for(const id of Object.keys(this.configStore.get().plugins??{}))void this.enqueue(id,async()=>{await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);}).catch(error=>this.fail(id,error));for(const id of Object.keys(this.configStore.get().plugins??{}))this.notify(id);}
  private enqueue<T>(id:string,operation:()=>Promise<T>):Promise<T>{const previous=this.operations.get(id)??Promise.resolve();const result=previous.then(operation,operation);this.operations.set(id,result.catch(()=>undefined));return result;}
- private revoke(id:string){this.epochs.set(id,(this.epochs.get(id)??0)+1);this.runtime.invalidateGeneration?.(id);this.starting.delete(id);this.managementWorkers.delete(id);this.agentTools.delete(id);this.agentPrompts.delete(id);}
+ private revoke(id:string){this.epochs.set(id,(this.epochs.get(id)??0)+1);this.runtime.invalidateGeneration?.(id);this.sandboxFiles.revoke(id);this.starting.delete(id);this.managementWorkers.delete(id);this.agentTools.delete(id);this.agentPrompts.delete(id);}
  private source(id:string):PluginSource{PluginIdSchema.parse(id);const source=this.configStore.get().plugins?.[id];if(!source)throw new Error(`Plugin is not configured: ${id}`);return source;}
  private patchSource(id:string,source:PluginSource){this.configStore.patch({plugins:{...this.configStore.get().plugins,[id]:source}});}
  private item(id:string){const item=this.listPlugins().find(item=>item.id===id);if(!item)throw new Error(`Plugin is not configured: ${id}`);return item;}

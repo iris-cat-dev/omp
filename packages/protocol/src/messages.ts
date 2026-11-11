@@ -576,6 +576,12 @@ const ToolPolicySchema = z
   })
   .strict();
 
+export const AgentSandboxSchema = z.object({
+  root: z.string().min(1),
+}).strict();
+
+export type AgentSandbox = z.infer<typeof AgentSandboxSchema>;
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -589,6 +595,7 @@ const AgentSessionConfigSchema = z.object({
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   proxyPolicy: ProxyPolicySchema.optional(),
+  sandbox: AgentSandboxSchema.optional(),
 });
 
 const AgentPermissionUpdateSchema = z.record(z.string(), z.unknown());
@@ -1031,6 +1038,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
   proxyPolicy: ProxyPolicySchema.optional(),
+  sandbox: AgentSandboxSchema.optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),

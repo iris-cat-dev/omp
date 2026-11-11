@@ -55,6 +55,7 @@ export interface OmpRuntimeRetirement {
 
 export interface OmpStartSessionInput {
   cwd: string;
+  sandbox?: { root: string };
   signal?: AbortSignal;
   onActivity?: (stage: "prepareMs" | "startMs", elapsedMs: number) => void;
   /** Transfers retirement ownership before readiness/protocol negotiation can fail. */
