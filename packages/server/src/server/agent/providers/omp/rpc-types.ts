@@ -727,6 +727,16 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       type: z.literal("prompt_result"),
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
+      status: z.enum(["completed", "aborted", "error"]).optional(),
+      error: z.object({
+        message: z.string(),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+        httpStatus: z.number().optional(),
+        retryable: z.boolean().optional(),
+        code: z.literal("cost_cap").optional(),
+      }).passthrough().optional(),
+      sessionSettled: z.boolean().optional(),
     })
     .passthrough(),
   z.object({ type: z.literal("process_exit"), error: z.string() }).passthrough(),
@@ -911,6 +921,7 @@ export type OmpSubagentEventPayload = z.infer<typeof OmpSubagentEventPayloadSche
 export type OmpAssistantMessageEvent = z.infer<typeof OmpAssistantMessageEventSchema>;
 export type OmpAgentSessionEvent = z.infer<typeof OmpAgentSessionEventSchema>;
 export type OmpRuntimeEvent = z.infer<typeof OmpRuntimeEventSchema>;
+export type OmpPromptResult = Extract<OmpRuntimeEvent, { type: "prompt_result" }>;
 export type OmpTodoItem = z.infer<typeof OmpTodoItemSchema>;
 export type OmpTodoPhase = z.infer<typeof OmpTodoPhaseSchema>;
 export type OmpTodoReminderEvent = z.infer<typeof OmpTodoReminderEventSchema>;

@@ -2,19 +2,22 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import {
   LOCAL_MODEL_MAX_REQUEST_BYTES,
-  LOCAL_MODEL_PROVIDER,
-  LocalModelCatalogSchema,
   LocalModelInferenceRequestSchema,
   type LocalModel,
   type LocalModelInferenceRequest,
 } from "@omp-desktop/protocol/local-models";
 import type { OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
+import { projectOmpLocalModelCatalog } from "./local-model-catalog.js";
 
 export interface OmpLocalModelGateway {
   models: LocalModel[];
   request(body: LocalModelInferenceRequest, signal?: AbortSignal): Promise<Response>;
   close(): Promise<void>;
+}
+export interface OmpLocalModelGatewaySource extends OmpLocalModelGateway {
+  /** Private host launch data; provider credentials stay in the source process. */
+  launchConfig: { baseUrl: string; token: string };
 }
 
 const WIRE_OPTIONS: Record<string, true> = {
@@ -50,13 +53,16 @@ const WIRE_OPTIONS: Record<string, true> = {
 /** One tool-free native host per source connection; closing it cancels every upstream request. */
 export async function startOmpLocalModelGateway(
   startSession: (input: OmpStartSessionInput) => Promise<OmpRuntimeSession>,
-): Promise<OmpLocalModelGateway> {
+  signal?: AbortSignal,
+): Promise<OmpLocalModelGatewaySource> {
   const token = randomUUID();
+  signal?.throwIfAborted();
   const runtime = await startSession({
     cwd: homedir(),
     protocolMode: "rpc",
     noSession: true,
     localModelGateway: true,
+    signal,
     env: { OMP_DESKTOP_LOCAL_MODEL_GATEWAY_TOKEN: token },
     extraArgs: [
       "--no-tools",
@@ -67,45 +73,27 @@ export async function startOmpLocalModelGateway(
       resolveOmpRuntimeHelperPath("local-model-gateway-extension", import.meta.url),
     ],
   });
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    signal?.removeEventListener("abort", abort);
+    return closePromise ??= runtime.close();
+  };
+  const abort = () => { void close().catch(() => undefined); };
+  signal?.addEventListener("abort", abort, { once: true });
   try {
+    signal?.throwIfAborted();
     if (!runtime.getLocalModelGatewayPort)
       throw new Error("Local models require an updated OMP runtime");
     const port = await runtime.getLocalModelGatewayPort();
     const catalog = await runtime.getAvailableModels();
-    const models = LocalModelCatalogSchema.parse(
-      catalog
-        .filter(
-          (model) =>
-            model.provider !== LOCAL_MODEL_PROVIDER &&
-            model.provider !== "omp-desktop-bootstrap" &&
-            (model.kind === undefined || model.kind === "chat"),
-        )
-        .map((model) => ({
-          provider: model.provider,
-          id: model.id,
-          name: model.name,
-          api: model.api,
-          reasoning: model.reasoning,
-          input: model.input,
-          thinking: model.thinking,
-          cost: model.cost,
-          serviceTiers: model.serviceTiers,
-          contextWindow:
-            typeof model.contextWindow === "number" && model.contextWindow > 0
-              ? model.contextWindow
-              : undefined,
-          maxTokens:
-            typeof model.maxTokens === "number" && model.maxTokens > 0
-              ? model.maxTokens
-              : undefined,
-        })),
-    );
+    signal?.throwIfAborted();
+    const models = projectOmpLocalModelCatalog(catalog);
     const allowed = new Set(models.map((model) => `${model.provider}/${model.id}`));
-    let closed = false;
     return {
       models,
+      launchConfig: { baseUrl: `http://127.0.0.1:${port}`, token },
       async request(input, signal) {
-        if (closed) throw new Error("Local model source is disconnected");
+        if (closePromise) throw new Error("Local model source is disconnected");
         const body = LocalModelInferenceRequestSchema.parse(input);
         if (!allowed.has(body.modelId)) throw new Error("Local model is unavailable");
         const options = Object.fromEntries(
@@ -121,14 +109,10 @@ export async function startOmpLocalModelGateway(
           signal,
         });
       },
-      async close() {
-        if (closed) return;
-        closed = true;
-        await runtime.close();
-      },
+      close,
     };
   } catch (error) {
-    await runtime.close();
+    await close();
     throw error;
   }
 }

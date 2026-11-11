@@ -168,6 +168,7 @@ import type {
   OmpFastModeSelection,
   OmpImageContent,
   OmpModel,
+  OmpPromptResult,
   OmpRuntimeEvent,
   OmpSessionState,
   OmpThinkingLevel,
@@ -1942,7 +1943,8 @@ export class OmpAgentSession implements AgentSession {
   }> = [];
   private activePromptRequestId: string | null = null;
   private activePromptAgentInvoked: boolean | null = null;
-  private readonly pendingPromptResults = new Map<string, boolean>();
+  private activePromptAwaitingAck = false;
+  private readonly pendingPromptResults = new Map<string, OmpPromptResult>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private pendingModelErrorContinuation: {
     timer: NodeJS.Timeout;
@@ -2382,25 +2384,25 @@ export class OmpAgentSession implements AgentSession {
     this.usagePoller.startTurn();
     this.startAutomaticCredentialResolution();
 
+    this.activePromptAwaitingAck = true;
     void (async () => {
       try {
         const ack = await this.runtimeSession.prompt(payload.text, payload.images, {
           clientMessageId,
         });
         if (this.activeTurnId !== turnId) return;
+        this.activePromptAwaitingAck = false;
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
           : undefined;
-        if (ack.requestId) {
-          this.pendingPromptResults.delete(ack.requestId);
-        }
-        this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
-        if (correlatedResult === false) {
-          this.scheduleNoTurnPromptCompletion(turnId);
+        this.pendingPromptResults.clear();
+        this.activePromptAgentInvoked = correlatedResult?.agentInvoked ?? ack.agentInvoked ?? null;
+        if (correlatedResult) {
+          this.applyPromptResult(turnId, correlatedResult);
           return;
         }
-        if (correlatedResult !== true && ack.agentInvoked === false) {
+        if (ack.agentInvoked === false) {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
@@ -2412,7 +2414,7 @@ export class OmpAgentSession implements AgentSession {
     return { turnId };
   }
 
-  private failActivePrompt(turnId: string, error: unknown): void {
+  private failActivePrompt(turnId: string, error: unknown, status?: "error" | "aborted"): void {
     if (this.activeTurnId !== turnId || this.activeInterrupt?.turnId === turnId) return;
     this.terminalizeActiveWork();
     this.cancelModelErrorContinuation();
@@ -2426,7 +2428,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.clearNoTurnBuffers();
-    this.emit(isOmpRequestAbortError(error)
+    this.emit((status === "aborted" || (status === undefined && isOmpRequestAbortError(error)))
       ? { type: "turn_canceled", provider: this.provider, turnId, reason: toDiagnosticErrorMessage(error) }
       : { type: "turn_failed", provider: this.provider, turnId, error: toDiagnosticErrorMessage(error) });
   }
@@ -3706,6 +3708,8 @@ export class OmpAgentSession implements AgentSession {
     this.activeNoTurnPromptInput = null;
     this.activePromptRequestId = null;
     this.activePromptAgentInvoked = null;
+    this.activePromptAwaitingAck = false;
+    this.pendingPromptResults.clear();
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
@@ -4365,22 +4369,28 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private handlePromptResult(event: OmpRuntimeEvent): void {
-    const requestId = optionalString("id" in event ? event.id : undefined);
-    const agentInvoked =
-      "agentInvoked" in event && typeof event.agentInvoked === "boolean"
-        ? event.agentInvoked
-        : undefined;
-    if (!requestId || agentInvoked === undefined) return;
-    if (requestId === this.activePromptRequestId && this.activeTurnId) {
-      this.activePromptAgentInvoked = agentInvoked;
-      if (agentInvoked === false) {
-        this.scheduleNoTurnPromptCompletion(this.activeTurnId);
-      } else {
-        this.cancelNoTurnPromptCompletion();
-      }
-    } else if (this.activePromptRequestId === null) {
-      this.pendingPromptResults.set(requestId, agentInvoked);
+  private handlePromptResult(event: OmpPromptResult): void {
+    const requestId = optionalString(event.id);
+    if (!requestId || typeof event.agentInvoked !== "boolean" || !this.activeTurnId) return;
+    if (requestId === this.activePromptRequestId) {
+      this.applyPromptResult(this.activeTurnId, event);
+    } else if (this.activePromptAwaitingAck && !this.pendingPromptResults.has(requestId)) {
+      this.pendingPromptResults.set(requestId, event);
+    }
+  }
+
+  private applyPromptResult(turnId: string, result: OmpPromptResult): void {
+    // Model events own terminalization and enhanced-error continuation once a run starts.
+    if (this.activeTurnId !== turnId || this.activeTurnStarted) return;
+    this.activePromptAgentInvoked = result.agentInvoked ?? null;
+    if (result.status === "error") {
+      this.failActivePrompt(turnId, result.error?.message ?? "OMP prompt failed", "error");
+    } else if (result.status === "aborted") {
+      this.failActivePrompt(turnId, "provider_aborted", "aborted");
+    } else if (result.agentInvoked === false) {
+      this.scheduleNoTurnPromptCompletion(turnId);
+    } else {
+      this.cancelNoTurnPromptCompletion();
     }
   }
 

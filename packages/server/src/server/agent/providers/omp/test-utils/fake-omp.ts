@@ -233,9 +233,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private readonly hostToolResultWaiters: Array<(result: OmpRpcHostToolResult) => void> = [];
   private readonly promptWaiters: Array<() => void> = [];
   private readonly subagentMessageResults = new Map<string, OmpSubagentMessagesResult[]>();
-  private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
-  private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
-    null;
+  private nextHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
+  private activeHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
   private releaseLogin: (() => void) | null = null;
 
   constructor(launch: OmpRuntimeLaunch) {
@@ -295,11 +294,17 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (this.nextHeldPrompt || this.activeHeldPrompt) {
       throw new Error("FakeOmp already has a held prompt");
     }
-    let reject!: (error: Error) => void;
-    const promise = new Promise<void>((_resolve, rejectPromise) => {
-      reject = rejectPromise;
-    });
-    this.nextHeldPrompt = { promise, reject };
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    this.nextHeldPrompt = { promise, resolve, reject };
+  }
+
+  async releaseHeldPrompt(): Promise<void> {
+    const heldPrompt = this.activeHeldPrompt ?? this.nextHeldPrompt;
+    if (!heldPrompt) {
+      throw new Error("FakeOmp has no held prompt");
+    }
+    heldPrompt.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
   async failHeldPrompt(error: Error): Promise<void> {

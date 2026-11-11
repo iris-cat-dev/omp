@@ -5,7 +5,8 @@ import pino from "pino";
 import { expect, test } from "vitest";
 import { LocalModelBridge } from "../../../local-model-bridge.js";
 import { mergeOmpDesktopRpcBootstrapIntoModelsYaml } from "./agent.js";
-import type { OmpRuntimeSession } from "./runtime.js";
+import { prepareOmpLocalModelsLaunch } from "./cli-runtime.js";
+import type { OmpRuntimeLaunch, OmpRuntimeSession } from "./runtime.js";
 import { OmpSdkRuntime } from "./sdk-runtime.js";
 import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
@@ -144,6 +145,10 @@ test("keeps local inference available to the parent and child after native task 
     });
     const ended = Promise.withResolvers<void>();
     session.onEvent((event) => {
+      if (event.type === "desktop_plugin_prompt_request") {
+        // This direct runtime fixture has no selected Desktop plugin contributions.
+        session!.sendPluginPromptResult!(event.id, []);
+      }
       if (event.type === "agent_end") ended.resolve();
     });
     await session.prompt("Delegate to LocalChild, then answer after it finishes.");
@@ -168,4 +173,27 @@ test("keeps local inference available to the parent and child after native task 
     await bridge.close();
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("sandbox bridge creation preserves provider identity and resume does not override saved models", async () => {
+  const bridge = new LocalModelBridge();
+  try {
+    await bridge.attach("desktop", [model], () => {});
+    const selected = `${model.provider}/${model.id}`;
+    const sandboxLaunch: OmpRuntimeLaunch = { cwd: process.cwd(), argv: ["omp"], model: selected };
+    await prepareOmpLocalModelsLaunch(sandboxLaunch, { cwd: process.cwd(), sandbox: { root: process.cwd() }, model: selected }, bridge);
+    expect(sandboxLaunch.model).toBe(selected);
+    expect(sandboxLaunch.argv).toContain(selected);
+    expect(sandboxLaunch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE).toBeUndefined();
+    expect(JSON.parse(sandboxLaunch.env!.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE!)).toEqual(expect.objectContaining({ baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/), token: expect.any(String) }));
+    const resumedLaunch: OmpRuntimeLaunch = { cwd: process.cwd(), argv: ["omp"] };
+    await prepareOmpLocalModelsLaunch(resumedLaunch, { cwd: process.cwd(), sandbox: { root: process.cwd() }, session: "saved.jsonl" }, bridge);
+    expect(resumedLaunch.model).toBeUndefined();
+    expect(resumedLaunch.argv).not.toContain("--model");
+    expect(resumedLaunch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE).toBeDefined();
+    const ordinaryLaunch: OmpRuntimeLaunch = { cwd: process.cwd(), argv: ["omp"], model: selected };
+    await prepareOmpLocalModelsLaunch(ordinaryLaunch, { cwd: process.cwd(), model: selected }, bridge);
+    expect(ordinaryLaunch.model).toBe(`desktop-local/${selected}`);
+    expect(ordinaryLaunch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE).toBeDefined();
+  } finally { await bridge.close(); }
 });

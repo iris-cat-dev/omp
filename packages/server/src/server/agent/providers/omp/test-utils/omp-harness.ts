@@ -12,6 +12,7 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
   AgentSteerOptions,
+  AgentRunResult,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
@@ -434,6 +435,7 @@ export class OmpHarness {
       type: "prompt_result",
       id: "prompt-local-only",
       agentInvoked: false,
+      status: "completed",
     });
     return { completed: () => isCompleted, completion };
   }
@@ -463,6 +465,7 @@ export class OmpHarness {
       type: "prompt_result",
       id: "prompt-invoked",
       agentInvoked: true,
+      status: "completed",
     });
     await waitForImmediate();
     await waitForImmediate();
@@ -500,6 +503,7 @@ export class OmpHarness {
       type: "prompt_result",
       id: "prompt-1",
       agentInvoked: false,
+      status: "completed",
     });
     await waitForImmediate();
     const completedBeforeTurn = completed;
@@ -657,6 +661,10 @@ export class OmpHarness {
   async interruptActiveTurn(message: string): Promise<void> {
     await this.requireSession().startTurn(message);
     await this.requireSession().interrupt();
+  }
+
+  async run(message: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+    return this.requireSession().run(message, options);
   }
 
   async startTurn(message: AgentPromptInput, options?: AgentRunOptions) {

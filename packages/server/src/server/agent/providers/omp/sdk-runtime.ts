@@ -16,6 +16,7 @@ import {
 } from "./cli-runtime.js";
 import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 import { prepareOmpImageSettingsLaunch, OMP_IMAGE_SETTINGS_TOKEN_ENV } from "./image-settings.js";
+import { startOmpLocalModelGateway, type OmpLocalModelGatewaySource } from "./local-model-gateway.js";
 import {
   resolveOmpSdkInstallation,
   resolveOmpSdkBrokerEndpoint,
@@ -126,7 +127,29 @@ export class OmpSdkRuntime implements OmpRuntime {
           ...launch.env,
         })
       : undefined;
+    let modelSource: OmpLocalModelGatewaySource | undefined;
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = (): Promise<void> => cleanupPromise ??= Promise.all([
+      imageLaunch?.cleanup(),
+      modelSource?.close(),
+    ]).then(() => undefined);
     try {
+      if (input.sandbox && !enabled) {
+        modelSource = await startOmpLocalModelGateway(sourceInput => this.startSession({
+          ...sourceInput,
+          cwd: env.HOME || env.USERPROFILE || sourceInput.cwd,
+          signal: input.signal,
+          env: { ...input.env, ...sourceInput.env },
+          proxyPolicy: input.proxyPolicy,
+        }), input.signal);
+        if (input.model && !modelSource.models.some(model => `${model.provider}/${model.id}` === input.model)) {
+          throw new Error(`Sandbox model is unavailable: ${input.model}`);
+        }
+        launch.env = {
+          ...launch.env,
+          OMP_DESKTOP_SANDBOX_MODEL_BRIDGE: JSON.stringify(modelSource.launchConfig),
+        };
+      }
       const denied = this.configureSdkHostLaunch(
         input,
         launch,
@@ -161,14 +184,27 @@ export class OmpSdkRuntime implements OmpRuntime {
         imageSettingsToken: imageLaunch?.token,
         imageToolAllowed: !input.sandbox && !denied.includes("generate_image"),
         localModelBridge: bridge,
-        localModelsEnabled: enabled,
+        localModelsEnabled: enabled && !launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE,
         serviceTierToken,
-        cleanup: imageLaunch?.cleanup,
+        cleanup,
       });
+      if (input.sandbox) {
+        try {
+          input.signal?.throwIfAborted();
+          const state = await session.getState();
+          if (!state.model || (launch.model && `${state.model.provider}/${state.model.id}` !== launch.model)) {
+            throw new Error(`Sandbox model is unavailable: ${launch.model ?? "saved or configured model"}`);
+          }
+          input.signal?.throwIfAborted();
+        } catch (error) {
+          await session.close();
+          throw error;
+        }
+      }
       input.onActivity?.("startMs", performance.now() - startStartedAt);
       return session;
     } catch (error) {
-      await imageLaunch?.cleanup();
+      await cleanup();
       throw error;
     }
   }
@@ -221,7 +257,13 @@ export class OmpSdkRuntime implements OmpRuntime {
       cwd: input.cwd,
       sandbox: input.sandbox,
       systemPrompt: input.sandbox ? input.systemPrompt : undefined,
-      modelBridgeExtension: input.sandbox && launch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE ? resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url) : undefined,
+      modelBridgeExtension: input.sandbox
+        ? launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE
+          ? resolveOmpRuntimeHelperPath("sandbox-models-extension", import.meta.url)
+          : launch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE
+            ? resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url)
+            : undefined
+        : undefined,
       proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
       protocolMode: launch.protocolMode,
       model: launch.model,
