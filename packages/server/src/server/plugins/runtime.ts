@@ -20,7 +20,8 @@ interface PluginOutputStream {
 
 interface PluginChild {
   connected: boolean;
-  killed: boolean;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
   stdout?: PluginOutputStream | null;
   stderr?: PluginOutputStream | null;
   send(message: PluginProcessRequest, callback?: (error: Error | null) => void): boolean;
@@ -28,7 +29,9 @@ interface PluginChild {
   disconnect(): void;
   on(event: "message", listener: (message: PluginProcessMessage) => void): this;
   on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   on(event: "error", listener: (error: Error) => void): this;
+  on(event: "disconnect", listener: () => void): this;
 }
 
 interface PendingInvocation {
@@ -350,13 +353,17 @@ export class PluginRuntime {
             this.handleChildMessage(loaded, message);
           }
         });
-        child.on("close", () => {
+        child.on("disconnect", () => {
+          sessionSocket.peerClosed();
+          if (!loaded) fail(new Error(`Plugin ${pluginId} IPC channel closed during initialization`));
+        });
+        child.on("exit", () => {
           sessionSocket.peerClosed();
           if (!loaded) {
             fail(new Error(`Plugin ${pluginId} exited during initialization`));
             return;
           }
-          void this.handleChildClose(loaded);
+          void this.handleChildExit(loaded);
         });
         if (!canPublish()) { fail(new Error(`Plugin start cancelled: ${pluginId}`)); return; }
         void send(child, {
@@ -400,7 +407,7 @@ export class PluginRuntime {
     else pending.reject(new Error(this.logRedactor(loaded.id).redact(message.error)));
   }
 
-  private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
+  private async handleChildExit(loaded: LoadedPlugin): Promise<void> {
     loaded.sessionSocket.peerClosed();
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
@@ -413,36 +420,36 @@ export class PluginRuntime {
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
-    if (loaded.child.killed) {
-      loaded.sessionSocket.peerClosed();
-      await loaded.sessionClosed;
-      this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
-      return;
-    }
     await this.stopChild(loaded.child, loaded.sessionSocket);
     await loaded.sessionClosed;
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 
   private async stopChild(child: PluginChild, socket: PluginSessionSocket): Promise<void> {
-    const closed = Promise.withResolvers<void>();
-    child.on("close", () => closed.resolve());
+    if (child.exitCode !== null || child.signalCode !== null) {
+      socket.peerClosed();
+      return;
+    }
+    const exited = Promise.withResolvers<void>();
+    // IPC disconnect may prevent a later close event even after process exit.
+    // Process lifetime is independent of the stdout/stderr capture lifetime.
+    child.on("exit", () => exited.resolve());
     const timer = setTimeout(() => {
       terminatePluginChild(child);
       socket.peerClosed();
-      closed.resolve();
+      exited.resolve();
     }, 3_000);
     if (child.connected) void send(child, { type: "shutdown" }).catch(() => {
       terminatePluginChild(child);
       socket.peerClosed();
-      closed.resolve();
+      exited.resolve();
     });
     else {
       terminatePluginChild(child);
       socket.peerClosed();
-      closed.resolve();
+      exited.resolve();
     }
-    await closed.promise;
+    await exited.promise;
     clearTimeout(timer);
     socket.peerClosed();
   }

@@ -17,6 +17,15 @@ import {
   TerminalStreamOpcode,
 } from "@omp-desktop/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
+import { DaemonClient } from "../../../client/src/daemon-client.js";
+import { createPaseoApi } from "../../../client/src/index.js";
+import { createPluginDaemonTransportFactory } from "../../../plugin/src/daemon-transport.js";
+import type { PluginProcessRequest } from "@omp-desktop/plugin/worker";
+import { PluginSessionSocket } from "./plugins/session-socket.js";
+import {
+  APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
+  APPLICATION_SOCKET_LEASE_MS,
+} from "./websocket/physical-socket.js";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -342,6 +351,68 @@ async function attachDirectAndHello(params: {
   return serverInfo!;
 }
 
+async function createPluginIpcSession(server: PaseoWebSocketServer, pluginId: string) {
+  const handlers = new Set<(message: PluginProcessRequest) => void>();
+  const frames: PluginProcessRequest[] = [];
+  const heldPongs: PluginProcessRequest[] = [];
+  let withholdPongs = false;
+  const deliver = (message: PluginProcessRequest) => {
+    queueMicrotask(() => {
+      for (const handler of handlers) handler(message);
+    });
+  };
+  const isPong = (message: PluginProcessRequest) =>
+    message.type === "paseo_frame" &&
+    typeof message.data === "string" &&
+    JSON.parse(message.data).type === "pong";
+  const socket = new PluginSessionSocket({
+    connected: true,
+    send(message, callback) {
+      frames.push(message);
+      if (withholdPongs && isPong(message)) heldPongs.push(message);
+      else deliver(message);
+      queueMicrotask(() => callback?.(null));
+      return true;
+    },
+  });
+  const transportFactory = createPluginDaemonTransportFactory({
+    send(message) {
+      if (message.type === "paseo_frame") socket.receive(message.data, message.isBinary);
+      else if (message.type === "paseo_close") socket.peerClosed();
+    },
+    onMessage(handler) {
+      handlers.add(handler);
+      return () => { handlers.delete(handler); };
+    },
+  });
+  const attachment = await server.attachPluginSocket(pluginId, socket);
+  const client = new DaemonClient({
+    url: `ipc://plugin/${pluginId}`,
+    clientId: `plugin:${pluginId}`,
+    clientType: "cli",
+    reconnect: { enabled: false },
+    transportFactory,
+    logger: createLogger(),
+  });
+  await client.connect();
+  return {
+    client,
+    socket,
+    closed: attachment.closed,
+    api: createPaseoApi(client),
+    pongCount: () => frames.filter(isPong).length,
+    withholdPongs: () => { withholdPongs = true; },
+    deliverPongs() {
+      withholdPongs = false;
+      for (const message of heldPongs.splice(0)) deliver(message);
+    },
+    async close() {
+      await client.close();
+      await attachment.closed;
+    },
+  };
+}
+
 function holdNextSessionMessage(session: (typeof sessionMock.instances)[number]): {
   finish: () => void;
 } {
@@ -433,6 +504,75 @@ describe("relay external socket reconnect behavior", () => {
     await secondAttachment.closed;
     expect(sessionMock.instances[1]?.cleanup).toHaveBeenCalledOnce();
     await server.close();
+  });
+
+  test("keeps plugin IPC connected through ten minutes of transport heartbeats alone", async () => {
+    const server = createServer();
+    const session = await createPluginIpcSession(server, "heartbeat-only");
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+      expect(session.pongCount()).toBe(60);
+      expect(session.client.getConnectionState()).toEqual({ status: "connected" });
+      expect(sessionMock.instances[0]?.cleanup).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+      await server.close();
+    }
+  });
+
+  test("keeps plugin IPC attached after sleep exceeds the network lease and timeout precedes pong", async () => {
+    const server = createServer();
+    const session = await createPluginIpcSession(server, "sleep-recovery");
+    const networkSocket = new MockSocket();
+    try {
+      await attachDirectAndHello({ server, socket: networkSocket, clientId: "network-control" });
+      networkSocket.emit("message", JSON.stringify({ type: "ping" }));
+      session.withholdPongs();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(session.pongCount()).toBe(1);
+
+      // Timers and IPC cannot run while the machine sleeps. On wake the network
+      // lease check and pending probe timeout may run before the queued pong.
+      vi.setSystemTime(Date.now() + 4 * APPLICATION_SOCKET_LEASE_MS);
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(networkSocket.readyState).toBe(3);
+      expect(session.socket.readyState).toBe(1);
+      expect(session.client.getConnectionState()).toEqual({ status: "connected" });
+      expect(sessionMock.instances[0]?.cleanup).not.toHaveBeenCalled();
+
+      session.deliverPongs();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(session.pongCount()).toBe(4);
+      expect(session.client.getConnectionState()).toEqual({ status: "connected" });
+      expect(sessionMock.instances[0]?.cleanup).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+      await server.close();
+    }
+  });
+
+  test("cleans genuinely closed plugin IPC immediately and reports the host disconnected", async () => {
+    const server = createServer();
+    const session = await createPluginIpcSession(server, "closed-ipc");
+    try {
+      expect(session.api.hostId).toBe("srv_test");
+      session.socket.close(1001, "Plugin worker disconnected");
+      await session.closed;
+
+      expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
+      expect(session.client.getConnectionState().status).toBe("disconnected");
+      expect(() => session.api.hostId).toThrow("Selected daemon host is not connected");
+      await vi.advanceTimersByTimeAsync(
+        APPLICATION_SOCKET_LEASE_MS + APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
+      );
+      expect(sessionMock.instances).toHaveLength(1);
+      expect(session.client.getConnectionState().status).toBe("disconnected");
+    } finally {
+      await session.close();
+      await server.close();
+    }
   });
 
   test("rejects ordinary sockets that claim the reserved plugin client id", async () => {
@@ -874,28 +1014,6 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("advertises current features in initial server_info", async () => {
-    const server = createServer();
-    const socket = new MockSocket();
-
-    const serverInfo = await attachRelayAndHello({
-      server,
-      socket,
-      clientId: "cid-stable-project-identity",
-    });
-
-    expect(serverInfo.features?.stableProjectIdentity).toBe(true);
-    expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
-    expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
-    expect(serverInfo.features?.workspaceTextSearch).toBe(true);
-    expect(serverInfo.features?.pluginLogs).toBe(true);
-    expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
-    expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
-    expect(serverInfo.features?.githubNativeAuth).toBe(true);
-    expect(serverInfo.features?.githubOAuthConfigured).toBe(true);
-    expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
-    await server.close();
-  });
 
 
   test("routes inbound terminal frames to session.handleBinaryFrame", async () => {

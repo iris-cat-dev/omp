@@ -28,6 +28,8 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
     stderr: new PassThrough(),
     connected: true,
     killed: false,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
     send(message: { type: string }, callback?: (error: Error | null) => void) {
       callback?.(null);
       if (message.type === "initialize") {
@@ -38,8 +40,8 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
         events.push(`shutdown:${name}`);
         this.connected = false;
         queueMicrotask(() => {
-          events.push(`exit:${name}`);
-          emit("close", null);
+          this.exit();
+          this.closeOutput();
         });
       }
       return true;
@@ -47,11 +49,22 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
     kill() {
       this.killed = true;
       this.connected = false;
-      queueMicrotask(() => emit("close", null));
+      this.signalCode = "SIGKILL";
+      queueMicrotask(() => { emit("exit", null); emit("close", null); });
       return true;
     },
     disconnect() {
       this.connected = false;
+      emit("disconnect", undefined);
+    },
+    exit() {
+      this.connected = false;
+      this.exitCode = 0;
+      events.push(`exit:${name}`);
+      emit("exit", 0);
+    },
+    closeOutput() {
+      emit("close", this.exitCode);
     },
     on(event: string, listener: (message: never) => void) {
       const registered = listeners.get(event) ?? [];
@@ -166,6 +179,76 @@ describe("PluginRuntime", () => {
       { stream: "stdout", message: "[paseo] Stopping plugin" },
       { stream: "stdout", message: "[paseo] Plugin stopped" },
     ]);
+  });
+
+  it("cleans the daemon session on IPC disconnect without waiting for process exit", async () => {
+    const directory = await createPlugin(
+      "ipc-disconnect",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("ipc-disconnect", []);
+    const sessionHost = createTrackedSessionHost();
+    const runtime = createTestRuntime({ spawnChild: () => child, sessionHost: sessionHost.host });
+    try {
+      await runtime.startPlugin("ipc-disconnect", directory);
+      expect(sessionHost.active.size).toBe(1);
+
+      child.disconnect();
+      expect(child.killed).toBe(false);
+      expect(sessionHost.active.size).toBe(0);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("revokes an exited plugin and its pending RPC before stdout close", async () => {
+    const directory = await createPlugin(
+      "exit-only",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("exit-only", [], ["wait"]);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    try {
+      await runtime.startPlugin("exit-only", directory);
+      const rejection = expect(runtime.invoke("exit-only", "wait", {})).rejects.toThrow(
+        "Plugin process exited: exit-only",
+      );
+      child.stdout.write("final fragment");
+      child.exit();
+
+      expect(runtime.catalog()).toEqual([]);
+      await rejection;
+      expect(runtime.getLogs("exit-only").some(entry => entry.message === "final fragment")).toBe(false);
+      child.closeOutput();
+      expect(runtime.getLogs("exit-only").some(entry => entry.message === "final fragment")).toBe(true);
+      expect(child.killed).toBe(false);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("does not schedule a kill or wait for close when stopping an already exited child", async () => {
+    const directory = await createPlugin(
+      "already-exited",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("already-exited", []);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("already-exited", directory);
+    // Node sets exitCode before invoking exit listeners; stop may be requested
+    // by an earlier listener before the runtime's own listener has run.
+    child.exitCode = 0;
+    child.connected = false;
+    const schedule = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await runtime.stopPluginById("already-exited");
+      expect(schedule).not.toHaveBeenCalled();
+      expect(child.killed).toBe(false);
+      expect(runtime.catalog()).toEqual([]);
+    } finally {
+      schedule.mockRestore();
+      await runtime.stopAll();
+    }
   });
 
   it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
@@ -443,6 +526,8 @@ export default async function contribute(plugin: PluginServiceContext) {
     const child = {
       connected: true,
       killed: false,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
       send(message: { type: string }, callback?: (error: Error | null) => void) {
         callback?.(null);
         if (message.type === "initialize") {
@@ -457,6 +542,7 @@ export default async function contribute(plugin: PluginServiceContext) {
       kill() {
         this.killed = true;
         this.connected = false;
+        this.signalCode = "SIGKILL";
         return true;
       },
       disconnect() {

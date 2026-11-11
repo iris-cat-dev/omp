@@ -2308,7 +2308,9 @@ export class PaseoWebSocketServer {
       this.recordInboundMessageType(message.type);
 
       if (message.type === "ping") {
-        this.applicationSocketLease.claim(ws);
+        // Plugin IPC is owned by the worker lifecycle and cannot reattach after a
+        // close. A network lease would permanently detach it after system sleep.
+        if (!this.pluginSocketIds.has(ws)) this.applicationSocketLease.claim(ws);
         this.sendToClient(ws, { type: "pong" });
         return;
       }

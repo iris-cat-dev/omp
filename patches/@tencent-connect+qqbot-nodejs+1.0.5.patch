@@ -1,0 +1,164 @@
+diff --git a/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.d.ts b/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.d.ts
+index c73195b..605aa07 100644
+--- a/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.d.ts
++++ b/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.d.ts
+@@ -73,6 +73,7 @@ export declare class GatewayConnection {
+     private finish;
+     private currentWs;
+     private heartbeatInterval;
++    private heartbeatAckTimeout;
+     private sessionId;
+     private lastSeq;
+     private isConnecting;
+@@ -97,6 +98,7 @@ export declare class GatewayConnection {
+     private notify;
+     /** Release the socket and heartbeat. Emits nothing. */
+     private cleanup;
++    private clearHeartbeatAckTimeout;
+     private clearReconnectTimer;
+     /** Schedule the next attempt, or return the terminal error when the budget is spent. */
+     private planReconnect;
+diff --git a/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.js b/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.js
+index f582cf6..c654e15 100644
+--- a/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.js
++++ b/node_modules/@tencent-connect/qqbot-nodejs/dist/protocol/gateway/gateway-connection.js
+@@ -28,6 +28,7 @@ export class GatewayConnection {
+     finish = () => { };
+     currentWs = null;
+     heartbeatInterval = null;
++    heartbeatAckTimeout = null;
+     sessionId = null;
+     lastSeq = null;
+     isConnecting = false;
+@@ -128,6 +129,7 @@ export class GatewayConnection {
+             clearInterval(this.heartbeatInterval);
+             this.heartbeatInterval = null;
+         }
++        this.clearHeartbeatAckTimeout();
+         const ws = this.currentWs;
+         // Retire ownership before close: ws can emit error/close after a replacement exists.
+         this.currentWs = null;
+@@ -135,6 +137,12 @@ export class GatewayConnection {
+         if (ws && ws.readyState !== WebSocket.CLOSED)
+             ws.terminate();
+     }
++    clearHeartbeatAckTimeout() {
++        if (this.heartbeatAckTimeout) {
++            clearTimeout(this.heartbeatAckTimeout);
++            this.heartbeatAckTimeout = null;
++        }
++    }
+     clearReconnectTimer() {
+         if (this.reconnectTimer) {
+             clearTimeout(this.reconnectTimer);
+@@ -265,6 +273,7 @@ export class GatewayConnection {
+                 this.handleDispatch(payload);
+                 break;
+             case GatewayOp.HEARTBEAT_ACK:
++                this.clearHeartbeatAckTimeout();
+                 break;
+             case GatewayOp.RECONNECT:
+                 this.handleGatewayReconnect("Gateway requested reconnect");
+@@ -344,10 +353,29 @@ export class GatewayConnection {
+         if (this.heartbeatInterval) {
+             clearInterval(this.heartbeatInterval);
+         }
++        this.clearHeartbeatAckTimeout();
++        let lastHeartbeatAt = Date.now();
+         this.heartbeatInterval = setInterval(() => {
+-            if (ws.readyState === WebSocket.OPEN) {
+-                ws.send(JSON.stringify({ op: GatewayOp.HEARTBEAT, d: this.lastSeq }));
++            if (ws !== this.currentWs)
++                return;
++            const now = Date.now();
++            // A late timer after sleep cannot establish that the old socket is alive.
++            if (now - lastHeartbeatAt > Math.max(interval * 2, 30_000)) {
++                this.handleGatewayReconnect("Heartbeat stalled after idle", 0);
++                return;
++            }
++            lastHeartbeatAt = now;
++            if (ws.readyState !== WebSocket.OPEN)
++                return;
++            if (this.heartbeatAckTimeout) {
++                this.handleGatewayReconnect("Heartbeat ACK timed out", 0);
++                return;
+             }
++            this.heartbeatAckTimeout = setTimeout(() => {
++                if (ws === this.currentWs)
++                    this.handleGatewayReconnect("Heartbeat ACK timed out", 0);
++            }, Math.min(interval, 15_000));
++            ws.send(JSON.stringify({ op: GatewayOp.HEARTBEAT, d: this.lastSeq }));
+         }, interval);
+     }
+     /** Opcode 7 / 9: drop the socket locally and reconnect. */
+diff --git a/node_modules/@tencent-connect/qqbot-nodejs/src/protocol/gateway/gateway-connection.ts b/node_modules/@tencent-connect/qqbot-nodejs/src/protocol/gateway/gateway-connection.ts
+index 668381d..25692fc 100644
+--- a/node_modules/@tencent-connect/qqbot-nodejs/src/protocol/gateway/gateway-connection.ts
++++ b/node_modules/@tencent-connect/qqbot-nodejs/src/protocol/gateway/gateway-connection.ts
+@@ -97,6 +97,7 @@ export class GatewayConnection {
+   private finish: (error?: Error) => void = () => {};
+   private currentWs: WebSocket | null = null;
+   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
++  private heartbeatAckTimeout: ReturnType<typeof setTimeout> | null = null;
+   private sessionId: string | null = null;
+   private lastSeq: number | null = null;
+   private isConnecting = false;
+@@ -205,6 +206,7 @@ export class GatewayConnection {
+       clearInterval(this.heartbeatInterval);
+       this.heartbeatInterval = null;
+     }
++    this.clearHeartbeatAckTimeout();
+     const ws = this.currentWs;
+     // Retire ownership before close: ws can emit error/close after a replacement exists.
+     this.currentWs = null;
+@@ -212,6 +214,13 @@ export class GatewayConnection {
+     if (ws && ws.readyState !== WebSocket.CLOSED) ws.terminate();
+   }
+ 
++  private clearHeartbeatAckTimeout(): void {
++    if (this.heartbeatAckTimeout) {
++      clearTimeout(this.heartbeatAckTimeout);
++      this.heartbeatAckTimeout = null;
++    }
++  }
++
+   private clearReconnectTimer(): void {
+     if (this.reconnectTimer) {
+       clearTimeout(this.reconnectTimer);
+@@ -359,6 +368,7 @@ export class GatewayConnection {
+         break;
+ 
+       case GatewayOp.HEARTBEAT_ACK:
++        this.clearHeartbeatAckTimeout();
+         break;
+ 
+       case GatewayOp.RECONNECT:
+@@ -439,10 +449,26 @@ export class GatewayConnection {
+     if (this.heartbeatInterval) {
+       clearInterval(this.heartbeatInterval);
+     }
++    this.clearHeartbeatAckTimeout();
++    let lastHeartbeatAt = Date.now();
+     this.heartbeatInterval = setInterval(() => {
+-      if (ws.readyState === WebSocket.OPEN) {
+-        ws.send(JSON.stringify({ op: GatewayOp.HEARTBEAT, d: this.lastSeq }));
++      if (ws !== this.currentWs) return;
++      const now = Date.now();
++      // A late timer after sleep cannot establish that the old socket is alive.
++      if (now - lastHeartbeatAt > Math.max(interval * 2, 30_000)) {
++        this.handleGatewayReconnect("Heartbeat stalled after idle", 0);
++        return;
++      }
++      lastHeartbeatAt = now;
++      if (ws.readyState !== WebSocket.OPEN) return;
++      if (this.heartbeatAckTimeout) {
++        this.handleGatewayReconnect("Heartbeat ACK timed out", 0);
++        return;
+       }
++      this.heartbeatAckTimeout = setTimeout(() => {
++        if (ws === this.currentWs) this.handleGatewayReconnect("Heartbeat ACK timed out", 0);
++      }, Math.min(interval, 15_000));
++      ws.send(JSON.stringify({ op: GatewayOp.HEARTBEAT, d: this.lastSeq }));
+     }, interval);
+   }
+ 

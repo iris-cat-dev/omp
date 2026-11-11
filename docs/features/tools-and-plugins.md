@@ -119,6 +119,16 @@ For an isolated integration check, use `packages/plugins/qqbot/tests/sandbox-smo
 
 To use the **QQ connection** sidebar entry, enable both **Allow host plugins to run** and the QQ installation's own switch. It appears below **Scheduled tasks** in the main sidebar. The shared QQ page in **Configure**, the sidebar surface, and workspace panels shows **Connection status** (`连接状态`) separately from error details. In active mode, **Restart QQ connection** (`重启 QQ 连接`) appears on that page, scoped to the selected host and installation; there is no sidebar puzzle menu or QQ application-menu action. An enabled connection waiting for account credentials keeps its sidebar entry and settings actions available. Pausing host execution hides execution entries and actions but retains the QQ switch selection and account configuration.
 
+QQ retries transient network failures with backoff, including temporary token-service failures, without an eight-attempt cutoff.
+
+Idle connections remain open while gateway heartbeats are acknowledged; incoming chat messages are not required. Each heartbeat ACK has a deadline of one heartbeat interval or 15 seconds, whichever is shorter. A missing ACK retires the half-open socket and immediately attempts to resume the QQ session. If sleep delays a heartbeat tick by more than two heartbeat intervals (with a 30-second minimum), the first tick after wake also reconnects immediately. These recoveries preserve existing Desktop agents and peer mappings.
+
+A successful session resume restores **Connected** and clears the disconnect reason. Rejected credentials and Tencent account/permission bans remain failures requiring correction and an explicit restart; disabling the installation cancels pending retries and heartbeat deadlines.
+
+`Selected daemon host is not connected` refers to the plugin worker's daemon API connection, not QQ authentication. This trusted local IPC follows the worker channel's lifetime and is exempt from network-socket heartbeat leases, so system sleep cannot expire that lease. Closing the actual IPC channel still releases its daemon session immediately, without waiting for the worker process to exit.
+
+When the worker process exits, pending plugin RPCs fail immediately and the installation stops appearing as running. This follows the process exit rather than waiting for its output streams to close.
+
 To ask about a QQ image, attach it to the message and @ the bot in a group. With `media.enabled` and `vision.enabled`, the service downloads supported images into `.qqbot-media` inside the configured sandbox and includes their image content in the model input.
 
 Supported HTTPS media origins include the exact `multimedia.nt.qq.com.cn` host shown in [Tencent's group-message attachment example](https://bot.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html). Downloads remain size-limited and reject redirects, lookalike hostnames and unrelated `qq.com.cn` subdomains. This trusted service operation does not require enabling sandbox JavaScript or public-network access.

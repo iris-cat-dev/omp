@@ -1,5 +1,5 @@
 import { QQBot, MemoryHistoryStore, errorHandler, messageFilter, mentionGate, contentSanitizer, rateLimiter, quoteRef, historyBuffer, envelopeFormatter, typingIndicator, type MiddlewareContext, type ResolvedQuote, type StreamSession } from '@tencent-connect/qqbot-nodejs';
-import type { RequestOptions } from '@tencent-connect/qqbot-nodejs/protocol';
+import { RECONNECT_DELAYS, type RequestOptions } from '@tencent-connect/qqbot-nodejs/protocol';
 import type { PluginServiceContext } from '@omp-desktop/plugin/server';
 import type { PaseoAgent, PaseoAgentHandle, PaseoAgentStream, PaseoAgentObservation } from '@omp-desktop/client';
 import { mkdir, realpath, lstat } from 'node:fs/promises';
@@ -90,6 +90,8 @@ export class Gateway {
   private streams = new Set<StreamSession>();
   private invitationReplies = new Set<string>();
   private mediaTimer: ReturnType<typeof setInterval> | undefined;
+  private connectTimer: ReturnType<typeof setTimeout> | undefined;
+  private connectAttempts = 0;
   private finished = false;
   private privateValues = new Set<string>();
   private redact(message:string){return redactQqMessage(message,this.privateValues);}
@@ -97,7 +99,7 @@ export class Gateway {
     this.signal = AbortSignal.any([ctx.signal,this.controller.signal]);
     this.privateValues.add(appSecret);
     this.logger={debug:message=>logger.debug(this.redact(message)),info:message=>logger.info(this.redact(message)),warn:message=>logger.warn(this.redact(message)),error:message=>logger.error(this.redact(message))};
-    this.bot = new QQBot({appId:config.appId,appSecret,transport:'websocket',markdownSupport:true,baseUrl:process.env.QQBOT_BASE_URL || 'https://api.bot.qq.com',tokenBaseUrl:process.env.QQBOT_TOKEN_BASE_URL || 'https://bots.qq.com',userAgent:'omp-desktop-plugin-qqbot/1.0.0',logger:this.logger,reconnect:{maxAttempts:8}});
+    this.bot = new QQBot({appId:config.appId,appSecret,transport:'websocket',markdownSupport:true,baseUrl:process.env.QQBOT_BASE_URL || 'https://api.bot.qq.com',tokenBaseUrl:process.env.QQBOT_TOKEN_BASE_URL || 'https://bots.qq.com',userAgent:'omp-desktop-plugin-qqbot/1.0.0',logger:this.logger});
     this.queue = new PeerQueue(config.maxQueue);
     const current = () => {
       const route = this.deliveryRoute.getStore();
@@ -117,11 +119,28 @@ export class Gateway {
     this.installMiddlewares();
     this.bot.on('message',async middleware=>{if(this.signal.aborted)return;this.cache.cacheMsgId(middleware.replyTarget.scope,middleware.replyTarget.targetId,middleware.replyTarget.msgId);await this.message(middleware);});
     this.bot.on('interaction',async(_context,event)=>{if(this.signal.aborted)return;const scope=event.group_openid?'group':'c2c';const openid=scope==='group'?event.group_openid:event.user_openid;if(!openid)return;this.cache.cacheEventId(scope,openid,event.id);const matched=await this.cards.interaction(scope,openid,event.group_member_openid??event.user_openid??'',event.data?.resolved?.button_data??'');if(!this.signal.aborted)await this.bot.acknowledgeInteraction(event.id,matched?0:3);});
-    this.bot.on('ready',()=>{if(!this.signal.aborted)this.changed('ready');});
+    const connected=()=>{if(!this.signal.aborted){this.connectAttempts=0;this.changed('ready');}};
+    this.bot.on('ready',connected);
+    this.bot.on('resumed',connected);
     this.bot.on('error',error=>{if(!this.signal.aborted)this.report(error);});
     this.bot.on('disconnected',event=>{if(!this.signal.aborted)this.changed(event.willReconnect?'connecting':'failed',this.redact(event.reason||`QQ socket closed (${event.code})`));});
   }
   private report(error:unknown){this.logger.error(error instanceof Error?error.message:String(error));}
+  private connect(){
+    if(this.signal.aborted)return;
+    this.changed('connecting');
+    void this.bot.start(this.signal).catch(error=>{
+      if(this.signal.aborted)return;
+      const reason=this.redact(error instanceof Error?error.message:String(error));
+      // Token prefetch runs before the SDK's WebSocket retry loop. Only retry
+      // its transient failures; credentials and fatal gateway closes need action.
+      if(error instanceof Error&&(error.message.startsWith('Network error getting access_token:')||/^Token fetch failed: HTTP (429|5\d\d)\b/.test(error.message))){
+        this.changed('connecting',reason);
+        const delay=RECONNECT_DELAYS[Math.min(this.connectAttempts++,RECONNECT_DELAYS.length-1)]!;
+        this.connectTimer=setTimeout(()=>{this.connectTimer=undefined;this.connect();},delay);
+      }else this.changed('failed',reason);
+    });
+  }
   private async retireMappedPeer(peer:Peer){
     if(this.retiredAgents.has(peer.agentId))return;
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
@@ -139,7 +158,7 @@ export class Gateway {
     catch(error){for(const peer of peers)if(peer.appId===this.config.appId)await this.retireMappedPeer(peer);throw error;}
     for(const peer of peers)if(peer.appId===this.config.appId)await this.getOrCreate(peer.scope,peer.openid);
     if(this.signal.aborted)return;
-    this.changed('connecting');void this.bot.start().catch(error=>{if(!this.signal.aborted)this.changed('failed',this.redact(error instanceof Error?error.message:String(error)));});
+    this.connect();
     this.mediaTimer=setInterval(()=>{if(this.files)void cleanMedia(this.files,this.config.media.ttlHours).catch(error=>this.report(error));},3600000);
   }
   private async authorized(peer: Pick<Peer,'scope'|'openid'>,sender:string,command=false){const state=(await this.store.read()).values;if(!this.matchesConfig(state.config))return false;const access=state.access;const admitted=peer.scope==='c2c'?permitted(access.c2cMode,access.allowC2c,peer.openid):permitted(access.groupMode,access.allowGroup,peer.openid);return admitted&&(!command||permitted(access.commandMode,access.owners,sender));}
@@ -316,5 +335,5 @@ export class Gateway {
     const key=JSON.stringify([context.replyTarget.scope,context.replyTarget.targetId,context.replyTarget.msgId??'']);this.invitationReplies.add(key);
     try{await this.bot.sendMarkdown(context.replyTarget,claimed?'已认领该访问名单身份。':'配对码已过期或已撤销；本次没有修改访问名单。');}finally{this.invitationReplies.delete(key);}
   }
-  dispose(){if(this.finished)return;this.finished=true;this.controller.abort();this.queue.dispose();this.cards.dispose();clearInterval(this.mediaTimer);for(const stream of this.streams)stream.cancel();this.streams.clear();this.invitationReplies.clear();for(const route of this.routes.values()){route.unsubscribe?.();route.buffer?.cancel();for(const pending of route.pending.values())pending.fail(new Error('QQ 路由已取消；原生 agent 保留'));}this.routes.clear();this.cache.clear();this.bot.stop();if(this.files){if(!this.ctx.signal.aborted)void this.files.close().catch(error=>this.report(error));this.files=null;}}
+  dispose(){if(this.finished)return;this.finished=true;this.controller.abort();this.queue.dispose();this.cards.dispose();clearInterval(this.mediaTimer);clearTimeout(this.connectTimer);for(const stream of this.streams)stream.cancel();this.streams.clear();this.invitationReplies.clear();for(const route of this.routes.values()){route.unsubscribe?.();route.buffer?.cancel();for(const pending of route.pending.values())pending.fail(new Error('QQ 路由已取消；原生 agent 保留'));}this.routes.clear();this.cache.clear();this.bot.stop();if(this.files){if(!this.ctx.signal.aborted)void this.files.close().catch(error=>this.report(error));this.files=null;}}
 }
