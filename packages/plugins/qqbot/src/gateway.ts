@@ -1,7 +1,7 @@
 import { QQBot, MemoryHistoryStore, errorHandler, messageFilter, mentionGate, contentSanitizer, rateLimiter, quoteRef, historyBuffer, envelopeFormatter, typingIndicator, type MiddlewareContext, type ResolvedQuote, type StreamSession } from '@tencent-connect/qqbot-nodejs';
 import type { RequestOptions } from '@tencent-connect/qqbot-nodejs/protocol';
 import type { PluginServiceContext } from '@omp-desktop/plugin/server';
-import type { PaseoAgentHandle, PaseoAgentStream, PaseoAgentObservation } from '@omp-desktop/client';
+import type { PaseoAgent, PaseoAgentHandle, PaseoAgentStream, PaseoAgentObservation } from '@omp-desktop/client';
 import { mkdir, realpath, lstat } from 'node:fs/promises';
 import { resolve, basename, parse } from 'node:path';
 import { homedir } from 'node:os';
@@ -143,6 +143,15 @@ export class Gateway {
     if(current)return reset?current.then(()=>this.getOrCreate(scope,openid,true)):current;
     let work:Promise<Route>;work=this.openPeer(scope,openid,reset).finally(()=>{if(this.creating.get(key)===work)this.creating.delete(key);});this.creating.set(key,work);return work;
   }
+  private async findAgent(agentId:string):Promise<PaseoAgent|null>{
+    let cursor:string|undefined;
+    do{
+      const result=await this.ctx.paseo.agents.list({filter:{includeArchived:true},page:{limit:100,cursor}});
+      for(const entry of result.entries)if(entry.agent.id===agentId)return entry.agent;
+      cursor=result.pageInfo.nextCursor??undefined;
+    }while(cursor!==undefined);
+    return null;
+  }
   private async openPeer(scope:'c2c'|'group',openid:string,reset=false):Promise<Route>{
     const key=peerKey(this.config.appId,scope,openid);
     const cwd=await this.sandboxRoot();
@@ -151,13 +160,12 @@ export class Gateway {
     if(existing&&!reset&&existing.peer.sandbox?.root===cwd)return existing;
     const state=(await this.store.read()).values;const saved=state.peers[key];
     if(saved?.hostId&&saved.hostId!==this.ctx.paseo.hostId)throw new Error('QQ peer 映射属于另一 daemon');
-    if(saved&&!reset&&saved.sandbox?.root===cwd&&saved.cwd===cwd){
-      const agent=this.ctx.paseo.agents.ref(saved.agentId);
-      const snapshot=await agent.refresh();
-      if(snapshot?.agent.sandbox?.root===cwd)return this.attach(saved,agent);
-    }
+    const previousId=existing?.agent.id??saved?.agentId;
+    const snapshot=previousId?await this.findAgent(previousId):null;
+    if(previousId&&!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
+    const previous=snapshot?this.ctx.paseo.agents.ref(snapshot):null;
+    if(previous&&saved&&!reset&&saved.sandbox?.root===cwd&&saved.cwd===cwd&&snapshot?.sandbox?.root===cwd)return this.attach(saved,previous);
     if(existing)this.retireRoute(existing);
-    const previous=existing?.agent??(saved?this.ctx.paseo.agents.ref(saved.agentId):null);
     if(previous)await previous.stop();
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const selected=state.presetSelections[key]??this.config.defaultPreset;const preset=this.config.presets.find(p=>p.name===selected);if(!preset)throw new Error(`所选 preset 不存在：${selected}`);

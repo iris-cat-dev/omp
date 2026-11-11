@@ -20,6 +20,10 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+interface AgentDirectoryFixture {
+  entries: Array<{ agent: { id: string; sandbox: undefined } }>;
+  pageInfo: { nextCursor: string | null; prevCursor: null; hasMore: boolean };
+}
 async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false) {
   const directory = await mkdtemp(join(tmpdir(), 'qq-sandbox-'));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
@@ -30,6 +34,7 @@ async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = 
   const storage = { get: async () => ({ revision, values: structuredClone(values) }), patch: async (patch: unknown, expected: number) => { if (expected !== revision) throw new Error('STORAGE_REVISION_CONFLICT'); values = StateSchema.parse(patch); return { revision: ++revision, values }; } } as unknown as PluginStorage;
   const store = new StateStore(storage);
   const old = { id: 'old-agent', stop: vi.fn(async () => {}), refresh: vi.fn(async () => ({ agent: { id: 'old-agent', sandbox: undefined } })) };
+  const list = vi.fn(async (_options?: { page?: { cursor?: string } }): Promise<AgentDirectoryFixture> => ({ entries: [await old.refresh()], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } }));
   const unsubscribe = vi.fn();
   const fresh = { id: 'new-agent', stop: vi.fn(async () => {}), observe: vi.fn(async () => ({ snapshot: { sandbox: { root }, pendingPermissions: [], activeTurn: null }, timeline: { window: { maxSeq: 0 }, entries: [] }, unsubscribe } as unknown as PaseoAgentObservation)) };
   const create = vi.fn(async (_options: PaseoAgentCreateOptions) => fresh as unknown as PaseoAgentHandle);
@@ -38,13 +43,13 @@ async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = 
   const scope = createActivationScope(1);
   cleanups.push(() => scope.dispose());
   const installation: PluginInstallation = { id: 'installation', packageId: packageMetadata.name, owner: 'daemon', version: packageMetadata.version, generation: scope.generation, enabled: true, declaredCapabilities: packageMetadata.ompDesktop.capabilities, grantedCapabilities: packageMetadata.ompDesktop.capabilities };
-  const paseo = createPluginPaseoApi({ hostId: 'host', agents: { ref: vi.fn(() => old) }, workspaces: { open } } as unknown as PaseoApi, installation, scope, { mode: 'active' });
+  const paseo = createPluginPaseoApi({ hostId: 'host', agents: { list, ref: vi.fn(() => old) }, workspaces: { open } } as unknown as PaseoApi, installation, scope, { mode: 'active' });
   const ctx = { signal: scope.signal, installation, native, paseo } as unknown as PluginServiceContext;
   const gateway = new Gateway(ctx, store, new Pairing(store), values.config, 'fixture-secret', { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, vi.fn());
   cleanups.push(() => gateway.dispose());
-  const internal = gateway as unknown as { getOrCreate(scope: 'c2c' | 'group', openid: string, reset?: boolean): Promise<{ peer: Peer; agent: PaseoAgentHandle }>; routes: Map<string, unknown>; event(route: unknown, stream: PaseoAgentStream): Promise<void>; deliverFile(route:unknown,path:string,type:string,target:unknown):Promise<void>; sender: { sendMarkdown: (...args: unknown[]) => Promise<unknown> }; bot: { sendImage:(...args:unknown[])=>Promise<unknown>;apiClient: { request: (...args: unknown[]) => Promise<unknown> } }; deliveryRoute: { run<T>(route: unknown, callback: () => T): T } };
+  const internal = gateway as unknown as { getOrCreate(scope: 'c2c' | 'group', openid: string, reset?: boolean): Promise<{ peer: Peer; agent: PaseoAgentHandle }>; routes: Map<string, unknown>; event(route: unknown, stream: PaseoAgentStream): Promise<void>; deliverFile(route:unknown,path:string,type:string,target:unknown):Promise<void>; sender: { sendMarkdown: (...args: unknown[]) => Promise<unknown> }; bot: { start():Promise<void>;sendImage:(...args:unknown[])=>Promise<unknown>;apiClient: { request: (...args: unknown[]) => Promise<unknown> } }; deliveryRoute: { run<T>(route: unknown, callback: () => T): T } };
   const saved = (sandbox?: { root: string }): Peer => ({ appId: 'saved-app', scope: 'c2c', openid: 'peer', hostId: 'host', workspaceId: 'old-workspace', agentId: old.id, cwd: sandbox?.root ?? root, sandbox, preset: 'default', template: values.config.presets[0]!, protocolPrompt: 'Old QQ context', lastDeliveredSequence: 4 });
-  return { root, key, store, old, fresh, create, open, internal, gateway, unsubscribe, saved, native };
+  return { root, key, store, old, fresh, create, open, internal, gateway, unsubscribe, saved, native, list };
 }
 
 it('creates mandatory sandbox with safe approval while preserving saved model and prompts', async () => {
@@ -80,6 +85,62 @@ it('does not create a replacement if stopping the old agent fails', async () => 
   f.old.stop.mockRejectedValue(new Error('stop failed'));
   await expect(f.internal.getOrCreate('c2c', 'peer')).rejects.toThrow('stop failed');
   expect(f.create).not.toHaveBeenCalled();
+});
+
+it.each(['legacy', 'confirmed'] as const)('startup recreates a missing %s agent and preserves account and preferences', async kind => {
+  const f = await fixture();
+  await f.store.mutate(state => { state.peers[f.key] = f.saved(kind === 'confirmed' ? { root: f.root } : undefined); });
+  const before = (await f.store.read()).values;
+  f.list.mockResolvedValue({ entries: [], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } });
+  vi.spyOn(f.internal.bot, 'start').mockResolvedValue();
+  await f.gateway.start();
+  const after = (await f.store.read()).values;
+  expect(after.peers[f.key]).toMatchObject({ agentId: 'new-agent', sandbox: { root: f.root } });
+  expect(f.old.stop).not.toHaveBeenCalled();
+  expect(after.config).toEqual(before.config);
+  expect(after.access).toEqual(before.access);
+  expect(after.credentialVersions).toEqual(before.credentialVersions);
+  expect(after.modelSelections).toEqual(before.modelSelections);
+  expect(after.presetSelections).toEqual(before.presetSelections);
+  expect(f.create.mock.calls[0]?.[0].config).toMatchObject({ sandbox: { root: f.root }, modeId: 'ask', provider: 'omp/provider/model', thinkingOptionId: 'high' });
+});
+
+it('stops an existing peer found on a later directory page before replacing it', async () => {
+  const f = await fixture();
+  await f.store.mutate(state => { state.peers[f.key] = f.saved(); });
+  f.list.mockImplementation(async options => options?.page?.cursor === 'next'
+    ? { entries: [await f.old.refresh()], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } }
+    : { entries: [{ agent: { id: 'other-agent', sandbox: undefined } }], pageInfo: { nextCursor: 'next', prevCursor: null, hasMore: true } });
+  await f.internal.getOrCreate('c2c', 'peer');
+  expect(f.old.stop).toHaveBeenCalledOnce();
+  expect(f.old.stop.mock.invocationCallOrder[0]).toBeLessThan(f.create.mock.invocationCallOrder[0]!);
+  expect((await f.store.read()).values.peers[f.key]?.agentId).toBe('new-agent');
+});
+
+it('does not recreate or rewrite a peer when its existence query fails', async () => {
+  const f = await fixture();
+  await f.store.mutate(state => { state.peers[f.key] = f.saved(); });
+  f.list.mockRejectedValue(new Error('agent lookup denied'));
+  await expect(f.internal.getOrCreate('c2c', 'peer')).rejects.toThrow('agent lookup denied');
+  expect(f.old.stop).not.toHaveBeenCalled();
+  expect(f.create).not.toHaveBeenCalled();
+  expect((await f.store.read()).values.peers[f.key]?.agentId).toBe('old-agent');
+});
+
+it('does not stop or recreate a peer after its pending lookup outlives the sandbox config', async () => {
+  const f = await fixture();
+  await f.store.mutate(state => { state.peers[f.key] = f.saved(); });
+  const queried = Promise.withResolvers<void>();
+  const pending = Promise.withResolvers<AgentDirectoryFixture>();
+  f.list.mockImplementation(() => { queried.resolve(); return pending.promise; });
+  const work = f.internal.getOrCreate('c2c', 'peer').catch(error => error);
+  await queried.promise;
+  await f.store.mutate(state => { state.config.sandboxPath = join(f.root, 'next'); });
+  pending.resolve({ entries: [await f.old.refresh()], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } });
+  expect(await work).toBeInstanceOf(Error);
+  expect(f.old.stop).not.toHaveBeenCalled();
+  expect(f.create).not.toHaveBeenCalled();
+  expect((await f.store.read()).values.peers[f.key]?.agentId).toBe('old-agent');
 });
 
 it('stops a stale create after root change and never stores or attaches it', async () => {
