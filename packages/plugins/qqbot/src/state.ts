@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PluginStorage, PluginStorageSnapshot } from '@omp-desktop/plugin';
+import { AgentSandboxSchema } from '@omp-desktop/protocol/messages';
 import { normalizePairCode, parseWhitelistEntries, type PairPurpose, type ManualPairResult } from './shared/pairing-protocol.ts';
 
 export const OpenId = z.string().trim().min(1).max(1024).regex(/^[A-Za-z0-9_-]+$/);
@@ -16,6 +17,7 @@ export const ConfigSchema = z.preprocess(value => {
   return { ...config, sandboxPath: config.sandboxPath ?? cwd };
 }, z.object({
   appId: z.string().default(''), sandboxPath: z.string().trim().refine(path => !path.includes('\0'), '沙箱路径不能包含 NUL').default(''), defaultPreset: z.string().default('default'),
+  sandboxCapabilities: z.object({ javascript: z.boolean().default(false), network: z.boolean().default(false) }).strict().default(() => ({ javascript: false, network: false })),
   presets: z.array(AgentPresetSchema).default([{ name: 'default', config: { provider: 'omp' }, qq: { prompt: '', skills: [], tools: [] } }]),
   requireMention: z.boolean().default(true), groupPrompt: z.string().default(''), directPrompt: z.string().default(''),
   textChunkLimit: z.number().int().min(200).max(4500).default(4500), streaming: z.boolean().default(true),
@@ -29,7 +31,7 @@ export const ConfigSchema = z.preprocess(value => {
 }).strict().superRefine((c, ctx) => { const names = c.presets.map(p => p.name); if (new Set(names).size !== names.length || !names.includes(c.defaultPreset)) ctx.addIssue({ code: 'custom', message: 'Preset 名称必须唯一且默认 preset 必须存在' }); }));
 export const MemberSchema = z.object({ openid: OpenId, nickname: z.string().default(''), scene: Scope, sceneName: z.string().default(''), claimedAt: z.number() });
 export const AccessSchema = z.object({ revision: z.number().int().default(0), c2cMode: AccessMode.default('open'), groupMode: AccessMode.default('open'), commandMode: AccessMode.default('open'), owners: z.array(MemberSchema).default([]), allowC2c: z.array(MemberSchema).default([]), allowGroup: z.array(MemberSchema).default([]) }).strict();
-export const PeerSchema = z.object({ appId: z.string(), scope: Scope, openid: OpenId, hostId: z.string(), workspaceId: z.string(), agentId: z.string(), cwd: z.string(), sandbox: z.object({ root: z.string().min(1) }).strict().optional(), preset: z.string(), template: AgentPresetSchema, protocolPrompt: z.string(), lastDeliveredSequence: z.number().default(0) });
+export const PeerSchema = z.object({ appId: z.string(), scope: Scope, openid: OpenId, hostId: z.string(), workspaceId: z.string(), agentId: z.string(), cwd: z.string(), sandbox: AgentSandboxSchema.optional(), preset: z.string(), template: AgentPresetSchema, protocolPrompt: z.string(), lastDeliveredSequence: z.number().default(0) });
 function migrateStoredPreset(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const preset = value as Record<string, unknown>;

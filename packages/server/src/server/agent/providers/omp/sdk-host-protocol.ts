@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ProxyPolicySchema } from "@omp-desktop/protocol/provider-config";
+import { AgentSandboxSchema } from "@omp-desktop/protocol/messages";
 
 export const OMP_SDK_ROOT_ENV = "OMP_DESKTOP_SDK_ROOT";
 export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
@@ -7,7 +8,7 @@ export const OMP_SDK_LAUNCH_ENV = "OMP_DESKTOP_SDK_LAUNCH";
 export const OmpSdkHostLaunchSchema = z
   .object({
     cwd: z.string().min(1),
-    sandbox: z.object({ root: z.string().min(1) }).strict().optional(),
+    sandbox: AgentSandboxSchema.optional(),
     systemPrompt: z.string().optional(),
     modelBridgeExtension: z.string().optional(),
     proxyPolicy: ProxyPolicySchema.optional(),

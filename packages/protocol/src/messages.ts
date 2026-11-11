@@ -578,6 +578,8 @@ const ToolPolicySchema = z
 
 export const AgentSandboxSchema = z.object({
   root: z.string().min(1),
+  javascript: z.boolean().optional(),
+  network: z.literal("public").optional(),
 }).strict();
 
 export type AgentSandbox = z.infer<typeof AgentSandboxSchema>;

@@ -1,14 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createActivationScope, createPluginPaseoApi } from '@omp-desktop/plugin/server';
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import type * as Os from 'node:os';
-import { join, parse } from 'node:path';
+import { basename, join, parse } from 'node:path';
 import type { PluginInstallation, PluginServiceContext, PluginStorage } from '@omp-desktop/plugin/server';
 import type { PaseoApi, PaseoAgentHandle, PaseoAgentCreateOptions, PaseoAgentObservation, PaseoAgentStream } from '@omp-desktop/client';
 import { Gateway } from './gateway.ts';
 import { Pairing, StateSchema, StateStore, peerKey, type Peer } from './state.ts';
+import * as media from './media.ts';
 
 const isolatedHome = vi.hoisted(() => ({ path: null as string | null }));
 vi.mock('node:os', async importOriginal => {
@@ -21,19 +22,20 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 interface AgentDirectoryFixture {
-  entries: Array<{ agent: { id: string; sandbox?: { root: string } } }>;
+  entries: Array<{ agent: { id: string; sandbox?: Peer['sandbox'] } }>;
   pageInfo: { nextCursor: string | null; prevCursor: null; hasMore: boolean };
 }
-async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false) {
+interface DownloadedSandboxAttachment { path: string; relativePath: string; mimeType: string; size: number }
+async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false, sandboxCapabilities?: { javascript: boolean; network: boolean }) {
   const directory = await mkdtemp(join(tmpdir(), 'qq-sandbox-'));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const root = await realpath(directory);
   const key = peerKey('saved-app', 'c2c', 'peer');
-  let values = StateSchema.parse({ config: { appId: 'saved-app', sandboxPath: sandboxPath ?? root, sendFile: { sendPresentedFiles: presentedFiles, extraRoots: ['/outside'] }, presets: [{ name: 'default', config: { provider, modeId: 'full', thinkingOptionId: 'high', systemPrompt: 'Keep prompt' }, qq: { prompt: 'QQ context' } }] }, modelSelections: { [key]: 'provider/model' }, credentialVersions: { 'saved-app': 1 } });
+  let values = StateSchema.parse({ config: { appId: 'saved-app', sandboxPath: sandboxPath ?? root, sandboxCapabilities, sendFile: { sendPresentedFiles: presentedFiles, extraRoots: ['/outside'] }, presets: [{ name: 'default', config: { provider, modeId: 'full', thinkingOptionId: 'high', systemPrompt: 'Keep prompt' }, qq: { prompt: 'QQ context' } }] }, modelSelections: { [key]: 'provider/model' }, credentialVersions: { 'saved-app': 1 } });
   let revision = 0;
   const storage = { get: async () => ({ revision, values: structuredClone(values) }), patch: async (patch: unknown, expected: number) => { if (expected !== revision) throw new Error('STORAGE_REVISION_CONFLICT'); values = StateSchema.parse(patch); return { revision: ++revision, values }; } } as unknown as PluginStorage;
   const store = new StateStore(storage);
-  const old = { id: 'old-agent', stop: vi.fn(async () => {}), refresh: vi.fn(async () => ({ agent: { id: 'old-agent', sandbox: undefined } })) };
+  const old = { id: 'old-agent', stop: vi.fn(async () => {}), refresh: vi.fn(async () => ({ agent: { id: 'old-agent', sandbox: undefined as Peer['sandbox'] } })) };
   const list = vi.fn(async (_options?: { page?: { cursor?: string } }): Promise<AgentDirectoryFixture> => ({ entries: [await old.refresh()], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } }));
   const unsubscribe = vi.fn();
   const fresh = { id: 'new-agent', stop: vi.fn(async () => {}), observe: vi.fn(async () => ({ snapshot: { sandbox: { root }, pendingPermissions: [], activeTurn: null }, timeline: { window: { maxSeq: 0 }, entries: [] }, unsubscribe } as unknown as PaseoAgentObservation)) };
@@ -57,8 +59,8 @@ async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = 
   const gateway = new Gateway(ctx, store, new Pairing(store), values.config, 'fixture-secret', { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, vi.fn());
   cleanups.push(() => gateway.dispose());
   const internal = gateway as unknown as { getOrCreate(scope: 'c2c' | 'group', openid: string, reset?: boolean): Promise<{ peer: Peer; agent: PaseoAgentHandle }>; routes: Map<string, unknown>; event(route: unknown, stream: PaseoAgentStream): Promise<void>; deliverFile(route:unknown,path:string,type:string,target:unknown):Promise<void>; sender: { sendMarkdown: (...args: unknown[]) => Promise<unknown> }; bot: { start():Promise<void>;sendImage:(...args:unknown[])=>Promise<unknown>;apiClient: { request: (...args: unknown[]) => Promise<unknown> } }; deliveryRoute: { run<T>(route: unknown, callback: () => T): T } };
-  const saved = (sandbox?: { root: string }): Peer => ({ appId: 'saved-app', scope: 'c2c', openid: 'peer', hostId: 'host', workspaceId: 'old-workspace', agentId: old.id, cwd: sandbox?.root ?? root, sandbox, preset: 'default', template: values.config.presets[0]!, protocolPrompt: 'Old QQ context', lastDeliveredSequence: 4 });
-  return { root, key, store, old, fresh, create, internal, gateway, unsubscribe, saved, native, list, occupiedWorkspaces };
+  const saved = (sandbox?: Peer['sandbox']): Peer => ({ appId: 'saved-app', scope: 'c2c', openid: 'peer', hostId: 'host', workspaceId: 'old-workspace', agentId: old.id, cwd: sandbox?.root ?? root, sandbox, preset: 'default', template: values.config.presets[0]!, protocolPrompt: 'Old QQ context', lastDeliveredSequence: 4 });
+  return { ctx, root, key, store, old, fresh, create, internal, gateway, unsubscribe, saved, native, list, occupiedWorkspaces };
 }
 
 it('creates mandatory sandbox with safe approval while preserving saved model and prompts', async () => {
@@ -96,6 +98,28 @@ it('keeps private and group peers independent in one sandbox, including group re
   expect(saved[f.key]?.agentId).toBe(direct.peer.agentId);
   expect(saved[peerKey('saved-app', 'group', 'peer')]?.agentId).toBe(reset.peer.agentId);
   expect(saved[peerKey('saved-app', 'group', 'peer')]?.sandbox).toEqual({ root: f.root });
+});
+
+it.each([{ javascript: true, network: false }, { javascript: false, network: true }, { javascript: true, network: true }])('replaces an unchanged-root peer when capabilities change to %s', async capabilities => {
+  const f = await fixture(undefined, 'omp', false, capabilities);
+  const sandbox: NonNullable<Peer['sandbox']> = { root: f.root };
+  if(capabilities.javascript)sandbox.javascript=true;
+  if(capabilities.network)sandbox.network='public';
+  await f.store.mutate(state => { state.peers[f.key] = f.saved({ root: f.root }); });
+  f.old.refresh.mockResolvedValue({ agent: { id: f.old.id, sandbox: { root: f.root } } });
+  f.fresh.observe.mockResolvedValue({ snapshot: { sandbox, pendingPermissions: [], activeTurn: null }, timeline: { window: { maxSeq: 0 }, entries: [] }, unsubscribe: f.unsubscribe } as unknown as PaseoAgentObservation);
+  const route = await f.internal.getOrCreate('c2c', 'peer');
+  expect(route.peer.agentId).toBe(f.fresh.id);
+  expect(route.peer.sandbox).toEqual(sandbox);
+  expect(f.old.stop.mock.invocationCallOrder[0]).toBeLessThan(f.create.mock.invocationCallOrder[0]!);
+  expect((await f.internal.getOrCreate('c2c', 'peer')).peer.agentId).toBe(route.peer.agentId);
+  expect(f.create).toHaveBeenCalledOnce();
+});
+
+it('refuses an SDK observation that confirms only the root but omits requested capabilities', async () => {
+  const f = await fixture(undefined, 'omp', false, { javascript: true, network: true });
+  await expect(f.internal.getOrCreate('c2c', 'peer')).rejects.toThrow('Desktop agent');
+  expect(f.fresh.stop).toHaveBeenCalled();
 });
 
 it.each(['legacy', 'moved-root', 'unsupported-agent'] as const)('stops %s peer before replacement without deleting its history', async kind => {
@@ -161,7 +185,7 @@ it('does not recreate or rewrite a peer when its existence query fails', async (
   expect((await f.store.read()).values.peers[f.key]?.agentId).toBe('old-agent');
 });
 
-it('does not stop or recreate a peer after its pending lookup outlives the sandbox config', async () => {
+it.each(['root', 'javascript', 'network'] as const)('does not stop or recreate a peer after lookup outlives a %s config change', async kind => {
   const f = await fixture();
   await f.store.mutate(state => { state.peers[f.key] = f.saved(); });
   const queried = Promise.withResolvers<void>();
@@ -169,7 +193,7 @@ it('does not stop or recreate a peer after its pending lookup outlives the sandb
   f.list.mockImplementation(() => { queried.resolve(); return pending.promise; });
   const work = f.internal.getOrCreate('c2c', 'peer').catch(error => error);
   await queried.promise;
-  await f.store.mutate(state => { state.config.sandboxPath = join(f.root, 'next'); });
+  await f.store.mutate(state => { if(kind === 'root')state.config.sandboxPath = join(f.root, 'next'); else state.config.sandboxCapabilities[kind] = true; });
   pending.resolve({ entries: [await f.old.refresh()], pageInfo: { nextCursor: null, prevCursor: null, hasMore: false } });
   expect(await work).toBeInstanceOf(Error);
   expect(f.old.stop).not.toHaveBeenCalled();
@@ -270,14 +294,14 @@ it('presented file uploads require explicit opt-in', async () => {
   expect(send).not.toHaveBeenCalled();
 });
 
-it('root change prevents a late model acknowledgement from overwriting peer preference', async () => {
+it.each(['root', 'javascript', 'network'] as const)('%s change prevents a late model acknowledgement from overwriting peer preference', async change => {
   const f=await fixture();await f.internal.getOrCreate('c2c','peer');
   const called=Promise.withResolvers<void>();const acknowledged=Promise.withResolvers<void>();
   Object.assign(f.fresh,{setModel:vi.fn(()=>{called.resolve();return acknowledged.promise;})});
   const internal=f.gateway as unknown as {command(context:unknown,text:string):Promise<void>};
   const work=internal.command({replyTarget:{scope:'c2c',targetId:'peer'},message:{senderId:'peer'}},'/model provider/new-model');
   const settled=work.catch(error=>error);await called.promise;
-  await f.store.mutate(s=>{s.config.sandboxPath=join(f.root,'next');});acknowledged.resolve();
+  await f.store.mutate(s=>{if(change==='root')s.config.sandboxPath=join(f.root,'next');else s.config.sandboxCapabilities[change]=true;});acknowledged.resolve();
   expect(await settled).toBeInstanceOf(Error);
   expect((await f.store.read()).values.modelSelections[f.key]).toBe('provider/model');
 });
@@ -286,4 +310,53 @@ it('unavailable pinned filesystem stops QQ creation without falling back to host
   const f=await fixture();f.native.invoke.mockRejectedValueOnce(new Error('unsupported secure filesystem'));
   await expect(f.internal.getOrCreate('c2c','peer')).rejects.toThrow('unsupported secure filesystem');
   expect(f.create).not.toHaveBeenCalled();expect(f.internal.routes.size).toBe(0);
+});
+
+it.each([false,true])('revoked grants stop the old turn when the replacement root is forbidden (capabilities %s)', async enabled => {
+  const f=await fixture(homedir());
+  const previous:NonNullable<Peer['sandbox']>={root:f.root,...(enabled?{javascript:true,network:'public' as const}:{})};
+  await f.store.mutate(s=>{s.peers[f.key]=f.saved(previous);});
+  f.old.refresh.mockResolvedValue({agent:{id:f.old.id,sandbox:previous}});
+  let oldTurnRunning=true;
+  f.old.stop.mockImplementation(async()=>{oldTurnRunning=false;});
+  await expect(f.gateway.start()).rejects.toBeInstanceOf(Error);
+  expect(oldTurnRunning).toBe(false);
+  expect((await f.store.read()).values.peers[f.key]?.agentId).toBe(f.old.id);
+  expect(f.create).not.toHaveBeenCalled();
+});
+
+it('revoked access cannot submit a turn after attachment preparation', async () => {
+  const f=await fixture();await f.internal.getOrCreate('c2c','peer');
+  const called=Promise.withResolvers<void>();
+  const downloaded=Promise.withResolvers<DownloadedSandboxAttachment>();
+  vi.spyOn(media,'downloadAttachment').mockImplementation(()=>{called.resolve();return downloaded.promise;});
+  const submitted:string[]=[];
+  Object.assign(f.fresh,{send:async(text:string)=>{submitted.push(text);throw new Error('Revoked peer submitted a turn');}});
+  const internal=f.gateway as unknown as {message(context:unknown):Promise<void>};
+  const work=internal.message({replyTarget:{scope:'c2c',targetId:'peer',msgId:'fixture-message'},message:{senderId:'peer',content:'file question',attachments:[{filename:'input.txt',content_type:'text/plain',size:1,url:'https://qpic.cn/input.txt'}]},state:{envelope:'file question'}});
+  const settled=work.catch(error=>error);await called.promise;
+  await f.store.mutate(s=>{s.access.c2cMode='disabled';s.access.revision++;});
+  downloaded.resolve({path:join(f.root,'input.txt'),relativePath:'input.txt',mimeType:'text/plain',size:1});
+  const result=await settled;
+  expect(result).toBeInstanceOf(Error);
+  expect(submitted).toEqual([]);
+});
+
+it('canonical parent alias keeps the mapped conversation at startup', async () => {
+  const f=await fixture();const alias=join(f.root,'parent-alias');await symlink(join(f.root,'..'),alias,'dir');
+  const sandbox={root:f.root};
+  await f.store.mutate(s=>{s.config.sandboxPath=join(alias,basename(f.root));s.peers[f.key]=f.saved(sandbox);});
+  f.old.refresh.mockResolvedValue({agent:{id:f.old.id,sandbox}});
+  Object.assign(f.old,{observe:f.fresh.observe});
+  let oldTurnRunning=true;f.old.stop.mockImplementation(async()=>{oldTurnRunning=false;});
+  const config=(await f.store.read()).values.config;
+  const restarted=new Gateway(f.ctx,f.store,new Pairing(f.store),config,'fixture-secret',{debug:vi.fn(),info:vi.fn(),warn:vi.fn(),error:vi.fn()},vi.fn());
+  cleanups.push(()=>restarted.dispose());
+  // Inspect the known in-process transport only to prevent fixture network I/O.
+  const restartedInternal=restarted as unknown as {bot:{start():Promise<void>}};
+  vi.spyOn(restartedInternal.bot,'start').mockResolvedValue();
+  await restarted.start();
+  expect(oldTurnRunning).toBe(true);
+  expect((await f.store.read()).values.peers[f.key]).toMatchObject({agentId:f.old.id,workspaceId:'old-workspace',cwd:f.root});
+  expect(f.create).not.toHaveBeenCalled();
 });

@@ -28,6 +28,7 @@ export class Gateway {
   readonly signal: AbortSignal;
   private bot: QQBot;
   private routes = new Map<string,Route>();
+  private retiredAgents = new Set<string>();
   private originDelivery(scope:'c2c'|'group',item:{clientMessageId?:string;messageId?:string;sourceKind?:'user'|'service'|'agent';sourceAgentId?:string}){
     if((item.clientMessageId??item.messageId??'').startsWith(`qqbot:${this.ctx.installation.id}:`))return true;
     if(item.sourceKind==='service'||item.sourceKind==='agent'||item.sourceAgentId)return this.config.serviceTurns;
@@ -38,9 +39,15 @@ export class Gateway {
   private root: string | null = null;
   private openingRoot: Promise<string> | null = null;
   private files: SandboxFiles | null = null;
+  private matchesConfig(config: Config) {
+    return !this.signal.aborted && config.appId === this.config.appId && config.sandboxPath === this.config.sandboxPath && config.sandboxCapabilities.javascript === this.config.sandboxCapabilities.javascript && config.sandboxCapabilities.network === this.config.sandboxCapabilities.network;
+  }
+  private matchesSandbox(sandbox: Peer['sandbox'], root: string) {
+    return sandbox?.root === root && (sandbox.javascript === true) === this.config.sandboxCapabilities.javascript && (sandbox.network === 'public') === this.config.sandboxCapabilities.network;
+  }
   private async currentConfig() {
     const config = (await this.store.read()).values.config;
-    return !this.signal.aborted && config.appId === this.config.appId && config.sandboxPath === this.config.sandboxPath;
+    return this.matchesConfig(config);
   }
   private async activeRoute(route: Route) {
     if(!await this.currentConfig()||this.routes.get(peerKey(route.peer.appId,route.peer.scope,route.peer.openid))!==route)throw new Error('QQ 沙箱路由已替换');
@@ -49,9 +56,12 @@ export class Gateway {
     if (this.root) return Promise.resolve(this.root);
     return this.openingRoot ??= this.openRoot();
   }
-  private async openRoot() {
+  private requestedRoot() {
     const path = this.config.sandboxPath;
-    const requested = resolve(path === '~' ? homedir() : path.startsWith('~/') ? resolve(homedir(), path.slice(2)) : path || resolve(homedir(), '.omp', 'qqbot-sandbox', this.ctx.installation.id));
+    return resolve(path === '~' ? homedir() : path.startsWith('~/') ? resolve(homedir(), path.slice(2)) : path || resolve(homedir(), '.omp', 'qqbot-sandbox', this.ctx.installation.id));
+  }
+  private async openRoot() {
+    const requested = this.requestedRoot();
     if (requested === parse(requested).root || requested === resolve(homedir())) throw new Error('QQ 沙箱不能使用文件系统根目录或用户主目录');
     await mkdir(requested, { recursive: true, mode: 0o700 });
     if ((await lstat(requested)).isSymbolicLink()) throw new Error('QQ 沙箱根目录不能是符号链接');
@@ -112,15 +122,27 @@ export class Gateway {
     this.bot.on('disconnected',event=>{if(!this.signal.aborted)this.changed(event.willReconnect?'connecting':'failed',this.redact(event.reason||`QQ socket closed (${event.code})`));});
   }
   private report(error:unknown){this.logger.error(error instanceof Error?error.message:String(error));}
+  private async retireMappedPeer(peer:Peer){
+    if(this.retiredAgents.has(peer.agentId))return;
+    if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
+    const previous=await this.findAgent(peer.agentId);
+    if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
+    if(previous){await this.ctx.paseo.agents.ref(previous).stop();this.retiredAgents.add(previous.id);}
+  }
   async start(){
-    const state=(await this.store.read()).values;
-    await this.sandboxRoot();
-    for(const peer of Object.values(state.peers))if(peer.appId===this.config.appId){if(peer.hostId!==this.ctx.paseo.hostId)throw new Error('持久 QQ peer 映射属于另一 daemon；请显式迁移而不是重用 agent ID');await this.getOrCreate(peer.scope,peer.openid);}
+    const state=(await this.store.read()).values;const peers=Object.values(state.peers);
+    for(const peer of peers)if(peer.appId===this.config.appId){
+      if(peer.hostId!==this.ctx.paseo.hostId)throw new Error('持久 QQ peer 映射属于另一 daemon；请显式迁移而不是重用 agent ID');
+      if(!this.matchesSandbox(peer.sandbox,peer.cwd))await this.retireMappedPeer(peer);
+    }
+    try{await this.sandboxRoot();}
+    catch(error){for(const peer of peers)if(peer.appId===this.config.appId)await this.retireMappedPeer(peer);throw error;}
+    for(const peer of peers)if(peer.appId===this.config.appId)await this.getOrCreate(peer.scope,peer.openid);
     if(this.signal.aborted)return;
     this.changed('connecting');void this.bot.start().catch(error=>{if(!this.signal.aborted)this.changed('failed',this.redact(error instanceof Error?error.message:String(error)));});
     this.mediaTimer=setInterval(()=>{if(this.files)void cleanMedia(this.files,this.config.media.ttlHours).catch(error=>this.report(error));},3600000);
   }
-  private async authorized(peer: Pick<Peer,'scope'|'openid'>,sender:string,command=false){const state=(await this.store.read()).values;if(this.signal.aborted||state.config.appId!==this.config.appId||state.config.sandboxPath!==this.config.sandboxPath)return false;const access=state.access;const admitted=peer.scope==='c2c'?permitted(access.c2cMode,access.allowC2c,peer.openid):permitted(access.groupMode,access.allowGroup,peer.openid);return admitted&&(!command||permitted(access.commandMode,access.owners,sender));}
+  private async authorized(peer: Pick<Peer,'scope'|'openid'>,sender:string,command=false){const state=(await this.store.read()).values;if(!this.matchesConfig(state.config))return false;const access=state.access;const admitted=peer.scope==='c2c'?permitted(access.c2cMode,access.allowC2c,peer.openid):permitted(access.groupMode,access.allowGroup,peer.openid);return admitted&&(!command||permitted(access.commandMode,access.owners,sender));}
   private async cardAuthorized(peer:Peer,sender:string){
     if(!sender||!await this.authorized(peer,sender))return false;
     const access=(await this.store.read()).values.access;
@@ -157,16 +179,16 @@ export class Gateway {
     const cwd=await this.sandboxRoot();
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const existing=this.routes.get(key);
-    if(existing&&!reset&&existing.peer.sandbox?.root===cwd)return existing;
+    if(existing&&!reset&&this.matchesSandbox(existing.peer.sandbox,cwd))return existing;
     const state=(await this.store.read()).values;const saved=state.peers[key];
     if(saved?.hostId&&saved.hostId!==this.ctx.paseo.hostId)throw new Error('QQ peer 映射属于另一 daemon');
     const previousId=existing?.agent.id??saved?.agentId;
     const snapshot=previousId?await this.findAgent(previousId):null;
     if(previousId&&!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const previous=snapshot?this.ctx.paseo.agents.ref(snapshot):null;
-    if(previous&&saved&&!reset&&saved.sandbox?.root===cwd&&saved.cwd===cwd&&snapshot?.sandbox?.root===cwd)return this.attach(saved,previous);
+    if(previous&&saved&&!reset&&!this.retiredAgents.has(previous.id)&&this.matchesSandbox(saved.sandbox,cwd)&&saved.cwd===cwd&&this.matchesSandbox(snapshot?.sandbox,cwd))return this.attach(saved,previous);
     if(existing)this.retireRoute(existing);
-    if(previous)await previous.stop();
+    if(previous&&!this.retiredAgents.has(previous.id))await previous.stop();
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const selected=state.presetSelections[key]??this.config.defaultPreset;const preset=this.config.presets.find(p=>p.name===selected);if(!preset)throw new Error(`所选 preset 不存在：${selected}`);
     if(preset.config.provider.split('/')[0]!=='omp')throw new Error('QQ 强制沙箱仅支持 OMP provider；请保留模型偏好并选择 OMP preset');
@@ -174,25 +196,28 @@ export class Gateway {
     const workspace=await this.ctx.paseo.workspaces.create({source:{kind:'directory',path:cwd},title});
     const prompt=[preset.qq.prompt,scope==='group'?this.config.groupPrompt:this.config.directPrompt,`QQ ${scope} 对话。只在当前获准目标回复。未知 QQ 斜杠命令不能操作宿主插件。`].filter(Boolean).join('\n\n');
     const model=state.modelSelections[key];
-    const config={...preset.config,provider:model?`${preset.config.provider.split('/')[0]}/${model}`:preset.config.provider,cwd,modeId:'ask',sandbox:{root:cwd},systemPrompt:[preset.config.systemPrompt,prompt].filter(Boolean).join('\n\n')};
+    const sandbox: NonNullable<Peer['sandbox']> = { root: cwd };
+    if(this.config.sandboxCapabilities.javascript)sandbox.javascript=true;
+    if(this.config.sandboxCapabilities.network)sandbox.network='public';
+    const config={...preset.config,provider:model?`${preset.config.provider.split('/')[0]}/${model}`:preset.config.provider,cwd,modeId:'ask',sandbox,systemPrompt:[preset.config.systemPrompt,prompt].filter(Boolean).join('\n\n')};
     if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
     const agent=await workspace.agents.create({config,title,labels:{'qqbot.installation':this.ctx.installation.id,'qqbot.appId':this.config.appId,'qqbot.scope':scope,'qqbot.peer':openid}});
-    const peer:Peer={appId:this.config.appId,scope,openid,hostId:this.ctx.paseo.hostId,workspaceId:workspace.id,agentId:agent.id,cwd,sandbox:{root:cwd},preset:selected,template:preset,protocolPrompt:prompt,lastDeliveredSequence:0};
+    const peer:Peer={appId:this.config.appId,scope,openid,hostId:this.ctx.paseo.hostId,workspaceId:workspace.id,agentId:agent.id,cwd,sandbox,preset:selected,template:preset,protocolPrompt:prompt,lastDeliveredSequence:0};
     try {
-      await this.store.mutate(s=>{if(this.signal.aborted||s.config.appId!==this.config.appId||s.config.sandboxPath!==this.config.sandboxPath)throw new Error('QQ peer 创建结果已失效');s.peers[key]=peer;});
+      await this.store.mutate(s=>{if(!this.matchesConfig(s.config))throw new Error('QQ peer 创建结果已失效');s.peers[key]=peer;});
       if(!await this.currentConfig())throw new Error('QQ 沙箱配置已变化');
       return await this.attach(peer,agent);
     } catch(error) { await agent.stop(); throw error; }
   }
   private async attach(peer:Peer,agent=this.ctx.paseo.agents.ref(peer.agentId)):Promise<Route>{
-    if(!await this.currentConfig()||peer.sandbox?.root!==await this.sandboxRoot())throw new Error('QQ 沙箱路由已失效');
+    if(!await this.currentConfig()||!this.matchesSandbox(peer.sandbox,await this.sandboxRoot()))throw new Error('QQ 沙箱路由已失效');
     const key=peerKey(peer.appId,peer.scope,peer.openid);const route:Route={peer,agent,unsubscribe:null,buffer:null,textRows:new Map(),files:new Map(),toolRevisions:new Map(),chain:Promise.resolve(),pending:new Map(),lastSeq:peer.lastDeliveredSequence,enabledDelivery:false};this.routes.set(key,route);
     const buffered:PaseoAgentStream[]=[];let observing=true;
     const receive=(stream:PaseoAgentStream)=>{if(this.signal.aborted||this.routes.get(key)!==route)return;if(observing){buffered.push(stream);return;}route.chain=route.chain.then(()=>this.deliveryRoute.run(route,()=>this.event(route,stream))).catch(error=>this.report(error));};
     let observation: PaseoAgentObservation;
     try { observation=await agent.observe(receive); } catch(error) { this.retireRoute(route); throw error; }
     route.unsubscribe=observation.unsubscribe;
-    if(!await this.currentConfig()||this.routes.get(key)!==route||observation.snapshot.sandbox?.root!==peer.sandbox?.root){this.retireRoute(route);await agent.stop();throw new Error('Desktop agent 未确认当前 QQ 沙箱；路由已停止，历史保留');}
+    if(!await this.currentConfig()||this.routes.get(key)!==route||!this.matchesSandbox(observation.snapshot.sandbox,peer.cwd)){this.retireRoute(route);await agent.stop();throw new Error('Desktop agent 未确认当前 QQ 沙箱；路由已停止，历史保留');}
     route.lastSeq=observation.timeline.window.maxSeq;
     for(const row of observation.timeline.entries)if(row.item.type==='assistant_message')route.textRows.set(row.seqEnd,row.item.text);
     let lastUser:{clientMessageId?:string;messageId?:string;sourceKind?:'user'|'service'|'agent';sourceAgentId?:string}|undefined;
@@ -215,6 +240,7 @@ export class Gateway {
         if(this.config.vision.enabled&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mimeType)){if(file.size>this.config.vision.maxBytes)throw new Error('图片超过原生视觉输入上限');images.push({data:(await this.files.read(file.relativePath,this.config.vision.maxBytes)).toString('base64'),mimeType:file.mimeType});}
       }
       if(!await this.currentConfig()||this.routes.get(key)!==route)throw new Error('QQ 沙箱路由已替换');
+      if(!await this.authorized(route.peer,context.message.senderId))throw new Error('QQ 发送者访问授权已撤销');
       const id=`qqbot:${this.ctx.installation.id}:${randomUUID()}`;const text=String(context.state.envelope??context.message.content)+((context.message.attachments??[]).map(a=>a.asr_refer_text?`\n语音转录：${a.asr_refer_text}`:'').join(''));
       let done!:()=>void;let fail!:(error:unknown)=>void;const completion=new Promise<void>((resolve,reject)=>{done=resolve;fail=reject;});const pending:PendingInput={target:{scope,targetId:openid,msgId:context.replyTarget.msgId},done,fail,owned:false};route.pending.set(id,pending);route.localTarget=context.replyTarget;
       const timer=setTimeout(()=>{if(this.signal.aborted)return;if(pending.owned&&(!pending.turnId||pending.turnId===route.turnId))void route.agent.stop().catch(error=>this.report(error));fail(new Error('QQ 回合处理超时，当前 QQ 路由已取消'));},this.config.processingTimeoutMs);
@@ -270,7 +296,7 @@ export class Gateway {
     else if(command==='whoami')reply=`scope=${scope}\npeer=${openid}\nsender=${context.message.senderId}`;
     else if(command==='stop'){const route=this.routes.get(key);if(route)await route.agent.stop();reply=route?'已请求停止当前 agent。':'当前没有对话。';}
     else if(command==='compact'){const route=await this.getOrCreate(scope,openid);await this.activeRoute(route);await route.agent.compact();reply='已请求原生对话压缩。';}
-    else if(command==='model'){const route=await this.getOrCreate(scope,openid);if(!arg){const snapshot=await route.agent.refresh();if(!snapshot)throw new Error('Desktop agent 不存在');await this.activeRoute(route);const models=await this.ctx.paseo.providers.listModels(snapshot.agent.provider,{cwd:route.peer.cwd});reply=JSON.stringify(models,null,2);}else{const model=arg==='default'?null:arg;await this.activeRoute(route);await route.agent.setModel(model);await this.store.mutate(s=>{if(this.signal.aborted||s.config.appId!==this.config.appId||s.config.sandboxPath!==this.config.sandboxPath||s.peers[key]?.agentId!==route.peer.agentId)throw new Error('QQ 模型选择结果已失效');s.modelSelections[key]=model;});reply='模型已由 Desktop 更新并保存到此 QQ peer 偏好。';}}
+    else if(command==='model'){const route=await this.getOrCreate(scope,openid);if(!arg){const snapshot=await route.agent.refresh();if(!snapshot)throw new Error('Desktop agent 不存在');await this.activeRoute(route);const models=await this.ctx.paseo.providers.listModels(snapshot.agent.provider,{cwd:route.peer.cwd});reply=JSON.stringify(models,null,2);}else{const model=arg==='default'?null:arg;await this.activeRoute(route);await route.agent.setModel(model);await this.store.mutate(s=>{if(!this.matchesConfig(s.config)||s.peers[key]?.agentId!==route.peer.agentId)throw new Error('QQ 模型选择结果已失效');s.modelSelections[key]=model;});reply='模型已由 Desktop 更新并保存到此 QQ peer 偏好。';}}
     else if(command==='status'){const route=this.routes.get(key);const current=route?await route.agent.refresh():null;reply=current?`${current.agent.status}\nagent=${current.agent.id}\nworkspace=${route!.peer.workspaceId}\nmodel=${current.agent.model??'默认'}`:'当前没有对话。';}
     else reply='未知 QQ 插件命令。发送 /bot-help；不会转发给宿主插件管理器。';
     for(const chunk of chunkMarkdownText(reply,this.config.textChunkLimit))await this.sender.sendMarkdown(context.replyTarget,chunk);

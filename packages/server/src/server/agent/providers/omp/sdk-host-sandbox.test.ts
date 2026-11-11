@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentSandbox } from '@omp-desktop/protocol/messages';
 import { OMP_SDK_LAUNCH_ENV } from "./sdk-host-protocol.js";
 import { runOmpSdkHost } from "./sdk-host.js";
 
@@ -13,20 +14,25 @@ beforeEach(() => {
   mocks.start.mockRejectedValue(new Error("Reached SDK startup"));
 });
 afterEach(() => { process.argv = originalArgv; vi.unstubAllEnvs(); });
-function configure(sandbox: boolean, version?: number) {
-  vi.stubEnv(OMP_SDK_LAUNCH_ENV, JSON.stringify({ cwd: process.cwd(), ...(sandbox ? { sandbox: { root: `${process.cwd()}/qq-files` } } : {}) }));
+function configure(sandbox: boolean | AgentSandbox, version?: number) {
+  vi.stubEnv(OMP_SDK_LAUNCH_ENV, JSON.stringify({ cwd: process.cwd(), ...(sandbox ? { sandbox: sandbox === true ? { root: `${process.cwd()}/qq-files` } : sandbox } : {}) }));
   mocks.load.mockImplementation((entry: string) => entry === "/trusted-preload" ? undefined : { startNodeRpcHost: mocks.start, NODE_RPC_SANDBOX_VERSION: version });
 }
 describe("mandatory SDK sandbox capability handshake", () => {
-  it.each([undefined, 0, 2])("refuses unsupported capability %s before entering SDK startup", async (version) => {
+  it.each([undefined, 0, 3])("refuses unsupported capability %s before entering SDK startup", async (version) => {
     configure(true, version);
     await expect(runOmpSdkHost()).rejects.toThrow("lacks mandatory sandbox support");
     expect(mocks.start).not.toHaveBeenCalled();
   });
-  it("admits version 1 and passes the sandbox root to the actual launch entry", async () => {
-    configure(true, 1);
+  it.each([1, 2])("admits supported profile %s for file-only sessions", async (version) => {
+    configure(true, version);
     await expect(runOmpSdkHost()).rejects.toThrow("Reached SDK startup");
-    expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ sandbox: { root: `${process.cwd()}/qq-files` } }));
+  });
+  it.each([{ javascript: true }, { network: 'public' as const }, { javascript: true, network: 'public' as const }])('requires profile 2 for requested capabilities %s', async (capabilities) => {
+    configure({ root: `${process.cwd()}/qq-files`, ...capabilities }, 1);
+    await expect(runOmpSdkHost()).rejects.toThrow('NODE_RPC_SANDBOX_VERSION=2');
+    configure({ root: `${process.cwd()}/qq-files`, ...capabilities }, 2);
+    await expect(runOmpSdkHost()).rejects.toThrow('Reached SDK startup');
   });
   it("keeps ordinary Desktop startup compatible with SDKs predating the sandbox profile", async () => {
     configure(false);
