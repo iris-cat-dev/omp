@@ -246,7 +246,7 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 
 `pet.json` 继续只包含已校验数据和 PNG 资源。保留 20 MiB／4096×4096 限制、图集校验、五个必需动画状态、旧资源可选气泡，以及新图像创作必须完整提供气泡的更强约束。导入不执行额外文件、不覆盖已有资源、不自动选择或启用新宠物。
 
-**使用 OMP 创建（Create with OMP）**仍建立独立本机创作工作区和普通 OMP 会话，使用用户独立选择的创作模型／Thinking／mode／features。保留 `hatch-pet`、旧复制技能与脚本，以及稳定公开安装入口 `--desktop-pet-install`。GUI 启动前将该命令分发到插件唯一的 importer；转换器不竞争 GUI 单例，也不执行 daemon／升级退出清理。禁用／移除插件不删除普通创作会话。
+**使用 OMP 创建（Create with OMP）**仍建立独立本机创作工作区和普通 OMP 会话，使用用户独立选择的创作模型／Thinking／mode／features。`hatch-pet` 属于插件的 `assets/skills/hatch-pet/`，随插件分发，只复制到创作工作区的 `.omp/skills/hatch-pet/`，不加入 Desktop 的全局技能目录。新工作区的 helper 使用 bundled Electron 的 Node 模式直接运行插件的 `dist/cjs/install-pet.js`；转换／安装实现和 `sharp` 运行依赖由插件提供，不恢复已移除的 Desktop `--desktop-pet-install` 命令，也不启动 GUI／daemon 或参与升级退出清理。现有工作区保留复制的技能与旧脚本，使用新 helper 需要新建创作工作区；禁用／移除插件不删除普通创作会话，运行 helper 时需保留插件及其运行依赖。
 
 ### 壁纸
 

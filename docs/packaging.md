@@ -476,6 +476,6 @@ At deployment, Desktop selects the SSH host's target, streams its pinned SDK thr
 
 The repository-root [`skills/`](../skills) directory is the source catalog for bundled orchestration skills. During the server build, [`packages/server/package.json`](../packages/server/package.json) removes the previous `dist/server/skills` directory and recursively copies `../../skills` into it. This makes the same catalog available to the development server and packaged application.
 
-The catalog currently includes [`skills/hatch-pet/SKILL.md`](../skills/hatch-pet/SKILL.md), which guides creation and installation of a custom animated desktop pet from a description or reference images using the configured image-generation tool and local installation helper. It is not an empty catalog: `.gitkeep` remains alongside `hatch-pet`.
+The core catalog is currently empty except for `.gitkeep`. Plugin-specific skills belong to their plugin packages, not this catalog. The Desktop pet plugin owns [`assets/skills/hatch-pet/SKILL.md`](../plugins/desktop-pet/assets/skills/hatch-pet/SKILL.md); its existing `files: ["dist", "src", "assets", ...]` packaging includes the skill and compiled installer. Creating a pet copies the skill only into the authoring workspace's `.omp/skills/hatch-pet/`. It neither installs a global skill nor adds pet resources to Desktop or remote-backend packages.
 
 Keep the `skills/` directory even when no bundled skills are present: removing it causes the recursive copy step to fail. Add bundled skills as subdirectories containing their `SKILL.md` files.
