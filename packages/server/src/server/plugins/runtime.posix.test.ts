@@ -596,7 +596,7 @@ export default async function contribute(plugin: PluginServiceContext) {
   it("loads the official Linear attachment extension", async () => {
     const directory = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../../../../../plugin-examples/linear",
+      "../../../../../plugins/examples/linear",
     );
     const runtime = createTestRuntime();
 

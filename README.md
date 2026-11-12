@@ -2,7 +2,7 @@
 
 A [mini-electron](https://github.com/iris-cat-dev/mini-electron) and Web client for [Oh My Pi](https://github.com/can1357/oh-my-pi). It runs a private daemon on your machine and talks to `omp --mode rpc-ui` through OMP's native JSONL RPC protocol. Web clients can control a remote daemon through an end-to-end encrypted relay.
 
-Current source version: **0.6.6**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
+Current source version: **0.7.0**. Packaged applications are available from [GitHub Releases](https://github.com/iris-cat-dev/omp-desktop/releases).
 
 ## Features
 
@@ -18,6 +18,7 @@ See the [documentation index](docs/README.md) for feature guides and operational
 
 - Node.js 24+ (CI uses 24.14.0), npm, Bun, Rustup, and a native compiler toolchain for source builds.
 - The pinned `omp-sdk/` submodule, initialized recursively. Development and packages use its Node SDK, not a system OMP executable.
+- The pinned `plugins/` submodule from [omp-plugins](https://github.com/iris-cat-dev/omp-plugins), containing builtin plugins and source examples.
 - A configured OMP model provider to run conversations; provider settings and sign-in can open without one.
 
 Standard **Apple Silicon macOS** and **Windows x64** packages include the SDK and embedded Node. No external Node, Bun, or OMP installation is required at runtime. See [packaging](docs/packaging.md#bundled-omp-sdk).

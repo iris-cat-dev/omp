@@ -1,3 +1,6 @@
 [submodule "omp-sdk"]
 	path = omp-sdk
 	url = https://github.com/iris-cat-dev/omp-sdk
+[submodule "plugins"]
+	path = plugins
+	url = https://github.com/iris-cat-dev/omp-plugins

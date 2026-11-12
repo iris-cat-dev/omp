@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["../../plugin-examples/**/*.ts", "../../plugin-examples/**/*.tsx"]
+  "include": ["src/**/*.d.ts", "../../plugins/examples/**/*.ts", "../../plugins/examples/**/*.tsx"]
 }

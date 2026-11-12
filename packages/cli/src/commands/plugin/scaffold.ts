@@ -21,7 +21,7 @@ export interface PluginScaffold {id:string;directory:string}
 export async function scaffoldPluginDirectory(targetDirectory:string,requestedId?:string):Promise<PluginScaffold> {
  const directory=path.resolve(targetDirectory);const id=PluginIdSchema.parse(requestedId??path.basename(directory));
  await mkdir(directory,{recursive:true});if((await readdir(directory)).length)throw new Error(`Plugin directory must be empty: ${directory}`);
- const packageJson={name:id,private:true,version:"0.0.0",scripts:{typecheck:"tsc --noEmit"},devDependencies:{"@omp-desktop/plugin":"^0.6.1","@omp-desktop/client":"^0.6.1","@omp-desktop/protocol":"^0.6.1","@tanstack/react-query":"^5.90.11","@types/react":"~19.2.0",react:"19.1.0","react-native":"0.81.5",typescript:"^5.9.3",zod:"^4.4.3"}};
+ const packageJson={name:id,private:true,version:"0.0.0",scripts:{typecheck:"tsc --noEmit"},devDependencies:{"@omp-desktop/plugin":"^0.7.0","@omp-desktop/client":"^0.7.0","@omp-desktop/protocol":"^0.7.0","@tanstack/react-query":"^5.90.11","@types/react":"~19.2.0",react:"19.1.0","react-native":"0.81.5",typescript:"^5.9.3",zod:"^4.4.3"}};
  const files=new Map<string,string>([["paseo-plugin.json",JSON.stringify({id},null,2)+"\n"],["package.json",JSON.stringify(packageJson,null,2)+"\n"],["tsconfig.json",JSON.stringify(TSCONFIG,null,2)+"\n"],["index.ts",ENTRY],["main.client.tsx",CLIENT_SURFACE]]);
  await Promise.all([...files].map(([filename,contents])=>writeFile(path.join(directory,filename),contents,{flag:"wx"})));
  return {id,directory};

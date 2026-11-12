@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const { parse } = require("@babel/parser");
-const packages = ["plugin", "plugins/agent-speed", "plugins/wallpaper", "plugins/desktop-pet"];
+const packages = ["packages/plugin", "plugins/agent-speed", "plugins/wallpaper", "plugins/desktop-pet"];
 const selected = process.argv.slice(2);
 if (selected.some((name) => !packages.includes(name))) throw new Error(`Unknown plugin build target: ${selected.join(", ")}`);
 
@@ -60,7 +60,7 @@ function rewriteModules(code, sourceFile, declaration = false) {
 }
 
 async function buildPackage(name) {
-  const directory = path.join(root, "packages", name);
+  const directory = path.join(root, name);
   const sourceRoot = path.join(directory, "src");
   const files = await sources(sourceRoot);
   const dist = path.join(directory, "dist");

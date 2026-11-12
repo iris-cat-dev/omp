@@ -1,6 +1,6 @@
 {
   "name": "omp-desktop",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "private": true,
   "description": "Desktop client for local Oh My Pi coding agents",
   "keywords": [
@@ -17,7 +17,7 @@
     "packages/relay",
     "packages/client",
     "packages/plugin",
-    "packages/plugins/*",
+    "plugins/*",
     "packages/server",
     "packages/app",
     "packages/desktop",
@@ -81,10 +81,10 @@
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js"
   },
   "dependencies": {
-    "@omp-desktop/plugin": "0.6.1",
-    "@omp-desktop/plugin-agent-speed": "0.6.1",
-    "@omp-desktop/plugin-desktop-pet": "0.6.1",
-    "@omp-desktop/plugin-wallpaper": "0.6.1"
+    "@omp-desktop/plugin": "0.7.0",
+    "@omp-desktop/plugin-agent-speed": "0.7.0",
+    "@omp-desktop/plugin-desktop-pet": "0.7.0",
+    "@omp-desktop/plugin-wallpaper": "0.7.0"
   },
   "devDependencies": {
     "@babel/parser": "^7.28.5",

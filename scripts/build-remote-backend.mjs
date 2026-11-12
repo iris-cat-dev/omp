@@ -11,14 +11,14 @@ const outputDir = path.join(rootDir, "packages", "desktop", "remote-backend-dist
 const sdkName = "@oh-my-pi/pi-coding-agent";
 const releaseConfigFile = path.join(rootDir, "omp-sdk", "sdk", "node-release.json");
 const workspacePackages = [
-  ["@omp-desktop/highlight", "highlight"],
-  ["@omp-desktop/protocol", "protocol"],
-  ["@omp-desktop/relay", "relay"],
-  ["@omp-desktop/client", "client"],
-  ["@omp-desktop/plugin", "plugin"],
+  ["@omp-desktop/highlight", "packages/highlight"],
+  ["@omp-desktop/protocol", "packages/protocol"],
+  ["@omp-desktop/relay", "packages/relay"],
+  ["@omp-desktop/client", "packages/client"],
+  ["@omp-desktop/plugin", "packages/plugin"],
   ["@omp-desktop/plugin-qqbot", "plugins/qqbot"],
-  ["@omp-desktop/server", "server"],
-  ["@omp-desktop/cli", "cli"],
+  ["@omp-desktop/server", "packages/server"],
+  ["@omp-desktop/cli", "packages/cli"],
 ];
 
 function runNpm(args, cwd) {
@@ -115,8 +115,8 @@ async function calculateBundleHash(releaseConfig, releaseIndex) {
   ];
   for (const [, directoryName] of workspacePackages) {
     await collectSourceFiles(
-      path.join(rootDir, "packages", directoryName),
-      `packages/${directoryName}`,
+      path.join(rootDir, directoryName),
+      directoryName,
       files,
     );
   }
@@ -155,7 +155,7 @@ try {
   for (const [packageName, directoryName] of workspacePackages) {
     const packed = JSON.parse(
       runNpm(
-        ["pack", path.join(rootDir, "packages", directoryName), "--ignore-scripts", "--json", "--pack-destination", packageDir],
+        ["pack", path.join(rootDir, directoryName), "--ignore-scripts", "--json", "--pack-destination", packageDir],
         rootDir,
       ),
     );
@@ -167,7 +167,7 @@ try {
   }
   const deploymentPackage = {
     name: "omp-desktop-remote-backend",
-    version: "0.0.0",
+    version: "0.7.0",
     private: true,
     dependencies,
   };

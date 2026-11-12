@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/desktop",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "private": true,
   "description": "OMP Desktop mini-electron application",
   "license": "AGPL-3.0-or-later",
@@ -17,10 +17,10 @@
   },
   "dependencies": {
     "@omp-desktop/cli": "*",
-    "@omp-desktop/plugin": "0.6.1",
-    "@omp-desktop/plugin-agent-speed": "0.6.1",
-    "@omp-desktop/plugin-desktop-pet": "0.6.1",
-    "@omp-desktop/plugin-wallpaper": "0.6.1",
+    "@omp-desktop/plugin": "0.7.0",
+    "@omp-desktop/plugin-agent-speed": "0.7.0",
+    "@omp-desktop/plugin-desktop-pet": "0.7.0",
+    "@omp-desktop/plugin-wallpaper": "0.7.0",
     "@omp-desktop/protocol": "*",
     "@omp-desktop/server": "*",
     "electron-log": "^5.4.3",

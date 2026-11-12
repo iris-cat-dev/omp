@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/app",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -35,10 +35,10 @@
     "@mattermost/react-native-paste-input": "2.0.1",
     "@omp-desktop/client": "*",
     "@omp-desktop/highlight": "*",
-    "@omp-desktop/plugin": "0.6.1",
-    "@omp-desktop/plugin-agent-speed": "0.6.1",
-    "@omp-desktop/plugin-desktop-pet": "0.6.1",
-    "@omp-desktop/plugin-wallpaper": "0.6.1",
+    "@omp-desktop/plugin": "0.7.0",
+    "@omp-desktop/plugin-agent-speed": "0.7.0",
+    "@omp-desktop/plugin-desktop-pet": "0.7.0",
+    "@omp-desktop/plugin-wallpaper": "0.7.0",
     "@omp-desktop/protocol": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "^0.3.2",

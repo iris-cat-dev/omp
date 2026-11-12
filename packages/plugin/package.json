@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/plugin",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "OMP Desktop unified plugin SDK",
   "files": ["dist", "src", "!src/**/*.test.*", "!dist/**/*.map"],
   "type": "module",
@@ -35,7 +35,7 @@
   },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "npm run build --workspace=@omp-desktop/client && node ../../scripts/build-desktop-plugins.mjs plugin",
+    "build": "npm run build --workspace=@omp-desktop/client && node ../../scripts/build-desktop-plugins.mjs packages/plugin",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
@@ -47,8 +47,8 @@
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@omp-desktop/client": "0.6.1",
-    "@omp-desktop/protocol": "0.6.1",
+    "@omp-desktop/client": "0.7.0",
+    "@omp-desktop/protocol": "0.7.0",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -57,8 +57,8 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@omp-desktop/client": "0.6.1",
-    "@omp-desktop/protocol": "0.6.1",
+    "@omp-desktop/client": "0.7.0",
+    "@omp-desktop/protocol": "0.7.0",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

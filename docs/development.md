@@ -22,6 +22,8 @@ The packaged app uses `~/.omp-desktop`. OMP keeps its own configuration, credent
 
 `omp-sdk/` is a Git submodule of [iris-cat-dev/omp-sdk](https://github.com/iris-cat-dev/omp-sdk), pinned to the commit recorded by Desktop. Use `git clone --recurse-submodules` for a fresh checkout, or rerun `git submodule update --init --recursive` after pulling Desktop changes. Commit SDK changes in `omp-sdk/` and push them to its own remote before committing and pushing an updated submodule pointer here. The SDK package root is `omp-sdk/packages/coding-agent`; initializing the submodule does not install its dependencies or build its Node artifacts.
 
+`plugins/` is a Git submodule of [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins). It contains the `agent-speed`, `wallpaper`, `desktop-pet`, and `qqbot` workspace packages, plus source examples under `plugins/examples/`. The shared plugin SDK and compiler remain in `packages/plugin`. Initialize both submodules before `npm install`; push plugin changes to their own remote before updating Desktop's gitlink. Package versions and dependencies are recorded in Desktop's root lockfile.
+
 The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift and Dart stream parsers use the same CodeMirror 6 language types as the application. Keep this pin when updating dependencies; `6.5.5` uses incompatible streamparser types.
 
 ## Workspace packages
@@ -37,7 +39,7 @@ The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift a
 | [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                   |
 | [`packages/highlight`](../packages/highlight) | Code and diff highlighting          |
 | [`packages/plugin`](../packages/plugin)       | Shared Desktop plugin SDK, compiler and isolated worker |
-| [`packages/plugins`](../packages/plugins)    | Builtin speed/wallpaper/pet and QQ plugin packages |
+| [`plugins`](../plugins)                      | Builtin speed/wallpaper/pet and QQ plugin packages; source examples |
 
 The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace uses its own TypeScript configuration; `npm run typecheck` checks those workspaces. To check root configuration files, run `npm exec --no -- tsgo --noEmit -p tsconfig.json`.
 
@@ -46,7 +48,7 @@ The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace us
 ```bash
 npm run build:client
 node scripts/build-desktop-plugins.mjs
-node packages/plugins/qqbot/build.mjs
+node plugins/qqbot/build.mjs
 npm run build:highlight
 npm run build:lib --workspace=@omp-desktop/server
 npm run build:scripts --workspace=@omp-desktop/server

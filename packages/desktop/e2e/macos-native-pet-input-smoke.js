@@ -61,7 +61,7 @@ function launch() {
   fs.mkdirSync(path.join(paths.home, "Library", "Application Support", name), { recursive: true });
   const entry = path.join(run, path.basename(__filename));
   fs.copyFileSync(__filename, entry);
-  fs.cpSync(path.join(desktopRoot, "..", "plugins", "desktop-pet", "assets", "pets"), path.join(run, "assets", "pets"), { recursive: true });
+  fs.cpSync(path.join(desktopRoot, "..", "..", "plugins", "desktop-pet", "assets", "pets"), path.join(run, "assets", "pets"), { recursive: true });
   fs.writeFileSync(path.join(run, "package.json"), JSON.stringify({ name, productName: name, version: "1.0.0", main: path.basename(entry) }));
   fs.writeFileSync(path.join(run, "ownership.json"), JSON.stringify({ kind: "omp-native-pet-input", name, root, run }));
   const helper = path.join(run, "native-pet-input.node");

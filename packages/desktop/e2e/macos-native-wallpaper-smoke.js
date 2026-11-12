@@ -87,10 +87,10 @@ function launch() {
   for (const directory of Object.values(paths)) fs.mkdirSync(directory, { recursive: true });
   fs.mkdirSync(path.join(paths.home, "Library/Application Support", name), { recursive: true });
   fs.mkdirSync(path.join(run, "fixtures"));
-  const iris = path.join(desktopRoot, "../plugins/desktop-pet/assets/pets/iris/sprites.png");
+  const iris = path.join(desktopRoot, "../../plugins/desktop-pet/assets/pets/iris/sprites.png");
   assert.ok(fs.existsSync(iris), "Prerequisite: the existing Iris PNG is missing");
   for (let index = 0; index < 50; index++) fs.copyFileSync(iris, path.join(run, "fixtures", `iris-${String(index).padStart(2, "0")}.png`));
-  fs.cpSync(path.join(desktopRoot, "../plugins/desktop-pet/assets/pets"), path.join(run, "assets/pets"), { recursive: true });
+  fs.cpSync(path.join(desktopRoot, "../../plugins/desktop-pet/assets/pets"), path.join(run, "assets", "pets"), { recursive: true });
   fs.copyFileSync(__filename, path.join(run, path.basename(__filename)));
   fs.writeFileSync(path.join(run, "package.json"), JSON.stringify({ name, productName: name, version: "1.0.0", main: path.basename(__filename) }));
   fs.writeFileSync(path.join(run, "ownership.json"), JSON.stringify({ kind: "omp-native-wallpaper", root, run, name }));

@@ -94,7 +94,7 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 ```json
 {
   "name": "@omp-desktop/plugin-qqbot",
-  "version": "1.0.0",
+  "version": "0.7.0",
   "type": "module",
   "files": ["dist"],
   "ompDesktop": {
@@ -358,6 +358,7 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 - 在 `packages/desktop` 增加应用拥有的本机服务／受控接口生命周期，将功能代码提取为内置插件包，不在 app／main 入口继续硬编码宠物／壁纸／速度挂载。
 - 原生 SDK 插件发现、模型执行、工具、审批、AuthStorage、指标事实采集保留在当前归属方。管理器是投影／适配层，不替换 harness。
 - 真实 Desktop 和远端 backend 分发产物包含旧源码编译支持、内置插件代码／资源、hatch-pet／安装命令分发。原生 API 依赖按目标／ABI 验收，不能从开发 Node 环境推断。
+- 功能插件与源码示例位于根目录 `plugins/` 子模块，对应 [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins)；四个插件包直接位于该仓库根目录，历史源码示例位于 `examples/`。共享插件 SDK 与编译器继续由 Desktop 的 `packages/plugin` 提供。
 
 由一个集成负责人统一负责注册表、激活状态、RPC 授权和 schema 切换。各功能负责人基于确定的契约迁移独立包，不能各自引入管理器、全局事件总线、设置存储或 daemon 连接。
 
@@ -368,10 +369,10 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 - [daemon 运行时接口与分发](../packages/server/src/server/session.ts)、[bootstrap 插件注入](../packages/server/src/server/bootstrap.ts)、[Desktop／原生插件协议](../packages/protocol/src/messages.ts)。
 - [插件 Tab 类型](../packages/app/src/workspace-tabs/model.ts)、[面板注册表](../packages/app/src/panels/panel-registry.ts)、[内置注册](../packages/app/src/panels/register-panels.ts)、[命令中心注册表](../packages/app/src/command-center/registry.ts)、[设置路由](../packages/app/src/utils/host-routes.ts)。
 - [OMP 原生管理语义](features/tools-and-plugins.md)、[原生管理适配器](../packages/server/src/server/omp-plugin-cli-service.ts)、[现有迁移指南](omp-desktop-plugin-migration.md)。
-- [宠物插件](../packages/plugins/desktop-pet)、[本机创作工作区](../packages/plugins/desktop-pet/src/creation-workspace.ts)、[资源 manifest](../packages/plugins/desktop-pet/src/manifest.ts)、[宠物使用指南](features/desktop-pet.md)。
-- [壁纸内置入口](../packages/plugins/wallpaper/src/builtin.ts)、[客户端](../packages/plugins/wallpaper/src/client.tsx)、[背景控制器](../packages/plugins/wallpaper/src/controller.ts)、[壁纸使用指南](features/appearance.md#wallpaper)。
-- [速度内置插件](../packages/plugins/agent-speed/src/index.tsx)、[实时算法](../packages/plugins/agent-speed/src/metrics.ts)、[刷新订阅](../packages/plugins/agent-speed/src/use-output-rate.ts)、[完成值](../packages/plugins/agent-speed/src/completed.ts)、[turn-token-stats](../packages/app/src/agent-stream/turn-token-stats.ts)。
-- [QQ 插件](../packages/plugins/qqbot)包含独立网关、会话与事件适配、访问／配对、问答／审批和文件工具；当前 producer 将有效 QQ SDK 内联到 CJS／MJS 服务产物。
+- [宠物插件](../plugins/desktop-pet)、[本机创作工作区](../plugins/desktop-pet/src/creation-workspace.ts)、[资源 manifest](../plugins/desktop-pet/src/manifest.ts)、[宠物使用指南](features/desktop-pet.md)。
+- [壁纸内置入口](../plugins/wallpaper/src/builtin.ts)、[客户端](../plugins/wallpaper/src/client.tsx)、[背景控制器](../plugins/wallpaper/src/controller.ts)、[壁纸使用指南](features/appearance.md#wallpaper)。
+- [速度内置插件](../plugins/agent-speed/src/index.tsx)、[实时算法](../plugins/agent-speed/src/metrics.ts)、[刷新订阅](../plugins/agent-speed/src/use-output-rate.ts)、[完成值](../plugins/agent-speed/src/completed.ts)、[turn-token-stats](../packages/app/src/agent-stream/turn-token-stats.ts)。
+- [QQ 插件](../plugins/qqbot)包含独立网关、会话与事件适配、访问／配对、问答／审批和文件工具；当前 producer 将有效 QQ SDK 内联到 CJS／MJS 服务产物。
 
 历史 [插件 SDK 契约](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/plugin/src/contracts.ts)、[服务运行时](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/server/src/server/plugins/runtime.ts)、[插件面板](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/app/src/plugins/workspace-panels/panel.tsx)构成旧契约基线，不能据此认定文件是在最近一次合并时被删除。Agent Speed 是从独立原生应用移植的算法／功能，尚未证实存在对应历史 Paseo 插件包。
 

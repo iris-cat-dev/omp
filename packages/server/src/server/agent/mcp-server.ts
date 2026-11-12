@@ -32,7 +32,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   const catalog = await createPaseoToolCatalog(options);
   const server = new McpServer({
     name: "agent-mcp",
-    version: "2.0.0",
+    version: "0.7.0",
   });
 
   for (const tool of catalog.tools.values()) {
