@@ -1611,12 +1611,6 @@ export const ptBR: TranslationResources = {
         failed: "Falha ao enviar notificação.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "Não foi possível verificar o status de instalação da CLI.",
-        installFailed: "Não foi possível instalar a CLI do OMP Desktop.",
-      },
-    },
   },
   rootError: {
     title: "O OMP Desktop encontrou um problema.",
@@ -2150,7 +2144,6 @@ export const ptBR: TranslationResources = {
       plugins: "Plugins",
       editor: "Editor",
       shortcuts: "Atalhos",
-      integrations: "Integrações",
       notifications: "Notificações",
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
@@ -2506,24 +2499,6 @@ export const ptBR: TranslationResources = {
       helpNotes: {
         showKeyboardShortcuts:
           "Disponível quando o foco não está em um campo de texto ou terminal.",
-      },
-    },
-    integrations: {
-      title: "Integrações",
-      docs: {
-        cli: "Docs da CLI",
-        openCli: "Abrir documentação da CLI",
-      },
-      commandLine: {
-        title: "Linha de comando",
-        description: "Controle agentes e execute scripts pelo terminal",
-      },
-      actions: {
-        install: "Instalar",
-        installing: "Instalando...",
-        installed: "Instalado",
-        uninstall: "Desinstalar",
-        uninstalling: "Desinstalando...",
       },
     },
     host: {

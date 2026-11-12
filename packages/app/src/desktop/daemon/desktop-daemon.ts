@@ -203,29 +203,6 @@ export async function closeLocalTransportSession(sessionId: string): Promise<voi
   await invokeDesktopCommand("close_local_daemon_transport", { sessionId });
 }
 
-// ---------------------------------------------------------------------------
-// Integrations
-// ---------------------------------------------------------------------------
-
-export interface InstallStatus {
-  installed: boolean;
-}
-
-function parseInstallStatus(raw: unknown): InstallStatus {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected install status response.");
-  }
-  return { installed: raw.installed === true };
-}
-
-export async function getCliInstallStatus(): Promise<InstallStatus> {
-  return parseInstallStatus(await invokeDesktopCommand("get_cli_install_status"));
-}
-
-export async function installCli(): Promise<InstallStatus> {
-  return parseInstallStatus(await invokeDesktopCommand("install_cli"));
-}
-
 // COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
 export function readLegacySkillSelection(): Promise<AgentSkillSelection | null> {
   return invokeDesktopCommand("read_legacy_skill_selection") as Promise<AgentSkillSelection | null>;

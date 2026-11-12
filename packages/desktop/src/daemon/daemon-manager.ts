@@ -16,7 +16,6 @@ import {
 } from "../features/attachments.js";
 import type { AppUpdateCheckIntent, AppReleaseChannel } from "../features/auto-updater.js";
 import type * as AppUpdater from "../features/auto-updater.js";
-import type * as CliInstall from "../integrations/cli-install/install.js";
 import { getBundledCliShimPath } from "../integrations/cli-install/paths.js";
 import {
   openLocalTransportSession,
@@ -670,16 +669,6 @@ export function createDaemonCommandHandlers({
       );
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
-    // Keep installation off startup; ESM import bypasses the native electron resolver.
-    install_cli: async () => {
-      const { installCli } = require("../integrations/cli-install/install.js") as typeof CliInstall;
-      return installCli();
-    },
-    get_cli_install_status: async () => {
-      const { getCliInstallStatus } =
-        require("../integrations/cli-install/install.js") as typeof CliInstall;
-      return getCliInstallStatus();
-    },
     read_legacy_skill_selection: () => readLegacySkillSelection(),
     delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
   };

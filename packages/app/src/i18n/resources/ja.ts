@@ -1588,12 +1588,6 @@ export const ja: TranslationResources = {
         failed: "通知の送信に失敗しました。",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "CLIのインストール状態を確認できません。",
-        installFailed: "OMP Desktop CLIをインストールできません。",
-      },
-    },
   },
   rootError: {
     title: "OMP Desktop で問題が発生しました。",
@@ -2127,7 +2121,6 @@ export const ja: TranslationResources = {
       plugins: "プラグイン",
       editor: "エディター",
       shortcuts: "ショートカット",
-      integrations: "連携",
       notifications: "通知",
       permissions: "権限",
       diagnostics: "診断",
@@ -2481,24 +2474,6 @@ export const ja: TranslationResources = {
       helpNotes: {
         showKeyboardShortcuts:
           "テキストフィールドまたはターミナルにフォーカスがない場合に利用できます。",
-      },
-    },
-    integrations: {
-      title: "連携",
-      docs: {
-        cli: "CLIドキュメント",
-        openCli: "CLIドキュメントを開く",
-      },
-      commandLine: {
-        title: "コマンドライン",
-        description: "ターミナルからエージェントを制御し、スクリプトで操作",
-      },
-      actions: {
-        install: "インストール",
-        installing: "インストール中...",
-        installed: "インストール済み",
-        uninstall: "アンインストール",
-        uninstalling: "アンインストール中...",
       },
     },
     host: {

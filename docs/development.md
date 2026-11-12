@@ -334,7 +334,9 @@ Apple Silicon startup streams local frontend assets in bounded chunks up to 1 Mi
 
 Mermaid, WebSocket response validation, and terminal emulation load on first use instead of inflating the startup entry. Desktop daemon setup imports only its configuration/runtime helpers; updater and CLI-install graphs also stay off the first-window path. Login-shell environment inheritance and daemon readiness checks are unchanged.
 
-Lazy-loaded CommonJS desktop modules must use typed `require`, not runtime `import()`. mini-electron resolves the native `electron` module through its CommonJS loader; Node's ESM-to-CommonJS loader bypasses that resolver and can fail with `Cannot find module 'electron'`, including in transitive dependencies. CLI/OMP shortcut installation and updater operations stay deferred through `require`; the Node worker and CLI entrypoint loaders retain `import()` for their ESM entrypoints. Qualify these paths in the native runtime, since Vitest's mocked Electron module does not exercise native resolution.
+Packaged GUI startup installs the `omp-desktop` command-line launcher after the first window is created. Each startup repairs an outdated launcher without rewriting an unchanged one; installation failures appear in the main-process log. Development launches and CLI passthrough do not install it. Settings no longer include an Integrations page or manual CLI installation controls.
+
+Lazy-loaded CommonJS desktop modules must use typed `require`, not runtime `import()`. mini-electron resolves the native `electron` module through its CommonJS loader; Node's ESM-to-CommonJS loader bypasses that resolver and can fail with `Cannot find module 'electron'`, including in transitive dependencies. Default CLI installation and updater operations stay deferred through `require`; the Node worker and CLI entrypoint loaders retain `import()` for their ESM entrypoints. Qualify these paths in the native runtime, since Vitest's mocked Electron module does not exercise native resolution.
 
 On Windows, the renderer normally reports content readiness after app settings load. If that signal never arrives, a bounded main-process fallback presents the successfully loaded first document. Navigation, close, hide, minimize, or normal readiness cancels it; the fallback cannot reopen a window hidden to the tray. macOS remains gated on its native paint handoff.
 
@@ -343,6 +345,8 @@ On Windows, the renderer normally reports content readiness after app settings l
 Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster stop scheduling animation while their retained panel or application is inactive. The homepage route supplies its navigation focus to the retained-panel context, so opening Settings also stops the covered poster while the window stays focused. Retained poster resources are reused within the mounted component and released on unmount or when the existing home-effects switch is disabled. Loaders share one timer at the six visible step boundaries per 950 ms cycle, not a permanent display-rate worklet. Reduced-motion preferences remain respected.
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
+
+Metro resolves relative `.js` imports to TypeScript source throughout the repository workspace, including builtin plugin packages under `plugins/`; installed `node_modules` dependencies retain their own resolution.
 
 Draft text changes keep the 200 ms checkpoint interval without scheduling attachment
 GC. GC is scheduled when active image references change, including nested visual

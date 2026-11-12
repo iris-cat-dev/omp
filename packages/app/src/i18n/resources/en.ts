@@ -1749,12 +1749,6 @@ export const en = {
         failed: "Failed to send notification.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "Unable to check CLI install status.",
-        installFailed: "Unable to install the OMP Desktop CLI.",
-      },
-    },
   },
   rootError: {
     title: "OMP Desktop ran into a problem.",
@@ -2322,7 +2316,6 @@ export const en = {
       plugins: "Plugins",
       editor: "Editor",
       shortcuts: "Shortcuts",
-      integrations: "Integrations",
       notifications: "Notifications",
       permissions: "Permissions",
       diagnostics: "Diagnostics",
@@ -2727,24 +2720,6 @@ export const en = {
       },
       helpNotes: {
         showKeyboardShortcuts: "Available when focus is not in a text field or terminal.",
-      },
-    },
-    integrations: {
-      title: "Integrations",
-      docs: {
-        cli: "CLI docs",
-        openCli: "Open CLI documentation",
-      },
-      commandLine: {
-        title: "Command line",
-        description: "Control and script agents from your terminal",
-      },
-      actions: {
-        install: "Install",
-        installing: "Installing...",
-        installed: "Installed",
-        uninstall: "Uninstall",
-        uninstalling: "Uninstalling...",
       },
     },
     host: {

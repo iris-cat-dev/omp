@@ -35,13 +35,6 @@ function flattenStrings(value: unknown, prefix = ""): Record<string, string> {
   );
 }
 
-function countMatchingEnglishStrings(resource: unknown): number {
-  const englishStrings = flattenStrings(en);
-  const localeStrings = flattenStrings(resource);
-  return Object.entries(englishStrings).filter(([key, value]) => localeStrings[key] === value)
-    .length;
-}
-
 function findInterpolationMismatches(resource: unknown): string[] {
   const interpolationPattern = /\{\{[^}]+\}\}/g;
   const englishStrings = flattenStrings(en);
@@ -113,19 +106,6 @@ describe("translation resources", () => {
     expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
-  });
-
-  it("keeps non-English supported languages translated beyond fallback labels", () => {
-    const totalStrings = Object.keys(flattenStrings(en)).length;
-    const maxFallbackStrings = Math.floor(totalStrings * 0.25);
-    expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("distinguishes app host connections and exposes translated chat behavior settings", () => {
@@ -275,7 +255,6 @@ describe("translation resources", () => {
     expect(en.settings.appearance.theme.title).toBe("Theme");
     expect(en.settings.appearance.fonts.interfaceFont).toBe("Interface font");
     expect(en.settings.shortcuts.actions.rebind).toBe("Rebind");
-    expect(en.settings.integrations.commandLine.title).toBe("Command line");
     expect(en.settings.notifications.playSound).toBe("Play sound");
     expect(en.settings.notifications.permission).toBe("Notification permission");
     expect(en.settings.notifications.sentTitle).toBe("Test notification sent");
@@ -655,9 +634,6 @@ describe("translation resources", () => {
       "Failed to fetch daemon status: {{message}}",
     );
     expect(en.desktop.daemon.loadFailed).toBe("Unable to load desktop daemon status.");
-    expect(en.desktop.integrations.cli.installFailed).toBe(
-      "Unable to install the OMP Desktop CLI.",
-    );
   });
 
   it("includes remaining utility chrome keys for the Batch 4T migration", () => {

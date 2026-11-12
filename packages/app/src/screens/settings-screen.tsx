@@ -76,7 +76,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
 import { DesktopStartupSection } from "@/desktop/components/desktop-startup-section";
 import { DesktopBrowserSection } from "@/desktop/components/desktop-browser-section";
-import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { useDesktopUpdate } from "@/desktop/updates/desktop-update-provider";
@@ -144,12 +143,6 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "plugins", labelKey: "settings.sections.plugins", icon: Puzzle },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
-  {
-    id: "integrations",
-    labelKey: "settings.sections.integrations",
-    icon: Puzzle,
-    desktopOnly: true,
-  },
   {
     id: "notifications",
     labelKey: "settings.sections.notifications",
@@ -1210,8 +1203,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           return isWeb ? <EditorSection /> : null;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
-        case "integrations":
-          return isDesktopApp ? <IntegrationsSection /> : null;
         case "notifications":
           return isDesktopApp ? <DesktopNotificationsSection /> : null;
         case "diagnostics":

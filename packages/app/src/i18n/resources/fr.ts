@@ -1617,12 +1617,6 @@ export const fr: TranslationResources = {
         failed: "Échec de l'envoi de la notification.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "Impossible de vérifier l'état de l'installation deCLI.",
-        installFailed: "Impossible d'installer leOMP DesktopCLI.",
-      },
-    },
   },
   rootError: {
     title: "OMP Desktop a rencontré un problème.",
@@ -2158,7 +2152,6 @@ export const fr: TranslationResources = {
       plugins: "Plugins",
       editor: "Éditeur",
       shortcuts: "Raccourcis",
-      integrations: "Intégrations",
       notifications: "Notifications",
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
@@ -2518,24 +2511,6 @@ export const fr: TranslationResources = {
       helpNotes: {
         showKeyboardShortcuts:
           "Disponible lorsque le focus n’est pas dans un champ de texte ou un terminal.",
-      },
-    },
-    integrations: {
-      title: "Intégrations",
-      docs: {
-        cli: "DocumentsCLI",
-        openCli: "Ouvrir la documentationCLI",
-      },
-      commandLine: {
-        title: "Ligne de commande",
-        description: "Agents de contrôle et de script depuis votre terminal",
-      },
-      actions: {
-        install: "Installer",
-        installing: "Installation...",
-        installed: "Installé",
-        uninstall: "Désinstaller",
-        uninstalling: "Désinstallation...",
       },
     },
     host: {

@@ -1716,12 +1716,6 @@ export const zhCN: TranslationResources = {
         failed: "发送通知失败。",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "无法检查 CLI 安装状态。",
-        installFailed: "无法安装 OMP Desktop CLI。",
-      },
-    },
   },
   rootError: {
     title: "OMP Desktop 遇到了问题。",
@@ -2282,7 +2276,6 @@ export const zhCN: TranslationResources = {
       plugins: "插件",
       editor: "编辑器",
       shortcuts: "快捷键",
-      integrations: "集成",
       notifications: "通知",
       permissions: "权限",
       diagnostics: "诊断",
@@ -2628,24 +2621,6 @@ export const zhCN: TranslationResources = {
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
-      },
-    },
-    integrations: {
-      title: "集成",
-      docs: {
-        cli: "CLI 文档",
-        openCli: "打开 CLI 文档",
-      },
-      commandLine: {
-        title: "命令行",
-        description: "从终端控制 Agent 并运行脚本",
-      },
-      actions: {
-        install: "安装",
-        installing: "正在安装...",
-        installed: "已安装",
-        uninstall: "卸载",
-        uninstalling: "正在卸载...",
       },
     },
     host: {

@@ -1570,12 +1570,6 @@ export const ar: TranslationResources = {
         failed: "فشل في إرسال الإخطار.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "غير قادر على التحقق من حالة تثبيت CLI.",
-        installFailed: "غير قادر على تثبيت OMP DesktopCLI.",
-      },
-    },
   },
   rootError: {
     title: "واجه OMP Desktop مشكلة.",
@@ -2104,7 +2098,6 @@ export const ar: TranslationResources = {
       plugins: "الإضافات",
       editor: "المحرر",
       shortcuts: "الاختصارات",
-      integrations: "التكامل",
       notifications: "الإشعارات",
       permissions: "الأذونات",
       diagnostics: "التشخيص",
@@ -2455,24 +2448,6 @@ export const ar: TranslationResources = {
       },
       helpNotes: {
         showKeyboardShortcuts: "متاح عندما لا يكون التركيز في حقل نص أو محطة طرفية.",
-      },
-    },
-    integrations: {
-      title: "التكامل",
-      docs: {
-        cli: "مستندات CLI",
-        openCli: "افتح وثائق CLI",
-      },
-      commandLine: {
-        title: "سطر الأوامر",
-        description: "وكلاء التحكم والبرنامج النصي من المحطة الطرفية الخاصة بك",
-      },
-      actions: {
-        install: "ثَبَّتَ",
-        installing: "جارٍ التثبيت...",
-        installed: "تم التثبيت",
-        uninstall: "إلغاء التثبيت",
-        uninstalling: "جارٍ إلغاء التثبيت...",
       },
     },
     host: {

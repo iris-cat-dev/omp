@@ -477,7 +477,6 @@ export const SETTINGS_SECTION_SLUGS = [
   "plugins",
   "editor",
   "shortcuts",
-  "integrations",
   "notifications",
   "permissions",
   "diagnostics",

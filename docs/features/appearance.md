@@ -74,7 +74,7 @@ Trial settings remain in `%LOCALAPPDATA%\OMP-Desktop-Wallpaper-Trial`, with sepa
 
 Windows `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, and `LOCALAPPDATA` keep system values for native-picker Quick Access. Only `HOME` and explicit OMP/Electron/daemon directories are isolated. The launcher neither copies, resets, nor recreates Quick Access. Restart after launcher changes; prior wallpaper records/settings survive.
 
-`PASEO_DISABLE_APP_UPDATES=1` disables updates, including manual install and install-on-quit. This is a wallpaper-only trial, **not a Windows sandbox**. Do not enable launch-at-login or install CLI/system integrations: OS-level effects lie outside its isolation.
+`PASEO_DISABLE_APP_UPDATES=1` disables updates, including manual install and install-on-quit. This is a wallpaper-only trial, **not a Windows sandbox**. Packaged GUI startup automatically installs the CLI launcher in the system user profile's `.local/bin`, outside the trial data isolation. Do not enable launch-at-login; OS-level effects lie outside its isolation.
 
 ## Touch and hybrid input
 

@@ -456,6 +456,8 @@ Desktop x64 builds explicitly compile the baseline ISA and ship `pi_natives.<pla
 
 The application contains no standalone `omp`/`omp.exe` and never downloads one during a build. The bundled `omp-desktop` launcher remains: it runs Desktop's CLI and daemon with the application's embedded Node runtime, not the retired OMP executable.
 
+Launching the packaged GUI automatically installs `omp-desktop` in `~/.local/bin` (`omp-desktop.cmd` on Windows). It refreshes the launcher when the application moves or updates and leaves an unchanged launcher intact. On macOS/Linux, supported shell startup files add `~/.local/bin` to PATH when needed; open a new terminal to pick up that change. There is no installation option in Settings.
+
 The Node SDK runtime does not ship `@ts-morph/common` or transpile TypeScript/JSX. Executable extensions, custom tools/commands, and eval scripts must be JavaScript; plugin manifests must reference precompiled `.js`, `.mjs`, or `.cjs` entries. Desktop's internal extensions are compiled during the server build. Reading/editing TypeScript files and the standalone Bun CLI are unaffected.
 
 The old `download:omp`, `build:windows:no-omp`, executable-preservation installer hook, and CLI-bound private distribution are removed. Standard installer and updater asset names remain unchanged.

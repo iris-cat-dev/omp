@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
-import { getBundledCliShimPath } from "../integrations/cli-install";
+import { getBundledCliShimPath } from "../integrations/cli-install/paths";
 import { createDaemonCommandHandlers, stopDesktopDaemonViaCli } from "./daemon-manager";
 
 const mocks = vi.hoisted(() => ({
@@ -84,6 +84,11 @@ vi.mock("./runtime-paths.js", () => ({
 vi.mock("./cli/external.js", () => ({
   runExternalCliJsonCommand: mocks.runExternalCliJsonCommand,
   runExternalCliTextCommand: mocks.runExternalCliTextCommand,
+}));
+
+vi.mock("../plugins/local-runtime-electron.js", () => ({
+  createLocalPluginCommandHandlers: () => ({}),
+  requireLocalPluginCommandDocument: vi.fn(),
 }));
 
 function desktopSettingsWithManagement(enabled: boolean) {

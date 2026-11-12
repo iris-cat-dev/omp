@@ -6,6 +6,7 @@ log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 import type * as AppUpdater from "./features/auto-updater.js";
+import type * as CliInstall from "./integrations/cli-install/install.js";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -866,6 +867,14 @@ async function bootstrap(): Promise<void> {
   // second-instance launches that arrived during cold start.
   bootstrapIsComplete = true;
   resolveBootstrapComplete();
+
+  if (app.isPackaged) {
+    // Load after the first window, using mini-electron's native module resolver.
+    const { installCli } = require("./integrations/cli-install/install.js") as typeof CliInstall;
+    void installCli().catch((error) => {
+      log.error("[cli-install] Failed to install the default command-line launcher", error);
+    });
+  }
 
   if (pendingAgentNavigation) {
     const target = pendingAgentNavigation;

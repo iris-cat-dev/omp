@@ -1618,12 +1618,6 @@ export const es: TranslationResources = {
         failed: "No se pudo enviar la notificación.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "No se puede verificar el estado de instalación deCLI.",
-        installFailed: "No se puede instalar elOMP DesktopCLI.",
-      },
-    },
   },
   rootError: {
     title: "OMP Desktop tuvo un problema.",
@@ -2157,7 +2151,6 @@ export const es: TranslationResources = {
       plugins: "Plugins",
       editor: "Editor",
       shortcuts: "Atajos",
-      integrations: "Integraciones",
       notifications: "Notificaciones",
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
@@ -2514,24 +2507,6 @@ export const es: TranslationResources = {
       },
       helpNotes: {
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",
-      },
-    },
-    integrations: {
-      title: "Integraciones",
-      docs: {
-        cli: "DocumentosCLI",
-        openCli: "Abrir la documentación deCLI",
-      },
-      commandLine: {
-        title: "línea de comando",
-        description: "Agentes de control y script desde tu terminal",
-      },
-      actions: {
-        install: "Instalar",
-        installing: "Instalando...",
-        installed: "Instalado",
-        uninstall: "Desinstalar",
-        uninstalling: "Desinstalando...",
       },
     },
     host: {

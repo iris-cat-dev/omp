@@ -1609,12 +1609,6 @@ export const ru: TranslationResources = {
         failed: "Не удалось отправить уведомление.",
       },
     },
-    integrations: {
-      cli: {
-        statusFailed: "Не удалось проверить состояние установки CLI.",
-        installFailed: "Не удалось установить OMP Desktop CLI.",
-      },
-    },
   },
   rootError: {
     title: "В OMP Desktop возникла проблема.",
@@ -2152,7 +2146,6 @@ export const ru: TranslationResources = {
       plugins: "Плагины",
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
-      integrations: "Интеграции",
       notifications: "Уведомления",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
@@ -2510,24 +2503,6 @@ export const ru: TranslationResources = {
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",
-      },
-    },
-    integrations: {
-      title: "Интеграции",
-      docs: {
-        cli: "Документация CLI",
-        openCli: "Открыть документацию CLI",
-      },
-      commandLine: {
-        title: "Командная строка",
-        description: "Управляйте агентами и автоматизируйте их работу из терминала",
-      },
-      actions: {
-        install: "Установить",
-        installing: "Установка...",
-        installed: "Установлено",
-        uninstall: "Удалить",
-        uninstalling: "Удаление...",
       },
     },
     host: {
