@@ -5,8 +5,8 @@ export type PluginProcessRequest =
   | { type: "host_result"; requestId: string; output?: unknown; error?: string }
   | { type:"host_event";event:string;payload:unknown }
   | { type: "shutdown" }
-  | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
-  | { type: "paseo_close" };
+  | { type: "omp_frame"; data: string | Uint8Array; isBinary: boolean }
+  | { type: "omp_close" };
 
 export type PluginProcessMessage =
   | { type: "ready"; methods: string[] }
@@ -15,5 +15,5 @@ export type PluginProcessMessage =
   | { type: "fatal"; error: string }
   | { type: "host_call"; requestId: string; operation: string; input: unknown }
   | { type: "waiting"; reason: string | null }
-  | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
-  | { type: "paseo_close" };
+  | { type: "omp_frame"; data: string | Uint8Array; isBinary: boolean }
+  | { type: "omp_close" };

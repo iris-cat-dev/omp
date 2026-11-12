@@ -27,7 +27,7 @@ export function getDesktopSettingsStore(): DesktopSettingsStore {
     desktopSettingsStore.subscribeWallpaperLibrary((library) => {
       for (const window of getMainWindows()) {
         try {
-          window.webContents.send("paseo:event:paseo:wallpaper:libraryChanged", library);
+          window.webContents.send("paseo:event:omp:wallpaper:libraryChanged", library);
         } catch {
           // A closed or failed renderer cannot turn a committed write into failure.
         }

@@ -16,9 +16,9 @@ export PASEO_DEV_ROOT="$DEV_ROOT"
 export PASEO_DEV_RUNTIME_FALLBACK_ROOT="$DEV_ROOT"
 DEV_RUNTIME="$(node "$SCRIPT_DIR/dev-runtime.mjs")"
 export PASEO_ELECTRON_FLAGS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).electronFlags)' "$DEV_RUNTIME")"
-export PASEO_ELECTRON_USER_DATA_DIR="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).userDataDir)' "$DEV_RUNTIME")"
+export OMP_ELECTRON_USER_DATA_DIR="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).userDataDir)' "$DEV_RUNTIME")"
 unset PASEO_DEV_RUNTIME_FALLBACK_ROOT
-mkdir -p "$PASEO_ELECTRON_USER_DATA_DIR"
+mkdir -p "$OMP_ELECTRON_USER_DATA_DIR"
 
 if [ -z "${EXPO_PORT:-}" ]; then
   EXPO_PORT=$(NO_COLOR=1 FORCE_COLOR=0 "$ROOT_DIR/node_modules/.bin/get-port" 8082 8083 8084 8085 8086 8087 8088 8089)
@@ -39,7 +39,7 @@ echo "════════════════════════�
 echo "  Metro:      ${EXPO_DEV_URL}"
 echo "  Daemon:     ${PASEO_LISTEN}"
 echo "  Home:       ${PASEO_HOME}"
-echo "  userData:   ${PASEO_ELECTRON_USER_DATA_DIR}"
+echo "  userData:   ${OMP_ELECTRON_USER_DATA_DIR}"
 echo "══════════════════════════════════════════════════════"
 
 exec node "$SCRIPT_DIR/dev-runner.mjs"

@@ -1669,7 +1669,7 @@ export async function createPaseoDaemon(
               localModelBridge,
               visualFeedbackService,
             );
-            pluginService.bindPaseoSessionHost(wsServer);
+            pluginService.bindOmpSessionHost(wsServer);
             void Promise.resolve().then(()=>pluginService.registerBundledDirectories(config.bundledPluginDirectories??[path.dirname(createRequire(import.meta.url).resolve("@omp-desktop/plugin-qqbot/package.json"))])).then(()=>pluginService.start()).catch(error => {logger.error({err:error}, "Bundled plugin registration failed");return pluginService.start();});
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({

@@ -75,7 +75,7 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 
 采用带修订号的字段补丁、串行持久化，并在提交成功后发布变更。不能用过期渲染进程缓存覆盖整份设置。禁用和普通移除保留插件配置与用户资源；**清除此插件数据**是独立、明确的操作。移除目录插件只删除安装引用，不删除用户源码目录。停用内置插件不删除随应用分发的文件，恢复内置功能也不要求重装 Desktop。OMP 原生插件移除遵循其包管理器的既有语义。
 
-## 插件包接入：保留历史契约，为新能力定义版本
+## 源码插件接入：统一 OMP 命名，保留注册生命周期
 
 明确的历史基线是 [Paseo 0.5.2 本地插件](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/docs/plugins.md)，包括：
 
@@ -85,9 +85,11 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 - 宿主注入的 `@getpaseo/plugin`、`@getpaseo/plugin/server`，以及共享的 React／RN／Query／Zod 依赖，避免产生多份运行时实例。
 - `handle`、`addSurface`、`addSidebarItem`、`addWorkspacePanel`、`addCommandCenterItem`、`addAttachmentSource`、`addTheme`。
 
-恢复旧源码接入适配器，让它进入同一套服务注册表、客户端注册表和生命周期引擎。不能给旧 API 门面添加没有依据的 `activate/deactivate`，也不能要求旧业务代码改成 OMP factory。旧注册方法可以返回 `void`；对应扩展函数的 cleanup 和宿主清理集合仍负责释放所有注册项。
+当前源码插件统一使用 `omp-plugin.json` 与 `@omp-desktop/plugin`／`@omp-desktop/plugin/server`。宿主 API 字段为 `context.omp`，React hook 为 `useOmp()`；客户端类型与工厂统一为 `OmpApi`、`OmpAgent`、`createOmpApi()`、`createOmpClient()`。旧清单文件名、包名和字段别名不再提供，外部源码插件须同步改名。
 
-旧 manifest 保持严格格式。新元数据放在带版本的 `package.json.ompDesktop` 描述中，不向 `{ id }` 塞额外字段。新公开契约的初始版本为 `apiVersion: 1`，与没有 API 版本字段的历史源码格式区分。
+源码接入仍进入同一套服务注册表、客户端注册表和生命周期引擎。保留默认扩展注册函数与 cleanup，不添加没有依据的 `activate/deactivate`，也不要求业务代码改成 OMP factory。注册方法可以返回 `void`；对应扩展函数的 cleanup 和宿主清理集合仍负责释放所有注册项。
+
+`omp-plugin.json` 保持严格的 `{ id }` 格式。新元数据放在带版本的 `package.json.ompDesktop` 描述中，不向 `{ id }` 塞额外字段。新公开契约的初始版本为 `apiVersion: 1`，与没有 API 版本字段的源码格式区分。
 
 拟定的编译后 QQ 插件包描述示例：
 

@@ -1,7 +1,7 @@
-import type { PaseoAgentHandle, PaseoClient } from "@omp-desktop/client";
+import type { OmpAgentHandle, OmpClient } from "@omp-desktop/client";
 
-export async function reviewInParallel(client: PaseoClient, cwd: string): Promise<string[]> {
-  const agents: PaseoAgentHandle[] = [];
+export async function reviewInParallel(client: OmpClient, cwd: string): Promise<string[]> {
+  const agents: OmpAgentHandle[] = [];
 
   try {
     agents.push(

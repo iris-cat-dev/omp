@@ -4,8 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "paths": {
-      "@getpaseo/plugin": ["./src/index.ts"],
-      "@getpaseo/plugin/server": ["./src/server.ts"]
+      "@omp-desktop/plugin": ["./src/index.ts"],
+      "@omp-desktop/plugin/server": ["./src/server.ts"]
     },
     "lib": ["ES2023", "DOM"],
     "jsx": "react-jsx",

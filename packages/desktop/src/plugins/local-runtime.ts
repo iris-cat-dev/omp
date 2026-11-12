@@ -130,7 +130,7 @@ export class LocalPluginRuntime {
     const unsupported = () => { throw new Error("This contribution is unavailable in the local Desktop service role."); };
     const context: PluginServiceContext = {
       installation: instance.record, signal: instance.scope.signal, mode: "active", role: "service", own: instance.scope.own,
-      get paseo(): PluginServiceContext["paseo"] { throw new Error("This local plugin does not have a selected daemon session."); },
+      get omp(): PluginServiceContext["omp"] { throw new Error("This local plugin does not have a selected daemon session."); },
       storage: {
         get: async <T>() => { instance.scope.assertCurrent(); const record = this.document.installations.find(({ id }) => id === instance.record.id)!; return { revision: record.revision, values: structuredClone(record.config) as T }; },
         patch: async <T>(patch: Partial<T>, expectedRevision: number): Promise<PluginStorageSnapshot<T>> => { instance.scope.assertCurrent(); const document = await this.store.patchPlugin({ installationId: instance.record.id, expectedRevision, patch: { config: patch as Record<string, unknown> } }, () => { instance.scope.assertCurrent(); this.assertAuthorized(instance.record.id, instance.scope.generation, "manage"); }); const record = document.installations.find(({ id }) => id === instance.record.id)!; return { revision: record.revision, values: structuredClone(record.config) as T }; },
@@ -144,7 +144,7 @@ export class LocalPluginRuntime {
       native: this.native(instance.record, instance.scope),
       handle: (contract, handler) => {
         if (instance.handlers.has(contract.name)) throw new Error(`Duplicate plugin RPC ${contract.name}.`);
-        instance.handlers.set(contract.name, async (raw) => { instance.scope.assertCurrent(); const input = await contract.input.parseAsync(raw); const result = await handler(input, { get paseo() { return context.paseo; } }); instance.scope.assertCurrent(); return contract.output.parseAsync(result); });
+        instance.handlers.set(contract.name, async (raw) => { instance.scope.assertCurrent(); const input = await contract.input.parseAsync(raw); const result = await handler(input, { get omp() { return context.omp; } }); instance.scope.assertCurrent(); return contract.output.parseAsync(result); });
       },
       waiting: (reason) => this.waiting(instance.record.id, instance.scope.generation, reason),
       addAgentTool: unsupported, addAgentPrompt: unsupported, addSurface: unsupported, addSidebarItem: unsupported, addWorkspacePanel: unsupported, addCommandCenterItem: unsupported, addAttachmentSource: unsupported, addTheme: unsupported,

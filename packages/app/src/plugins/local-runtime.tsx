@@ -1,6 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { createActivationScope, createPluginPaseoApi, type PluginActivationScope } from "@omp-desktop/plugin/host";
-import { createPaseoApi } from "@omp-desktop/client";
+import { createActivationScope, createPluginOmpApi, type PluginActivationScope } from "@omp-desktop/plugin/host";
+import { createOmpApi } from "@omp-desktop/client";
 import type { PluginClientSetup } from "@omp-desktop/plugin";
 import { LocalPluginSnapshotSchema, type LocalPluginSnapshot } from "@omp-desktop/protocol/desktop-local-plugins";
 import setupPet from "@omp-desktop/plugin-desktop-pet";
@@ -51,7 +51,7 @@ function rendererServices(profile: RendererPluginProfile, record: LocalPluginSna
     if (current.generation !== record.generation || !current.installed || !current.trusted) throw new Error("Plugin client activation is no longer authorized.");
   };
   return {
-    getPaseo: () => unsupported("daemon API access"),
+    getOmp: () => unsupported("daemon API access"),
     storage: {
       async get<T>() {
         const current = (await profile.getSnapshot()).installations.find(({ id }) => id === record.id);
@@ -144,10 +144,10 @@ export function LocalPluginCatalogBridge() {
           const instance = await setupPluginClient({
             hostId: "desktop", installation: record, format: record.format === "legacy" ? "legacy" : "package", mode, scope, setup, changed: () => pluginClientRegistry.changed(key),
             services: renderer ? rendererServices(renderer, record, scope) : {
-              getPaseo() {
+              getOmp() {
                 const client = hostId.current ? getHostRuntimeStore().getSnapshot(hostId.current)?.client : null;
                 if (!client) throw new Error("This local plugin has no connected local daemon");
-                return createPluginPaseoApi(createPaseoApi(client), record, scope, { mode, legacy: record.format === "legacy" });
+                return createPluginOmpApi(createOmpApi(client), record, scope, { mode, legacy: record.format === "legacy" });
               },
               storage: {
                 get: async <T,>() => await invoke("storage.get") as { revision: number; values: T },
@@ -164,7 +164,7 @@ export function LocalPluginCatalogBridge() {
                   let cancelled = false;
                   let off: (() => void) | undefined;
                   const nativeEvent = event === "plugins:changed" || event === "wallpaper:selectionChanged" ? "desktop-plugins-changed"
-                    : event === "wallpaper:libraryChanged" ? "paseo:wallpaper:libraryChanged"
+                    : event === "wallpaper:libraryChanged" ? "omp:wallpaper:libraryChanged"
                     : event === "wallpaper:migrationChanged" ? "desktop-plugin-wallpaper-migration-changed" : event;
                   void listenToDesktopEvent(nativeEvent, (payload) => {
                     if (cancelled || scope.signal.aborted) return;

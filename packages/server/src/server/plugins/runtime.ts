@@ -54,7 +54,7 @@ interface LoadedPlugin {
 
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
-  sessionHost?: PluginPaseoSessionHost;
+  sessionHost?: PluginOmpSessionHost;
   hostCall?: (pluginId: string, operation: string, input: unknown) => unknown | Promise<unknown>;
 }
 
@@ -65,7 +65,7 @@ interface PluginLogTail {
 }
 
 
-export interface PluginPaseoSessionHost {
+export interface PluginOmpSessionHost {
   attachPluginSocket(
     pluginId: string,
     socket: PluginSessionSocket,
@@ -131,7 +131,7 @@ export class PluginRuntime {
   private readonly logger: pino.Logger;
   private readonly logRedactors = new Map<string, PluginLogRedactor>();
   private readonly spawnChild: () => PluginChild;
-  private sessionHost: PluginPaseoSessionHost | null;
+  private sessionHost: PluginOmpSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
   private readonly generations = new Map<string,number>();
   private readonly waitingReasons = new Map<string,string>();
@@ -144,7 +144,7 @@ export class PluginRuntime {
     this.hostCall = dependencies.hostCall ?? (() => {throw new Error("Plugin host capabilities are unavailable");});
   }
 
-  bindPaseoSessionHost(sessionHost: PluginPaseoSessionHost): void {
+  bindOmpSessionHost(sessionHost: PluginOmpSessionHost): void {
     if (this.plugins.size > 0)
       throw new Error("Cannot replace the plugin session host while running");
     this.sessionHost = sessionHost;
@@ -186,12 +186,12 @@ export class PluginRuntime {
     this.starting.set(pluginId, starting);
     const publish = () => !cancelled && canPublish();
     try {
-      this.appendLog(pluginId, "stdout", "[paseo] Loading plugin");
+      this.appendLog(pluginId, "stdout", "[omp] Loading plugin");
       const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath, packageInfo, grantedCapabilities, publish, mode, preparedBundles, cancel => {
         interrupt = cancel;
         if (cancelled) cancel();
       }).catch((error) => {
-        this.appendLog(pluginId, "stderr", `[paseo] Plugin failed to load: ${describeError(error)}`);
+        this.appendLog(pluginId, "stderr", `[omp] Plugin failed to load: ${describeError(error)}`);
         throw error;
       });
       if (!publish()) {
@@ -199,7 +199,7 @@ export class PluginRuntime {
         throw new Error(`Plugin start cancelled: ${pluginId}`);
       }
       this.plugins.set(pluginId, loaded);
-      this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
+      this.appendLog(pluginId, "stdout", "[omp] Plugin ready");
     } finally {
       this.starting.delete(pluginId);
       completion.resolve();
@@ -292,7 +292,7 @@ export class PluginRuntime {
     const bundles=preparedBundles??(packageInfo.format==="legacy"?await compilePlugin(packageInfo.serviceEntry!):await compilePackageEntries(packageInfo));
     if(!canPublish())throw new Error(`Plugin start cancelled: ${pluginId}`);
     const sessionHost = this.sessionHost;
-    if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
+    if (!sessionHost) throw new Error("Plugin Omp session host is not attached");
     const child = this.spawnChild();
     const outputCapture = new PluginOutputCapture(child, (stream, message, truncated) => {
       this.appendLog(pluginId, stream, message, truncated);
@@ -338,9 +338,9 @@ export class PluginRuntime {
             return;
           }
           if(message.type==="waiting") {if(message.reason)this.waitingReasons.set(pluginId,this.logRedactor(pluginId).redact(message.reason));else this.waitingReasons.delete(pluginId);this.notify(pluginId);return;}
-          if (message.type === "paseo_frame") {
+          if (message.type === "omp_frame") {
             sessionSocket.receive(message.data, message.isBinary);
-          } else if (message.type === "paseo_close") {
+          } else if (message.type === "omp_close") {
             sessionSocket.peerClosed();
           } else if (message.type === "ready") {
             if (settled) return;
@@ -419,10 +419,10 @@ export class PluginRuntime {
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
-    this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
+    this.appendLog(loaded.id, "stdout", "[omp] Stopping plugin");
     await this.stopChild(loaded.child, loaded.sessionSocket);
     await loaded.sessionClosed;
-    this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
+    this.appendLog(loaded.id, "stdout", "[omp] Plugin stopped");
   }
 
   private async stopChild(child: PluginChild, socket: PluginSessionSocket): Promise<void> {

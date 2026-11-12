@@ -4,7 +4,7 @@ import { PluginIdSchema, type PluginLogEntry, type PluginListItem, type PluginSo
 import type { DesktopPluginCatalogEntry, DesktopPluginApprovalSchema, DesktopPluginExpectedInstallation } from "@omp-desktop/protocol/desktop-plugins";
 import type { z } from "zod";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
-import { PluginRuntime, type PluginPaseoSessionHost } from "./runtime.js";
+import { PluginRuntime, type PluginOmpSessionHost } from "./runtime.js";
 import { inspectPluginPackage, compilePlugin, compilePackageEntries, type InspectedPluginPackage, type CompiledPluginBundles } from "@omp-desktop/plugin/compiler";
 import { PluginDataStore } from "./storage.js";
 import type { PaseoToolDefinition } from "../agent/tools/types.js";
@@ -19,7 +19,7 @@ export interface PluginRuntimePort {
  startPlugin(id:string,directory:string,canPublish:()=>boolean,info?:InspectedPluginPackage,grants?:readonly string[],mode?:"manage"|"active",bundles?:CompiledPluginBundles):Promise<void>;
  stopPluginById(id:string):Promise<boolean>;stopAll():Promise<void>;
  subscribe(listener:(id:string,error?:string)=>void):()=>void;
- bindPaseoSessionHost(host:PluginPaseoSessionHost):void;
+ bindOmpSessionHost(host:PluginOmpSessionHost):void;
  bindHostCall?(handler:(id:string,operation:string,input:unknown)=>unknown|Promise<unknown>):void;
  generation?(id:string):number; waitingReason?(id:string):string|undefined;
  invalidateGeneration?(id:string):void;
@@ -52,7 +52,7 @@ export class PluginService {
   runtime.bindHostCall?.((id,operation,input)=>this.hostOperation(id,operation,input));
   runtime.subscribe((id,error)=>{if(error){this.revoke(id);this.errors.set(id,error);}this.notify(id);});
  }
- bindPaseoSessionHost(host:PluginPaseoSessionHost){this.runtime.bindPaseoSessionHost(host);}
+ bindOmpSessionHost(host:PluginOmpSessionHost){this.runtime.bindOmpSessionHost(host);}
  subscribe(listener:(id:string)=>void){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  getRevision(){return this.revision;}
  getGeneration(id:string){return this.runtime.generation?.(id)??this.epochs.get(id)??0;}

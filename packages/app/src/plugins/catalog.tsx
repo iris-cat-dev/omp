@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { createActivationScope, createPluginPaseoApi, type PluginActivationScope } from "@omp-desktop/plugin/host";
-import { createPaseoApi } from "@omp-desktop/client";
+import { createActivationScope, createPluginOmpApi, type PluginActivationScope } from "@omp-desktop/plugin/host";
+import { createOmpApi } from "@omp-desktop/client";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import type { DesktopPluginCatalogEntry } from "@omp-desktop/protocol/desktop-plugins";
 import { useHostRuntimeSnapshot } from "@/runtime/host-runtime";
@@ -39,7 +39,7 @@ export async function reloadDaemonPluginCatalog(hostId: string) {
 
 function pluginServices(client: DaemonClient, entry: DesktopPluginCatalogEntry, scope: PluginActivationScope, mode: "manage" | "active") {
   return {
-    getPaseo: () => createPluginPaseoApi(createPaseoApi(client), entry, scope, { mode, legacy: entry.format === "legacy" }),
+    getOmp: () => createPluginOmpApi(createOmpApi(client), entry, scope, { mode, legacy: entry.format === "legacy" }),
     storage: {
       get: async <T,>() => { const snapshot = await client.getPluginStorage(entry.id, entry.generation); return { revision: snapshot.revision, values: snapshot.values as T }; },
       patch: async <T,>(fields: Partial<T>, revision: number) => { const snapshot = await client.patchPluginStorage(entry.id, fields as Record<string, unknown>, revision, entry.generation); return { revision: snapshot.revision, values: snapshot.values as T }; },

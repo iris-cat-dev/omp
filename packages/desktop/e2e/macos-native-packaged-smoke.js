@@ -52,7 +52,7 @@ async function smokeMacOSPackagedApp({
     XDG_CONFIG_HOME: path.join(profile, ".config"), XDG_CACHE_HOME: path.join(profile, ".cache"),
     OMP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent, OMP_CONFIG_FILES: emptyConfig, PI_CONFIG_FILES: emptyConfig,
     OMP_DESKTOP_HOME: daemonHome, PASEO_HOME: daemonHome, PASEO_LISTEN: listen, PASEO_HOST: listen,
-    PASEO_ELECTRON_USER_DATA_DIR: userData, PASEO_DISABLE_APP_UPDATES: "1", PASEO_WEB_UI_ENABLED: "false",
+    OMP_ELECTRON_USER_DATA_DIR: userData, PASEO_DISABLE_APP_UPDATES: "1", PASEO_WEB_UI_ENABLED: "false",
     NODE_OPTIONS: `--require=${JSON.stringify(path.join(__dirname, "macos-native-smoke-preload.cjs"))}`,
     OMP_DESKTOP_NATIVE_SMOKE_CONFIG: configFile, NO_COLOR: "1",
   };

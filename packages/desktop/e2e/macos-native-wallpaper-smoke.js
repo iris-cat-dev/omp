@@ -380,7 +380,7 @@ async function runNative() {
         return createWindow(suffix, pathname);
       }
       record("state", "actual native document owner", { windowId: window.id, owner: registry.getOwner(window.webContents)?.nativeIdentity, committed: getCommittedWallpaperDocumentIdentity(window.webContents), version: getMainWindowDocumentVersion(window) });
-      await evaluate(window, `(async()=>{window.__wallpaperNativeEvents=[];for(const name of ['desktop-plugins-changed','paseo:wallpaper:libraryChanged'])await window.paseoDesktop.events.on(name,event=>{const payload=event&&typeof event==='object'&&'payload'in event?event.payload:event;window.__wallpaperNativeEvents.push({name,time:performance.now(),revision:payload?.revision,wallpaper:payload?.installations?.find(item=>item.id==='wallpaper'),candidates:payload?.items?.map(item=>item.candidateId)});});return true;})()`);
+      await evaluate(window, `(async()=>{window.__wallpaperNativeEvents=[];for(const name of ['desktop-plugins-changed','omp:wallpaper:libraryChanged'])await window.paseoDesktop.events.on(name,event=>{const payload=event&&typeof event==='object'&&'payload'in event?event.payload:event;window.__wallpaperNativeEvents.push({name,time:performance.now(),revision:payload?.revision,wallpaper:payload?.installations?.find(item=>item.id==='wallpaper'),candidates:payload?.items?.map(item=>item.candidateId)});});return true;})()`);
       const debug = window.webContents.debugger;
       if (debug && typeof debug.attach === "function" && typeof debug.sendCommand === "function" && typeof debug.on === "function") {
         try {

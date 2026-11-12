@@ -31,15 +31,15 @@ describe("plugin scaffold", () => {
         ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
       ),
     ).toEqual([]);
-    expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
+    expect(JSON.parse(await readFile(path.join(directory, "omp-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
   }, 20_000);
 
-  it("typechecks client and server Paseo API access", async () => {
+  it("typechecks client and server Omp API access", async () => {
     const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
     directories.push(parent);
-    const directory = path.join(parent, "paseo-api-plugin");
+    const directory = path.join(parent, "omp-api-plugin");
     await scaffoldPluginDirectory(directory);
     await Promise.all([
       writeFile(
@@ -62,9 +62,9 @@ import { inspect } from "./inspect.shared";
 
 export async function inspectConfig(
   _input: ZodOutput<typeof inspect.input>,
-  { paseo }: PluginHandlerContext,
+  { omp }: PluginHandlerContext,
 ) {
-  return { configured: Boolean((await paseo.config.get()).config) };
+  return { configured: Boolean((await omp.config.get()).config) };
 }
 `,
       ),
@@ -75,17 +75,17 @@ import { Text } from "react-native";
 import {
   type PluginAgentPanelProps,
   useAgent,
-  usePaseo,
+  useOmp,
   useWorkspace,
 } from "@omp-desktop/plugin";
 
 export function Surface() {
-  const paseo = usePaseo();
-  const createWorkspace = () => paseo.workspaces.create({
+  const omp = useOmp();
+  const createWorkspace = () => omp.workspaces.create({
     source: { kind: "directory", path: "/repo" },
   });
   void createWorkspace;
-  return <Text>Paseo API</Text>;
+  return <Text>OMP API</Text>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
@@ -125,8 +125,8 @@ export default function contribute(plugin: PluginContext) {
     title: "Open review",
     icon: "Scan",
     context: "agent",
-    async onSelect({ paseo, rpc, workspace, openPanel }) {
-      await paseo.workspaces.ref(workspace.id).setTitle("Review");
+    async onSelect({ omp, rpc, workspace, openPanel }) {
+      await omp.workspaces.ref(workspace.id).setTitle("Review");
       await rpc(inspect, {});
       openPanel("review");
     },
@@ -152,7 +152,7 @@ export default function contribute(plugin: PluginContext) {
   }, 20_000);
 
   it("refuses to write into a non-empty directory", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "omp-plugin-scaffold-"));
     directories.push(directory);
     await writeFile(path.join(directory, "notes.txt"), "keep me");
 

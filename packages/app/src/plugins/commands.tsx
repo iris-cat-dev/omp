@@ -14,7 +14,7 @@ import type { PluginClientInstance } from "./registry";
 import { createPluginClientStateSource } from "./client-state";
 import { buildPluginSurfaceRoute } from "./routes";
 import { resolvePluginIcon } from "./icons";
-import { getPluginPaseo } from "./paseo";
+import { getPluginOmp } from "./omp";
 
 export interface PluginActionContext { hostId?: string; workspaceId?: string; agentId?: string }
 
@@ -42,17 +42,17 @@ export async function runPluginCommand(instance: PluginClientInstance, item: Plu
     rpc: instance.context.rpc,
     openSurface: (id: string) => openPluginSurface(instance, id),
   };
-  if (item.context === "global") await item.onSelect({ ...capabilities, context: "global", get paseo() { return getPluginPaseo(instance, instance.installation.owner === "desktop" ? context.hostId || undefined : undefined); } });
+  if (item.context === "global") await item.onSelect({ ...capabilities, context: "global", get omp() { return getPluginOmp(instance, instance.installation.owner === "desktop" ? context.hostId || undefined : undefined); } });
   else {
     const source = createPluginClientStateSource(context.hostId ?? null);
     const workspace = context.workspaceId ? source.getWorkspace(context.workspaceId) : null;
     if (!workspace) throw new Error("Plugin command workspace is unavailable");
     const openPanel = (id: string) => openPluginPanel(instance, context, id);
-    if (item.context === "workspace") await item.onSelect({ ...capabilities, context: "workspace", workspace, openPanel, get paseo() { return getPluginPaseo(instance, context.hostId); } });
+    if (item.context === "workspace") await item.onSelect({ ...capabilities, context: "workspace", workspace, openPanel, get omp() { return getPluginOmp(instance, context.hostId); } });
     else {
       const agent = context.agentId ? source.getAgent(context.agentId) : null;
       if (!agent || agent.workspaceId !== workspace.id) throw new Error("Plugin command agent context is unavailable");
-      await item.onSelect({ ...capabilities, context: "agent", workspace, agent, openPanel, get paseo() { return getPluginPaseo(instance, context.hostId); } });
+      await item.onSelect({ ...capabilities, context: "agent", workspace, agent, openPanel, get omp() { return getPluginOmp(instance, context.hostId); } });
     }
   }
   instance.scope.assertCurrent();
@@ -64,7 +64,7 @@ export async function runPluginMenuItem(instance: PluginClientInstance, item: Pl
     hostId: context.hostId ?? instance.hostId, workspaceId: context.workspaceId, agentId: context.agentId,
     rpc: instance.context.rpc, openPanel: (id: string) => openPluginPanel(instance, context, id),
     openSurface: (id: string) => openPluginSurface(instance, id),
-    get paseo() { return getPluginPaseo(instance, context.hostId); },
+    get omp() { return getPluginOmp(instance, context.hostId); },
   });
   instance.scope.assertCurrent();
 }

@@ -244,7 +244,7 @@ function filterEntrypoint(source: string, target: PluginBuildTarget): string {
 
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget): Plugin {
   return {
-    name: `paseo-plugin-${target}-runtime-boundary`,
+    name: `omp-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
       buildContext.onResolve({ filter: /\.(?:client|server)(?:\.[cm]?[jt]sx?)?$/ }, (args) => {
         const importedTarget = moduleTarget(args.path);
@@ -283,14 +283,14 @@ function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
       ? /^(@tanstack\/react-query|react(?:\/jsx(?:-dev)?-runtime)?|react-native(?:-unistyles)?|react-i18next|lucide-react-native)$/
       : /^node:/;
   return {
-    name: `paseo-plugin-${target}-unused-platform-modules`,
+    name: `omp-plugin-${target}-unused-platform-modules`,
     setup(buildContext) {
       buildContext.onResolve({ filter }, (args) => ({
         path: args.path,
-        namespace: "paseo-unused-platform-module",
+        namespace: "omp-unused-platform-module",
         sideEffects: false,
       }));
-      buildContext.onLoad({ filter: /.*/, namespace: "paseo-unused-platform-module" }, () => ({
+      buildContext.onLoad({ filter: /.*/, namespace: "omp-unused-platform-module" }, () => ({
         contents: "module.exports = {};",
         loader: "js",
       }));
@@ -326,10 +326,9 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
         ? [
             ...PLUGIN_SDK_SPECIFIERS,
             ...PLUGIN_SHARED_CLIENT_SPECIFIERS,
-            "@getpaseo/client",
             "@omp-desktop/client",
           ]
-        : [...PLUGIN_SDK_SPECIFIERS, "@getpaseo/client", "@omp-desktop/client", "zod"],
+        : [...PLUGIN_SDK_SPECIFIERS, "@omp-desktop/client", "zod"],
     plugins: [createHostImportBoundaryPlugin(),createRuntimeBoundaryPlugin(target), createUnusedPlatformModulePlugin(target)],
     logLevel: "silent",
     treeShaking: true,

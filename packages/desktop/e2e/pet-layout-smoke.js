@@ -335,7 +335,7 @@ async function runNativeSmoke() {
       [points.art, true],
       [points.blank, false],
     ]) {
-      pet.webContents.send("paseo:overlay:pointer", point);
+      pet.webContents.send("omp:overlay:pointer", point);
       await until(
         async () => (await evaluateRenderer(pet.webContents, "interactive")) === expected,
       );

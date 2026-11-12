@@ -156,7 +156,7 @@ func run() throws {
     process.executableURL = bundle.appendingPathComponent("Contents/MacOS/OMP Desktop")
     process.environment = ProcessInfo.processInfo.environment.merging([
         "PASEO_HOME": home.path, "PASEO_LISTEN": listen,
-        "PASEO_ELECTRON_USER_DATA_DIR": userData.path
+        "OMP_ELECTRON_USER_DATA_DIR": userData.path
     ]) { _, value in value }
     process.environment?.removeValue(forKey: "ELECTRON_RUN_AS_NODE")
     process.environment?.removeValue(forKey: "DYLD_INSERT_LIBRARIES")

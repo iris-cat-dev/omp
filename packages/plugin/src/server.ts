@@ -16,6 +16,6 @@ export function defineAttachmentSource<Definition extends PluginAttachmentSource
 }
 export type * from "./runtime-contracts.js";
 export { createActivationScope, type PluginActivationScope } from "./activation.js";
-export { createPluginPaseoApi } from "./paseo-api.js";
+export { createPluginOmpApi } from "./omp-api.js";
 export { isPluginReleaseOperation } from "./native-cleanup.js";
 export { PluginLogRedactor } from "./log-redaction.js";

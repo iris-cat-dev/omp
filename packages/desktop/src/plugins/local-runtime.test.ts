@@ -27,11 +27,11 @@ describe("local profile plugin generations", () => {
     await patch(false); runtime.startupReady(); await runtime.whenIdle();
     expect(setup).not.toHaveBeenCalled(); expect(runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")).toMatchObject({ enabled: false, status: "disabled" });
   });
-  it("reports a missing selected daemon facade instead of returning an invalid Paseo API", async () => {
+  it("reports a missing selected daemon facade instead of returning an invalid Omp API", async () => {
     let context: PluginServiceContext | undefined;
     const { runtime, patch } = await localRuntime((ctx) => { context = ctx; });
     await patch(true); runtime.startupReady(); await runtime.whenIdle();
-    expect(() => context!.paseo).toThrow("does not have a selected daemon session");
+    expect(() => context!.omp).toThrow("does not have a selected daemon session");
   });
   it("shares one service across concurrent readiness and configuration changes", async () => {
     const cleanup = vi.fn(), setup = vi.fn(() => cleanup); const { runtime, patch } = await localRuntime(setup);

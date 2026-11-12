@@ -11,13 +11,13 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-test("plugin handlers create workspaces and agents through their Paseo API", async () => {
-  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-plugin-"));
-  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-workspace-"));
+test("plugin handlers create workspaces and agents through their Omp API", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "omp-api-plugin-"));
+  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "omp-api-workspace-"));
   roots.push(pluginDirectory, workspaceDirectory);
   await writeFile(
-    path.join(pluginDirectory, "paseo-plugin.json"),
-    JSON.stringify({ id: "paseo-api" }),
+    path.join(pluginDirectory, "omp-plugin.json"),
+    JSON.stringify({ id: "omp-api" }),
   );
   await writeFile(
     path.join(pluginDirectory, "index.tsx"),
@@ -31,8 +31,8 @@ const create = defineRpc({
 });
 
 export default function contribute(plugin: PluginContext) {
-  plugin.handle(create, async ({ path }, { paseo }) => {
-    const workspace = await paseo.workspaces.create({
+  plugin.handle(create, async ({ path }, { omp }) => {
+    const workspace = await omp.workspaces.create({
       source: { kind: "directory", path },
       title: "Plugin workspace",
     });
@@ -56,12 +56,12 @@ export default function contribute(plugin: PluginContext) {
     await client.connect();
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await expect(client.installDirectoryPlugin(pluginDirectory,undefined,{trusted:true})).resolves.toMatchObject({
-      id: "paseo-api",
+      id: "omp-api",
       status: "running",
     });
 
-    const generation=(await client.getPluginCatalog()).find(plugin=>plugin.id==="paseo-api")!.generation;
-    const created = await client.invokePluginRpc("paseo-api", "create", {
+    const generation=(await client.getPluginCatalog()).find(plugin=>plugin.id==="omp-api")!.generation;
+    const created = await client.invokePluginRpc("omp-api", "create", {
       path: workspaceDirectory,
     },generation);
 
@@ -72,7 +72,7 @@ export default function contribute(plugin: PluginContext) {
     if (typeof created !== "object" || created === null) {
       throw new Error("Plugin returned an invalid creation result");
     }
-    await client.removePlugin("paseo-api");
+    await client.removePlugin("omp-api");
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();
     expect(workspaces.entries.map((workspace) => workspace.id)).toContain(
@@ -88,13 +88,13 @@ export default function contribute(plugin: PluginContext) {
 }, 60_000);
 
 test("daemon config reload enables and disables configured plugins without restarting", async () => {
-  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reload-plugin-"));
-  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-reload-home-"));
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "omp-reload-plugin-"));
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "omp-reload-home-"));
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   roots.push(pluginDirectory, paseoHomeRoot);
   const factoryMarker = path.join(pluginDirectory, "factory-started.txt");
   await writeFile(
-    path.join(pluginDirectory, "paseo-plugin.json"),
+    path.join(pluginDirectory, "omp-plugin.json"),
     JSON.stringify({ id: "reloadable-plugin" }),
   );
   await writeFile(

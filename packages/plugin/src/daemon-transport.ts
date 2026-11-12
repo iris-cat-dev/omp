@@ -23,10 +23,10 @@ export function createPluginDaemonTransportFactory(
     const closeHandlers = new Set<(event?: unknown) => void>();
     let isOpen = true;
     const unsubscribe = port.onMessage((message) => {
-      if (message.type === "paseo_frame") {
+      if (message.type === "omp_frame") {
         for (const handler of messageHandlers) handler(message.data, message.isBinary);
       }
-      if (message.type === "paseo_close") closeTransport();
+      if (message.type === "omp_close") closeTransport();
     });
 
     function closeTransport(): void {
@@ -45,11 +45,11 @@ export function createPluginDaemonTransportFactory(
       send(data) {
         if (!isOpen) throw new Error("Plugin daemon transport is closed");
         const frame = normalizeFrame(data);
-        port.send({ type: "paseo_frame", data: frame, isBinary: typeof frame !== "string" });
+        port.send({ type: "omp_frame", data: frame, isBinary: typeof frame !== "string" });
       },
       close() {
         if (!isOpen) return;
-        port.send({ type: "paseo_close" });
+        port.send({ type: "omp_close" });
         closeTransport();
       },
       onMessage(handler) {

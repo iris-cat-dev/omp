@@ -1,15 +1,15 @@
 # @omp-desktop/client
 
-TypeScript SDK for building integrations on top of a Paseo daemon.
+TypeScript SDK for building integrations on top of an Omp daemon.
 
 ```bash
 npm install @omp-desktop/client
 ```
 
 ```ts
-import { createPaseoClient } from "@omp-desktop/client";
+import { createOmpClient } from "@omp-desktop/client";
 
-const client = createPaseoClient({ url: "ws://127.0.0.1:6767/ws" });
+const client = createOmpClient({ url: "ws://127.0.0.1:6767/ws" });
 await client.connect();
 
 const agent = await client.agents.create({
@@ -24,9 +24,9 @@ console.log(result.lastMessage);
 await client.close();
 ```
 
-The public API is the package root. Imports under `@omp-desktop/client/internal/*` are unsupported implementation details used by Paseo's own packages.
+The public API is the package root. Imports under `@omp-desktop/client/internal/*` are unsupported implementation details used by Omp's own packages.
 
-Read the [SDK documentation](https://paseo.sh/docs/sdk) for agents, workspaces, provider discovery, events, recipes, and the API reference. Runnable TypeScript patterns also live in [`examples/`](./examples/README.md).
+See the [public API definitions](./src/index.ts) for agents, workspaces, provider discovery, events, and the API reference. Runnable TypeScript patterns live in [`examples/`](./examples/README.md).
 
 ## Runtime
 

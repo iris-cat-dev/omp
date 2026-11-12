@@ -38,7 +38,7 @@ describe("plugin contribution identifier boundary", () => {
       installation: { id: "qqbot", packageId: "qqbot", owner: "daemon", version: "1.0.0", generation: 1, enabled: mode === "active", declaredCapabilities: [], grantedCapabilities: [] },
       mode, format: "package", scope, setup: setupQQClient,
       services: {
-        getPaseo: unavailable,
+        getOmp: unavailable,
         storage: { get: async <T,>() => ({ values: state as T, revision: 0 }), patch: async () => unavailable() },
         secrets: { configured: async () => unavailable(), set: async () => unavailable(), delete: async () => unavailable() },
         native: { invoke: async () => unavailable(), subscribe: unavailable },

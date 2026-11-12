@@ -40,7 +40,7 @@ $env:PASEO_DEV_ROOT = $RootDir
 $env:PASEO_DEV_RUNTIME_FALLBACK_ROOT = $RootDir
 $DevRuntime = node "$ScriptDir\dev-runtime.mjs" | ConvertFrom-Json
 $env:PASEO_ELECTRON_FLAGS = $DevRuntime.electronFlags
-$env:PASEO_ELECTRON_USER_DATA_DIR = $DevRuntime.userDataDir
+$env:OMP_ELECTRON_USER_DATA_DIR = $DevRuntime.userDataDir
 Remove-Item Env:\PASEO_DEV_RUNTIME_FALLBACK_ROOT -ErrorAction SilentlyContinue
 
 # Allow any origin in dev so Electron on random ports works.
@@ -62,7 +62,7 @@ if (-not $env:PASEO_HOME) {
 } else {
     $PaseoHomeManaged = $false
 }
-New-Item -ItemType Directory -Force -Path $env:PASEO_HOME, $env:PASEO_ELECTRON_USER_DATA_DIR | Out-Null
+New-Item -ItemType Directory -Force -Path $env:PASEO_HOME, $env:OMP_ELECTRON_USER_DATA_DIR | Out-Null
 
 $DevDaemonPort = if ($env:PASEO_DEV_DAEMON_PORT) {
     $env:PASEO_DEV_DAEMON_PORT
@@ -114,7 +114,7 @@ Write-Host @"
   Metro:      http://localhost:$($env:EXPO_PORT)
   Daemon:     $($env:PASEO_LISTEN) (isolated)
   PASEO_HOME: $($env:PASEO_HOME)
-  userData:   $($env:PASEO_ELECTRON_USER_DATA_DIR)
+  userData:   $($env:OMP_ELECTRON_USER_DATA_DIR)
 ======================================================
 "@
 

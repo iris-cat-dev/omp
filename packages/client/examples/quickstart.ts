@@ -1,6 +1,6 @@
-import { createPaseoClient } from "@omp-desktop/client";
+import { createOmpClient } from "@omp-desktop/client";
 
-const client = createPaseoClient({ url: "ws://127.0.0.1:6767/ws" });
+const client = createOmpClient({ url: "ws://127.0.0.1:6767/ws" });
 
 await client.connect();
 

@@ -141,7 +141,7 @@ app.setName(APP_NAME);
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
-const forcedUserDataDir = process.env.PASEO_ELECTRON_USER_DATA_DIR?.trim();
+const forcedUserDataDir = process.env.OMP_ELECTRON_USER_DATA_DIR?.trim();
 if (forcedUserDataDir) {
   app.setPath("userData", forcedUserDataDir);
   log.info("[dev-user-data] forced userData dir:", forcedUserDataDir);

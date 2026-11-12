@@ -1,7 +1,7 @@
-import { createPaseoClient, type PaseoClient } from "@omp-desktop/client";
+import { createOmpClient, type OmpClient } from "@omp-desktop/client";
 
-export function createClient(url: string): PaseoClient {
-  return createPaseoClient({
+export function createClient(url: string): OmpClient {
+  return createOmpClient({
     url,
   });
 }

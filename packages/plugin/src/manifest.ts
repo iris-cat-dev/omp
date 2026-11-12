@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { PluginIdSchema } from "@omp-desktop/protocol/messages";
 
-const MANIFEST_FILENAME = "paseo-plugin.json";
+const MANIFEST_FILENAME = "omp-plugin.json";
 const PluginManifestSchema = z.object({ id: PluginIdSchema }).strict();
 
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;

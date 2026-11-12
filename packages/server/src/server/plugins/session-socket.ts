@@ -38,7 +38,7 @@ export class PluginSessionSocket {
     this.bufferedAmount += byteLength;
     try {
       this.child.send(
-        { type: "paseo_frame", data: frame, isBinary: typeof frame !== "string" },
+        { type: "omp_frame", data: frame, isBinary: typeof frame !== "string" },
         (error) => {
           this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
           callback?.(error ?? undefined);
@@ -59,7 +59,7 @@ export class PluginSessionSocket {
     if (this.readyState === 3) return;
     this.readyState = 3;
     try {
-      if (this.child.connected !== false) this.child.send({ type: "paseo_close" }, (error) => {
+      if (this.child.connected !== false) this.child.send({ type: "omp_close" }, (error) => {
         if (error) this.handleCloseError(error);
       });
     } catch (error) {

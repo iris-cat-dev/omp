@@ -5,11 +5,11 @@ import {
   type PluginHandlerContext,
   type PluginRpcContract,
 } from "@omp-desktop/plugin/server";
-import { createPaseoApi, type PaseoApi } from "@omp-desktop/client";
+import { createOmpApi, type OmpApi } from "@omp-desktop/client";
 import { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginSdkSpecifier, PLUGIN_FORBIDDEN_HOST_SPECIFIER } from "./plugin-sdk-specifiers.js";
-import { createActivationScope, createPluginPaseoApi } from "@omp-desktop/plugin/server";
+import { createActivationScope, createPluginOmpApi } from "@omp-desktop/plugin/server";
 import type { PluginServiceContext, PluginStorageSnapshot } from "@omp-desktop/plugin/server";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -39,7 +39,7 @@ interface RegisteredRpc {
 const handlers = new Map<string, RegisteredRpc>();
 let initializing: Promise<void> | null = null;
 let daemonClient: DaemonClient | null = null;
-let paseo: PaseoApi | null = null;
+let omp: OmpApi | null = null;
 let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
 
@@ -122,7 +122,7 @@ function createRuntimeRequire(serviceEntry: string): NodeRequire {
   const runtimeRequire = Object.assign((name: string): unknown => {
     assertPublicImport(name);
     if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
-    if (name === "@getpaseo/client" || name === "@omp-desktop/client") return clientRuntime;
+    if (name === "@omp-desktop/client") return clientRuntime;
     if (name === "zod") return z;
     if (name.startsWith("zod/")) return nodeRequire(name);
     return installedRequire(name);
@@ -130,7 +130,7 @@ function createRuntimeRequire(serviceEntry: string): NodeRequire {
   runtimeRequire.resolve = Object.assign((name: string, options?: Parameters<NodeRequire["resolve"]>[1]) => {
     assertPublicImport(name);
     if (isPluginSdkSpecifier(name)) return nodeRequire.resolve("@omp-desktop/plugin/server");
-    if (name === "@getpaseo/client" || name === "@omp-desktop/client") return nodeRequire.resolve("@omp-desktop/client");
+    if (name === "@omp-desktop/client") return nodeRequire.resolve("@omp-desktop/client");
     if (name === "zod" || name.startsWith("zod/")) return nodeRequire.resolve(name);
     return installedRequire.resolve(name, options);
   }, { paths: installedRequire.resolve.paths });
@@ -148,10 +148,10 @@ async function evaluateBundle(bundle: string, installation: NonNullable<Extract<
     : (typeof exports === "function" ? exports : exports !== null && typeof exports === "object" ? Reflect.get(exports, "default") : undefined);
   if (typeof setup !== "function") throw new Error(managementOnly ? "Plugin does not expose disabled management" : "Plugin server bundle must default export a function");
   scope.assertCurrent();
-  if (!paseo && !managementOnly && installation.owner!=="desktop") throw new Error("Plugin host connection unavailable");
+  if (!omp && !managementOnly && installation.owner!=="desktop") throw new Error("Plugin host connection unavailable");
   const unsupported = () => { throw new Error("Client contribution cannot register in service role"); };
   const context: PluginServiceContext = {
-    installation,signal:scope.signal,mode:"active",role:"service",get paseo(){if(!paseo)throw new Error("This local service has no selected daemon host connection");return paseo;},
+    installation,signal:scope.signal,mode:"active",role:"service",get omp(){if(!omp)throw new Error("This local service has no selected daemon host connection");return omp;},
     handle: register,own:scope.own,waiting:reason => send({type:"waiting",reason}),
     addAgentTool(contribution) {
       scope.assertCurrent();
@@ -200,7 +200,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
   managementOnly=message.mode==="manage";
   if(installation.owner==="daemon"){
     daemonClient = new DaemonClient({url:`ipc://plugin/${encodeURIComponent(message.pluginId)}`,clientId:`plugin:${message.pluginId}`,clientType:"cli",reconnect:{enabled:false},transportFactory});
-    paseo=createPluginPaseoApi(createPaseoApi(daemonClient),installation,scope,{mode:managementOnly?"manage":"active",legacy:message.format==="legacy"});
+    omp=createPluginOmpApi(createOmpApi(daemonClient),installation,scope,{mode:managementOnly?"manage":"active",legacy:message.format==="legacy"});
     if(!managementOnly)await daemonClient.connect();
   }
   scope.assertCurrent();
@@ -224,9 +224,9 @@ async function shutdown(): Promise<void> {
   await initializing?.catch(() => undefined);
   await released;
   await daemonClient?.close().catch(() => undefined);
-  await sendAndWait({ type: "paseo_close" });
+  await sendAndWait({ type: "omp_close" });
   daemonClient = null;
-  paseo = null;
+  omp = null;
   if (process.connected) process.disconnect();
 }
 
@@ -250,7 +250,7 @@ process.on("message", (message: PluginProcessRequest) => {
     void shutdown();
     return;
   }
-  if (message.type === "paseo_frame" || message.type === "paseo_close") return;
+  if (message.type === "omp_frame" || message.type === "omp_close") return;
   if (stopping) return;
   const registered = handlers.get(message.method);
   if (!registered) {
@@ -262,9 +262,9 @@ process.on("message", (message: PluginProcessRequest) => {
     return;
   }
   const handlerContext: PluginHandlerContext = {
-    get paseo() {
-      if (!paseo) throw new Error("This local service has no selected daemon host connection");
-      return paseo;
+    get omp() {
+      if (!omp) throw new Error("This local service has no selected daemon host connection");
+      return omp;
     },
   };
   void registered.invoke(message.input, managementOnly ? {} as PluginHandlerContext : handlerContext)

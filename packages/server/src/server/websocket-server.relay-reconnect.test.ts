@@ -18,7 +18,7 @@ import {
 } from "@omp-desktop/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
 import { DaemonClient } from "../../../client/src/daemon-client.js";
-import { createPaseoApi } from "../../../client/src/index.js";
+import { createOmpApi } from "../../../client/src/index.js";
 import { createPluginDaemonTransportFactory } from "../../../plugin/src/daemon-transport.js";
 import type { PluginProcessRequest } from "@omp-desktop/plugin/worker";
 import { PluginSessionSocket } from "./plugins/session-socket.js";
@@ -362,7 +362,7 @@ async function createPluginIpcSession(server: PaseoWebSocketServer, pluginId: st
     });
   };
   const isPong = (message: PluginProcessRequest) =>
-    message.type === "paseo_frame" &&
+    message.type === "omp_frame" &&
     typeof message.data === "string" &&
     JSON.parse(message.data).type === "pong";
   const socket = new PluginSessionSocket({
@@ -377,8 +377,8 @@ async function createPluginIpcSession(server: PaseoWebSocketServer, pluginId: st
   });
   const transportFactory = createPluginDaemonTransportFactory({
     send(message) {
-      if (message.type === "paseo_frame") socket.receive(message.data, message.isBinary);
-      else if (message.type === "paseo_close") socket.peerClosed();
+      if (message.type === "omp_frame") socket.receive(message.data, message.isBinary);
+      else if (message.type === "omp_close") socket.peerClosed();
     },
     onMessage(handler) {
       handlers.add(handler);
@@ -399,7 +399,7 @@ async function createPluginIpcSession(server: PaseoWebSocketServer, pluginId: st
     client,
     socket,
     closed: attachment.closed,
-    api: createPaseoApi(client),
+    api: createOmpApi(client),
     pongCount: () => frames.filter(isPong).length,
     withholdPongs: () => { withholdPongs = true; },
     deliverPongs() {

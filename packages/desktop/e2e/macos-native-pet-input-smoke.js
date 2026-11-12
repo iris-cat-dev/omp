@@ -234,13 +234,13 @@ async function runNative() {
         record("state", "owned activation document navigation start", { contentsId: contents.id, url, inPlace, mainFrame, processId, routingId, nativeURL: contents.getURL(), frame: { nativeID: frame?.nativeID ?? null, routingId: frame?.routingId ?? null, detached: frame?.detached ?? null, url: frame?.url ?? null, navigationToken: frame?.navigationToken ?? null } });
       });
       const traceInteractive = (nativeEvent, type, payload, requestId) => {
-        if (!type.startsWith("ipc-") || typeof payload?.channel !== "string" || !payload.channel.startsWith("paseo:overlay:")) return;
+        if (!type.startsWith("ipc-") || typeof payload?.channel !== "string" || !payload.channel.startsWith("omp:overlay:")) return;
         const frame = contents.mainFrame;
         record("state", "real overlay renderer IPC", {
           type, channel: payload.channel, args: payload.args, requestId,
           contentsId: contents.id,
           nativeURL: contents.getURL(),
-          expectedInteractiveChannel: `paseo:overlay:${contents.id}:interactive`,
+          expectedInteractiveChannel: `omp:overlay:${contents.id}:interactive`,
           valueType: typeof payload.args?.[0],
           nativeFrameId: nativeEvent.frameId,
           nativeFrameGeneration: nativeEvent.frameGeneration,

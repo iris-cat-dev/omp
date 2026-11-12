@@ -271,18 +271,18 @@ function registerLocalPluginIpc(): void {
     else { const holdings = ownership ?? new Map<string, ClientScopeBinding>(); holdings.set(key, binding); mediaClientOwners.set(owner, holdings); }
     return wallpaperMediaRegistry.nextPluginDocumentRevision(owner, request.installationId, request.generation, purpose);
   } });
-  ipcMain.handle("paseo:plugins:bind", (event) => ({ documentEpoch: requireMainFrame(event) }));
-  ipcMain.handle("paseo:plugins:openClientScope", async (event, raw) => { const input = LocalPluginClientScopeSchema.parse(raw); requireMainFrame(event, input.documentEpoch); await initializing; requireMainFrame(event, input.documentEpoch); getLocalPluginRuntime().assertAuthorized(input.installationId, input.generation, input.mode === "active" ? "active" : "manage"); clientScopes.open(input, event.sender.id); });
-  ipcMain.handle("paseo:plugins:releaseClientScope", (event, raw) => { const input = LocalPluginClientScopeSchema.omit({ mode: true }).parse(raw); requireMainFrame(event, input.documentEpoch); clientScopes.close(input, event.sender.id); });
-  ipcMain.handle("paseo:plugins:startup-ready", async (event) => { const epoch = requireMainFrame(event); await initializing; await navigation!.startupBarrier; requireMainFrame(event, epoch); getLocalPluginRuntime().startupReady(); });
-  ipcMain.handle("paseo:plugins:get", async (event) => { requireMainFrame(event); await initializing; return getLocalPluginRuntime().getSnapshot(); });
-  ipcMain.handle("paseo:plugins:patch", async (event, raw) => { requireMainFrame(event); await initializing; await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); });
-  ipcMain.handle("paseo:plugins:migrate", async (event, raw) => { requireMainFrame(event); await initializing; return migrateLegacyDesktopPlugins(raw); });
-  ipcMain.handle("paseo:plugins:inspectDirectory", async (event, raw) => { requireMainFrame(event); return inspectLocalPluginDirectory(z.object({ directory: z.string() }).parse(raw).directory); });
-  ipcMain.handle("paseo:plugins:installDirectory", async (event, raw) => { requireMainFrame(event); await initializing; return installLocalPluginDirectory(LocalPluginDirectoryInstallSchema.parse(raw)); });
-  ipcMain.handle("paseo:plugins:getLogs", async (event, raw) => { requireMainFrame(event); const { installationId } = z.object({ installationId: z.string() }).parse(raw); if (!getLocalPluginRuntime().getSnapshot().installations.some(({ id }) => id === installationId)) throw new Error("Plugin is not installed."); return pluginLogs().get(installationId); });
-  ipcMain.handle("paseo:plugins:selectBackground", async (event, raw) => { requireMainFrame(event); await initializing; const input = LocalPluginSelectionSchema.parse(raw), local = getLocalPluginRuntime(); if (local.getSnapshot().revision !== input.expectedRevision) throw new Error("Plugin registry changed."); const document = await getDesktopSettingsStore().getPlugins(); await getDesktopSettingsStore().selectPluginBackground(input.provider, document.revision); return local.getSnapshot(); });
-  for (const action of ["reload", "remove", "reinstall", "clearData"] as const) ipcMain.handle(`paseo:plugins:${action}`, async (event, raw) => {
+  ipcMain.handle("omp:plugins:bind", (event) => ({ documentEpoch: requireMainFrame(event) }));
+  ipcMain.handle("omp:plugins:openClientScope", async (event, raw) => { const input = LocalPluginClientScopeSchema.parse(raw); requireMainFrame(event, input.documentEpoch); await initializing; requireMainFrame(event, input.documentEpoch); getLocalPluginRuntime().assertAuthorized(input.installationId, input.generation, input.mode === "active" ? "active" : "manage"); clientScopes.open(input, event.sender.id); });
+  ipcMain.handle("omp:plugins:releaseClientScope", (event, raw) => { const input = LocalPluginClientScopeSchema.omit({ mode: true }).parse(raw); requireMainFrame(event, input.documentEpoch); clientScopes.close(input, event.sender.id); });
+  ipcMain.handle("omp:plugins:startup-ready", async (event) => { const epoch = requireMainFrame(event); await initializing; await navigation!.startupBarrier; requireMainFrame(event, epoch); getLocalPluginRuntime().startupReady(); });
+  ipcMain.handle("omp:plugins:get", async (event) => { requireMainFrame(event); await initializing; return getLocalPluginRuntime().getSnapshot(); });
+  ipcMain.handle("omp:plugins:patch", async (event, raw) => { requireMainFrame(event); await initializing; await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); });
+  ipcMain.handle("omp:plugins:migrate", async (event, raw) => { requireMainFrame(event); await initializing; return migrateLegacyDesktopPlugins(raw); });
+  ipcMain.handle("omp:plugins:inspectDirectory", async (event, raw) => { requireMainFrame(event); return inspectLocalPluginDirectory(z.object({ directory: z.string() }).parse(raw).directory); });
+  ipcMain.handle("omp:plugins:installDirectory", async (event, raw) => { requireMainFrame(event); await initializing; return installLocalPluginDirectory(LocalPluginDirectoryInstallSchema.parse(raw)); });
+  ipcMain.handle("omp:plugins:getLogs", async (event, raw) => { requireMainFrame(event); const { installationId } = z.object({ installationId: z.string() }).parse(raw); if (!getLocalPluginRuntime().getSnapshot().installations.some(({ id }) => id === installationId)) throw new Error("Plugin is not installed."); return pluginLogs().get(installationId); });
+  ipcMain.handle("omp:plugins:selectBackground", async (event, raw) => { requireMainFrame(event); await initializing; const input = LocalPluginSelectionSchema.parse(raw), local = getLocalPluginRuntime(); if (local.getSnapshot().revision !== input.expectedRevision) throw new Error("Plugin registry changed."); const document = await getDesktopSettingsStore().getPlugins(); await getDesktopSettingsStore().selectPluginBackground(input.provider, document.revision); return local.getSnapshot(); });
+  for (const action of ["reload", "remove", "reinstall", "clearData"] as const) ipcMain.handle(`omp:plugins:${action}`, async (event, raw) => {
     requireMainFrame(event); await initializing;
     const input = LocalPluginActionSchema.parse(raw), local = getLocalPluginRuntime(), store = getDesktopSettingsStore();
     const record = local.getSnapshot().installations.find(({ id }) => id === input.installationId);
@@ -300,7 +300,7 @@ function registerLocalPluginIpc(): void {
     else await store.setPluginInstalled(record.id, action === "reinstall", record.revision);
     return local.getSnapshot();
   });
-  ipcMain.handle("paseo:plugins:invoke", async (event, raw) => {
+  ipcMain.handle("omp:plugins:invoke", async (event, raw) => {
     const input = LocalPluginInvocationSchema.parse(raw), epoch = requireMainFrame(event, input.documentEpoch), local = getLocalPluginRuntime();
     const binding = clientScopes.accept(input, event.sender.id);
     try {

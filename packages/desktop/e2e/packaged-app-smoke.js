@@ -165,7 +165,7 @@ function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
     OMP_DESKTOP_HOME: home,
     PASEO_HOME: home,
     PASEO_LISTEN: listen,
-    PASEO_ELECTRON_USER_DATA_DIR: userData,
+    OMP_ELECTRON_USER_DATA_DIR: userData,
     PASEO_DISABLE_APP_UPDATES: "1",
     PASEO_ELECTRON_FLAGS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
   };
@@ -1001,7 +1001,7 @@ async function smokePetCreationHelper({ page, appPath, env }) {
     }),
   );
   const workspaceRoot = fs.realpathSync(
-    path.join(env.PASEO_ELECTRON_USER_DATA_DIR, "pet-workspaces"),
+    path.join(env.OMP_ELECTRON_USER_DATA_DIR, "pet-workspaces"),
   );
   const workspaceRelative = path.relative(workspaceRoot, fs.realpathSync(workspace.cwd));
   if (

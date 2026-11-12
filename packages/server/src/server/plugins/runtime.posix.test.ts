@@ -11,9 +11,9 @@ import type { PluginSessionSocket } from "./session-socket.js";
 const temporaryDirectories: string[] = [];
 
 async function createPlugin(id: string, source: string): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "omp-plugin-"));
   temporaryDirectories.push(directory);
-  await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id }), "utf8");
+  await writeFile(path.join(directory, "omp-plugin.json"), JSON.stringify({ id }), "utf8");
   await writeFile(path.join(directory, "index.tsx"), source, "utf8");
   return directory;
 }
@@ -174,10 +174,10 @@ describe("PluginRuntime", () => {
     expect(
       runtime.getLogs("lifecycle").map(({ stream, message }) => ({ stream, message })),
     ).toEqual([
-      { stream: "stdout", message: "[paseo] Loading plugin" },
-      { stream: "stdout", message: "[paseo] Plugin ready" },
-      { stream: "stdout", message: "[paseo] Stopping plugin" },
-      { stream: "stdout", message: "[paseo] Plugin stopped" },
+      { stream: "stdout", message: "[omp] Loading plugin" },
+      { stream: "stdout", message: "[omp] Plugin ready" },
+      { stream: "stdout", message: "[omp] Stopping plugin" },
+      { stream: "stdout", message: "[omp] Plugin stopped" },
     ]);
   });
 
@@ -269,7 +269,7 @@ describe("PluginRuntime", () => {
     const logs = runtime.getLogs("output");
     expect(
       logs
-        .filter((entry) => !entry.message.startsWith("[paseo]"))
+        .filter((entry) => !entry.message.startsWith("[omp]"))
         .map(({ stream, message }) => ({ stream, message })),
     ).toEqual([
       { stream: "stdout", message: "first" },
@@ -391,7 +391,7 @@ describe("PluginRuntime", () => {
     ).toEqual([
       {
         stream: "stdout",
-        message: "[paseo] Loading plugin",
+        message: "[omp] Loading plugin",
       },
       {
         stream: "stderr",
@@ -444,7 +444,7 @@ describe("PluginRuntime", () => {
   });
 
   it("waits for asynchronous plugin cleanup before stopping", async () => {
-    const cleanupFile = path.join(tmpdir(), `paseo-plugin-cleanup-${Date.now()}`);
+    const cleanupFile = path.join(tmpdir(), `omp-plugin-cleanup-${Date.now()}`);
     const directory = await createPlugin(
       "async-cleanup",
       `import { writeFile } from "node:fs/promises";
@@ -586,7 +586,7 @@ export default async function contribute(plugin: PluginServiceContext) {
       name: "package-version-legacy", version: "legacy",
       ompDesktop: { apiVersion: 1, id: "package-version-legacy", owner: "daemon", entries: { service: "./service.mjs" }, capabilities: [] },
     }));
-    await writeFile(path.join(directory, "service.mjs"), `export default ctx => ctx.paseo.config.get();`);
+    await writeFile(path.join(directory, "service.mjs"), `export default ctx => ctx.omp.config.get();`);
     const runtime = createTestRuntime();
     await expect(runtime.startPlugin("package-version-legacy", directory)).rejects.toThrow("Global host API is unavailable to plugin: config");
     expect(runtime.catalog()).toEqual([]);
@@ -667,21 +667,19 @@ export default function contribute(plugin: any) {
     expect(catalog[0]?.clientBundle).toContain("Open review");
     expect(catalog[0]?.clientBundle).not.toContain("node:os");
     expect(catalog[0]?.clientBundle).not.toContain("get: () => from[key]");
-    await expect(runtime.invoke("hello", "greet", { name: "Paseo" })).resolves.toMatchObject({
-      message: "Hello, Paseo",
+    await expect(runtime.invoke("hello", "greet", { name: "Omp" })).resolves.toMatchObject({
+      message: "Hello, Omp",
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
 
     await runtime.stopAll();
   });
 
-  // COMPAT(plugin-sdk-scope): plugins scaffolded through 0.5.0-beta.1 import the unpublished
-  // @paseo/plugin name. Drop with the specifiers in plugin-sdk-specifiers.ts.
-  it("loads a plugin that imports the pre-rename @paseo/plugin specifier", async () => {
+  it("loads a plugin that imports the public SDK server entry", async () => {
     const directory = await createPlugin(
-      "legacy-sdk",
+      "public-sdk",
       `import { z } from "zod";
-import { defineRpc } from "@paseo/plugin/server";
+import { defineRpc } from "@omp-desktop/plugin/server";
 
 const pingRpc = defineRpc({
   name: "ping",
@@ -696,19 +694,19 @@ export default function contribute(plugin: any) {
     );
     const runtime = createTestRuntime();
 
-    await runtime.startPlugin("legacy-sdk", directory);
+    await runtime.startPlugin("public-sdk", directory);
 
-    await expect(runtime.invoke("legacy-sdk", "ping", {})).resolves.toMatchObject({ ok: true });
+    await expect(runtime.invoke("public-sdk", "ping", {})).resolves.toMatchObject({ ok: true });
 
     await runtime.stopAll();
   });
 
   it("keeps client and server modules in their target runtime", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "omp-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
       writeFile(
-        path.join(directory, "paseo-plugin.json"),
+        path.join(directory, "omp-plugin.json"),
         JSON.stringify({ id: "split-runtime" }),
         "utf8",
       ),
@@ -776,11 +774,11 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
   });
 
   it("rejects server imports from client-only modules", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "omp-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
       writeFile(
-        path.join(directory, "paseo-plugin.json"),
+        path.join(directory, "omp-plugin.json"),
         JSON.stringify({ id: "cross-runtime-import" }),
         "utf8",
       ),
@@ -816,11 +814,11 @@ export function Surface() { return readSecret(); }`,
   });
 
   it("rejects client imports from server-only modules", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "omp-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
       writeFile(
-        path.join(directory, "paseo-plugin.json"),
+        path.join(directory, "omp-plugin.json"),
         JSON.stringify({ id: "cross-runtime-import" }),
         "utf8",
       ),
@@ -904,7 +902,7 @@ export default function contribute(plugin: any) {
   });
 
   it("isolates two active installation IDs sharing the same source directory", async () => {
-    const directory = await createPlugin("shared-package", `import {defineRpc, type PluginServiceContext} from '@getpaseo/plugin/server';
+    const directory = await createPlugin("shared-package", `import {defineRpc, type PluginServiceContext} from '@omp-desktop/plugin/server';
 import {z} from 'zod';
 const identity=defineRpc({name:'identity',input:z.object({}),output:z.string()});
 export default function contribute(plugin: PluginServiceContext) {

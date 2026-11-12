@@ -693,7 +693,7 @@ throw new Error("Unused project plugin must not load at daemon startup");`,
     if (!isPlatform("win32")) {
       await mkdir(pluginDirectory);
       await writeFile(
-        path.join(pluginDirectory, "paseo-plugin.json"),
+        path.join(pluginDirectory, "omp-plugin.json"),
         JSON.stringify({ id: "startup-rollback" }),
       );
       await writeFile(

@@ -10,7 +10,7 @@ import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback"
 
 type EventHandler = (payload: unknown) => void;
 let pluginDocumentBinding: Promise<{ documentEpoch: number }> | undefined;
-const bindPluginDocument = () => pluginDocumentBinding ??= ipcRenderer.invoke("paseo:plugins:bind");
+const bindPluginDocument = () => pluginDocumentBinding ??= ipcRenderer.invoke("omp:plugins:bind");
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
@@ -27,29 +27,29 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       } | null>,
   },
   plugins: {
-    startupReady: () => ipcRenderer.invoke("paseo:plugins:startup-ready") as Promise<void>,
-    getSnapshot: () => ipcRenderer.invoke("paseo:plugins:get") as Promise<LocalPluginSnapshot>,
-    patch: (input: LocalPluginPatch) => ipcRenderer.invoke("paseo:plugins:patch", input) as Promise<LocalPluginSnapshot>,
-    migrateLegacy: (input: { wallpaper?: WallpaperLegacyPluginInput }) => ipcRenderer.invoke("paseo:plugins:migrate", input) as Promise<LocalPluginSnapshot>,
-    selectBackground: (input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:selectBackground", input) as Promise<LocalPluginSnapshot>,
-    reload: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:reload", input) as Promise<LocalPluginSnapshot>,
-    remove: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:remove", input) as Promise<LocalPluginSnapshot>,
-    reinstall: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:reinstall", input) as Promise<LocalPluginSnapshot>,
-    clearData: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:clearData", input) as Promise<LocalPluginSnapshot>,
-    inspectDirectory: (input: { directory: string }) => ipcRenderer.invoke("paseo:plugins:inspectDirectory", input) as Promise<LocalPluginDirectoryInspection>,
-    installDirectory: (input: LocalPluginDirectoryInstall) => ipcRenderer.invoke("paseo:plugins:installDirectory", input) as Promise<LocalPluginSnapshot>,
-    getLogs: (input: { installationId: string }) => ipcRenderer.invoke("paseo:plugins:getLogs", input) as Promise<LocalPluginLogEntry[]>,
+    startupReady: () => ipcRenderer.invoke("omp:plugins:startup-ready") as Promise<void>,
+    getSnapshot: () => ipcRenderer.invoke("omp:plugins:get") as Promise<LocalPluginSnapshot>,
+    patch: (input: LocalPluginPatch) => ipcRenderer.invoke("omp:plugins:patch", input) as Promise<LocalPluginSnapshot>,
+    migrateLegacy: (input: { wallpaper?: WallpaperLegacyPluginInput }) => ipcRenderer.invoke("omp:plugins:migrate", input) as Promise<LocalPluginSnapshot>,
+    selectBackground: (input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:selectBackground", input) as Promise<LocalPluginSnapshot>,
+    reload: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:reload", input) as Promise<LocalPluginSnapshot>,
+    remove: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:remove", input) as Promise<LocalPluginSnapshot>,
+    reinstall: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:reinstall", input) as Promise<LocalPluginSnapshot>,
+    clearData: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:clearData", input) as Promise<LocalPluginSnapshot>,
+    inspectDirectory: (input: { directory: string }) => ipcRenderer.invoke("omp:plugins:inspectDirectory", input) as Promise<LocalPluginDirectoryInspection>,
+    installDirectory: (input: LocalPluginDirectoryInstall) => ipcRenderer.invoke("omp:plugins:installDirectory", input) as Promise<LocalPluginSnapshot>,
+    getLogs: (input: { installationId: string }) => ipcRenderer.invoke("omp:plugins:getLogs", input) as Promise<LocalPluginLogEntry[]>,
     publish: async (input: { installationId: string; generation: number; clientActivationId: string; method: string; input?: unknown }) => {
       const { documentEpoch } = await bindPluginDocument();
-      return ipcRenderer.invoke("paseo:plugins:invoke", { ...input, documentEpoch });
+      return ipcRenderer.invoke("omp:plugins:invoke", { ...input, documentEpoch });
     },
     openClientScope: async (input: { installationId: string; generation: number; clientActivationId: string; mode: "manage" | "active" }) => {
       const { documentEpoch } = await bindPluginDocument();
-      await ipcRenderer.invoke("paseo:plugins:openClientScope", { ...input, documentEpoch });
+      await ipcRenderer.invoke("omp:plugins:openClientScope", { ...input, documentEpoch });
     },
     releaseClientScope: async (input: { installationId: string; generation: number; clientActivationId: string }) => {
       const { documentEpoch } = await bindPluginDocument();
-      await ipcRenderer.invoke("paseo:plugins:releaseClientScope", { ...input, documentEpoch });
+      await ipcRenderer.invoke("omp:plugins:releaseClientScope", { ...input, documentEpoch });
     },
   },
   monitor: {

@@ -26,8 +26,8 @@ describe("isolated Desktop service worker",()=>{
   const worker=await IsolatedPluginWorker.start({installation,serverBundle,serviceEntry,format:"package",mode:"manage",hostCall:()=>{activeCalls++;return {revision:1,values:{}};}});workers.push(worker);
   expect(await worker.invoke("status",{},7)).toBe(true);expect(activeCalls).toBe(0);
  },10000);
- it("activates a historical source arrow default with legacy SDK aliases",async()=>{
-  const {serverBundle,serviceEntry}=await bundle(`import {defineRpc} from '@getpaseo/plugin/server';import {z} from 'zod';const status=defineRpc({name:'status',input:z.object({}),output:z.string()});export default ctx=>{ctx.handle(status,()=> 'legacy-active');return()=>{};};`,"ts");
+ it("activates a source arrow default with the public SDK",async()=>{
+  const {serverBundle,serviceEntry}=await bundle(`import {defineRpc} from '@omp-desktop/plugin/server';import {z} from 'zod';const status=defineRpc({name:'status',input:z.object({}),output:z.string()});export default ctx=>{ctx.handle(status,()=> 'legacy-active');return()=>{};};`,"ts");
   const worker=await IsolatedPluginWorker.start({installation:{...installation,version:"legacy",enabled:true},serverBundle,serviceEntry,format:"legacy",mode:"active",hostCall:()=>undefined});workers.push(worker);
   expect(await worker.invoke("status",{},7)).toBe("legacy-active");
  },10000);

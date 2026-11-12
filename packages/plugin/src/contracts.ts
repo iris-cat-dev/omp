@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { PaseoApi } from "@omp-desktop/client";
+import type { OmpApi } from "@omp-desktop/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
@@ -136,7 +136,7 @@ export interface PluginAttachmentSourceContribution {
 }
 
 export interface PluginCommandCapabilities {
-  paseo: PaseoApi;
+  omp: OmpApi;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: ZodInput<InputSchema>,
@@ -183,7 +183,7 @@ export type PluginCommandCenterItemContribution =
     });
 
 export interface PluginHandlerContext {
-  paseo: PaseoApi;
+  omp: OmpApi;
 }
 
 export interface PluginContext {

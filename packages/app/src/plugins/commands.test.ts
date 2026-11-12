@@ -8,7 +8,7 @@ vi.mock("@/command-center/provider", () => ({ useCommandCenterActions: () => {} 
 vi.mock("@/command-center/icon", () => ({ getCommandCenterIcon: () => null }));
 vi.mock("./icons", () => ({ resolvePluginIcon: () => () => null }));
 vi.mock("./hooks", () => ({ usePluginContributions: () => [] }));
-vi.mock("./paseo", () => ({ getPluginPaseo: () => { throw new Error("Unexpected SDK access"); } }));
+vi.mock("./omp", () => ({ getPluginOmp: () => { throw new Error("Unexpected SDK access"); } }));
 vi.mock("@/stores/navigation-active-workspace-store", () => ({ useActiveWorkspaceSelection: () => null }));
 vi.mock("@/stores/session-store", () => ({
   useSessionStore: {

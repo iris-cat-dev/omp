@@ -2,7 +2,7 @@ import { Component, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { Text, View, Platform } from "react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { PluginHostProps } from "@omp-desktop/plugin";
-import { PaseoApiProvider, PluginRpcProvider, PluginClientStateProvider } from "@omp-desktop/plugin/host";
+import { OmpApiProvider, PluginRpcProvider, PluginClientStateProvider } from "@omp-desktop/plugin/host";
 import { useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
@@ -10,7 +10,7 @@ import { settingsStyles } from "@/styles/settings";
 import { setCssColorAlpha } from "@/appearance/color";
 import { pluginClientRegistry, type PluginClientInstance } from "./registry";
 import { createPluginClientStateSource } from "./client-state";
-import { getPluginPaseo } from "./paseo";
+import { getPluginOmp } from "./omp";
 
 class PluginErrorBoundary extends Component<{ instance: PluginClientInstance; children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
@@ -48,11 +48,11 @@ export function usePluginHostProps(hostId: string, owner: "desktop" | "daemon" =
 function PluginProviders({ instance, hostId, children }: { instance: PluginClientInstance; hostId?: string; children: ReactNode }) {
   const source = useMemo(() => createPluginClientStateSource(hostId ?? (instance.installation.owner === "daemon" ? instance.hostId : null)), [hostId, instance.hostId, instance.installation.owner]);
   const viewClient = useHostRuntimeClient(hostId ?? "");
-  const paseo = useMemo(() => instance.installation.owner !== "desktop" || (hostId && viewClient) ? getPluginPaseo(instance, hostId) : null, [instance, hostId, viewClient]);
+  const omp = useMemo(() => instance.installation.owner !== "desktop" || (hostId && viewClient) ? getPluginOmp(instance, hostId) : null, [instance, hostId, viewClient]);
   return (
     <QueryClientProvider client={instance.queryClient}>
       <PluginClientStateProvider source={source}>
-        {paseo ? <PaseoApiProvider paseo={paseo}><PluginRpcProvider invoke={instance.invoke}>{children}</PluginRpcProvider></PaseoApiProvider>
+        {omp ? <OmpApiProvider omp={omp}><PluginRpcProvider invoke={instance.invoke}>{children}</PluginRpcProvider></OmpApiProvider>
           : <PluginRpcProvider invoke={instance.invoke}>{children}</PluginRpcProvider>}
       </PluginClientStateProvider>
     </QueryClientProvider>

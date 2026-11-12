@@ -11,7 +11,7 @@ import type {
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
-import { PaseoApiProvider } from "./paseo-context.js";
+import { OmpApiProvider } from "./omp-context.js";
 import { callPluginRpc } from "./rpc.js";
 import type { ComponentType } from "react";
 
@@ -75,9 +75,9 @@ export async function searchPluginAttachments(
   return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
-export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
+export { callPluginRpc, OmpApiProvider, PluginRpcProvider };
 export { createActivationScope, type PluginActivationScope } from "./activation.js";
 export type * from "./runtime-contracts.js";
-export { createPluginPaseoApi } from "./paseo-api.js";
+export { createPluginOmpApi } from "./omp-api.js";
 export { isPluginReleaseOperation } from "./native-cleanup.js";
 export { PLUGIN_SHARED_CLIENT_SPECIFIERS } from "./client-modules.js";

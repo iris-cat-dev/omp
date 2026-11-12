@@ -72,14 +72,14 @@ export type ConnectionState =
   | { status: "disconnected"; reason?: string }
   | { status: "disposed" };
 
-export interface PaseoLogger {
+export interface OmpLogger {
   debug(obj: object, msg?: string): void;
   info(obj: object, msg?: string): void;
   warn(obj: object, msg?: string): void;
   error(obj: object, msg?: string): void;
 }
 
-export interface PaseoClientConfig {
+export interface OmpClientConfig {
   url: string;
   clientId?: string;
   appVersion?: string;
@@ -87,7 +87,7 @@ export interface PaseoClientConfig {
   password?: string;
   authHeader?: string;
   suppressSendErrors?: boolean;
-  logger?: PaseoLogger;
+  logger?: OmpLogger;
   connectTimeoutMs?: number;
   e2ee?: {
     enabled?: boolean;
@@ -102,118 +102,118 @@ export interface PaseoClientConfig {
   runtimeMetricsWindowMs?: number;
 }
 
-export type PaseoWorkspace = WorkspaceDescriptorPayload;
-export type PaseoAgent = AgentSnapshotPayload;
-export type PaseoAgentListOptions = FetchAgentsOptions;
+export type OmpWorkspace = WorkspaceDescriptorPayload;
+export type OmpAgent = AgentSnapshotPayload;
+export type OmpAgentListOptions = FetchAgentsOptions;
 
-export interface PaseoAgentListResult {
+export interface OmpAgentListResult {
   requestId: string;
   subscriptionId?: string | null;
   entries: FetchAgentsEntry[];
   pageInfo: FetchAgentsPageInfo;
 }
-export type PaseoWorkspaceListOptions = Omit<
+export type OmpWorkspaceListOptions = Omit<
   FetchWorkspacesRequestMessage,
   "type" | "requestId"
 > & {
   requestId?: string;
 };
 
-export interface PaseoWorkspaceListResult {
+export interface OmpWorkspaceListResult {
   requestId: string;
   subscriptionId?: string | null;
-  entries: PaseoWorkspace[];
+  entries: OmpWorkspace[];
   pageInfo: FetchWorkspacesResponseMessage["payload"]["pageInfo"];
 }
 
-export interface PaseoWorkspaceOpenOptions {
+export interface OmpWorkspaceOpenOptions {
   cwd: string;
   requestId?: string;
 }
 
-export type PaseoWorkspaceCreateOptions = Omit<WorkspaceCreateRequest, "type" | "requestId"> & {
+export type OmpWorkspaceCreateOptions = Omit<WorkspaceCreateRequest, "type" | "requestId"> & {
   requestId?: string;
 };
 
-export interface PaseoWorkspaceArchiveResult {
+export interface OmpWorkspaceArchiveResult {
   requestId: string;
   workspaceId: string;
   archivedAt: string | null;
   error: string | null;
 }
 
-export type PaseoWorkspaceUpdate = Extract<
+export type OmpWorkspaceUpdate = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
 >["payload"];
 
-export type PaseoWorkspaceUpdateHandler = (update: PaseoWorkspaceUpdate) => void;
+export type OmpWorkspaceUpdateHandler = (update: OmpWorkspaceUpdate) => void;
 
-export interface PaseoWorkspaceHandle {
+export interface OmpWorkspaceHandle {
   readonly id: string;
   readonly projectId: string | null;
   readonly directory: string | null;
   readonly name: string | null;
-  readonly status: PaseoWorkspace["status"] | null;
+  readonly status: OmpWorkspace["status"] | null;
   readonly agents: {
-    create(options: PaseoWorkspaceAgentCreateOptions): Promise<PaseoAgentHandle>;
+    create(options: OmpWorkspaceAgentCreateOptions): Promise<OmpAgentHandle>;
   };
-  current(): PaseoWorkspace | null;
-  refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
+  current(): OmpWorkspace | null;
+  refresh(options?: { requestId?: string }): Promise<OmpWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
-  archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
+  archive(requestId?: string): Promise<OmpWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
    * This returns a local unsubscribe function; it does not own app cache state or
    * send a daemon unsubscribe RPC. Call `workspaces.list({ subscribe: {} })` when
    * the daemon should start streaming workspace directory updates.
    */
-  subscribe(handler: (update: PaseoWorkspaceUpdate) => void): () => void;
+  subscribe(handler: (update: OmpWorkspaceUpdate) => void): () => void;
 }
 
-export interface PaseoWorkspaceActions {
-  list(options?: PaseoWorkspaceListOptions): Promise<PaseoWorkspaceListResult>;
-  ref(workspace: string | PaseoWorkspace): PaseoWorkspaceHandle;
+export interface OmpWorkspaceActions {
+  list(options?: OmpWorkspaceListOptions): Promise<OmpWorkspaceListResult>;
+  ref(workspace: string | OmpWorkspace): OmpWorkspaceHandle;
   open(
-    input: string | PaseoWorkspaceOpenOptions,
+    input: string | OmpWorkspaceOpenOptions,
     requestId?: string,
-  ): Promise<PaseoWorkspaceHandle>;
-  create(options: PaseoWorkspaceCreateOptions): Promise<PaseoWorkspaceHandle>;
+  ): Promise<OmpWorkspaceHandle>;
+  create(options: OmpWorkspaceCreateOptions): Promise<OmpWorkspaceHandle>;
   archive(
-    workspace: string | PaseoWorkspaceHandle,
+    workspace: string | OmpWorkspaceHandle,
     requestId?: string,
-  ): Promise<PaseoWorkspaceArchiveResult>;
+  ): Promise<OmpWorkspaceArchiveResult>;
   /**
    * Local event subscription over the low-level driver's workspace_update stream.
    * The returned function only removes this SDK listener.
    */
-  subscribe(handler: PaseoWorkspaceUpdateHandler): () => void;
+  subscribe(handler: OmpWorkspaceUpdateHandler): () => void;
 }
 
-type PaseoAgentSessionConfig = CreateAgentRequestMessage["config"];
-export type PaseoAgentProvider = PaseoAgentSessionConfig["provider"];
+type OmpAgentSessionConfig = CreateAgentRequestMessage["config"];
+export type OmpAgentProvider = OmpAgentSessionConfig["provider"];
 
-export type PaseoProviderFeatureValues = Record<string, unknown>;
+export type OmpProviderFeatureValues = Record<string, unknown>;
 
-export interface PaseoAgentConfig {
+export interface OmpAgentConfig {
   /** Provider and model in `provider/model` format. */
   provider: string;
-  modeId?: PaseoAgentSessionConfig["modeId"];
-  thinkingOptionId?: PaseoAgentSessionConfig["thinkingOptionId"];
-  featureValues?: PaseoProviderFeatureValues;
+  modeId?: OmpAgentSessionConfig["modeId"];
+  thinkingOptionId?: OmpAgentSessionConfig["thinkingOptionId"];
+  featureValues?: OmpProviderFeatureValues;
   /** JSON-safe provider-native settings, validated by the selected provider. */
-  options?: PaseoAgentSessionConfig["providerOptions"];
-  systemPrompt?: PaseoAgentSessionConfig["systemPrompt"];
-  toolPolicy?: PaseoAgentSessionConfig["toolPolicy"];
-  mcpServers?: PaseoAgentSessionConfig["mcpServers"];
-  sandbox?: PaseoAgentSessionConfig["sandbox"];
+  options?: OmpAgentSessionConfig["providerOptions"];
+  systemPrompt?: OmpAgentSessionConfig["systemPrompt"];
+  toolPolicy?: OmpAgentSessionConfig["toolPolicy"];
+  mcpServers?: OmpAgentSessionConfig["mcpServers"];
+  sandbox?: OmpAgentSessionConfig["sandbox"];
 }
 
-export interface PaseoAgentCreateOptions {
-  config: PaseoAgentConfig;
+export interface OmpAgentCreateOptions {
+  config: OmpAgentConfig;
   cwd: string;
-  parent?: string | PaseoAgentHandle;
-  title?: PaseoAgentSessionConfig["title"];
+  parent?: string | OmpAgentHandle;
+  title?: OmpAgentSessionConfig["title"];
   env?: CreateAgentRequestMessage["env"];
   prompt?: string;
   clientMessageId?: string;
@@ -227,14 +227,14 @@ export interface PaseoAgentCreateOptions {
   labels?: Record<string, string>;
 }
 
-export type PaseoWorkspaceAgentCreateOptions = Omit<PaseoAgentCreateOptions, "cwd">;
+export type OmpWorkspaceAgentCreateOptions = Omit<OmpAgentCreateOptions, "cwd">;
 
-export interface PaseoAgentRefetchResult {
-  agent: PaseoAgent;
+export interface OmpAgentRefetchResult {
+  agent: OmpAgent;
   project: ProjectPlacementPayload | null;
 }
 
-export interface PaseoAgentTimelineRefetchOptions {
+export interface OmpAgentTimelineRefetchOptions {
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
@@ -242,134 +242,134 @@ export interface PaseoAgentTimelineRefetchOptions {
   requestId?: string;
 }
 
-export interface PaseoAgentSendOptions {
+export interface OmpAgentSendOptions {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
 
-export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
+export interface OmpAgentRunOptions extends OmpAgentSendOptions {
   timeoutMs?: number;
 }
 
-export type PaseoAgentRunResult = WaitForFinishResult;
+export type OmpAgentRunResult = WaitForFinishResult;
 
-export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
+export type OmpAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
-export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
+export type OmpAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
 
-export type PaseoAgentUpdateHandler = (update: PaseoAgentUpdate) => void;
+export type OmpAgentUpdateHandler = (update: OmpAgentUpdate) => void;
 
-export interface PaseoAgentTimelineHandle {
+export interface OmpAgentTimelineHandle {
   /**
    * Fetches a fresh timeline page through the existing daemon RPC. If the daemon
    * includes an agent snapshot in the response, the parent handle is updated to
    * that value.
    */
-  refetch(options?: PaseoAgentTimelineRefetchOptions): Promise<FetchAgentTimelinePayload>;
+  refetch(options?: OmpAgentTimelineRefetchOptions): Promise<FetchAgentTimelinePayload>;
   /**
    * Local listener for agent_stream events matching this handle id. It does not
    * retain timeline entries or own application cache state.
    */
-  subscribe(handler: (event: PaseoAgentStream) => void): () => void;
+  subscribe(handler: (event: OmpAgentStream) => void): () => void;
 }
-export interface PaseoAgentObservation { snapshot:PaseoAgent;timeline:FetchAgentTimelinePayload;unsubscribe:()=>void }
+export interface OmpAgentObservation { snapshot:OmpAgent;timeline:FetchAgentTimelinePayload;unsubscribe:()=>void }
 
-export interface PaseoAgentHandle {
+export interface OmpAgentHandle {
   readonly id: string;
   readonly workspaceId: string | null;
   readonly cwd: string | null;
-  readonly status: PaseoAgent["status"] | null;
-  readonly timeline: PaseoAgentTimelineHandle;
-  current(): PaseoAgent | null;
-  refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
-  send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
+  readonly status: OmpAgent["status"] | null;
+  readonly timeline: OmpAgentTimelineHandle;
+  current(): OmpAgent | null;
+  refresh(requestId?: string): Promise<OmpAgentRefetchResult | null>;
+  send(text: string, options?: OmpAgentSendOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
-  run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
+  run(text: string, options?: OmpAgentRunOptions): Promise<OmpAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
-  waitForFinish(timeoutMs?: number): Promise<PaseoAgentRunResult>;
+  waitForFinish(timeoutMs?: number): Promise<OmpAgentRunResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
-  subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
+  subscribe(handler: (update: OmpAgentUpdate) => void): () => void;
   stop():Promise<void>;
   compact():Promise<void>;
   setModel(modelId:string|null):Promise<void>;
   respondToPermission(requestId:string,response:AgentPermissionResponse):Promise<void>;
-  observe(handler:(stream:PaseoAgentStream)=>void):Promise<PaseoAgentObservation>;
+  observe(handler:(stream:OmpAgentStream)=>void):Promise<OmpAgentObservation>;
 }
 
-export interface PaseoAgentActions {
-  list(options?: PaseoAgentListOptions): Promise<PaseoAgentListResult>;
-  ref(agent: string | PaseoAgent): PaseoAgentHandle;
-  create(options: PaseoAgentCreateOptions): Promise<PaseoAgentHandle>;
+export interface OmpAgentActions {
+  list(options?: OmpAgentListOptions): Promise<OmpAgentListResult>;
+  ref(agent: string | OmpAgent): OmpAgentHandle;
+  create(options: OmpAgentCreateOptions): Promise<OmpAgentHandle>;
   /**
    * Local event subscription over the low-level driver's agent_update stream.
    * The returned function only removes this SDK listener.
    */
-  subscribe(handler: PaseoAgentUpdateHandler): () => void;
+  subscribe(handler: OmpAgentUpdateHandler): () => void;
 }
 
-export type PaseoProviderModelsResult = ListProviderModelsResponseMessage["payload"];
-export type PaseoProviderModesResult = ListProviderModesResponseMessage["payload"];
-type PaseoProviderFeaturesDraft = ListProviderFeaturesRequestMessage["draftConfig"];
-export interface PaseoProviderFeaturesInput extends Omit<
-  PaseoProviderFeaturesDraft,
+export type OmpProviderModelsResult = ListProviderModelsResponseMessage["payload"];
+export type OmpProviderModesResult = ListProviderModesResponseMessage["payload"];
+type OmpProviderFeaturesDraft = ListProviderFeaturesRequestMessage["draftConfig"];
+export interface OmpProviderFeaturesInput extends Omit<
+  OmpProviderFeaturesDraft,
   "provider" | "model"
 > {
   /** Provider and model in `provider/model` format. */
   provider: string;
 }
-export type PaseoProviderFeaturesResult = ListProviderFeaturesResponseMessage["payload"];
-export type PaseoProviderAvailabilityResult = ListAvailableProvidersResponse["payload"];
-export type PaseoProviderSnapshotResult = GetProvidersSnapshotResponseMessage["payload"];
-export type PaseoProviderSnapshotUpdate = Extract<
+export type OmpProviderFeaturesResult = ListProviderFeaturesResponseMessage["payload"];
+export type OmpProviderAvailabilityResult = ListAvailableProvidersResponse["payload"];
+export type OmpProviderSnapshotResult = GetProvidersSnapshotResponseMessage["payload"];
+export type OmpProviderSnapshotUpdate = Extract<
   SessionOutboundMessage,
   { type: "providers_snapshot_update" }
 >["payload"];
-export type PaseoProviderRefreshResult = RefreshProvidersSnapshotResponseMessage["payload"];
-export type PaseoProviderDiagnosticResult = ProviderDiagnosticResponseMessage["payload"];
+export type OmpProviderRefreshResult = RefreshProvidersSnapshotResponseMessage["payload"];
+export type OmpProviderDiagnosticResult = ProviderDiagnosticResponseMessage["payload"];
 
-export interface PaseoProviderListOptions {
+export interface OmpProviderListOptions {
   cwd?: string;
   requestId?: string;
 }
 
-export interface PaseoProviderRefreshOptions {
+export interface OmpProviderRefreshOptions {
   cwd?: string;
-  providers?: PaseoAgentProvider[];
+  providers?: OmpAgentProvider[];
   requestId?: string;
 }
 
-export interface PaseoProviderWaitOptions extends PaseoProviderListOptions {
+export interface OmpProviderWaitOptions extends OmpProviderListOptions {
   timeoutMs?: number;
 }
 
-export interface PaseoProviderActions {
+export interface OmpProviderActions {
   listModels(
-    provider: PaseoAgentProvider,
-    options?: PaseoProviderListOptions,
-  ): Promise<PaseoProviderModelsResult>;
+    provider: OmpAgentProvider,
+    options?: OmpProviderListOptions,
+  ): Promise<OmpProviderModelsResult>;
   listModes(
-    provider: PaseoAgentProvider,
-    options?: PaseoProviderListOptions,
-  ): Promise<PaseoProviderModesResult>;
+    provider: OmpAgentProvider,
+    options?: OmpProviderListOptions,
+  ): Promise<OmpProviderModesResult>;
   listFeatures(
-    draftConfig: PaseoProviderFeaturesInput,
+    draftConfig: OmpProviderFeaturesInput,
     options?: { requestId?: string },
-  ): Promise<PaseoProviderFeaturesResult>;
-  listAvailable(options?: { requestId?: string }): Promise<PaseoProviderAvailabilityResult>;
-  snapshot(options?: PaseoProviderListOptions): Promise<PaseoProviderSnapshotResult>;
+  ): Promise<OmpProviderFeaturesResult>;
+  listAvailable(options?: { requestId?: string }): Promise<OmpProviderAvailabilityResult>;
+  snapshot(options?: OmpProviderListOptions): Promise<OmpProviderSnapshotResult>;
   /** Resolves after the daemon's lazy provider discovery has finished. */
-  waitForReady(options?: PaseoProviderWaitOptions): Promise<PaseoProviderSnapshotResult>;
-  refresh(options?: PaseoProviderRefreshOptions): Promise<PaseoProviderRefreshResult>;
+  waitForReady(options?: OmpProviderWaitOptions): Promise<OmpProviderSnapshotResult>;
+  refresh(options?: OmpProviderRefreshOptions): Promise<OmpProviderRefreshResult>;
   diagnostic(
-    provider: PaseoAgentProvider,
+    provider: OmpAgentProvider,
     options?: { requestId?: string },
-  ): Promise<PaseoProviderDiagnosticResult>;
-  subscribe(handler: (update: PaseoProviderSnapshotUpdate) => void): () => void;
+  ): Promise<OmpProviderDiagnosticResult>;
+  subscribe(handler: (update: OmpProviderSnapshotUpdate) => void): () => void;
 }
 
-export interface PaseoConfigActions {
+export interface OmpConfigActions {
   /**
    * Reads daemon config through the existing config RPC. Provider profiles,
    * custom provider entries, keys/env, custom binaries, and provider enablement
@@ -405,7 +405,7 @@ export interface OmpNativePluginActions {
   };
 }
 
-export interface OmpProviderActions {
+export interface OmpProviderManagementActions {
   plugins: OmpNativePluginActions;
   getProviderManagement(options?: {
     requestId?: string;
@@ -488,7 +488,7 @@ export interface OmpProviderActions {
   ): Promise<OmpProviderLoginCancelResponseMessage["payload"]>;
 }
 
-export interface PaseoForgeAuthActions {
+export interface OmpForgeAuthActions {
   start(
     input: { forge: string; cwd?: string; host?: string },
     requestId?: string,
@@ -501,31 +501,31 @@ export interface PaseoForgeAuthActions {
   ): Promise<ForgeAuthLogoutResponse["payload"]>;
 }
 
-export interface PaseoApi {
+export interface OmpApi {
   readonly hostId:string;
   readonly plugins:DesktopPluginActions;
-  readonly workspaces: PaseoWorkspaceActions;
-  readonly agents: PaseoAgentActions;
-  readonly providers: PaseoProviderActions;
-  readonly config: PaseoConfigActions;
-  readonly omp: OmpProviderActions;
-  readonly forgeAuth: PaseoForgeAuthActions;
+  readonly workspaces: OmpWorkspaceActions;
+  readonly agents: OmpAgentActions;
+  readonly providers: OmpProviderActions;
+  readonly config: OmpConfigActions;
+  readonly omp: OmpProviderManagementActions;
+  readonly forgeAuth: OmpForgeAuthActions;
 }
 
-export interface PaseoClient extends PaseoApi {
+export interface OmpClient extends OmpApi {
   connect(): Promise<void>;
   close(): Promise<void>;
   ensureConnected(): void;
   getConnectionState(): ConnectionState;
 }
 
-export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
+export function createOmpClient(config: OmpClientConfig): OmpClient {
   const daemonClient = new DaemonClient({
     ...config,
     clientId: config.clientId ?? createGeneratedClientId(),
     clientType: "cli",
   });
-  return Object.assign(createPaseoApi(daemonClient), {
+  return Object.assign(createOmpApi(daemonClient), {
     connect: () => daemonClient.connect(),
     close: () => daemonClient.close(),
     ensureConnected: () => daemonClient.ensureConnected(),
@@ -533,10 +533,10 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
   });
 }
 
-export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
+export function createOmpApi(daemonClient: DaemonClient): OmpApi {
   const createAgentHandle = createAgentHandleFactory(daemonClient);
   const createAgent = async (
-    options: PaseoAgentCreateOptions,
+    options: OmpAgentCreateOptions,
     placement?: { workspaceId: string; cwd: string },
   ) => {
     const { config: agentConfig, cwd, parent, title, prompt, ...requestOptions } = options;
@@ -671,12 +671,12 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
   };
 }
 
-type WorkspaceHandleFactory = (workspace: string | PaseoWorkspace) => PaseoWorkspaceHandle;
-type AgentHandleFactory = (agent: string | PaseoAgent) => PaseoAgentHandle;
+type WorkspaceHandleFactory = (workspace: string | OmpWorkspace) => OmpWorkspaceHandle;
+type AgentHandleFactory = (agent: string | OmpAgent) => OmpAgentHandle;
 type CreateAgent = (
-  options: PaseoAgentCreateOptions,
+  options: OmpAgentCreateOptions,
   placement?: { workspaceId: string; cwd: string },
-) => Promise<PaseoAgentHandle>;
+) => Promise<OmpAgentHandle>;
 
 function createWorkspaceHandleFactory(
   daemonClient: DaemonClient,
@@ -763,7 +763,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
     const id = typeof agent === "string" ? agent : agent.id;
     let current = typeof agent === "string" ? null : agent;
 
-    const handle: PaseoAgentHandle = {
+    const handle: OmpAgentHandle = {
       id,
       timeline: {
         refetch: async (options) => {
@@ -839,7 +839,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         let disposed = false;
         let flush: ReturnType<typeof setTimeout> | undefined;
         let release: (() => void) | undefined;
-        const buffered: PaseoAgentStream[] = [];
+        const buffered: OmpAgentStream[] = [];
         const unsubscribe = daemonClient.on("agent_stream", (message) => {
           if (message.payload.agentId !== id || disposed) return;
           if (ready) handler(message.payload);
@@ -901,9 +901,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
 async function openWorkspace(
   daemonClient: DaemonClient,
   createWorkspaceHandle: WorkspaceHandleFactory,
-  input: string | PaseoWorkspaceOpenOptions,
+  input: string | OmpWorkspaceOpenOptions,
   requestId?: string,
-): Promise<PaseoWorkspaceHandle> {
+): Promise<OmpWorkspaceHandle> {
   const options = typeof input === "string" ? { cwd: input, requestId } : input;
   const result = await daemonClient.openProject(options.cwd, options.requestId);
   if (result.error || !result.workspace) {
@@ -912,11 +912,11 @@ async function openWorkspace(
   return createWorkspaceHandle(result.workspace);
 }
 
-function resolveWorkspaceId(workspace: string | PaseoWorkspaceHandle): string {
+function resolveWorkspaceId(workspace: string | OmpWorkspaceHandle): string {
   return typeof workspace === "string" ? workspace : workspace.id;
 }
 
-function resolveAgentId(agent: string | PaseoAgentHandle): string {
+function resolveAgentId(agent: string | OmpAgentHandle): string {
   return typeof agent === "string" ? agent : agent.id;
 }
 
@@ -933,8 +933,8 @@ function parseProviderModel(selection: string): { provider: string; model: strin
 
 function waitForProvidersReady(
   daemonClient: DaemonClient,
-  options: PaseoProviderWaitOptions = {},
-): Promise<PaseoProviderSnapshotResult> {
+  options: OmpProviderWaitOptions = {},
+): Promise<OmpProviderSnapshotResult> {
   // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
   if (daemonClient.getLastServerInfoMessage()?.features?.providersSnapshotCwd !== true) {
     return Promise.reject(new Error("Update the host to wait for provider discovery."));
@@ -946,14 +946,14 @@ function waitForProvidersReady(
     let settled = false;
     let requestId: string | null = null;
     let snapshotCwd: string | undefined;
-    const pendingUpdates = new Map<string | undefined, PaseoProviderSnapshotUpdate>();
-    let latestEntries: PaseoProviderSnapshotResult["entries"] = [];
+    const pendingUpdates = new Map<string | undefined, OmpProviderSnapshotUpdate>();
+    let latestEntries: OmpProviderSnapshotResult["entries"] = [];
 
     const cleanup = () => {
       clearTimeout(timeout);
       unsubscribe();
     };
-    const finish = (snapshot: PaseoProviderSnapshotResult) => {
+    const finish = (snapshot: OmpProviderSnapshotResult) => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -965,7 +965,7 @@ function waitForProvidersReady(
       cleanup();
       reject(error instanceof Error ? error : new Error(String(error)));
     };
-    const updateMatches = (update: PaseoProviderSnapshotUpdate) => update.cwd === snapshotCwd;
+    const updateMatches = (update: OmpProviderSnapshotUpdate) => update.cwd === snapshotCwd;
 
     const unsubscribe = daemonClient.on("providers_snapshot_update", (message) => {
       const update = message.payload;
@@ -1018,5 +1018,5 @@ function createGeneratedClientId(): string {
     typeof globalThis.crypto?.randomUUID === "function"
       ? globalThis.crypto.randomUUID()
       : Math.random().toString(36).slice(2);
-  return `paseo-sdk-${randomId}`;
+  return `omp-sdk-${randomId}`;
 }

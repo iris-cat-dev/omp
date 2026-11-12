@@ -1,7 +1,7 @@
-import type { PaseoApi } from "@omp-desktop/client";
+import type { OmpApi } from "@omp-desktop/client";
 import type { PluginInstallation } from "./runtime-contracts.js";
 import type { PluginActivationScope } from "./activation.js";
-export function createPluginPaseoApi(api:PaseoApi,installation:PluginInstallation,scope:PluginActivationScope,options:{mode:"manage"|"active";legacy?:boolean}):PaseoApi {
+export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,scope:PluginActivationScope,options:{mode:"manage"|"active";legacy?:boolean}):OmpApi {
  const proxies=new WeakMap<object,object>();
  const subscriptions=new WeakMap<object,()=>void|Promise<void>>();
  const capability=(path:readonly string[])=>{
@@ -44,5 +44,5 @@ export function createPluginPaseoApi(api:PaseoApi,installation:PluginInstallatio
   });
   proxies.set(value,proxy);return proxy;
  };
- return wrap(api,[]) as PaseoApi;
+ return wrap(api,[]) as OmpApi;
 }

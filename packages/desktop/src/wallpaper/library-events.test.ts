@@ -50,7 +50,7 @@ describe("independent wallpaper library event integration", () => {
     ];
     const added = await store.addWallpaperCandidates([await validateWallpaperFile(filePath)]);
     expect(received).toEqual([
-      { channel: "paseo:event:paseo:wallpaper:libraryChanged", library: added.library },
+      { channel: "paseo:event:omp:wallpaper:libraryChanged", library: added.library },
     ]);
     const owner = registry.activateOwner({});
     held = (await registry.setBackground(owner, owner.epoch, 0, added.added[0].candidateId,
@@ -60,7 +60,7 @@ describe("independent wallpaper library event integration", () => {
     const removed = await store.removeWallpaperCandidates([added.added[0].candidateId]);
     expect(revokedAtSend).toBe(true);
     expect(received[1]).toEqual({
-      channel: "paseo:event:paseo:wallpaper:libraryChanged",
+      channel: "paseo:event:omp:wallpaper:libraryChanged",
       library: removed.library,
     });
     expect(registry.get(held.id, held.scope)).toBeNull();

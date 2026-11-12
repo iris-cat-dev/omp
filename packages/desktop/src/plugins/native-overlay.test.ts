@@ -33,7 +33,7 @@ function overlay(bind = true) {
   const onAction = vi.fn(), onPosition = vi.fn(async () => undefined);
   const lease = acquireNativeOverlay({ id: "test", html: "<!doctype html>", width: 260, height: 228, position: { x: -1000, y: 200 }, state: { ready: true }, onAction, onPosition }, scope, "test-plugin");
   const window = mock.windows.at(-1)!;
-  if (bind) mock.handlers.get("paseo:overlay:bind")!({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
+  if (bind) mock.handlers.get("omp:overlay:bind")!({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
   return { scope, lease, window, onAction, onPosition };
 }
 describe("native overlay leases", () => {
@@ -42,21 +42,21 @@ describe("native overlay leases", () => {
     const { window } = overlay(false);
     const bootstrap = window.webContents.mainFrame;
     const documentURL = bootstrap.url;
-    const bind = mock.handlers.get("paseo:overlay:bind")!;
+    const bind = mock.handlers.get("omp:overlay:bind")!;
     bootstrap.url = "";
     expect(() => bind({ sender: window.webContents, senderFrame: bootstrap })).toThrow("Unauthorized overlay preload");
     bootstrap.detached = true;
     const documentFrame = { url: documentURL, detached: false };
     window.webContents.mainFrame = documentFrame;
     expect(() => bind({ sender: window.webContents, senderFrame: documentFrame })).not.toThrow();
-    const ready = mock.handlers.get(`paseo:overlay:${window.webContents.id}`)!;
+    const ready = mock.handlers.get(`omp:overlay:${window.webContents.id}`)!;
     await expect(ready({ sender: window.webContents, senderFrame: documentFrame }, "ready")).resolves.toEqual({ ready: true });
     expect(() => bind({ sender: window.webContents, senderFrame: bootstrap })).toThrow("Unauthorized overlay preload");
     expect(() => bind({ sender: window.webContents, senderFrame: { ...documentFrame } })).toThrow("Unauthorized overlay preload");
   });
-  it("rejects a wrong frame and revoked generation actions", async () => { const { window, scope, onAction } = overlay(); const handler = mock.handlers.get(`paseo:overlay:${window.webContents.id}`)!; await expect(handler({ sender: window.webContents, senderFrame: {} }, "open")).rejects.toThrow("Unauthorized"); await handler({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, "open"); expect(onAction).toHaveBeenCalledWith("open", undefined); await scope.dispose(); await expect(handler({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, "open")).rejects.toThrow("no longer active"); });
+  it("rejects a wrong frame and revoked generation actions", async () => { const { window, scope, onAction } = overlay(); const handler = mock.handlers.get(`omp:overlay:${window.webContents.id}`)!; await expect(handler({ sender: window.webContents, senderFrame: {} }, "open")).rejects.toThrow("Unauthorized"); await handler({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, "open"); expect(onAction).toHaveBeenCalledWith("open", undefined); await scope.dispose(); await expect(handler({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, "open")).rejects.toThrow("no longer active"); });
   it("never shows a window whose generation was revoked during document load", async () => { const { promise, resolve } = Promise.withResolvers<void>(); mock.load = promise; const { scope, window } = overlay(); await scope.dispose(); resolve(); await Promise.resolve(); expect(window.destroyed).toBe(true); expect(window.showInactive).not.toHaveBeenCalled(); });
-  it("drags inside display bounds and persists the real screen position", async () => { const { window, onPosition } = overlay(); const handler = mock.handlers.get(`paseo:overlay:${window.webContents.id}`)!; const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }; await handler(event, "drag-start"); mock.cursor = { x: -2000, y: 300 }; vi.advanceTimersByTime(50); expect(window.bounds.x).toBe(-1280); await handler(event, "drag-end"); expect(onPosition).toHaveBeenCalledWith({ x: -1280, y: 300 }); });
+  it("drags inside display bounds and persists the real screen position", async () => { const { window, onPosition } = overlay(); const handler = mock.handlers.get(`omp:overlay:${window.webContents.id}`)!; const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }; await handler(event, "drag-start"); mock.cursor = { x: -2000, y: 300 }; vi.advanceTimersByTime(50); expect(window.bounds.x).toBe(-1280); await handler(event, "drag-end"); expect(onPosition).toHaveBeenCalledWith({ x: -1280, y: 300 }); });
   it("never dispatches retained menu callbacks to a replacement frame or revoked generation", async () => {
     const f = overlay(); f.lease.showMenu([{ id: "open", label: "Open" }]);
     const invoke = mock.menus.at(-1)![0].click as () => void;
@@ -68,19 +68,19 @@ describe("native overlay leases", () => {
   it("revokes before full navigation and rejects an asynchronous old-document completion", async () => {
     const f = overlay();
     const { promise, resolve } = Promise.withResolvers<void>(); f.onAction.mockReturnValue(promise);
-    const handler = mock.handlers.get(`paseo:overlay:${f.window.webContents.id}`)!;
+    const handler = mock.handlers.get(`omp:overlay:${f.window.webContents.id}`)!;
     const event = { sender: f.window.webContents, senderFrame: f.window.webContents.mainFrame };
     const pending = Promise.resolve(handler(event, "open"));
     const rejected = expect(pending).rejects.toThrow("Unauthorized overlay document");
     f.window.webContents.emit("did-start-navigation", {}, "omp-desktop://overlay/replaced", false, true);
     expect(f.window.destroyed).toBe(true); resolve(); await rejected;
-    expect(() => mock.handlers.get("paseo:overlay:bind")!(event)).toThrow("Unauthorized");
+    expect(() => mock.handlers.get("omp:overlay:bind")!(event)).toThrow("Unauthorized");
   });
   it("revokes the document and retained actions after Native closes the window", async () => {
     const f = overlay();
     const sender = f.window.webContents;
     const pathname = new URL(sender.mainFrame.url!).pathname;
-    const handler = mock.handlers.get(`paseo:overlay:${sender.id}`)!;
+    const handler = mock.handlers.get(`omp:overlay:${sender.id}`)!;
     f.window.destroyed = true;
     Object.defineProperty(f.window, "webContents", { get: () => undefined });
     f.window.emit("closed");
@@ -92,7 +92,7 @@ describe("native overlay leases", () => {
     const f = overlay();
     f.window.webContents.emit("did-start-navigation", {}, "omp-desktop://overlay/#same", true, true);
     f.window.webContents.emit("did-start-navigation", {}, "omp-desktop://overlay/subframe", false, false);
-    const handler = mock.handlers.get(`paseo:overlay:${f.window.webContents.id}`)!;
+    const handler = mock.handlers.get(`omp:overlay:${f.window.webContents.id}`)!;
     await handler({ sender: f.window.webContents, senderFrame: f.window.webContents.mainFrame }, "open");
     expect(f.onAction).toHaveBeenCalledWith("open", undefined); expect(f.window.destroyed).toBe(false);
   });

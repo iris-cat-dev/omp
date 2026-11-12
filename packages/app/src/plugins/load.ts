@@ -7,7 +7,7 @@ import * as Unistyles from "react-native-unistyles";
 import * as Zod from "zod";
 import * as PluginSdk from "@omp-desktop/plugin";
 import * as PluginServerSdk from "@omp-desktop/plugin/server";
-import * as PaseoClient from "@omp-desktop/client";
+import * as OmpClient from "@omp-desktop/client";
 import * as ReactI18next from "react-i18next";
 import * as LucideIcons from "lucide-react-native";
 import type { PluginClientSetup } from "@omp-desktop/plugin";
@@ -24,12 +24,7 @@ const sharedModules: Record<string, unknown> = {
   zod: Zod,
   "@omp-desktop/plugin": PluginSdk,
   "@omp-desktop/plugin/server": PluginServerSdk,
-  "@omp-desktop/client": PaseoClient,
-  "@getpaseo/plugin": PluginSdk,
-  "@getpaseo/plugin/server": PluginServerSdk,
-  "@paseo/plugin": PluginSdk,
-  "@paseo/plugin/server": PluginServerSdk,
-  "@getpaseo/client": PaseoClient,
+  "@omp-desktop/client": OmpClient,
 };
 
 /** Only call after this exact client bundle has been approved on this machine. */

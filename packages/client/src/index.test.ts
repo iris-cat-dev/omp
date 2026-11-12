@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { createPaseoApi, createPaseoClient } from "./index.js";
+import { createOmpApi, createOmpClient } from "./index.js";
 import { DaemonClient } from "./daemon-client.js";
-import type { PaseoAgent, PaseoClient, PaseoWorkspace } from "./index.js";
+import type { OmpAgent, OmpClient, OmpWorkspace } from "./index.js";
 
 type FakeWebSocketHandler = (...args: unknown[]) => void;
 
@@ -83,9 +83,9 @@ function parseSentFrame(
 
 async function connectClient(
   features: Record<string, boolean> = { providersSnapshotCwd: true },
-): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+): Promise<{ client: OmpClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
-  const client = createPaseoClient({
+  const client = createOmpClient({
     url: "ws://daemon.test",
     reconnect: { enabled: false },
   });
@@ -99,7 +99,7 @@ async function connectClient(
     clientType: "cli",
     protocolVersion: 1,
   });
-  expect(hello.clientId).toEqual(expect.stringMatching(/^paseo-sdk-/));
+  expect(hello.clientId).toEqual(expect.stringMatching(/^omp-sdk-/));
   ws.message(
     sessionMessage({
       type: "status",
@@ -117,7 +117,7 @@ async function connectClient(
   return { client, ws };
 }
 
-function createWorkspace(input: Partial<PaseoWorkspace> = {}): PaseoWorkspace {
+function createWorkspace(input: Partial<OmpWorkspace> = {}): OmpWorkspace {
   return {
     id: "workspace_sdk",
     projectId: "project_sdk",
@@ -138,7 +138,7 @@ function createWorkspace(input: Partial<PaseoWorkspace> = {}): PaseoWorkspace {
   };
 }
 
-function createAgent(input: Partial<PaseoAgent> = {}): PaseoAgent {
+function createAgent(input: Partial<OmpAgent> = {}): OmpAgent {
   return {
     id: "agent_sdk",
     provider: "codex",
@@ -170,7 +170,7 @@ function createAgent(input: Partial<PaseoAgent> = {}): PaseoAgent {
   };
 }
 
-test("createPaseoClient exposes workspace list through the daemon client", async () => {
+test("createOmpClient exposes workspace list through the daemon client", async () => {
   const { client, ws } = await connectClient();
 
   const listPromise = client.workspaces.list({
@@ -215,18 +215,18 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await client.close();
 });
 
-test("createPaseoApi borrows daemon capabilities without exposing connection ownership", () => {
+test("createOmpApi borrows daemon capabilities without exposing connection ownership", () => {
   const daemonClient = new DaemonClient({
     url: "ws://daemon.test",
     clientId: "borrowed-api",
     reconnect: { enabled: false },
   });
 
-  const paseo = createPaseoApi(daemonClient);
+  const omp = createOmpApi(daemonClient);
 
-  expect("connect" in paseo).toBe(false);
-  expect("close" in paseo).toBe(false);
-  expect("skills" in paseo.agents).toBe(false);
+  expect("connect" in omp).toBe(false);
+  expect("close" in omp).toBe(false);
+  expect("skills" in omp.agents).toBe(false);
 });
 
 test("agent actions list the daemon directory without exposing the low-level client", async () => {
@@ -1554,7 +1554,7 @@ function createObserverScenario() {
     };
   });
   vi.spyOn(driver, "fetchAgent").mockResolvedValue({ requestId: "agent", agent, error: null });
-  return { handle: createPaseoApi(driver).agents.ref(agent), driver, unsubscribe, release, emit };
+  return { handle: createOmpApi(driver).agents.ref(agent), driver, unsubscribe, release, emit };
 }
 
 test("agent observer hydrates before Promise-wrapped live delivery and retains same-row revisions", async () => {

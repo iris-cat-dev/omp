@@ -38,7 +38,7 @@ export function resolveDevRuntime(env = process.env) {
     electronFlags: buildElectronFlags(env.PASEO_ELECTRON_FLAGS, remoteDebuggingPort),
     userDataDir: resolveDevUserDataDir({
       devRoot: env.PASEO_DEV_ROOT,
-      inheritedUserDataDir: env.PASEO_ELECTRON_USER_DATA_DIR,
+      inheritedUserDataDir: env.OMP_ELECTRON_USER_DATA_DIR,
       fallbackRoot: env.PASEO_DEV_RUNTIME_FALLBACK_ROOT,
     }),
   };

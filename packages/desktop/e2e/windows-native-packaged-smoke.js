@@ -114,7 +114,7 @@ function isolatedEnvironment({ root, stagedApp, daemonHome, listen, userData }) 
     PASEO_HOME: daemonHome,
     PASEO_LISTEN: listen,
     PASEO_HOST: listen,
-    PASEO_ELECTRON_USER_DATA_DIR: userData,
+    OMP_ELECTRON_USER_DATA_DIR: userData,
     PASEO_DISABLE_APP_UPDATES: "1",
     PASEO_WEB_UI_ENABLED: "false",
     PASEO_ELECTRON_FLAGS: "--lang=zh-CN",
@@ -124,7 +124,7 @@ function isolatedEnvironment({ root, stagedApp, daemonHome, listen, userData }) 
 
 function nativeProfilePaths(env) {
   const profile = env.USERPROFILE;
-  const userData = env.PASEO_ELECTRON_USER_DATA_DIR;
+  const userData = env.OMP_ELECTRON_USER_DATA_DIR;
   return {
     home: profile,
     appData: env.APPDATA,

@@ -19,7 +19,7 @@ interface CatalogClient {
   invokePluginRpc(): Promise<unknown>;
 }
 const fixture = vi.hoisted(() => ({ client: null as CatalogClient | null, snapshot: null as { client: CatalogClient; connectionStatus: "online"; connectionEpoch: number } | null, listeners: new Set<(message: CatalogStatus) => void>(), nextSnapshot: null as Promise<CatalogSnapshot> | null, resolveRpc: null as ((value: unknown) => void) | null }));
-vi.mock("@/runtime/host-runtime", () => ({ useHostRuntimeSnapshot: () => fixture.snapshot, getHostRuntimeStore: () => { throw new Error("Counter does not acquire a Paseo session"); } }));
+vi.mock("@/runtime/host-runtime", () => ({ useHostRuntimeSnapshot: () => fixture.snapshot, getHostRuntimeStore: () => { throw new Error("Counter does not acquire an Omp session"); } }));
 vi.mock("./client-trust", () => ({ hasPluginClientTrust: async () => true, subscribePluginClientTrust: () => () => {} }));
 vi.mock("./load", () => ({ loadTrustedPluginClient: () => (context: PluginClientContext) => { context.addSurface("counter", Counter); } }));
 vi.mock("./icons", () => ({ resolvePluginIcon: () => undefined }));

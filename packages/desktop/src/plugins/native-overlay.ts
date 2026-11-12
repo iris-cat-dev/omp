@@ -11,7 +11,7 @@ export function acquireNativeOverlay(request: PluginNativeOverlayRequest, scope:
   scope.assertCurrent();
   if (!bridgeRegistered) {
     bridgeRegistered = true;
-    ipcMain.handle("paseo:overlay:bind", (event) => {
+    ipcMain.handle("omp:overlay:bind", (event) => {
       const binding = overlayChannels.get(event.sender.id);
       if (!binding) throw new Error("Unauthorized overlay preload.");
       binding.bind(event);
@@ -63,7 +63,7 @@ export function acquireNativeOverlay(request: PluginNativeOverlayRequest, scope:
       throw new Error("Unauthorized overlay document.");
     }
   };
-  const channel = `paseo:overlay:${webContentsId}`;
+  const channel = `omp:overlay:${webContentsId}`;
   overlayChannels.set(webContentsId, { channel, bind(event) {
     scope.assertCurrent();
     if (released || window.isDestroyed() || event.sender !== window.webContents || !event.senderFrame ||
@@ -97,14 +97,14 @@ export function acquireNativeOverlay(request: PluginNativeOverlayRequest, scope:
     if (drag) window.setBounds(bounds({ x: drag.origin.x + cursor.x - drag.cursor.x, y: drag.origin.y + cursor.y - drag.cursor.y }));
     const current = window.getBounds();
     const x = cursor.x - current.x, y = cursor.y - current.y;
-    if (!lastPointer || lastPointer.x !== x || lastPointer.y !== y) { lastPointer = { x, y }; window.webContents.send("paseo:overlay:pointer", lastPointer); }
+    if (!lastPointer || lastPointer.x !== x || lastPointer.y !== y) { lastPointer = { x, y }; window.webContents.send("omp:overlay:pointer", lastPointer); }
   }, 50);
   const release = () => { if (released) return; released = true; overlayChannels.delete(webContentsId); documents.delete(pathname); clearInterval(pointerTimer); ipcMain.removeHandler(channel); ipcMain.removeListener(`${channel}:interactive`, interactive); screen.removeListener("display-added", displaysChanged); screen.removeListener("display-removed", displaysChanged); screen.removeListener("display-metrics-changed", displaysChanged); if (!window.isDestroyed()) window.destroy(); };
   window.on("closed", release);
   scope.own(release);
-  void window.loadURL(documentURL).then(() => { if (released || scope.signal.aborted || window.isDestroyed()) return; window.webContents.send("paseo:overlay:state", state); window.showInactive(); }).catch((error) => { release(); if (!scope.signal.aborted) void request.onAction("error", error instanceof Error ? error.message : String(error)); });
+  void window.loadURL(documentURL).then(() => { if (released || scope.signal.aborted || window.isDestroyed()) return; window.webContents.send("omp:overlay:state", state); window.showInactive(); }).catch((error) => { release(); if (!scope.signal.aborted) void request.onAction("error", error instanceof Error ? error.message : String(error)); });
   return {
-    update(input) { scope.assertCurrent(); if (released) throw new Error("Overlay lease released."); if (Object.hasOwn(input, "state")) state = input.state; dimensions = { width: input.width ?? dimensions.width, height: input.height ?? dimensions.height }; window.setBounds(bounds(Object.hasOwn(input, "position") ? input.position ?? null : window.getBounds())); window.webContents.send("paseo:overlay:state", state); },
+    update(input) { scope.assertCurrent(); if (released) throw new Error("Overlay lease released."); if (Object.hasOwn(input, "state")) state = input.state; dimensions = { width: input.width ?? dimensions.width, height: input.height ?? dimensions.height }; window.setBounds(bounds(Object.hasOwn(input, "position") ? input.position ?? null : window.getBounds())); window.webContents.send("omp:overlay:state", state); },
     showMenu(items) {
       scope.assertCurrent();
       if (released || !boundDocument || window.isDestroyed()) throw new Error("Overlay document is unavailable.");

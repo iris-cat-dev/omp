@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { PaseoApi } from "@omp-desktop/client";
+import type { OmpApi } from "@omp-desktop/client";
 import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
 import type { PluginContext, PluginCleanup, PluginHostProps, PluginCommandCapabilities } from "./contracts.js";
 import type { PluginRpcContract } from "./rpc.js";
@@ -55,7 +55,7 @@ export interface PluginClientContext extends PluginContext {
   readonly signal: AbortSignal;
   readonly mode: "manage" | "active";
   readonly role: "client";
-  readonly paseo: PaseoApi;
+  readonly omp: OmpApi;
   readonly storage: PluginStorage;
   readonly secrets: PluginSecrets;
   readonly native: PluginNativeApi;
@@ -72,7 +72,7 @@ export interface PluginServiceContext extends PluginContext {
   readonly signal: AbortSignal;
   readonly mode: "active";
   readonly role: "service";
-  readonly paseo: PaseoApi;
+  readonly omp: OmpApi;
   readonly storage: PluginStorage;
   readonly secrets: PluginServiceSecrets;
   readonly native: PluginNativeApi;

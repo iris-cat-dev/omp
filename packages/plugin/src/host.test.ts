@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAttachmentSource, defineRpc } from "./index.js";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
-import type { PaseoApi, PaseoAgent } from "@omp-desktop/client";
+import type { OmpApi, OmpAgent } from "@omp-desktop/client";
 import { createActivationScope } from "./activation.js";
-import { createPluginPaseoApi } from "./paseo-api.js";
+import { createPluginOmpApi } from "./omp-api.js";
 import type { PluginInstallation } from "./runtime-contracts.js";
 
 const contract = defineRpc({
@@ -118,9 +118,9 @@ describe("controlled agent observer cleanup", () => {
     const unsubscribe = vi.fn();
     let complete!: (value: { unsubscribe: () => void }) => void;
     const pending = new Promise<{ unsubscribe: () => void }>(resolve => { complete = resolve; });
-    const api = { agents: { ref: () => ({ observe: () => pending }) } } as unknown as PaseoApi;
-    const controlled = createPluginPaseoApi(api, installation, scope, { mode: "active" });
-    const observation = controlled.agents.ref({} as PaseoAgent).observe(() => {});
+    const api = { agents: { ref: () => ({ observe: () => pending }) } } as unknown as OmpApi;
+    const controlled = createPluginOmpApi(api, installation, scope, { mode: "active" });
+    const observation = controlled.agents.ref({} as OmpAgent).observe(() => {});
     await scope.dispose();
     complete({ unsubscribe });
     await expect(observation).rejects.toThrow("generation is no longer active");
@@ -130,9 +130,9 @@ describe("controlled agent observer cleanup", () => {
   it("keeps only an owned release callable after abort", async () => {
     const scope = createActivationScope(1);
     const unsubscribe = vi.fn();
-    const api = { agents: { ref: () => ({ observe: async () => ({ unsubscribe, snapshot: {} }) }) } } as unknown as PaseoApi;
-    const controlled = createPluginPaseoApi(api, installation, scope, { mode: "active" });
-    const observation = await controlled.agents.ref({} as PaseoAgent).observe(() => {});
+    const api = { agents: { ref: () => ({ observe: async () => ({ unsubscribe, snapshot: {} }) }) } } as unknown as OmpApi;
+    const controlled = createPluginOmpApi(api, installation, scope, { mode: "active" });
+    const observation = await controlled.agents.ref({} as OmpAgent).observe(() => {});
     await scope.dispose();
     await observation.unsubscribe();
     expect(unsubscribe).toHaveBeenCalledTimes(1);

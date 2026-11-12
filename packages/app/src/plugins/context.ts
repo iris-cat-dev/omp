@@ -9,7 +9,7 @@ import type {
   PluginStorage,
 } from "@omp-desktop/plugin";
 import type { PluginActivationScope } from "@omp-desktop/plugin/host";
-import type { PaseoApi } from "@omp-desktop/client";
+import type { OmpApi } from "@omp-desktop/client";
 import { QueryClient } from "@tanstack/react-query";
 import {
   emptyPluginContributions,
@@ -20,7 +20,7 @@ import {
 import { validatePluginContribution } from "./contribution-validation";
 
 export interface PluginClientServices {
-  getPaseo(): PaseoApi;
+  getOmp(): OmpApi;
   storage: PluginStorage;
   secrets: PluginSecrets;
   native: PluginNativeApi;
@@ -75,7 +75,7 @@ export async function setupPluginClient(input: {
     signal: scope.signal,
     mode: input.mode,
     role: "client",
-    get paseo() { return services.getPaseo(); },
+    get omp() { return services.getOmp(); },
     storage: {
       get: <T>() => guarded(() => services.storage.get<T>()),
       patch: <T>(patch: Partial<T>, revision: number) => guarded(() => services.storage.patch<T>(patch, revision)),

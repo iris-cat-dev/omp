@@ -35,7 +35,7 @@ async function install(hostId: string, owner: "desktop" | "daemon", title: strin
   const instance = await setupPluginClient({
     hostId, installation: { id: "same-name", packageId: "fixture", owner, version: "1.0.0", generation: 1, enabled: true, declaredCapabilities: [], grantedCapabilities: [] },
     mode: "active", format: "package", scope: createActivationScope(1),
-    services: { getPaseo: unavailable, storage: { get: async () => unavailable(), patch: async () => unavailable() }, secrets: { configured: async () => unavailable(), set: async () => unavailable(), delete: async () => unavailable() }, native: { invoke: async () => unavailable(), subscribe: unavailable }, invoke: async (method) => { if (method !== "search") throw new Error("Unknown fixture RPC"); return { items: [resource] }; } },
+    services: { getOmp: unavailable, storage: { get: async () => unavailable(), patch: async () => unavailable() }, secrets: { configured: async () => unavailable(), set: async () => unavailable(), delete: async () => unavailable() }, native: { invoke: async () => unavailable(), subscribe: unavailable }, invoke: async (method) => { if (method !== "search") throw new Error("Unknown fixture RPC"); return { items: [resource] }; } },
     setup(ctx) { ctx.addAttachmentSource({ id: "source", title, icon: "Paperclip", pickerTitle: title, searchPlaceholder: "Search", search }); },
   });
   if (!instance) throw new Error("Attachment fixture activation was cancelled");

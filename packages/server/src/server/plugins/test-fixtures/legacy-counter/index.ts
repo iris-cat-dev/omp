@@ -1,4 +1,4 @@
-import type {PluginContext} from "@getpaseo/plugin";
+import type {PluginContext} from "@omp-desktop/plugin";
 import {CounterView} from "./counter.client";
 import {createCounterHandler,searchCounter} from "./counter.server";
 import {count,search} from "./counter.shared";
