@@ -34,7 +34,10 @@ export interface RelayServerAddress {
   endpoint: string;
   useTls: boolean;
 }
-export const DEFAULT_RELAY_SERVER_ADDRESS = `wss://${DEFAULT_RELAY_ENDPOINT}`;
+const configuredDefaultRelay = process.env.EXPO_PUBLIC_RELAY_SERVER_ADDRESS?.trim();
+export const DEFAULT_RELAY_SERVER_ADDRESS = configuredDefaultRelay
+  ? formatRelayServerAddress(parseRelayServerAddress(configuredDefaultRelay))
+  : `wss://${DEFAULT_RELAY_ENDPOINT}`;
 
 export function parseRelayServerAddress(input: string): RelayServerAddress {
   const address = input.trim();

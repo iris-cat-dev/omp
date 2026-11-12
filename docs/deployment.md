@@ -27,20 +27,39 @@ npm run deploy:web
 
 ### Self-hosted relay and Web domains
 
-Deploy the [Paseo Relay OCI image](https://github.com/getpaseo/paseo-relay) pinned to a verified image digest, using Docker or Podman under a process supervisor. Serve the Web export separately through your HTTPS reverse proxy. Forward `/ws` using HTTP/1.1 WebSocket upgrades with proxy buffering disabled. The relay machine does not need OMP or access to the daemon's private listening port.
+Deploy the [Paseo Relay OCI image](https://github.com/getpaseo/paseo-relay) pinned to a verified image digest, using Docker or Podman under a process supervisor. Serve the Web export as static files through your HTTPS reverse proxy. Forward `/ws` using HTTP/1.1 WebSocket upgrades with proxy buffering disabled. The relay machine does not need OMP or access to the daemon's private listening port.
 
 For a standalone Podman service using host networking, set `RELEASE_DISTRIBUTION=none` so Erlang cluster listeners are not exposed. Configure the relay bind address and port with `PASEO_RELAY_HOST` and `PASEO_RELAY_PORT`; add a memory limit and a suitable `PASEO_RELAY_MEMORY_WATERMARK_BYTES` on small hosts. Verify `/ready` and a real encrypted WebSocket exchange before changing existing daemon connections.
 
-#### Hangzhou relay endpoint
+#### Hangzhou Web and relay
 
-Use `wss://omp.myzhijieyun.cn` in client settings, or `omp.myzhijieyun.cn:443` with `useTls: true` in daemon configuration. This domain is the relay endpoint, not the Web client deployment.
+Open `https://omp.myzhijieyun.cn` for the Web client. Its deployment defaults to `wss://omp.myzhijieyun.cn`; configure daemons with `omp.myzhijieyun.cn:443` and `useTls: true`. Set their `app.baseUrl` to `https://omp.myzhijieyun.cn` to generate pairing links for this Web deployment.
 
-On `HZProxyServer` (`114.55.112.128`), `/etc/nginx/conf.d/omp-relay.conf` terminates TLS and forwards HTTP and WebSocket requests to `127.0.0.1:4000`. Port `80` redirects to HTTPS except for the ACME challenge path. Keep TCP `80` and `443` allowed in the cloud security group; clients using the old public `:4000` endpoint must switch to WSS if that port is no longer allowed.
+The build-time `EXPO_PUBLIC_RELAY_SERVER_ADDRESS` sets the default Relay for new client profiles. Saved client Relay settings continue to override that default; builds without this variable retain the hosted Relay default.
+
+On `HZProxyServer` (`114.55.112.128`), `/etc/nginx/conf.d/omp-relay.conf` terminates TLS and serves `/var/www/omp-web/current`. `/ws`, `/health`, `/ready` and `/metrics` still forward to `127.0.0.1:4000`. Nginx falls back to `index.html` for application routes, returns `404` for missing exported assets, serves precompressed files, and revalidates HTML instead of caching an obsolete app shell.
+
+Keep TCP `80` and `443` allowed in the cloud security group. Port `80` redirects to HTTPS except for the ACME challenge path. Clients using the old public `:4000` endpoint must switch to WSS if that port is no longer allowed.
+
+Build and publish another version from the repository root:
+
+```bash
+npm run clean --workspace=@omp-desktop/app
+EXPO_PUBLIC_RELAY_SERVER_ADDRESS=wss://omp.myzhijieyun.cn \
+  npm run build:web --workspace=@omp-desktop/app -- --clear
+gzip -9 -k packages/app/dist/_expo/static/js/web/*.js packages/app/dist/_expo/static/css/*.css packages/app/dist/index.html packages/app/dist/metadata.json packages/app/dist/manifest.json packages/app/dist/*.wasm packages/app/dist/*.js
+RELEASE="$(date -u +%Y%m%dT%H%M%SZ)"
+ssh HZProxyServer "install -d -m 0755 /var/www/omp-web/releases/$RELEASE"
+rsync -az --chmod=D755,F644 packages/app/dist/ "HZProxyServer:/var/www/omp-web/releases/$RELEASE/"
+ssh HZProxyServer "ln -s releases/$RELEASE /var/www/omp-web/.current-$RELEASE && mv -Tf /var/www/omp-web/.current-$RELEASE /var/www/omp-web/current"
+curl --fail https://omp.myzhijieyun.cn/ready
+```
+
+Release directories remain under `/var/www/omp-web/releases`; switch `current` atomically to a retained release to roll back a later update. The initial relay-only Nginx configuration is retained at `/var/www/omp-web/nginx-before-20261112T120519Z.conf`. Restore that configuration and run `nginx -t && systemctl reload nginx` to undo the initial Web routing change.
 
 Certbot uses `/var/lib/letsencrypt` for HTTP validation and `certbot.timer` for automatic renewal. The executable deploy hook `/etc/letsencrypt/renewal-hooks/deploy/omp-relay-nginx` checks the Nginx configuration and reloads the renewed certificate.
 
 ```bash
-curl --fail https://omp.myzhijieyun.cn/ready
 ssh HZProxyServer 'certbot renew --cert-name omp.myzhijieyun.cn --dry-run --run-deploy-hooks --no-random-sleep-on-renew'
 ```
 
