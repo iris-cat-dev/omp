@@ -345,7 +345,7 @@ function escapeCmdExeArgument(rawArg: string): string {
 }
 
 /**
- * Resolve a terminal profile command (e.g. `claude`) into something node-pty's
+ * Resolve an explicit terminal command (e.g. `claude`) into something node-pty's
  * conpty backend can actually launch on Windows.
  *
  * On Windows, conpty's underlying `CreateProcess` does not apply `PATHEXT`, so a
@@ -354,7 +354,7 @@ function escapeCmdExeArgument(rawArg: string): string {
  * its own conout worker thread, so that failure surfaces as an uncaught
  * exception that takes down the whole terminal worker process. Resolving the
  * real path up front — and routing `.cmd`/`.bat` shims through `cmd.exe /c`
- * (node-pty has no `shell` option) — keeps the profile launchable.
+ * (node-pty has no `shell` option) — keeps the command launchable.
  *
  * Non-Windows and the default-shell path (no explicit command) are unchanged.
  */

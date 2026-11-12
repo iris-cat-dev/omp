@@ -242,7 +242,7 @@ describe("createTerminal", () => {
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   });
 
-  it("passes profile commands through untouched on non-Windows", async () => {
+  it("passes explicit commands through untouched on non-Windows", async () => {
     const resolveExecutable = vi.fn(async () => "/usr/local/bin/claude");
     const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
       platform: "linux",
@@ -384,10 +384,9 @@ describe("createTerminal", () => {
   it.runIf(isPlatform("linux", "darwin"))(
     "spawns without shell interpretation on POSIX, so argv reaches the child byte-for-byte",
     async () => {
-      // The composer substitutes {{{prompt}}} directly into `args` before this
-      // ever reaches the daemon, so a raw multi-line prompt containing quotes,
-      // backslashes, and shell metacharacters must arrive at the spawned
-      // process exactly as typed. node-pty's POSIX backend spawns via execve
+      // Explicit command arguments may contain raw newlines, quotes,
+      // backslashes, and shell metacharacters, and must arrive at the spawned
+      // process exactly as supplied. node-pty's POSIX backend spawns via execve
       // with no shell, so per-arg escaping is unnecessary there -- this test
       // proves that end-to-end through createTerminal (not just at the
       // resolveTerminalSpawnCommand unit level) by reading the argv the
