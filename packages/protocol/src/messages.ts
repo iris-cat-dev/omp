@@ -175,18 +175,6 @@ const MutableQuickAskConfigPatchSchema = z
   })
   .passthrough();
 
-export const TerminalProfileSchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    command: z.string(),
-    args: z.array(z.string()).optional(),
-    icon: z.string().optional(),
-  })
-  .passthrough();
-
-export type TerminalProfile = z.infer<typeof TerminalProfileSchema>;
-
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
@@ -310,7 +298,6 @@ export const MutableDaemonConfigSchema = z
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
-    terminalProfiles: z.array(TerminalProfileSchema).optional(),
     ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
@@ -338,7 +325,6 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
-    terminalProfiles: z.array(TerminalProfileSchema).optional(),
     ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -824,6 +824,7 @@ describe("loadPersistedConfig", () => {
           version: 1,
           daemon: {
             listen: "127.0.0.1:6767",
+            ompProviderAccountNotes: { "1": "Primary account" },
             terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
             agentProfiles: { obsolete: "not a valid launch configuration" },
           },
@@ -847,9 +848,11 @@ describe("loadPersistedConfig", () => {
 
       const expectedDaemon = {
         listen: "127.0.0.1:6767",
-        terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+        ompProviderAccountNotes: { "1": "Primary account" },
       };
       expect(config.daemon).toEqual(expectedDaemon);
+      expect(config.daemon).not.toHaveProperty("terminalProfiles");
+      expect(readFileSync(configPath, "utf-8")).toContain('"terminalProfiles"');
       expect(config.providers?.openai).toEqual({ apiKey: "global-key" });
       expect(config.providers).not.toHaveProperty("local");
       expect(config.features).not.toHaveProperty("dictation");
@@ -857,6 +860,8 @@ describe("loadPersistedConfig", () => {
       savePersistedConfig(home, config);
       const saved = loadPersistedConfig(home);
       expect(saved.daemon).toEqual(expectedDaemon);
+      expect(saved.daemon).not.toHaveProperty("terminalProfiles");
+      expect(readFileSync(configPath, "utf-8")).not.toContain('"terminalProfiles"');
       expect(saved.providers?.openai).toEqual({ apiKey: "global-key" });
     } finally {
       rmSync(home, { recursive: true, force: true });

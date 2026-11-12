@@ -73,6 +73,8 @@ If the archived workspace owns the current route, navigation follows a surviving
 
 Side-by-side conversations respond to their pane width, not whole-window width. If an expanded task rail leaves insufficient room for a complete compact conversation/composer, both rail and toggle hide until space returns, restoring expansion. Resizing/maximizing keeps text and controls within the pane.
 
+**Terminal** in the new-tab menu opens the host's default shell in the current workspace. Command profiles and their settings have been removed; run CLI programs inside a normal terminal.
+
 The header bottom-panel button and **Cmd+Shift+\\** on macOS toggle terminals. Hiding retains tabs, selected terminal, split sizes, and live shell processes, including across client reload. Showing restores them; a terminal is created only if no bottom terminal panel exists. Use terminal-tab **Close** to terminate a session.
 
 The **+** beside the bottom terminal tabs creates and selects another terminal in the same pane. With the built-in zsh integration, starting a command changes the tab title to the executable name (for example, `sleep` or `node`); returning to the prompt restores the current directory. Application-provided terminal titles still take precedence while running, and manually renamed terminals keep their titles. Other shells retain their own terminal-title escape-sequence behavior.

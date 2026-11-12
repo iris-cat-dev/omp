@@ -2406,10 +2406,7 @@ function WorkspaceScreenContent({
         return;
       }
       if (selection.kind === "terminal") {
-        createTerminal({
-          profile: selection.profile,
-          destination,
-        });
+        createTerminal({ destination });
         return;
       }
     },

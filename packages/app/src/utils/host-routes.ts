@@ -500,7 +500,6 @@ export const HOST_SECTION_SLUGS = [
   "providers",
   "image-generation",
   "usage",
-  "terminals",
   "plugins",
   "host",
 ] as const;

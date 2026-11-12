@@ -1,9 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Pencil, Plus, type LucideIcon } from "lucide-react-native";
+import { Plus, type LucideIcon } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -11,22 +10,17 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
-import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   useWorkspaceTabLaunchCatalog,
   type WorkspaceTabLaunchItem,
 } from "@/workspace-tabs/launcher";
 
 const ThemedPlus = withUnistyles(Plus);
-const ThemedPencil = withUnistyles(Pencil);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const extraMutedColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundExtraMuted,
-});
 /** Every launcher row leads with the same glyph box so labels share one rail. */
 const LAUNCHER_ICON_SIZE = ICON_SIZE.md;
 const LAUNCHER_MAX_WIDTH = 380;
-const EDIT_PROFILES_HIT_SIZE = ICON_SIZE.xs + SPACING[2];
 const ROW_DATA_SET = { newTabLauncherRow: "true" };
 const ROW_SELECTOR = '[data-new-tab-launcher-row="true"]';
 function LauncherIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
@@ -53,26 +47,6 @@ function rowStyle({
   ];
 }
 
-function editProfilesStyle({ pressed, hovered }: PressableStateCallbackType) {
-  return [styles.editProfiles, (hovered || pressed) && styles.editProfilesHovered];
-}
-
-function EditProfilesButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={editProfilesStyle}
-      testID="workspace-new-tab-edit-terminal-profiles"
-    >
-      <View style={styles.editProfilesGlyph}>
-        <ThemedPencil size={ICON_SIZE.xs} uniProps={extraMutedColorMapping} />
-      </View>
-    </Pressable>
-  );
-}
-
 function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
   const { tabId } = usePaneContext();
   const handlePress = useCallback(() => {
@@ -91,9 +65,6 @@ function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
       testID={`workspace-new-tab-${item.id}`}
     >
       {item.Icon ? <ThemedLauncherIcon Icon={item.Icon} uniProps={mutedColorMapping} /> : null}
-      {item.terminalIconKey ? (
-        <TerminalProfileIcon iconKey={item.terminalIconKey} size={LAUNCHER_ICON_SIZE} />
-      ) : null}
       <View style={styles.rowText}>
         <Text numberOfLines={1} style={styles.rowLabel}>
           {item.label}
@@ -224,17 +195,7 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
         <View style={styles.rail}>
           {groups.map((group) => (
             <View key={group.id} style={styles.group}>
-              {group.label ? (
-                <View style={styles.groupHeader}>
-                  <Text style={styles.groupLabel}>{group.label}</Text>
-                  {group.accessory ? (
-                    <EditProfilesButton
-                      label={group.accessory.label}
-                      onPress={group.accessory.run}
-                    />
-                  ) : null}
-                </View>
-              ) : null}
+              {group.label ? <Text style={styles.groupLabel}>{group.label}</Text> : null}
               {group.items.map((item) => (
                 <LauncherRow key={item.id} item={item} />
               ))}
@@ -290,40 +251,10 @@ const styles = StyleSheet.create((theme) => ({
   rowText: { flex: 1, paddingVertical: theme.spacing[2] },
   rowLabel: { color: theme.colors.foreground },
   rowDescription: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-  // The section header shares the launcher rows' outer rails. The pencil's own
-  // padding is subtracted so its glyph — not its hover box — lands on the right rail.
-  groupHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 2,
-    marginBottom: theme.spacing[1],
-  },
   groupLabel: {
     color: theme.colors.foregroundExtraMuted,
     fontSize: theme.fontSize.sm,
-    // Without an explicit line height the font's ascent/descent split the text box
-    // unevenly and the label rides above the pencil beside it.
-    lineHeight: EDIT_PROFILES_HIT_SIZE,
-  },
-  // The box is the hover target; the negative margin cancels its growth on every
-  // side, so its layout footprint stays the glyph and the header keeps its height.
-  editProfiles: {
-    width: EDIT_PROFILES_HIT_SIZE,
-    height: EDIT_PROFILES_HIT_SIZE,
-    margin: -(EDIT_PROFILES_HIT_SIZE - ICON_SIZE.xs) / 2,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    outlineWidth: 0,
-    outlineColor: "transparent",
-  },
-  // Opacity sits on the whole glyph, not per path — the pencil's two strokes
-  // overlap and would render unevenly if each faded on its own.
-  editProfilesGlyph: {
-    opacity: theme.opacity[50],
-  },
-  editProfilesHovered: {
-    backgroundColor: theme.colors.surface2,
+    paddingHorizontal: 2,
+    marginBottom: theme.spacing[1],
   },
 }));

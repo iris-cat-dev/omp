@@ -1,31 +1,20 @@
-import React, { useCallback, useMemo } from "react";
-import { View } from "react-native";
-import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Copy, Ellipsis, Import as ImportIcon, Settings, SquarePen } from "lucide-react-native";
+import { Copy, Ellipsis, Import as ImportIcon, Settings, SquarePen, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { TerminalProfile } from "@omp-desktop/protocol/messages";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { buttonControlHeight } from "@/components/ui/control-geometry";
-import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@omp-desktop/protocol/terminal-profiles";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedSquarePen = withUnistyles(SquarePen);
+const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 
@@ -33,7 +22,7 @@ const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foregrou
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16} />;
+const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
@@ -145,43 +134,10 @@ export function WorkspaceHeaderMenuDesktop(props: WorkspaceHeaderWorkspaceAction
   );
 }
 
-interface HeaderMenuProfileItemProps {
-  profile: TerminalProfile;
-  disabled: boolean;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-}
-
-function HeaderMenuProfileItem({
-  profile,
-  disabled,
-  onCreateTerminalWithProfile,
-}: HeaderMenuProfileItemProps) {
-  const handleSelect = useCallback(() => {
-    onCreateTerminalWithProfile(profile);
-  }, [onCreateTerminalWithProfile, profile]);
-
-  const leading = useMemo(
-    () => (
-      <View style={styles.headerMenuProfileIconWrapper}>
-        <TerminalProfileIcon iconKey={getTerminalProfileIcon(profile)} size={16} />
-      </View>
-    ),
-    [profile],
-  );
-
-  return (
-    <DropdownMenuItem leading={leading} disabled={disabled} onSelect={handleSelect}>
-      {profile.name}
-    </DropdownMenuItem>
-  );
-}
-
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
-  normalizedServerId: string;
   createTerminalDisabled: boolean;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
 }
 
 /**
@@ -189,24 +145,12 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
  * actions.
  */
 export function WorkspaceHeaderMenuMobile({
-  normalizedServerId,
   createTerminalDisabled,
   onCreateDraftTab,
   onCreateTerminal,
-  onCreateTerminalWithProfile,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
   const { t } = useTranslation();
-  const router = useRouter();
-  const { config } = useDaemonConfig(normalizedServerId);
-  const profiles = useMemo(
-    () => resolveTerminalProfiles(config?.terminalProfiles),
-    [config?.terminalProfiles],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
-  }, [normalizedServerId, router]);
 
   return (
     <DropdownMenu compactMode="sheet">
@@ -232,9 +176,6 @@ export function WorkspaceHeaderMenuMobile({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
-        <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
         <DropdownMenuItem
           testID="workspace-header-new-terminal"
           leading={MENU_NEW_TERMINAL_ICON}
@@ -243,21 +184,8 @@ export function WorkspaceHeaderMenuMobile({
         >
           {t("workspace.header.actions.newTerminal")}
         </DropdownMenuItem>
-        {profiles.map((profile) => (
-          <HeaderMenuProfileItem
-            key={profile.id}
-            profile={profile}
-            disabled={createTerminalDisabled}
-            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
-          />
-        ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          testID="workspace-header-edit-terminal-profiles"
-          onSelect={handleEditProfiles}
-        >
-          {t("workspace.tabs.actions.editTerminalProfiles")}
-        </DropdownMenuItem>
+        <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -282,9 +210,5 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     alignItems: "center",
     justifyContent: "center",
-  },
-  headerMenuProfileIconWrapper: {
-    width: 16,
-    height: 16,
   },
 }));

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
-import type { TerminalProfile } from "@omp-desktop/protocol/messages";
-import { resolveTerminalProfileLaunch } from "@omp-desktop/protocol/terminal-profiles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
@@ -33,7 +31,6 @@ export type TerminalTabDestination =
 
 interface TerminalCreateInput {
   destination: TerminalTabDestination;
-  profile?: TerminalProfile;
 }
 
 interface PendingTerminalCreateInput extends TerminalCreateInput {
@@ -156,26 +153,16 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !directory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const profile = _input.profile ? resolveTerminalProfileLaunch(_input.profile, "") : undefined;
-      const defaultShell = profile
-        ? undefined
-        : resolveDesktopDefaultTerminalShell({
-            activeConnection,
-            loginShell: getDesktopHost()?.loginShell,
-          });
-      const payload = profile
-        ? await client.createTerminal(directory, profile.name, undefined, {
-            command: profile.command,
-            args: profile.args,
-            workspaceId: _input.workspaceId || undefined,
-          })
-        : await client.createTerminal(directory, undefined, undefined, {
-            workspaceId: _input.workspaceId || undefined,
-            ...(defaultShell ? { command: defaultShell } : {}),
-          });
-      // The daemon reports a failed spawn (e.g. a profile command that isn't
-      // installed) via payload.error with a null terminal. Surface it instead
-      // of silently treating the create as a no-op success.
+      const defaultShell = resolveDesktopDefaultTerminalShell({
+        activeConnection,
+        loginShell: getDesktopHost()?.loginShell,
+      });
+      const payload = await client.createTerminal(directory, undefined, undefined, {
+        workspaceId: _input.workspaceId || undefined,
+        ...(defaultShell ? { command: defaultShell } : {}),
+      });
+      // The daemon reports a failed spawn via payload.error with a null terminal.
+      // Surface it instead of silently treating the create as a no-op success.
       if (!payload.terminal && payload.error) {
         throw new Error(payload.error);
       }

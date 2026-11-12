@@ -15,7 +15,6 @@ import {
   OmpProviderAccountNotesSchema,
   OmpDesktopToolCapabilitiesSchema,
   PluginSourceSchema,
-  TerminalProfileSchema,
 } from "@omp-desktop/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@omp-desktop/protocol/paseo-config-schema";
 import { DEFAULT_RELAY_ENDPOINT } from "@omp-desktop/protocol/daemon-endpoints";
@@ -225,7 +224,6 @@ export const PersistedConfigSchema = z
         autoArchiveAfterMerge: z.boolean().optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),
-        terminalProfiles: z.array(TerminalProfileSchema).optional(),
         ompProviderAccountNotes: OmpProviderAccountNotesSchema.optional(),
         cors: z
           .object({
@@ -355,9 +353,10 @@ function stripRemovedConfig(parsed: unknown): unknown {
 
   const root = { ...(parsed as Record<string, unknown>) };
   const daemon = root.daemon;
-  if (daemon && typeof daemon === "object" && !Array.isArray(daemon) && "agentProfiles" in daemon) {
+  if (daemon && typeof daemon === "object" && !Array.isArray(daemon)) {
     const daemonConfig = { ...(daemon as Record<string, unknown>) };
     delete daemonConfig.agentProfiles;
+    delete daemonConfig.terminalProfiles;
     root.daemon = daemonConfig;
   }
 

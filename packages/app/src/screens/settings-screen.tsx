@@ -33,7 +33,6 @@ import {
   Bell,
   Puzzle,
   FolderGit2,
-  SquareTerminal,
   Code2,
   Sparkles,
   Globe2,
@@ -97,7 +96,6 @@ import {
   HostProvidersPage,
   HostProxyPage,
   HostImageGenerationPage,
-  HostTerminalsPage,
 } from "@/screens/settings/host-page";
 import { HostUsagePage } from "@/screens/settings/host-usage-page";
 import { HostMemoryPage } from "@/screens/settings/omp-memory-page";
@@ -178,7 +176,6 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "providers", labelKey: "settings.providers.title", icon: Boxes },
   { id: "image-generation", labelKey: "settings.imageGeneration.title", icon: Image },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
-  { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
 ];
 
 function renderHostSettingsContent(
@@ -204,8 +201,6 @@ function renderHostSettingsContent(
       return <PluginsPage serverId={view.serverId} />;
     case "usage":
       return <HostUsagePage serverId={view.serverId} />;
-    case "terminals":
-      return <HostTerminalsPage serverId={view.serverId} />;
     case "host":
       return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
   }

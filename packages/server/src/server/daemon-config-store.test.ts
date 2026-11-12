@@ -39,7 +39,6 @@ function reloadableConfig(
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
-    terminalProfiles: daemon.terminalProfiles,
     ompProviderAccountNotes: daemon.ompProviderAccountNotes,
     cors: { allowedOrigins: [] },
     trustedProxies: ["loopback"],
@@ -1467,13 +1466,13 @@ describe("DaemonConfigStore reload", () => {
     expect(store.get()).toEqual(before);
   });
 
-  test("removing providers and optional terminal profiles clears live state", () => {
+  test("removing providers and optional account notes clears live state", () => {
     const { paseoHome, store, persisted } = createReloadableStore();
     writeConfig(paseoHome, {
       ...persisted,
       daemon: {
         ...persisted.daemon,
-        terminalProfiles: [{ id: "shell", name: "Shell", command: "bash" }],
+        ompProviderAccountNotes: { "1": "Primary account" },
       },
       agents: {
         providers: {
@@ -1482,13 +1481,15 @@ describe("DaemonConfigStore reload", () => {
       },
     });
     store.reload();
+    expect(store.get().providers).toHaveProperty("gemini");
+    expect(store.get().ompProviderAccountNotes).toEqual({ "1": "Primary account" });
 
     writeConfig(paseoHome, persisted);
     const result = store.reload();
 
-    expect(result.appliedPaths).toEqual(["agents.providers", "daemon.terminalProfiles"]);
+    expect(result.appliedPaths).toEqual(["agents.providers", "daemon.ompProviderAccountNotes"]);
     expect(store.get().providers).toEqual({});
-    expect(store.get().terminalProfiles).toBeUndefined();
+    expect(store.get().ompProviderAccountNotes).toBeUndefined();
   });
 
   test("reports a launch-controlled edit without changing live state", () => {

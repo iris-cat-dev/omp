@@ -8,7 +8,6 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
-import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { Theme } from "@/styles/theme";
 import {
@@ -29,13 +28,6 @@ const ThemedLaunchItemIconGlyph = withUnistyles(LaunchItemIconGlyph);
 function LaunchItemIcon({ item }: { item: WorkspaceTabLaunchItem }): ReactElement | null {
   if (item.Icon) {
     return <ThemedLaunchItemIconGlyph Icon={item.Icon} uniProps={mutedColorMapping} />;
-  }
-  if (item.terminalIconKey) {
-    return (
-      <View>
-        <TerminalProfileIcon iconKey={item.terminalIconKey} size={14} />
-      </View>
-    );
   }
   return null;
 }
@@ -102,17 +94,6 @@ export function WorkspaceNewTabMenuContent({
           {group.items.map((item) => (
             <WorkspaceNewTabMenuItem key={item.id} item={item} paneId={paneId} />
           ))}
-          {group.accessory ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                testID={`workspace-new-tab-menu-${group.accessory.id}`}
-                onSelect={group.accessory.run}
-              >
-                {group.accessory.label}
-              </DropdownMenuItem>
-            </>
-          ) : null}
         </View>
       ))}
     </DropdownMenuContent>

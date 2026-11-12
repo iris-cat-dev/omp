@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
-import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
   FileDiff,
@@ -10,14 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import invariant from "tiny-invariant";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
-import type { TerminalProfile } from "@omp-desktop/protocol/messages";
-import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@omp-desktop/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
 import { usePluginContributions } from "@/plugins/hooks";
 import { resolvePluginIcon } from "@/plugins/icons";
@@ -43,17 +35,15 @@ export interface WorkspaceTabLaunchItem {
   label: string;
   description?: string;
   Icon?: LucideIcon;
-  terminalIconKey?: string;
   shortcutActionId?: string;
   disabled: boolean;
   launch: (destination: WorkspaceTabLaunchDestination) => void;
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "terminal-profiles" | "plugins";
+  id: "tabs" | "plugins";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
-  accessory?: { id: string; label: string; run: () => void };
 }
 
 const NewTabLauncherContext = createContext<NewTabLauncher | null>(null);
@@ -88,9 +78,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
 }): readonly WorkspaceTabLaunchGroup[] {
   const { serverId, purpose } = input;
   const { t } = useTranslation();
-  const router = useRouter();
   const launcher = useNewTabLauncher();
-  const { config } = useDaemonConfig(serverId);
   const pluginPanels = usePluginContributions("panel");
   const workspaceKey = resolveProjectLayoutKey({ serverId, workspaceId: launcher.workspaceId });
   const layout = useWorkspaceLayoutStore((state) => workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined);
@@ -104,9 +92,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
     },
     [launcher],
   );
-  const editTerminalProfiles = useCallback(() => {
-    router.push(buildSettingsHostSectionRoute(serverId, "terminals") as Href);
-  }, [router, serverId]);
 
   return useMemo(() => {
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
@@ -157,26 +142,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
       return item.hidden ? [] : [item];
     });
 
-    const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
-    if (profiles.length > 0) {
-      groups.push({
-        id: "terminal-profiles",
-        label: t("workspace.tabs.actions.terminalProfilesMenu"),
-        items: profiles.map((profile: TerminalProfile) => ({
-          id: `terminal-profile:${profile.id}`,
-          label: profile.name,
-          terminalIconKey: getTerminalProfileIcon(profile),
-          disabled: launcher.terminalDisabled,
-          launch: launchSelection({ kind: "terminal", profile }),
-        })),
-        accessory: {
-          id: "edit-terminal-profiles",
-          label: t("workspace.tabs.actions.editTerminalProfiles"),
-          run: editTerminalProfiles,
-        },
-      });
-    }
     const panelItems: WorkspaceTabLaunchItem[] = pluginPanels.filter(({ instance }) => instance.installation.owner === "desktop" || instance.hostId === serverId).map(({ key, instance, contribution }) => ({
       id: key, label: contribution.title, description: `${instance.installation.id} · ${instance.hostId}`, Icon: resolvePluginIcon(contribution.icon),
       disabled: contribution.context === "agent" && !agentId,
@@ -190,7 +156,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     }));
     if (panelItems.length) groups.push({ id: "plugins", label: t("settings.sections.plugins"), items: panelItems });
     return groups;
-  }, [config?.terminalProfiles, editTerminalProfiles, launchSelection, launcher, purpose, t, pluginPanels, serverId, agentId]);
+  }, [launchSelection, launcher, purpose, t, pluginPanels, serverId, agentId]);
 }
 
 export { getBuiltInLaunchOrder } from "./internal/catalog";

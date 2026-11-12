@@ -15,6 +15,11 @@ describe("CreateTerminalRequest size", () => {
     expect(parsed).toEqual(base);
   });
 
+  it("preserves an explicit command and arguments for programmatic callers", () => {
+    const request = { ...base, command: "node", args: ["-e", "console.log('terminal')"] };
+    expect(CreateTerminalRequestSchema.parse(request)).toEqual(request);
+  });
+
   it("parses a request carrying a viewport size", () => {
     const parsed = CreateTerminalRequestSchema.parse({ ...base, size: { rows: 55, cols: 136 } });
     expect(parsed.size).toEqual({ rows: 55, cols: 136 });

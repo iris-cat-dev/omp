@@ -569,8 +569,6 @@ function resolveStaticLoadConfigSettings(
     ...resolveMcpSettings(cli, persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
-    // Undefined selects built-in terminal defaults; an empty array removes them all.
-    terminalProfiles: persisted.daemon?.terminalProfiles,
     ompProviderAccountNotes: persisted.daemon?.ompProviderAccountNotes,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
@@ -605,7 +603,6 @@ export function resolveConfigFromPersisted(
     mcpToolCapabilities,
     autoArchiveAfterMerge,
     appendSystemPrompt,
-    terminalProfiles,
     ompProviderAccountNotes,
     hostnames,
     trustedProxies,
@@ -660,7 +657,6 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
-    terminalProfiles,
     ompProviderAccountNotes,
     skillSelection: persisted.agents?.skills?.selection,
     pluginsEnabled: persisted.pluginsEnabled ?? false,
