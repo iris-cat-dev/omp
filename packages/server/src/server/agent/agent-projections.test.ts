@@ -485,6 +485,24 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it.each([0, 2])("keeps %i persisted compaction rounds in client snapshots", (compactionCount) => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        scope: "session",
+        contextWindowMaxTokens: 272_000,
+        contextWindowUsedTokens: 54_000,
+        compactionCount,
+      },
+    });
+
+    expect(toAgentPayload(agent).lastUsage).toEqual({
+      scope: "session",
+      contextWindowMaxTokens: 272_000,
+      contextWindowUsedTokens: 54_000,
+      compactionCount,
+    });
+  });
+
   it("omits lastUsage when context window usage fields are invalid", () => {
     const agent = createManagedAgent({
       lastUsage: {
