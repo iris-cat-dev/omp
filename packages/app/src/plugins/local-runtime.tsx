@@ -1,21 +1,15 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createActivationScope, createPluginOmpApi, type PluginActivationScope } from "@omp-desktop/plugin/host";
 import { createOmpApi } from "@omp-desktop/client";
-import type { PluginClientSetup } from "@omp-desktop/plugin";
 import { LocalPluginSnapshotSchema, type LocalPluginSnapshot } from "@omp-desktop/protocol/desktop-local-plugins";
-import setupPet from "@omp-desktop/plugin-desktop-pet";
-import setupWallpaper from "@omp-desktop/plugin-wallpaper";
-import setupSpeed from "@omp-desktop/plugin-agent-speed";
 import { getDesktopHost } from "@/desktop/host";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
-import { configureBuiltinPluginClientHosts } from "@/desktop/plugins/client-hosts";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { setupPluginClient, type PluginClientServices } from "./context";
+import { setupPluginClient } from "./context";
 import { loadTrustedPluginClient } from "./load";
 import { pluginClientRegistry, pluginInstanceKey, pluginExtensionKey } from "./registry";
 import { getLocalPluginControl, type LocalPluginEnvironment } from "./local-control";
-import { getRendererPluginProfile, type RendererPluginProfile } from "./renderer-profile";
 
 interface LocalPluginCatalogState {
   status: "unavailable" | "loading" | "ready" | "error";
@@ -26,8 +20,6 @@ interface LocalPluginCatalogState {
 let state: LocalPluginCatalogState = { status: "unavailable", snapshot: null, error: null, environment: null };
 const listeners = new Set<() => void>();
 let reload: (() => Promise<void>) | null = null;
-const builtins: Record<string, PluginClientSetup> = { "desktop-pet": setupPet, wallpaper: setupWallpaper, "agent-speed": setupSpeed };
-configureBuiltinPluginClientHosts();
 function publish(next: LocalPluginCatalogState) {
   state = next;
   for (const listener of listeners) listener();
@@ -44,41 +36,15 @@ export async function reloadLocalPluginCatalog() {
   await reload();
 }
 
-function rendererServices(profile: RendererPluginProfile, record: LocalPluginSnapshot["installations"][number], scope: PluginActivationScope): PluginClientServices {
-  const unsupported = (capability: string): never => { throw new Error(`This renderer-only plugin host does not support ${capability}.`); };
-  const authorize = (current: { generation: number; installed: boolean; trusted: boolean }) => {
-    scope.assertCurrent();
-    if (current.generation !== record.generation || !current.installed || !current.trusted) throw new Error("Plugin client activation is no longer authorized.");
-  };
-  return {
-    getOmp: () => unsupported("daemon API access"),
-    storage: {
-      async get<T>() {
-        const current = (await profile.getSnapshot()).installations.find(({ id }) => id === record.id);
-        if (!current) throw new Error("Plugin installation is not installed.");
-        authorize(current);
-        return { revision: current.revision, values: current.config as T };
-      },
-      async patch<T>(patch: Partial<T>, expectedRevision: number) {
-        const snapshot = await profile.patch({ installationId: record.id, expectedRevision, patch: { config: patch as Record<string, unknown> } }, authorize);
-        const current = snapshot.installations.find(({ id }) => id === record.id)!;
-        return { revision: current.revision, values: current.config as T };
-      },
-    },
-    secrets: { configured: async () => unsupported("secrets"), set: async () => unsupported("secrets"), delete: async () => unsupported("secrets") },
-    native: { invoke: async () => unsupported("native operations"), subscribe: () => unsupported("native subscriptions") },
-    invoke: async () => unsupported("service RPC"),
-  };
-}
-
 export function LocalPluginCatalogBridge() {
   const localServerId = useLocalDaemonServerId();
   const hostId = useRef(localServerId);
   hostId.current = localServerId;
   useEffect(() => {
-    const bridge = getDesktopHost()?.plugins;
+    const availableBridge = getDesktopHost()?.plugins;
+    if (!availableBridge) return;
+    const bridge = availableBridge;
     const control = getLocalPluginControl();
-    const renderer = bridge ? null : getRendererPluginProfile();
     const lifetime = new AbortController();
     const running = new Map<string, { signature: string; bundle: string | undefined; scope: PluginActivationScope }>();
     let desired = new Map<string, { signature: string; bundle: string | undefined; mode: "manage" | "active" }>();
@@ -88,7 +54,7 @@ export function LocalPluginCatalogBridge() {
 
     function describe(record: LocalPluginSnapshot["installations"][number]) {
       const mode = record.enabled && record.status === "active" ? "active" as const : "manage" as const;
-      if (!record.installed || !record.trusted || (record.format === "legacy" && mode === "manage") || (record.source.type !== "builtin" && !record.clientBundle) || (!bridge && record.packageId !== "agent-speed")) return null;
+      if (!record.installed || !record.trusted || (record.format === "legacy" && mode === "manage") || !record.clientBundle) return null;
       return { mode, bundle: record.clientBundle, signature: JSON.stringify([record.id, record.packageId, record.format, record.source, record.generation, record.version, record.enabled, record.installed, record.trusted, record.declaredCapabilities, record.grantedCapabilities, mode]) };
     }
     function isDesired(key: string, candidate: { signature: string; bundle: string | undefined }) {
@@ -118,32 +84,24 @@ export function LocalPluginCatalogBridge() {
         pluginClientRegistry.begin(key, scope);
         running.set(key, { signature, bundle, scope });
         const binding = { installationId: record.id, generation: record.generation, clientActivationId: scope.id };
-        if (bridge) {
-          // Revoke native authorization on abort, before any plugin-owned async cleanup.
-          scope.signal.addEventListener("abort", () => {
-            void bridge.releaseClientScope(binding).catch((error: unknown) => pluginClientRegistry.fail(key, error, scope));
-          }, { once: true });
-          // Keep the final idempotent close after owned resources have finished releasing.
-          scope.own(() => bridge.releaseClientScope(binding));
-        }
-        const invoke = (method: string, input?: unknown) => {
-          if (!bridge) return Promise.reject(new Error("This renderer-only plugin host does not support service RPC."));
-          return bridge.publish({ ...binding, method, input });
-        };
+        // Revoke native authorization on abort, before any plugin-owned async cleanup.
+        scope.signal.addEventListener("abort", () => {
+          void bridge.releaseClientScope(binding).catch((error: unknown) => pluginClientRegistry.fail(key, error, scope));
+        }, { once: true });
+        // Keep the final idempotent close after owned resources have finished releasing.
+        scope.own(() => bridge.releaseClientScope(binding));
+        const invoke = (method: string, input?: unknown) => bridge.publish({ ...binding, method, input });
         try {
-          if (bridge) {
-            const { promise, resolve, reject } = Promise.withResolvers<void>();
-            const cancel = () => resolve();
-            scope.signal.addEventListener("abort", cancel, { once: true });
-            void bridge.openClientScope({ ...binding, mode }).then(resolve, reject).finally(() => scope.signal.removeEventListener("abort", cancel));
-            await promise;
-          }
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          const cancel = () => resolve();
+          scope.signal.addEventListener("abort", cancel, { once: true });
+          void bridge.openClientScope({ ...binding, mode }).then(resolve, reject).finally(() => scope.signal.removeEventListener("abort", cancel));
+          await promise;
           if (!isDesired(key, candidate) || scope.signal.aborted) { stop(key); continue; }
-          const setup = record.source.type === "builtin" ? builtins[record.packageId] : loadTrustedPluginClient(bundle!);
-          if (!setup) throw new Error("Plugin client entry is unavailable");
+          const setup = loadTrustedPluginClient(bundle!);
           const instance = await setupPluginClient({
             hostId: "desktop", installation: record, format: record.format === "legacy" ? "legacy" : "package", mode, scope, setup, changed: () => pluginClientRegistry.changed(key),
-            services: renderer ? rendererServices(renderer, record, scope) : {
+            services: {
               getOmp() {
                 const client = hostId.current ? getHostRuntimeStore().getSnapshot(hostId.current)?.client : null;
                 if (!client) throw new Error("This local plugin has no connected local daemon");
@@ -163,15 +121,9 @@ export function LocalPluginCatalogBridge() {
                 subscribe(event, listener) {
                   let cancelled = false;
                   let off: (() => void) | undefined;
-                  const nativeEvent = event === "plugins:changed" || event === "wallpaper:selectionChanged" ? "desktop-plugins-changed"
-                    : event === "wallpaper:libraryChanged" ? "omp:wallpaper:libraryChanged"
-                    : event === "wallpaper:migrationChanged" ? "desktop-plugin-wallpaper-migration-changed" : event;
-                  void listenToDesktopEvent(nativeEvent, (payload) => {
+                  void listenToDesktopEvent(event === "plugins:changed" ? "desktop-plugins-changed" : event, (payload) => {
                     if (cancelled || scope.signal.aborted) return;
-                    if (event === "wallpaper:selectionChanged") {
-                      const selected = LocalPluginSnapshotSchema.parse(payload).backgroundProvider;
-                      listener(selected?.installationId === record.id && selected.extensionId === "wallpaper");
-                    } else if (event === "plugin-menu-action") {
+                    if (event === "plugin-menu-action") {
                       if (typeof payload === "object" && payload !== null && "installationId" in payload && payload.installationId === record.id && "generation" in payload && payload.generation === record.generation && "clientActivationId" in payload && payload.clientActivationId === scope.id) listener(payload);
                     } else listener(payload);
                   }).then((remove) => { if (cancelled) remove(); else off = remove; }).catch((error: unknown) => pluginClientRegistry.fail(key, error, scope));
@@ -187,7 +139,6 @@ export function LocalPluginCatalogBridge() {
           void stop(key);
           if (isDesired(key, candidate)) {
             pluginClientRegistry.fail(key, error, scope);
-            renderer?.fail(record.id, record.generation, error);
           }
         }
       }

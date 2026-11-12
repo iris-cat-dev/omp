@@ -1,7 +1,7 @@
 import { createActivationScope, type PluginActivationScope } from "@omp-desktop/plugin/server";
 import type { PluginNativeApi, PluginServiceContext, PluginServiceSetup, PluginStorageSnapshot } from "@omp-desktop/plugin";
 import type { DesktopSettingsStore } from "../settings/desktop-settings.js";
-import type { LocalPluginDocument, LocalPluginRecord, LocalPluginSnapshot, LocalPluginStatus } from "./records.js";
+import type { LocalPluginDocument, LocalPluginRecord, LocalPluginSnapshot, LocalPluginStatus } from "../settings/plugin-records.js";
 
 export interface LocalPluginDefinition {
   id: string;
@@ -10,7 +10,6 @@ export interface LocalPluginDefinition {
   manage?: Readonly<Record<string, (input: unknown) => unknown | Promise<unknown>>>;
   invoke?: (method: string, input: unknown, generation: number) => Promise<unknown>;
   manageInvoke?: (method: string, input: unknown, generation: number) => Promise<unknown>;
-  resource?: (pathname: string) => Promise<Response | null>;
   clearData?: () => Promise<void>;
 }
 interface Instance {
@@ -27,7 +26,6 @@ function executionIdentity(record: LocalPluginRecord): string {
 }
 export class LocalPluginRuntime {
   private readonly instances = new Map<string, Instance>();
-  private readonly definitions = new Map<string, LocalPluginDefinition>();
   private readonly listeners = new Set<(snapshot: LocalPluginSnapshot) => void>();
   private readonly revocations = new Set<(id: string, generation: number) => void>();
   private document: LocalPluginDocument = { revision: 0, backgroundProvider: null, backgroundSelectionEdited: false, installations: [] };
@@ -42,10 +40,6 @@ export class LocalPluginRuntime {
     private readonly loadLocal: (record: LocalPluginRecord, scope: PluginActivationScope) => Promise<LocalPluginDefinition>,
     private readonly onError: (id: string, message: string) => void,
   ) {}
-  register(definition: LocalPluginDefinition): void {
-    if (this.definitions.has(definition.id)) throw new Error(`Duplicate local plugin ${definition.id}.`);
-    this.definitions.set(definition.id, definition);
-  }
   async initialize(): Promise<void> {
     this.document = await this.store.getPlugins();
     this.revision = this.document.revision;
@@ -70,8 +64,8 @@ export class LocalPluginRuntime {
   getSnapshot(): LocalPluginSnapshot {
     return {
       revision: this.revision,
-      backgroundProvider: this.document.backgroundProvider ? { ...this.document.backgroundProvider } : null,
-      installations: this.document.installations.map((record) => {
+      backgroundProvider: this.document.backgroundProvider && this.document.installations.some((record) => record.id === this.document.backgroundProvider?.installationId && record.source.type === "local") ? { ...this.document.backgroundProvider } : null,
+      installations: this.document.installations.filter((record) => record.source.type === "local").map((record) => {
         const instance = this.instances.get(record.id);
         const current = instance && executionIdentity(instance.record) === executionIdentity(record);
         const status = !record.installed ? "removed" : !record.enabled ? "disabled" : current ? instance.status : "waiting";
@@ -94,6 +88,7 @@ export class LocalPluginRuntime {
   private async reconcile(): Promise<void> {
     if (this.stopped) return;
     for (const listed of this.document.installations) {
+      if (listed.source.type !== "local") continue;
       let instance = this.instances.get(listed.id);
       if (!instance || executionIdentity(instance.record) !== executionIdentity(listed)) {
         if (instance) await this.stop(instance);
@@ -104,7 +99,7 @@ export class LocalPluginRuntime {
         this.instances.set(record.id, instance);
         if (!record.installed || !record.trusted) continue;
         try {
-          instance.definition = record.source.type === "builtin" ? this.definitions.get(record.packageId) : await this.loadLocal(record, instance.scope);
+          instance.definition = await this.loadLocal(record, instance.scope);
           instance.scope.assertCurrent();
           if (!instance.definition) throw new Error("Plugin entry is unavailable.");
         } catch (error) {
@@ -165,6 +160,7 @@ export class LocalPluginRuntime {
     const record = this.document.installations.find((record) => record.id === id);
     const instance = this.instances.get(id);
     if (!record || (instance?.scope.generation ?? record.generation) !== generation) throw new Error("Plugin generation is no longer current.");
+    if (record.source.type !== "local") throw new Error("Legacy bundled plugins cannot be activated or invoked.");
     if (!record.trusted) throw new Error("Plugin execution is not trusted.");
     if (capability && !record.grantedCapabilities.includes(capability)) throw new Error(`Plugin capability is not granted: ${capability}.`);
     if (purpose !== "manage" && (!record.installed || !record.enabled || !instance || instance.scope.signal.aborted || instance.status !== "active")) throw new Error("Plugin execution is not active.");
@@ -178,9 +174,9 @@ export class LocalPluginRuntime {
     return record;
   }
   async invoke(id: string, generation: number, operation: string, input: unknown): Promise<unknown> {
-    const record = this.assertAuthorized(id, generation, "manage");
+    this.assertAuthorized(id, generation, "manage");
     const instance = this.instances.get(id);
-    const definition = instance?.definition ?? (record.source.type === "builtin" ? this.definitions.get(record.packageId) : undefined);
+    const definition = instance?.definition;
     const manage = definition?.manage?.[operation];
     if (manage) return manage(input);
     if (definition?.manageInvoke && instance?.status !== "active") return definition.manageInvoke(operation, input, generation);
@@ -190,9 +186,8 @@ export class LocalPluginRuntime {
     if (!handler) throw new Error(`Unknown plugin operation: ${operation}.`);
     return handler(input);
   }
-  async resource(pathname: string): Promise<Response | null> { for (const definition of this.definitions.values()) { const response = await definition.resource?.(pathname); if (response) return response; } return null; }
   async whenIdle(): Promise<void> { for (;;) { const pending = this.queue; await pending; if (pending === this.queue) return; } }
-  async reload(id: string): Promise<void> { const instance = this.instances.get(id); if (instance) { await this.stop(instance); this.instances.delete(id); } this.enqueue(); await this.whenIdle(); const current = this.instances.get(id); if (current?.status === "failed") throw new Error(current.error ?? "Plugin reload failed."); }
+  async reload(id: string): Promise<void> { const record = this.document.installations.find((record) => record.id === id); if (!record || record.source.type !== "local") throw new Error("Only folder plugins can be reloaded."); const instance = this.instances.get(id); if (instance) { await this.stop(instance); this.instances.delete(id); } this.enqueue(); await this.whenIdle(); const current = this.instances.get(id); if (current?.status === "failed") throw new Error(current.error ?? "Plugin reload failed."); }
   fail(id: string, generation: number, message: string): void {
     const instance = this.instances.get(id);
     if (!instance || instance.scope.generation !== generation) return;
@@ -204,6 +199,6 @@ export class LocalPluginRuntime {
   }
   waiting(id: string, generation: number, reason: string | null): void { const instance = this.instances.get(id); if (!instance || instance.scope.generation !== generation || instance.scope.signal.aborted) return; instance.status = reason ? "waiting" : "active"; instance.error = reason; this.publish(); }
   async suspend(id: string): Promise<void> { const instance = this.instances.get(id); if (instance) await this.stop(instance); }
-  async clearData(id: string): Promise<void> { const record = this.document.installations.find((record) => record.id === id); if (!record) throw new Error("Plugin installation is not installed."); const definition = this.instances.get(id)?.definition ?? this.definitions.get(record.packageId); await definition?.clearData?.(); }
+  async clearData(id: string): Promise<void> { const record = this.document.installations.find((record) => record.id === id); if (!record || record.source.type !== "local") throw new Error("Only folder plugins can clear their data."); const definition = this.instances.get(id)?.definition; await definition?.clearData?.(); }
   async dispose(): Promise<void> { if (this.stopped) return; this.stopped = true; this.unsubscribe?.(); await Promise.all([...this.instances.values()].map((instance) => this.stop(instance))); this.instances.clear(); }
 }

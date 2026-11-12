@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginServiceContext, PluginServiceSetup } from "@omp-desktop/plugin";
+import { LocalPluginRecordSchema } from "@omp-desktop/protocol/desktop-local-plugins";
 import { createDesktopSettingsStore } from "../settings/desktop-settings.js";
 import { LocalPluginRuntime } from "./local-runtime.js";
 const directories: string[] = [];
@@ -11,21 +12,23 @@ afterEach(async () => { await Promise.all(runtimes.splice(0).map((runtime) => ru
 async function localRuntime(setup: PluginServiceSetup) {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), "omp-local-plugin-runtime-")); directories.push(userDataPath);
   const store = createDesktopSettingsStore({ userDataPath });
+  for (const id of ["directory-demo", "independent"]) {
+    const record = LocalPluginRecordSchema.parse({ id, packageId: id, owner: "desktop", version: "1.0.0", generation: 0, enabled: id === "independent", installed: true, source: { type: "local", identity: path.join(userDataPath, id) }, trusted: true, config: {}, declaredCapabilities: [], grantedCapabilities: [], revision: 0, migrationVersion: 1, format: "package", metadata: null });
+    await store.installPlugin(record, (await store.getPlugins()).revision);
+  }
   const errors = vi.fn();
-  const runtime = new LocalPluginRuntime(store, () => ({ invoke: async () => { throw new Error("Unexpected test native operation"); }, subscribe: () => { throw new Error("Unexpected test native subscription"); } }), async () => { throw new Error("No directory plugin in this fixture"); }, errors);
-  runtime.register({ id: "desktop-pet", setup, manage: { "pet:list": () => ["iris"] } });
-  runtime.register({ id: "wallpaper" }); runtime.register({ id: "agent-speed" });
+  const runtime = new LocalPluginRuntime(store, () => ({ invoke: async () => { throw new Error("Unexpected test native operation"); }, subscribe: () => { throw new Error("Unexpected test native subscription"); } }), async (record) => ({ id: record.id, ...(record.id === "directory-demo" ? { setup, manage: { "demo:list": () => ["resource"] } } : {}) }), errors);
   runtimes.push(runtime);
   await runtime.initialize(); await runtime.whenIdle();
-  const patch = async (enabled: boolean, config?: Record<string, unknown>) => { const record = (await store.getPlugins()).installations.find(({ id }) => id === "desktop-pet")!; return store.patchPlugin({ installationId: record.id, expectedRevision: record.revision, patch: { enabled, ...(config ? { config } : {}) } }); };
+  const patch = async (enabled: boolean, config?: Record<string, unknown>) => { const record = (await store.getPlugins()).installations.find(({ id }) => id === "directory-demo")!; return store.patchPlugin({ installationId: record.id, expectedRevision: record.revision, patch: { enabled, ...(config ? { config } : {}) } }); };
   return { runtime, store, patch, userDataPath, errors };
 }
-describe("local profile plugin generations", () => {
-  it("waits for startup readiness and disables without ever acquiring the feature", async () => {
+describe("folder plugin generations", () => {
+  it("waits for readiness and disables without acquiring the feature", async () => {
     const setup = vi.fn(); const { runtime, patch } = await localRuntime(setup);
     await patch(true); await runtime.whenIdle(); expect(setup).not.toHaveBeenCalled();
     await patch(false); runtime.startupReady(); await runtime.whenIdle();
-    expect(setup).not.toHaveBeenCalled(); expect(runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")).toMatchObject({ enabled: false, status: "disabled" });
+    expect(setup).not.toHaveBeenCalled(); expect(runtime.getSnapshot().installations.find(({ id }) => id === "directory-demo")).toMatchObject({ enabled: false, status: "disabled" });
   });
   it("reports a missing selected daemon facade instead of returning an invalid Omp API", async () => {
     let context: PluginServiceContext | undefined;
@@ -36,40 +39,57 @@ describe("local profile plugin generations", () => {
   it("shares one service across concurrent readiness and configuration changes", async () => {
     const cleanup = vi.fn(), setup = vi.fn(() => cleanup); const { runtime, patch } = await localRuntime(setup);
     await patch(true); runtime.startupReady(); runtime.startupReady(); await runtime.whenIdle(); expect(setup).toHaveBeenCalledOnce();
-    const generation = runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")!.generation;
+    const generation = runtime.getSnapshot().installations.find(({ id }) => id === "directory-demo")!.generation;
     await patch(true, { size: "large" }); await runtime.whenIdle();
-    expect(setup).toHaveBeenCalledOnce(); expect(runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")!.generation).toBe(generation);
+    expect(setup).toHaveBeenCalledOnce(); expect(runtime.getSnapshot().installations.find(({ id }) => id === "directory-demo")!.generation).toBe(generation);
     await patch(false); await runtime.whenIdle(); expect(cleanup).toHaveBeenCalledOnce();
-    expect(() => runtime.assertAuthorized("desktop-pet", generation, "active")).toThrow();
+    expect(() => runtime.assertAuthorized("directory-demo", generation, "active")).toThrow();
   });
-  it("does not run a waiting factory twice on ordinary configuration broadcasts", async () => {
+  it("does not rerun a waiting factory for ordinary configuration broadcasts", async () => {
     const cleanup = vi.fn(), setup = vi.fn((ctx: PluginServiceContext) => { ctx.waiting("Choose a resource"); return cleanup; });
     const { runtime, patch } = await localRuntime(setup); await patch(true); runtime.startupReady(); await runtime.whenIdle();
     await patch(true, { size: "small" }); await runtime.whenIdle(); expect(setup).toHaveBeenCalledOnce();
-    expect(runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")).toMatchObject({ status: "waiting", error: "Choose a resource" });
+    expect(runtime.getSnapshot().installations.find(({ id }) => id === "directory-demo")).toMatchObject({ status: "waiting", error: "Choose a resource" });
   });
-  it("runs a late returned cleanup after revocation instead of leaking an asynchronous factory", async () => {
+  it("runs a late cleanup after revocation without leaking an asynchronous factory", async () => {
     const started = Promise.withResolvers<void>(), pending = Promise.withResolvers<() => void>(), cleanup = vi.fn();
     const setup = vi.fn(async () => { started.resolve(); return pending.promise; });
     const { runtime, patch } = await localRuntime(setup); await patch(true); runtime.startupReady(); await started.promise;
     await patch(false); pending.resolve(cleanup); await runtime.whenIdle(); expect(cleanup).toHaveBeenCalledOnce(); expect(setup).toHaveBeenCalledOnce();
   });
-  it("leaves resources and ordinary creation workspaces intact while settings broadcasts and disabled management remain usable", async () => {
+  it("preserves resources and sessions while settings and disabled management remain usable", async () => {
     const cleanup = vi.fn(), setup = vi.fn(() => cleanup); const { runtime, store, patch, userDataPath } = await localRuntime(setup);
-    const resource = path.join(userDataPath, "pets", "keep.txt"), workspace = path.join(userDataPath, "pet-workspaces", "ordinary-agent.txt");
+    const resource = path.join(userDataPath, "resources", "keep.txt"), workspace = path.join(userDataPath, "sessions", "ordinary-agent.txt");
     await mkdir(path.dirname(resource), { recursive: true }); await mkdir(path.dirname(workspace), { recursive: true }); await writeFile(resource, "artwork"); await writeFile(workspace, "ordinary OMP conversation");
     await patch(true); runtime.startupReady(); await runtime.whenIdle(); await patch(false); await runtime.whenIdle();
     const settingsChanged = vi.fn(); store.subscribe(settingsChanged); await store.patch({ notifications: { playSound: false } }); expect(settingsChanged).toHaveBeenCalledOnce();
-    const record = runtime.getSnapshot().installations.find(({ id }) => id === "desktop-pet")!;
-    expect(await runtime.invoke(record.id, record.generation, "pet:list", {})).toEqual(["iris"]);
+    const record = runtime.getSnapshot().installations.find(({ id }) => id === "directory-demo")!;
+    expect(await runtime.invoke(record.id, record.generation, "demo:list", {})).toEqual(["resource"]);
     await store.setPluginInstalled(record.id, false, record.revision); await runtime.whenIdle();
     expect(await readFile(resource, "utf8")).toBe("artwork"); expect(await readFile(workspace, "utf8")).toBe("ordinary OMP conversation"); expect(cleanup).toHaveBeenCalledOnce();
   });
   it("isolates a factory failure and requires explicit reload", async () => {
     const setup = vi.fn(() => { throw new Error("Corrupt selected resource"); }); const { runtime, patch, errors } = await localRuntime(setup);
     await patch(true); runtime.startupReady(); await runtime.whenIdle(); await patch(true, { size: "small" }); await runtime.whenIdle();
-    expect(setup).toHaveBeenCalledOnce(); expect(errors).toHaveBeenCalledWith("desktop-pet", "Corrupt selected resource");
-    expect(runtime.getSnapshot().installations.find(({ id }) => id === "agent-speed")!.status).toBe("active");
-    await expect(runtime.reload("desktop-pet")).rejects.toThrow("Corrupt selected resource"); expect(setup).toHaveBeenCalledTimes(2);
+    expect(setup).toHaveBeenCalledOnce(); expect(errors).toHaveBeenCalledWith("directory-demo", "Corrupt selected resource");
+    expect(runtime.getSnapshot().installations.find(({ id }) => id === "independent")!.status).toBe("active");
+    await expect(runtime.reload("directory-demo")).rejects.toThrow("Corrupt selected resource"); expect(setup).toHaveBeenCalledTimes(2);
+  });
+  it("never loads, exposes or authorizes enabled legacy bundled records", async () => {
+    const { userDataPath } = await localRuntime(vi.fn());
+    const legacy = LocalPluginRecordSchema.parse({ id: "desktop-pet", packageId: "desktop-pet", owner: "desktop", version: "0.7.0", generation: 6, enabled: true, installed: true, source: { type: "builtin", identity: "builtin:desktop-pet" }, trusted: true, config: { size: "large" }, declaredCapabilities: [], grantedCapabilities: [], revision: 4, migrationVersion: 1 });
+    const raw = { version: 1, plugins: { revision: 9, backgroundProvider: { installationId: legacy.id, extensionId: "legacy" }, installations: [legacy] } };
+    await writeFile(path.join(userDataPath, "desktop-settings.json"), JSON.stringify(raw));
+    const store = createDesktopSettingsStore({ userDataPath });
+    const loader = vi.fn(async () => { throw new Error("Legacy plugin was loaded"); });
+    const runtime = new LocalPluginRuntime(store, () => { throw new Error("Legacy native acquisition"); }, loader, vi.fn()); runtimes.push(runtime);
+    await runtime.initialize(); runtime.startupReady(); await runtime.whenIdle();
+    expect(loader).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot()).toMatchObject({ installations: [], backgroundProvider: null });
+    expect(() => runtime.assertAuthorized(legacy.id, legacy.generation, "manage")).toThrow("Legacy bundled");
+    await expect(runtime.reload(legacy.id)).rejects.toThrow("Only folder");
+    await expect(runtime.invoke(legacy.id, legacy.generation, "demo:list", {})).rejects.toThrow("Legacy bundled");
+    await store.patch({ notifications: { playSound: false } });
+    expect((await store.getPlugins()).installations).toEqual([legacy]);
   });
 });

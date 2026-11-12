@@ -10,9 +10,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const { parse } = require("@babel/parser");
-const packages = ["packages/plugin", "plugins/agent-speed", "plugins/wallpaper", "plugins/desktop-pet"];
 const selected = process.argv.slice(2);
-if (selected.some((name) => !packages.includes(name))) throw new Error(`Unknown plugin build target: ${selected.join(", ")}`);
+if (selected.length === 0) throw new Error("Pass one or more plugin package folders to build.");
 
 async function sources(directory) {
   const result = [];
@@ -108,4 +107,4 @@ async function buildPackage(name) {
   }
 }
 
-for (const name of selected.length ? selected : packages) await buildPackage(name);
+for (const name of selected) await buildPackage(name);

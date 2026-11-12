@@ -51,9 +51,15 @@ describe("local directory plugin discovery", () => {
     expect(await inspectLocalPluginDirectory(directory)).toMatchObject({ id: inspected.id, version: inspected.version });
     expect((await store.getPlugins()).installations.find(({ id }) => id === records[1]!.id)).toMatchObject({ installed: true, trusted: false, enabled: false });
   });
-  it("cannot replace the protected builtin installation identity", async () => {
-    const { root, directory } = await directoryPlugin(), inspected = await inspectLocalPluginDirectory(directory), store = createDesktopSettingsStore({ userDataPath: path.join(root, "profile") });
-    const current = await store.getPlugins(); const record = LocalPluginRecordSchema.parse({ ...current.installations[0], source: { type: "local", identity: directory }, metadata: inspected.metadata });
-    await expect(store.installPlugin(record, current.revision)).rejects.toThrow("cannot replace a builtin");
+  it("allows explicit folder reinstall of a legacy identity while preserving configuration", async () => {
+    const { root, directory } = await directoryPlugin(), inspected = await inspectLocalPluginDirectory(directory), userDataPath = path.join(root, "profile");
+    const legacy = LocalPluginRecordSchema.parse({ id: "retained", packageId: "retained", owner: "desktop", version: "0.7.0", generation: 7, enabled: true, installed: true, source: { type: "builtin", identity: "builtin:retained" }, trusted: true, config: { retained: "value" }, declaredCapabilities: [], grantedCapabilities: [], revision: 4, migrationVersion: 1 });
+    await mkdir(userDataPath);
+    await writeFile(path.join(userDataPath, "desktop-settings.json"), JSON.stringify({ version: 1, plugins: { revision: 9, installations: [legacy] } }));
+    const store = createDesktopSettingsStore({ userDataPath });
+    const current = await store.getPlugins();
+    const record = LocalPluginRecordSchema.parse({ ...legacy, packageId: inspected.id, version: inspected.version, enabled: false, source: { type: "local", identity: inspected.directory }, config: {}, declaredCapabilities: inspected.capabilities, grantedCapabilities: inspected.capabilities, format: inspected.format, metadata: inspected.metadata });
+    await store.installPlugin(record, current.revision);
+    expect(await store.getPlugins()).toMatchObject({ revision: 10, installations: [{ ...record, config: legacy.config, generation: legacy.generation, revision: 5 }] });
   });
 });

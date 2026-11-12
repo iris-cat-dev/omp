@@ -17,14 +17,9 @@ import type { Logger } from "pino";
 import { execCommand } from "../utils/spawn.js";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import {
-  provisionBundledOmpPlugins,
-  resolveOmpPluginInvocation,
-  type OmpPluginInvocation,
-} from "./bundled-omp-plugins.js";
-import { createBundledOmpHostVerifier, hasBundledOmpPlugins } from "./bundled-omp-host.js";
-import {
   createProviderEnv,
   toRuntimeSettings,
+  resolveProviderCommandPrefix,
   type ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import {
@@ -222,6 +217,27 @@ export interface OmpPluginManagementPatch {
   deleteSettings?: string[];
 }
 
+interface OmpPluginInvocation {
+  command: [string, ...string[]];
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+}
+
+async function resolveOmpPluginInvocation(options: {
+  provider?: ProviderOverride;
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+}): Promise<OmpPluginInvocation> {
+  const settings = toRuntimeSettings(options.provider);
+  const prefix = await resolveProviderCommandPrefix(settings?.command, () => options.env.OMP_COMMAND?.trim() || "omp");
+  const args = prefix.args[0] === "launch" ? prefix.args.slice(1) : prefix.args;
+  return {
+    command: [prefix.command, ...args],
+    env: createProviderEnv({ baseEnv: options.env, runtimeSettings: settings }),
+    cwd: options.cwd,
+  };
+}
+
 export class OmpPluginCliService {
   private readonly logger: Logger;
   private readonly runner: OmpPluginRunner;
@@ -346,11 +362,6 @@ export class OmpPluginCliService {
       const env = createProviderEnv({
         runtimeSettings,
       });
-      if (hasBundledOmpPlugins(env)) {
-        throw new Error(
-          "This plugin-bound CLI distribution cannot use the SDK backend; select CLI or package SDK-compatible plugins separately",
-        );
-      }
       const installation = await resolveOmpSdkInstallation(runtimeSettings, env);
       invocation = {
         command: await resolveOmpSdkHostCommand(),
@@ -369,19 +380,6 @@ export class OmpPluginCliService {
         env: { ...process.env, OMP_COMMAND: command },
         cwd: workingDirectory,
       });
-      const hostVerifier = createBundledOmpHostVerifier();
-      await hostVerifier(invocation.command[0], invocation.env);
-      // First-use setup must finish before native management, not before the
-      // daemon begins listening. Large private runtimes may require file staging.
-      const provisioning = await provisionBundledOmpPlugins({
-        ...invocation,
-        hostVerifier,
-      });
-      for (const plugin of provisioning.plugins) {
-        if (plugin.error)
-          this.logger.error({ plugin: plugin.name, state: plugin.state }, plugin.error);
-      }
-      await hostVerifier(invocation.command[0], invocation.env);
     }
     try {
       const result = await this.runner(

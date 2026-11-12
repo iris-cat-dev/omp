@@ -1369,6 +1369,30 @@ describe("DaemonConfigStore reload", () => {
     expect(changes).toEqual([true, false]);
   });
 
+  test("does not request a restart for applied plugin trust, but still reports external source edits", () => {
+    const source = { source: "directory" as const, path: "/external-plugin", enabled: true };
+    const { paseoHome, store } = createReloadableStore({
+      initialPersisted: { version: 1, pluginsEnabled: false, plugins: { example: source } },
+    });
+    const approval = { trusted: true as const, version: "legacy", capabilities: [] };
+    store.patch({ plugins: { example: { ...source, approval } } });
+    const before = loadPersistedConfig(paseoHome);
+    writeConfig(paseoHome, { ...before, pluginsEnabled: true });
+    const after = loadPersistedConfig(paseoHome);
+    expect({ ...after, pluginsEnabled: before.pluginsEnabled }).toEqual(before);
+    expect(store.reload()).toEqual({
+      appliedPaths: ["pluginsEnabled"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().plugins?.example?.approval).toEqual(approval);
+    expect(loadPersistedConfig(paseoHome).plugins?.example?.approval).toEqual(approval);
+
+    writeConfig(paseoHome, { ...after, plugins: { example: { ...source, approval, path: "/changed-source" } } });
+    expect(store.reload().restartRequiredPaths).toEqual(["plugins.example.path"]);
+    expect(store.get().plugins?.example).toEqual({ ...source, approval });
+  });
+
   test("classifies every leaf when a parent subtree is added", () => {
     const { paseoHome, store } = createReloadableStore({
       initialPersisted: { version: 1 },

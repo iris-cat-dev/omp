@@ -42,7 +42,7 @@ else
 fi
 
 shopt -s nullglob
-apps=(packages/desktop/release/mac-*/*.app)
+apps=(packages/desktop/release/unbundled/mac-*/*.app)
 if (( ${#apps[@]} == 0 )); then
   echo "No packaged macOS application was produced." >&2
   exit 1

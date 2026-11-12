@@ -1,6 +1,5 @@
 import { isSyntaxThemeId, type SyntaxThemeId } from "@omp-desktop/highlight";
 import type { ActiveTurnBehavior } from "@omp-desktop/protocol/messages";
-import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
@@ -219,17 +218,14 @@ export interface DesktopSettingsBridge {
 export interface SettingsDeps {
   storage: KeyValueStorage;
   desktop: DesktopSettingsBridge;
-  wallpaper?: {
-    migrateLegacy(input: WallpaperLegacyPluginInput): Promise<void>;
-  };
 }
 const appSettingsSaveTails = new WeakMap<KeyValueStorage, Promise<void>>();
-const pendingWallpaperInputs = new WeakMap<KeyValueStorage, Partial<StoredAppSettings>>();
-const wallpaperMigrationTails = new WeakMap<KeyValueStorage, Promise<void>>();
+// Keep historical wallpaper configuration as data; no plugin migration or activation owns it.
+const retainedWallpaperSettings = new WeakMap<KeyValueStorage, Partial<StoredAppSettings>>();
 const LEGACY_WALLPAPER_KEYS = ["wallpaperEnabled", "wallpaperSource", "wallpaperCandidateId", "wallpaperUrl", "wallpaperOpacity", "wallpaperDir", "wallpaperPath"] as const;
 
 function serializeAppSettings(settings: AppSettings, storage: KeyValueStorage): string {
-  return JSON.stringify({ ...settings, ...pendingWallpaperInputs.get(storage) });
+  return JSON.stringify({ ...settings, ...retainedWallpaperSettings.get(storage) });
 }
 
 interface SaveAppSettingsInput {
@@ -287,34 +283,10 @@ export async function saveAppSettings(input: SaveAppSettingsInput): Promise<void
   }
 }
 
-async function migrateWallpaperSettings(deps: SettingsDeps): Promise<void> {
-  const pending = pendingWallpaperInputs.get(deps.storage);
-  if (!pending || !deps.wallpaper) return;
-  const running = wallpaperMigrationTails.get(deps.storage);
-  if (running) return running;
-  const migration = (async () => {
-    await deps.wallpaper!.migrateLegacy(normalizeLegacyWallpaper(pending));
-    const previous = appSettingsSaveTails.get(deps.storage) ?? Promise.resolve();
-    const commit = previous.catch(() => undefined).then(async () => {
-      const latest = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
-      await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(normalizeAppSettings(latest)));
-      pendingWallpaperInputs.delete(deps.storage);
-    });
-    appSettingsSaveTails.set(deps.storage, commit);
-    try { await commit; }
-    finally { if (appSettingsSaveTails.get(deps.storage) === commit) appSettingsSaveTails.delete(deps.storage); }
-  })();
-  wallpaperMigrationTails.set(deps.storage, migration);
-  try { await migration; }
-  finally { if (wallpaperMigrationTails.get(deps.storage) === migration) wallpaperMigrationTails.delete(deps.storage); }
-}
-
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
   const read = await readAppSettings(deps);
   if (read.needsWrite) await deps.storage.setItem(APP_SETTINGS_KEY, serializeAppSettings(read.settings, deps.storage));
   const settings = await migrateAppSettings(read.settings, deps.storage, value => serializeAppSettings(value, deps.storage));
-  try { await migrateWallpaperSettings(deps); }
-  catch (error) { console.error("[AppSettings] Failed to migrate wallpaper plugin settings:", error); }
   await (appSettingsSaveTails.get(deps.storage) ?? Promise.resolve()).catch(() => undefined);
   const latest = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
   return latest ? normalizeAppSettings(latest) : settings;
@@ -325,15 +297,15 @@ function rememberWallpaperRecovery(storage: KeyValueStorage, stored: StoredAppSe
   for (const key of LEGACY_WALLPAPER_KEYS) {
     if (Object.hasOwn(stored, key)) Object.assign(recovery, { [key]: stored[key] });
   }
-  if (Object.keys(recovery).length) pendingWallpaperInputs.set(storage, recovery);
-  else pendingWallpaperInputs.delete(storage);
+  if (Object.keys(recovery).length) retainedWallpaperSettings.set(storage, recovery);
+  else retainedWallpaperSettings.delete(storage);
 }
 
 async function readAppSettings(
   deps: SettingsDeps,
 ): Promise<{ settings: AppSettings; needsWrite: boolean }> {
   const stored = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
-  if (deps.desktop.isElectron() && stored) rememberWallpaperRecovery(deps.storage, stored);
+  if (stored) rememberWallpaperRecovery(deps.storage, stored);
   if (stored) {
     return {
       settings: normalizeAppSettings(stored),
@@ -343,8 +315,7 @@ async function readAppSettings(
         stored.workspaceTitleSource !== undefined ||
         stored.sidebarWorkspaceTrailing !== undefined ||
         (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
-        stored.contentFontSize === undefined ||
-        LEGACY_WALLPAPER_KEYS.some(key => Object.hasOwn(stored, key)),
+        stored.contentFontSize === undefined,
     };
   }
 
@@ -354,7 +325,7 @@ async function readAppSettings(
     LegacyRendererSettingsSchema,
   );
   if (legacyStored) {
-    if (deps.desktop.isElectron()) rememberWallpaperRecovery(deps.storage, legacyStored);
+    rememberWallpaperRecovery(deps.storage, legacyStored);
     return {
       settings: {
         ...DEFAULT_CLIENT_SETTINGS,
@@ -470,24 +441,6 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     result.syntaxTheme = stored.syntaxTheme;
   }
   return result;
-}
-
-/** Recovery input is not a renderer setting or a second plugin configuration writer. */
-export function normalizeLegacyWallpaper(stored: Partial<StoredAppSettings>): WallpaperLegacyPluginInput {
-  const opacity = typeof stored.wallpaperOpacity === "string" ? Number.parseFloat(stored.wallpaperOpacity) : stored.wallpaperOpacity;
-  const candidate = z.uuid().safeParse(stored.wallpaperCandidateId);
-  return {
-    enabled: stored.wallpaperEnabled === true,
-    config: {
-      source: stored.wallpaperSource ?? "none",
-      candidateId: candidate.success ? candidate.data : null,
-      url: typeof stored.wallpaperUrl === "string" ? stored.wallpaperUrl : null,
-      opacity: typeof opacity === "number" && Number.isFinite(opacity) && opacity >= 0 && opacity <= 1 ? opacity : 0.85,
-    },
-    candidateIdProvided: Object.hasOwn(stored, "wallpaperCandidateId"),
-    directory: typeof stored.wallpaperDir === "string" ? stored.wallpaperDir : null,
-    path: typeof stored.wallpaperPath === "string" ? stored.wallpaperPath : null,
-  };
 }
 
 function pickRelayAppSettings(

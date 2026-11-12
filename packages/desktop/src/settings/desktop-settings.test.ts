@@ -15,7 +15,7 @@ import type {
   WallpaperLibrary,
   WallpaperValidatedFile,
 } from "@omp-desktop/protocol/desktop-wallpaper";
-import type { DesktopPetSettings } from "@omp-desktop/plugin-desktop-pet/types";
+import { LocalPluginRecordSchema } from "@omp-desktop/protocol/desktop-local-plugins";
 
 import {
   DEFAULT_DESKTOP_SETTINGS,
@@ -29,6 +29,12 @@ async function createTempUserDataDir(): Promise<string> {
 
 function settingsFilePath(userDataPath: string): string {
   return path.join(userDataPath, "desktop-settings.json");
+}
+
+async function installTestPlugin(userDataPath: string): Promise<void> {
+  const store = createDesktopSettingsStore({ userDataPath });
+  const record = LocalPluginRecordSchema.parse({ id: "directory-demo", packageId: "directory-demo", owner: "desktop", version: "1.0.0", generation: 0, enabled: false, installed: true, source: { type: "local", identity: path.join(userDataPath, "source") }, trusted: true, config: { selectedId: "resource", position: null, size: "medium" }, declaredCapabilities: [], grantedCapabilities: [], revision: 0, migrationVersion: 1, format: "package", metadata: null });
+  await store.installPlugin(record, (await store.getPlugins()).revision);
 }
 
 async function createMediaFile(
@@ -62,16 +68,17 @@ describe("desktop-settings", () => {
   it("serializes a plugin field patch with unrelated settings without duplicating desired state", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
+    await installTestPlugin(userDataPath);
     const store = createDesktopSettingsStore({ userDataPath });
-    const pet = (await store.getPlugins()).installations.find(({ id }) => id === "desktop-pet")!;
+    const plugin = (await store.getPlugins()).installations.find(({ id }) => id === "directory-demo")!;
     await Promise.all([
-      store.patchPlugin({ installationId: pet.id, expectedRevision: pet.revision, patch: { enabled: true, config: { selectedId: "custom-cat", position: { x: -1240, y: 420 }, size: "large" } } }),
+      store.patchPlugin({ installationId: plugin.id, expectedRevision: plugin.revision, patch: { enabled: true, config: { selectedId: "custom-resource", position: { x: -1240, y: 420 }, size: "large" } } }),
       store.patch({ notifications: { playSound: false } }),
     ]);
     const restarted = createDesktopSettingsStore({ userDataPath });
-    const record = (await restarted.getPlugins()).installations.find(({ id }) => id === pet.id)!;
+    const record = (await restarted.getPlugins()).installations.find(({ id }) => id === plugin.id)!;
     expect(record.enabled).toBe(true);
-    expect(record.config).toEqual({ selectedId: "custom-cat", size: "large", position: { x: -1240, y: 420 } });
+    expect(record.config).toEqual({ selectedId: "custom-resource", size: "large", position: { x: -1240, y: 420 } });
     expect((await restarted.get()).notifications.playSound).toBe(false);
     expect(JSON.parse(await readFile(settingsFilePath(userDataPath), "utf8")).settings).not.toHaveProperty("pet");
   });
@@ -103,11 +110,12 @@ describe("desktop-settings", () => {
   it("rejects invalid plugin fields and isolates returned configuration from persisted state", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
+    await installTestPlugin(userDataPath);
     const store = createDesktopSettingsStore({ userDataPath });
-    await store.patchPlugin({ installationId: "desktop-pet", expectedRevision: 0, patch: { config: { selectedId: "custom", position: { x: -100, y: 50 } } } });
-    await expect(store.patchPlugin({ installationId: "desktop-pet", expectedRevision: 1, patch: { config: { size: "huge", selectedId: "", position: { x: Infinity, y: 0 } } } })).rejects.toThrow();
-    const record = (await store.getPlugins()).installations.find(({ id }) => id === "desktop-pet")!;
-    const config = record.config as unknown as DesktopPetSettings; // The builtin schema validates this in-process snapshot.
+    await store.patchPlugin({ installationId: "directory-demo", expectedRevision: 0, patch: { config: { selectedId: "custom", position: { x: -100, y: 50 } } } });
+    await expect(store.patchPlugin({ installationId: "directory-demo", expectedRevision: 1, patch: { config: { position: { x: Infinity, y: 0 } } } })).rejects.toThrow();
+    const record = (await store.getPlugins()).installations.find(({ id }) => id === "directory-demo")!;
+    const config = record.config as { position: { x: number; y: number } | null; selectedId: string };
     config.position!.x = 999;
     config.selectedId = "mutated";
     const persisted = (await store.getPlugins()).installations.find(({ id }) => id === record.id)!;

@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { stripVTControlCharacters } = require("node:util");
+const { assertNoPackagedAddons, seedLegacyPluginProfile, smokeFolderPlugin } = require("./folder-plugin-smoke.js");
 
 const EXECUTABLE_NAME = "OMP Desktop";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -17,6 +18,7 @@ const REQUIRED_DESKTOP_BRIDGE_KEYS = [
   "invoke",
   "getPendingOpenProject",
   "events",
+  "plugins",
   "window",
   "dialog",
   "notification",
@@ -981,129 +983,17 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
-async function selectedDesktopPet(page) {
-  return page.evaluate(async () => {
-    const snapshot = await window.paseoDesktop.invoke("get_desktop_plugins");
-    const pet = snapshot.installations.find((record) => record.id === "desktop-pet");
-    if (!pet || typeof pet.config.selectedId !== "string") {
-      throw new Error("Desktop pet plugin selection is unavailable");
-    }
-    return pet.config.selectedId;
+async function smokePluginStartup({ page, appPath, env, legacyRecords }) {
+  return smokeFolderPlugin({
+    page, appPath, env, legacyRecords,
+    checkDaemonPlugins: () => runCliShimJsonCommand({ appPath, env, args: ["plugin", "ls"], label: "Default daemon plugin registry" }),
   });
 }
 
-async function smokePetCreationHelper({ page, appPath, env }) {
-  const before = await page.evaluate(() => window.paseoDesktop.invoke("desktop_daemon_status"));
-  const selectedBefore = await selectedDesktopPet(page);
-  const workspace = await page.evaluate(() =>
-    window.paseoDesktop.invoke("prepare_desktop_pet_creation", {
-      description: "Packaged pet installer lifetime regression",
-    }),
-  );
-  const workspaceRoot = fs.realpathSync(
-    path.join(env.OMP_ELECTRON_USER_DATA_DIR, "pet-workspaces"),
-  );
-  const workspaceRelative = path.relative(workspaceRoot, fs.realpathSync(workspace.cwd));
-  if (
-    !workspaceRelative ||
-    workspaceRelative === ".." ||
-    workspaceRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(workspaceRelative)
-  ) {
-    throw new Error("The generated pet workspace escaped the isolated desktop user-data directory");
-  }
-  const imagePath = path.join(workspace.cwd, "iris-reference.png");
-  const image = fs.readFileSync(imagePath);
-  const animation = { row: 0, frames: 1, fps: 1 };
-  fs.writeFileSync(
-    path.join(workspace.cwd, "pet.json"),
-    JSON.stringify({
-      version: 1,
-      name: "Packaged helper smoke",
-      spritesheet: "sprites.png",
-      frameWidth: image.readUInt32BE(16),
-      frameHeight: image.readUInt32BE(20),
-      animations: {
-        idle: animation,
-        running: animation,
-        needs_input: animation,
-        ready: animation,
-        blocked: animation,
-      },
-      bubble: {
-        appearance: {
-          background: "#172A42",
-          foreground: "#E5F0FA",
-          border: "#579ED9",
-          shape: "rounded",
-          fontSize: 13,
-          fontWeight: "normal",
-          padding: 8,
-          borderRadius: 10,
-          maxWidth: 200,
-          animation: "fade",
-        },
-        states: Object.fromEntries(
-          [
-            "idle",
-            "offline",
-            "running",
-            "needs_input",
-            "ready",
-            "blocked",
-            "dragging",
-            "petted",
-          ].map((state) => [
-            state,
-            {
-              messages: [`Owned helper smoke: ${state}`],
-              delayMs: 0,
-              durationMs: 1500,
-              repeatDelayMs: 0,
-            },
-          ]),
-        ),
-      },
-    }),
-  );
-  const helper = path.join(
-    workspace.cwd,
-    process.platform === "win32" ? "install-pet.cmd" : "install-pet.sh",
-  );
-  const script =
-    process.platform === "win32"
-      ? `call ${shellQuoteCliArg(helper)} ${shellQuoteCliArg(imagePath)}`
-      : `${shellQuote(helper)} ${shellQuote(imagePath)}`;
-  console.log("Packaged desktop smoke: installing a pet through the real generated helper");
-  await runShellCommand({ script, env, label: "Packaged pet creation helper" });
-  const after = await page.evaluate(() => window.paseoDesktop.invoke("desktop_daemon_status"));
-  if (
-    after.status !== "running" ||
-    after.pid !== before.pid ||
-    after.serverId !== before.serverId
-  ) {
-    throw new Error(
-      `Pet image conversion stopped or replaced the running daemon: ${JSON.stringify(after)}`,
-    );
-  }
-  const pets = await page.evaluate(() => window.paseoDesktop.invoke("list_desktop_pets"));
-  if (
-    !pets.some((pet) => pet.name === "Packaged helper smoke" && !pet.builtIn && pet.id !== "iris")
-  ) {
-    throw new Error("Pet helper exited without installing a usable custom pet");
-  }
-  const selectedAfter = await selectedDesktopPet(page);
-  if (selectedAfter !== selectedBefore) {
-    throw new Error("Installing a custom pet changed the user's selected pet");
-  }
-  await smokeCliShim({ appPath, env });
-  console.log(
-    "Packaged desktop smoke: pet installed without stopping the daemon or changing selection",
-  );
-  return { installed: true, daemonPid: after.pid, selectedId: selectedAfter };
-}
 
-async function smokePackagedDesktopApp({ appPath, executableName }) {
+
+async function smokePackagedDesktopApp({ appPath, executableName = EXECUTABLE_NAME, legacyProfile = false }) {
+  assertNoPackagedAddons(appPath);
   const smokeOmpRuntime = smokePackagedSdkRuntime;
   if (process.platform === "darwin") {
     const { smokeMacOSPackagedApp } = require("./macos-native-packaged-smoke");
@@ -1122,7 +1012,8 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
         sdk: await smokeOmpRuntime({ appPath: actualAppPath, env }),
         terminal: await smokeCliTerminal({ appPath: actualAppPath, env, createTerminal }),
       }),
-      runPetCreation: smokePetCreationHelper,
+      runPluginChecks: smokePluginStartup,
+      legacyProfile,
       stopDaemon: stopCliDaemon,
       assertDockVisibility: assertDarwinDockVisibility,
     });
@@ -1140,10 +1031,16 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
         omp: await smokeOmpRuntime({ appPath: stagedAppPath, env }),
         terminal: await smokeCliTerminal({ appPath: stagedAppPath, env, createTerminal }),
       }),
-      runPetCreation: smokePetCreationHelper,
+      runPluginChecks: smokePluginStartup,
+      legacyProfile,
       stopDaemon: stopCliDaemon,
     });
   }
+  return smokeLinuxPackagedProfile({ appPath, executableName, legacyProfile });
+}
+
+async function smokeLinuxPackagedProfile({ appPath, executableName, legacyProfile }) {
+  const smokeOmpRuntime = smokePackagedSdkRuntime;
   const executablePath = getExecutablePath(appPath, executableName);
   assertExecutable(executablePath, "Packaged app executable");
   ensureLinuxSandboxPermissions(appPath);
@@ -1167,6 +1064,7 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
     userData,
     cdpPort,
   });
+  const legacyRecords = legacyProfile ? seedLegacyPluginProfile(userData, daemonHome) : [];
 
   const stdout = [];
   const stderr = [];
@@ -1243,11 +1141,12 @@ async function smokePackagedDesktopApp({ appPath, executableName }) {
     await smokeCliShim({ appPath, env });
     await smokeOmpRuntime({ appPath, env, executableName });
     await smokeCliTerminal({ appPath, env });
-    await smokePetCreationHelper({ page, appPath, env });
+    const plugins = await smokePluginStartup({ page, appPath, env, legacyRecords });
     await stopDaemonForCleanup();
     console.log(
-      `Packaged desktop smoke passed: real renderer and preload loaded; renderer-started desktop daemon pid ${status.pid}, listen ${status.listen}; CLI shim daemon status, terminal and pet installer lifetime smoke succeeded`,
+      `Packaged desktop smoke passed: real renderer, daemon pid ${status.pid}, CLI, SDK, terminal and actual folder plugin UI/service/RPC (${plugins.profile})`,
     );
+    return { daemon: status, plugins };
   } catch (error) {
     await writeFailureArtifacts({ page, stdout, stderr, userData, daemonHome, error }).catch(
       (artifactError) => {

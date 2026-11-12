@@ -1,37 +1,31 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
-import { app, dialog, ipcMain, nativeImage, type IpcMainInvokeEvent } from "electron";
+import { app, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { isPluginReleaseOperation, type PluginActivationScope, type PluginNativeApi, type PluginNativeOverlayRequest, type PluginNativeOverlayLease, type PluginNativeOverlayWireRequest } from "@omp-desktop/plugin/server";
 import { LocalPluginActionSchema, LocalPluginInvocationSchema, LocalPluginPatchSchema, LocalPluginSelectionSchema, LocalPluginDirectoryInstallSchema, LocalPluginRecordSchema, LocalPluginClientScopeSchema, type LocalPluginRecord, type LocalPluginSnapshot, type LocalPluginDirectoryInstall } from "@omp-desktop/protocol/desktop-local-plugins";
 import { isWallpaperCommand, type WallpaperCommand } from "@omp-desktop/protocol/desktop-wallpaper";
-import { createDesktopPetDefinition, type DesktopPetBuiltinDefinition } from "@omp-desktop/plugin-desktop-pet/builtin";
-import { WallpaperConfigSchema } from "@omp-desktop/plugin-wallpaper/builtin";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { getMainWindows, getMainWindowDocumentVersion, isMainWindowSender, onMainWindowRemoved, selectMainWindow } from "../window/main-windows.js";
 import { wallpaperMediaRegistry, type WallpaperDocumentOwner } from "../wallpaper/media-registry.js";
 import { createWallpaperCommandHandler } from "../wallpaper/commands.js";
 import { getCommittedWallpaperDocumentIdentity } from "../wallpaper/media-request-authorization.js";
-import { validateLegacyWallpaper, wallpaperFailure, WallpaperError } from "../wallpaper/files.js";
+import { WallpaperError } from "../wallpaper/files.js";
 import { LocalPluginRuntime } from "./local-runtime.js";
 import { acquireNativeOverlay, getNativeOverlayDocument, NATIVE_OVERLAY_CSP } from "./native-overlay.js";
-import { convertGeneratedAtlas } from "./image-converter.js";
-import { createLocalPluginDocument } from "./records.js";
 import { inspectLocalPluginDirectory, loadExternalLocalPlugin, type LocalPluginWorkerBridge } from "./external-plugins.js";
 import { LocalPluginLogs } from "./logs.js";
 import { LocalPluginSecrets, LocalPluginSecretRequestSchema } from "./secrets.js";
 import { registerPluginNativeMenu, unregisterPluginNativeMenu, revokePluginNativeMenus, releasePluginDocumentMenus, releasePluginClientMenus } from "./native-menu.js";
 import { LocalPluginClientScopes, type ClientScopeBinding } from "./client-scopes.js";
 
-interface Navigation { openApp(): void | Promise<void>; openAgent(target: { serverId: string; agentId: string }): void | Promise<void>; startupBarrier: Promise<void>; resourceRoot?: string }
+interface Navigation { openApp(): void | Promise<void>; openAgent(target: { serverId: string; agentId: string }): void | Promise<void>; startupBarrier: Promise<void> }
 let navigation: Navigation | undefined;
 let runtime: LocalPluginRuntime | undefined;
 let initializing: Promise<void> | undefined;
-let petDefinition: DesktopPetBuiltinDefinition | undefined;
 let logs: LocalPluginLogs | undefined;
 let secrets: LocalPluginSecrets | undefined;
-let builtinResourceRoot: string | undefined;
 const events = new Map<string, Set<(payload: unknown) => void>>();
 const wireOverlays = new Map<string, { installationId: string; generation: number; lease: PluginNativeOverlayLease }>();
 function emit(event: string, payload: unknown): void { for (const listener of events.get(event) ?? []) listener(payload); }
@@ -52,15 +46,6 @@ const clientScopes = new LocalPluginClientScopes((binding) => {
 });
 function pluginLogs(): LocalPluginLogs { logs ??= new LocalPluginLogs(app.getPath("userData")); return logs; }
 function pluginSecrets(): LocalPluginSecrets { secrets ??= new LocalPluginSecrets(app.getPath("userData")); return secrets; }
-function getPetDefinition(): DesktopPetBuiltinDefinition {
-  petDefinition ??= createDesktopPetDefinition({
-    builtInDirectory: builtinResourceRoot ? path.join(builtinResourceRoot, "pets") : app.isPackaged ? path.join(app.getAppPath(), "assets", "pets") : path.resolve(app.getAppPath(), "..", "plugins", "desktop-pet", "assets", "pets"),
-    userDataPath: app.getPath("userData"), skillPath: app.isPackaged ? path.join(process.resourcesPath, "pet-creation", "hatch-pet", "SKILL.md") : path.resolve(app.getAppPath(), "..", "..", "skills", "hatch-pet", "SKILL.md"),
-    executablePath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged,
-    decodeImage: (data, crop) => { const image = nativeImage.createFromBuffer(data); if (image.isEmpty()) throw new TypeError("Image cannot be decoded."); return { ...image.getSize(), bitmap: image.toBitmap(), preview: image.crop(crop).toPNG() }; },
-  });
-  return petDefinition;
-}
 export function getLocalPluginRuntime(): LocalPluginRuntime {
   runtime ??= new LocalPluginRuntime(getDesktopSettingsStore(), serviceNative, (record, scope) => loadExternalLocalPlugin(record, scope, {
     logs: pluginLogs(), hostCall: workerHostCall, subscribe,
@@ -190,14 +175,10 @@ export function authorizeLocalPlugin(event: IpcMainInvokeEvent, installationId: 
   if (purpose === "background" && extensionId && local.getSnapshot().backgroundProvider?.extensionId !== extensionId) throw new Error("This background extension is not selected.");
   return { installationId, generation, documentEpoch, webContentsId: event.sender.id };
 }
-export async function setupBuiltinLocalPlugins(options: Navigation): Promise<void> {
+export async function setupLocalPlugins(options: Navigation): Promise<void> {
   navigation = options;
-  builtinResourceRoot = options.resourceRoot;
   if (!initializing) initializing = (async () => {
     const local = getLocalPluginRuntime(), store = getDesktopSettingsStore();
-    local.register(getPetDefinition());
-    local.register({ id: "wallpaper", clearData: async () => { const library = await store.getWallpaperLibrary(); await store.removeWallpaperCandidates(library.items.map(({ candidateId }) => candidateId)); } });
-    local.register({ id: "agent-speed" });
     local.subscribeRevocations((id, generation) => { clientScopes.revokeInstallation(id, generation); wallpaperMediaRegistry.revokeInstallation(id, generation); revokePluginNativeMenus(id, generation); });
     let selection = (await store.getPlugins()).backgroundProvider;
     store.subscribePlugins((document) => {
@@ -209,33 +190,11 @@ export async function setupBuiltinLocalPlugins(options: Navigation): Promise<voi
     onMainWindowRemoved(releaseLocalPluginDocument);
     registerLocalPluginIpc();
     await local.initialize();
-    const recovery = await store.getLegacyWallpaperRecovery();
-    if (recovery) void restoreLegacyWallpaperCandidates(recovery).catch((error) => pluginLogs().append("wallpaper", "stderr", String(error)));
   })();
   return initializing;
 }
 export function releaseLocalPluginDocument(senderId: number): void { clientScopes.releaseDocument(senderId); releasePluginDocumentMenus(senderId); emit("window:removed", senderId); }
 export function subscribeLocalPluginRevocations(listener: (id: string, generation: number) => void): () => void { return getLocalPluginRuntime().subscribeRevocations(listener); }
-async function restoreLegacyWallpaperCandidates(recovery: { directory: string | null; path: string | null }) {
-  let file = null, reason: string | null = null;
-  try { file = await validateLegacyWallpaper(recovery.directory, recovery.path); } catch (error) { reason = wallpaperFailure(error).message; }
-  const result = await getDesktopSettingsStore().importLegacyWallpaper(file, reason);
-  emit("wallpaper:migrationChanged", result);
-  for (const window of getMainWindows()) window.webContents.send("paseo:event:desktop-plugin-wallpaper-migration-changed", { reason: result.reason, pending: false });
-  return result;
-}
-const LegacyWallpaperSchema = z.object({ enabled: z.boolean(), config: WallpaperConfigSchema, candidateIdProvided: z.boolean().default(true), directory: z.string().nullable().default(null), path: z.string().nullable().default(null) });
-export async function migrateLegacyDesktopPlugins(raw: unknown): Promise<LocalPluginSnapshot> {
-  const legacy = z.object({ wallpaper: LegacyWallpaperSchema.optional() }).parse(raw), store = getDesktopSettingsStore();
-  if (!legacy.wallpaper) return getLocalPluginRuntime().getSnapshot();
-  const current = (await store.getPlugins()).installations.find(({ id }) => id === "wallpaper")!;
-  if (current.migrationVersion >= 1) return getLocalPluginRuntime().getSnapshot();
-  const wallpaper = legacy.wallpaper;
-  if (!wallpaper.candidateIdProvided && wallpaper.config.source !== "url") wallpaper.config.candidateId = (await restoreLegacyWallpaperCandidates(wallpaper)).candidateId;
-  await store.migrateLegacyPlugins({ wallpaper: { enabled: wallpaper.enabled, config: wallpaper.config, ...(wallpaper.config.source === "url" && !wallpaper.candidateIdProvided ? { recovery: { directory: wallpaper.directory, path: wallpaper.path } } : {}) } });
-  if (wallpaper.config.source === "url" && !wallpaper.candidateIdProvided) void restoreLegacyWallpaperCandidates(wallpaper).catch((error) => pluginLogs().append("wallpaper", "stderr", String(error)));
-  return getLocalPluginRuntime().getSnapshot();
-}
 export async function installLocalPluginDirectory(raw: LocalPluginDirectoryInstall): Promise<LocalPluginSnapshot> {
   const input = LocalPluginDirectoryInstallSchema.parse(raw), inspected = await inspectLocalPluginDirectory(input.directory), local = getLocalPluginRuntime(), store = getDesktopSettingsStore();
   if (local.getSnapshot().revision !== input.expectedRevision) throw new Error("Plugin registry changed. Reload it before installing.");
@@ -277,7 +236,6 @@ function registerLocalPluginIpc(): void {
   ipcMain.handle("omp:plugins:startup-ready", async (event) => { const epoch = requireMainFrame(event); await initializing; await navigation!.startupBarrier; requireMainFrame(event, epoch); getLocalPluginRuntime().startupReady(); });
   ipcMain.handle("omp:plugins:get", async (event) => { requireMainFrame(event); await initializing; return getLocalPluginRuntime().getSnapshot(); });
   ipcMain.handle("omp:plugins:patch", async (event, raw) => { requireMainFrame(event); await initializing; await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); });
-  ipcMain.handle("omp:plugins:migrate", async (event, raw) => { requireMainFrame(event); await initializing; return migrateLegacyDesktopPlugins(raw); });
   ipcMain.handle("omp:plugins:inspectDirectory", async (event, raw) => { requireMainFrame(event); return inspectLocalPluginDirectory(z.object({ directory: z.string() }).parse(raw).directory); });
   ipcMain.handle("omp:plugins:installDirectory", async (event, raw) => { requireMainFrame(event); await initializing; return installLocalPluginDirectory(LocalPluginDirectoryInstallSchema.parse(raw)); });
   ipcMain.handle("omp:plugins:getLogs", async (event, raw) => { requireMainFrame(event); const { installationId } = z.object({ installationId: z.string() }).parse(raw); if (!getLocalPluginRuntime().getSnapshot().installations.some(({ id }) => id === installationId)) throw new Error("Plugin is not installed."); return pluginLogs().get(installationId); });
@@ -294,8 +252,7 @@ function registerLocalPluginIpc(): void {
     } else if (action === "clearData") {
       await local.suspend(record.id); await local.clearData(record.id); await pluginSecrets().clear(record.id);
       const current = (await store.getPlugins()).installations.find(({ id }) => id === record.id)!;
-      const defaults = createLocalPluginDocument().installations.find(({ packageId }) => packageId === record.packageId);
-      await store.resetPluginConfiguration(record.id, defaults?.config ?? {}, current.revision);
+      await store.resetPluginConfiguration(record.id, {}, current.revision);
     } else if (action === "reinstall" && record.source.type === "local") await refreshDirectoryInstallation({ ...record, enabled: false }, true);
     else await store.setPluginInstalled(record.id, action === "reinstall", record.revision);
     return local.getSnapshot();
@@ -307,7 +264,7 @@ function registerLocalPluginIpc(): void {
       const record = local.assertAuthorized(input.installationId, input.generation, "manage");
       const authorizeCommit = () => { requireMainFrame(event, epoch); clientScopes.assertCurrent(binding); local.assertAuthorized(record.id, input.generation, "manage"); };
       if (input.method.startsWith("wallpaper:")) requireCapability(record, "wallpaper.media");
-      if (["pet.activity", "menu.register"].includes(input.method) && binding.mode !== "active") throw new Error("Management cannot acquire plugin execution resources.");
+      if (input.method === "menu.register" && binding.mode !== "active") throw new Error("Management cannot acquire plugin execution resources.");
       let result: unknown;
       if (input.method.startsWith("overlay.")) throw new Error("Native overlays are owned by the active Desktop service.");
       if (input.method === "dialog.open") result = await openPluginDialog(record, input.input, event);
@@ -318,7 +275,6 @@ function registerLocalPluginIpc(): void {
       else if (input.method === "storage.patch") { const request = z.object({ patch: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().nonnegative() }).parse(input.input); const document = await getDesktopSettingsStore().patchPlugin({ installationId: record.id, expectedRevision: request.expectedRevision, patch: { config: request.patch } }, authorizeCommit); const updated = document.installations.find(({ id }) => id === record.id)!; result = { revision: updated.revision, values: updated.config }; }
       else if (input.method === "secret") { requireCapability(record, "secrets.scoped"); if (LocalPluginSecretRequestSchema.parse(input.input).operation === "get") throw new Error("Renderer clients cannot read plugin secrets."); result = await pluginSecrets().invoke(record.id, input.input, authorizeCommit); }
       else if (input.method === "wallpaper:selection") result = local.getSnapshot().backgroundProvider?.installationId === record.id && local.getSnapshot().backgroundProvider?.extensionId === "wallpaper";
-      else if (input.method === "wallpaper:migrationStatus") result = await getDesktopSettingsStore().getWallpaperMigrationStatus();
       else if (input.method.startsWith("wallpaper:")) {
         const command = input.method.slice("wallpaper:".length);
         if (!isWallpaperCommand(command)) throw new Error("Unknown wallpaper command.");
@@ -326,22 +282,21 @@ function registerLocalPluginIpc(): void {
         wallpaperActors.set(event, binding);
         try { result = await invokeWallpaper(event, command as WallpaperCommand, { ...request, installationId: record.id, generation: input.generation }); }
         finally { wallpaperActors.delete(event); }
-      } else result = await local.invoke(record.id, input.generation, input.method, input.method === "pet.activity" ? { senderId: event.sender.id, activity: input.input } : input.input);
+      } else result = await local.invoke(record.id, input.generation, input.method, input.input);
       requireMainFrame(event, epoch);
       clientScopes.assertCurrent(binding);
-      local.assertAuthorized(record.id, input.generation, input.method === "pet.activity" ? "active" : "manage");
+      local.assertAuthorized(record.id, input.generation, "manage");
       return result;
     } finally { clientScopes.finish(binding); }
   });
 }
-export function createLocalPluginCommandHandlers() { return { ...getPetDefinition().publicCommands, get_desktop_plugins: () => getLocalPluginRuntime().getSnapshot(), patch_desktop_plugin: async (raw: unknown) => { await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); }, migrate_legacy_desktop_plugins: migrateLegacyDesktopPlugins }; }
+export function createLocalPluginCommandHandlers() { return { get_desktop_plugins: () => getLocalPluginRuntime().getSnapshot(), patch_desktop_plugin: async (raw: unknown) => { await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); } }; }
 export function requireLocalPluginCommandDocument(event: IpcMainInvokeEvent): void { requireMainFrame(event); }
-export async function handleBuiltinPluginResource(hostname: string, pathname: string): Promise<Response | null> {
+export async function handleLocalPluginResource(hostname: string, pathname: string): Promise<Response | null> {
   if (hostname === "overlay" && pathname.startsWith("/plugin-overlay/")) {
     const html = getNativeOverlayDocument(pathname);
     return html ? new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": NATIVE_OVERLAY_CSP } }) : new Response("Not found", { status: 404 });
   }
   if (pathname.startsWith("/plugin-overlay/")) return new Response("Not found", { status: 404 });
-  return hostname === "app" || hostname === "overlay" ? getLocalPluginRuntime().resource(pathname) : null;
+  return null;
 }
-export function runBuiltinPluginInstallCli(): Promise<boolean> { return getPetDefinition().runInstallCli({ argv: process.argv, ready: () => app.whenReady().then(() => undefined), convertImage: convertGeneratedAtlas, exit: (code) => app.exit(code) }); }

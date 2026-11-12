@@ -8,8 +8,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { ProviderCommand } from "../../provider-launch-config.js";
-import { assertBundledOmpHost } from "../../../bundled-omp-host.js";
-import type * as BundledHost from "../../../bundled-omp-host.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import type * as SpawnUtilities from "../../../../utils/spawn.js";
@@ -24,10 +22,6 @@ vi.mock("node:os", async (importOriginal) => {
 vi.mock("../../../../utils/spawn.js", async (importOriginal) => {
   const native = await importOriginal<typeof SpawnUtilities>();
   return { ...native, spawnProcess: vi.fn() };
-});
-vi.mock("../../../bundled-omp-host.js", async (importOriginal) => {
-  const native = await importOriginal<typeof BundledHost>();
-  return { ...native, assertBundledOmpHost: vi.fn() };
 });
 
 interface FixtureDatabase {
@@ -122,7 +116,6 @@ function client(
 
 beforeEach(() => {
   vi.mocked(spawnProcess).mockReset();
-  vi.mocked(assertBundledOmpHost).mockReset().mockResolvedValue(undefined);
   for (const key of [
     "PI_CONFIG_DIR",
     "OMP_CONFIG_DIR",
@@ -203,10 +196,6 @@ describe("OmpAgentClient native stats refresh", () => {
         stdio: "ignore",
       }),
     );
-    expect(assertBundledOmpHost).toHaveBeenCalledWith(
-      join(home, "omp.exe"),
-      expect.objectContaining({ USERPROFILE: home }),
-    );
     addRequest(database, 200);
     first.child.exit();
     const result = await pending;
@@ -235,7 +224,6 @@ describe("OmpAgentClient native stats refresh", () => {
     "signal",
     "spawn-error",
     "spawn-throw",
-    "verification",
   ] as const)(
     "never reports the old index as refreshed after %s failure, and permits a retry",
     async (failure) => {
@@ -244,11 +232,7 @@ describe("OmpAgentClient native stats refresh", () => {
       addRequest(database);
       database.close();
       const agent = client(home);
-      if (failure === "verification") {
-        vi.mocked(assertBundledOmpHost).mockRejectedValueOnce(
-          new Error(`${home}/private host`),
-        );
-      } else if (failure === "spawn-throw") {
+      if (failure === "spawn-throw") {
         vi.mocked(spawnProcess).mockImplementationOnce(() => {
           throw new Error(`${home}/private executable ENOENT`);
         });
@@ -448,19 +432,6 @@ describe("OmpAgentClient native stats refresh", () => {
     expect(spawnProcess).toHaveBeenCalledTimes(2);
   });
 
-  it("never starts a late process after host verification exceeded the refresh deadline", async () => {
-    const home = await fixtureHome();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const { promise: verified, resolve: finishVerification } =
-      Promise.withResolvers<void>();
-    vi.mocked(assertBundledOmpHost).mockReturnValueOnce(verified);
-    const pending = client(home).getOmpStats("all");
-    await vi.advanceTimersByTimeAsync(40_000);
-    expect(await pending).toMatchObject({ reason: "index_refresh_timeout" });
-    finishVerification();
-    await verified;
-    expect(spawnProcess).not.toHaveBeenCalled();
-  });
 
   it.runIf(process.platform === "win32")(
     "terminates a real timed-out native child and its descendant before returning",
@@ -540,11 +511,10 @@ describe("OmpAgentClient native stats refresh", () => {
         reason: "scope_unavailable",
       });
       expect(spawnProcess).not.toHaveBeenCalled();
-      expect(assertBundledOmpHost).not.toHaveBeenCalled();
     },
   );
 
-  it("refuses an invalid profile scope before host verification or spawning", async () => {
+  it("refuses an invalid profile scope before spawning", async () => {
     const home = await fixtureHome();
     expect(
       await client(home, { env: { OMP_PROFILE: "../other" } }).getOmpStats(
@@ -555,6 +525,5 @@ describe("OmpAgentClient native stats refresh", () => {
       reason: "scope_unavailable",
     });
     expect(spawnProcess).not.toHaveBeenCalled();
-    expect(assertBundledOmpHost).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,6 @@ import { open, rm } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -399,7 +398,6 @@ export interface PaseoDaemonConfig {
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
-  bundledPluginDirectories?: string[];
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -1664,7 +1662,7 @@ export async function createPaseoDaemon(
               visualFeedbackService,
             );
             pluginService.bindOmpSessionHost(wsServer);
-            void Promise.resolve().then(()=>pluginService.registerBundledDirectories(config.bundledPluginDirectories??[path.dirname(createRequire(import.meta.url).resolve("@omp-desktop/plugin-qqbot/package.json"))])).then(()=>pluginService.start()).catch(error => {logger.error({err:error}, "Bundled plugin registration failed");return pluginService.start();});
+            void pluginService.start().catch(error => logger.error({ err: error }, "Plugin startup failed"));
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
               config: getRelayConfig(),

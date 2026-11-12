@@ -103,7 +103,7 @@ test("daemon config reload enables and disables configured plugins without resta
 export default function contribute(plugin: unknown) {
   void plugin;
   writeFileSync(${JSON.stringify(factoryMarker)}, "initialized");
-  return () => undefined;
+  return () => writeFileSync(${JSON.stringify(factoryMarker)}, "stopped");
 }`,
   );
 
@@ -133,6 +133,8 @@ export default function contribute(plugin: unknown) {
       configPath,
       `${JSON.stringify({ ...config, pluginsEnabled: enabled }, null, 2)}\n`,
     );
+    const written = JSON.parse(await readFile(configPath, "utf8"));
+    expect({ ...written, pluginsEnabled: config.pluginsEnabled }).toEqual(config);
   }
 
   try {
@@ -140,6 +142,14 @@ export default function contribute(plugin: unknown) {
     await expect(client.listPlugins()).resolves.toEqual([
       expect.objectContaining({ id: "reloadable-plugin", status: "disabled" }),
     ]);
+    // Paused discovery persists inherited trust before compiling the bundle.
+    // Wait for both before modifying the same profile file externally.
+    await expect.poll(async () => (await client.getPluginCatalog())[0]).toMatchObject({
+      trusted: true,
+      clientBundle: expect.any(String),
+    });
+    const approvedSource = JSON.parse(await readFile(configPath, "utf8")).plugins["reloadable-plugin"];
+    expect(approvedSource.approval).toEqual({ trusted: true, version: "legacy", capabilities: [] });
     await expect(readFile(factoryMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     await setPluginsEnabled(true);
@@ -153,6 +163,7 @@ export default function contribute(plugin: unknown) {
       .poll(async () => (await client.listPlugins()).find(({ id }) => id === "reloadable-plugin"))
       .toMatchObject({ enabled: true, status: "running" });
     await expect(readFile(factoryMarker, "utf8")).resolves.toBe("initialized");
+    expect(JSON.parse(await readFile(configPath, "utf8")).plugins["reloadable-plugin"]).toEqual(approvedSource);
 
     await setPluginsEnabled(false);
     await expect(client.reloadDaemonConfig()).resolves.toEqual({
@@ -164,6 +175,55 @@ export default function contribute(plugin: unknown) {
     await expect
       .poll(async () => (await client.listPlugins()).find(({ id }) => id === "reloadable-plugin"))
       .toMatchObject({ enabled: true, status: "disabled" });
+    await expect.poll(() => readFile(factoryMarker, "utf8")).toBe("stopped");
+    expect(JSON.parse(await readFile(configPath, "utf8")).plugins["reloadable-plugin"]).toEqual(approvedSource);
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
+test("old preinstalled QQ records remain inactive until explicitly installed from a folder", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "omp-qq-retired-plugin-"));
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "omp-qq-retired-home-"));
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  roots.push(pluginDirectory, paseoHomeRoot);
+  const marker = path.join(pluginDirectory, "executed.txt");
+  await writeFile(path.join(pluginDirectory, "omp-plugin.json"), JSON.stringify({ id: "qqbot" }));
+  await writeFile(path.join(pluginDirectory, "index.tsx"), `import {writeFileSync} from "node:fs";
+import {defineRpc} from "@omp-desktop/plugin";
+import {z} from "zod";
+const ping=defineRpc({name:"ping",input:z.object({}),output:z.string()});
+export default function contribute(plugin) {
+  writeFileSync(${JSON.stringify(marker)}, "executed");
+  plugin.handle(ping,()=>"folder-installed");
+  return ()=>{};
+}`);
+  const plugins = { qqbot: { source: "directory" as const, path: pluginDirectory, enabled: true, bundled: true } };
+  await mkdir(paseoHome, { recursive: true });
+  const configPath = path.join(paseoHome, "config.json");
+  await writeFile(configPath, JSON.stringify({ version: 1, pluginsEnabled: true, plugins }));
+  const daemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false, pluginsEnabled: true, plugins });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.4.0" });
+  try {
+    await client.connect();
+    await expect(client.listPlugins()).resolves.toEqual([]);
+    await expect(client.getPluginCatalog()).resolves.toEqual([]);
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(client.enablePlugin("qqbot")).rejects.toThrow(/installed explicitly from a folder/);
+    await expect(client.invokePluginRpc("qqbot", "ping", {}, 0)).rejects.toThrow(/installed explicitly from a folder/);
+    await client.patchDaemonConfig({ pluginsEnabled: false });
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    await writeFile(configPath, JSON.stringify({ ...config, pluginsEnabled: true }));
+    await client.reloadDaemonConfig();
+    await expect(client.listPlugins()).resolves.toEqual([]);
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(await readFile(configPath, "utf8")).plugins).toEqual(plugins);
+    await expect(client.installDirectoryPlugin(pluginDirectory, "qqbot", { trusted: true })).resolves.toMatchObject({ id: "qqbot", status: "running", bundled: false });
+    const [installed] = await client.getPluginCatalog();
+    await expect(client.invokePluginRpc("qqbot", "ping", {}, installed!.generation)).resolves.toBe("folder-installed");
+    await expect(readFile(marker, "utf8")).resolves.toBe("executed");
+    expect(JSON.parse(await readFile(configPath, "utf8")).plugins.qqbot.bundled).toBeUndefined();
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

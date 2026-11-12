@@ -41,16 +41,6 @@ import {
   type OmpBranchMessage,
 } from "./runtime.js";
 import { resolveOmpBuiltinToolArgsForLaunch } from "./provider-config.js";
-import {
-  createBundledOmpHostVerifier,
-  type BundledOmpHostVerifier,
-} from "../../../bundled-omp-host.js";
-import {
-  provisionBundledOmpPlugins,
-  type BundledOmpProvisioningResult,
-} from "../../../bundled-omp-plugins.js";
-import { beginBundledOmpInitialization } from "../../../bundled-omp-initialization.js";
-import { createProviderEnv } from "../../provider-launch-config.js";
 import { LOCAL_MODEL_PROVIDER } from "@omp-desktop/protocol/local-models";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
@@ -256,34 +246,6 @@ export class OmpCliRuntime implements OmpRuntime {
     launch.argv.push(...policyArgs);
   }
 
-  private async provisionBundledPlugins(
-    command: [string, ...string[]],
-    env: NodeJS.ProcessEnv,
-    cwd: string,
-    hostVerifier: BundledOmpHostVerifier,
-    agentId: string | undefined,
-  ): Promise<void> {
-    const initialization = agentId ? beginBundledOmpInitialization(agentId) : undefined;
-    let provisioning: BundledOmpProvisioningResult;
-    try {
-      provisioning = await provisionBundledOmpPlugins({
-        command,
-        env,
-        cwd,
-        hostVerifier,
-        onProgress: initialization?.report,
-      });
-    } finally {
-      initialization?.close();
-    }
-    for (const plugin of provisioning.plugins) {
-      if (plugin.error)
-        this.options.logger.warn(
-          { plugin: plugin.name, error: plugin.error },
-          "Bundled OMP plugin provisioning requires explicit management",
-        );
-    }
-  }
 
   async startSession(input: OmpStartSessionInput): Promise<OmpRuntimeSession> {
     input.signal?.throwIfAborted();
@@ -299,18 +261,6 @@ export class OmpCliRuntime implements OmpRuntime {
       this.options.localModelBridge,
     );
     const effectiveCommand = resolveOmpRuntimeCommand(this.command, this.options.runtimeSettings);
-    const providerEnv = createProviderEnv({ overlays: [launch.env] });
-    const hostVerifier = createBundledOmpHostVerifier();
-    // Each cwd may initialize a different native dotenv/profile. Resolve it with
-    // the genuine host before launch; the per-profile ledger prevents reseeding.
-    await this.provisionBundledPlugins(
-      effectiveCommand,
-      providerEnv,
-      launch.cwd,
-      hostVerifier,
-      input.env?.PASEO_AGENT_ID,
-    );
-    await hostVerifier(launch.argv[0], providerEnv);
     installCodexCatalogPreload(launch);
     const serviceTierToken = randomUUID();
     launch.env = { ...launch.env, [OMP_SERVICE_TIER_TOKEN_ENV]: serviceTierToken };

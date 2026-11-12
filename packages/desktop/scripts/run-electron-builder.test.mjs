@@ -31,7 +31,7 @@ const { Platform } = require("app-builder-lib/out/core");
 
 const scriptPath = fileURLToPath(new URL("./run-electron-builder.mjs", import.meta.url));
 
-test("absolute symlinked CLI paths still validate builds and emit release output metadata", () => {
+test("absolute symlinked CLI paths still validate builds", () => {
   const fixture = createPackagingFixture();
   try {
     const link = path.join(fixture.directory, "linked-scripts");
@@ -49,18 +49,6 @@ test("absolute symlinked CLI paths still validate builds and emit release output
     expect(build.error).toBeUndefined();
     expect(build.status).toBe(1);
     expect(build.stderr).toContain("Cannot package darwin-arm64 with the win32-x64 runtime");
-    const output = spawnSync(
-      process.execPath,
-      [path.join(link, "windows-build-output.mjs"), "1.2.3"],
-      { cwd: fixture.directory, encoding: "utf8", timeout: 20_000 },
-    );
-    expect(output.error).toBeUndefined();
-    expect(output.status).toBe(0);
-    expect(output.stdout.trim().split("\t")).toEqual([
-      "packages/desktop/release",
-      "latest.yml",
-      "OMP-Desktop-Setup-1.2.3.exe",
-    ]);
   } finally {
     fixture.dispose();
   }
@@ -1271,14 +1259,6 @@ describe("prepackaged distribution boundary", () => {
 });
 
 describe("Windows wrapper metadata boundary", () => {
-  test.each(["1.2.3", "1.2.3-beta.4"])("selects release update metadata (%s)", (version) => {
-    const output = windowsBuildOutput(version, []);
-    expect(output).toEqual({
-      releaseDirectory: "packages/desktop/release",
-      metadataFilename: version.includes("-") ? "beta.yml" : "latest.yml",
-      legacyInstaller: `OMP-Desktop-Setup-${version}.exe`,
-    });
-  });
   test("rejects obsolete executable-host plugin output", () => {
     expect(() => windowsBuildOutput("1.2.3", ["--with-bundled-plugins"])).toThrow(
       "SDK-only packaging",

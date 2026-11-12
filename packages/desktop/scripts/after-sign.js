@@ -2,7 +2,6 @@ const path = require("node:path");
 
 const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
-const PRODUCT_NAME = "OMP Desktop";
 
 exports.default = async function afterSign(context) {
   if (process.env.PASEO_DESKTOP_SMOKE !== "1") {
@@ -14,6 +13,8 @@ exports.default = async function afterSign(context) {
   }
 
   await smokePackagedDesktopApp({
-    appPath: path.join(context.appOutDir, `${PRODUCT_NAME}.app`),
+    appPath: path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`),
+    executableName: context.packager.config.executableName,
+    legacyProfile: true,
   });
 };

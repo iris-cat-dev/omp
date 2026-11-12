@@ -7,7 +7,7 @@ export function windowsBuildOutput(version, args) {
   }
   const channel = version.includes("-") ? version.split("-")[1].split(".")[0] : "latest";
   return {
-    releaseDirectory: "packages/desktop/release",
+    releaseDirectory: "packages/desktop/release/unbundled",
     metadataFilename: `${channel}.yml`,
     legacyInstaller: `OMP-Desktop-Setup-${version}.exe`,
   };

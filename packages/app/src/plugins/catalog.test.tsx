@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import React, { useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineRpc, useRpc } from "@omp-desktop/plugin";
 import { PluginRpcProvider } from "@omp-desktop/plugin/host";
 import { z } from "zod";
 import type { PluginClientContext } from "@omp-desktop/plugin";
 import type { DesktopPluginCatalogEntry } from "@omp-desktop/protocol/desktop-plugins";
-import { HostPluginCatalogBridge } from "./catalog";
+import { HostPluginCatalogBridge, useDaemonPluginCatalog } from "./catalog";
 import { usePluginClientSnapshot, usePluginContributions } from "./hooks";
 import { pluginClientRegistry } from "./registry";
+import { loadTrustedPluginClient } from "./load";
 
 type CatalogSnapshot = { plugins: DesktopPluginCatalogEntry[]; revision: number; pluginsEnabled: boolean };
 type CatalogStatus = { payload: { status: "plugin_catalog_changed"; pluginId: string; generation: number } };
@@ -21,7 +22,7 @@ interface CatalogClient {
 const fixture = vi.hoisted(() => ({ client: null as CatalogClient | null, snapshot: null as { client: CatalogClient; connectionStatus: "online"; connectionEpoch: number } | null, listeners: new Set<(message: CatalogStatus) => void>(), nextSnapshot: null as Promise<CatalogSnapshot> | null, resolveRpc: null as ((value: unknown) => void) | null }));
 vi.mock("@/runtime/host-runtime", () => ({ useHostRuntimeSnapshot: () => fixture.snapshot, getHostRuntimeStore: () => { throw new Error("Counter does not acquire an Omp session"); } }));
 vi.mock("./client-trust", () => ({ hasPluginClientTrust: async () => true, subscribePluginClientTrust: () => () => {} }));
-vi.mock("./load", () => ({ loadTrustedPluginClient: () => (context: PluginClientContext) => { context.addSurface("counter", Counter); } }));
+vi.mock("./load", () => ({ loadTrustedPluginClient: vi.fn(() => (context: PluginClientContext) => { context.addSurface("counter", Counter); }) }));
 vi.mock("./icons", () => ({ resolvePluginIcon: () => undefined }));
 
 const contract = defineRpc({ name: "increment", input: z.object({}), output: z.number() });
@@ -45,6 +46,7 @@ const entry = (generation: number): DesktopPluginCatalogEntry => ({ id: "counter
 const snapshot = (generation: number, revision: number) => ({ plugins: [entry(generation)], revision, pluginsEnabled: false });
 function notify(generation: number) { for (const listener of fixture.listeners) listener({ payload: { status: "plugin_catalog_changed", pluginId: "counter", generation } }); }
 beforeEach(() => {
+  vi.mocked(loadTrustedPluginClient).mockClear();
   fixture.listeners.clear(); fixture.nextSnapshot = null; fixture.resolveRpc = null;
   fixture.client = { getPluginCatalogSnapshot: () => fixture.nextSnapshot ?? Promise.resolve(snapshot(1, 1)), on: (_event: string, listener: (message: CatalogStatus) => void) => { fixture.listeners.add(listener); return () => fixture.listeners.delete(listener); }, invokePluginRpc: () => new Promise(resolve => { fixture.resolveRpc = resolve; }) };
   fixture.snapshot = { client: fixture.client, connectionStatus: "online", connectionEpoch: 1 };
@@ -52,6 +54,20 @@ beforeEach(() => {
 afterEach(async () => { cleanup(); await Promise.all(pluginClientRegistry.getSnapshot().instances.map(instance => instance.scope.dispose())); });
 
 describe("daemon client catalog lifetime", () => {
+  it.each([false, undefined])("ignores old bundled records while retaining external bundled=%s clients", async bundled => {
+    const external = { ...entry(1), bundled };
+    const preinstalled = { ...entry(1), id: "legacy-preinstalled", packageId: "legacy-preinstalled", bundled: true, enabled: true, effectiveEnabled: true, status: "running" as const, clientBundle: "legacy-client-bundle" };
+    fixture.nextSnapshot = Promise.resolve({ plugins: [preinstalled, external], revision: 1, pluginsEnabled: true });
+    const catalog = renderHook(() => useDaemonPluginCatalog("owned-host"));
+    render(<><HostPluginCatalogBridge hostId="owned-host" /><Surface /></>);
+    await screen.findByText("Count 0");
+    expect(catalog.result.current.plugins).toEqual([external]);
+    expect(pluginClientRegistry.getSnapshot().instances.map(instance => instance.installation.id)).toEqual(["counter"]);
+    expect(loadTrustedPluginClient).toHaveBeenCalledTimes(1);
+    expect(loadTrustedPluginClient).toHaveBeenCalledWith("counter-bundle");
+    expect(fixture.resolveRpc).toBeNull();
+  });
+
   it("keeps local state and an in-flight RPC across same-generation catalog updates", async () => {
     render(<><HostPluginCatalogBridge hostId="owned-host" /><Surface /></>);
     fireEvent.click(await screen.findByText("Count 0"));

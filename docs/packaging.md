@@ -1,6 +1,6 @@
 # Desktop packaging and releases
 
-All shell and PowerShell commands below run from the repository root unless stated otherwise. See [development and verification](development.md) for development setup and native smoke procedures. A successful build is not native acceptance: qualify the actual packaged application, including generated-pet image conversion and right-click menu dismissal after one outside click, rather than substituting a minimal native menu probe.
+All shell and PowerShell commands below run from the repository root unless stated otherwise. See [development and verification](development.md) for development setup and native smoke procedures. Qualify the actual packaged application: directory installation through its UI, explicit enablement, real worker activity and client RPC, plus the SDK, CLI and terminal paths.
 
 ## Packaging commands and script layout
 
@@ -13,6 +13,8 @@ npm run build:package
 The Node.js launcher selects macOS on a Mac and Windows on Windows. It keeps native Windows builds independent of Git Bash. Published mini-electron runtimes support **macOS arm64 (Apple Silicon)** and **Windows x64**; Intel Mac and Windows arm64 packages are not currently supported.
 Application builds stage the `desktop` SDK target with the `core` profile by default. Native builds compile `omp-sdk/` and require Node.js 24+, Bun, Rustup, and a native compiler toolchain. With `OMP_DESKTOP_SDK_ARTIFACT`, builds import the matching Actions artifact instead, without compiling or reinstalling its native dependencies. Applications include the SDK and embedded Node, not a standalone OMP executable. See [SDK build overrides](development.md#omp-sdk-backend) and [Mac-to-Windows packaging](#mac-to-windows-packaging).
 
+Standard packages and remote-backend payloads contain no specific plugin packages, pet assets or `hatch-pet` skill. The generic `@omp-desktop/plugin` SDK, compiler, worker and native overlay/media host remain available for folder-installed plugins. New profiles have empty plugin registries. Historical Desktop `source.type: "builtin"` and daemon `bundled: true` records remain saved but are hidden and never activated by the new host. Explicit folder reinstallation converts the same ID to a normal installation while preserving its configuration and data; Desktop installations start disabled. Normal settings saves retain legacy pet configuration and user resources.
+
 Explicit targets remain available:
 
 ```bash
@@ -22,7 +24,7 @@ npm run build:windows      # NSIS installer + ZIP, x64
 npm run build:package -- --help
 ```
 
-Installer builds default to `--publish never` and write artifacts to `packages/desktop/release/`. Additional electron-builder options are forwarded, for example:
+Installer builds default to `--publish never` and write artifacts to `packages/desktop/release/unbundled/`. Additional electron-builder options are forwarded, for example:
 
 ```bash
 npm run build:package -- mac --config.mac.identity=null
@@ -54,7 +56,7 @@ npm run build:desktop -- --dir
 The macOS arm64 application is written to:
 
 ```text
-packages/desktop/release/mac-arm64/OMP Desktop.app
+packages/desktop/release/unbundled/mac-arm64/OMP Desktop.app
 ```
 
 For local installer builds, pass `--publish never` to avoid uploading release artifacts.
@@ -260,24 +262,24 @@ Use the high-level command for a complete build. Running `packages/desktop/scrip
 #### 5. Qualify the actual packaged application
 
 ```powershell
-node packages/desktop/e2e/packaged-app-smoke.js --app packages/desktop/release/win-unpacked
+node packages/desktop/e2e/packaged-app-smoke.js --app packages/desktop/release/unbundled/win-unpacked
 if ($LASTEXITCODE -ne 0) { throw "Packaged application smoke failed: $LASTEXITCODE" }
 ```
 
-Keep the interactive Windows desktop unlocked and avoid mouse/keyboard input during the native window scenarios. The smoke uses a disposable application copy and isolated profiles, exercises the embedded runtime, CLI/daemon, SDK/native tools, terminal, window gestures, Chinese Usage and companion behavior, and prints its evidence directory. To retain evidence under a chosen directory, set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside `win-unpacked` before running it. A passing build without this smoke is not native acceptance; see [the Windows acceptance scope and limitations](development.md#packaged-windows-application).
+Keep the interactive Windows desktop unlocked and avoid mouse/keyboard input during the native window scenarios. The smoke uses a disposable application copy and isolated profiles, exercises the embedded runtime, CLI/daemon, SDK/native tools, terminal, window gestures, Chinese Usage and real folder-plugin UI/service/RPC, and prints its evidence directory. To retain evidence under a chosen directory, set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside `win-unpacked` before running it. A passing build without this smoke is not native acceptance; see [the Windows acceptance scope and limitations](development.md#packaged-windows-application).
 
 #### 6. Check and hand off the new artifacts
 
 ```powershell
 $version = node -p "require('./packages/desktop/package.json').version"
-Get-Item "packages/desktop/release/OMP-Desktop-Setup-$version-x64.exe",
-  "packages/desktop/release/OMP-Desktop-Setup-$version-x64.zip" |
+Get-Item "packages/desktop/release/unbundled/OMP-Desktop-Setup-$version-x64.exe",
+  "packages/desktop/release/unbundled/OMP-Desktop-Setup-$version-x64.zip" |
   Select-Object Name,Length,LastWriteTime
-Get-FileHash "packages/desktop/release/OMP-Desktop-Setup-$version-x64.exe" -Algorithm SHA256
-Get-Content packages/desktop/release/win-unpacked/version.json
+Get-FileHash "packages/desktop/release/unbundled/OMP-Desktop-Setup-$version-x64.exe" -Algorithm SHA256
+Get-Content packages/desktop/release/unbundled/win-unpacked/version.json
 ```
 
-Standard stable builds produce the EXE, ZIP, EXE `.blockmap`, `latest.yml`, and `win-unpacked` under `packages/desktop/release/`. Prereleases use their channel's update YAML. Verify the packaged runtime version, installer size/hash against the matching update metadata, and the smoke's passing report. If supplying a SHA-256 checksum file, regenerate it from this build; the packaging command does not maintain `SHA256SUMS.txt`. Keep update metadata with its exact installer, and record build time separately from acceptance time. Local packaging defaults to `--publish never`; committing source does not push it or publish installers.
+Standard stable builds produce the EXE, ZIP, EXE `.blockmap`, `latest.yml`, and `win-unpacked` under `packages/desktop/release/unbundled/`. Prereleases use their channel's update YAML. Verify the packaged runtime version, installer size/hash against the matching update metadata, and the smoke's passing report. If supplying a SHA-256 checksum file, regenerate it from this build; the packaging command does not maintain `SHA256SUMS.txt`. Keep update metadata with its exact installer, and record build time separately from acceptance time. Local packaging defaults to `--publish never`; committing source does not push it or publish installers.
 
 ### Timing and stalled-build diagnosis
 
@@ -348,7 +350,7 @@ npm exec -- cross-env CSC_IDENTITY_AUTO_DISCOVERY=false \
   npm run build:desktop -- --win nsis --x64 --publish never
 ```
 
-Standard Windows builds include `OMP-Desktop-Setup-<version>-x64.exe`, its `.blockmap`, a `.zip`, and `latest.yml` (or the prerelease channel's metadata) in `packages/desktop/release`. The explicit NSIS-only command above does not produce a ZIP.
+Standard Windows builds include `OMP-Desktop-Setup-<version>-x64.exe`, its `.blockmap`, a `.zip`, and `latest.yml` (or the prerelease channel's metadata) in `packages/desktop/release/unbundled`. The explicit NSIS-only command above does not produce a ZIP.
 
 Windows runtime builds disable Inspector/CDP. Qualify the real native window, bundled Desktop CLI, daemon, and SDK using the [Windows packaged application smoke](development.md#packaged-windows-application); do not enable Inspector or bypass IPC frame checks.
 

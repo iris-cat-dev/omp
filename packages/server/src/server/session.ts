@@ -46,7 +46,6 @@ import {
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import { readPersistedAgentHistory } from "./agent/persisted-agent-history.js";
-import { subscribeBundledOmpInitialization } from "./bundled-omp-initialization.js";
 import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -685,7 +684,6 @@ export class Session {
   private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
   private readonly workspaceTextSearches = new Map<string, AbortController>();
   private readonly defaultTimelineSubscriptionSource = {};
-  private readonly initializationObservers = new Map<() => void, object | undefined>();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
@@ -1120,9 +1118,6 @@ export class Session {
 
   clearAgentTimelineSubscription(source: object): void {
     this.localModelSession.disconnect(source);
-    for (const [unsubscribe, observerSource] of this.initializationObservers) {
-      if (observerSource === source) unsubscribe();
-    }
     this.clientCapabilitiesBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
       this.rebuildViewedTimelineAgentIds();
@@ -7449,33 +7444,6 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
-  private observeBundledOmpInitialization(
-    agentId: string,
-    requestId: string,
-    source?: object,
-  ): () => void {
-    if (this.isCleanedUp) return () => {};
-    let active = true;
-    let detach = () => {};
-    const unsubscribe = () => {
-      active = false;
-      detach();
-      this.initializationObservers.delete(unsubscribe);
-    };
-    this.initializationObservers.set(unsubscribe, source);
-    detach = subscribeBundledOmpInitialization(agentId, (phase) => {
-      if (!active) return;
-      this.emitForSource(
-        {
-          type: "status",
-          payload: { status: "agent_initialization_progress", agentId, requestId, phase },
-        },
-        source,
-      );
-    });
-    if (!active) detach();
-    return unsubscribe;
-  }
 
   private getTimelineStartCursor(
     selected: AgentTimelineProjectionSelection,
@@ -7598,11 +7566,6 @@ export class Session {
             : {}),
         }
       : undefined;
-    const unsubscribeInitialization = this.observeBundledOmpInitialization(
-      msg.agentId,
-      msg.requestId,
-      source,
-    );
 
     try {
       const supportsDegradedHistory = source
@@ -7699,8 +7662,6 @@ export class Session {
         },
         source,
       );
-    } finally {
-      unsubscribeInitialization();
     }
   }
 
@@ -8583,7 +8544,6 @@ export class Session {
     this.isCleanedUp = true;
     await this.localModelSession.dispose();
     this.visualFeedbackSession.dispose();
-    for (const unsubscribe of this.initializationObservers.keys()) unsubscribe();
     for (const search of this.workspaceTextSearches.values()) search.abort();
     this.workspaceTextSearches.clear();
 

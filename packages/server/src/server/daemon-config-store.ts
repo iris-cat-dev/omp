@@ -755,7 +755,12 @@ export class DaemonConfigStore {
       );
     });
     const restartRequiredPaths = compactOwnedPaths(
-      diffPaths(this.startupPersisted, persisted).filter((path) => {
+      // Plugin lifecycle operations already apply source/trust changes live.
+      // Only external edits that differ from that active registry need a restart.
+      diffPaths(
+        { ...this.startupPersisted, plugins: this.current.plugins ?? {} },
+        { ...persisted, plugins: persisted.plugins ?? {} },
+      ).filter((path) => {
         if (path === "$schema" || path === "version") return false;
         if (RELOADABLE_PATHS.some((owner) => pathBelongsTo(path, owner))) return false;
         return !resolved.overrideControlledPaths.some((owner) => pathBelongsTo(path, owner));

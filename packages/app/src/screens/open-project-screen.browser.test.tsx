@@ -54,7 +54,6 @@ vi.mock("@/desktop/settings/desktop-settings", () => ({
   migrateLegacyDesktopSettings: vi.fn(),
   useDesktopSettings: vi.fn(),
 }));
-vi.mock("@/desktop/plugins/local-plugins", () => ({ migrateLegacyWallpaperPlugin: vi.fn() }));
 vi.mock("@/plugins/background", () => ({
   usePluginBackgroundState: () => ({ status: React.useSyncExternalStore(
     listener => { state.backgroundListeners.add(listener); return () => { state.backgroundListeners.delete(listener); }; },

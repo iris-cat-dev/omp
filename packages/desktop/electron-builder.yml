@@ -16,13 +16,9 @@ publish:
   owner: iris-cat-dev
   repo: omp-desktop
 directories:
-  output: release
+  output: release/unbundled
 files:
   - dist/**/*
-  - from: ../../plugins/desktop-pet/assets/pets
-    to: assets/pets
-    filter:
-      - "**/*"
   - "!**/*.map"
   - "!sdk-dist{,/**/*}"
   - "!**/*.d.{ts,cts,mts}"
@@ -34,6 +30,10 @@ files:
   - "!node_modules/@omp-desktop/**/*.spec.*"
   - "!node_modules/@omp-desktop/server/dist/server/web-ui/**"
   - "!node_modules/@vscode/ripgrep*/**"
+  - "!node_modules/@omp-desktop/plugin-*{,/**/*}"
+  - "!node_modules/@omp-desktop/**/.env"
+  - "!node_modules/@omp-desktop/server/dist/server/skills/hatch-pet{,/**/*}"
+  - "!node_modules/@omp-desktop/**/test-fixtures{,/**/*}"
   # Workspace packages are symlinked, so anything a developer generates inside them
   # can land in the application bundle. CI never has these; a local .debug run adds gigabytes.
   - "!node_modules/@omp-desktop/*/.debug/**"
@@ -52,8 +52,6 @@ extraResources:
     to: app-dist
   - from: remote-backend-dist
     to: remote-backend
-  - from: ../../skills/hatch-pet
-    to: pet-creation/hatch-pet
 mac:
   artifactName: "OMP-Desktop-${version}-${arch}.${ext}"
   category: public.app-category.developer-tools

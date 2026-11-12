@@ -7,9 +7,10 @@
   "author": "OMP Desktop contributors",
   "main": "dist/main.js",
   "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
     "build": "npm --prefix ../.. run build:remote-backend && npm run build:main:compiled && node scripts/stage-windows-native.mjs && node scripts/run-electron-builder.mjs",
-    "build:main": "npm --prefix ../.. run build:desktop-plugins && npm run build:main:compiled",
-    "build:main:compiled": "tsc -p tsconfig.json --incremental false",
+    "build:main": "npm --prefix ../.. run build:plugin && npm run build:main:compiled",
+    "build:main:compiled": "npm run clean && tsc -p tsconfig.json --incremental false",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run --exclude \"e2e/**\"",
@@ -18,9 +19,6 @@
   "dependencies": {
     "@omp-desktop/cli": "*",
     "@omp-desktop/plugin": "0.7.0",
-    "@omp-desktop/plugin-agent-speed": "0.7.0",
-    "@omp-desktop/plugin-desktop-pet": "0.7.0",
-    "@omp-desktop/plugin-wallpaper": "0.7.0",
     "@omp-desktop/protocol": "*",
     "@omp-desktop/server": "*",
     "electron-log": "^5.4.3",

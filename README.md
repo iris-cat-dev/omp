@@ -9,7 +9,7 @@ Current source version: **0.7.0**. Packaged applications are available from [Git
 - OMP conversations with model/provider settings, approval modes, workflows, and managed subagents.
 - Project workspaces with split conversations, files, Git changes, terminals, and background processes.
 - Scheduled tasks and heartbeats, provider usage and quotas, native OMP tools, and plugins.
-- Desktop appearance controls, wallpaper, an optional desktop pet, and image/media previews.
+- Desktop appearance controls and image/media previews; folder-installed plugins can extend settings, menus, backgrounds, and overlays.
 - SSH-managed remote hosts that can use locally configured models without copying credentials, plus Web access through a hosted or self-hosted relay.
 
 See the [documentation index](docs/README.md) for feature guides and operational details.
@@ -18,10 +18,12 @@ See the [documentation index](docs/README.md) for feature guides and operational
 
 - Node.js 24+ (CI uses 24.14.0), npm, Bun, Rustup, and a native compiler toolchain for source builds.
 - The pinned `omp-sdk/` submodule, initialized recursively. Development and packages use its Node SDK, not a system OMP executable.
-- The pinned `plugins/` submodule from [omp-plugins](https://github.com/iris-cat-dev/omp-plugins), containing builtin plugins and source examples.
+- The pinned `plugins/` submodule from [omp-plugins](https://github.com/iris-cat-dev/omp-plugins), containing optional plugin packages and source examples.
 - A configured OMP model provider to run conversations; provider settings and sign-in can open without one.
 
 Standard **Apple Silicon macOS** and **Windows x64** packages include the SDK and embedded Node. No external Node, Bun, or OMP installation is required at runtime. See [packaging](docs/packaging.md#bundled-omp-sdk).
+
+Packages include the generic plugin SDK, compiler and worker, but no specific plugins or pet assets. Install plugins through **Settings → Plugins → Discover**, inspect a folder and confirm trust, then enable the installation. Historical preinstalled records are preserved as inactive data: they are neither shown nor executed. Reinstalling from a folder with the same ID preserves installation data.
 
 ## Quick start
 
@@ -44,7 +46,7 @@ npm run build:windows          # Windows x64: NSIS installer + ZIP
 npm run build:package -- --help
 ```
 
-Installer builds default to `--publish never` and write to `packages/desktop/release/`. Platform scripts live in [`scripts/packaging/`](scripts/packaging). SDK compilation remains target-native. **Package release** builds the Windows SDK on Windows, then packages Windows installers on Mac; local Mac builds use its extracted `OMP-SDK-win32-x64` artifact via `OMP_DESKTOP_SDK_ARTIFACT`. See [packaging](docs/packaging.md#mac-to-windows-packaging) for the download/build commands, runtime selection, signing, and updater metadata. A successful build does not replace native application verification.
+Installer builds default to `--publish never` and write to `packages/desktop/release/unbundled/`. Platform scripts live in [`scripts/packaging/`](scripts/packaging). SDK compilation remains target-native. **Package release** builds the Windows SDK on Windows, then packages Windows installers on Mac; local Mac builds use its extracted `OMP-SDK-win32-x64` artifact via `OMP_DESKTOP_SDK_ARTIFACT`. See [packaging](docs/packaging.md#mac-to-windows-packaging) for the download/build commands, runtime selection, signing, and updater metadata. A successful build does not replace native application verification.
 
 ## Documentation
 

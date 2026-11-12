@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { expect, test } from "vitest";
 
-const { deduplicateSdkSharp, stripCoreSdkAddon, assertDesktopPluginArtifacts } = createRequire(import.meta.url)(
+const { deduplicateSdkSharp, stripCoreSdkAddon, assertUnbundledPluginArtifacts } = createRequire(import.meta.url)(
   "./after-pack.js",
 );
 
@@ -173,37 +173,17 @@ test.skipIf(process.platform !== "darwin")(
   },
 );
 
-test("Desktop plugin packaging retains both module graphs, adjacent workers and local pet resources", () => {
+test("packaging rejects concrete plugins and pet resources", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omp-plugin-package-"));
   const resources = path.join(directory, "resources");
-  const app = path.join(resources, "app");
-  const put = (file, content = "") => {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, content);
-  };
+  const namespace = path.join(resources, "app", "node_modules", "@omp-desktop");
+  const addon = path.join(namespace, "plugin-agent-speed");
   try {
-    for (const name of ["plugin", "plugin-agent-speed", "plugin-desktop-pet", "plugin-wallpaper", "plugin-qqbot"]) {
-      const root = path.join(app, "node_modules", "@omp-desktop", name);
-      put(path.join(root, "package.json"), JSON.stringify({ name: `@omp-desktop/${name}`, exports: { ".": { import: "./dist/esm/index.js", require: "./dist/cjs/index.js" }, "./package.json": "./package.json" }, ompDesktop: { entries: { service: "./dist/esm/index.js" } } }));
-      for (const format of ["esm", "cjs"]) put(path.join(root, "dist", format, "index.js"));
-    }
-    for (const format of ["esm", "cjs"]) {
-      for (const file of ["worker-process.js", "worker-loader.js", "plugin-process-protocol.js", "daemon-transport.js", "package.json"]) put(path.join(app, "node_modules", "@omp-desktop", "plugin", "dist", format, file));
-    }
-    put(path.join(app, "dist", "plugins", "overlay-preload.js"));
-    for (const file of ["pet.json", "sprites.png"]) put(path.join(app, "assets", "pets", "iris", file));
-    put(path.join(resources, "pet-creation", "hatch-pet", "SKILL.md"));
-    expect(() => assertDesktopPluginArtifacts(resources)).not.toThrow();
-    const speed = path.join(app, "node_modules", "@omp-desktop", "plugin-agent-speed", "dist", "cjs", "index.js");
-    fs.unlinkSync(speed);
-    expect(() => assertDesktopPluginArtifacts(resources)).toThrow(/plugin-agent-speed/);
-    put(speed);
-    const worker = path.join(app, "node_modules", "@omp-desktop", "plugin", "dist", "cjs", "worker-process.js");
-    fs.unlinkSync(worker);
-    expect(() => assertDesktopPluginArtifacts(resources)).toThrow(/worker-process\.js/);
-    put(worker);
-    fs.unlinkSync(path.join(app, "assets", "pets", "iris", "sprites.png"));
-    expect(() => assertDesktopPluginArtifacts(resources)).toThrow(/sprites\.png/);
+    fs.mkdirSync(addon, { recursive: true });
+    expect(() => assertUnbundledPluginArtifacts(resources)).toThrow(/bundled plugin: plugin-agent-speed/);
+    fs.rmSync(addon, { recursive: true });
+    fs.mkdirSync(path.join(resources, "pet-creation", "hatch-pet"), { recursive: true });
+    expect(() => assertUnbundledPluginArtifacts(resources)).toThrow(/bundled plugin resources: pet-creation/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

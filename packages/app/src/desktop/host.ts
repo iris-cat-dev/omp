@@ -1,7 +1,6 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
-import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
@@ -271,7 +270,6 @@ export interface DesktopPluginsBridge {
   startupReady(): Promise<void>;
   getSnapshot(): Promise<LocalPluginSnapshot>;
   patch(input: LocalPluginPatch): Promise<LocalPluginSnapshot>;
-  migrateLegacy(input: { wallpaper?: WallpaperLegacyPluginInput }): Promise<LocalPluginSnapshot>;
   selectBackground(input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }): Promise<LocalPluginSnapshot>;
   reload(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;
   remove(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;

@@ -1,4 +1,4 @@
-import {mkdtemp,writeFile,readFile,rm,rename} from "node:fs/promises";
+import {mkdtemp,writeFile,readFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -9,13 +9,6 @@ import type {PluginSource} from "@omp-desktop/protocol/messages";
 const roots:string[]=[];const services:PluginService[]=[];
 afterEach(async()=>{await Promise.all(services.splice(0).map(service=>service.stopAllPlugins()));await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 async function directory(id="package-id",source="export default function contribute(p){return ()=>{};}"){const root=await mkdtemp(path.join(tmpdir(),"desktop-plugin-registry-"));roots.push(root);await writeFile(path.join(root,"omp-plugin.json"),JSON.stringify({id}));await writeFile(path.join(root,"index.ts"),source);return root;}
-async function packageDirectory(version="1.0.0"){
- const root=await mkdtemp(path.join(tmpdir(),"desktop-bundled-plugin-"));roots.push(root);
- await writeFile(path.join(root,"package.json"),JSON.stringify({name:"@fixture/bundled-plugin",version,type:"module",ompDesktop:{apiVersion:1,id:"package-id",owner:"daemon",entries:{client:"./client.mjs",service:"./service.mjs"},capabilities:["storage.scoped"]}}));
- await writeFile(path.join(root,"client.mjs"),"export default function contribute(p){return ()=>{};}");
- await writeFile(path.join(root,"service.mjs"),"export default function contribute(p){return ()=>{};}");
- return root;
-}
 function runtime(){
  const running=new Set<string>();const generations=new Map<string,number>();const starts:string[]=[];const stops:string[]=[];const cleared:string[]=[];
  let beforeStart:(id:string)=>Promise<void>=async()=>{};
@@ -36,39 +29,21 @@ describe("authoritative daemon Desktop plugin installation",()=>{
  it("rejects stale field patches and isolates a failed reload without restoring old code",async()=>{const source=await directory();const {service,fake}=await registry(true);await service.installDirectory({path:source,trusted:true});service.storagePatch("package-id",{choice:1},0);expect(()=>service.storagePatch("package-id",{choice:2},0)).toThrow(/revision conflict/);await writeFile(path.join(source,"index.ts"),"invalid syntax {");await expect(service.reloadPlugin("package-id")).rejects.toThrow();expect(fake.running.size).toBe(0);expect(service.catalog()[0].clientBundle).toBeUndefined();});
  it("rejects a trust confirmation for an ID replaced by another source",async()=>{const first=await directory();const second=await directory();const {service}=await registry(true);await service.installDirectory({path:first,trusted:true});const entry=service.catalog()[0];await service.removePlugin("package-id");await service.installDirectory({path:second,trusted:true,enabled:false});await service.revokePluginTrust("package-id");await expect(service.approvePlugin("package-id",{trusted:true,version:"legacy",capabilities:[]},{sourcePath:entry.source.path,packageId:entry.packageId,generation:entry.generation})).rejects.toThrow(/changed during trust approval/);expect(service.catalog()[0].trusted).toBe(false);});
  it("rejects stale configuration and secret mutations after revocation",async()=>{const source=await directory();const {service}=await registry(true);await service.installDirectory({path:source,trusted:true});const generation=service.catalog()[0].generation;await service.disablePlugin("package-id");expect(()=>service.storagePatch("package-id",{late:true},0,generation)).toThrow(/generation/);expect(()=>service.secret("package-id","token","set","not-a-real-secret",generation)).toThrow(/generation/);});
- it("rebases a moved bundled package while preserving pause, approval and configuration",async()=>{
-  const original=await packageDirectory();const moved=original+"-moved";await rename(original,moved);roots.push(moved);
-  const previous:PluginSource={source:"directory",path:original,bundled:true,installed:true,enabled:true,approval:{trusted:true,version:"1.0.0",capabilities:["storage.scoped"]}};
-  const {service,store,fake}=await registry(false,{"package-id":previous});service.storagePatch("package-id",{accountChoice:"retained"},0);
-  await service.registerBundledDirectories([moved]);
-  expect(store.get().plugins?.["package-id"]).toEqual({...previous,path:moved});expect(store.get().pluginsEnabled).toBe(false);
-  expect(service.catalog()[0]).toMatchObject({version:"1.0.0",format:"package",source:{path:moved},enabled:true,effectiveEnabled:false,trusted:true,status:"disabled",error:undefined});
-  expect(service.storageGet("package-id")).toEqual({revision:1,values:{accountChoice:"retained"}});expect(fake.running.size).toBe(0);
- });
- it("does not replace a user-installed package with the same bundled ID",async()=>{
-  const original=await packageDirectory();const bundled=await packageDirectory();
-  const previous:PluginSource={source:"directory",path:original,bundled:false,installed:true,enabled:false,approval:{trusted:true,version:"1.0.0",capabilities:["storage.scoped"]}};
-  const {service,store}=await registry(false,{"package-id":previous});await service.registerBundledDirectories([bundled]);
-  expect(store.get().plugins?.["package-id"]).toEqual(previous);expect(service.catalog()[0].source.path).toBe(original);
- });
- it.each([
-  {state:"revoked trust",version:"1.0.0",installed:true,enabled:true,trustRevoked:true,trusted:false},
-  {state:"removed installation",version:"1.0.0",installed:false,enabled:false,trustRevoked:false,trusted:true},
-  {state:"unapproved version",version:"2.0.0",installed:true,enabled:true,trustRevoked:false,trusted:false},
- ])("preserves $state when a bundled package moves",async({version,installed,enabled,trustRevoked,trusted})=>{
-  const original=await packageDirectory();const moved=await packageDirectory(version);
-  const previous:PluginSource={source:"directory",path:original,bundled:true,installed,enabled,trustRevoked,approval:{trusted:true,version:"1.0.0",capabilities:["storage.scoped"]}};
-  const {service,store,fake}=await registry(true,{"package-id":previous});await service.registerBundledDirectories([moved]);
-  expect(store.get().plugins?.["package-id"]).toEqual({...previous,path:moved});
-  expect(service.catalog()[0]).toMatchObject({version,installed,enabled,trusted,effectiveEnabled:false,source:{path:moved}});expect(fake.running.size).toBe(0);
- });
- it("retires the old generation on relocation without restarting an unchanged path",async()=>{
-  const original=await packageDirectory();const moved=await packageDirectory();
-  const previous:PluginSource={source:"directory",path:original,bundled:true,installed:true,enabled:true,approval:{trusted:true,version:"1.0.0",capabilities:["storage.scoped"]}};
-  const {service}=await registry(true,{"package-id":previous});await service.enablePlugin("package-id");const generation=service.catalog()[0].generation;
-  await service.registerBundledDirectories([moved]);const current=service.catalog()[0];
-  expect(current).toMatchObject({source:{path:moved},status:"running"});expect(current.generation).toBeGreaterThan(generation);
-  await expect(service.invokePluginRpc("package-id","test",{},generation)).rejects.toThrow(/generation/);
-  await service.registerBundledDirectories([moved]);expect(service.catalog()[0].generation).toBe(current.generation);
+ it("retires legacy preinstalled entries without rewriting profile choices and accepts explicit folder installation",async()=>{
+  const source=await directory();
+  const previous:PluginSource={source:"directory",path:source,bundled:true,installed:true,enabled:true,approval:{trusted:true,version:"legacy",capabilities:[]}};
+  const {service,store,fake}=await registry(true,{"package-id":previous});
+  expect(service.catalog()).toEqual([]);expect(service.listPlugins()).toEqual([]);expect(fake.starts).toEqual([]);
+  expect(store.get().plugins?.["package-id"]).toEqual(previous);
+  store.patch({pluginsEnabled:false});store.patch({pluginsEnabled:true});
+  await expect(service.enablePlugin("package-id")).rejects.toThrow(/installed explicitly from a folder/);
+  await expect(service.invokePluginRpc("package-id","test",{},0)).rejects.toThrow(/installed explicitly from a folder/);
+  expect(service.agentToolDefinitions("agent",()=>null)).toEqual([]);
+  await expect(service.agentPromptContributions("agent",null)).resolves.toEqual([]);
+  expect(fake.starts).toEqual([]);expect(store.get().plugins?.["package-id"]).toEqual(previous);
+  await service.installDirectory({path:source,id:"package-id",trusted:true});
+  expect(store.get().plugins?.["package-id"]).toEqual({source:"directory",path:source,enabled:true,installed:true,approval:{trusted:true,version:"legacy",capabilities:[]}});
+  expect(service.catalog()[0]).toMatchObject({id:"package-id",status:"running",effectiveEnabled:true,bundled:false});
+  await expect(service.invokePluginRpc("package-id","test",{},service.catalog()[0].generation)).resolves.toBe("package-id");
  });
 });

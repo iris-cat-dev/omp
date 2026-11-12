@@ -91,15 +91,17 @@ This is an original implementation inspired by [EditHere's feedback workflow](ht
 
 ## Plugin management and native commands
 
-**Settings → Plugins** is the shared entry for built-in plugins, Desktop-local installations, daemon plugins and native OMP plugin management. The installed/discovery views show each installation's owner, source, scope, version and runtime state; configuration, permissions and logs belong to that exact installation.
+**Settings → Plugins** manages Desktop-local folder installations, daemon plugins and native OMP plugins. Packages ship only the generic host, with no specific preinstalled plugins. Installed/discovery views show each installation's owner, source, scope, version and runtime state; configuration, permissions and logs belong to that exact installation.
 
 Select a host for daemon and native operations. Desktop-owned controls stay local: changing hosts or losing a remote connection does not move their configuration or resources to that daemon. Two installation IDs using the same source directory remain independent. Disabling/removing an installation keeps its data unless you explicitly choose **Clear data**; disabled installations can still be configured. Pausing source plugins preserves their individual enabled selections.
 
-When Desktop is moved or replaced, the daemon rebases bundled plugin directories to the current App when it starts. This preserves enabled selections, host pause, removed-installation state, execution approvals and stored data; user-installed packages with the same ID are not replaced. New versions or additional capabilities still need matching approval. Client trust remains bound to the source: confirm the relocated client under **Permissions** before opening its account page.
+To install from a folder, open **Discover**, select the Desktop or daemon target, enter the folder path, and choose **Inspect and install**. Inspecting metadata does not execute the plugin. Review its declared capabilities and confirm trust; then enable the installation. Desktop installations start disabled. Daemon execution also requires **Allow host plugins to run**. For a disabled daemon CLI installation, use `omp-desktop plugin install <folder> --trust --disabled`, then `omp-desktop plugin allow` and `omp-desktop plugin enable <id>`.
+
+Historical Desktop `builtin` and daemon `bundled: true` records remain saved but are not listed, loaded or started by the new host. Reinstall from a folder with the same ID to use new code while retaining installation data. The renderer also hides these records from old hosts; it does not stop an already-running old daemon.
 
 After installing a daemon-side fix, restart the built-in daemon from the new App when no tasks are running. Closing the App alone can leave the detached daemon running old code; the plugin's **Restart/reload** action does not reload the daemon implementation.
 
-For **QQ connection (`qqbot`)**, select its daemon installation, grant its declared capabilities under **Permissions**, then open **Configure**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
+After installing the **QQ connection** plugin from its folder, select its daemon installation, grant its declared capabilities under **Permissions**, then open **Configure**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
 
 Choose **Scan to bind** to request a QR code; opening the settings page alone does not generate one. The selected daemon needs internet access to obtain a Tencent binding URL, which it converts to the displayed QR image. You do not need to enter AppID/AppSecret first. Binding failures appear on the account page; **Refresh QR code** requests a replacement after expiry.
 

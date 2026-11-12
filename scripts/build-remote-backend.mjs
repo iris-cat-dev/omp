@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { cp, link, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -16,7 +16,6 @@ const workspacePackages = [
   ["@omp-desktop/relay", "packages/relay"],
   ["@omp-desktop/client", "packages/client"],
   ["@omp-desktop/plugin", "packages/plugin"],
-  ["@omp-desktop/plugin-qqbot", "plugins/qqbot"],
   ["@omp-desktop/server", "packages/server"],
   ["@omp-desktop/cli", "packages/cli"],
 ];
@@ -130,6 +129,25 @@ async function calculateBundleHash(releaseConfig, releaseIndex) {
   return hash.digest("hex");
 }
 
+async function stageUnbundledPackage(source, destination) {
+  const metadata = JSON.parse(await readFile(path.join(source, "package.json"), "utf8"));
+  await mkdir(destination, { recursive: true });
+  for (const entry of metadata.files ?? ["dist", "bin"]) {
+    if (entry.startsWith("!") || entry.includes("*") || entry === ".env") continue;
+    try {
+      await cp(path.join(source, entry), path.join(destination, entry), {
+        recursive: true,
+        filter: (file) => !/(?:^|[\\/])(?:hatch-pet|test-fixtures)(?:[\\/]|$)/u.test(path.relative(source, file)),
+      });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  delete metadata.devDependencies;
+  await writeFile(path.join(destination, "package.json"), `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
+
 const releaseConfig = JSON.parse(await readFile(releaseConfigFile, "utf8"));
 const releaseBase = `https://github.com/${releaseConfig.repository}/releases/download/${releaseConfig.tag}`;
 const indexResponse = await fetch(`${releaseBase}/omp-sdk-release.json`);
@@ -153,9 +171,11 @@ try {
   const dependencies = {};
   const commonFiles = {};
   for (const [packageName, directoryName] of workspacePackages) {
+    const staged = path.join(temporary, "workspaces", path.basename(directoryName));
+    await stageUnbundledPackage(path.join(rootDir, directoryName), staged);
     const packed = JSON.parse(
       runNpm(
-        ["pack", path.join(rootDir, directoryName), "--ignore-scripts", "--json", "--pack-destination", packageDir],
+        ["pack", staged, "--ignore-scripts", "--json", "--pack-destination", packageDir],
         rootDir,
       ),
     );

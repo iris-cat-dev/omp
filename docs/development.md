@@ -39,16 +39,15 @@ The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift a
 | [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                   |
 | [`packages/highlight`](../packages/highlight) | Code and diff highlighting          |
 | [`packages/plugin`](../packages/plugin)       | Shared Desktop plugin SDK, compiler and isolated worker |
-| [`plugins`](../plugins)                      | Builtin speed/wallpaper/pet and QQ plugin packages; source examples |
+| [`plugins`](../plugins)                      | Optional plugin packages and source examples; not included in default application builds |
 
 The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace uses its own TypeScript configuration; `npm run typecheck` checks those workspaces. To check root configuration files, run `npm exec --no -- tsgo --noEmit -p tsconfig.json`.
 
-### Build Desktop plugins before their consumers
+### Build the plugin host before its consumers
 
 ```bash
 npm run build:client
-node scripts/build-desktop-plugins.mjs
-node plugins/qqbot/build.mjs
+npm run build:plugin
 npm run build:highlight
 npm run build:lib --workspace=@omp-desktop/server
 npm run build:scripts --workspace=@omp-desktop/server
@@ -56,7 +55,7 @@ npm run build --workspace=@omp-desktop/cli
 npm run build:main:compiled --workspace=@omp-desktop/desktop
 ```
 
-The builtin builder clears each selected package's `dist`; finish it before building consumers. QQ has its own builder and external native/npm dependencies. These commands preserve an already staged release SDK; `build:server` selects the development SDK instead.
+Specific plugins are built separately: for example, `node scripts/build-desktop-plugins.mjs plugins/wallpaper`; QQ uses `node plugins/qqbot/build.mjs` and its own native/npm dependencies. The external-package builder requires explicit package folders and clears each selected package's `dist`. These commands preserve an already staged release SDK; `build:server` selects the development SDK instead.
 
 Trusted plugin clients share the renderer's React, client, SDK and Lucide modules. Selective Lucide imports still resolve directly to licensed icon modules. Namespace imports intentionally retain the full public module, including canonical names, aliases, `icons`, `Icon` and `createLucideIcon`; replacing the namespace with the canonical-icon table breaks external client bundles.
 
@@ -346,7 +345,7 @@ Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster s
 
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
 
-Metro resolves relative `.js` imports to TypeScript source throughout the repository workspace, including builtin plugin packages under `plugins/`; installed `node_modules` dependencies retain their own resolution.
+Metro resolves relative `.js` imports to TypeScript source throughout the repository workspace, including optional plugin packages under `plugins/`; installed `node_modules` dependencies retain their own resolution. Default application exports load only installed plugins' client bundles, with no fixed plugin imports.
 
 Draft text changes keep the 200 ms checkpoint interval without scheduling attachment
 GC. GC is scheduled when active image references change, including nested visual
@@ -482,19 +481,19 @@ npm run typecheck
 
 Run only targeted Vitest files; **do not run the full test suite locally**.
 
-A successful build is not native acceptance. Qualify the actual packaged application, including generated-pet image conversion and right-click menu dismissal after one outside click. A minimal native menu probe is not substituted for that product path. The runtime requirements and known limitations in [packaging](packaging.md#native-runtime-contracts) remain part of qualification.
+A successful build is not native acceptance. Qualify the actual packaged application, including folder installation through the real UI, explicit enablement, worker file activity, client contributions and RPC. The runtime requirements and known limitations in [packaging](packaging.md#native-runtime-contracts) remain part of qualification.
 
 ### Packaged macOS application
 
 To exercise the actual packaged macOS application, including its visible renderer, daemon, bundled Node SDK, CLI, and terminal, run:
 
 ```bash
-node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/release/mac-arm64/OMP Desktop.app"
+node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/release/unbundled/mac-arm64/OMP Desktop.app"
 ```
 
 macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node preload to drive real `BrowserWindow` APIs; the signed executable, production main entry and application resources remain unchanged. It isolates HOME, userData, credentials/configuration and daemon ports, waits for visible React content, and retains a native PNG and JSON report under the printed evidence directory. Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside the application to choose that directory.
 
-Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet installation without changing the desktop-pet plugin's selected ID.
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Discover, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
 
 #### Native window-close interactions
 
@@ -502,12 +501,12 @@ Verify the packaged app with system mouse events, not direct `NSWindow.sendEvent
 
 ```bash
 swift packages/desktop/e2e/macos-window-close-smoke.swift \
-  "packages/desktop/release/mac-arm64/OMP Desktop.app"
+  "packages/desktop/release/unbundled/mac-arm64/OMP Desktop.app"
 ```
 
 This requires macOS Accessibility, screen-capture and input-event permission. It uses isolated settings and a real managed daemon, checking Cancel, tray background/restore, and Exit through system mouse input and the original UI. It also checks equal traffic-light spacing, yellow-button minimization and Dock restore, and green-button enlargement followed by restoration of the actual size.
 
-Known macOS host limitation: the optional pet overlay still requires the missing `BrowserWindow.setIgnoreMouseEvents` API. Activity publication was verified with the default hidden pet; this does not establish full overlay compatibility.
+Folder plugins using native overlays must qualify input and media on their target runtime.
 
 #### Locally repaired runtime regressions
 
@@ -533,24 +532,22 @@ Run the runtime's `test/macos-precise-wheel-smoke.js` to check precise-wheel sta
 
 ### Packaged Windows application
 
-Windows runtime builds disable Inspector/CDP, so the CDP-based `PASEO_DESKTOP_SMOKE=1` check is not supported there. Verify the real native window and bundled CLI/daemon instead; **do not enable Inspector or bypass IPC frame checks to pass a smoke**.
+Windows runtime builds disable Inspector/CDP. Automatic after-sign smoke is macOS-only; use the native Windows driver below. Do not enable Inspector or bypass IPC frame checks to pass a smoke.
 
 Run the actual unpacked Windows application on an unlocked interactive desktop:
 
 ```bash
 node packages/desktop/e2e/packaged-app-smoke.js \
-  --app packages/desktop/release/win-unpacked
+  --app packages/desktop/release/unbundled/win-unpacked
 ```
 
-The Windows driver uses a copied official runtime, isolated native profile paths, real renderer/preload/IPC/daemon/CLI/terminal/OMP, and synthetic numeric SQLite fixtures. It checks maximize/restore/minimize presentation, native resize-edge hit-tests, continuous restore-to-top dragging, companion assets and native menu input, and Chinese Usage ranges/refresh.
+The Windows driver uses a copied official runtime, isolated native profile paths, real renderer/preload/IPC/daemon/CLI/terminal/OMP, and synthetic numeric SQLite fixtures. It checks maximize/restore/minimize presentation, native resize-edge hit-tests, continuous restore-to-top dragging, Chinese Usage ranges/refresh and real folder-plugin UI/service/RPC.
 
-Native screen captures reject foreign-window overlap and use an owned opaque backing for transparent gaps. Only the copied main is temporarily topmost during window/Usage surface scenarios; its original native flag is checked after restoration and before companion tests. Other programs are never hidden, moved, or reconfigured. Input targets only verified owned windows; initial foreground acquisition does not loosen OS foreground policy or force repaint during restore measurements.
+Native screen captures reject foreign-window overlap and use an owned opaque backing for transparent gaps. Only the copied main is temporarily topmost during window/Usage surface scenarios; its original native flag is checked after restoration. Other programs are never hidden, moved, or reconfigured. Input targets only verified owned windows; initial foreground acquisition does not loosen OS foreground policy or force repaint during restore measurements.
 
 The continuous titlebar regression requires a safe native `HTCAPTION`, then uses one physical left-button press to drag a maximized window into its restored state and back to the current monitor's top edge. It records button state, window bounds, and the owned GUI thread's system move-loop state while held, then requires native maximization after release. It aborts on foreground/input contention, releases only its injected button, and restores the cursor only if the user has not taken it over. Keep the desktop unlocked and avoid mouse/keyboard input during this check.
 
 The gesture trace proves continuous native dragging and release-to-Snap, not visual animation quality: it does not capture transition pixels, inspect the Snap preview, or exercise physical titlebar double-click or cross-monitor mixed-DPI transitions. Existing browser tests cover scoped interactive no-drag regions and top-corner resize regions. Inspect transient restore frames separately when investigating ghosting; settled screenshots alone cannot establish a clean transition.
-
-Pet input waits for genuine, authenticated interactivity IPC to transition from an outside false state to a fresh true state for the same run, process, and pet HWND. The passive observer discards superseded events and never changes input state or opens the menu itself. Native ownership and `HTCLIENT` are safety checks, not proof that the runtime has stopped ignoring mouse events. Upstream contract failures remain failures, not skipped or replaced by mock bridges.
 
 Windows runtime 0.1.15 has an observed [electron-log renderer-preload redeclaration issue](https://github.com/iris-cat-dev/mini-electron/issues/5). The native smoke retains this error; passing the application scenarios does not prove that renderer logging initialized successfully.
 
@@ -605,14 +602,3 @@ Selector acceptance requires a pointer-opened, visibly painted option list and a
 For redraw regressions, drive the production collector with owned numeric JSONL, including a large backfilled file and many project scopes. Measure incoming state messages and option/ladder mutations separately from trusted click-to-frame callbacks; do not substitute a prebuilt snapshot or infer hardware input latency from those callbacks. Also visit the lazily rendered Cost/Orb/Data pages, change a currency, persist it, and verify a real project filter reduces the displayed usage. A worker publication is one scoped batch: an obsolete scope entry must not discard valid sibling entries from the same poll.
 
 Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` to retain its numeric report and native compositor PNGs elsewhere. Focused filesystem/pricing/lifecycle/CSV/resource regressions are under `packages/desktop/src/monitor`; run that directory only, not the full repository suite. The pricing tests use deterministic transports; a separate real public-data exercise is needed to qualify live network availability.
-
-### Companion layout regression
-
-After building the workspace dependencies, run the companion's native regression:
-
-```bash
-npm run build:main --workspace=@omp-desktop/desktop
-node packages/desktop/e2e/pet-layout-smoke.js
-```
-
-The smoke briefly opens a non-focusing companion with an isolated temporary profile. It covers changing captions and task counts, all three sizes, main-window zoom, viewport changes, and opaque/transparent pointer targets without calling a model. It uses an owned copy of the installed official Windows 0.1.15 runtime; stock Electron and legacy renderer-result wrappers are not used as fallbacks.

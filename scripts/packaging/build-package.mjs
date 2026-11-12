@@ -16,8 +16,8 @@ if (args.includes("--help") || args.includes("-h")) {
 With no target, package for the current OS.
 mac:     macOS arm64, requires a Mac; produces DMG and ZIP.
 windows: Windows x64; macOS cross-builds require OMP_DESKTOP_SDK_ARTIFACT. Produces NSIS, ZIP and update metadata.
-Output:  packages/desktop/release/
-Local builds default to --publish never.`);
+Output:  packages/desktop/release/unbundled/
+Plugins are installed from user-selected folders; no plugins are bundled. Local builds default to --publish never.`);
   process.exit(0);
 }
 

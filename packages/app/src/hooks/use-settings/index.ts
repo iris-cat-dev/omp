@@ -10,7 +10,6 @@ import {
   useDesktopSettings,
 } from "@/desktop/settings/desktop-settings";
 import { isElectronRuntime } from "@/desktop/host";
-import { migrateLegacyWallpaperPlugin } from "@/desktop/plugins/local-plugins";
 import {
   APP_SETTINGS_KEY,
   APP_SETTINGS_QUERY_KEY,
@@ -101,7 +100,6 @@ const productionDeps: SettingsDeps = {
     loadDesktopSettings,
     migrateLegacyDesktopSettings,
   },
-  wallpaper: { migrateLegacy: migrateLegacyWallpaperPlugin },
 };
 
 export interface UseAppSettingsReturn {

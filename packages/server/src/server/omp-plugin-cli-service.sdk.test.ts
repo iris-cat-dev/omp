@@ -194,24 +194,4 @@ describe("SDK plugin management through the compiled Desktop host", () => {
     },
   );
 
-  it("rejects the legacy private plugin-bound distribution before SDK or CLI lookup", async () => {
-    const resolveOmpCommand = vi.fn(async () => "available-cli-must-not-run");
-    const runner = vi.fn<OmpPluginRunner>();
-    const service = new OmpPluginCliService({
-      logger: createTestLogger(),
-      runner,
-      resolveOmpCommand,
-      getProviderConfig: () => ({
-        ompBackend: "sdk",
-        ompSdkPath: "/missing-sdk",
-        env: { OMP_DESKTOP_BUNDLED_PLUGINS: "private" },
-      }),
-    });
-    expect(await service.install({ spec: "fixture-plugin" })).toMatchObject({
-      ok: false,
-      output: expect.stringContaining("plugin-bound CLI distribution"),
-    });
-    expect(runner).not.toHaveBeenCalled();
-    expect(resolveOmpCommand).not.toHaveBeenCalled();
-  });
 });

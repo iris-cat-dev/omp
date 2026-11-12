@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const nodeUtil = require("node:util");
+const { seedLegacyPluginProfile } = require("./folder-plugin-smoke.js");
 
 // Invoked by packaged-app-smoke.js on Windows. A visible, unlocked desktop is
 // required for the owned-window surface screenshots; no Inspector/CDP is used.
@@ -17,7 +18,7 @@ const BRIDGE_KEYS = [
   "getPendingOpenProject",
   "agentNavigation",
   "window",
-  "pet",
+  "plugins",
   "remoteSsh",
   "dialog",
   "notification",
@@ -245,7 +246,7 @@ function stageApplication(appPath, stagedApp, earlyProfile) {
   const resources = path.join(stagedApp, "resources");
   const app = path.join(resources, "app");
   // The production builder config is asar:false. Never extract a different
-  // archive layout and accidentally hide its file-identity/pet asset failures.
+  // archive layout and accidentally hide real file-identity failures.
   assert.ok(
     fs.existsSync(app) && !fs.existsSync(path.join(resources, "app.asar")),
     "Select the actual resources/app package produced by electron-builder.yml (asar:false); archived packages are not rewritten/extracted by smoke",
@@ -259,10 +260,6 @@ function stageApplication(appPath, stagedApp, earlyProfile) {
   fs.copyFileSync(
     path.join(__dirname, "windows-native-smoke-bootstrap.js"),
     path.join(app, bootstrapName),
-  );
-  fs.copyFileSync(
-    path.join(__dirname, "windows-native-plugin-operations.js"),
-    path.join(app, "omp-native-plugin-operations.cjs"),
   );
   fs.writeFileSync(
     metadataPath,
@@ -280,15 +277,10 @@ function stageApplication(appPath, stagedApp, earlyProfile) {
   };
 }
 
-function mainWindow(state, target = "main") {
+function mainWindow(state) {
   return state.windows.find((window) => {
     const url = new URL(window.url || "about:blank");
-    return (
-      url.protocol === "omp-desktop:" &&
-      (target === "pet"
-        ? url.hostname === "pet" && url.pathname === "/desktop-pet"
-        : url.hostname === "app")
-    );
+    return url.protocol === "omp-desktop:" && url.hostname === "app";
   });
 }
 
@@ -310,8 +302,7 @@ function makeController({ child, control, deadline, getAbort }) {
     writeJson(path.join(control, `${current}.request.json`), request);
     const responsePath = path.join(control, `${current}.response.json`);
     let timeoutMs = COMMAND_TIMEOUT_MS;
-    if (request.action === "plugins") timeoutMs = 90_000;
-    else if (request.action === "stats") timeoutMs = STATS_COMMAND_TIMEOUT_MS;
+    if (request.action === "stats") timeoutMs = STATS_COMMAND_TIMEOUT_MS;
     const commandDeadline = Math.min(deadline, Date.now() + timeoutMs);
     while (Date.now() < commandDeadline) {
       if (getAbort()) throw getAbort();
@@ -370,15 +361,6 @@ function nativeHelper({ script, request, label, evidence, control, env }) {
     ],
     { encoding: "utf8", env, windowsHide: true, timeout: 20_000 },
   );
-  if (
-    request.inputObservationPath === path.join(control, "pet-interactivity.observation") &&
-    fs.existsSync(request.inputObservationPath)
-  ) {
-    fs.copyFileSync(
-      request.inputObservationPath,
-      path.join(evidence, `${label}-interactivity.observation`),
-    );
-  }
   if (result.error || result.status !== 0) {
     throw new Error(
       `Owned-window native helper ${label} failed: ${result.error || result.stderr || result.stdout}`,
@@ -670,213 +652,7 @@ async function smokeWindows({ command, page, evidence, control, env, report }) {
   );
 }
 
-async function smokeCompanionMenu({
-  command,
-  page,
-  petPage,
-  state,
-  window,
-  evidence,
-  control,
-  env,
-  report,
-}) {
-  const before = await page.evaluate(() => window.paseoDesktop.invoke("get_desktop_settings"));
-  const point = await petPage.evaluate(() => {
-    const canvas = document.querySelector("#mascot");
-    const rect = canvas.getBoundingClientRect();
-    const { data, width, height } = canvas
-      .getContext("2d")
-      .getImageData(0, 0, canvas.width, canvas.height);
-    const hasOpaquePatch = (x, y) => {
-      for (let dy = -3; dy <= 3; dy += 1)
-        for (let dx = -3; dx <= 3; dx += 1)
-          if (data[((y + dy) * width + x + dx) * 4 + 3] < 240) return false;
-      return true;
-    };
-    let selected = null;
-    let distance = Infinity;
-    for (let y = 3; y < height - 3; y += 1) {
-      for (let x = 3; x < width - 3; x += 1) {
-        const candidate = (x - width / 2) ** 2 + (y - height / 2) ** 2;
-        if (candidate >= distance) continue;
-        if (hasOpaquePatch(x, y)) {
-          distance = candidate;
-          selected = {
-            x: rect.x + ((x + 0.5) * rect.width) / width,
-            y: rect.y + ((y + 0.5) * rect.height) / height,
-          };
-        }
-      }
-    }
-    return selected;
-  });
-  assert.ok(point, "The real companion must expose a safely opaque native right-click target");
-  const menu = nativeHelper({
-    script: "windows-native-pet-menu-smoke.ps1",
-    request: {
-      pid: state.pid,
-      petHandle: window.handle,
-      petCssPoint: point,
-      inputObservationPath: path.join(control, "pet-interactivity.observation"),
-      observationRunId: path.basename(path.dirname(control)),
-    },
-    label: "pet-menu-outside-click",
-    evidence,
-    control,
-    env,
-  });
-  assert.equal(menu.menuOpened, true, "Actual right click must open the owned native pet menu");
-  assert.equal(
-    menu.dismissedAfterOutsideClick,
-    true,
-    "One native outside click must dismiss the menu",
-  );
-  assert.equal(
-    menu.petNoActivate,
-    true,
-    "Outside dismissal must preserve companion no-activate style",
-  );
-  assert.equal(
-    menu.petVisible,
-    true,
-    "Outside dismissal must not invoke the hide-companion command",
-  );
-  const after = await page.evaluate(() => window.paseoDesktop.invoke("get_desktop_settings"));
-  assert.deepEqual(
-    after.pet,
-    before.pet,
-    "Outside dismissal must not select hide/reset menu actions",
-  );
-  assert.ok(mainWindow(await command({ action: "inspect" }), "pet")?.visible);
-  report.checks.push(
-    "actual companion right click opens the owned OS menu; one native click on a separate owned window dismisses it without hiding/resetting the pet",
-  );
-}
 
-async function smokeCompanion({ command, page, evidence, control, env, report }) {
-  const pets = await page.evaluate(() => window.paseoDesktop.invoke("list_desktop_pets"));
-  assert.ok(
-    Array.isArray(pets) && pets.some((pet) => pet.id === "iris" && pet.builtIn),
-    "The genuine packaged pet library must include built-in Iris",
-  );
-  report.companions = pets.map(({ id, name, builtIn }) => ({ id, name, builtIn }));
-  const petPage = rendererPage(command, "pet");
-  for (const [size, sprite] of [
-    ["small", 112],
-    ["medium", 152],
-    ["large", 200],
-  ]) {
-    await page.evaluate(
-      (chosenSize) =>
-        window.paseoDesktop.invoke("patch_desktop_settings", {
-          pet: { enabled: true, selectedId: "iris", size: chosenSize },
-        }),
-      size,
-    );
-    await until(`real ${size} companion window`, async () => {
-      const window = mainWindow(await command({ action: "inspect" }), "pet");
-      return window?.visible && !window.minimized;
-    });
-    let measurement;
-    await until(`${size} companion spritesheet pixels and viewport`, async () => {
-      measurement = await petPage.evaluate(() => {
-        const canvas = document.querySelector("#mascot");
-        const bubble = document.querySelector("#bubble");
-        if (!canvas || !bubble) return null;
-        const c = canvas.getBoundingClientRect(),
-          b = bubble.getBoundingClientRect();
-        const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
-        let painted = 0;
-        for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 16) painted += 1;
-        return {
-          width: innerWidth,
-          height: innerHeight,
-          painted,
-          bubbleHidden: bubble.hidden,
-          caption: bubble.textContent,
-          canvas: { x: c.x, y: c.y, width: c.width, height: c.height },
-          bubble: { x: b.x, y: b.y, right: b.right, bottom: b.bottom },
-        };
-      });
-      const state = await command({ action: "inspect" });
-      const window = mainWindow(state, "pet");
-      return (
-        measurement &&
-        window?.visible &&
-        !window.minimized &&
-        measurement.painted > 500 &&
-        Math.abs(measurement.canvas.width - sprite) <= 1 &&
-        !measurement.bubbleHidden &&
-        measurement.width === window.contentSize[0] &&
-        measurement.height === window.contentSize[1] &&
-        window.contentSize[0] === sprite + 108 &&
-        window.contentSize[1] === sprite + 76
-      );
-    });
-    assert.ok(
-      measurement.bubble.right < measurement.canvas.x + measurement.canvas.width / 2,
-      `${size}: companion bubble must remain to the upper left of the pet's face`,
-    );
-    assert.ok(
-      measurement.bubble.x >= 7 &&
-        measurement.bubble.y >= 0 &&
-        measurement.bubble.right <= measurement.width &&
-        measurement.bubble.bottom <= measurement.height,
-      `${size}: companion caption must remain inside its native viewport`,
-    );
-    const state = await command({ action: "inspect" });
-    const window = mainWindow(state, "pet");
-    const native = nativeProbe({ state, window, label: `pet-${size}`, evidence, control, env });
-    assert.equal(
-      native.noActivate,
-      true,
-      "Companion must have native WS_EX_NOACTIVATE, not steal focus",
-    );
-    assert.equal(
-      native.toolWindow,
-      true,
-      "Companion must be a native tool window, not a taskbar app",
-    );
-    assert.equal(
-      native.appWindow,
-      false,
-      "Companion must not carry native WS_EX_APPWINDOW/taskbar style",
-    );
-    assert.equal(native.topmost, true, "Companion must retain its native always-on-top style");
-    assert.equal(
-      native.foreground,
-      false,
-      "The real showInactive companion must never become the foreground window",
-    );
-    const capture = await petPage.snapshot(`pet-${size}-renderer.png`);
-    writeJson(path.join(evidence, `pet-${size}.json`), { measurement, window, native, capture });
-  }
-  const menuState = await command({ action: "inspect" });
-  const menuWindow = mainWindow(menuState, "pet");
-  assert.ok(menuWindow?.visible, "The real companion must remain visible before menu input");
-  await smokeCompanionMenu({
-    command,
-    page,
-    petPage,
-    state: menuState,
-    window: menuWindow,
-    evidence,
-    control,
-    env,
-    report,
-  });
-  await page.evaluate(() =>
-    window.paseoDesktop.invoke("patch_desktop_settings", { pet: { enabled: false } }),
-  );
-  await until(
-    "disabled companion HWND destruction",
-    async () => !mainWindow(await command({ action: "inspect" }), "pet"),
-  );
-  report.checks.push(
-    "real companion library, enable/render/three sizes/disable; native visible/non-minimized/no-activate/tool-window/topmost state",
-  );
-}
 
 const STATS_RANGES = {
   "1h": 3_600_000,
@@ -1713,8 +1489,9 @@ async function smokeWindowsPackagedApp({
   configureIsolatedDaemonHome,
   runColdCli,
   runCliChecks,
-  runPetCreation,
+  runPluginChecks,
   stopDaemon,
+  legacyProfile = false,
 }) {
   assert.equal(process.platform, "win32", "The native Windows driver must run on Windows");
   appPath = path.resolve(appPath);
@@ -1752,6 +1529,7 @@ async function smokeWindowsPackagedApp({
   const report = {
     status: "running",
     originalApp: appPath,
+    profile: legacyProfile ? "legacy" : "fresh",
     sandbox: root,
     evidence,
     checks: [],
@@ -1856,6 +1634,7 @@ async function smokeWindowsPackagedApp({
     assert.equal(report.asyncContext.asyncContextPropagation, 1);
     report.checks.push("packaged EXE AsyncLocalStorage isolation across await, realms and Workers");
     configureIsolatedDaemonHome(daemonHome, listen);
+    const legacyRecords = legacyProfile ? seedLegacyPluginProfile(userData, daemonHome) : [];
     const fixture = seedStatsFixture(env.HOME);
     report.statsFixture = {
       kind: fixture.kind,
@@ -2020,7 +1799,7 @@ async function smokeWindowsPackagedApp({
     report.nativeSurfaceFixture = {
       originalTopmost: originalSurfaceTopmost,
       raisedOnlyOwnedMain: true,
-      restoredBeforeCompanion: false,
+      restoredBeforePluginChecks: false,
     };
     try {
       await smokeWindows({ command, page, evidence, control, env, report });
@@ -2049,15 +1828,13 @@ async function smokeWindowsPackagedApp({
       assert.equal(
         restoredNative.topmost,
         originalSurfaceTopmost,
-        "Restore the owned main's original native topmost flag before companion qualification",
+        "Restore the owned main's original native topmost flag before plugin checks",
       );
-      report.nativeSurfaceFixture.restoredBeforeCompanion = true;
+      report.nativeSurfaceFixture.restoredBeforePluginChecks = true;
     }
-    await smokeCompanion({ command, page, evidence, control, env, report });
-    report.petInstaller = await runPetCreation({ page, appPath: stagedApp, env: launchEnv });
-    report.checks.push(
-      "real generated pet installer preserves daemon lifetime and selected companion",
-    );
+    report.plugins = await runPluginChecks({ page, appPath: stagedApp, env: launchEnv, legacyRecords });
+    report.pluginCapture = await page.snapshot("folder-plugin-settings.png");
+    report.checks.push("actual folder settings install/enable, worker activation, client contribution and real RPC");
     report.finalDaemon = await page.evaluate(() =>
       window.paseoDesktop.invoke("desktop_daemon_status"),
     );

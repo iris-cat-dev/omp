@@ -4,7 +4,6 @@ import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createProviderEnv } from "../../provider-launch-config.js";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
-import { hasBundledOmpPlugins } from "../../../bundled-omp-host.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import {
   prepareOmpLocalModelsLaunch,
@@ -229,11 +228,6 @@ export class OmpSdkRuntime implements OmpRuntime {
       );
     }
     const env = createProviderEnv({ runtimeSettings, overlays: [input.env] });
-    if (hasBundledOmpPlugins(env)) {
-      throw new Error(
-        "This plugin-bound CLI distribution cannot use the SDK backend; select CLI or package SDK-compatible plugins separately",
-      );
-    }
     return env;
   }
 

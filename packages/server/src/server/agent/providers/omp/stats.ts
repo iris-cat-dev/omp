@@ -12,7 +12,6 @@ import {
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
-import { assertBundledOmpHost } from "../../../bundled-omp-host.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import type { OmpSdkInstallation } from "./sdk-installation.js";
@@ -462,9 +461,9 @@ async function runNativeStatsRefresh(
     else if (message.type === "error") onError();
   }
 
-  void (sdk ? Promise.resolve() : assertBundledOmpHost(launch.command, env))
+  void Promise.resolve()
     .then(() => {
-      // Verification may outlast the deadline; never spawn after reporting timeout.
+      // Never spawn after the refresh deadline has expired.
       if (finishing) return undefined;
       child = sdk
         ? spawn(launch.command, launch.args, {

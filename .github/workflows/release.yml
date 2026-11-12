@@ -155,7 +155,7 @@ jobs:
           script: |
             const fs = require('node:fs');
             const path = require('node:path');
-            const source = 'packages/desktop/release';
+            const source = 'packages/desktop/release/unbundled';
             const files = fs.readdirSync(source).filter(name =>
               /\.(exe|dmg|zip|blockmap)$/.test(name) ||
               (/\.yml$/.test(name) && !name.startsWith('builder-')));

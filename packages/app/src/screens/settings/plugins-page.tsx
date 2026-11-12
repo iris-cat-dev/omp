@@ -20,7 +20,7 @@ import { pluginInstanceKey } from "@/plugins/registry";
 import { approvePluginClientTrust, revokePluginClientTrust } from "@/plugins/client-trust";
 import { PluginView, usePluginHostProps } from "@/plugins/view";
 import { PluginSettingsActions } from "@/plugins/menus";
-import { getLocalPluginControl } from "@/plugins/local-control";
+import { getLocalPluginControl, getLocalPluginEnvironment } from "@/plugins/local-control";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "./settings-section";
@@ -130,8 +130,8 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
   }, [params.plugin, params.owner, serverId, invalidateActions]);
 
   const plugins = useMemo<ManagedPlugin[]>(() => [
-    ...(local.snapshot?.installations ?? []).filter((entry) => view === "discover" ? entry.source.type === "builtin" || !entry.installed : entry.installed).map((entry) => ({ kind: "local" as const, hostId: "desktop" as const, entry })),
-    ...(daemon.plugins).filter((entry) => view === "discover" ? entry.bundled : entry.installed !== false).map((entry) => ({ kind: "daemon" as const, hostId, entry })),
+    ...(local.snapshot?.installations ?? []).filter((entry) => view === "discover" ? !entry.installed : entry.installed).map((entry) => ({ kind: "local" as const, hostId: "desktop" as const, entry })),
+    ...(daemon.plugins).filter((entry) => view === "discover" ? entry.installed === false : entry.installed !== false).map((entry) => ({ kind: "daemon" as const, hostId, entry })),
   ], [local.snapshot, daemon.plugins, view, hostId]);
   const visible = plugins.filter((plugin) => `${plugin.entry.id} ${plugin.entry.packageId} ${plugin.kind === "local" ? plugin.entry.source.identity : plugin.entry.source.path}`.toLowerCase().includes(query.trim().toLowerCase()));
   const detail = selected ? plugins.find((plugin) => plugin.kind === selected.kind && plugin.entry.id === selected.id) : undefined;
@@ -231,7 +231,7 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
       </View>
       <SearchField value={query} onChangeText={setQuery} placeholder={t("plugins.search")} clearAccessibilityLabel={t("plugins.clearSearch")} testID="plugins-search" />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        <Text style={settingsStyles.rowHint}>{t(`plugins.environment.${getLocalPluginControl().environment}`)}</Text>
+        {getDesktopHost()?.plugins ? <Text style={settingsStyles.rowHint}>{t(`plugins.environment.${getLocalPluginEnvironment()}`)}</Text> : null}
         {hosts.map((host) => <Button key={host.serverId} size="sm" variant={hostId === host.serverId ? "default" : "outline"} onPress={() => { invalidateActions(); setSelectedHost(host.serverId); setSelected(null); }}>{host.label ? `${host.label} · ${host.serverId}` : host.serverId}</Button>)}
       </View>
     </View>
@@ -239,14 +239,14 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
     {selectionMemory.error ? <Text accessibilityRole="alert" style={settingsStyles.rowError}>{selectionMemory.error}</Text> : null}
     {local.error ? <Text accessibilityRole="alert" style={settingsStyles.rowError}>{local.error}</Text> : null}
     {daemon.error ? <Text accessibilityRole="alert" style={settingsStyles.rowError}>{daemon.error}</Text> : null}
-    {selectedHost && !connected ? <Text style={settingsStyles.rowHint}>{t("plugins.hostOfflineLocalAvailable")}</Text> : null}
+    {selectedHost && !connected ? <Text style={settingsStyles.rowHint}>{t(getDesktopHost()?.plugins ? "plugins.hostOfflineLocalAvailable" : "plugins.hostOffline")}</Text> : null}
     {selectedHost && client ? <SettingsSection title={t("plugins.daemonExecution")}>
       <View style={[settingsStyles.card, settingsStyles.row]}>
         <View style={settingsStyles.rowContent}><Text style={settingsStyles.rowTitle}>{t("plugins.allowHostPlugins")}</Text><Text style={settingsStyles.rowHint}>{t("plugins.daemonExecutionHint")}</Text></View>
         <Switch value={config?.pluginsEnabled ?? daemon.pluginsEnabled} disabled={!connected || !!busy} onValueChange={(enabled) => void perform("global", async () => { await patchConfig({ pluginsEnabled: enabled }); await reloadDaemonPluginCatalog(hostId); })} accessibilityLabel={t("plugins.allowHostPlugins")} />
       </View>
     </SettingsSection> : null}
-    <SettingsSection title={t(view === "installed" ? "plugins.desktopInstalled" : "plugins.bundledCatalog")}>
+    <SettingsSection title={t(view === "installed" ? "plugins.desktopInstalled" : "plugins.availablePlugins")}>
       <View style={settingsStyles.card}>
         {visible.map((plugin) => {
           const entry = plugin.entry;
@@ -256,10 +256,10 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
           const paused = plugin.kind === "daemon" && entry.enabled && entry.status === "disabled" && !(config?.pluginsEnabled ?? daemon.pluginsEnabled);
           return <View key={key} style={[settingsStyles.row, { gap: 12, flexWrap: "wrap" }]} testID={`plugin-row-${key}`}>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>{t(`plugins.names.${entry.packageId}`, { defaultValue: entry.packageId })} · {entry.version}</Text>
-              <Text style={settingsStyles.rowHint}>{entry.id} · {plugin.kind === "local" ? t(`plugins.environment.${getLocalPluginControl().environment}`) : `${t("plugins.daemon")} ${plugin.hostId}`}</Text>
+              <Text style={settingsStyles.rowTitle}>{entry.packageId} · {entry.version}</Text>
+              <Text style={settingsStyles.rowHint}>{entry.id} · {plugin.kind === "local" ? t(`plugins.environment.${getLocalPluginEnvironment()}`) : `${t("plugins.daemon")} ${plugin.hostId}`}</Text>
               <Text style={settingsStyles.rowHint}>{plugin.kind === "local" ? plugin.entry.source.identity : plugin.entry.source.path}</Text>
-              {(plugin.kind === "local" ? plugin.entry.source.type === "local" : !plugin.entry.bundled) ? <Text style={settingsStyles.rowHint}>{t("plugins.linked")}</Text> : null}
+              <Text style={settingsStyles.rowHint}>{t("plugins.linked")}</Text>
               <View style={{ alignSelf: "flex-start" }}><StatusBadge label={t(`plugins.status.${paused ? "paused" : entry.status}`, { defaultValue: entry.status })} variant={entry.status === "failed" ? "error" : entry.status === "running" || entry.status === "active" ? "success" : entry.status === "waiting" ? "warning" : "muted"} /></View>
               {entry.error || rowError ? <Text style={settingsStyles.rowError}>{entry.error || rowError}</Text> : null}
             </View>
@@ -301,9 +301,9 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
     {view === "discover" ? <SettingsSection title={t("plugins.installDirectory")}>
       <View style={[settingsStyles.card, { padding: 16, gap: 12 }]}>
         <View style={{ flexDirection: "row", gap: 8 }}><Button size="sm" variant={installTarget === "desktop" ? "default" : "outline"} disabled={!getDesktopHost()?.plugins} onPress={() => setInstallTarget("desktop")}>{t("plugins.localProfile")}</Button><Button size="sm" variant={installTarget === "daemon" ? "default" : "outline"} disabled={!connected} onPress={() => setInstallTarget("daemon")}>{t("plugins.daemon")}</Button></View>
-        <Field label={t("plugins.directory")}><FormTextInput initialValue={directory} onChangeText={setDirectory} placeholder={t("plugins.directoryPlaceholder")} /></Field>
-        <Field label={t("plugins.installationId")} hint={t("plugins.installationIdHint")}><FormTextInput initialValue={installationId} onChangeText={setInstallationId} /></Field>
-        <Button disabled={!!busy || !directory.trim() || (installTarget === "daemon" && !connected)} onPress={install}>{t("plugins.inspectAndInstall")}</Button>
+        <Field label={t("plugins.directory")}><FormTextInput initialValue={directory} onChangeText={setDirectory} placeholder={t("plugins.directoryPlaceholder")} testID="plugins-install-directory" /></Field>
+        <Field label={t("plugins.installationId")} hint={t("plugins.installationIdHint")}><FormTextInput initialValue={installationId} onChangeText={setInstallationId} testID="plugins-installation-id" /></Field>
+        <Button testID="plugins-inspect-and-install" disabled={!!busy || !directory.trim() || (installTarget === "daemon" && !connected)} onPress={install}>{t("plugins.inspectAndInstall")}</Button>
       </View>
     </SettingsSection> : null}
     {selectedHost ? <OmpPluginsPage serverId={selectedHost} view={view} query={query} /> : <Text style={settingsStyles.rowHint}>{t("plugins.selectHostNative")}</Text>}

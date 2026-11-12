@@ -7,7 +7,6 @@ Customize local appearance and wallpaper, understand platform window behavior, a
 - [Language and display preferences](#language-and-display-preferences)
 - [Window and theme behavior](#window-and-theme-behavior)
 - [Wallpaper](#wallpaper)
-- [Isolated Windows wallpaper trial](#isolated-windows-wallpaper-trial)
 - [Touch and hybrid input](#touch-and-hybrid-input)
 
 ## Language and display preferences
@@ -36,7 +35,7 @@ The document `color-scheme` follows resolved theme so native selection and form 
 
 ## Wallpaper
 
-Open **Settings → Plugins → Wallpaper**, enable the installation, choose **File**, then **Add files** with the system picker. Configuration remains available while disabled. Ctrl/Shift multi-selection and files from different folders work. Candidates persist across restarts; originals remain where they are.
+Wallpaper controls belong to an optional folder-installed plugin, not the default application. Install a compatible wallpaper package through **Settings → Plugins → Discover** first. Then open that installation's **Configure**, enable it, choose **File**, and use **Add files** with the system picker. Configuration remains available while disabled. Ctrl/Shift multi-selection and files from different folders work. Candidates persist across restarts; originals remain where they are.
 
 Media, candidate records, and Desktop selection stay on this computer. Pairing a phone/tablet does not copy them. A Web browser can independently configure URL wallpaper in browser-local settings; that is not Desktop synchronization. For connecting clients see [Remote hosts](../remote-hosts.md) and [Deployment](../deployment.md).
 
@@ -59,22 +58,6 @@ Accepted file extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `m
 Base workspaces become transparent only after media loads, including newly selected tabs. Floating menus, palettes, tooltips, dialogs, and notifications stay opaque. Text still follows theme: match wallpaper/theme or reduce transparency if contrast suffers. Load errors appear in Wallpaper settings and retain normal surfaces. Source switching or load recovery preserves focused inputs and pet-creation drafts. Selected media and committed transparency persist across restarts.
 
 Local media uses app-scoped opaque IDs rather than whole-file renderer IPC. The mini-electron 0.1.28 protocol adapter buffers each response before delivery, so that runtime does not provide end-to-end media streaming. Windows/Linux native caption controls use a transparent overlay on the HTML titlebar, not an opaque patch; the top resize strip remains inside titlebar bounds and aligned with the right edge when restored/maximized. Model lists and Thinking/Fast/Context window settings remain opaque, theme-matched, and readable over media.
-
-## Isolated Windows wallpaper trial
-
-For a prepared `packages/desktop/release/wallpaper-trial/win-unpacked/` build, launch from repository root with:
-
-```bat
-packages\desktop\scripts\launch-wallpaper-trial.cmd
-```
-
-Do not launch the unpacked EXE directly: the [launcher](../../packages/desktop/scripts/launch-wallpaper-trial.cmd) provides isolation. Open **Settings → Appearance → Wallpaper → File → Add files**. Local wallpaper testing needs no model configuration. See [Packaging](../packaging.md) for build workflows.
-
-Trial settings remain in `%LOCALAPPDATA%\OMP-Desktop-Wallpaper-Trial`, with separate Electron storage, agent configuration, and loopback daemon. Installed-app conversations, model credentials, and provider environment are not copied. Existing trial data stays; existing non-trial directories are refused. Its native title identifies the trial; reopening foregrounds the same window without stopping its daemon.
-
-Windows `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, and `LOCALAPPDATA` keep system values for native-picker Quick Access. Only `HOME` and explicit OMP/Electron/daemon directories are isolated. The launcher neither copies, resets, nor recreates Quick Access. Restart after launcher changes; prior wallpaper records/settings survive.
-
-`PASEO_DISABLE_APP_UPDATES=1` disables updates, including manual install and install-on-quit. This is a wallpaper-only trial, **not a Windows sandbox**. Packaged GUI startup automatically installs the CLI launcher in the system user profile's `.local/bin`, outside the trial data isolation. Do not enable launch-at-login; OS-level effects lie outside its isolation.
 
 ## Touch and hybrid input
 

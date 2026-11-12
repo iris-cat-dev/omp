@@ -20,7 +20,7 @@ import {
   type BrowserTargetId,
   type CustomBrowserConfig,
 } from "../features/browser-targets.js";
-import { applyLocalPluginPatch, clonePluginDocument, createLocalPluginDocument, LegacyPluginMigrationSchema, parseLocalPluginDocument, validatePluginConfig, type LocalPluginDocument, type LocalPluginRecord, type LocalPluginPatch } from "../plugins/records.js";
+import { applyLocalPluginPatch, clonePluginDocument, createLocalPluginDocument, parseLocalPluginDocument, validatePluginConfig, type LocalPluginDocument, type LocalPluginRecord, type LocalPluginPatch } from "./plugin-records.js";
 
 export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
@@ -61,7 +61,6 @@ interface PersistedDesktopSettingsDocument {
     // persists this flag and is never overridden again.
     daemonStopOnQuitDefaultApplied: boolean;
     wallpaperImported: WallpaperMigration | null;
-    wallpaperRecovery: { directory: string | null; path: string | null } | null;
   };
 }
 
@@ -72,15 +71,12 @@ export interface DesktopSettingsStore {
   subscribe(listener: (settings: DesktopSettings) => void): () => void;
   getPlugins(): Promise<LocalPluginDocument>;
   patchPlugin(patch: LocalPluginPatch, authorize?: () => void): Promise<LocalPluginDocument>;
-  migrateLegacyPlugins(input: unknown): Promise<LocalPluginDocument>;
   selectPluginBackground(provider: LocalPluginDocument["backgroundProvider"], expectedRevision: number): Promise<LocalPluginDocument>;
   advancePluginGeneration(installationId: string): Promise<LocalPluginDocument>;
   setPluginInstalled(installationId: string, installed: boolean, expectedRevision: number): Promise<LocalPluginDocument>;
   installPlugin(record: LocalPluginRecord, expectedRevision: number): Promise<LocalPluginDocument>;
   resetPluginConfiguration(installationId: string, config: Record<string, unknown>, expectedRevision: number): Promise<LocalPluginDocument>;
-  getWallpaperMigrationStatus(): Promise<{ reason: string | null; pending: boolean }>;
   subscribePlugins(listener: (plugins: LocalPluginDocument) => void): () => void;
-  getLegacyWallpaperRecovery(): Promise<{ directory: string | null; path: string | null } | null>;
   getWallpaperLibrary(): Promise<WallpaperLibrary>;
   addWallpaperCandidates(
     files: readonly WallpaperValidatedFile[],
@@ -166,7 +162,6 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
       legacyRendererSettingsImported: false,
       daemonStopOnQuitDefaultApplied: true,
       wallpaperImported: null,
-      wallpaperRecovery: null,
     },
   };
 }
@@ -382,10 +377,8 @@ function coerceDocument(input: unknown): PersistedDesktopSettingsDocument {
     throw new InvalidWallpaperDataError(settings, error);
   }
   let plugins: LocalPluginDocument;
-  let wallpaperRecovery: PersistedDesktopSettingsDocument["migrations"]["wallpaperRecovery"];
   try {
-    plugins = Object.hasOwn(input, "plugins") ? parseLocalPluginDocument(input.plugins) : createLocalPluginDocument(isRecord(input.settings) ? input.settings.pet : undefined);
-    wallpaperRecovery = isRecord(input.migrations) && input.migrations.wallpaperRecovery ? LegacyPluginMigrationSchema.shape.wallpaper.unwrap().shape.recovery.unwrap().parse(input.migrations.wallpaperRecovery) : null;
+    plugins = Object.hasOwn(input, "plugins") ? parseLocalPluginDocument(input.plugins) : createLocalPluginDocument();
   } catch (error) { throw new InvalidLocalPluginDataError(settings, error); }
 
   return {
@@ -393,7 +386,7 @@ function coerceDocument(input: unknown): PersistedDesktopSettingsDocument {
     settings,
     wallpaperLibrary,
     plugins,
-    migrations: { ...migrations, wallpaperImported, wallpaperRecovery },
+    migrations: { ...migrations, wallpaperImported },
   };
 }
 
@@ -406,6 +399,7 @@ export function createDesktopSettingsStore({
 }): DesktopSettingsStore {
   const filePath = path.join(userDataPath, DESKTOP_SETTINGS_FILENAME);
   let cachedDocument: PersistedDesktopSettingsDocument | null = null;
+  let preservedDocument: Record<string, unknown> | null = null;
   let operationQueue: Promise<unknown> = Promise.resolve();
   const listeners = new Set<(settings: DesktopSettings) => void>();
   const wallpaperListeners = new Set<(library: WallpaperLibrary) => void>();
@@ -497,7 +491,13 @@ export function createDesktopSettingsStore({
     await mkdir(userDataPath, { recursive: true });
     const tempFilePath = `${filePath}.tmp.${process.pid}.${randomUUID()}`;
     try {
-      await writeFile(tempFilePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+      const persisted = {
+        ...preservedDocument,
+        ...document,
+        settings: { ...(isRecord(preservedDocument?.settings) ? preservedDocument.settings : {}), ...document.settings },
+        migrations: { ...(isRecord(preservedDocument?.migrations) ? preservedDocument.migrations : {}), ...document.migrations },
+      };
+      await writeFile(tempFilePath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
       await rename(tempFilePath, filePath);
     } catch (error) {
       await rm(tempFilePath, { force: true }).catch(() => undefined);
@@ -533,9 +533,11 @@ export function createDesktopSettingsStore({
       await persistDocument(document, "load");
       return document;
     }
-    const document = coerceDocument(JSON.parse(raw));
-    // Persist migration before exposing any installation or starting its factory.
-    await persistDocument(document, "load");
+    const input: unknown = JSON.parse(raw);
+    const document = coerceDocument(input);
+    preservedDocument = isRecord(input) ? input : null;
+    cachedDocument = document;
+    publishLibrary(document.wallpaperLibrary, false);
     return document;
   }
 
@@ -605,19 +607,6 @@ export function createDesktopSettingsStore({
       });
     },
 
-    migrateLegacyPlugins(input): Promise<LocalPluginDocument> {
-      const legacy = LegacyPluginMigrationSchema.parse(input);
-      return serialize(async () => {
-        const current = await loadDocument();
-        const wallpaper = current.plugins.installations.find(({ id }) => id === "wallpaper");
-        if (!legacy.wallpaper || !wallpaper || wallpaper.migrationVersion >= 1) return clonePluginDocument(current.plugins);
-        const plugins = applyLocalPluginPatch(current.plugins, { installationId: wallpaper.id, expectedRevision: wallpaper.revision, patch: { enabled: legacy.wallpaper.enabled, config: legacy.wallpaper.config } });
-        if (legacy.wallpaper.enabled && legacy.wallpaper.config.source !== "none" && !plugins.backgroundSelectionEdited && !plugins.backgroundProvider) plugins.backgroundProvider = { installationId: "wallpaper", extensionId: "wallpaper" };
-        await persistDocument({ ...current, plugins, migrations: { ...current.migrations, wallpaperRecovery: legacy.wallpaper.recovery ?? current.migrations.wallpaperRecovery } });
-        for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
-        return clonePluginDocument(plugins);
-      });
-    },
 
     subscribePlugins(listener): () => void {
       pluginListeners.add(listener);
@@ -628,6 +617,7 @@ export function createDesktopSettingsStore({
       return serialize(async () => {
         const current = await loadDocument();
         if (current.plugins.revision !== expectedRevision) throw new Error("Plugin registry changed. Reload it before selecting a background.");
+        if (provider && current.plugins.installations.some((record) => record.id === provider.installationId && record.source.type !== "local")) throw new Error("Legacy bundled plugins cannot provide a background.");
         if (provider && !current.plugins.installations.some(({ id }) => id === provider.installationId)) throw new Error("Background provider is not installed.");
         const plugins = clonePluginDocument(current.plugins);
         plugins.backgroundProvider = provider ? { ...provider } : null;
@@ -645,6 +635,7 @@ export function createDesktopSettingsStore({
         const plugins = clonePluginDocument(current.plugins);
         const record = plugins.installations.find(({ id }) => id === installationId);
         if (!record) throw new Error("Plugin installation is not installed.");
+        if (record.source.type !== "local") throw new Error("Legacy bundled plugin records cannot be activated.");
         record.generation = incrementRevision(record.generation);
         plugins.revision = incrementRevision(plugins.revision);
         await persistDocument({ ...current, plugins });
@@ -665,17 +656,13 @@ export function createDesktopSettingsStore({
       });
     },
 
-    getLegacyWallpaperRecovery() {
-      return serialize(async () => structuredClone((await loadDocument()).migrations.wallpaperRecovery));
-    },
-
     installPlugin(record, expectedRevision): Promise<LocalPluginDocument> {
       return serialize(async () => {
+        if (record.source.type !== "local") throw new Error("Only folder plugins can be installed.");
         const current = await loadDocument();
         if (current.plugins.revision !== expectedRevision) throw new Error("Plugin registry changed. Reload it before installing.");
         const plugins = clonePluginDocument(current.plugins);
         const existing = plugins.installations.find(({ id }) => id === record.id);
-        if (existing?.source.type === "builtin") throw new Error("A directory installation cannot replace a builtin identity.");
         const installation = { ...record, config: existing?.config ?? record.config, revision: existing ? incrementRevision(existing.revision) : 0, generation: existing?.generation ?? 0 };
         if (existing) plugins.installations = plugins.installations.map((value) => value.id === installation.id ? installation : value);
         else plugins.installations.push(installation);
@@ -691,17 +678,10 @@ export function createDesktopSettingsStore({
         const current = await loadDocument();
         const plugins = applyLocalPluginPatch(current.plugins, { installationId, expectedRevision, patch: { enabled: false } });
         const record = plugins.installations.find(({ id }) => id === installationId)!;
-        record.config = validatePluginConfig(record.packageId, config);
+        record.config = validatePluginConfig(config);
         await persistDocument({ ...current, plugins });
         for (const listener of pluginListeners) listener(clonePluginDocument(plugins));
         return clonePluginDocument(plugins);
-      });
-    },
-
-    getWallpaperMigrationStatus() {
-      return serialize(async () => {
-        const { migrations } = await loadDocument();
-        return { reason: migrations.wallpaperImported?.reason ?? null, pending: migrations.wallpaperRecovery !== null && migrations.wallpaperImported === null };
       });
     },
 

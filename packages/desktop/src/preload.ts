@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
-import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
@@ -30,14 +29,20 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     startupReady: () => ipcRenderer.invoke("omp:plugins:startup-ready") as Promise<void>,
     getSnapshot: () => ipcRenderer.invoke("omp:plugins:get") as Promise<LocalPluginSnapshot>,
     patch: (input: LocalPluginPatch) => ipcRenderer.invoke("omp:plugins:patch", input) as Promise<LocalPluginSnapshot>,
-    migrateLegacy: (input: { wallpaper?: WallpaperLegacyPluginInput }) => ipcRenderer.invoke("omp:plugins:migrate", input) as Promise<LocalPluginSnapshot>,
     selectBackground: (input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:selectBackground", input) as Promise<LocalPluginSnapshot>,
     reload: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:reload", input) as Promise<LocalPluginSnapshot>,
     remove: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:remove", input) as Promise<LocalPluginSnapshot>,
     reinstall: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:reinstall", input) as Promise<LocalPluginSnapshot>,
     clearData: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("omp:plugins:clearData", input) as Promise<LocalPluginSnapshot>,
     inspectDirectory: (input: { directory: string }) => ipcRenderer.invoke("omp:plugins:inspectDirectory", input) as Promise<LocalPluginDirectoryInspection>,
-    installDirectory: (input: LocalPluginDirectoryInstall) => ipcRenderer.invoke("omp:plugins:installDirectory", input) as Promise<LocalPluginSnapshot>,
+    installDirectory: (input: LocalPluginDirectoryInstall) => ipcRenderer.invoke("omp:plugins:installDirectory", {
+      directory: input.directory,
+      expectedRevision: input.expectedRevision,
+      // mini-electron's context bridge transports explicit undefined values as null.
+      // Omit absent optional properties before the request reaches the strict IPC schema.
+      ...(input.installationId == null ? {} : { installationId: input.installationId }),
+      ...(input.approval == null ? {} : { approval: input.approval }),
+    }) as Promise<LocalPluginSnapshot>,
     getLogs: (input: { installationId: string }) => ipcRenderer.invoke("omp:plugins:getLogs", input) as Promise<LocalPluginLogEntry[]>,
     publish: async (input: { installationId: string; generation: number; clientActivationId: string; method: string; input?: unknown }) => {
       const { documentEpoch } = await bindPluginDocument();

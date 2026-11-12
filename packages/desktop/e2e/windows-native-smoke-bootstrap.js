@@ -4,12 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { pathToFileURL } = require("node:url");
-const { app, BrowserWindow, ipcMain, screen } = require("electron");
-const { createPluginOperations } = require("./omp-native-plugin-operations.cjs");
+const { app, BrowserWindow } = require("electron");
 const config = JSON.parse(fs.readFileSync(process.env.OMP_DESKTOP_NATIVE_SMOKE_CONFIG, "utf8"));
 
 const ownedRoot = path.dirname(config.control);
-const pluginOperations = createPluginOperations(ownedRoot);
 const isOwnedPath = (value) => {
   const relative = path.relative(ownedRoot, path.resolve(value));
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
@@ -53,12 +51,8 @@ app.setName(config.originalAppName);
 
 require(path.join(__dirname, config.originalMain));
 
-// The real generated pet installer and second-instance launch must run only the
-// original application, not start another copy of the smoke controller.
-if (
-  !process.argv.includes("--desktop-pet-install") &&
-  process.env.OMP_DESKTOP_NATIVE_SMOKE_SECONDARY !== "1"
-) {
+// Second-instance launches must run only the original application.
+if (process.env.OMP_DESKTOP_NATIVE_SMOKE_SECONDARY !== "1") {
   serve().catch((error) => {
     writeJson(path.join(config.control, "bootstrap-failure.json"), {
       error: error.stack || String(error),
@@ -73,16 +67,11 @@ function writeJson(file, value) {
   fs.renameSync(temporary, file);
 }
 
-function selectWindow(target) {
+function selectWindow() {
   return BrowserWindow.getAllWindows().find((window) => {
     if (window.isDestroyed()) return false;
     const url = new URL(window.webContents.getURL() || "about:blank");
-    return (
-      url.protocol === "omp-desktop:" &&
-      (target === "pet"
-        ? url.hostname === "pet" && url.pathname === "/desktop-pet"
-        : url.hostname === "app")
-    );
+    return url.protocol === "omp-desktop:" && url.hostname === "app";
   });
 }
 
@@ -104,39 +93,6 @@ function windowState(window) {
   };
 }
 
-let petInteractivitySequence = 0;
-function observePetInteractivity(event, interactive) {
-  const pet = selectWindow("pet");
-  if (
-    !pet ||
-    typeof interactive !== "boolean" ||
-    event.sender !== pet.webContents ||
-    event.senderFrame !== event.sender.mainFrame
-  ) {
-    return;
-  }
-  // Observe only: defer until the genuine product listeners applied their state.
-  const sequence = ++petInteractivitySequence;
-  setImmediate(() => {
-    if (sequence !== petInteractivitySequence || pet.isDestroyed() || selectWindow("pet") !== pet) {
-      return;
-    }
-    const cursor = screen.getCursorScreenPoint();
-    const bounds = pet.getBounds();
-    const file = path.join(config.control, "pet-interactivity.observation");
-    const record = [
-      path.basename(path.dirname(config.control)),
-      sequence,
-      process.pid,
-      windowState(pet).handle,
-      interactive ? 1 : 0,
-      cursor.x - bounds.x,
-      cursor.y - bounds.y,
-    ].join("|");
-    fs.writeFileSync(`${file}.tmp`, record);
-    fs.renameSync(`${file}.tmp`, file);
-  });
-}
 
 function setMainSurfaceTopmost(window, request) {
   if ((request.target && request.target !== "main") || typeof request.enabled !== "boolean") {
@@ -170,7 +126,6 @@ async function runDaemonOperation(client, request) {
   if (request.action === "stats") return client.getOmpStats({ range: request.range });
   if (request.action === "installation")
     return client.getOmpInstallationStatus({ checkForUpdates: false });
-  if (request.action === "plugins") return pluginOperations(client, request);
   const cwd = fs.realpathSync(request.cwd);
   const relative = path.relative(fs.realpathSync(path.dirname(config.control)), cwd);
   if (
@@ -220,8 +175,7 @@ async function runDaemonCommand(request) {
       );
     }
     let timeoutMs = 10_000;
-    if (request.action === "plugins") timeoutMs = 90_000;
-    else if (request.action === "stats") timeoutMs = 60_000;
+    if (request.action === "stats") timeoutMs = 60_000;
     const payload = await Promise.race([
       runDaemonOperation(client, request),
       new Promise((_resolve, reject) => {
@@ -259,7 +213,7 @@ async function command(request) {
         .map(windowState),
     };
   }
-  if (["stats", "installation", "terminal-create", "plugins"].includes(request.action)) {
+  if (["stats", "installation", "terminal-create"].includes(request.action)) {
     return runDaemonCommand(request);
   }
   if (request.action === "quit") {
@@ -321,7 +275,6 @@ async function serve() {
   };
   app.on("browser-window-created", (_event, window) => observe(window));
   await app.whenReady();
-  ipcMain.on("paseo:pet:interactive", observePetInteractivity);
   BrowserWindow.getAllWindows().forEach(observe);
   writeJson(path.join(config.control, "bootstrap-ready.json"), { pid: process.pid });
   let sequence = 1;

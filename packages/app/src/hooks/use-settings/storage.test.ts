@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import {
   APP_SETTINGS_KEY,
   APP_SETTINGS_QUERY_KEY,
@@ -13,7 +12,6 @@ import {
   defaultContentFontSize,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
-  normalizeLegacyWallpaper,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   saveAppSettings,
@@ -679,9 +677,7 @@ describe("saveAppSettings", () => {
     });
   });
 
-  it("normalizes invalid legacy opacity without exposing wallpaper as app settings", async () => {
-    expect(normalizeLegacyWallpaper({ wallpaperOpacity: 3 }).config.opacity).toBe(0.85);
-    expect(normalizeLegacyWallpaper({ wallpaperOpacity: "NaN" }).config.opacity).toBe(0.85);
+  it("keeps legacy wallpaper values out of active app settings", async () => {
     const deps = makeDeps({ storage: createInMemoryKeyValueStorage({ [APP_SETTINGS_KEY]: JSON.stringify({ wallpaperOpacity: 3 }) }) });
     expect(await loadAppSettingsFromStorage(deps)).not.toHaveProperty("wallpaperOpacity");
   });
@@ -966,96 +962,28 @@ describe("parseClampedFontSize", () => {
   });
 });
 
-describe("wallpaper plugin migration through the app settings loader", () => {
+describe("preserving inactive legacy wallpaper configuration", () => {
   const oldWallpaper = { wallpaperEnabled: true, wallpaperSource: "file", wallpaperDir: "C:/wallpapers",
-    wallpaperPath: "C:/wallpapers/a.png", language: "ja", sendBehavior: "interrupt" };
+    wallpaperPath: "C:/wallpapers/a.png", language: "ja", sendBehavior: "steer" };
 
-  it("retains recovery input through ordinary saves until native commit, then removes all renderer writers", async () => {
+  it("preserves original configuration through loads and ordinary preference saves", async () => {
     const storage = createInMemoryKeyValueStorage({ [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper) });
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    let received: unknown;
-    const deps: SettingsDeps = { storage, desktop: createFakeDesktopBridge({ isElectron: true }), wallpaper: {
-      async migrateLegacy(input) { received = input; entered.resolve(); await release.promise; },
-    } };
-    const loading = loadAppSettingsFromStorage(deps);
-    await entered.promise;
-    expect(received).toEqual({ enabled: true, config: { source: "file", candidateId: null, url: null, opacity: 0.85 },
-      candidateIdProvided: false, directory: oldWallpaper.wallpaperDir, path: oldWallpaper.wallpaperPath });
+    const deps = makeDeps({ storage });
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings).not.toHaveProperty("wallpaperEnabled");
     const queryClient = new QueryClient();
-    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, { ...DEFAULT_CLIENT_SETTINGS, language: "ja", sendBehavior: "steer" });
-    await saveAppSettings({ deps, queryClient, updates: { theme: "light" } });
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, settings);
+    await saveAppSettings({ deps, queryClient, updates: { theme: "light", sendBehavior: "steer" } });
     expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({ ...oldWallpaper, sendBehavior: "steer", theme: "light" });
-    release.resolve();
-    expect(await loading).toMatchObject({ theme: "light", language: "ja" });
-    const persisted = JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!);
-    for (const key of Object.keys(oldWallpaper).filter(key => key.startsWith("wallpaper"))) expect(persisted).not.toHaveProperty(key);
+    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({ theme: "light", language: "ja" });
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({ wallpaperPath: oldWallpaper.wallpaperPath });
   });
 
-  it.each([null, 42, "not-a-uuid", "0199ef80-5ff5-7000-8000-000000000001"])(
-    "preserves explicit candidate presence %s rather than rebinding by path", async candidateId => {
-      const storage = createInMemoryKeyValueStorage({ [APP_SETTINGS_KEY]: JSON.stringify({ ...oldWallpaper,
-        wallpaperCandidateId: candidateId, wallpaperSource: "url", wallpaperUrl: "https://example.com/a.webm?token=x#frame" }) });
-      let received: WallpaperLegacyPluginInput | undefined;
-      const deps: SettingsDeps = { storage, desktop: createFakeDesktopBridge({ isElectron: true }), wallpaper: {
-        async migrateLegacy(input) { received = input; },
-      } };
-      const result = await loadAppSettingsFromStorage(deps);
-      expect(result).not.toHaveProperty("wallpaperCandidateId");
-      expect(received).toMatchObject({ candidateIdProvided: true, config: { source: "url", url: "https://example.com/a.webm?token=x#frame",
-        candidateId: typeof candidateId === "string" && candidateId.startsWith("0199") ? candidateId : null } });
-    },
-  );
-
-  it.each([0, 0.85, 1])("preserves opacity %s and disabled none/null selections", opacity => {
-    expect(normalizeLegacyWallpaper({ wallpaperEnabled: false, wallpaperSource: "none", wallpaperCandidateId: null,
-      wallpaperUrl: null, wallpaperOpacity: opacity })).toMatchObject({ enabled: false, candidateIdProvided: true,
-      config: { source: "none", candidateId: null, url: null, opacity } });
-  });
-
-  it("keeps failed native migration recovery for retry while preserving ordinary preferences", async () => {
-    const storage = createInMemoryKeyValueStorage({ [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper) });
-    let calls = 0;
-    const deps: SettingsDeps = { storage, desktop: createFakeDesktopBridge({ isElectron: true }), wallpaper: {
-      async migrateLegacy() { if (++calls === 1) throw new Error("native disk full"); },
-    } };
-    expect(await loadAppSettingsFromStorage(deps)).toMatchObject({ language: "ja" });
-    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toHaveProperty("wallpaperPath", oldWallpaper.wallpaperPath);
-    await loadAppSettingsFromStorage(deps);
-    expect(calls).toBe(2);
-    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty("wallpaperPath");
-    await loadAppSettingsFromStorage(deps);
-    expect(calls).toBe(2);
-  });
-
-  it("retries reentrant native commit after renderer cleanup write failure", async () => {
-    const storage = createInMemoryKeyValueStorage({ [APP_SETTINGS_KEY]: JSON.stringify(oldWallpaper) });
-    const write = storage.setItem.bind(storage);
-    let fail = true;
-    storage.setItem = async (key, value) => {
-      if (key === APP_SETTINGS_KEY && !Object.hasOwn(JSON.parse(value), "wallpaperPath") && fail) { fail = false; throw new Error("renderer disk full"); }
-      await write(key, value);
-    };
-    let commits = 0;
-    const deps: SettingsDeps = { storage, desktop: createFakeDesktopBridge({ isElectron: true }), wallpaper: {
-      async migrateLegacy() { commits++; },
-    } };
-    await loadAppSettingsFromStorage(deps);
-    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toHaveProperty("wallpaperPath");
-    await loadAppSettingsFromStorage(deps);
-    expect(commits).toBe(2);
-    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty("wallpaperPath");
-  });
-
-  it("migrates the old key without losing original path and seals only native commit", async () => {
+  it("retains the old storage key and its wallpaper configuration", async () => {
     const storage = createInMemoryKeyValueStorage({ [LEGACY_SETTINGS_KEY]: JSON.stringify(oldWallpaper) });
-    let path: string | null = null;
-    const deps: SettingsDeps = { storage, desktop: createFakeDesktopBridge({ isElectron: true }), wallpaper: {
-      async migrateLegacy(input) { path = input.path; },
-    } };
+    const deps = makeDeps({ storage });
     expect(await loadAppSettingsFromStorage(deps)).not.toHaveProperty("wallpaperEnabled");
-    expect(path).toBe(oldWallpaper.wallpaperPath);
     expect(storage.entries.get(LEGACY_SETTINGS_KEY)).toBe(JSON.stringify(oldWallpaper));
-    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).not.toHaveProperty("wallpaperPath");
+    expect(JSON.parse(storage.entries.get(APP_SETTINGS_KEY)!)).toMatchObject({ wallpaperEnabled: true, wallpaperSource: "file", wallpaperDir: oldWallpaper.wallpaperDir, wallpaperPath: oldWallpaper.wallpaperPath });
   });
 });

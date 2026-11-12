@@ -1,7 +1,7 @@
 import type { SessionInboundMessage, SessionOutboundMessage } from "@omp-desktop/protocol/messages";
 
 import type { Logger } from "pino";
-import { OmpPluginCliService } from "./omp-plugin-cli-service.js";
+import type { OmpPluginCliService } from "./omp-plugin-cli-service.js";
 
 /**
  * Routes `ompPlugins.*` session messages to the CLI-backed service.

@@ -6,7 +6,6 @@ const { createHash } = require("node:crypto");
 
 const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
-const PRODUCT_NAME = "OMP Desktop";
 
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
@@ -131,12 +130,7 @@ function assertNativeKeyringBinding(resourcesDir, platform, arch) {
 
 exports.assertNativeKeyringBinding = assertNativeKeyringBinding;
 
-function pruneNativeModules(appOutDir, platform, arch) {
-  const resourcesDir =
-    platform === "darwin"
-      ? path.join(appOutDir, `${PRODUCT_NAME}.app`, "Contents", "Resources")
-      : path.join(appOutDir, "resources");
-
+function pruneNativeModules(resourcesDir, platform, arch) {
   const nodeModules = path.join(resourcesDir, "app", "node_modules");
   if (!fs.existsSync(nodeModules)) return;
 
@@ -431,37 +425,30 @@ function fmtMB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function assertDesktopPluginArtifacts(resourcesDir) {
+function assertUnbundledPluginArtifacts(resourcesDir) {
   const appRoot = path.join(resourcesDir, "app");
-  const assertFile = (file) => {
-    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
-      throw new Error(`Packaged Desktop plugin artifact is missing: ${file}`);
+  const namespace = path.join(appRoot, "node_modules", "@omp-desktop");
+  for (const name of fs.readdirSync(namespace)) {
+    if (name.startsWith("plugin-")) {
+      throw new Error(`Package contains a bundled plugin: ${name}`);
     }
-  };
-  for (const name of ["plugin", "plugin-agent-speed", "plugin-desktop-pet", "plugin-wallpaper", "plugin-qqbot"]) {
-    const directory = path.join(appRoot, "node_modules", "@omp-desktop", name);
-    const metadataPath = path.join(directory, "package.json");
-    assertFile(metadataPath);
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-    for (const [entry, mapping] of Object.entries(metadata.exports)) {
-      if (entry === "./package.json") continue;
-      for (const condition of ["import", "require"]) {
-        if (typeof mapping[condition] !== "string") throw new Error(`Missing ${condition} export: ${metadata.name}${entry}`);
-        assertFile(path.join(directory, mapping[condition]));
+  }
+  for (const relative of ["app/assets/pets", "app/dist/pets", "pet-creation", "app/node_modules/@omp-desktop/server/dist/server/skills/hatch-pet"]) {
+    if (fs.existsSync(path.join(resourcesDir, relative))) {
+      throw new Error(`Package contains bundled plugin resources: ${relative}`);
+    }
+  }
+  const sdk = path.join(namespace, "plugin");
+  for (const format of ["esm", "cjs"]) {
+    for (const file of ["index.js", "compiler-entry.js", "worker-process.js", "worker-loader.js", "plugin-process-protocol.js", "daemon-transport.js", "package.json"]) {
+      const artifact = path.join(sdk, "dist", format, file);
+      if (!fs.existsSync(artifact) || !fs.statSync(artifact).isFile()) {
+        throw new Error(`Folder plugin host artifact is missing: ${artifact}`);
       }
     }
-    for (const entry of Object.values(metadata.ompDesktop?.entries ?? {})) assertFile(path.join(directory, entry));
   }
-  for (const format of ["esm", "cjs"]) {
-    for (const file of ["worker-process.js", "worker-loader.js", "plugin-process-protocol.js", "daemon-transport.js", "package.json"]) {
-      assertFile(path.join(appRoot, "node_modules", "@omp-desktop", "plugin", "dist", format, file));
-    }
-  }
-  assertFile(path.join(appRoot, "dist", "plugins", "overlay-preload.js"));
-  for (const file of ["pet.json", "sprites.png"]) assertFile(path.join(appRoot, "assets", "pets", "iris", file));
-  assertFile(path.join(resourcesDir, "pet-creation", "hatch-pet", "SKILL.md"));
 }
-exports.assertDesktopPluginArtifacts = assertDesktopPluginArtifacts;
+exports.assertUnbundledPluginArtifacts = assertUnbundledPluginArtifacts;
 
 exports.default = async function afterPack(context) {
   const platform = context.electronPlatformName;
@@ -469,12 +456,12 @@ exports.default = async function afterPack(context) {
 
   const resourcesDir =
     platform === "darwin"
-      ? path.join(context.appOutDir, `${PRODUCT_NAME}.app`, "Contents", "Resources")
+      ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources")
       : path.join(context.appOutDir, "resources");
   await copyRipgrep(resourcesDir, platform, arch);
   assertOmpExtensions(resourcesDir);
-  assertDesktopPluginArtifacts(resourcesDir);
-  pruneNativeModules(context.appOutDir, platform, arch);
+  assertUnbundledPluginArtifacts(resourcesDir);
+  pruneNativeModules(resourcesDir, platform, arch);
   stripCoreSdkAddon(resourcesDir, platform, arch);
   deduplicateSdkSharp(resourcesDir, platform, arch);
   assertNativeKeyringBinding(resourcesDir, platform, arch);

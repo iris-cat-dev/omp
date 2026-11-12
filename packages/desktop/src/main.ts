@@ -101,7 +101,7 @@ import {
   beginMainWindowShutdown,
   markMainWindowLoading,
 } from "./window/main-windows.js";
-import { getLocalPluginRuntime, setupBuiltinLocalPlugins, runBuiltinPluginInstallCli, handleBuiltinPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
+import { getLocalPluginRuntime, setupLocalPlugins, handleLocalPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
 import { OmpMonitorController } from "./monitor/controller.js";
 import { MONITOR_HTML } from "./monitor/html.js";
 import { MONITOR_PERF_CARD_HTML } from "./monitor/perf-card-html.js";
@@ -753,11 +753,9 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
-  // Load and publish authoritative membership independently of optional pet startup.
   try {
     await getDesktopSettingsStore().getWallpaperLibrary();
   } catch (error) {
-    // Keep settings and URL wallpapers usable; getLibrary reports the persisted error.
     log.error("[wallpaper] failed to load candidate library", error);
   }
   try {
@@ -785,7 +783,7 @@ async function bootstrap(): Promise<void> {
 
     const wallpaperResponse = await handleWallpaperProtocolRequest(request, url, app.isPackaged ? null : new URL(DEV_SERVER_URL).origin);
     if (wallpaperResponse) return wallpaperResponse;
-    const pluginResource = await handleBuiltinPluginResource(hostname, decodedPath);
+    const pluginResource = await handleLocalPluginResource(hostname, decodedPath);
     if (pluginResource) return pluginResource;
 
     // Chromium can occasionally request the exported entrypoint directly.
@@ -831,13 +829,12 @@ async function bootstrap(): Promise<void> {
   monitorController = new OmpMonitorController();
   monitorController.initialize();
   try {
-    await setupBuiltinLocalPlugins({
+    await setupLocalPlugins({
       startupBarrier: bootstrapComplete,
       openApp: async () => { await bootstrapComplete; await focusOrCreateWindow(); },
       openAgent: async (target) => { await bootstrapComplete; focusExistingWindowOnAgent(target); },
     });
   } catch (error) {
-    // Persistent errors remain visible through plugin management; the app stays usable.
     log.error("[desktop-plugins] Local plugin startup failed", error);
   }
 
@@ -888,7 +885,9 @@ async function bootstrap(): Promise<void> {
 }
 
 void (async () => {
-  if (await runBuiltinPluginInstallCli()) return;
+  if (isPetCreationCli) {
+    throw new Error("--desktop-pet-install is no longer supported. Install plugins from a folder in Desktop settings.");
+  }
   await runDesktopStartup({
     hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
     runCliPassthroughIfRequested,
@@ -916,58 +915,54 @@ async function prepareDesktopToQuit(): Promise<void> {
   await getLocalPluginRuntime().dispose();
 }
 
-// The headless pet installer owns neither the GUI nor its managed daemon.
-if (!isPetCreationCli) {
-  const quitLifecycle = createQuitLifecycle({
-    app,
-    prepareToQuit: prepareDesktopToQuit,
-    closeTransportSessions: closeAllTransportSessions,
-    stopDesktopManagedDaemonIfNeeded: async () => {
-      return stopDesktopManagedDaemonOnQuitIfNeeded({
-        settingsStore: getDesktopSettingsStore(),
-        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-        stopDaemon: () => stopDesktopDaemonViaCli("quit"),
-        showShutdownFeedback: showDaemonShutdownDialog,
-      });
-    },
-    installAppUpdateOnQuit: async (signal) => {
-      // Startup exception: updater loading belongs to an update/quit operation,
-      // not the first-window critical path.
-      const { installAppUpdateOnQuit } = require("./features/auto-updater.js") as typeof AppUpdater;
-      const { releaseChannel } = await getDesktopSettingsStore().get();
-      return await installAppUpdateOnQuit({
-        currentVersion: app.getVersion(),
-        releaseChannel,
-        signal,
-      });
-    },
-    createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
-    onPrepareError: (error) => {
-      log.error("[local monitor] quit cancelled because settings could not be saved", error);
-    },
-    onStopError: (error) => {
-      log.error("[desktop daemon] failed to stop managed daemon on quit", error);
-    },
-    onUpdateError: (error) => {
-      log.error("[auto-updater] failed to validate downloaded update on quit", error);
-    },
-  });
+const quitLifecycle = createQuitLifecycle({
+  app,
+  prepareToQuit: prepareDesktopToQuit,
+  closeTransportSessions: closeAllTransportSessions,
+  stopDesktopManagedDaemonIfNeeded: async () => {
+    return stopDesktopManagedDaemonOnQuitIfNeeded({
+      settingsStore: getDesktopSettingsStore(),
+      isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+      stopDaemon: () => stopDesktopDaemonViaCli("quit"),
+      showShutdownFeedback: showDaemonShutdownDialog,
+    });
+  },
+  installAppUpdateOnQuit: async (signal) => {
+    // Startup exception: updater loading belongs to an update/quit operation,
+    // not the first-window critical path.
+    const { installAppUpdateOnQuit } = require("./features/auto-updater.js") as typeof AppUpdater;
+    const { releaseChannel } = await getDesktopSettingsStore().get();
+    return await installAppUpdateOnQuit({
+      currentVersion: app.getVersion(),
+      releaseChannel,
+      signal,
+    });
+  },
+  createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
+  onPrepareError: (error) => {
+    log.error("[local monitor] quit cancelled because settings could not be saved", error);
+  },
+  onStopError: (error) => {
+    log.error("[desktop daemon] failed to stop managed daemon on quit", error);
+  },
+  onUpdateError: (error) => {
+    log.error("[auto-updater] failed to validate downloaded update on quit", error);
+  },
+});
 
-  electronAutoUpdater.on("before-quit-for-update", () => {
-    quitLifecycle.handleBeforeQuitForUpdate();
-  });
+electronAutoUpdater.on("before-quit-for-update", () => {
+  quitLifecycle.handleBeforeQuitForUpdate();
+});
 
-  app.on("before-quit", (event) => {
-    // A failed-lock relaunch must not stop the primary GUI's daemon or updater.
-    if (!ownsDesktopInstance) return;
-    quitLifecycle.handleBeforeQuit(event);
-  });
-  registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
-}
+app.on("before-quit", (event) => {
+  // A failed-lock relaunch must not stop the primary GUI's daemon or updater.
+  if (!ownsDesktopInstance) return;
+  quitLifecycle.handleBeforeQuit(event);
+});
+registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 
 app.on("window-all-closed", () => {
-  // The install CLI exits only after conversion and the atomic import finish.
-  if (!isPetCreationCli && process.platform !== "darwin") {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });

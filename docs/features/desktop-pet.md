@@ -1,6 +1,6 @@
 # Desktop pet
 
-Show a local companion, follow task status, and create or import validated custom pets. This feature is available only in the Electron app; for wallpaper and theme settings see [Appearance](appearance.md).
+The controls below belong to an optional Desktop pet plugin. Install a compatible folder package and its pet assets through [Plugin management](tools-and-plugins.md#plugin-management-and-native-commands) first; Desktop ships neither the pet implementation nor its assets. This plugin requires the native app; for wallpaper and theme settings see [Appearance](appearance.md).
 
 ## Contents
 
@@ -12,7 +12,7 @@ Show a local companion, follow task status, and create or import validated custo
 
 ## Enable and interact
 
-Open **Settings → Plugins → Desktop pet** to configure Iris, the built-in pink fluffy kitten. Enable the installation to show it in a separate transparent always-on-top window; it is off by default. Size, library, import/refresh, and creation settings remain available while disabled. Disabling preserves configuration, the creation draft, and model selection.
+Open the pet installation's **Configure** page under **Settings → Plugins**. A plugin providing Iris can show the pink fluffy kitten in a separate transparent always-on-top window after you enable it. Size, library, import/refresh, and creation settings remain available while disabled. Disabling preserves configuration, the creation draft, and model selection.
 
 Pet packages, selection, visibility, size, and position are local to this computer. A phone/tablet connected to its daemon receives neither pet assets nor overlay state. The authoring conversation is an ordinary OMP conversation, not an asset-sync channel.
 
@@ -53,11 +53,11 @@ Iris has six registered 24-frame, 12-fps action sequences with continuous local 
 
 **Create with OMP** opens an independent local authoring workspace and normal OMP conversation with selected model, Thinking, and approval mode. Model/mode/thinking/feature selections are local to authoring, not defaults for ordinary conversations. Describe the pet in Settings or attach references in chat.
 
-The bundled `hatch-pet` skill uses the [configured image-generation tool](tools-and-plugins.md#image-generation-with-references), creates a coherent transparent animation atlas, a complete per-pet bubble profile, and `pet.json`, then runs its generated install helper. The helper rejects new image-based authoring without that complete profile before conversion. Windows uses bundled Electron, not global Node. The headless converter does not perform GUI quit cleanup or stop an existing daemon. Creation uses your configured image model; ordinary animation and dialogue do not.
+Creation requires the plugin's own `hatch-pet` skill and conversion/install helper; they are not provided by Desktop, which no longer exposes a pet-install CLI. The skill uses the [configured image-generation tool](tools-and-plugins.md#image-generation-with-references), creates a coherent transparent animation atlas, a complete per-pet bubble profile, and `pet.json`, then runs its helper. The helper rejects new image-based authoring without that complete profile before conversion. Creation uses your configured image model; ordinary animation and dialogue do not.
 
-After installation, **Refresh** and select the new pet. **Import folder** accepts completed packages. Imports contain only a validated manifest and transparent PNG data, never executable scripts or HTML. Images are limited to **20 MiB** and **4096 × 4096** pixels. Built-in Iris and existing custom packages are not replaced.
+After installation, **Refresh** and select the new pet. **Import folder** accepts completed resource packages, distinct from installing executable plugins. Imports contain only a validated manifest and transparent PNG data, never executable scripts or HTML. Images are limited to **20 MiB** and **4096 × 4096** pixels. Plugin-provided Iris and existing custom packages are not replaced.
 
-The skill's default 1536 × 1024 atlas uses 128 × 128 cells and twelve frames per action; the built-in 3840 × 960 atlas instead uses 160 × 160 cells and twenty-four frames. Both are supported. The actual image and manifest must describe the same grid. The installer converts image format/background but does not resize, retile, or invent frames; contact-sheet and motion-preview inspection remain necessary to catch visual fragments or inconsistent poses.
+The skill's default 1536 × 1024 atlas uses 128 × 128 cells and twelve frames per action; Iris's 3840 × 960 atlas instead uses 160 × 160 cells and twenty-four frames. Both are supported. The actual image and manifest must describe the same grid. The installer converts image format/background but does not resize, retile, or invent frames; contact-sheet and motion-preview inspection remain necessary to catch visual fragments or inconsistent poses.
 
 ## Independent custom bubbles
 
@@ -68,4 +68,4 @@ Each newly authored pet supplies its own `bubble.appearance` and all eight `bubb
 - Duration zero persists until a real state/event change. Repeat delay zero means no repetition. Petting is a one-shot event and cannot repeat; a timed response can outlast the physical gesture. Dragging and relevant task changes interrupt stale responses.
 - Unchanged activity snapshots, task renames, and secondary-task updates do not restart the current message clock. The real highest-priority task still controls attention and click targets; persona text does not change task status.
 
-Profiles are bounded, strictly validated data: hex colors and enumerated style choices, not executable CSS, HTML, scripts, or model-call instructions. Runtime dialogue is local and makes no API requests. Built-in Iris and existing imported version-1 packages without profiles retain their prior behavior without rewriting stored packages. Existing authoring workspaces keep their copied skill; open a new **Create with OMP** workspace to use the updated instructions.
+Profiles are bounded, strictly validated data: hex colors and enumerated style choices, not executable CSS, HTML, scripts, or model-call instructions. Runtime dialogue is local and makes no API requests. Plugin-provided Iris and existing imported version-1 packages without profiles retain their prior behavior without rewriting stored packages. Existing authoring workspaces keep their copied skill; open a new **Create with OMP** workspace to use the updated instructions.

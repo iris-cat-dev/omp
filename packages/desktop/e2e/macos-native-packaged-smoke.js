@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
+const { seedLegacyPluginProfile } = require("./folder-plugin-smoke.js");
 
 function writeJson(file, value) {
   fs.writeFileSync(`${file}.tmp`, JSON.stringify(value));
@@ -20,7 +21,8 @@ async function waitForExit(child, timeout = 10_000) {
 
 async function smokeMacOSPackagedApp({
   appPath, executableName, reserveLocalTcpPort, configureIsolatedDaemonHome,
-  checkRenderer, runColdCli, runCliChecks, runPetCreation, stopDaemon, assertDockVisibility,
+  checkRenderer, runColdCli, runCliChecks, runPluginChecks, stopDaemon, assertDockVisibility,
+  legacyProfile = false,
 }) {
   assert.equal(process.platform, "darwin");
   appPath = path.resolve(appPath);
@@ -42,6 +44,7 @@ async function smokeMacOSPackagedApp({
   fs.writeFileSync(emptyConfig, "{}\n");
   const listen = `127.0.0.1:${await reserveLocalTcpPort()}`;
   configureIsolatedDaemonHome(daemonHome, listen);
+  const legacyRecords = legacyProfile ? seedLegacyPluginProfile(userData, daemonHome) : [];
   const configFile = path.join(root, "native-smoke.json");
   const deadline = Date.now() + 480_000;
   writeJson(configFile, { root, control, evidence, deadline, driverPid: process.pid });
@@ -57,7 +60,7 @@ async function smokeMacOSPackagedApp({
     OMP_DESKTOP_NATIVE_SMOKE_CONFIG: configFile, NO_COLOR: "1",
   };
   const logs = { stdout: [], stderr: [] };
-  const report = { appPath, evidence, status: "running", checks: [] };
+  const report = { appPath, evidence, profile: legacyProfile ? "legacy" : "fresh", status: "running", checks: [] };
   console.log(`Packaged macOS native smoke evidence: ${evidence}`);
   let child;
   let command;
@@ -140,10 +143,28 @@ async function smokeMacOSPackagedApp({
       appPath, env, createTerminal: ({ cwd, name }) => command({ action: "terminal-create", cwd, name }),
     });
     report.checks.push("bundled SDK, CLI and native terminal");
-    report.pet = await runPetCreation({ page, appPath, env });
-    report.checks.push("real pet installer preserved daemon and selection");
+    report.plugins = await runPluginChecks({ page, appPath, env, legacyRecords });
+    report.pluginCapture = await command({ action: "capture" });
+    report.checks.push("real settings folder installation, explicit enable, worker activation and client contribution RPC");
   } catch (error) {
     failure = error;
+    if (command && child?.exitCode === null && child?.signalCode === null) {
+      try {
+        report.failureRenderer = await command({ action: "evaluate", source: `(async () => ({ url: location.href, title: document.title, text: document.body.innerText, html: document.querySelector('[data-testid="plugins-manager"]')?.outerHTML, plugins: await window.paseoDesktop.plugins.getSnapshot() }))()` });
+      } catch (diagnosticError) {
+        report.failureRendererError = diagnosticError.stack || String(diagnosticError);
+      }
+      try {
+        if (report.capture?.path && fs.existsSync(report.capture.path)) {
+          const initialPath = path.join(evidence, "initial-app.png");
+          fs.copyFileSync(report.capture.path, initialPath);
+          report.capture.path = initialPath;
+        }
+        report.failureCapture = await command({ action: "capture" });
+      } catch (diagnosticError) {
+        report.failureCaptureError = diagnosticError.stack || String(diagnosticError);
+      }
+    }
   } finally {
     const cleanupErrors = [];
     if (child) {
@@ -169,7 +190,7 @@ async function smokeMacOSPackagedApp({
     fs.rmSync(root, { recursive: true, force: true });
   }
   if (failure) throw failure;
-  console.log("Packaged macOS native smoke passed: signed app renderer, preload, daemon, SDK, CLI, terminal and pet installer");
+  console.log(`Packaged macOS native smoke passed (${report.profile}): signed renderer, daemon, SDK, CLI, terminal and external folder plugin UI/service/RPC`);
   return report;
 }
 

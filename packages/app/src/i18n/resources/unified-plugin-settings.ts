@@ -1,6 +1,6 @@
 const en = {
   installed: "Installed", discover: "Discover", search: "Search plugins…", clearSearch: "Clear search",
-  localProfile: "This Desktop profile", daemon: "Daemon", desktopInstalled: "Desktop plugins", bundledCatalog: "Bundled plugins",
+  localProfile: "This Desktop profile", daemon: "Daemon", desktopInstalled: "Desktop plugins", availablePlugins: "Available plugins",
   configure: "Configure", close: "Close", unavailable: "Plugin unavailable", install: "Install", remove: "Remove", restart: "Restart / reload", clearData: "Clear this plugin's data",
   toggle: "Enable {{id}}", noMatches: "No matching plugins", noSettings: "This plugin has no settings page, or its client has not been trusted on this device.",
   hostOffline: "The selected host is offline.", hostOfflineLocalAvailable: "The selected host is offline. Local Desktop plugins remain available.",
@@ -20,12 +20,11 @@ const en = {
   attachments: { searching: "Searching…", empty: "No matching resources", remove: "Remove attachment", openSource: "Open source" },
   themeSource: "Theme source", selectedSourceUnavailable: "The selected theme source is unavailable.", declaredCapabilities: "Declared capabilities", grantedCapabilities: "Granted capabilities", trustedState: "Execution trusted", untrustedState: "Execution not trusted",
   workspaceActions: "Workspace plugin actions", configurationPatch: "Configuration patch", configurationPatchHint: "Only supplied keys are updated; omitted keys and private secrets are retained.", saveConfiguration: "Save configuration", loadConfiguration: "Reload configuration",
-  names: { "desktop-pet": "Desktop pet", wallpaper: "Wallpaper", "agent-speed": "Agent speed", qqbot: "QQ connection" },
   status: { removed: "Removed", disabled: "Disabled", paused: "Paused by host switch", waiting: "Waiting", activating: "Activating", starting: "Starting", active: "Active", running: "Running", failed: "Failed" },
 } as const;
 const zhCN = {
   installed: "已安装", discover: "发现", search: "搜索插件…", clearSearch: "清除搜索",
-  localProfile: "本机 Desktop 配置档案", daemon: "主机 daemon", desktopInstalled: "Desktop 插件", bundledCatalog: "随应用分发的插件",
+  localProfile: "本机 Desktop 配置档案", daemon: "主机 daemon", desktopInstalled: "Desktop 插件", availablePlugins: "可安装插件",
   configure: "配置", close: "关闭", unavailable: "插件不可用", install: "安装", remove: "移除", restart: "重启／重载", clearData: "清除此插件数据",
   toggle: "启用 {{id}}", noMatches: "没有匹配的插件", noSettings: "此插件未注册配置页面，或客户端尚未获得本机执行信任。",
   hostOffline: "选定主机已离线。", hostOfflineLocalAvailable: "选定主机已离线，本机 Desktop 插件仍可管理。",
@@ -45,7 +44,6 @@ const zhCN = {
   attachments: { searching: "正在搜索…", empty: "没有匹配的资源", remove: "移除附件", openSource: "打开来源" },
   themeSource: "主题来源", selectedSourceUnavailable: "已选主题来源当前不可用。", declaredCapabilities: "声明的能力", grantedCapabilities: "已授予的能力", trustedState: "已信任执行", untrustedState: "未信任执行",
   workspaceActions: "工作区插件操作", configurationPatch: "配置补丁", configurationPatchHint: "仅更新提供的字段，未提供的字段与私有密钥保持不变。", saveConfiguration: "保存配置", loadConfiguration: "重新读取配置",
-  names: { "desktop-pet": "桌面宠物", wallpaper: "壁纸", "agent-speed": "速度监控", qqbot: "QQ 连接" },
   status: { removed: "已移除", disabled: "禁用", paused: "主机执行已暂停", waiting: "等待就绪", activating: "正在激活", starting: "正在启动", active: "已激活", running: "运行中", failed: "失败" },
 } as const;
 export const unifiedPluginSettings = { en, "zh-CN": zhCN };

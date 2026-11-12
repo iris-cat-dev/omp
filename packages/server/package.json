@@ -75,7 +75,6 @@
     "@omp-desktop/client": "0.7.0",
     "@omp-desktop/highlight": "0.7.0",
     "@omp-desktop/plugin": "0.7.0",
-    "@omp-desktop/plugin-qqbot": "0.7.0",
     "@omp-desktop/protocol": "0.7.0",
     "@omp-desktop/relay": "0.7.0",
     "@vscode/ripgrep": "^1.18.0",

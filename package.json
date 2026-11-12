@@ -41,10 +41,9 @@
     "build:relay:clean": "npm run build:clean --workspace=@omp-desktop/relay",
     "build:client": "npm run build --workspace=@omp-desktop/client",
     "build:plugin": "npm run build --workspace=@omp-desktop/plugin",
-    "build:desktop-plugins": "npm run build:plugin && node scripts/build-desktop-plugins.mjs plugins/agent-speed plugins/wallpaper plugins/desktop-pet && npm run build --workspace=@omp-desktop/plugin-qqbot",
     "build:client:clean": "npm run build:protocol:clean && npm run build:clean --workspace=@omp-desktop/client",
-    "build:server-deps": "npm run build:desktop-plugins && npm run build:highlight",
-    "build:server-deps:clean": "npm run build:client:clean && npm run build:desktop-plugins && npm run build:highlight:clean",
+    "build:server-deps": "npm run build:plugin && npm run build:highlight",
+    "build:server-deps:clean": "npm run build:client:clean && npm run build:plugin && npm run build:highlight:clean",
     "build:omp-sdk": "node scripts/build-omp-sdk.mjs",
     "build:omp-sdk:dev": "cross-env OMP_DESKTOP_SDK_BUILD_MODE=development node scripts/build-omp-sdk.mjs",
     "build:omp-sdk:release": "cross-env OMP_DESKTOP_SDK_BUILD_MODE=release node scripts/build-omp-sdk.mjs",
@@ -52,8 +51,8 @@
     "build:server:clean": "npm run build:omp-sdk:release && npm run build:clean --workspace=@omp-desktop/server && npm run build:clean --workspace=@omp-desktop/cli",
     "build:remote-backend": "npm run build:server:clean && node scripts/build-remote-backend.mjs",
     "build:daemon-web-ui": "node scripts/build-daemon-web-ui.mjs",
-    "build:app-deps": "npm run build:highlight && npm run build:desktop-plugins",
-    "build:app-deps:clean": "npm run build:highlight:clean && npm run build:desktop-plugins",
+    "build:app-deps": "npm run build:highlight && npm run build:plugin",
+    "build:app-deps:clean": "npm run build:highlight:clean && npm run build:plugin",
     "watch:protocol": "npm run watch --workspace=@omp-desktop/protocol",
     "watch:client": "tsc -p packages/client/tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -80,13 +79,8 @@
     "db:query": "npm run db:query --workspace=@omp-desktop/server --",
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js"
   },
-  "dependencies": {
-    "@omp-desktop/plugin": "0.7.0",
-    "@omp-desktop/plugin-agent-speed": "0.7.0",
-    "@omp-desktop/plugin-desktop-pet": "0.7.0",
-    "@omp-desktop/plugin-wallpaper": "0.7.0"
-  },
   "devDependencies": {
+    "@omp-desktop/plugin": "0.7.0",
     "@babel/parser": "^7.28.5",
     "esbuild": "0.28.2",
     "@types/ws": "^8.5.14",

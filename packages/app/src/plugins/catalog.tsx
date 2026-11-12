@@ -137,8 +137,10 @@ export function HostPluginCatalogBridge({ hostId }: { hostId: string }) {
         const result = await client!.getPluginCatalogSnapshot();
         if (lifetime.signal.aborted || sequence !== refreshSequence || result.revision < currentRevision) return;
         currentRevision = result.revision;
-        publish(hostId, { status: "ready", plugins: result.plugins, revision: result.revision, pluginsEnabled: result.pluginsEnabled, error: null });
-        const entries = result.plugins;
+        // Older connected daemons still advertise their preinstalled client bundles.
+        // Keep their processes untouched; only manually installed code enters this GUI.
+        const entries = result.plugins.filter((entry) => entry.bundled !== true);
+        publish(hostId, { status: "ready", plugins: entries, revision: result.revision, pluginsEnabled: result.pluginsEnabled, error: null });
         desired = new Map(entries.flatMap((entry) => { const candidate = describe(entry); return candidate ? [[pluginInstanceKey(hostId, entry.id, "daemon"), candidate] as const] : []; }));
         for (const [key, current] of running) if (!isDesired(key, current)) void stop(key);
         const run = () => reconcile(entries);

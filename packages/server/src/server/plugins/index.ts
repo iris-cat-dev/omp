@@ -46,7 +46,7 @@ export class PluginService {
  private readonly sandboxFiles:SandboxFileLeases;
  constructor(private readonly logger:pino.Logger,private readonly configStore:DaemonConfigStore,runtime:PluginRuntimePort=new PluginRuntime(logger),home?:string) {
   this.runtime=runtime;
-  for(const [id,source] of Object.entries(configStore.get().plugins??{}))if(source.enabled!==false&&!source.approval)this.inheritedTrust.add(id);
+  for(const [id,source] of Object.entries(configStore.get().plugins??{}))if(source.bundled!==true&&source.enabled!==false&&!source.approval)this.inheritedTrust.add(id);
   this.data=new PluginDataStore(home??configStore.storageDirectory());
   this.sandboxFiles=new SandboxFileLeases(()=>configStore.get().providers.omp);
   runtime.bindHostCall?.((id,operation,input)=>this.hostOperation(id,operation,input));
@@ -61,6 +61,7 @@ export class PluginService {
   if(this.started)return;this.started=true;this.globalStartsBlocked=!this.pluginsEnabled();
   this.unsubscribeConfig=this.configStore.onFieldChange("pluginsEnabled",value=>this.handleGlobalSwitch(value===true));
   for(const id of Object.keys(this.configStore.get().plugins??{})){
+   if(this.configStore.get().plugins?.[id]?.bundled===true)continue;
    void this.enqueue(id,async()=>{await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);}).catch(error=>this.fail(id,error));
   }
  }
@@ -87,7 +88,7 @@ export class PluginService {
  }
  catalog():DesktopPluginCatalogEntry[]{
   const running=new Set(this.runtime.catalog().map(item=>item.id));
-  return Object.entries(this.configStore.get().plugins??{}).map(([id,source]):DesktopPluginCatalogEntry=>{
+  return Object.entries(this.configStore.get().plugins??{}).filter(([,source])=>source.bundled!==true).map(([id,source]):DesktopPluginCatalogEntry=>{
    const info=this.descriptions.get(id);const enabled=source.enabled!==false;const trusted=info?this.approved(id,info):false;
    const waitingReason=this.runtime.waitingReason?.(id);const error=this.errors.get(id);
    const status=!enabled||!this.pluginsEnabled()?"disabled":error?"failed":waitingReason?"waiting":running.has(id)||trusted&&info?.format==="package"&&!info.serviceEntry?"running":this.starting.has(id)?"starting":trusted?"waiting":"disabled";
@@ -105,8 +106,8 @@ export class PluginService {
   if(approval.version!==info.version||info.capabilities.some(cap=>!approval.capabilities.includes(cap))||approval.capabilities.some(cap=>!info.capabilities.includes(cap)))throw new Error("Approval must match the inspected version and declared capabilities");
   return this.enqueue(id,async()=>{
    const previous=this.configStore.get().plugins?.[id];
-   if(previous&&previous.installed!==false)throw new Error(`Plugin ID "${id}" is already configured; choose another ID with --id`);
-   this.configStore.patch({plugins:{...this.configStore.get().plugins,[id]:{source:"directory",path:directory,enabled:input.enabled??true,installed:true,bundled:previous?.bundled===true&&path.resolve(previous.path)===directory,approval}}});
+   if(previous&&previous.bundled!==true&&previous.installed!==false)throw new Error(`Plugin ID "${id}" is already configured; choose another ID with --id`);
+   this.configStore.patch({plugins:{...this.configStore.get().plugins,[id]:{source:"directory",path:directory,enabled:input.enabled??true,installed:true,approval}}});
    await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);
   });
  }
@@ -119,26 +120,10 @@ export class PluginService {
  });}
  async revokePluginTrust(id:string){this.patchSource(id,{...this.source(id),trustRevoked:true});this.revoke(id);this.bundles.delete(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.notify(id);return this.catalog().find(item=>item.id===id)!;});}
 
- async registerBundledDirectories(directories:readonly string[]){
-  for(const directory of directories){
-   const resolved=path.resolve(directory);const info=await inspectPluginPackage(resolved);if(info.metadata?.owner!=="daemon")throw new Error(`Bundled daemon package has invalid owner: ${info.id}`);
-   await this.enqueue(info.id,async()=>{
-    const previous=this.configStore.get().plugins?.[info.id];
-    if(previous){
-     if(previous.bundled!==true||path.resolve(previous.path)===resolved)return;
-     // App relocation changes the source, not the user's installation choices or grants.
-     this.revoke(info.id);await this.runtime.stopPluginById(info.id);
-     this.descriptions.delete(info.id);this.bundles.delete(info.id);
-     this.patchSource(info.id,{...previous,path:resolved});
-    }else this.patchSource(info.id,{source:"directory",path:resolved,enabled:false,installed:true,bundled:true,approval:{trusted:true,version:info.version,capabilities:info.capabilities}});
-    await this.discover(info.id);if(this.canRun(info.id))await this.activate(info.id);this.notify(info.id);
-   });
-  }
- }
  async enablePlugin(id:string){if(this.source(id).installed===false)throw new Error("Plugin is not installed");this.patchSource(id,{...this.source(id),enabled:true});return this.enqueue(id,async()=>{if(this.runtime.catalog().some(plugin=>plugin.id===id)&&!this.managementWorkers.has(id)){this.notify(id);return this.item(id);}await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);});}
  async disablePlugin(id:string){this.patchSource(id,{...this.source(id),enabled:false});this.revoke(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.errors.delete(id);this.notify(id);return this.item(id);});}
  async reloadPlugin(id:string){this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.errors.delete(id);await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);});}
- async removePlugin(id:string){const source=this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);const plugins={...this.configStore.get().plugins};if(source.bundled)plugins[id]={...source,installed:false,enabled:false};else delete plugins[id];this.configStore.patch({plugins});await this.enqueue(id,async()=>{await stopping;this.runtime.clearLogs(id);this.errors.delete(id);this.descriptions.delete(id);this.bundles.delete(id);this.notify(id);});}
+ async removePlugin(id:string){this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);const plugins={...this.configStore.get().plugins};delete plugins[id];this.configStore.patch({plugins});await this.enqueue(id,async()=>{await stopping;this.runtime.clearLogs(id);this.errors.delete(id);this.descriptions.delete(id);this.bundles.delete(id);this.notify(id);});}
  async invokePluginRpc(id:string,method:string,input:unknown,generation:number){
   this.source(id);
   if(method.startsWith("agent-tool.")||method.startsWith("agent-prompt."))throw new Error("Agent bridge methods require authenticated host caller context");
@@ -223,7 +208,7 @@ export class PluginService {
   throw new Error(`Host operation is unsupported by daemon: ${operation}`);
  }
  async stopAllPlugins(){this.closing=true;this.globalStartsBlocked=true;this.unsubscribeConfig?.();for(const id of this.epochs.keys())this.revoke(id);this.sandboxFiles.close();await this.runtime.stopAll();await Promise.allSettled(this.operations.values());await this.runtime.stopAll();}
- private canRun(id:string){const source=this.configStore.get().plugins?.[id];const info=this.descriptions.get(id);return !this.closing&&!this.globalStartsBlocked&&this.pluginsEnabled()&&!!source&&source.installed!==false&&source.enabled!==false&&!!info&&this.approved(id,info);}
+ private canRun(id:string){const source=this.configStore.get().plugins?.[id];const info=this.descriptions.get(id);return !this.closing&&!this.globalStartsBlocked&&this.pluginsEnabled()&&!!source&&source.bundled!==true&&source.installed!==false&&source.enabled!==false&&!!info&&this.approved(id,info);}
  private async activate(id:string){
   if(this.managementWorkers.delete(id))await this.runtime.stopPluginById(id);
   if(this.runtime.catalog().some(item=>item.id===id))return;
@@ -233,10 +218,10 @@ export class PluginService {
   catch(error){if(this.canRun(id)){this.fail(id,error);throw error;}}
   finally{this.starting.delete(id);this.notify(id);}
  }
- private handleGlobalSwitch(enabled:boolean){this.globalStartsBlocked=!enabled;if(!enabled){for(const id of Object.keys(this.configStore.get().plugins??{}))this.revoke(id);void this.runtime.stopAll().catch(error=>this.logger.error({err:error},"Failed to stop plugins"));}else for(const id of Object.keys(this.configStore.get().plugins??{}))void this.enqueue(id,async()=>{await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);}).catch(error=>this.fail(id,error));for(const id of Object.keys(this.configStore.get().plugins??{}))this.notify(id);}
+ private handleGlobalSwitch(enabled:boolean){this.globalStartsBlocked=!enabled;if(!enabled){for(const id of Object.keys(this.configStore.get().plugins??{}))this.revoke(id);void this.runtime.stopAll().catch(error=>this.logger.error({err:error},"Failed to stop plugins"));}else for(const [id,source] of Object.entries(this.configStore.get().plugins??{})){if(source.bundled===true)continue;void this.enqueue(id,async()=>{await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);}).catch(error=>this.fail(id,error));}for(const [id,source] of Object.entries(this.configStore.get().plugins??{}))if(source.bundled!==true)this.notify(id);}
  private enqueue<T>(id:string,operation:()=>Promise<T>):Promise<T>{const previous=this.operations.get(id)??Promise.resolve();const result=previous.then(operation,operation);this.operations.set(id,result.catch(()=>undefined));return result;}
  private revoke(id:string){this.epochs.set(id,(this.epochs.get(id)??0)+1);this.runtime.invalidateGeneration?.(id);this.sandboxFiles.revoke(id);this.starting.delete(id);this.managementWorkers.delete(id);this.agentTools.delete(id);this.agentPrompts.delete(id);}
- private source(id:string):PluginSource{PluginIdSchema.parse(id);const source=this.configStore.get().plugins?.[id];if(!source)throw new Error(`Plugin is not configured: ${id}`);return source;}
+ private source(id:string):PluginSource{PluginIdSchema.parse(id);const source=this.configStore.get().plugins?.[id];if(!source)throw new Error(`Plugin is not configured: ${id}`);if(source.bundled===true)throw new Error(`Plugin must be installed explicitly from a folder: ${id}`);return source;}
  private patchSource(id:string,source:PluginSource){this.configStore.patch({plugins:{...this.configStore.get().plugins,[id]:source}});}
  private item(id:string){const item=this.listPlugins().find(item=>item.id===id);if(!item)throw new Error(`Plugin is not configured: ${id}`);return item;}
  private fail(id:string,error:unknown){this.revoke(id);this.errors.set(id,error instanceof Error?error.message:String(error));void this.runtime.stopPluginById(id).catch(stopError=>this.logger.error({err:stopError,pluginId:id},"Failed to stop failed plugin"));this.notify(id);}

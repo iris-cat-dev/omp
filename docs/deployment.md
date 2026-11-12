@@ -31,6 +31,19 @@ Deploy the [Paseo Relay OCI image](https://github.com/getpaseo/paseo-relay) pinn
 
 For a standalone Podman service using host networking, set `RELEASE_DISTRIBUTION=none` so Erlang cluster listeners are not exposed. Configure the relay bind address and port with `PASEO_RELAY_HOST` and `PASEO_RELAY_PORT`; add a memory limit and a suitable `PASEO_RELAY_MEMORY_WATERMARK_BYTES` on small hosts. Verify `/ready` and a real encrypted WebSocket exchange before changing existing daemon connections.
 
+#### Hangzhou relay endpoint
+
+Use `wss://omp.myzhijieyun.cn` in client settings, or `omp.myzhijieyun.cn:443` with `useTls: true` in daemon configuration. This domain is the relay endpoint, not the Web client deployment.
+
+On `HZProxyServer` (`114.55.112.128`), `/etc/nginx/conf.d/omp-relay.conf` terminates TLS and forwards HTTP and WebSocket requests to `127.0.0.1:4000`. Port `80` redirects to HTTPS except for the ACME challenge path. Keep TCP `80` and `443` allowed in the cloud security group; clients using the old public `:4000` endpoint must switch to WSS if that port is no longer allowed.
+
+Certbot uses `/var/lib/letsencrypt` for HTTP validation and `certbot.timer` for automatic renewal. The executable deploy hook `/etc/letsencrypt/renewal-hooks/deploy/omp-relay-nginx` checks the Nginx configuration and reloads the renewed certificate.
+
+```bash
+curl --fail https://omp.myzhijieyun.cn/ready
+ssh HZProxyServer 'certbot renew --cert-name omp.myzhijieyun.cn --dry-run --run-deploy-hooks --no-random-sleep-on-renew'
+```
+
 ## Configure the machine running OMP
 
 Merge this configuration into `~/.omp-desktop/config.json`, retaining your other settings. Replace the example domains with those in the relay deployment:
