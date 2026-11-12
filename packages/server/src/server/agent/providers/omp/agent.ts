@@ -201,7 +201,7 @@ import {
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
-import { mapOmpToolDetail, mapOmpPresentedFiles } from "./tool-call-mapper.js";
+import { mapOmpToolDetail, mapOmpPresentedFiles, mapOmpGeneratedImages } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
@@ -1208,6 +1208,7 @@ function buildResumeConfig(
   const overrideConfig = overrides ?? {};
   const sandbox = metadata.sandbox ?? overrideConfig.sandbox;
   if (metadata.sandbox && overrideConfig.sandbox && metadata.sandbox.root !== overrideConfig.sandbox.root) throw new Error("Sandbox root changes require a new session");
+  if (metadata.sandbox && overrideConfig.sandbox && ((metadata.sandbox.imageGeneration ?? false) !== (overrideConfig.sandbox.imageGeneration ?? false) || (metadata.sandbox.javascript ?? false) !== (overrideConfig.sandbox.javascript ?? false) || metadata.sandbox.network !== overrideConfig.sandbox.network)) throw new Error("Sandbox capability changes require a new session");
   const cwd = sandbox?.root ?? overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
@@ -5227,6 +5228,7 @@ export class OmpAgentSession implements AgentSession {
       metadata: {
         ...(toolCall.intent ? {intent:toolCall.intent} : {}),
         ...(presentedFiles.length ? {presentedFiles,presentedFilesSource:"omp-present-image"} : {}),
+        ...mapOmpGeneratedImages(toolCall, result, status),
       },
     };
     const item =

@@ -14,6 +14,15 @@ export async function allowedFile(path: string, peer: Peer, config: Config, file
   }
   return files.read(sandboxRelativePath(path), config.media.maxMB * 1024 * 1024);
 }
+
+export function validateGeneratedImage(bytes: Buffer, mimeType: string) {
+  const valid = mimeType === 'image/png' ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+    : mimeType === 'image/jpeg' ? bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+    : mimeType === 'image/gif' ? bytes.length >= 6 && ['GIF87a','GIF89a'].includes(bytes.toString('ascii',0,6))
+    : mimeType === 'image/webp' ? bytes.length >= 12 && bytes.toString('ascii',0,4) === 'RIFF' && bytes.toString('ascii',8,12) === 'WEBP'
+    : false;
+  if (!valid) throw new Error('生成图片内容与 MIME 不匹配');
+}
 export interface RawAttachment { filename: string; content_type: string; size: number; url: string; asr_refer_text?: string }
 export async function downloadAttachment(attachment: RawAttachment, cwd: string, config: Config, signal: AbortSignal, files: SandboxFiles): Promise<{ path: string; relativePath: string; mimeType: string; size: number }> {
   if (!config.media.enabled) throw new Error('QQ 富媒体接收已关闭');
@@ -38,6 +47,13 @@ export async function cleanMedia(files:SandboxFiles,ttlHours:number){
   if(ttlHours===0)return;
   await files.mkdir('.qqbot-media');
   for(const file of await files.list('.qqbot-media')){
+    if(file.isDirectory&&file.name==='generated'){
+      for(const generated of await files.list('.qqbot-media/generated')){
+        if(generated.isDirectory||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(png|jpg|gif|webp)$/.test(generated.name))continue;
+        if(Date.now()-generated.modifiedAt>ttlHours*3600000)await files.remove(`.qqbot-media/generated/${generated.name}`);
+      }
+      continue;
+    }
     if(file.isDirectory||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-/.test(file.name))continue;
     if(Date.now()-file.modifiedAt>ttlHours*3600000)await files.remove(`.qqbot-media/${file.name}`);
   }

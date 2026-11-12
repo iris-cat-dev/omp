@@ -19,12 +19,12 @@ function configure(sandbox: boolean | AgentSandbox, version?: number) {
   mocks.load.mockImplementation((entry: string) => entry === "/trusted-preload" ? undefined : { startNodeRpcHost: mocks.start, NODE_RPC_SANDBOX_VERSION: version });
 }
 describe("mandatory SDK sandbox capability handshake", () => {
-  it.each([undefined, 0, 3])("refuses unsupported capability %s before entering SDK startup", async (version) => {
+  it.each([undefined, 0, 4])("refuses unsupported capability %s before entering SDK startup", async (version) => {
     configure(true, version);
     await expect(runOmpSdkHost()).rejects.toThrow("lacks mandatory sandbox support");
     expect(mocks.start).not.toHaveBeenCalled();
   });
-  it.each([1, 2])("admits supported profile %s for file-only sessions", async (version) => {
+  it.each([1, 2, 3])("admits supported profile %s for file-only sessions", async (version) => {
     configure(true, version);
     await expect(runOmpSdkHost()).rejects.toThrow("Reached SDK startup");
   });
@@ -33,6 +33,13 @@ describe("mandatory SDK sandbox capability handshake", () => {
     await expect(runOmpSdkHost()).rejects.toThrow('NODE_RPC_SANDBOX_VERSION=2');
     configure({ root: `${process.cwd()}/qq-files`, ...capabilities }, 2);
     await expect(runOmpSdkHost()).rejects.toThrow('Reached SDK startup');
+  });
+  it.each([1, 2])("requires profile 3 for image generation, independently of public network (%s)", async version => {
+    configure({ root: `${process.cwd()}/qq-files`, imageGeneration: true }, version);
+    await expect(runOmpSdkHost()).rejects.toThrow("NODE_RPC_SANDBOX_VERSION=3");
+    expect(mocks.start).not.toHaveBeenCalled();
+    configure({ root: `${process.cwd()}/qq-files`, imageGeneration: true }, 3);
+    await expect(runOmpSdkHost()).rejects.toThrow("Reached SDK startup");
   });
   it("keeps ordinary Desktop startup compatible with SDKs predating the sandbox profile", async () => {
     configure(false);

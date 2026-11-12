@@ -121,7 +121,7 @@ export class OmpSdkRuntime implements OmpRuntime {
     );
     const extensions = input.sandbox ? [] : [resolveOmpServiceTierExtensionPath()];
     if (!input.sandbox && launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
-    const imageLaunch = !input.sandbox && input.getImageGenerationConfig
+    const imageLaunch = (!input.sandbox || input.sandbox.imageGeneration) && input.getImageGenerationConfig
       ? await prepareOmpImageSettingsLaunch(command, input.cwd, {
           ...process.env,
           ...launch.env,
@@ -180,9 +180,9 @@ export class OmpSdkRuntime implements OmpRuntime {
         logger: this.options.logger,
         signal: input.signal,
         onRetirementCreated: input.onRetirementCreated,
-        getImageGenerationConfig: input.sandbox ? undefined : input.getImageGenerationConfig,
+        getImageGenerationConfig: !input.sandbox || input.sandbox.imageGeneration ? input.getImageGenerationConfig : undefined,
         imageSettingsToken: imageLaunch?.token,
-        imageToolAllowed: !input.sandbox && !denied.includes("generate_image"),
+        imageToolAllowed: (!input.sandbox || input.sandbox.imageGeneration === true) && !denied.includes("generate_image"),
         localModelBridge: bridge,
         localModelsEnabled: enabled && !launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE,
         serviceTierToken,
@@ -245,7 +245,7 @@ export class OmpSdkRuntime implements OmpRuntime {
     runtimeSettings: ProviderRuntimeSettings | undefined,
     imageLaunch: { configPath: string; token: string } | undefined,
   ): string[] {
-    if (imageLaunch) extensions.push(resolveOmpImageSettingsExtensionPath());
+    if (imageLaunch && !input.sandbox) extensions.push(resolveOmpImageSettingsExtensionPath());
     const denied = [
       ...new Set([
         ...(runtimeSettings?.disallowedTools ?? []),
@@ -257,6 +257,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       cwd: input.cwd,
       sandbox: input.sandbox,
       systemPrompt: input.sandbox ? input.systemPrompt : undefined,
+      imageSettingsAdapter: input.sandbox?.imageGeneration && imageLaunch ? resolveOmpImageSettingsExtensionPath() : undefined,
       modelBridgeExtension: input.sandbox
         ? launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE
           ? resolveOmpRuntimeHelperPath("sandbox-models-extension", import.meta.url)

@@ -17,7 +17,7 @@ export const ConfigSchema = z.preprocess(value => {
   return { ...config, sandboxPath: config.sandboxPath ?? cwd };
 }, z.object({
   appId: z.string().default(''), sandboxPath: z.string().trim().refine(path => !path.includes('\0'), '沙箱路径不能包含 NUL').default(''), defaultPreset: z.string().default('default'),
-  sandboxCapabilities: z.object({ javascript: z.boolean().default(false), network: z.boolean().default(false) }).strict().default(() => ({ javascript: false, network: false })),
+  sandboxCapabilities: z.object({ javascript: z.boolean().default(false), network: z.boolean().default(false), imageGeneration: z.boolean().default(false) }).strict().default(() => ({ javascript: false, network: false, imageGeneration: false })),
   presets: z.array(AgentPresetSchema).default([{ name: 'default', config: { provider: 'omp' }, qq: { prompt: '', skills: [], tools: [] } }]),
   requireMention: z.boolean().default(true), groupPrompt: z.string().default(''), directPrompt: z.string().default(''),
   textChunkLimit: z.number().int().min(200).max(4500).default(4500), streaming: z.boolean().default(true),

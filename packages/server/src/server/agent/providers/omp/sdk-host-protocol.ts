@@ -11,6 +11,7 @@ export const OmpSdkHostLaunchSchema = z
     sandbox: AgentSandboxSchema.optional(),
     systemPrompt: z.string().optional(),
     modelBridgeExtension: z.string().optional(),
+    imageSettingsAdapter: z.string().optional(),
     proxyPolicy: ProxyPolicySchema.optional(),
     protocolMode: z.enum(["rpc", "rpc-ui"]).optional(),
     model: z.string().optional(),

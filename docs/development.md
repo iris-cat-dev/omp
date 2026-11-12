@@ -480,13 +480,15 @@ A successful build is not native acceptance. Qualify the actual packaged applica
 
 ### Packaged macOS application
 
-To exercise an unpacked application, including its renderer, daemon, bundled Node SDK, CLI, and terminal, use this entry point with a runtime that exposes a CDP debugging endpoint:
+To exercise the actual packaged macOS application, including its visible renderer, daemon, bundled Node SDK, CLI, and terminal, run:
 
 ```bash
 node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/release/mac-arm64/OMP Desktop.app"
 ```
 
-Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The packaged smoke checks macOS Dock visibility, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet image installation.
+macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node preload to drive real `BrowserWindow` APIs; the signed executable, production main entry and application resources remain unchanged. It isolates HOME, userData, credentials/configuration and daemon ports, waits for visible React content, and retains a native PNG and JSON report under the printed evidence directory. Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside the application to choose that directory.
+
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet installation without changing the desktop-pet plugin's selected ID.
 
 #### Native window-close interactions
 

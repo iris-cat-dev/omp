@@ -72,6 +72,30 @@ it('newer native tool metadata preserves inspected MIME and delivers extensionle
   }
 });
 
+it.each([false, true])('failed tool events stay internal while the final reply still reaches QQ (showToolResults=%s)', async showToolResults => {
+  const values = StateSchema.parse({ config: { appId: 'test-account', showToolResults, streaming: false } });
+  const storage = { get: async () => ({ revision: 0, values: structuredClone(values) }), patch: vi.fn() } as unknown as PluginStorage;
+  const store = new StateStore(storage);
+  const context = { signal: new AbortController().signal, installation: { id: 'installation', generation: 2 }, paseo: {} } as unknown as PluginServiceContext;
+  const gateway = new Gateway(context, store, new Pairing(store), values.config, 'fixture-only-secret', { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, vi.fn());
+  const route = { peer: { appId: 'test-account', scope: 'c2c' as const, openid: 'peer', agentId: 'agent' }, enabledDelivery: true, target: { scope: 'c2c', targetId: 'peer' }, buffer: null, files: new Map(), textRows: new Map(), toolRevisions: new Map(), pending: new Map(), lastSeq: 0 };
+  const internal = gateway as unknown as { routes: Map<string, typeof route>; event: (route: typeof route, stream: PaseoAgentStream) => Promise<void>; sender: { sendMarkdown: (target: unknown, text: string) => Promise<void> } };
+  internal.routes.set(peerKey('test-account', 'c2c', 'peer'), route);
+  const sent = vi.spyOn(internal.sender, 'sendMarkdown').mockResolvedValue();
+  try {
+    const failed = { type: 'tool_call', callId: 'fetch', name: 'sandbox_fetch', status: 'failed', revision: 1 };
+    await internal.event(route, { seq: 1, event: { type: 'timeline', item: failed } } as unknown as PaseoAgentStream);
+    await internal.event(route, { seq: 1, contentVersion: 2, event: { type: 'timeline', item: { ...failed, revision: 2 } } } as unknown as PaseoAgentStream);
+    expect(sent).not.toHaveBeenCalled();
+    await internal.event(route, { seq: 2, event: { type: 'timeline', item: { type: 'assistant_message', text: '这是查询结果。' } } } as unknown as PaseoAgentStream);
+    await internal.event(route, { seq: 3, event: { type: 'turn_completed' } } as unknown as PaseoAgentStream);
+    expect(sent).toHaveBeenCalledExactlyOnceWith({ scope: 'c2c', targetId: 'peer' }, '这是查询结果。');
+  } finally {
+    gateway.dispose();
+    vi.restoreAllMocks();
+  }
+});
+
 function connectionFixture() {
   const values = StateSchema.parse({ config: { appId: 'test-account' } });
   const storage = { get: async () => ({ revision: 0, values: structuredClone(values) }), patch: vi.fn() } as unknown as PluginStorage;

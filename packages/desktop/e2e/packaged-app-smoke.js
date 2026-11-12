@@ -895,7 +895,7 @@ function assertCleanDaemonStatusOutput(output) {
 async function smokeCliTerminal({ appPath, env, createTerminal }) {
   const cwd = createTempDir(
     "omp-desktop-smoke-terminal-cwd-",
-    process.platform === "win32" ? env.TEMP : undefined,
+    env.TEMP,
   );
   const marker = `omp-desktop-packaged-terminal-smoke-${Date.now()}`;
   const name = `packaged-smoke-${process.pid}-${Date.now()}`;
@@ -981,11 +981,20 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
+async function selectedDesktopPet(page) {
+  return page.evaluate(async () => {
+    const snapshot = await window.paseoDesktop.invoke("get_desktop_plugins");
+    const pet = snapshot.installations.find((record) => record.id === "desktop-pet");
+    if (!pet || typeof pet.config.selectedId !== "string") {
+      throw new Error("Desktop pet plugin selection is unavailable");
+    }
+    return pet.config.selectedId;
+  });
+}
+
 async function smokePetCreationHelper({ page, appPath, env }) {
   const before = await page.evaluate(() => window.paseoDesktop.invoke("desktop_daemon_status"));
-  const settingsBefore = await page.evaluate(() =>
-    window.paseoDesktop.invoke("get_desktop_settings"),
-  );
+  const selectedBefore = await selectedDesktopPet(page);
   const workspace = await page.evaluate(() =>
     window.paseoDesktop.invoke("prepare_desktop_pet_creation", {
       description: "Packaged pet installer lifetime regression",
@@ -1083,21 +1092,41 @@ async function smokePetCreationHelper({ page, appPath, env }) {
   ) {
     throw new Error("Pet helper exited without installing a usable custom pet");
   }
-  const settingsAfter = await page.evaluate(() =>
-    window.paseoDesktop.invoke("get_desktop_settings"),
-  );
-  if (settingsAfter.pet.selectedId !== settingsBefore.pet.selectedId) {
+  const selectedAfter = await selectedDesktopPet(page);
+  if (selectedAfter !== selectedBefore) {
     throw new Error("Installing a custom pet changed the user's selected pet");
   }
   await smokeCliShim({ appPath, env });
   console.log(
     "Packaged desktop smoke: pet installed without stopping the daemon or changing selection",
   );
-  return { installed: true, daemonPid: after.pid, selectedId: settingsAfter.pet.selectedId };
+  return { installed: true, daemonPid: after.pid, selectedId: selectedAfter };
 }
 
 async function smokePackagedDesktopApp({ appPath, executableName }) {
   const smokeOmpRuntime = smokePackagedSdkRuntime;
+  if (process.platform === "darwin") {
+    const { smokeMacOSPackagedApp } = require("./macos-native-packaged-smoke");
+    return smokeMacOSPackagedApp({
+      appPath,
+      executableName: executableName ?? EXECUTABLE_NAME,
+      reserveLocalTcpPort,
+      configureIsolatedDaemonHome,
+      checkRenderer: async (input) => {
+        await assertPackagedRendererLoaded(input.page, input.deadline);
+        return waitForRendererStartedDaemon(input);
+      },
+      runColdCli: smokeColdCliDaemonStart,
+      runCliChecks: async ({ appPath: actualAppPath, env, createTerminal }) => ({
+        status: await smokeCliShim({ appPath: actualAppPath, env }),
+        sdk: await smokeOmpRuntime({ appPath: actualAppPath, env }),
+        terminal: await smokeCliTerminal({ appPath: actualAppPath, env, createTerminal }),
+      }),
+      runPetCreation: smokePetCreationHelper,
+      stopDaemon: stopCliDaemon,
+      assertDockVisibility: assertDarwinDockVisibility,
+    });
+  }
   if (process.platform === "win32") {
     const { smokeWindowsPackagedApp } = require("./windows-native-packaged-smoke");
     return smokeWindowsPackagedApp({

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { parseToolArgs, parseToolResult } from "./tool-call-detail.js";
-import { mapOmpToolDetail } from "./tool-call-mapper.js";
+import { mapOmpToolDetail, mapOmpGeneratedImages } from "./tool-call-mapper.js";
 
 const png = {
   data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aShoAAAAASUVORK5CYII=",
@@ -17,6 +17,27 @@ const gif = {
 };
 
 describe("OMP tool call mapper", () => {
+  test("projects only completed sandbox-native generated artifacts and displays their relative paths", () => {
+    const tool = parseToolArgs("generate_image", { subject: "A pixel" });
+    const generatedImages = [{ path: ".qqbot-media/generated/01234567-abcd.png", mimeType: "image/png", name: "pixel.png" }];
+    const details = { generatedImagesSource: "omp-sandbox-image", generatedImages, imageCount: 1 };
+    const result = parseToolResult({ content: [{ type: "text", text: generatedImages[0]!.path }], details });
+    expect(mapOmpGeneratedImages(tool, result, "completed")).toEqual({ generatedImagesSource: "omp-sandbox-image", generatedImages });
+    for (const status of ["running", "failed", "canceled"]) expect(mapOmpGeneratedImages(tool, result, status)).toEqual({});
+    expect(mapOmpGeneratedImages(parseToolArgs("present_image", {}), result, "completed")).toEqual({});
+    expect(mapOmpGeneratedImages(tool, parseToolResult({ content: [], details, isError: true }), "completed")).toEqual({});
+    for (const path of ["/tmp/image.png", ".qqbot-media/generated/../image.png", ".qqbot-media/generated/nested/image.png"]) expect(mapOmpGeneratedImages(tool, parseToolResult({ content: [], details: { ...details, generatedImages: [{ path, mimeType: "image/png" }] } }), "completed")).toEqual({});
+    expect(mapOmpToolDetail(tool, result, { toolCallId: "image", toolCallStatus: "completed" })).toMatchObject({ label: "Generated image", text: `Saved to ${generatedImages[0]!.path}` });
+    const directory = mkdtempSync(join(tmpdir(), "omp-sandbox-image-preview-"));
+    try {
+      const withBytes = parseToolResult({ content: [], details: { ...details, images: [png] } });
+      const card = mapOmpToolDetail(tool, withBytes, { toolCallId: "image", toolCallStatus: "completed", imageOutputDir: directory });
+      expect(card).toMatchObject({ label: "Generated image", preview: { type: "image", mimeType: "image/png" } });
+      if (card?.type !== "plain_text" || card.preview?.type !== "image") throw new Error("Missing sandbox image preview");
+      expect(readFileSync(card.preview.source)).toEqual(Buffer.from(png.data, "base64"));
+      expect(mapOmpGeneratedImages(tool, withBytes, "completed")).toEqual({ generatedImagesSource: "omp-sandbox-image", generatedImages });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
   test("maps OMP bash, read, hashline edit, and write calls", () => {
     expect(
       mapOmpToolDetail(

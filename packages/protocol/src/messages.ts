@@ -580,6 +580,7 @@ export const AgentSandboxSchema = z.object({
   root: z.string().min(1),
   javascript: z.boolean().optional(),
   network: z.literal("public").optional(),
+  imageGeneration: z.boolean().optional(),
 }).strict();
 
 export type AgentSandbox = z.infer<typeof AgentSandboxSchema>;

@@ -4,6 +4,7 @@ import type {
 } from "@omp-desktop/protocol/background-processes";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
+import type { AgentSandbox } from "@omp-desktop/protocol/messages";
 import type {
   OmpAbortAndRestoreQueueResult,
   OmpApprovalMode,
@@ -55,7 +56,7 @@ export interface OmpRuntimeRetirement {
 
 export interface OmpStartSessionInput {
   cwd: string;
-  sandbox?: { root: string };
+  sandbox?: AgentSandbox;
   signal?: AbortSignal;
   onActivity?: (stage: "prepareMs" | "startMs", elapsedMs: number) => void;
   /** Transfers retirement ownership before readiness/protocol negotiation can fail. */

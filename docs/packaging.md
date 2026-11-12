@@ -70,7 +70,7 @@ npx vitest run \
   packages/desktop/scripts/run-electron-builder.test.mjs
 ```
 
-These checks cover SDK artifact validation, relocated Sharp dependency confinement, and target-runtime selection. They do not replace native packaged-application acceptance.
+These checks cover SDK artifact validation, relocated Sharp dependency confinement, target-runtime selection, and nonzero CLI failure status even when dependency exit handlers reset it. They do not replace native packaged-application acceptance.
 
 ## GitHub Actions release packaging
 
@@ -167,6 +167,8 @@ Without notarization credentials, this requires a valid code-signing identity na
 This local signature is not notarized and does not satisfy Gatekeeper's distribution requirements on other Macs.
 
 macOS signing uses electron-builder's bundled entitlement template for the app; no separate Helper applications or entitlement files are required in `packages/desktop/build`.
+
+Include native acceptance in the local installer build with `PASEO_DESKTOP_SMOKE=1 npm run build:mac`. The [macOS packaged smoke](development.md#packaged-macos-application) exercises the actual signed application without Inspector/CDP; a failed smoke aborts installer construction and returns a nonzero build status.
 
 For a signed, notarized release, the build machine needs a valid `Developer ID Application` certificate (or `CSC_LINK`) and one of electron-builder's notarization credential sets:
 

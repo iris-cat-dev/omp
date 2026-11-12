@@ -40,6 +40,21 @@ async function collectHistory(
 }
 
 describe("OMP history mapper", () => {
+  test("durable native history retains successful sandbox image metadata and suppresses failed projections", async () => {
+    const generatedImages = [{ path: ".qqbot-media/generated/01234567-abcd.png", mimeType: "image/png" }];
+    for (const isError of [false, true]) {
+      const messages = [
+        { role: "assistant", content: [{ type: "toolCall", id: "image", name: "generate_image", arguments: { subject: "A pixel" } }], timestamp: 1 },
+        { role: "toolResult", toolCallId: "image", toolName: "generate_image", content: [{ type: "text", text: generatedImages[0]!.path }], details: { generatedImagesSource: "omp-sandbox-image", generatedImages }, isError, timestamp: 2 },
+      ] as OmpAgentMessage[];
+      const events = await collectHistory(messages);
+      const completed = events.filter(event => event.type === "timeline" && event.item.type === "tool_call").at(-1);
+      expect(completed).toMatchObject({ type: "timeline", item: { status: isError ? "failed" : "completed" } });
+      if (completed?.type !== "timeline" || completed.item.type !== "tool_call") throw new Error("Missing replay result");
+      if (isError) expect(completed.item.metadata?.generatedImages).toBeUndefined();
+      else expect(completed.item.metadata).toMatchObject({ generatedImagesSource: "omp-sandbox-image", generatedImages });
+    }
+  });
   test("reports an unavailable explicitly selected journal SDK instead of losing CLI history", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-missing-journal-"));
     const sessionFile = join(dir, "session.jsonl");

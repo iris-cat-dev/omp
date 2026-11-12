@@ -26,7 +26,7 @@ interface AgentDirectoryFixture {
   pageInfo: { nextCursor: string | null; prevCursor: null; hasMore: boolean };
 }
 interface DownloadedSandboxAttachment { path: string; relativePath: string; mimeType: string; size: number }
-async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false, sandboxCapabilities?: { javascript: boolean; network: boolean }) {
+async function fixture(sandboxPath?: string, provider = 'omp', presentedFiles = false, sandboxCapabilities?: { javascript: boolean; network: boolean; imageGeneration?: boolean }) {
   const directory = await mkdtemp(join(tmpdir(), 'qq-sandbox-'));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const root = await realpath(directory);
@@ -100,11 +100,12 @@ it('keeps private and group peers independent in one sandbox, including group re
   expect(saved[peerKey('saved-app', 'group', 'peer')]?.sandbox).toEqual({ root: f.root });
 });
 
-it.each([{ javascript: true, network: false }, { javascript: false, network: true }, { javascript: true, network: true }])('replaces an unchanged-root peer when capabilities change to %s', async capabilities => {
+it.each([{ javascript: true, network: false, imageGeneration: false }, { javascript: false, network: true, imageGeneration: false }, { javascript: true, network: true, imageGeneration: false }, { javascript: false, network: false, imageGeneration: true }])('replaces an unchanged-root peer when capabilities change to %s', async capabilities => {
   const f = await fixture(undefined, 'omp', false, capabilities);
   const sandbox: NonNullable<Peer['sandbox']> = { root: f.root };
   if(capabilities.javascript)sandbox.javascript=true;
   if(capabilities.network)sandbox.network='public';
+  if(capabilities.imageGeneration)sandbox.imageGeneration=true;
   await f.store.mutate(state => { state.peers[f.key] = f.saved({ root: f.root }); });
   f.old.refresh.mockResolvedValue({ agent: { id: f.old.id, sandbox: { root: f.root } } });
   f.fresh.observe.mockResolvedValue({ snapshot: { sandbox, pendingPermissions: [], activeTurn: null }, timeline: { window: { maxSeq: 0 }, entries: [] }, unsubscribe: f.unsubscribe } as unknown as PaseoAgentObservation);
@@ -185,7 +186,7 @@ it('does not recreate or rewrite a peer when its existence query fails', async (
   expect((await f.store.read()).values.peers[f.key]?.agentId).toBe('old-agent');
 });
 
-it.each(['root', 'javascript', 'network'] as const)('does not stop or recreate a peer after lookup outlives a %s config change', async kind => {
+it.each(['root', 'javascript', 'network', 'imageGeneration'] as const)('does not stop or recreate a peer after lookup outlives a %s config change', async kind => {
   const f = await fixture();
   await f.store.mutate(state => { state.peers[f.key] = f.saved(); });
   const queried = Promise.withResolvers<void>();
@@ -294,7 +295,7 @@ it('presented file uploads require explicit opt-in', async () => {
   expect(send).not.toHaveBeenCalled();
 });
 
-it.each(['root', 'javascript', 'network'] as const)('%s change prevents a late model acknowledgement from overwriting peer preference', async change => {
+it.each(['root', 'javascript', 'network', 'imageGeneration'] as const)('%s change prevents a late model acknowledgement from overwriting peer preference', async change => {
   const f=await fixture();await f.internal.getOrCreate('c2c','peer');
   const called=Promise.withResolvers<void>();const acknowledged=Promise.withResolvers<void>();
   Object.assign(f.fresh,{setModel:vi.fn(()=>{called.resolve();return acknowledged.promise;})});
@@ -359,4 +360,67 @@ it('canonical parent alias keeps the mapped conversation at startup', async () =
   expect(oldTurnRunning).toBe(true);
   expect((await f.store.read()).values.peers[f.key]).toMatchObject({agentId:f.old.id,workspaceId:'old-workspace',cwd:f.root});
   expect(f.create).not.toHaveBeenCalled();
+});
+
+it('revoking image generation replaces the saved agent and preserves peer preferences and history', async () => {
+  const f=await fixture();
+  const granted={root:f.root,imageGeneration:true};
+  const previous=f.saved(granted);
+  await f.store.mutate(state=>{state.peers[f.key]=previous;state.presetSelections[f.key]='default';});
+  f.old.refresh.mockResolvedValue({agent:{id:f.old.id,sandbox:granted}});
+  const route=await f.internal.getOrCreate('c2c','peer');
+  expect(f.old.stop).toHaveBeenCalledOnce();
+  expect(route.peer.sandbox).toEqual({root:f.root});
+  expect(f.create.mock.calls[0]?.[0].config?.sandbox).toEqual({root:f.root});
+  const state=(await f.store.read()).values;
+  expect(state.modelSelections[f.key]).toBe('provider/model');
+  expect(state.presetSelections[f.key]).toBe('default');
+  expect(state.config.appId).toBe('saved-app');
+  expect(state.config.presets[0]?.config.systemPrompt).toBe('Keep prompt');
+  expect(previous.agentId).toBe(f.old.id);
+});
+
+it('requires SDK confirmation of the image generation grant', async () => {
+  const f=await fixture(undefined,'omp',false,{javascript:false,network:false,imageGeneration:true});
+  await expect(f.internal.getOrCreate('c2c','peer')).rejects.toThrow('Desktop agent');
+  expect(f.fresh.stop).toHaveBeenCalledOnce();
+  expect(f.unsubscribe).toHaveBeenCalledOnce();
+  expect(f.internal.routes.size).toBe(0);
+});
+
+it('preserves the sandbox confirmation error if fresh-agent cleanup fails', async () => {
+  const f=await fixture(undefined,'omp',false,{javascript:false,network:false,imageGeneration:true});
+  f.fresh.stop.mockRejectedValue(new Error('cleanup failed'));
+  await expect(f.internal.getOrCreate('c2c','peer')).rejects.toThrow('Desktop agent 未确认当前 QQ 沙箱');
+  expect(f.fresh.stop).toHaveBeenCalledOnce();
+  expect(f.internal.routes.size).toBe(0);
+});
+
+it('stops a fresh agent after observation failure without replacing the original error', async () => {
+  const f=await fixture();const failure=new Error('observation denied');
+  f.fresh.observe.mockRejectedValue(failure);f.fresh.stop.mockRejectedValue(new Error('cleanup failed'));
+  await expect(f.internal.getOrCreate('c2c','peer')).rejects.toBe(failure);
+  expect(f.fresh.stop).toHaveBeenCalledOnce();
+  expect(f.internal.routes.size).toBe(0);
+});
+
+it.each(['observation-failed','unconfirmed-sandbox'] as const)('keeps saved-agent cleanup scoped to %s', async kind => {
+  const f=await fixture(undefined,'omp',false,{javascript:false,network:false,imageGeneration:true});
+  const sandbox={root:f.root,imageGeneration:true};
+  await f.store.mutate(state=>{state.peers[f.key]=f.saved(sandbox);});
+  f.old.refresh.mockResolvedValue({agent:{id:f.old.id,sandbox}});
+  Object.assign(f.old,{observe:f.fresh.observe});
+  const failure=new Error('saved observation denied');
+  if(kind==='observation-failed')f.fresh.observe.mockRejectedValue(failure);
+  else f.old.stop.mockRejectedValue(new Error('saved cleanup failed'));
+  const work=f.internal.getOrCreate('c2c','peer');
+  if(kind==='observation-failed'){
+    await expect(work).rejects.toBe(failure);expect(f.old.stop).not.toHaveBeenCalled();
+  }else{
+    await expect(work).rejects.toThrow('Desktop agent 未确认当前 QQ 沙箱');expect(f.old.stop).toHaveBeenCalledOnce();
+  }
+  expect(f.create).not.toHaveBeenCalled();expect(f.fresh.stop).not.toHaveBeenCalled();
+  expect(f.internal.routes.size).toBe(0);
+  expect((await f.store.read()).values.peers[f.key]?.agentId).toBe(f.old.id);
+  expect((await f.store.read()).values.modelSelections[f.key]).toBe('provider/model');
 });
