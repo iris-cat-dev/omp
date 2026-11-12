@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-menu";
 import type { Theme } from "@/styles/theme";
+import { PluginMenuIcon } from "@/plugins/menus";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -48,6 +49,7 @@ function MobileTabDropdownMenuItem({
   entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
 }) {
   const leading = useMemo(() => {
+    if (entry.pluginIcon) return <PluginMenuIcon name={entry.pluginIcon} />;
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -68,7 +70,7 @@ function MobileTabDropdownMenuItem({
       default:
         return undefined;
     }
-  }, [entry.icon]);
+  }, [entry.icon, entry.pluginIcon]);
   const trailing = useMemo(
     () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
     [entry.hint],

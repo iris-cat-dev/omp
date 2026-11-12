@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
-import type { DesktopPetActivity, DesktopPetActivityResult } from "@/desktop/pets/types";
+import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
+import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
@@ -266,9 +267,22 @@ export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
-export interface DesktopPetBridge {
-  startupReady?: () => Promise<void>;
-  publishActivity?: (activity: DesktopPetActivity) => Promise<DesktopPetActivityResult>;
+export interface DesktopPluginsBridge {
+  startupReady(): Promise<void>;
+  getSnapshot(): Promise<LocalPluginSnapshot>;
+  patch(input: LocalPluginPatch): Promise<LocalPluginSnapshot>;
+  migrateLegacy(input: { wallpaper?: WallpaperLegacyPluginInput }): Promise<LocalPluginSnapshot>;
+  selectBackground(input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }): Promise<LocalPluginSnapshot>;
+  reload(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;
+  remove(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;
+  reinstall(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;
+  clearData(input: { installationId: string; expectedRevision: number }): Promise<LocalPluginSnapshot>;
+  inspectDirectory(input: { directory: string }): Promise<LocalPluginDirectoryInspection>;
+  installDirectory(input: LocalPluginDirectoryInstall): Promise<LocalPluginSnapshot>;
+  getLogs(input: { installationId: string }): Promise<LocalPluginLogEntry[]>;
+  publish(input: { installationId: string; generation: number; clientActivationId: string; method: string; input?: unknown }): Promise<unknown>;
+  openClientScope(input: { installationId: string; generation: number; clientActivationId: string; mode: "manage" | "active" }): Promise<void>;
+  releaseClientScope(input: { installationId: string; generation: number; clientActivationId: string }): Promise<void>;
 }
 
 export interface DesktopHostBridge {
@@ -277,7 +291,7 @@ export interface DesktopHostBridge {
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
-  pet?: DesktopPetBridge;
+  plugins?: DesktopPluginsBridge;
   monitor?: { open: () => Promise<void> };
   screenshot?: { capture: () => Promise<VisualFeedbackImage | null> };
   events?: DesktopEventsBridge;

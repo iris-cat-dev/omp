@@ -30,18 +30,21 @@ export async function readValidatedJson<Value>(
   storage: ValidatedStorage,
   key: string,
   schema: z.ZodType<Value>,
+  options?: { invalid: "throw" },
 ): Promise<Value | null> {
   const raw = await storage.getItem(key);
   if (raw === null) return null;
   let decoded: unknown;
   try {
     decoded = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    if (options?.invalid === "throw") throw error;
     await clearInvalidValue(storage, key);
     return null;
   }
   const result = schema.safeParse(decoded);
   if (result.success) return result.data;
+  if (options?.invalid === "throw") throw result.error;
   await clearInvalidValue(storage, key);
   return null;
 }

@@ -219,18 +219,28 @@ function buildApplicationMenuTemplate(
 
 let applicationMenuOptions: ApplicationMenuOptions | null = null;
 let capturingShortcut = false;
+const applicationMenuContributions = new Map<string, () => Electron.MenuItemConstructorOptions[]>();
+export function registerApplicationMenuContribution(id: string, items: () => Electron.MenuItemConstructorOptions[]): () => void {
+  if (applicationMenuContributions.has(id)) throw new Error(`Duplicate application menu contribution: ${id}.`);
+  applicationMenuContributions.set(id, items);
+  rebuildApplicationMenu();
+  return () => { applicationMenuContributions.delete(id); rebuildApplicationMenu(); };
+}
 
 function rebuildApplicationMenu(): void {
   if (!applicationMenuOptions) return;
-  const menu = Menu.buildFromTemplate(
-    buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut),
-  );
+  const template = buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut);
+  const pluginItems = [...applicationMenuContributions.entries()].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, items]) => items());
+  if (pluginItems.length) template.push({ label: "Plugins", submenu: pluginItems });
+  const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
 
 export function setupApplicationMenu(options: ApplicationMenuOptions): void {
   applicationMenuOptions = options;
   rebuildApplicationMenu();
+  app.on("browser-window-focus", rebuildApplicationMenu);
+  app.on("browser-window-blur", rebuildApplicationMenu);
 
   ipcMain.handle(
     "paseo:menu:showContextMenu",

@@ -10,6 +10,7 @@ import {
   VISUAL_FEEDBACK_MAX_IMAGE_PIXELS,
 } from "@omp-desktop/protocol/visual-feedback";
 import { getComposerAttachmentImages } from "@/attachments/composer-images";
+import { ExternalResourceAttachmentMetadataSchema } from "@omp-desktop/protocol/messages";
 
 export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
@@ -93,6 +94,7 @@ export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z
   [
     z.strictObject({ kind: z.literal("image"), metadata: AttachmentMetadataSchema }),
     z.strictObject({ kind: z.literal("file"), attachment: UploadedFileSchema }),
+    z.strictObject({ kind: z.literal("external_text"), id: z.string(), title: z.string(), subtitle: z.string().optional(), text: z.string(), externalResource: ExternalResourceAttachmentMetadataSchema }),
     z.strictObject({
       kind: z.literal("directory"),
       path: z.string(),

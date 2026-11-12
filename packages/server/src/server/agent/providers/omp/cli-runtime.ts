@@ -19,6 +19,7 @@ import {
   type AgentPromptContext,
 } from "@omp-desktop/protocol/prompt-context";
 import type { Logger } from "pino";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
@@ -70,6 +71,7 @@ import {
   OmpHostToolsResultSchema,
   OmpLoginProvidersResultSchema,
   OmpMessagesResultSchema,
+  OmpSessionAnnotationResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpNativeServiceTierSnapshotSchema,
@@ -345,7 +347,7 @@ export class OmpCliRuntime implements OmpRuntime {
         imageSettingsToken: imageLaunch?.token,
         imageToolAllowed,
         localModelBridge: bridge,
-        localModelsEnabled,
+        localModelsEnabled: localModelsEnabled && !launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE,
         serviceTierToken,
         cleanup: imageLaunch?.cleanup,
       });
@@ -380,24 +382,32 @@ export async function prepareOmpLocalModelsLaunch(
     const requested = input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)
       ? input.model.slice(LOCAL_MODEL_PROVIDER.length + 1)
       : input.model;
+    const restoreSandboxModel = input.sandbox && input.session && !requested;
     const selected = requested
       ? configuration.models.find((model) => `${model.provider}/${model.id}` === requested)
-      : configuration.models[0];
-    if (!selected) throw new Error("Select an available model from this Desktop.");
-    const reference = `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
-    // The final CLI selector wins over persisted defaults and resumed remote models.
-    launch.argv.push("--model", reference);
-    launch.model = reference;
+      : restoreSandboxModel ? undefined : configuration.models[0];
+    if (!selected && !restoreSandboxModel) throw new Error("Select an available model from this Desktop.");
+    const preserveIdentity = input.sandbox && !input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`);
+    if (selected) {
+      const reference = preserveIdentity
+        ? `${selected.provider}/${selected.id}`
+        : `${LOCAL_MODEL_PROVIDER}/${selected.provider}/${selected.id}`;
+      // An explicit source selector wins; sandbox resume without one restores its own saved selection.
+      launch.argv.push("--model", reference);
+      launch.model = reference;
+    }
     launch.argv.push(
       "--extension",
-      resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url),
+      resolveOmpRuntimeHelperPath(preserveIdentity ? "sandbox-models-extension" : "local-models-extension", import.meta.url),
     );
     launch.env = {
       ...launch.env,
-      OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
-        baseUrl: configuration.baseUrl,
-        token: configuration.token,
-      }),
+      ...(preserveIdentity
+        ? { OMP_DESKTOP_SANDBOX_MODEL_BRIDGE: JSON.stringify({ baseUrl: configuration.baseUrl, token: configuration.token }) }
+        : { OMP_DESKTOP_LOCAL_MODEL_BRIDGE: JSON.stringify({
+            baseUrl: configuration.baseUrl,
+            token: configuration.token,
+          }) }),
     };
   } else if (!input.localModelGateway && input.model?.startsWith(`${LOCAL_MODEL_PROVIDER}/`)) {
     throw new Error("Local model source is disconnected. Reconnect OMP Desktop.");
@@ -447,8 +457,15 @@ export async function startOmpRpcSession(
     options.serviceTierToken,
   );
   if (options.cleanup) {
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = () => cleanupPromise ??= options.cleanup!();
+    const close = session.close.bind(session);
+    session.close = async () => {
+      try { await close(); }
+      finally { await cleanup(); }
+    };
     process.onExit(() => {
-      void options.cleanup!().catch((error: unknown) => {
+      void cleanup().catch((error: unknown) => {
         logger.warn({ error }, "Could not remove private OMP session overlay");
       });
     });
@@ -1061,6 +1078,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
+  async appendSessionAnnotation(customType: string, data: unknown): Promise<string> {
+    return OmpSessionAnnotationResultSchema.parse(await this.request({ type: "append_session_annotation", customType, data })).entryId;
+  }
+
   async getSubagents(): Promise<OmpSubagentSnapshot[]> {
     const command = OmpSubagentRpcCommandSchema.parse({ type: "get_subagents" });
     return OmpSubagentsResultSchema.parse(await this.process.request(command)).subagents;
@@ -1170,6 +1191,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void {
     this.process.send({ ...update });
+  }
+
+  sendPluginPromptResult(id:string,contributions:PluginAgentPromptSelection[],error?:string):void {
+    this.process.send({type:"desktop_plugin_prompt_response",id,contributions,error});
   }
 
   async branch(entryId: string): Promise<{ text: string }> {

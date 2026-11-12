@@ -14,7 +14,9 @@ import {
   OMP_SERVICE_TIER_TOKEN_ENV,
   startOmpRpcSession,
 } from "./cli-runtime.js";
+import { resolveOmpRuntimeHelperPath } from "./sdk-host-command.js";
 import { prepareOmpImageSettingsLaunch, OMP_IMAGE_SETTINGS_TOKEN_ENV } from "./image-settings.js";
+import { startOmpLocalModelGateway, type OmpLocalModelGatewaySource } from "./local-model-gateway.js";
 import {
   resolveOmpSdkInstallation,
   resolveOmpSdkBrokerEndpoint,
@@ -117,15 +119,37 @@ export class OmpSdkRuntime implements OmpRuntime {
       input,
       this.options.localModelBridge,
     );
-    const extensions = [resolveOmpServiceTierExtensionPath()];
-    if (launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
-    const imageLaunch = input.getImageGenerationConfig
+    const extensions = input.sandbox ? [] : [resolveOmpServiceTierExtensionPath()];
+    if (!input.sandbox && launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
+    const imageLaunch = (!input.sandbox || input.sandbox.imageGeneration) && input.getImageGenerationConfig
       ? await prepareOmpImageSettingsLaunch(command, input.cwd, {
           ...process.env,
           ...launch.env,
         })
       : undefined;
+    let modelSource: OmpLocalModelGatewaySource | undefined;
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = (): Promise<void> => cleanupPromise ??= Promise.all([
+      imageLaunch?.cleanup(),
+      modelSource?.close(),
+    ]).then(() => undefined);
     try {
+      if (input.sandbox && !enabled) {
+        modelSource = await startOmpLocalModelGateway(sourceInput => this.startSession({
+          ...sourceInput,
+          cwd: env.HOME || env.USERPROFILE || sourceInput.cwd,
+          signal: input.signal,
+          env: { ...input.env, ...sourceInput.env },
+          proxyPolicy: input.proxyPolicy,
+        }), input.signal);
+        if (input.model && !modelSource.models.some(model => `${model.provider}/${model.id}` === input.model)) {
+          throw new Error(`Sandbox model is unavailable: ${input.model}`);
+        }
+        launch.env = {
+          ...launch.env,
+          OMP_DESKTOP_SANDBOX_MODEL_BRIDGE: JSON.stringify(modelSource.launchConfig),
+        };
+      }
       const denied = this.configureSdkHostLaunch(
         input,
         launch,
@@ -139,7 +163,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       const startStartedAt = performance.now();
       const session = await startOmpRpcSession({
         launch,
-        enableAskDialog: true,
+        enableAskDialog: !input.sandbox,
         // This is our Node host, not an external provider command. The shared
         // transport's default spawn strips ELECTRON_RUN_AS_NODE, which makes a
         // packaged Desktop executable re-enter its GUI/CLI dispatch instead.
@@ -156,18 +180,31 @@ export class OmpSdkRuntime implements OmpRuntime {
         logger: this.options.logger,
         signal: input.signal,
         onRetirementCreated: input.onRetirementCreated,
-        getImageGenerationConfig: input.getImageGenerationConfig,
+        getImageGenerationConfig: !input.sandbox || input.sandbox.imageGeneration ? input.getImageGenerationConfig : undefined,
         imageSettingsToken: imageLaunch?.token,
-        imageToolAllowed: !denied.includes("generate_image"),
+        imageToolAllowed: (!input.sandbox || input.sandbox.imageGeneration === true) && !denied.includes("generate_image"),
         localModelBridge: bridge,
-        localModelsEnabled: enabled,
+        localModelsEnabled: enabled && !launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE,
         serviceTierToken,
-        cleanup: imageLaunch?.cleanup,
+        cleanup,
       });
+      if (input.sandbox) {
+        try {
+          input.signal?.throwIfAborted();
+          const state = await session.getState();
+          if (!state.model || (launch.model && `${state.model.provider}/${state.model.id}` !== launch.model)) {
+            throw new Error(`Sandbox model is unavailable: ${launch.model ?? "saved or configured model"}`);
+          }
+          input.signal?.throwIfAborted();
+        } catch (error) {
+          await session.close();
+          throw error;
+        }
+      }
       input.onActivity?.("startMs", performance.now() - startStartedAt);
       return session;
     } catch (error) {
-      await imageLaunch?.cleanup();
+      await cleanup();
       throw error;
     }
   }
@@ -208,7 +245,7 @@ export class OmpSdkRuntime implements OmpRuntime {
     runtimeSettings: ProviderRuntimeSettings | undefined,
     imageLaunch: { configPath: string; token: string } | undefined,
   ): string[] {
-    if (imageLaunch) extensions.push(resolveOmpImageSettingsExtensionPath());
+    if (imageLaunch && !input.sandbox) extensions.push(resolveOmpImageSettingsExtensionPath());
     const denied = [
       ...new Set([
         ...(runtimeSettings?.disallowedTools ?? []),
@@ -218,20 +255,31 @@ export class OmpSdkRuntime implements OmpRuntime {
     const systemPrompt = input.systemPrompt?.trim();
     const payload = OmpSdkHostLaunchSchema.parse({
       cwd: input.cwd,
+      sandbox: input.sandbox,
+      systemPrompt: input.sandbox ? input.systemPrompt : undefined,
+      imageSettingsAdapter: input.sandbox?.imageGeneration && imageLaunch ? resolveOmpImageSettingsExtensionPath() : undefined,
+      modelBridgeExtension: input.sandbox
+        ? launch.env?.OMP_DESKTOP_SANDBOX_MODEL_BRIDGE
+          ? resolveOmpRuntimeHelperPath("sandbox-models-extension", import.meta.url)
+          : launch.env?.OMP_DESKTOP_LOCAL_MODEL_BRIDGE
+            ? resolveOmpRuntimeHelperPath("local-models-extension", import.meta.url)
+            : undefined
+        : undefined,
       proxyPolicy: input.proxyPolicy ?? runtimeSettings?.proxyPolicy,
       protocolMode: launch.protocolMode,
       model: launch.model,
+      desktopPluginPrompts: !input.sandbox,
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,
-      extraArgs: [
+      extraArgs: input.sandbox ? [] : [
         ...(input.extraArgs ?? []),
         ...launch.argv.slice(command.length),
         ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
       ],
-      extensions,
+      extensions: input.sandbox ? [] : extensions,
       disallowedTools: input.localModelGateway ? [] : denied,
-      configFiles: imageLaunch ? [imageLaunch.configPath] : [],
+      configFiles: !input.sandbox && imageLaunch ? [imageLaunch.configPath] : [],
     });
     launch.argv = [...command];
     launch.env = {

@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { Text, View } from "react-native";
-import { useTranslation } from "react-i18next";
+import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { SPACING, type Theme } from "@/styles/theme";
@@ -8,7 +7,8 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import { TurnFileChangesBar } from "./turn-file-changes-bar";
 import type { TurnTokenStats } from "./turn-token-stats";
 import { formatTokenCount } from "./turn-token-stats";
-import { formatOutputTokenSpeed } from "./token-output-speed";
+import type { PluginTurnMetricProps } from "@omp-desktop/plugin";
+import { PluginTurnMetrics } from "@/plugins/turn-metrics";
 import type { StreamItem } from "@/types/stream";
 import {
   collectAssistantResponseContentForStreamRenderStrategy,
@@ -38,7 +38,7 @@ export type AssistantTurnForkHandler = (input: {
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
-  outputTokenSpeed,
+  metricProps,
   workingMessage,
   host,
   strategy,
@@ -50,7 +50,7 @@ export const TurnFooter = memo(function TurnFooter({
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
-  outputTokenSpeed: number | null;
+  metricProps: PluginTurnMetricProps;
   workingMessage?: string;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -65,7 +65,7 @@ export const TurnFooter = memo(function TurnFooter({
       <TurnFooterRow>
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
-          outputTokenSpeed={outputTokenSpeed}
+          metricProps={metricProps}
           workingMessage={workingMessage}
         />
       </TurnFooterRow>
@@ -83,6 +83,7 @@ export const TurnFooter = memo(function TurnFooter({
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
       turnTokenStats={turnTokenStats}
+      metricProps={metricProps}
       onOpenFile={onOpenFile}
       onRestoreFile={onRestoreFile}
       onForkAssistantTurn={onForkAssistantTurn}
@@ -98,6 +99,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex,
   supportsTimelineCursor,
   turnTokenStats,
+  metricProps,
   onOpenFile,
   onRestoreFile,
   onForkAssistantTurn,
@@ -109,6 +111,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex: number;
   supportsTimelineCursor: boolean;
   turnTokenStats?: TurnTokenStats | null;
+  metricProps?: PluginTurnMetricProps;
   onOpenFile?: (path: string) => void;
   onRestoreFile?: (path: string) => void;
   onForkAssistantTurn?: AssistantTurnForkHandler;
@@ -133,6 +136,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
           startIndex={startIndex}
           supportsTimelineCursor={supportsTimelineCursor}
           turnTokenStats={turnTokenStats}
+          metricProps={metricProps}
           onForkAssistantTurn={onForkAssistantTurn}
         />
       </View>
@@ -142,14 +146,13 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
-  outputTokenSpeed,
+  metricProps,
   workingMessage,
 }: {
   inFlightTurnStartedAt?: Date | null;
-  outputTokenSpeed: number | null;
+  metricProps: PluginTurnMetricProps;
   workingMessage?: string;
 }) {
-  const { t } = useTranslation();
   const active = useRetainedPanelActive();
   return (
     <View style={stylesheet.turnFooterContent}>
@@ -171,33 +174,25 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-elapsed"
         />
       ) : null}
-      {outputTokenSpeed !== null ? (
-        <View style={stylesheet.tokenOutputSpeed} testID="turn-token-output-speed">
-          <Text style={stylesheet.tokenOutputSpeedText}>
-            {t("agentStream.turnMetadata.tokensPerSecond", {
-              speed: formatOutputTokenSpeed(outputTokenSpeed),
-            })}
-          </Text>
-        </View>
-      ) : null}
+      <PluginTurnMetrics {...metricProps} />
     </View>
   );
 });
 
 function RunningTurnFooter({
   inFlightTurnStartedAt,
-  outputTokenSpeed,
+  metricProps,
   workingMessage,
 }: {
   inFlightTurnStartedAt: Date | null;
-  outputTokenSpeed: number | null;
+  metricProps: PluginTurnMetricProps;
   workingMessage?: string;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
-        outputTokenSpeed={outputTokenSpeed}
+        metricProps={metricProps}
         workingMessage={workingMessage}
       />
     </View>
@@ -211,6 +206,7 @@ function CompletedTurnFooter({
   startIndex,
   supportsTimelineCursor,
   turnTokenStats,
+  metricProps,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
@@ -219,6 +215,7 @@ function CompletedTurnFooter({
   startIndex: number;
   supportsTimelineCursor: boolean;
   turnTokenStats?: TurnTokenStats | null;
+  metricProps?: PluginTurnMetricProps;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   const getContent = useCallback(
@@ -248,11 +245,7 @@ function CompletedTurnFooter({
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         tokenTotalLabel={turnTokenStats ? formatTokenCount(turnTokenStats.totalTokens) : null}
-        avgSpeedLabel={
-          turnTokenStats?.avgTokensPerSecond != null
-            ? formatOutputTokenSpeed(turnTokenStats.avgTokensPerSecond)
-            : null
-        }
+        metrics={metricProps ? <PluginTurnMetrics {...metricProps} /> : null}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
       />
     </View>
@@ -313,19 +306,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     textAlign: "auto",
     minWidth: 0,
     flexShrink: 1,
-  },
-  tokenOutputSpeed: {
-    height: 24,
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-    paddingHorizontal: theme.spacing[2],
-  },
-  tokenOutputSpeedText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
-    fontVariant: ["tabular-nums"],
   },
 }));

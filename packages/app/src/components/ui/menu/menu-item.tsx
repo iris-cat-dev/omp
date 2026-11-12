@@ -19,7 +19,7 @@ import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "@/appearance/color"
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
 
 const ThemedCheck = withUnistyles(Check);

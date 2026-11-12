@@ -228,6 +228,9 @@ export interface LightThemeConfig {
   terminalBlack: string;
   terminalBrightBlack: string;
   ring: string;
+  accent?: string;
+  accentBright?: string;
+  accentForeground?: string;
 }
 
 // Cursor Light's ANSI set: dark, ink-like hues that hold up on a near-white canvas.
@@ -274,9 +277,9 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     border: tint.border,
     borderAccent: tint.borderAccent,
 
-    accent: ompBrandColors.cyanOnLight,
-    accentBright: ompBrandColors.cyanOnLight,
-    accentForeground: baseColors.white,
+    accent: tint.accent ?? ompBrandColors.cyanOnLight,
+    accentBright: tint.accentBright ?? tint.accent ?? ompBrandColors.cyanOnLight,
+    accentForeground: tint.accentForeground ?? baseColors.white,
 
     destructive: tint.destructive,
     destructiveForeground: tint.surface0,
@@ -361,6 +364,9 @@ export interface DarkThemeConfig {
   terminalBrightBlack: string;
   foreground?: string;
   ring?: string;
+  accent?: string;
+  accentBright?: string;
+  accentForeground?: string;
 }
 
 const darkTerminalAnsi = {
@@ -405,9 +411,9 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     border: tint.border,
     borderAccent: tint.borderAccent,
 
-    accent: ompBrandColors.cyan,
-    accentBright: ompBrandColors.cyan,
-    accentForeground: baseColors.black,
+    accent: tint.accent ?? ompBrandColors.cyan,
+    accentBright: tint.accentBright ?? tint.accent ?? ompBrandColors.cyan,
+    accentForeground: tint.accentForeground ?? baseColors.black,
 
     destructive: tint.destructive,
     destructiveForeground: "#ffffff",

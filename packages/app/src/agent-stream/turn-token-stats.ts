@@ -2,7 +2,6 @@ import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
 
 export interface TurnTokenStats {
   totalTokens: number;
-  avgTokensPerSecond: number | null;
 }
 
 function trimTrailingZero(value: string): string {
@@ -24,32 +23,8 @@ export function formatTokenCount(count: number): string {
   return String(rounded);
 }
 
-function measuredTurnRate(usage: AgentUsage | null | undefined): number | null {
-  const native = usage?.nativeMetrics;
-  const outputTokens = usage?.outputTokens;
-  if (
-    !native ||
-    !Number.isSafeInteger(native.measuredDurationMs) ||
-    native.measuredDurationMs < 500 ||
-    !Number.isSafeInteger(native.measuredOutputTokens) ||
-    native.measuredOutputTokens < 0 ||
-    typeof outputTokens !== "number" ||
-    !Number.isFinite(outputTokens) ||
-    outputTokens < 0 ||
-    native.measuredOutputTokens > outputTokens
-  ) {
-    return null;
-  }
-  const rate = native.measuredOutputTokens / (native.measuredDurationMs / 1_000);
-  return Number.isFinite(rate) ? rate : null;
-}
 
-/**
- * Keep provider token/cache semantics unchanged. Speed is the valid own native
- * requests' Σoutput / Σduration, not the whole turn's "Worked for" duration.
- * Untimed, failed and interrupted requests can count in totals, never in speed.
- * Completed replay metadata is authoritative over retained in-flight samples.
- */
+/** Provider input/output totals remain core facts, including replay priority. */
 export function deriveTurnTokenStats(
   recordedUsage: AgentUsage | null | undefined,
   replayedUsage?: AgentUsage | null,
@@ -68,5 +43,5 @@ export function deriveTurnTokenStats(
   }
   const totalTokens =
     (hasInput ? (inputTokens as number) : 0) + (hasOutput ? (outputTokens as number) : 0);
-  return { totalTokens, avgTokensPerSecond: measuredTurnRate(usage) };
+  return { totalTokens };
 }

@@ -139,12 +139,12 @@ describe("OmpPluginCliService", () => {
     expect(result.rawOutput).toBeUndefined();
   });
 
-  it("falls back to rawOutput when list output is not parseable JSON", async () => {
-    const runner = makeRunner("omp: not logged in");
+  it("does not forward unparseable native metadata that may contain secrets", async () => {
+    const runner = makeRunner("omp: secret-token-value");
     const result = await makeService(runner).list();
 
     expect(result.plugins).toEqual([]);
-    expect(result.rawOutput).toContain("not logged in");
+    expect(result.rawOutput).toBe("The selected OMP runtime returned invalid plugin metadata.");
   });
 
   it("extracts the trailing JSON object when progress lines precede it", async () => {
@@ -629,5 +629,32 @@ describe("OmpPluginCliService", () => {
         await dispose();
       }
     });
+  });
+  it("refuses marketplace discovery when the selected runtime omits authoritative paths", async () => {
+    await expect(makeService(makeRunner(LIST_JSON)).marketplaceList()).rejects.toThrow("authoritative marketplace paths");
+  });
+
+  it("redacts native secret defaults in list metadata", async () => {
+    const runner = makeRunner(JSON.stringify({ npm: [{ name: "fixture", version: "1", manifest: { settings: { token: { type: "string", secret: true, default: "private-default" } } } }], marketplace: [] }));
+    expect(JSON.stringify(await makeService(runner).list())).not.toContain("private-default");
+  });
+
+  it("preserves exact management identity and null versus empty feature patches", async () => {
+    const state = { name: "fixture@market", scope: "user", schema: { token: { type: "string", secret: true }, count: { type: "number" } }, settings: { count: 3 }, secretConfigured: { token: true }, enabledFeatures: null, availableFeatures: {}, effectiveFeatures: [], overriddenSettings: [], featuresOverridden: false, secretInput: "unavailable", appliesTo: "new-or-resumed-sessions" };
+    const runner = makeRunner(JSON.stringify(state));
+    const service = makeService(runner);
+    await service.updateManagement({ name: state.name, scope: "user", patch: { enabledFeatures: [] } });
+    await service.updateManagement({ name: state.name, scope: "user", patch: { enabledFeatures: null } });
+    expect(runner.calls[1]?.args).toEqual(["plugin", "manage", "fixture@market", "--json", "--scope", "user", "--set", '{"enabledFeatures":[]}']);
+    expect(runner.calls[3]?.args).toEqual(["plugin", "manage", "fixture@market", "--json", "--scope", "user", "--set", '{"enabledFeatures":null}']);
+    await expect(service.updateManagement({ name: state.name, scope: "user", patch: { settings: { token: "never-spawn-this-secret" } } })).rejects.toThrow("Secret input is unavailable");
+    expect(JSON.stringify(runner.calls)).not.toContain("never-spawn-this-secret");
+  });
+
+  it("never exposes raw CLI configuration output on unsupported management runtimes", async () => {
+    const service = makeService(makeRunner('{"token":"raw-secret"}'));
+    await expect(service.getManagement({ name: "fixture" })).rejects.toThrow("safe Desktop configuration");
+    const throwing = makeService(async () => { throw new Error("raw-secret"); });
+    await expect(throwing.getManagement({ name: "fixture" })).rejects.toThrow("Native management failed or is unsupported");
   });
 });

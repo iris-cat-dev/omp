@@ -10,7 +10,6 @@ import type { ReleaseChannel } from "@/hooks/use-settings";
 import { i18n } from "@/i18n/i18next";
 import type { DesktopBrowserTargetId } from "@/desktop/host";
 import { getDesktopHost } from "@/desktop/host";
-import type { DesktopPetSettings } from "@/desktop/pets/types";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 
 const DESKTOP_SETTINGS_QUERY_KEY = ["desktop-settings"] as const;
@@ -31,7 +30,6 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
-  pet: DesktopPetSettings;
 }
 
 export interface DesktopSettingsPatch {
@@ -39,7 +37,6 @@ export interface DesktopSettingsPatch {
   browser?: Partial<DesktopSettings["browser"]>;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
-  pet?: Partial<DesktopPetSettings>;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -55,7 +52,6 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
-  pet: { enabled: false, size: "medium", selectedId: "iris", position: null },
 };
 
 export function useDesktopSettings(): {
@@ -204,24 +200,6 @@ export async function migrateLegacyDesktopSettings(input: {
   }
   await invokeDesktopCommand("migrate_legacy_desktop_settings", input);
 }
-function parsePetSettings(raw: unknown): DesktopPetSettings {
-  const pet = isRecord(raw) ? raw : {};
-  const position = isRecord(pet.position) ? pet.position : null;
-  return {
-    enabled: typeof pet.enabled === "boolean" ? pet.enabled : false,
-    size: pet.size === "small" || pet.size === "large" ? pet.size : "medium",
-    selectedId:
-      typeof pet.selectedId === "string" && pet.selectedId.trim() ? pet.selectedId : "iris",
-    position:
-      position &&
-      typeof position.x === "number" &&
-      Number.isFinite(position.x) &&
-      typeof position.y === "number" &&
-      Number.isFinite(position.y)
-        ? { x: position.x, y: position.y }
-        : null,
-  };
-}
 
 function parseDesktopSettings(raw: unknown): DesktopSettings {
   const record = isRecord(raw) ? raw : {};
@@ -261,7 +239,6 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
           ? daemon.keepRunningAfterQuit
           : DEFAULT_DESKTOP_SETTINGS.daemon.keepRunningAfterQuit,
     },
-    pet: parsePetSettings(record.pet),
   };
 }
 
@@ -283,7 +260,6 @@ function mergeDesktopSettings(
       ...current.daemon,
       ...updates.daemon,
     },
-    pet: { ...current.pet, ...updates.pet },
   };
 }
 
@@ -293,7 +269,6 @@ function normalizePatch(updates: DesktopSettingsPatch): Record<string, unknown> 
     ...(updates.browser ? { browser: updates.browser } : {}),
     ...(updates.notifications ? { notifications: updates.notifications } : {}),
     ...(updates.daemon ? { daemon: updates.daemon } : {}),
-    ...(updates.pet ? { pet: updates.pet } : {}),
   };
 }
 

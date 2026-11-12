@@ -21,6 +21,10 @@ If validation or sending fails, the unacknowledged local row is removed and the 
 
 Uploaded-file attachments preserve their Unicode basename in the composer, message, and agent input. Disk storage names are sanitized separately; path prefixes and control characters are not accepted as display names.
 
+Enabled plugin attachment sources appear in the composer's **+** menu. Local Desktop sources remain available when changing hosts; daemon sources belong to the selected host. Choosing a resource captures its complete text and source metadata. Open the composer's attachment pill to read that snapshot. Sending submits the saved text, without searching or fetching the source again.
+
+After sending, click the attachment card in the message to read its complete saved text. Reopening the conversation or disabling/removing the source plugin preserves both the text and metadata; the reader does not call the source plugin. Registered local commands that finish without invoking the agent also retain their submitted text and attachments in history.
+
 ## Long input messages
 
 Sent input text taller than six rendered lines starts collapsed. Choose **Expand full message** to read it and **Collapse** to fold it again. Wrapping follows the available width; short text has no disclosure control. Copy and rewind retain the complete original message, and image/file attachments remain outside the collapsed text. Long skill arguments follow the same rule; expanding the skill still shows its full instructions.

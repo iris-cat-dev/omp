@@ -25,7 +25,9 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { containsTimelineImageAsset } from "@/assistant-image/timeline-assets";
 
 const STORAGE_KEY = "@omp-desktop:replica-cache";
-const CACHE_VERSION = 6;
+// Older replicas can claim complete coverage for user rows whose attachments
+// were dropped by the canonical consumer. Rehydrate from native history.
+const CACHE_VERSION = 7;
 const PERSIST_AFTER_USER_INACTIVITY_MS = 5_000;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;

@@ -1,13 +1,11 @@
 import { createAuthGatewayRouter } from "@oh-my-pi/pi-ai/auth-gateway";
 import { serve } from "@oh-my-pi/pi-utils/runtime";
+import { projectOmpLocalModelCatalog } from "./local-model-catalog.js";
+import type { OmpModel } from "./rpc-types.js";
 
 const TOKEN_ENV = "OMP_DESKTOP_LOCAL_MODEL_GATEWAY_TOKEN";
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
-interface GatewayModel {
-  provider: string;
-  id: string;
-}
 interface GatewayRegistry {
   authStorage: { keys: object };
   getApiKeyWithCredentialForProvider(
@@ -15,7 +13,7 @@ interface GatewayRegistry {
     sessionId?: string,
     options?: unknown,
   ): Promise<unknown>;
-  getAvailable(): GatewayModel[];
+  getAvailable(): OmpModel[];
 }
 interface GatewayExtensionApi {
   on(
@@ -75,7 +73,11 @@ export default function localModelGateway(pi: GatewayExtensionApi): void {
         ) {
           return new Response(null, { status: 403 });
         }
-        if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/pi/stream") {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === "GET" && pathname === "/models") {
+          return Response.json(projectOmpLocalModelCatalog(registry.getAvailable()), { headers: { "cache-control": "no-store" } });
+        }
+        if (request.method !== "POST" || pathname !== "/v1/pi/stream") {
           return new Response(null, { status: 404 });
         }
         const declaredLength = Number(request.headers.get("content-length") ?? 0);

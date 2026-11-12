@@ -91,11 +91,71 @@ This is an original implementation inspired by [EditHere's feedback workflow](ht
 
 ## Plugin management and native commands
 
-**Host Settings → OMP plugins** browses registered marketplaces and manages native runtime plugins. Marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
+**Settings → Plugins** is the shared entry for built-in plugins, Desktop-local installations, daemon plugins and native OMP plugin management. The installed/discovery views show each installation's owner, source, scope, version and runtime state; configuration, permissions and logs belong to that exact installation.
 
-Installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.
+Select a host for daemon and native operations. Desktop-owned controls stay local: changing hosts or losing a remote connection does not move their configuration or resources to that daemon. Two installation IDs using the same source directory remain independent. Disabling/removing an installation keeps its data unless you explicitly choose **Clear data**; disabled installations can still be configured. Pausing source plugins preserves their individual enabled selections.
+
+When Desktop is moved or replaced, the daemon rebases bundled plugin directories to the current App when it starts. This preserves enabled selections, host pause, removed-installation state, execution approvals and stored data; user-installed packages with the same ID are not replaced. New versions or additional capabilities still need matching approval. Client trust remains bound to the source: confirm the relocated client under **Permissions** before opening its account page.
+
+After installing a daemon-side fix, restart the built-in daemon from the new App when no tasks are running. Closing the App alone can leave the detached daemon running old code; the plugin's **Restart/reload** action does not reload the daemon implementation.
+
+For **QQ connection (`qqbot`)**, select its daemon installation, grant its declared capabilities under **Permissions**, then open **Configure**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
+
+Choose **Scan to bind** to request a QR code; opening the settings page alone does not generate one. The selected daemon needs internet access to obtain a Tencent binding URL, which it converts to the displayed QR image. You do not need to enter AppID/AppSecret first. Binding failures appear on the account page; **Refresh QR code** requests a replacement after expiry.
+
+QQ agents always use the **QQ sandbox path** (`QQ 沙箱路径`) shown in Configure. Edit an absolute path (or `~/...`) and choose **Save configuration**; blank uses a private directory dedicated to this installation. Existing `cwd` settings migrate to `sandboxPath`. The path field, **JavaScript**, **Public requests** and **Host image generation** (`主机生图`) switches share the JSON draft. All three capabilities default to off; enable the required grants with `sandboxCapabilities: { javascript: true, network: true, imageGeneration: true }`. JavaScript adds isolated computation and sandbox file APIs; public requests permit data submission to arbitrary public HTTP/HTTPS addresses, so authorized QQ users can send sandbox data off-host. Account credentials, access lists, and saved model preferences remain separate. A root or capability change stops the old agent and creates a new sandboxed conversation with the exact saved grant; its Desktop history and user files remain available.
+
+The sandbox restricts model capabilities, not the daemon's operating system. QQ models cannot run shell/host eval/browser tools, obtain system identity, load ambient skills/MCP/extensions, or access files outside their sandbox. Opt-in JavaScript runs in a fresh QuickJS WASM guest without Node globals or host imports. Opt-in networking rejects private/localhost/metadata destinations and uses no host proxy, Cookies or credentials. Presets retain model/thinking/prompt preferences but cannot override the sandbox or `ask` approval mode. `qqbot_send_file` is unavailable; optional automatic presented-file delivery requires `sendFile.sendPresentedFiles: true` and accepts only sandbox-contained regular files. `sendFile.extraRoots` never grants outside access. Old agents without the complete confirmed sandbox policy are stopped and replaced before QQ routing resumes.
+
+Enabled model-provider plugins run in a separate, tool-free host inference gateway. QQ's sandbox session keeps the original provider/model selection at creation, resume and model changes; provider-plugin tools, ambient prompts and hooks do not enter that session. Model requests expose `sandbox_read`, `sandbox_write` and `sandbox_list` by default; explicit grants add `sandbox_js`, `sandbox_fetch` and/or controlled `generate_image`. JavaScript/public requests require Node RPC sandbox profile 2; host image generation requires profile 3. Older profiles retain their existing file-only or JavaScript/network support. An unavailable selected model fails startup. Inference failures remain failed turns, and QQ receives a failure notice instead of a silently successful empty turn.
+
+Tool-call failures stay in the agent/Desktop timeline and are not posted to QQ. With `showToolResults: true`, QQ receives successful completion notices only; normal assistant replies and whole-turn failure notices keep their existing delivery behavior.
+
+`sandbox_fetch` returns locally rendered Markdown for HTML, with browser request headers and a bounded 5 MiB response / 100,000-character preview. Use `raw: true` for source text; guest JavaScript `fetch()` keeps its complete 1 MiB raw-response contract. Captcha and JavaScript-only pages still require an accessible source.
+
+To let QQ generate and send images, enable **主机生图** and choose **Save configuration**. The host's image-generation settings must also be enabled with a usable model and credentials. `generate_image` uses that existing native image pipeline; image editing accepts sandbox-relative input paths only, and generated files are saved under `.qqbot-media/generated/`. Successful images are uploaded to the current authorized QQ conversation, independently of **Public requests** and `sendFile.sendPresentedFiles`. Cancelled or failed turns do not send queued generated images; images without a known current-turn origin are not replayed into another conversation. `media.ttlHours` also cleans expired generated UUID images.
+
+At startup or reset, QQ checks whether the saved Agent ID still exists, including archived agents and every directory page. A missing ID creates a fresh sandboxed agent and replaces only that peer mapping; AppID, credentials, access lists, model/thinking choices, and literal prompts stay intact. Lookup and stop failures remain errors rather than being treated as missing agents. A sandbox configuration change invalidates an in-flight lookup or model acknowledgement. Revoked capabilities stop before opening the replacement directory; an inaccessible replacement still stops the old turn. Sender access is checked again after attachment preparation, immediately before submitting the turn.
+
+Private chats and groups have separate peer mappings and independent root conversations. New conversations, including `/new` and `/reset`, receive a fresh workspace record backed by the same configured sandbox directory; they never reuse another peer's workspace. Existing mapped agents keep their IDs at startup, and reset preserves the previous Desktop history. Sandbox stop/reset does not require host background-job extensions; retained daemons remain scoped to their recorded owner.
+
+QQ's service requires the declared `agents.prompt` capability to send messages, stop legacy peers, change models, and cancel timed-out turns. This permission belongs to the trusted plugin service; it does not add model tools or relax the model's sandbox. Grant it under **Permissions** if the installation reports a missing capability.
+
+For an isolated integration check, use `packages/plugins/qqbot/tests/sandbox-smoke-inputs.json` with a fresh test daemon/HOME/PASEO_HOME and a real model; leave the user's existing daemon and App untouched. Prepare the listed inside canary, sibling outside canary, symlink and hardlink, then send the exact prompts through QQ. In the UI, confirm path and capability edits update JSON, JSON edits update the controls, invalid JSON is preserved, and blank selects the installation-private default. Verify an in-flight root or capability change retires the old route without changing AppID, access lists, credentials or the selected model.
+
+To use the **QQ connection** sidebar entry, enable both **Allow host plugins to run** and the QQ installation's own switch. It appears below **Scheduled tasks** in the main sidebar. The shared QQ page in **Configure**, the sidebar surface, and workspace panels shows **Connection status** (`连接状态`) separately from error details. In active mode, **Restart QQ connection** (`重启 QQ 连接`) appears on that page, scoped to the selected host and installation; there is no sidebar puzzle menu or QQ application-menu action. An enabled connection waiting for account credentials keeps its sidebar entry and settings actions available. Pausing host execution hides execution entries and actions but retains the QQ switch selection and account configuration.
+
+QQ retries transient network failures with backoff, including temporary token-service failures, without an eight-attempt cutoff.
+
+Idle connections remain open while gateway heartbeats are acknowledged; incoming chat messages are not required. Each heartbeat ACK has a deadline of one heartbeat interval or 15 seconds, whichever is shorter. A missing ACK retires the half-open socket and immediately attempts to resume the QQ session. If sleep delays a heartbeat tick by more than two heartbeat intervals (with a 30-second minimum), the first tick after wake also reconnects immediately. These recoveries preserve existing Desktop agents and peer mappings.
+
+A successful session resume restores **Connected** and clears the disconnect reason. Rejected credentials and Tencent account/permission bans remain failures requiring correction and an explicit restart; disabling the installation cancels pending retries and heartbeat deadlines.
+
+`Selected daemon host is not connected` refers to the plugin worker's daemon API connection, not QQ authentication. This trusted local IPC follows the worker channel's lifetime and is exempt from network-socket heartbeat leases, so system sleep cannot expire that lease. Closing the actual IPC channel still releases its daemon session immediately, without waiting for the worker process to exit.
+
+When the worker process exits, pending plugin RPCs fail immediately and the installation stops appearing as running. This follows the process exit rather than waiting for its output streams to close.
+
+To ask about a QQ image, attach it to the message and @ the bot in a group. With `media.enabled` and `vision.enabled`, the service downloads supported images into `.qqbot-media` inside the configured sandbox and includes their image content in the model input.
+
+Supported HTTPS media origins include the exact `multimedia.nt.qq.com.cn` host shown in [Tencent's group-message attachment example](https://bot.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html). Downloads remain size-limited and reject redirects, lookalike hostnames and unrelated `qq.com.cn` subdomains. This trusted service operation does not require enabling sandbox JavaScript or public-network access.
+
+Native marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
+
+Native installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.
 
 Management operations use the selected project's cwd, native `.env` discovery, and configured provider profile/environment. Explicit leading `launch` in a provider command is omitted for management only. Omitting enable/disable scope preserves native unique-scope inference; explicit user/project scope remains exact.
+
+Native configuration uses the selected installation's schema without executing its factory. **Configure** edits non-secret values and optional features, including while disabled. Default features (`null`) and an explicit empty selection (`[]`) remain distinct; project overrides retain precedence. Changes apply to new or resumed sessions, without restarting running conversations. Secret values are never displayed or accepted here; the page shows configured markers and directs sensitive input to the selected OMP CLI.
+
+The matching native CLI operation is:
+
+```sh
+omp plugin manage plugin-name@marketplace-name --scope project --json
+omp plugin manage plugin-name@marketplace-name --scope project \
+  --set '{"enabledFeatures":[],"settings":{"count":4}}'
+```
+
+Setting names and values must match that plugin's schema. `deleteSettings` removes specified non-secret overrides; omitted keys remain unchanged. Linked installations expose their actual source and cannot be upgraded from a catalog.
 
 Busy actions, including **Remove** while confirmation is open, preserve button dimensions and adjacent spacing; progress overlays the existing icon/text footprint. A recovered catalog retry clears its old error without dismissing feedback from an operation's own refresh.
 

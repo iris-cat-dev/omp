@@ -1751,11 +1751,11 @@ export class PaseoWebSocketServer {
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: true,
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
-        plugins: true,
-        pluginManagement: true,
-        pluginLogs: true,
+        plugins: !!this.pluginRuntime,
+        pluginManagement: !!this.pluginRuntime,
+        pluginLogs: !!this.pluginRuntime,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
-        pluginThemes: true,
+        pluginThemes: !!this.pluginRuntime,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -2308,7 +2308,9 @@ export class PaseoWebSocketServer {
       this.recordInboundMessageType(message.type);
 
       if (message.type === "ping") {
-        this.applicationSocketLease.claim(ws);
+        // Plugin IPC is owned by the worker lifecycle and cannot reattach after a
+        // close. A network lease would permanently detach it after system sleep.
+        if (!this.pluginSocketIds.has(ws)) this.applicationSocketLease.claim(ws);
         this.sendToClient(ws, { type: "pong" });
         return;
       }

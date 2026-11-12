@@ -113,6 +113,15 @@ it("projects the daemon-owned active turn identity", () => {
   });
 });
 
+it("retains sandbox authority in live, serialized and cold projections", () => {
+  const sandbox = { root: "/tmp/qq-files" };
+  const agent = createManagedAgent({ provider: "omp", config: { provider: "omp", sandbox } });
+  const record = toStoredAgentRecord(agent);
+  expect(toAgentPayload(agent).sandbox).toEqual(sandbox);
+  expect(record.config?.sandbox).toEqual(sandbox);
+  expect(buildStoredAgentPayload(record, ["omp"]).sandbox).toEqual(sandbox);
+});
+
 it.each(["initializing", "running"] as const)(
   "does not restore a saved %s state as a live runtime",
   (lifecycle) => {

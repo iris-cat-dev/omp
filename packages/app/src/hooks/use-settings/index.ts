@@ -10,7 +10,7 @@ import {
   useDesktopSettings,
 } from "@/desktop/settings/desktop-settings";
 import { isElectronRuntime } from "@/desktop/host";
-import { importLegacyWallpaper } from "@/wallpaper/desktop-client";
+import { migrateLegacyWallpaperPlugin } from "@/desktop/plugins/local-plugins";
 import {
   APP_SETTINGS_KEY,
   APP_SETTINGS_QUERY_KEY,
@@ -101,7 +101,7 @@ const productionDeps: SettingsDeps = {
     loadDesktopSettings,
     migrateLegacyDesktopSettings,
   },
-  wallpaper: { importLegacy: importLegacyWallpaper },
+  wallpaper: { migrateLegacy: migrateLegacyWallpaperPlugin },
 };
 
 export interface UseAppSettingsReturn {
@@ -136,10 +136,6 @@ export function useAppSettings(): UseAppSettingsReturn {
     async (updates: Partial<AppSettings>) => {
       try {
         await saveAppSettings({ queryClient, updates });
-        if (updates.wallpaperSource === "file" || updates.wallpaperEnabled === true) {
-          // Retry a deferred/failed local migration through the same authoritative load path.
-          await queryClient.invalidateQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
-        }
       } catch (err) {
         console.error("[AppSettings] Failed to save settings:", err);
         throw err;

@@ -7,6 +7,8 @@ import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ar: TranslationResources = {
+  plugins: en.plugins,
+  nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ar,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ar,
@@ -2100,6 +2102,7 @@ export const ar: TranslationResources = {
       connections: "اتصالات المضيف",
       chatBehavior: "سلوك الدردشة",
       appearance: "مظهر",
+      plugins: "الإضافات",
       editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",

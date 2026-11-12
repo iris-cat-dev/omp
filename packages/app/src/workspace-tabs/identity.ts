@@ -154,6 +154,7 @@ export function workspaceTabTargetsEqual(
     return (
       left.pluginId === right.pluginId &&
       left.panelId === right.panelId &&
+      (left.owner ?? "daemon") === (right.owner ?? "daemon") &&
       left.context === right.context &&
       (left.context === "workspace" ||
         (right.context === "agent" && left.agentId === right.agentId))
@@ -293,7 +294,7 @@ function buildUnboundWorkspaceTabId(target: WorkspaceTabTarget): string {
     return target.kind;
   }
   if (target.kind === "plugin") {
-    const identity = `${target.pluginId.length}_${target.pluginId}_${target.panelId.length}_${target.panelId}`;
+    const identity = `${target.owner === "desktop" ? "desktop_" : ""}${target.pluginId.length}_${target.pluginId}_${target.panelId.length}_${target.panelId}`;
     return target.context === "workspace"
       ? `plugin_workspace_${identity}`
       : `plugin_agent_${identity}_${target.agentId.length}_${target.agentId}`;
@@ -307,11 +308,12 @@ function normalizePluginTabTarget(
   const pluginId = trimNonEmpty(value.pluginId);
   const panelId = trimNonEmpty(value.panelId);
   if (!pluginId || !panelId) return null;
+  const owner = value.owner === "desktop" ? { owner: "desktop" as const } : {};
   if (value.context === "workspace") {
-    return { kind: "plugin", pluginId, panelId, context: "workspace" };
+    return { kind: "plugin", pluginId, panelId, ...owner, context: "workspace" };
   }
   const agentId = trimNonEmpty(value.agentId);
-  return agentId ? { kind: "plugin", pluginId, panelId, context: "agent", agentId } : null;
+  return agentId ? { kind: "plugin", pluginId, panelId, ...owner, context: "agent", agentId } : null;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {

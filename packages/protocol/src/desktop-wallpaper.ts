@@ -66,6 +66,17 @@ export const WallpaperMigrationSchema = z.strictObject({
   reason: z.string().nullable(),
 });
 export type WallpaperMigration = z.infer<typeof WallpaperMigrationSchema>;
+export const WallpaperMigrationStatusSchema = z.strictObject({ reason: z.string().nullable(), pending: z.boolean() });
+export type WallpaperMigrationStatus = z.infer<typeof WallpaperMigrationStatusSchema>;
+
+export interface WallpaperLegacyPluginInput {
+  enabled: boolean;
+  config: { source: "none" | "file" | "url"; candidateId: string | null; url: string | null; opacity: number };
+  candidateIdProvided: boolean;
+  directory: string | null;
+  path: string | null;
+}
+
 
 export type WallpaperErrorCode =
   | "invalid-request"
@@ -78,7 +89,8 @@ export type WallpaperErrorCode =
   | "storage-error"
   | "dialog-error"
   | "busy"
-  | "unavailable";
+  | "unavailable"
+  | "unauthorized";
 
 export interface WallpaperFileFailure {
   path: string;
@@ -92,12 +104,21 @@ export interface WallpaperPreviewFailure {
   message: string;
 }
 
+export interface WallpaperLeaseScope {
+  installationId: string;
+  generation: number;
+  epoch: string;
+  purpose: "background" | "previews";
+}
+
 export interface WallpaperMediaDescriptor {
   id: string;
   candidateId: string;
   path: string;
   name: string;
   kind: WallpaperMediaKind;
+  scope: WallpaperLeaseScope;
+  uri: string;
 }
 
 export interface WallpaperAddedCandidates {
@@ -120,10 +141,14 @@ export interface WallpaperLegacyResult extends WallpaperMigration {
   library: WallpaperLibrary;
 }
 
-const ContextSchema = z.strictObject({ epoch: z.string().min(1) });
+const BindingSchema = z.strictObject({
+  installationId: z.string().min(1),
+  generation: RevisionSchema,
+});
+const ContextSchema = BindingSchema.extend({ epoch: z.string().min(1) });
 
 export const WallpaperRequestSchemas = {
-  getContext: z.strictObject({}),
+  getContext: BindingSchema,
   getLibrary: ContextSchema,
   importLegacy: ContextSchema.extend({
     directory: z.string().nullable(),

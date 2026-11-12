@@ -36,7 +36,7 @@ The document `color-scheme` follows resolved theme so native selection and form 
 
 ## Wallpaper
 
-In **Settings → Appearance**, enable **Wallpaper**, choose **File**, then **Add files** with the system picker. Ctrl/Shift multi-selection and files from different folders work. Candidates persist across restarts; originals remain where they are.
+Open **Settings → Plugins → Wallpaper**, enable the installation, choose **File**, then **Add files** with the system picker. Configuration remains available while disabled. Ctrl/Shift multi-selection and files from different folders work. Candidates persist across restarts; originals remain where they are.
 
 Media, candidate records, and Desktop selection stay on this computer. Pairing a phone/tablet does not copy them. A Web browser can independently configure URL wallpaper in browser-local settings; that is not Desktop synchronization. For connecting clients see [Remote hosts](../remote-hosts.md) and [Deployment](../deployment.md).
 
@@ -50,7 +50,7 @@ The candidate grid is continuously scrollable and virtualized, not paginated or 
 
 Accepted file extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `mp4`, `m4v`, `webm`, `mov`, `ogv`. Playback depends on the runtime and codec; Desktop does not transcode. **URL** accepts HTTP(S) images/videos and detects type from pathname, including signed video URLs with query strings.
 
-**Windows mini-electron 0.1.28:** its media-player factory is not implemented. Valid MP4 and WebM files fail with “error creating media player” even over HTTP; changing a filename or codec does not repair that missing player. Images remain usable. The current Windows package retains this runtime; video-wallpaper support is deferred.
+**Last verified Windows mini-electron 0.1.28 package:** its media-player factory is not implemented. Valid MP4 and WebM files fail with “error creating media player” even over HTTP; changing a filename or codec does not repair that missing player. Images remain usable. Newer Windows runtime and video-wallpaper support require actual Windows artifact verification.
 
 ### Transparency and loading
 

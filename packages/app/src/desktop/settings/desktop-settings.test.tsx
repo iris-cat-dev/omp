@@ -40,15 +40,7 @@ function Wrapper({ children }: PropsWithChildren) {
 beforeEach(() => {
   vi.resetAllMocks();
   service.desktop = true;
-  service.current = {
-    ...DEFAULT_DESKTOP_SETTINGS,
-    pet: {
-      enabled: true,
-      selectedId: "custom-round-cat",
-      size: "large",
-      position: { x: 14, y: 23 },
-    },
-  };
+  service.current = { ...DEFAULT_DESKTOP_SETTINGS };
   service.listener = null;
   service.resolvePatch = null;
   service.rejectPatch = null;
@@ -60,7 +52,7 @@ beforeEach(() => {
     if (command === "get_desktop_settings") return Promise.resolve(service.current);
     if (command === "patch_desktop_settings") {
       const { promise, resolve, reject } = Promise.withResolvers<DesktopSettings>();
-      service.current = { ...service.current, pet: { ...service.current.pet, ...patch?.pet } };
+      service.current = { ...service.current, notifications: { ...service.current.notifications, ...patch?.notifications } };
       service.resolvePatch = resolve;
       service.rejectPatch = reject;
       return promise;
@@ -116,60 +108,47 @@ describe("desktop browser settings normalization", () => {
   });
 });
 
-describe("native desktop pet settings", () => {
-  it("loads persisted custom selection and patches size without dropping position or existing settings", async () => {
+describe("native desktop settings", () => {
+  it("patches notification sound without dropping other persisted settings", async () => {
     const { result } = renderHook(useDesktopSettings, { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.settings.pet.selectedId).toBe("custom-round-cat");
     let saving: Promise<void> | undefined;
-    act(() => {
-      saving = result.current.updateSettings({ pet: { size: "small" } });
-    });
+    act(() => { saving = result.current.updateSettings({ notifications: { playSound: false } }); });
     await waitFor(() => expect(service.resolvePatch).not.toBeNull());
-    await act(async () => {
-      service.resolvePatch?.(service.current);
-      await saving;
-    });
-    expect(result.current.settings.pet).toEqual({
-      enabled: true,
-      selectedId: "custom-round-cat",
-      size: "small",
-      position: { x: 14, y: 23 },
-    });
-    expect(result.current.settings.notifications).toEqual(DEFAULT_DESKTOP_SETTINGS.notifications);
+    await act(async () => { service.resolvePatch?.(service.current); await saving; });
+    expect(result.current.settings.notifications.playSound).toBe(false);
     expect(result.current.settings.daemon).toEqual(DEFAULT_DESKTOP_SETTINGS.daemon);
   });
 
-  it("reflects right-click Hide and drag events and unsubscribes on unmount", async () => {
+  it("receives native general settings changes independently of plugin execution", async () => {
     const { result, unmount } = renderHook(useDesktopSettings, { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     const native = {
       ...service.current,
-      pet: { ...service.current.pet, enabled: false, position: { x: -200, y: 450 } },
+      notifications: { playSound: false },
     };
     act(() => {
       service.listener?.({ payload: native });
     });
-    await waitFor(() => expect(result.current.settings.pet.enabled).toBe(false));
-    expect(result.current.settings.pet.position).toEqual({ x: -200, y: 450 });
+    await waitFor(() => expect(result.current.settings.notifications.playSound).toBe(false));
     unmount();
     expect(service.unsubscribe).toHaveBeenCalledOnce();
   });
 
   it.each(["success", "failure"] as const)(
-    "keeps newer native Hide/drag state over a late patch %s",
+    "keeps newer native settings over a late patch %s",
     async (outcome) => {
       const { result } = renderHook(useDesktopSettings, { wrapper: Wrapper });
       await waitFor(() => expect(result.current.isLoading).toBe(false));
       let saving: Promise<void> | undefined;
       act(() => {
-        saving = result.current.updateSettings({ pet: { size: "small" } });
+        saving = result.current.updateSettings({ notifications: { playSound: false } });
       });
       await waitFor(() => expect(service.resolvePatch).not.toBeNull());
       const olderPatch = service.current;
       const native = {
         ...olderPatch,
-        pet: { ...olderPatch.pet, enabled: false, position: { x: 400, y: 500 } },
+        notifications: { playSound: true },
       };
       act(() => {
         service.listener?.({ payload: native });
@@ -183,7 +162,7 @@ describe("native desktop pet settings", () => {
           // The failure path is reported by the settings hook and asserted below.
         }
       });
-      await waitFor(() => expect(result.current.settings.pet).toEqual(native.pet));
+      await waitFor(() => expect(result.current.settings.notifications).toEqual(native.notifications));
       if (outcome === "failure") expect(service.report).toHaveBeenCalledOnce();
     },
   );

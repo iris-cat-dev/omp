@@ -25,6 +25,10 @@ export class OmpPluginSession {
 
   handleInboundMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "ompPlugins.management.get.request":
+        return this.reply(msg.requestId, "ompPlugins.management.get.response", () => this.service.getManagement(msg));
+      case "ompPlugins.management.update.request":
+        return this.reply(msg.requestId, "ompPlugins.management.update.response", () => this.service.updateManagement(msg));
       case "ompPlugins.list.request": {
         const requestId = msg.requestId;
         return this.reply(
@@ -121,7 +125,7 @@ export class OmpPluginSession {
         payload: { requestId, ...payload },
       } as SessionOutboundMessage);
     } catch (error) {
-      this.logger.warn({ err: error, responseType }, "ompPlugins operation failed");
+      this.logger.warn({ responseType }, "ompPlugins operation failed");
       this.emitFn({
         type: "rpc_error",
         payload: {

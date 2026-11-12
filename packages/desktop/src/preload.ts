@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { DesktopPetActivity, DesktopPetActivityResult } from "./pets/types.js";
+import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
+import type { WallpaperLegacyPluginInput } from "@omp-desktop/protocol/desktop-wallpaper";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
@@ -8,6 +9,8 @@ import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback"
 // window.paseoDesktop undefined (the 0.1.108 regression, #2103).
 
 type EventHandler = (payload: unknown) => void;
+let pluginDocumentBinding: Promise<{ documentEpoch: number }> | undefined;
+const bindPluginDocument = () => pluginDocumentBinding ??= ipcRenderer.invoke("paseo:plugins:bind");
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
@@ -23,10 +26,31 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         agentId: string;
       } | null>,
   },
-  pet: {
-    startupReady: () => ipcRenderer.invoke("paseo:pet:startup-ready") as Promise<void>,
-    publishActivity: (activity: DesktopPetActivity): Promise<DesktopPetActivityResult> =>
-      ipcRenderer.invoke("paseo:pet:publishActivity", activity),
+  plugins: {
+    startupReady: () => ipcRenderer.invoke("paseo:plugins:startup-ready") as Promise<void>,
+    getSnapshot: () => ipcRenderer.invoke("paseo:plugins:get") as Promise<LocalPluginSnapshot>,
+    patch: (input: LocalPluginPatch) => ipcRenderer.invoke("paseo:plugins:patch", input) as Promise<LocalPluginSnapshot>,
+    migrateLegacy: (input: { wallpaper?: WallpaperLegacyPluginInput }) => ipcRenderer.invoke("paseo:plugins:migrate", input) as Promise<LocalPluginSnapshot>,
+    selectBackground: (input: { provider: { installationId: string; extensionId: string } | null; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:selectBackground", input) as Promise<LocalPluginSnapshot>,
+    reload: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:reload", input) as Promise<LocalPluginSnapshot>,
+    remove: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:remove", input) as Promise<LocalPluginSnapshot>,
+    reinstall: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:reinstall", input) as Promise<LocalPluginSnapshot>,
+    clearData: (input: { installationId: string; expectedRevision: number }) => ipcRenderer.invoke("paseo:plugins:clearData", input) as Promise<LocalPluginSnapshot>,
+    inspectDirectory: (input: { directory: string }) => ipcRenderer.invoke("paseo:plugins:inspectDirectory", input) as Promise<LocalPluginDirectoryInspection>,
+    installDirectory: (input: LocalPluginDirectoryInstall) => ipcRenderer.invoke("paseo:plugins:installDirectory", input) as Promise<LocalPluginSnapshot>,
+    getLogs: (input: { installationId: string }) => ipcRenderer.invoke("paseo:plugins:getLogs", input) as Promise<LocalPluginLogEntry[]>,
+    publish: async (input: { installationId: string; generation: number; clientActivationId: string; method: string; input?: unknown }) => {
+      const { documentEpoch } = await bindPluginDocument();
+      return ipcRenderer.invoke("paseo:plugins:invoke", { ...input, documentEpoch });
+    },
+    openClientScope: async (input: { installationId: string; generation: number; clientActivationId: string; mode: "manage" | "active" }) => {
+      const { documentEpoch } = await bindPluginDocument();
+      await ipcRenderer.invoke("paseo:plugins:openClientScope", { ...input, documentEpoch });
+    },
+    releaseClientScope: async (input: { installationId: string; generation: number; clientActivationId: string }) => {
+      const { documentEpoch } = await bindPluginDocument();
+      await ipcRenderer.invoke("paseo:plugins:releaseClientScope", { ...input, documentEpoch });
+    },
   },
   monitor: {
     open: () => ipcRenderer.invoke("paseo:monitor:open") as Promise<void>,

@@ -17,6 +17,7 @@ import { MenuHeader } from "@/components/headers/menu-header";
 import { Switch } from "@/components/ui/switch";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useAppSettings } from "@/hooks/use-settings";
+import { usePluginBackgroundState } from "@/plugins/background";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   useIsCompactFormFactor,
@@ -304,11 +305,12 @@ export function OpenProjectScreen() {
   const openImportedProject = useOpenProject(importServerId);
   const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
   const {
-    settings: { homeAnimationsEnabled: storedHomeAnimationsEnabled, wallpaperEnabled },
+    settings: { homeAnimationsEnabled: storedHomeAnimationsEnabled },
     isLoading: areSettingsLoading,
     updateSettings,
   } = useAppSettings();
-  const showHomeEffects = !areSettingsLoading && !wallpaperEnabled;
+  const background = usePluginBackgroundState();
+  const showHomeEffects = !areSettingsLoading && background.status !== "loading" && background.status !== "ready";
   const homeAnimationsEnabled = showHomeEffects && storedHomeAnimationsEnabled;
   // The poster, its scanlines and the brand glows are drawn for a dark canvas. Light schemes keep
   // Cursor Light's flat canvas and an ink mark instead.

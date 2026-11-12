@@ -294,5 +294,9 @@ if (
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
+    // Match electron-builder's CLI: dependency exit handlers can reset the status.
+    process.on("exit", () => {
+      process.exitCode = 1;
+    });
   });
 }

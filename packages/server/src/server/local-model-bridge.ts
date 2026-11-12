@@ -222,9 +222,11 @@ export class LocalModelBridge {
       return;
     }
     const prefix = `${LOCAL_MODEL_PROVIDER}/`;
-    const modelId = parsed.data.modelId.startsWith(prefix)
-      ? parsed.data.modelId.slice(prefix.length)
-      : "";
+    const modelId = owner.modelIds.has(parsed.data.modelId)
+      ? parsed.data.modelId
+      : parsed.data.modelId.startsWith(prefix)
+        ? parsed.data.modelId.slice(prefix.length)
+        : "";
     if (!owner.modelIds.has(modelId)) {
       this.fail(response, "Local model is not available", 400);
       return;

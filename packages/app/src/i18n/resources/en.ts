@@ -5,8 +5,11 @@ import { backgroundProcesses } from "./background-processes";
 import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 import { visualFeedback } from "./visual-feedback";
+import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
 
 export const en = {
+  plugins: unifiedPluginSettings.en,
+  nativePlugin: { details: nativePluginDetails.en },
   providerUsage: providerUsage.en,
   backgroundProcesses: backgroundProcesses.en,
   schedules: schedules.en,
@@ -2317,6 +2320,7 @@ export const en = {
       connections: "Host connections",
       chatBehavior: "Chat behavior",
       appearance: "Appearance",
+      plugins: "Plugins",
       editor: "Editor",
       shortcuts: "Shortcuts",
       integrations: "Integrations",

@@ -102,7 +102,7 @@ import {
 import { HostUsagePage } from "@/screens/settings/host-usage-page";
 import { HostMemoryPage } from "@/screens/settings/omp-memory-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
-import { OmpPluginsPage } from "@/screens/settings/omp-plugins-page";
+import { PluginsPage } from "@/screens/settings/plugins-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -143,6 +143,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "chat-behavior", labelKey: "settings.sections.chatBehavior", icon: MessageSquare },
   { id: "connections", labelKey: "settings.sections.connections", icon: Network },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
+  { id: "plugins", labelKey: "settings.sections.plugins", icon: Puzzle },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
   {
@@ -178,11 +179,6 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "image-generation", labelKey: "settings.imageGeneration.title", icon: Image },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
-  {
-    id: "omp-plugins",
-    labelKey: "settings.hostSections.ompPlugins",
-    icon: Puzzle,
-  },
 ];
 
 function renderHostSettingsContent(
@@ -204,8 +200,8 @@ function renderHostSettingsContent(
       return <HostProvidersPage serverId={view.serverId} />;
     case "image-generation":
       return <HostImageGenerationPage serverId={view.serverId} />;
-    case "omp-plugins":
-      return <OmpPluginsPage serverId={view.serverId} />;
+    case "plugins":
+      return <PluginsPage serverId={view.serverId} />;
     case "usage":
       return <HostUsagePage serverId={view.serverId} />;
     case "terminals":
@@ -1213,6 +1209,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           );
         case "appearance":
           return <AppearanceSection />;
+        case "plugins":
+          return <PluginsPage serverId={activeHostServerId ?? undefined} />;
         case "editor":
           return isWeb ? <EditorSection /> : null;
         case "shortcuts":

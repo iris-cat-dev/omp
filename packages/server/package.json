@@ -51,7 +51,7 @@
     "dev": "cross-env PASEO_NODE_ENV=development node --import tsx scripts/dev-runner.ts",
     "dev:tsx": "cross-env PASEO_NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' scripts/dev-runner.ts",
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "npm run build:lib && npm run build:scripts",
+    "build": "npm --prefix ../.. run build:server-deps && npm run build:lib && npm run build:scripts",
     "build:clean": "npm run clean && npm run build",
     "build:lib": "tsc -p tsconfig.server.json --incremental false && node scripts/build-omp-catalog-preload.mjs && node -e \"const fs=require('node:fs'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.copyFileSync('src/server/agent/providers/omp/stats-worker.mjs','dist/server/server/agent/providers/omp/stats-worker.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true});\"",
     "build:scripts": "tsc -p tsconfig.scripts.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs'); fs.copyFileSync('scripts/github-git-askpass.mjs','dist/scripts/github-git-askpass.mjs'); fs.copyFileSync('scripts/github-git-askpass.cmd','dist/scripts/github-git-askpass.cmd'); if(process.platform!=='win32')fs.chmodSync('dist/scripts/github-git-askpass.mjs',0o700);\"",
@@ -65,6 +65,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@babel/parser": "^7.28.5",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@napi-rs/keyring": "^1.3.0",
@@ -73,6 +74,8 @@
     "@octokit/rest": "^22.0.1",
     "@omp-desktop/client": "0.6.1",
     "@omp-desktop/highlight": "0.6.1",
+    "@omp-desktop/plugin": "0.6.1",
+    "@omp-desktop/plugin-qqbot": "1.0.0",
     "@omp-desktop/protocol": "0.6.1",
     "@omp-desktop/relay": "0.6.1",
     "@vscode/ripgrep": "^1.18.0",
@@ -80,6 +83,7 @@
     "ajv": "^8.20.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
+    "esbuild": "0.28.2",
     "express": "^4.18.2",
     "fast-deep-equal": "^3.1.3",
     "lru-cache": "^11.5.1",
@@ -112,7 +116,6 @@
     "@vitest/ui": "^4.1.6",
     "ai": "5.0.78",
     "cross-env": "^10.1.0",
-    "esbuild": "0.28.2",
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
     "vitest": "^4.1.6"

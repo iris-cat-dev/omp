@@ -72,6 +72,20 @@ test("only the attached owner can update ownership or complete incremental nativ
   expect(h.events.filter((value) => value.type === "cancel")).toHaveLength(0);
 });
 
+test("accepts exact original sandbox provider identities without changing ordinary local requests", async () => {
+  const h = await setup();
+  const responsePromise = fetch(`${h.config.baseUrl}/v1/pi/stream`, {
+    method: "POST",
+    headers: h.headers,
+    body: JSON.stringify({ ...body, modelId: "openai/native/model" }),
+  });
+  const event = await h.requested;
+  expect(event.body.modelId).toBe("openai/native/model");
+  h.bridge.receive("owner", event.requestId, { type: "headers", status: 200, contentType: "text/event-stream" });
+  h.bridge.receive("owner", event.requestId, { type: "end" });
+  expect((await responsePromise).status).toBe(200);
+});
+
 test("source detach terminates inference without retry and keeps local mode enabled until its owner disables it", async () => {
   const h = await setup();
   const responsePromise = fetch(`${h.config.baseUrl}/v1/pi/stream`, {
@@ -141,7 +155,6 @@ test("only authenticated no-Origin catalog and exact native model requests are a
   const catalog = await fetch(`${h.config.baseUrl}/models`, { headers: h.headers });
   expect(await catalog.json()).toEqual(models);
   for (const modelId of [
-    "openai/native/model",
     "desktop-local/openai/other",
     "https://upstream.invalid/model",
   ]) {

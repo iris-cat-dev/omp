@@ -45,8 +45,10 @@ import { isNative } from "@/constants/platform";
 import type { ContributedThemeOption as PluginThemeOption } from "@/appearance/provider";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
-import { WallpaperSection } from "./wallpaper-section";
-import { DesktopPetSection } from "@/desktop/pets/section";
+import { Button } from "@/components/ui/button";
+import { router } from "expo-router";
+import { buildPluginSettingsRoute } from "@/utils/host-routes";
+import { useHosts } from "@/runtime/host-runtime";
 
 // ---------------------------------------------------------------------------
 // Theme-reactive leaf icons (withUnistyles + uniProps color mapping — no
@@ -143,13 +145,16 @@ interface PluginThemeMenuItemProps {
 }
 
 function PluginThemeMenuItem({ option, selected, onSelect }: PluginThemeMenuItemProps) {
+  const { t } = useTranslation();
+  const hosts = useHosts();
+  const sourceLabel = option.owner === "desktop" ? t("plugins.environment.native-desktop") : `${t("plugins.daemon")} · ${hosts.find((host) => host.serverId === option.serverId)?.label ?? option.serverId}`;
   const handleSelect = useCallback(() => {
     onSelect(option);
   }, [onSelect, option]);
   const leading = useMemo(() => <ThemeSwatch color={option.swatch} />, [option.swatch]);
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
-      {option.name}
+      {`${option.name} · ${sourceLabel}`}
     </DropdownMenuItem>
   );
 }
@@ -179,6 +184,7 @@ function ThemeRow({
     <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.appearance.theme.title")}</Text>
+        {value === PLUGIN_THEME_PREFERENCE && !selectedPluginTheme ? <Text style={settingsStyles.rowHint}>{t("plugins.selectedSourceUnavailable")}</Text> : null}
       </View>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -195,7 +201,7 @@ function ThemeRow({
           <Text style={styles.triggerText}>{selectedLabel}</Text>
           <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="bottom" align="end" width={200}>
+        <DropdownMenuContent side="bottom" align="end" width={320}>
           {THEME_OPTIONS.map((option, index) => {
             const previousOption = THEME_OPTIONS[index - 1];
             return (
@@ -214,9 +220,9 @@ function ThemeRow({
           {pluginThemes.length > 0 ? <DropdownMenuSeparator /> : null}
           {pluginThemes.map((option) => (
             <PluginThemeMenuItem
-              key={option.id}
+              key={JSON.stringify([option.owner, option.serverId, option.id])}
               option={option}
-              selected={selectedPluginTheme?.id === option.id}
+              selected={selectedPluginTheme?.id === option.id && selectedPluginTheme.serverId === option.serverId && selectedPluginTheme.owner === option.owner}
               onSelect={onSelectPluginTheme}
             />
           ))}
@@ -407,10 +413,11 @@ export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
   const {
-    options: pluginThemes,
+    sources: pluginThemes,
     selected: selectedPluginTheme,
     select: selectPluginTheme,
   } = useContributedThemes();
+  const [themeSelectionError, setThemeSelectionError] = useState<string | null>(null);
   const showInterfaceFontFamilyRow = !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
@@ -441,7 +448,8 @@ export function AppearanceSection() {
 
   const handlePluginThemeChange = useCallback(
     (option: PluginThemeOption) => {
-      selectPluginTheme(option);
+      setThemeSelectionError(null);
+      void selectPluginTheme(option).catch((error: unknown) => setThemeSelectionError(error instanceof Error ? error.message : String(error)));
     },
     [selectPluginTheme],
   );
@@ -554,6 +562,7 @@ export function AppearanceSection() {
             onChange={handleThemeChange}
             onSelectPluginTheme={handlePluginThemeChange}
           />
+          {themeSelectionError ? <View style={settingsStyles.row}><Text accessibilityRole="alert" style={settingsStyles.rowError}>{themeSelectionError}</Text></View> : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
@@ -609,8 +618,12 @@ export function AppearanceSection() {
           />
         </View>
       </SettingsSection>
-      <WallpaperSection />
-      <DesktopPetSection />
+      <SettingsSection title={t("settings.sections.plugins")}>
+        <View style={[settingsStyles.card, settingsStyles.row]}>
+          <Button variant="outline" onPress={() => router.push(buildPluginSettingsRoute({ pluginId: "wallpaper" }))}>{t("plugins.names.wallpaper")}</Button>
+          <Button variant="outline" onPress={() => router.push(buildPluginSettingsRoute({ pluginId: "desktop-pet" }))}>{t("plugins.names.desktop-pet")}</Button>
+        </View>
+      </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>
         <View style={settingsStyles.card}>
           <SyntaxRow value={settings.syntaxTheme} onChange={handleSyntaxThemeChange} />

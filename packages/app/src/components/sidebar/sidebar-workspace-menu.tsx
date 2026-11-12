@@ -65,6 +65,7 @@ import {
   WORKSPACE_CONVERSATIONS_PAGE_ID,
 } from "@/components/sidebar/workspace-conversations-menu";
 
+import { PluginMenuItems } from "@/plugins/menus";
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -346,6 +347,7 @@ function SidebarWorkspaceMenuItems({
           {t("workspaceLabels.title")}
         </DropdownMenuSubTrigger>
       ) : null}
+      {serverId && workspaceId ? <PluginMenuItems position="workspace" hostId={serverId} workspaceId={workspaceId} surface={surface === "context" ? "context" : "dropdown"} /> : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}

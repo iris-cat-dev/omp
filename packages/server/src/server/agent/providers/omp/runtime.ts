@@ -4,6 +4,7 @@ import type {
 } from "@omp-desktop/protocol/background-processes";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
+import type { AgentSandbox } from "@omp-desktop/protocol/messages";
 import type {
   OmpAbortAndRestoreQueueResult,
   OmpApprovalMode,
@@ -32,6 +33,7 @@ import type {
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
@@ -54,6 +56,7 @@ export interface OmpRuntimeRetirement {
 
 export interface OmpStartSessionInput {
   cwd: string;
+  sandbox?: AgentSandbox;
   signal?: AbortSignal;
   onActivity?: (stage: "prepareMs" | "startMs", elapsedMs: number) => void;
   /** Transfers retirement ownership before readiness/protocol negotiation can fail. */
@@ -116,6 +119,7 @@ export interface OmpRuntimeSession {
     model: { provider: string; id: string },
   ): Promise<OmpFastModeResult>;
   getMessages(): Promise<OmpAgentMessage[]>;
+  appendSessionAnnotation(customType: string, data: unknown): Promise<string>;
   getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getSubagentMessages(selector: OmpSubagentMessagesSelector): Promise<OmpSubagentMessagesResult>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
@@ -132,6 +136,7 @@ export interface OmpRuntimeSession {
   setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]>;
   sendHostToolResult(result: OmpRpcHostToolResult): void;
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;
+  sendPluginPromptResult?(id:string,contributions:PluginAgentPromptSelection[],error?:string):void;
   branch(entryId: string): Promise<{ text: string }>;
   getBranchMessages(): Promise<OmpBranchMessage[]>;
   activeBranchEntryId?: string;

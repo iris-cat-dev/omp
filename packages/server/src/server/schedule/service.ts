@@ -859,6 +859,7 @@ export class ScheduleService {
       await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
         replaceRunning: true,
         activeTurnBehavior: "steer",
+        runOptions: {sourceKind:"service",clientMessageId:randomUUID()},
       });
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
@@ -925,7 +926,7 @@ export class ScheduleService {
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
-      const result = await this.agentManager.runAgent(agent.id, schedule.prompt);
+      const result = await this.agentManager.runAgent(agent.id, schedule.prompt,{sourceKind:"service",clientMessageId:randomUUID()});
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
       });

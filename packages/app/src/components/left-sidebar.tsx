@@ -50,6 +50,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
+import { PluginSidebarItems } from "@/plugins/sidebar-items";
 import {
   formatOmpAccountIdentity,
   formatOmpAccountSelectionLabel,
@@ -1685,6 +1686,7 @@ function MobileSidebar({
             testID="sidebar-schedules"
             variant="compact"
           />
+          <PluginSidebarItems onNavigate={closeSidebar} />
         </View>
         <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
           <Pressable
@@ -1897,6 +1899,7 @@ function DesktopSidebar({
             testID="sidebar-schedules"
             variant="compact"
           />
+          <PluginSidebarItems />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (

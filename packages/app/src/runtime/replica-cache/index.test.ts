@@ -9,6 +9,7 @@ import {
   useSessionStore,
 } from "@/stores/session-store";
 import { createUserMessage, reduceStreamUpdate, type StreamItem } from "@/types/stream";
+import { processTimelineResponse } from "@/timeline/session-stream-reducers";
 import { ReplicaCache, type ReplicaCacheStorage } from ".";
 
 const SERVER_ID = "cached-host";
@@ -707,7 +708,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual([
       "agentId",
       "hasOlder",
@@ -875,22 +876,31 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects and clears version 5 cache data before overwriting it on flush", async () => {
+  it.each([5, 6])("rejects and clears version %s coverage before overwriting it on flush", async (version) => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@omp-desktop:replica-cache",
       JSON.stringify({
-        version: 5,
+        version,
         hosts: [
           {
             serverId: SERVER_ID,
             agents: [],
             workspaces: [],
+            projects: [],
             emptyProjects: [],
             timeline: {
               agentId: "agent-1",
-              items: [],
-              cursor: { epoch: "poisoned", startSeq: 1, endSeq: 100 },
+              items: [{
+                id: "local-snapshot",
+                kind: "user_message",
+                clientMessageId: "local-snapshot",
+                rewindStatus: "unavailable",
+                text: "/ui-attachment-save durable-ui-snapshot",
+                timestamp: "2026-11-10T11:00:00.000Z",
+                timelineCursor: { epoch: "persisted-omp:agent-1", seq: 1 },
+              }],
+              range: { epoch: "persisted-omp:agent-1", startSeq: 1, endSeq: 1, contentVersion: 0 },
               hasOlder: false,
             },
           },
@@ -906,8 +916,73 @@ describe("ReplicaCache", () => {
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@omp-desktop:replica-cache") ?? "null")).toEqual({
-      version: 6,
+      version: 7,
       hosts: [],
+    });
+
+    // Rejection removes the stale authoritative range, so the normal canonical
+    // consumer must apply the complete native row instead of discarding it.
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    const attachment = {
+      type: "text" as const,
+      mimeType: "text/plain" as const,
+      title: "Persistent external text",
+      text: "Full external resource snapshot\nSecond line survives source removal.\nSearch: durable-query-20261110",
+      externalResource: {
+        provider: "ui-smoke/external",
+        providerLabel: "External snapshot demo",
+        resourceType: "document",
+        id: "resource",
+        identifier: "DEMO-42",
+        title: "Persistent external text",
+        url: "https://example.com/resource/42",
+      },
+    };
+    const hydrated = processTimelineResponse({
+      payload: {
+        agentId: "agent-1",
+        direction: "tail",
+        projection: "projected",
+        reset: false,
+        epoch: "persisted-omp:agent-1",
+        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        contentVersion: 0,
+        entries: [{
+          provider: "omp",
+          item: {
+            type: "user_message",
+            clientMessageId: "local-snapshot",
+            rewindStatus: "unavailable",
+            text: "/ui-attachment-save durable-ui-snapshot",
+            attachments: [attachment],
+          },
+          timestamp: "2026-11-10T11:00:00.000Z",
+          seqStart: 1,
+          seqEnd: 1,
+          sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+          collapsed: [],
+        }],
+        hasOlder: false,
+        hasNewer: false,
+        error: null,
+      },
+      currentTail: session?.agentStreamTail.get("agent-1") ?? [],
+      currentHead: session?.agentStreamHead.get("agent-1") ?? [],
+      currentCursor: session?.agentTimelineCursor.get("agent-1"),
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      sendingClientMessageIds: [],
+    });
+    expect(hydrated.commit).toBe("apply");
+    expect(hydrated.tail).toHaveLength(1);
+    expect(hydrated.tail[0]).toMatchObject({
+      kind: "user_message",
+      text: "/ui-attachment-save durable-ui-snapshot",
+      attachments: [attachment],
     });
   });
 });

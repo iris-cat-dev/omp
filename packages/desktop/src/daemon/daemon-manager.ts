@@ -50,7 +50,7 @@ import { wallpaperMediaRegistry } from "../wallpaper/media-registry.js";
 import { createWallpaperCommandHandler } from "../wallpaper/commands.js";
 import { isWallpaperCommand } from "@omp-desktop/protocol/desktop-wallpaper";
 import { getMainWindows } from "../window/main-windows.js";
-import { getPetLibrary } from "../pets/library.js";
+import { createLocalPluginCommandHandlers, requireLocalPluginCommandDocument } from "../plugins/local-runtime-electron.js";
 import { DESKTOP_DISTRIBUTION_IDENTITY } from "../distribution.js";
 const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
@@ -613,17 +613,7 @@ export function createDaemonCommandHandlers({
       settingsStore: getDesktopSettingsStore(),
       launchAtLoginController,
     }),
-    list_desktop_pets: () => getPetLibrary().list(),
-    import_desktop_pet: (args) => {
-      if (typeof args?.directory !== "string")
-        throw new TypeError("import_desktop_pet requires a package directory.");
-      return getPetLibrary().importDirectory(args.directory);
-    },
-    prepare_desktop_pet_creation: (args) => {
-      if (args?.description !== undefined && typeof args.description !== "string")
-        throw new TypeError("Pet creation description must be text.");
-      return getPetLibrary().prepareCreation(args?.description);
-    },
+    ...createLocalPluginCommandHandlers(),
     desktop_get_runtime_info: () => ({
       appVersion: resolveDesktopAppVersion(),
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
@@ -714,14 +704,7 @@ export function registerDaemonManager(deps: { prepareForAppUpdate: () => Promise
       }
       return handleWallpaperCommand(event, wallpaperCommand, args);
     }
-    if (
-      (command === "list_desktop_pets" ||
-        command === "import_desktop_pet" ||
-        command === "prepare_desktop_pet_creation") &&
-      !getMainWindows().some((window) => window.webContents === event.sender)
-    ) {
-      throw new Error("Pet library commands require a registered main app window.");
-    }
+    if (Object.hasOwn(createLocalPluginCommandHandlers(), command)) requireLocalPluginCommandDocument(event);
     if (command === "garbage_collect_attachment_files") {
       const ownerId = event.sender.id;
       const ownerSession = event.sender.session;

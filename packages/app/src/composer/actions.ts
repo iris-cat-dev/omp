@@ -406,6 +406,10 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
     input.setLightboxMetadata(input.attachment.metadata);
     return;
   }
+  if (input.attachment.kind === "external_text") {
+    input.openExternalUrl(input.attachment.externalResource.url);
+    return;
+  }
   if (
     input.attachment.kind === "file" ||
     input.attachment.kind === "directory" ||

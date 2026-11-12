@@ -66,6 +66,7 @@ export function addModelVisibleStructuredContent(result: PaseoToolResult): Paseo
 export function serializePaseoToolInputParameters(
   tool: PaseoToolDefinition,
 ): Record<string, unknown> {
+  if(tool.inputJsonSchema)return tool.inputJsonSchema;
   const schema = normalizeObjectSchema(
     tool.inputSchema as AnySchema | ZodRawShapeCompat | undefined,
   );

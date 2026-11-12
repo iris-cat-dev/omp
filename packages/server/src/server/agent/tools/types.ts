@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 export interface PaseoToolExecutionContext {
   signal?: AbortSignal;
@@ -15,6 +16,7 @@ export interface PaseoToolConfig {
   title?: string;
   description?: string;
   inputSchema?: z.ZodRawShape | z.ZodType;
+  inputJsonSchema?: Record<string,unknown>;
   outputSchema?: z.ZodRawShape;
 }
 
@@ -32,6 +34,7 @@ export interface PaseoToolCatalog {
     input: unknown,
     context?: PaseoToolExecutionContext,
   ): Promise<PaseoToolResult>;
+  pluginPrompt?():Promise<PluginAgentPromptSelection[]>;
 }
 
 export interface PaseoToolRuntimeContext {

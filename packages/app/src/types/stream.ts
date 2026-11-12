@@ -329,6 +329,9 @@ function produceUserMessage(
     images:
       presentation.images ??
       (presentationPolicy === "incoming" ? existing.images : incoming.images),
+    attachments:
+      presentation.attachments ??
+      (presentationPolicy === "incoming" ? existing.attachments : incoming.attachments),
   });
   if (userMessagesEqual(existing, merged)) {
     return { items, index, message: existing, matched: true };
@@ -1033,9 +1036,10 @@ function appendUserMessage(
   workingStartedAt?: Date,
   images?: Array<{ data: string; mimeType: string }>,
   rewindStatus?: AgentUserMessageRewindStatus,
+  attachments?: AgentAttachment[],
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent && !images?.length) {
+  if (!hasContent && !images?.length && !attachments?.length) {
     return state;
   }
 
@@ -1052,6 +1056,7 @@ function appendUserMessage(
     text: chunk,
     timestamp,
     images: timelineImagesToAttachments(images, id, timestamp),
+    attachments,
   });
   return upsertUserMessage(state, nextItem);
 }
@@ -1738,6 +1743,7 @@ function reduceTimelineEvent(
           item.workingStartedAt ? new Date(item.workingStartedAt) : undefined,
           item.images,
           item.rewindStatus,
+          item.attachments,
         ),
       );
     case "assistant_message":
@@ -2203,7 +2209,10 @@ function applyCanonicalUserMessageEvent(params: {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
   const normalized = normalizeChunk(event.item.text);
-  const hasContent = normalized.hasContent || Boolean(event.item.images?.length);
+  const hasContent =
+    normalized.hasContent ||
+    Boolean(event.item.images?.length) ||
+    Boolean(event.item.attachments?.length);
   const id =
     event.item.messageId ??
     createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp);
@@ -2221,6 +2230,7 @@ function applyCanonicalUserMessageEvent(params: {
     text: normalized.chunk,
     timestamp,
     images: timelineImagesToAttachments(event.item.images, id, timestamp),
+    attachments: event.item.attachments,
   });
   const updatesExistingPosition =
     timelineCursor !== undefined &&

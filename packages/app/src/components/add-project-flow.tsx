@@ -37,7 +37,7 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { setCssColorAlpha } from "@/wallpaper/color";
+import { setCssColorAlpha } from "@/appearance/color"
 import {
   applyAvailableAddProjectHosts,
   backAddProjectPage,

@@ -1468,6 +1468,31 @@ describe("OMP CLI runtime", () => {
     },
   );
 
+  test("awaits owned source cleanup once across process exit and repeated session close", async () => {
+    const child = createOmpChild();
+    const cleanupStarted = Promise.withResolvers<void>();
+    const releaseCleanup = Promise.withResolvers<void>();
+    const cleanup = vi.fn(async () => {
+      cleanupStarted.resolve();
+      await releaseCleanup.promise;
+    });
+    const session = await startOmpRpcSession({
+      launch: { cwd: tmpdir(), argv: [process.execPath] },
+      logger: pino({ level: "silent" }),
+      spawnProcess: () => child,
+      cleanup,
+    });
+    let closed = false;
+    const closing = session.close().then(() => { closed = true; });
+    await cleanupStarted.promise;
+    expect(closed).toBe(false);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    releaseCleanup.resolve();
+    await closing;
+    await session.close();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
   test("negotiates RPC protocol v2 when OMP advertises it", async () => {
     const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
     const commands: Record<string, unknown>[] = [];

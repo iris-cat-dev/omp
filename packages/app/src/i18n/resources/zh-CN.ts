@@ -7,8 +7,11 @@ import { backgroundProcesses } from "./background-processes";
 import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 import { visualFeedback } from "./visual-feedback";
+import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
 
 export const zhCN: TranslationResources = {
+  plugins: unifiedPluginSettings["zh-CN"],
+  nativePlugin: { details: nativePluginDetails["zh-CN"] },
   providerUsage: providerUsage["zh-CN"],
   backgroundProcesses: backgroundProcesses["zh-CN"],
   schedules: schedules["zh-CN"],
@@ -2277,6 +2280,7 @@ export const zhCN: TranslationResources = {
       connections: "主机连接",
       chatBehavior: "聊天行为",
       appearance: "外观",
+      plugins: "插件",
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",

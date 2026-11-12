@@ -26,6 +26,10 @@ const patchedPackages = [
     patchPrefix: "app-builder-lib+",
   },
   {
+    nodeModulesPath: "node_modules/@tencent-connect/qqbot-nodejs",
+    patchPrefix: "@tencent-connect+qqbot-nodejs+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-markdown-display",
     patchPrefix: "react-native-markdown-display+",
   },

@@ -1,0 +1,1 @@
+{"name":"@example/package-counter","version":"1.0.0","type":"module","ompDesktop":{"apiVersion":1,"id":"package-counter","owner":"daemon","entries":{"client":"./client.mjs","service":"./service.mjs"},"capabilities":[]}}

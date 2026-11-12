@@ -1,3 +1,4 @@
+import { mapOmpGeneratedImages } from "./tool-call-mapper.js";
 import { createHash } from "node:crypto";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
@@ -329,6 +330,7 @@ export class OmpHistoryMapper {
         isError: Boolean(message.isError),
         detail,
         intent: tracked.intent,
+        generatedMetadata: mapOmpGeneratedImages(tracked, result, message.isError ? "failed" : "completed"),
         errorText: extractTextFromToolResult(result) ?? "Tool call failed",
       }),
     };
@@ -395,7 +397,9 @@ function toToolResultTimelineItem(input: {
   detail: ToolCallDetail;
   errorText: string;
   intent?: string;
+  generatedMetadata?: { generatedImagesSource?: "omp-sandbox-image"; generatedImages?: Array<{ path: string; mimeType: string; name?: string }> };
 }): AgentTimelineItem {
+  const generatedMetadata = input.generatedMetadata?.generatedImagesSource === "omp-sandbox-image" && input.generatedMetadata.generatedImages?.length ? input.generatedMetadata : undefined;
   if (input.isError) {
     return {
       type: "tool_call",
@@ -413,7 +417,9 @@ function toToolResultTimelineItem(input: {
     name: input.name,
     status: "completed",
     detail: input.detail,
-    ...(input.intent ? { metadata: { intent: input.intent } } : {}),
+    ...(input.intent || generatedMetadata
+      ? { metadata: { ...(input.intent ? { intent: input.intent } : {}), ...generatedMetadata } }
+      : {}),
     error: null,
   };
 }

@@ -66,6 +66,24 @@ test("absolute symlinked CLI paths still validate builds and emit release output
   }
 });
 
+test("reports packaging failures even when dependency exit handlers reset the status", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "omp-packaging-exit-"));
+  try {
+    const preload = path.join(directory, "reset-exit.cjs");
+    writeFileSync(preload, 'process.on("exit", () => { process.exitCode = 0; });\n');
+    const result = spawnSync(process.execPath, [scriptPath, "--with-bundled-plugins"], {
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}` },
+      timeout: 20_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("obsolete OMP executable host");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 describe("packaging runtime compatibility", () => {
   test.each([
     {

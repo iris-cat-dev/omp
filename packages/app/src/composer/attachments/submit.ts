@@ -45,6 +45,10 @@ export function splitComposerAttachmentsForSubmit(
       images.push(attachment.metadata);
       continue;
     }
+    if (attachment.kind === "external_text") {
+      agentAttachments.push({ type: "text", mimeType: "text/plain", title: attachment.title, text: attachment.text, externalResource: attachment.externalResource });
+      continue;
+    }
 
     if (attachment.kind === "visual_feedback") {
       const originalImageNumber = attachment.image

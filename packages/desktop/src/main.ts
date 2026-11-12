@@ -40,9 +40,8 @@ import {
   setupDefaultContextMenu,
   setupDragDropPrevention,
 } from "./window/window-manager.js";
-import { wallpaperMediaRegistry } from "./wallpaper/media-registry.js";
 import { registerWallpaperWindow } from "./wallpaper/commands.js";
-import { createWallpaperMediaResponse } from "./wallpaper/media-response.js";
+import { handleWallpaperProtocolRequest } from "./wallpaper/media-protocol.js";
 import { BackgroundModeController } from "./window/background-mode.js";
 import { CloseChoiceRequestBroker } from "./window/close-choice-request.js";
 import {
@@ -101,10 +100,7 @@ import {
   beginMainWindowShutdown,
   markMainWindowLoading,
 } from "./window/main-windows.js";
-import { DesktopPetController } from "./pets/controller.js";
-import { PET_HTML } from "./pets/html.js";
-import { getPetLibrary } from "./pets/library.js";
-import { tryRunPetCreationCli } from "./pets/creation-cli.js";
+import { getLocalPluginRuntime, setupBuiltinLocalPlugins, runBuiltinPluginInstallCli, handleBuiltinPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
 import { OmpMonitorController } from "./monitor/controller.js";
 import { MONITOR_HTML } from "./monitor/html.js";
 import { MONITOR_PERF_CARD_HTML } from "./monitor/perf-card-html.js";
@@ -117,7 +113,6 @@ const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const isPetCreationCli = process.argv.includes("--desktop-pet-install");
 const agentNavigationInbox = new AgentNavigationInbox();
 const closeChoiceRequests = new CloseChoiceRequestBroker();
-let petController: DesktopPetController | null = null;
 let monitorController: OmpMonitorController | null = null;
 let ownsDesktopInstance = false;
 let mainWindowsQuitting = false;
@@ -257,14 +252,6 @@ ipcMain.handle("paseo:window:content-ready", async (event) => {
     }
     throw error;
   }
-});
-ipcMain.handle("paseo:pet:startup-ready", async (event) => {
-  if (!isMainWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) {
-    throw new Error("Startup readiness requires a main application window");
-  }
-  await bootstrapComplete;
-  if (!isMainWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) return;
-  await petController?.start();
 });
 ipcMain.handle("paseo:window:closeChoiceReady", (event) => {
   return closeChoiceRequests.getPending(event.sender.id);
@@ -460,9 +447,9 @@ async function createWindow(
   const webContentsId = mainWindow.webContents.id;
   let initialDocumentVersion: number | undefined;
   let captureInitialNavigation = false;
-  mainWindow.webContents.once("destroyed", () => petController?.clearActivity(webContentsId));
+  mainWindow.webContents.once("destroyed", () => releaseLocalPluginDocument(webContentsId));
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    petController?.clearActivity(webContentsId);
+    releaseLocalPluginDocument(webContentsId);
     if (!presentedMainWindows.has(mainWindow)) {
       failInitialWindowPresentation(mainWindow, new Error(`Renderer exited: ${details.reason}`));
       return;
@@ -485,7 +472,7 @@ async function createWindow(
         captureInitialNavigation = false;
       }
       agentNavigationInbox.windowLoading(webContentsId);
-      petController?.clearActivity(webContentsId);
+      releaseLocalPluginDocument(webContentsId);
     }
   });
   mainWindow.on("closed", () => {
@@ -782,7 +769,8 @@ async function bootstrap(): Promise<void> {
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, async (request) => {
-    const { hostname, pathname, search, hash } = new URL(request.url);
+    const url = new URL(request.url);
+    const { hostname, pathname, search, hash } = url;
     const decodedPath = decodeURIComponent(pathname);
     if (hostname === "monitor") {
       let html: string;
@@ -793,21 +781,11 @@ async function bootstrap(): Promise<void> {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     }
-    if (decodedPath === "/desktop-pet") {
-      return new Response(PET_HTML, {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      });
-    }
 
-    if (decodedPath === "/wallpaper-media") {
-      return createWallpaperMediaResponse(
-        request,
-        wallpaperMediaRegistry,
-        app.isPackaged ? null : new URL(DEV_SERVER_URL).origin,
-      );
-    }
-    const petResource = await getPetLibrary().handleResource(decodedPath);
-    if (petResource) return petResource;
+    const wallpaperResponse = await handleWallpaperProtocolRequest(request, url, app.isPackaged ? null : new URL(DEV_SERVER_URL).origin);
+    if (wallpaperResponse) return wallpaperResponse;
+    const pluginResource = await handleBuiltinPluginResource(hostname, decodedPath);
+    if (pluginResource) return pluginResource;
 
     // Chromium can occasionally request the exported entrypoint directly.
     // Canonicalize it back to the route URL so Expo Router sees `/`, not `/index.html`.
@@ -851,23 +829,15 @@ async function bootstrap(): Promise<void> {
   registerScreenshotHandler();
   monitorController = new OmpMonitorController();
   monitorController.initialize();
-  petController = new DesktopPetController({
-    openApp: async () => {
-      await bootstrapComplete;
-      await focusOrCreateWindow();
-    },
-    openTask: async (task) => {
-      await bootstrapComplete;
-      focusExistingWindowOnAgent({ serverId: task.serverId, agentId: task.agentId });
-    },
-  });
   try {
-    await petController.initialize();
+    await setupBuiltinLocalPlugins({
+      startupBarrier: bootstrapComplete,
+      openApp: async () => { await bootstrapComplete; await focusOrCreateWindow(); },
+      openAgent: async (target) => { await bootstrapComplete; focusExistingWindowOnAgent(target); },
+    });
   } catch (error) {
-    // A damaged persisted library must remain untouched, not prevent the UI from opening.
-    petController.dispose();
-    petController = null;
-    log.error("[desktop-settings] Companion unavailable; opening the main window", error);
+    // Persistent errors remain visible through plugin management; the app stays usable.
+    log.error("[desktop-plugins] Local plugin startup failed", error);
   }
 
   // In-app "Open in new window": opens a window that lands on the given project
@@ -909,7 +879,7 @@ async function bootstrap(): Promise<void> {
 }
 
 void (async () => {
-  if (await tryRunPetCreationCli()) return;
+  if (await runBuiltinPluginInstallCli()) return;
   await runDesktopStartup({
     hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
     runCliPassthroughIfRequested,
@@ -934,7 +904,7 @@ async function prepareDesktopToQuit(): Promise<void> {
   rendererLossRecoveryController.beginShutdown();
   beginMainWindowShutdown();
   backgroundModeController.markAppQuitting();
-  petController?.beginShutdown();
+  await getLocalPluginRuntime().dispose();
 }
 
 // The headless pet installer owns neither the GUI nor its managed daemon.

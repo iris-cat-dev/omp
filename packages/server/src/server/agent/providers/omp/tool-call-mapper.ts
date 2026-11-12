@@ -45,6 +45,28 @@ export function mapOmpToolDetail(
   return mapOmpCoreToolDetail(toolCall, result);
 }
 
+export function mapOmpPresentedFiles(toolCall:OmpTrackedToolCall,result:OmpToolResult,status:string):Array<{path:string;mimeType?:string;name:string}>{
+  const dispatch=resolveXdevToolCall(toolCall,result);
+  const actualTool=dispatch?.toolCall??toolCall;const actualResult=dispatch?.result??result;
+  if(status!=="completed"||actualTool.toolName!=="present_image")return [];
+  const details=resultDetails(actualResult);const filePath=firstString(details?.filePath);
+  if(firstString(details?.status)!=="published"||!filePath)return [];
+  return [{path:filePath,mimeType:firstString(details?.mimeType),name:filePath.split(/[\\/]/).at(-1)??filePath}];
+}
+
+/** Only the successful sandbox wrapper emits this durable artifact contract. */
+export function mapOmpGeneratedImages(toolCall: OmpTrackedToolCall, result: OmpToolResult, status: string): { generatedImagesSource?: "omp-sandbox-image"; generatedImages?: Array<{ path: string; mimeType: string; name?: string }> } {
+  if (status !== "completed" || toolCall.toolName !== "generate_image" || (result && typeof result === "object" && result.isError)) return {};
+  const details = resultDetails(result);
+  if (details?.generatedImagesSource !== "omp-sandbox-image" || !Array.isArray(details.generatedImages) || !details.generatedImages.length) return {};
+  const generatedImages: Array<{ path: string; mimeType: string; name?: string }> = [];
+  for (const image of details.generatedImages) {
+    if (!isRecord(image) || typeof image.path !== "string" || !/^\.qqbot-media\/generated\/[a-f0-9-]+\.(png|jpg|webp|gif)$/.test(image.path) || typeof image.mimeType !== "string" || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(image.mimeType)) return {};
+    generatedImages.push({ path: image.path, mimeType: image.mimeType, ...(typeof image.name === "string" ? { name: image.name } : {}) });
+  }
+  return { generatedImagesSource: "omp-sandbox-image", generatedImages };
+}
+
 function mapOmpImageGenerationDetail(
   args: unknown,
   result: OmpToolResult,
@@ -91,6 +113,7 @@ function mapOmpImageGenerationDetail(
     ? []
     : persistOmpImageOutputs(details?.images, details?.imagePaths, context?.imageOutputDir);
   const primary = outputs[0];
+  const sandboxImages = mapOmpGeneratedImages({ kind: "unknown", toolName: "generate_image", args }, result, context?.toolCallStatus ?? (failed ? "failed" : result ? "completed" : "running")).generatedImages ?? [];
   const reportedCount =
     typeof details?.imageCount === "number" && Number.isFinite(details.imageCount)
       ? Math.max(0, Math.floor(details.imageCount))
@@ -119,6 +142,8 @@ function mapOmpImageGenerationDetail(
     statusText = resultText ?? "Image generation failed.";
   } else if (pending) {
     statusText = resultText ?? prompt;
+  } else if (sandboxImages.length) {
+    statusText = sandboxImages.map(image => `Saved to ${image.path}`).join("\n");
   } else {
     statusText =
       expectedCount > 0
@@ -129,8 +154,8 @@ function mapOmpImageGenerationDetail(
     type: "plain_text",
     label: failed
       ? "Image generation failed"
-      : primary
-        ? outputs.length > 1
+      : primary || sandboxImages.length
+        ? outputs.length > 1 || sandboxImages.length > 1
           ? "Generated images"
           : "Generated image"
         : pending

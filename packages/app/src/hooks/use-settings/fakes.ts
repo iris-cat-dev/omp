@@ -43,7 +43,6 @@ const DEFAULT_DESKTOP: DesktopSettings = {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
-  pet: { enabled: false, size: "medium", selectedId: "iris", position: null },
 };
 
 export function createFakeDesktopBridge(

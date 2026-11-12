@@ -115,6 +115,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox, ImageLightbox } from "@/components/attachment-lightbox";
+import { ExternalTextAttachmentFrame } from "@/plugins/attachments";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type {
@@ -578,17 +579,12 @@ export const UserMessage = memo(function UserMessage({
             <View style={attachmentPreviewContainerStyle}>
               {attachments.map((attachment, index) => {
                 const content = getAgentAttachmentPillContent(attachment, t);
-                return (
-                  <AttachmentFrame
-                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                  >
-                    <AttachmentLabel
-                      icon={content.icon}
-                      title={content.title}
-                      subtitle={content.subtitle}
-                    />
-                  </AttachmentFrame>
-                );
+                const label = <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />;
+                const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
+                if (attachment.type === "text" && attachment.externalResource) {
+                  return <ExternalTextAttachmentFrame key={key} title={content.title} text={attachment.text} externalResource={attachment.externalResource}>{label}</ExternalTextAttachmentFrame>;
+                }
+                return <AttachmentFrame key={key}>{label}</AttachmentFrame>;
               })}
             </View>
           ) : null}
@@ -634,8 +630,8 @@ interface AssistantTurnFooterProps {
   durationMs?: number;
   /** Compact total tokens for this turn, e.g. "4.6k". Hidden when absent. */
   tokenTotalLabel?: string | null;
-  /** Average output tokens/second across the turn, e.g. "38.2". Hidden when absent. */
-  avgSpeedLabel?: string | null;
+  /** Contributions from the active plugin registry. */
+  metrics?: React.ReactNode;
   onFork?: () => Promise<void> | void;
 }
 
@@ -672,7 +668,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   tokenTotalLabel,
-  avgSpeedLabel,
+  metrics,
   onFork,
 }: AssistantTurnFooterProps) {
   const { t, i18n } = useTranslation();
@@ -721,11 +717,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
           {tokenTotalLabel} {t("agentStream.turnMetadata.tokens")}
         </Text>
       ) : null}
-      {avgSpeedLabel ? (
-        <Text style={assistantTurnFooterStylesheet.metadataLabel} testID="turn-avg-speed">
-          {t("agentStream.turnMetadata.tokensPerSecond", { speed: avgSpeedLabel })}
-        </Text>
-      ) : null}
+      {metrics}
     </View>
   );
 });

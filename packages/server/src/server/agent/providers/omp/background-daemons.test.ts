@@ -9,6 +9,7 @@ import pino from "pino";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { OmpAgentClient, OmpAgentSession } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
+import type { OmpRuntimeSession } from "./runtime.js";
 
 let root: string;
 let sdkRoot: string;
@@ -184,6 +185,39 @@ describe("OMP passive daemon inspection", () => {
         terminalId: null,
       },
     ]);
+  });
+
+  test.each([false, true])("sandbox=%s preserves native bridge errors or stops only retained owned daemons", async sandbox => {
+    snapshot.owner = "desktop:current-agent";
+    await persist();
+    const foreign = { ...snapshot, id: "foreign-id", name: "foreign", owner: "desktop:other-agent" };
+    await broker((request, socket) => {
+      socket.end(JSON.stringify({ id: request.id, ok: true, result: { op: "list", daemons: [snapshot, foreign] } }) + "\n");
+    });
+    adapter.dispose();
+    adapter = new OmpBackgroundDaemons({ cwd: root, env, resolveBrokerEndpoint: brokerEndpoint, stopDaemon: async (_name, id) => {
+      if (id !== "daemon-id") throw new Error("Cannot stop a foreign daemon");
+      snapshot.state = "exited";
+      await persist();
+    } });
+    const fake = await new FakeOmp().startSession({ cwd: root });
+    const runtime: OmpRuntimeSession = fake;
+    runtime.listBackgroundJobs = async () => { throw new Error("jobs extension unavailable"); };
+    runtime.stopAllBackgroundJobs = async () => { throw new Error("jobs extension unavailable"); };
+    const session = new OmpAgentSession({ runtimeSession: runtime, initialState: fake.state,
+      config: { provider: "omp", cwd: root, ...(sandbox ? { sandbox: { root } } : {}) },
+      logger: pino({ level: "silent" }), backgroundDaemons: adapter, backgroundOwnerId: "desktop:current-agent",
+    });
+    try {
+      if (!sandbox) {
+        await expect(session.stopAllBackgroundProcesses()).rejects.toThrow("jobs extension unavailable");
+        expect(snapshot.state).toBe("ready");
+        return;
+      }
+      expect(await session.listBackgroundProcesses()).toMatchObject([{ id: "daemon-id", status: "ready" }]);
+      expect(await session.stopAllBackgroundProcesses()).toBe(1);
+      expect(await session.listBackgroundProcesses()).toMatchObject([{ id: "daemon-id", status: "exited" }]);
+    } finally { await session.close(); }
   });
 
   test("rewind retains the Desktop owner, fences unload and rejects another agent's output", async () => {

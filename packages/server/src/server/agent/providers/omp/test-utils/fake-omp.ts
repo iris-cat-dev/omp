@@ -167,6 +167,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly steerUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly followUpUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
+  readonly sessionAnnotations: Array<{ customType: string; data: unknown }> = [];
+  annotationError: Error | null = null;
+  annotationCalls = 0;
+  annotationBarrier: Promise<void> | null = null;
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentMessageRequests: OmpSubagentMessagesSelector[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
@@ -229,9 +233,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private readonly hostToolResultWaiters: Array<(result: OmpRpcHostToolResult) => void> = [];
   private readonly promptWaiters: Array<() => void> = [];
   private readonly subagentMessageResults = new Map<string, OmpSubagentMessagesResult[]>();
-  private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
-  private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
-    null;
+  private nextHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
+  private activeHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
   private releaseLogin: (() => void) | null = null;
 
   constructor(launch: OmpRuntimeLaunch) {
@@ -291,11 +294,17 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (this.nextHeldPrompt || this.activeHeldPrompt) {
       throw new Error("FakeOmp already has a held prompt");
     }
-    let reject!: (error: Error) => void;
-    const promise = new Promise<void>((_resolve, rejectPromise) => {
-      reject = rejectPromise;
-    });
-    this.nextHeldPrompt = { promise, reject };
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    this.nextHeldPrompt = { promise, resolve, reject };
+  }
+
+  async releaseHeldPrompt(): Promise<void> {
+    const heldPrompt = this.activeHeldPrompt ?? this.nextHeldPrompt;
+    if (!heldPrompt) {
+      throw new Error("FakeOmp has no held prompt");
+    }
+    heldPrompt.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
   async failHeldPrompt(error: Error): Promise<void> {
@@ -377,6 +386,14 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   async getMessages(): Promise<OmpAgentMessage[]> {
     return this.messages;
+  }
+
+  async appendSessionAnnotation(customType: string, data: unknown): Promise<string> {
+    this.annotationCalls += 1;
+    await this.annotationBarrier;
+    if (this.annotationError) throw this.annotationError;
+    this.sessionAnnotations.push({ customType, data });
+    return `annotation-${this.sessionAnnotations.length}`;
   }
 
   async getAvailableModels(_timeoutMs?: number | null): Promise<OmpModel[]> {

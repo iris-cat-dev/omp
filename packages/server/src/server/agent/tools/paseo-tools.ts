@@ -2,6 +2,7 @@ import { z } from "zod";
 import { registerAgentTerminal } from "../../../terminal/background-processes.js";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
+import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
@@ -139,6 +140,8 @@ export interface PaseoToolHostDependencies {
    */
   callerAgentId?: string;
   logger: Logger;
+  pluginAgentTools?: (agentId:string)=>PaseoToolDefinition[];
+  pluginAgentPrompt?: (agentId:string)=>Promise<PluginAgentPromptSelection[]>;
 }
 
 function parseTimestamp(value: string | null | undefined): number {
@@ -680,6 +683,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const toCatalog = (): PaseoToolCatalog => ({
     tools,
+    pluginPrompt: callerAgentId&&options.pluginAgentPrompt ? ()=>options.pluginAgentPrompt!(callerAgentId) : undefined,
     getTool(name: string): PaseoToolDefinition | undefined {
       return tools.get(name);
     },
@@ -3408,6 +3412,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
   );
 
+  if(callerAgentId){for(const tool of options.pluginAgentTools?.(callerAgentId)??[]){if(tools.has(tool.name))throw new Error(`Plugin tool conflicts with host tool: ${tool.name}`);tools.set(tool.name,tool);}}
   return toCatalog();
 }
 

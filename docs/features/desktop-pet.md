@@ -12,13 +12,13 @@ Show a local companion, follow task status, and create or import validated custo
 
 ## Enable and interact
 
-**Settings → Appearance → Desktop pet** follows Wallpaper. Enable **Show desktop pet** to show Iris, the built-in pink fluffy kitten, in a separate transparent always-on-top window. It is off by default. Size, library, import/refresh, and creation settings are shown only while enabled, as with Wallpaper. Disabling preserves the creation draft and model selection.
+Open **Settings → Plugins → Desktop pet** to configure Iris, the built-in pink fluffy kitten. Enable the installation to show it in a separate transparent always-on-top window; it is off by default. Size, library, import/refresh, and creation settings remain available while disabled. Disabling preserves configuration, the creation draft, and model selection.
 
 Pet packages, selection, visibility, size, and position are local to this computer. A phone/tablet connected to its daemon receives neither pet assets nor overlay state. The authoring conversation is an ordinary OMP conversation, not an asset-sync channel.
 
 On macOS, enabling does not activate the pet window or steal keyboard focus. It remains visible across Spaces, including fullscreen apps. On launch, an enabled pet waits for initial service startup and restoration of main-interface appearance, saved layout, and navigation. Offline, disabled-daemon-management, and startup-error screens also satisfy readiness. Pre-readiness changes use the latest settings; disabling prevents a startup flash.
 
-- **Drag** the kitten to move it; position, size, selection, and visibility persist locally. Transparent space passes mouse input through to other apps.
+- **Drag** the kitten to move it; dragging starts at 4 logical screen pixels of movement. Position, size, selection, and visibility persist locally. Transparent space passes mouse input through to other apps.
 - **Click** the kitten to pet it, showing a happy pose, soft squash/rebound, and floating hearts. Dragging does not pet it.
 - **Click the status bubble** to restore OMP and open the task needing attention, or simply open the app when nothing is pending.
 - **Right-click** to hide or reset position. Minimizing OMP does not hide it. Quitting detaches only after in-flight activity publications settle, then follows existing desktop/daemon shutdown settings.

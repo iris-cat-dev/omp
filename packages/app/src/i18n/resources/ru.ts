@@ -7,6 +7,8 @@ import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ru: TranslationResources = {
+  plugins: en.plugins,
+  nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ru,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ru,
@@ -2148,6 +2150,7 @@ export const ru: TranslationResources = {
       connections: "Подключения к хостам",
       chatBehavior: "Поведение чата",
       appearance: "Оформление",
+      plugins: "Плагины",
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",

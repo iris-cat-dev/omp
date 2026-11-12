@@ -9,6 +9,7 @@ import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc-types.js";
+import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
 
@@ -2667,6 +2668,34 @@ describe("OMP agent client and session", () => {
     });
     expect(omp.completedTurnCount()).toBe(1);
   });
+
+  test("waits for the real local submission annotation before completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const { promise, resolve: release } = Promise.withResolvers<void>();
+    omp.runtime().annotationBarrier = promise;
+    const attachment = { type: "text" as const, mimeType: "text/plain", title: "External snapshot", text: "Full snapshot\nSurvives source removal", externalResource: { provider: "fixture/source", providerLabel: "Fixture", resourceType: "document", id: "42", identifier: "DOC-42", title: "External snapshot", url: "https://example.com/42" } };
+    let completed = false;
+    const completion = omp.runPromptWithoutTurn([{ type: "text", text: "/local save" }, attachment]).then((result) => { completed = true; return result; });
+    await vi.waitFor(() => expect(omp.runtime().annotationCalls).toBe(1));
+    expect(completed).toBe(false);
+    expect(omp.completedTurnCount()).toBe(0);
+    release();
+    await completion;
+    expect(omp.runtime().sessionAnnotations).toEqual([{ customType: "desktop-local-submission", data: { type: "user_message", text: "/local save", rewindStatus: "unavailable", attachments: [attachment] } }]);
+    expect(omp.timeline()).toContainEqual({ type: "user_message", text: "/local save", rewindStatus: "unavailable", attachments: [attachment] });
+    await omp.close();
+  });
+
+  test("reports local submission persistence failure without a successful completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().annotationError = new Error("Local annotation write failed");
+    await expect(omp.runPromptWithoutTurn("/local save")).rejects.toThrow("Local annotation write failed");
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.runtime().sessionAnnotations).toEqual([]);
+    await omp.close();
+  });
   test("keeps workflow directives out of local-only timeline messages", async () => {
     const scheduler = new ManualNoTurnScheduler();
     const omp = new OmpHarness({ noTurnScheduler: scheduler });
@@ -2748,6 +2777,201 @@ describe("OMP agent client and session", () => {
       finalText: "correlated model turn completed",
     });
     expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  describe("correlated prompt results", () => {
+    const diagnostic = "Trae provider failed after the upstream request was aborted";
+    const terminalEvents = (omp: OmpHarness) => omp.streamEvents().filter(
+      (event) => event.type === "turn_failed" || event.type === "turn_canceled" || event.type === "turn_completed",
+    );
+
+    test.each([
+      ["before", "error", false],
+      ["before", "error", true],
+      ["after", "error", false],
+      ["after", "error", true],
+      ["before", "aborted", false],
+      ["before", "aborted", true],
+      ["after", "aborted", false],
+      ["after", "aborted", true],
+    ] as const)("preserves %s-ack %s with agentInvoked=%s", async (timing, status, agentInvoked) => {
+      const scheduler = new ManualNoTurnScheduler();
+      const omp = new OmpHarness({ noTurnScheduler: scheduler });
+      await omp.start();
+      try {
+        const runtime = omp.runtime();
+        runtime.promptAck = { requestId: "failed-prompt", ...(timing === "before" ? { agentInvoked: false } : {}) };
+        runtime.holdNextPrompt();
+        const promptStarted = runtime.nextPrompt();
+        let settled = false;
+        const completion = omp.run("hi").then(
+          (result) => { settled = true; return { status: "resolved" as const, result }; },
+          (error: Error) => { settled = true; return { status: "rejected" as const, error }; },
+        );
+        await promptStarted;
+        if (timing === "after") await runtime.releaseHeldPrompt();
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "unrelated-prompt", agentInvoked: false, status: "completed",
+        }));
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "failed-prompt", agentInvoked, status,
+          ...(status === "error" ? { error: { message: diagnostic, provider: "trae", retryable: false } } : {}),
+        }));
+        if (timing === "before") {
+          expect(settled).toBe(false);
+          expect(terminalEvents(omp)).toEqual([]);
+          // A duplicate with a conflicting outcome must not overwrite the first same-id result.
+          runtime.emit(OmpRuntimeEventSchema.parse({
+            type: "prompt_result", id: "failed-prompt", agentInvoked: false, status: "completed",
+          }));
+          await runtime.releaseHeldPrompt();
+        }
+        const outcome = await completion;
+        if (status === "error") {
+          expect(outcome.status).toBe("rejected");
+          if (outcome.status === "rejected") expect(outcome.error.message).toBe(diagnostic);
+          expect(terminalEvents(omp)).toEqual([
+            expect.objectContaining({ type: "turn_failed", error: diagnostic, turnId: expect.any(String) }),
+          ]);
+        } else {
+          expect(outcome).toMatchObject({ status: "resolved", result: { finalText: "" } });
+          expect(terminalEvents(omp)).toEqual([
+            expect.objectContaining({ type: "turn_canceled", reason: "provider_aborted", turnId: expect.any(String) }),
+          ]);
+        }
+        const firstTerminal = terminalEvents(omp)[0]!;
+        expect(runtime.sessionAnnotations).toEqual([]);
+
+        // Stale frames while idle and before a different prompt's acknowledgement cannot own it.
+        const stale = OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "failed-prompt", agentInvoked: false, status: "error",
+          error: { message: diagnostic, retryable: false },
+        });
+        runtime.emit(stale);
+        runtime.promptAck = { requestId: "next-prompt" };
+        runtime.holdNextPrompt();
+        const nextStarted = runtime.nextPrompt();
+        const nextCompletion = omp.run("/local success");
+        await nextStarted;
+        runtime.emit(stale);
+        runtime.emit(OmpRuntimeEventSchema.parse({ type: "prompt_result", agentInvoked: false, status: "aborted" }));
+        await runtime.releaseHeldPrompt();
+        runtime.emit(stale);
+        expect(terminalEvents(omp)).toEqual([firstTerminal]);
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "next-prompt", agentInvoked: false, status: "completed",
+        }));
+        scheduler.settle();
+        await expect(nextCompletion).resolves.toMatchObject({ finalText: "" });
+        const terminals = terminalEvents(omp);
+        expect(terminals).toHaveLength(2);
+        expect(terminals[0]).toEqual(firstTerminal);
+        expect(terminals[1]).toMatchObject({ type: "turn_completed" });
+        expect(terminals[1]!.turnId).not.toBe(firstTerminal.turnId);
+      } finally {
+        await omp.close();
+      }
+    });
+
+    test.each(["before", "after"] as const)("completes a successful local-only result %s acknowledgement", async (timing) => {
+      const scheduler = new ManualNoTurnScheduler();
+      const omp = new OmpHarness({ noTurnScheduler: scheduler });
+      await omp.start();
+      try {
+        const runtime = omp.runtime();
+        runtime.promptAck = { requestId: "local-prompt" };
+        runtime.holdNextPrompt();
+        const promptStarted = runtime.nextPrompt();
+        const completion = omp.run("/local success", { clientMessageId: "local-client" });
+        await promptStarted;
+        if (timing === "after") await runtime.releaseHeldPrompt();
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "local-prompt", agentInvoked: false, status: "completed",
+        }));
+        if (timing === "before") await runtime.releaseHeldPrompt();
+        expect(terminalEvents(omp)).toEqual([]);
+        scheduler.settle();
+        await expect(completion).resolves.toMatchObject({
+          finalText: "", timeline: [expect.objectContaining({ type: "user_message", text: "/local success", clientMessageId: "local-client" })],
+        });
+        expect(terminalEvents(omp)).toEqual([expect.objectContaining({ type: "turn_completed" })]);
+        expect(runtime.sessionAnnotations).toEqual([
+          { customType: "desktop-local-submission", data: expect.objectContaining({ type: "user_message", text: "/local success", clientMessageId: "local-client" }) },
+        ]);
+      } finally {
+        await omp.close();
+      }
+    });
+
+    test("failure wins over a pending local-only acknowledgement persistence", async () => {
+      const omp = new OmpHarness();
+      await omp.start();
+      const { promise, resolve } = Promise.withResolvers<void>();
+      try {
+        const runtime = omp.runtime();
+        runtime.annotationBarrier = promise;
+        runtime.promptAck = { requestId: "persisting-prompt", agentInvoked: false };
+        const promptStarted = runtime.nextPrompt();
+        const completion = omp.run("hi");
+        const failed = expect(completion).rejects.toThrow(diagnostic);
+        await promptStarted;
+        await waitForImmediate();
+        await waitForImmediate();
+        expect(runtime.annotationCalls).toBe(1);
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "persisting-prompt", agentInvoked: false, status: "error",
+          error: { message: diagnostic, retryable: false },
+        }));
+        await failed;
+        resolve();
+        await waitForImmediate();
+        expect(terminalEvents(omp)).toEqual([expect.objectContaining({ type: "turn_failed", error: diagnostic })]);
+      } finally {
+        resolve();
+        await omp.close();
+      }
+    });
+
+    test.each(["before", "after"] as const)("keeps model-error continuation ownership with a %s-ack failed result", async (timing) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const omp = new OmpHarness();
+      try {
+        await omp.start({ featureValues: { workflow_mode: "enhanced" } });
+        const runtime = omp.runtime();
+        runtime.promptAck = { requestId: "model-prompt" };
+        runtime.holdNextPrompt();
+        const promptStarted = runtime.nextPrompt();
+        const completion = omp.run("finish the task");
+        await promptStarted;
+        if (timing === "after") await runtime.releaseHeldPrompt();
+        runtime.beginTurn();
+        runtime.acceptPrompt("finish the task", "model-user");
+        runtime.finishTurn({ role: "assistant", content: [], stopReason: "error", errorMessage: diagnostic });
+        const failedResult = OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "model-prompt", agentInvoked: true, status: "error",
+          error: { message: diagnostic, retryable: false },
+        });
+        runtime.emit(failedResult);
+        if (timing === "before") await runtime.releaseHeldPrompt();
+        expect(terminalEvents(omp)).toEqual([]);
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(runtime.followUpRequests).toHaveLength(1);
+        runtime.beginTurn();
+        // A late result for the original prompt cannot terminate the continuation's active run.
+        runtime.emit(failedResult);
+        runtime.emit(OmpRuntimeEventSchema.parse({
+          type: "prompt_result", id: "model-prompt", agentInvoked: true, status: "aborted",
+        }));
+        expect(terminalEvents(omp)).toEqual([]);
+        runtime.streamAssistantText("recovered", "recovered-assistant");
+        runtime.finishTurn({ role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" });
+        await expect(completion).resolves.toMatchObject({ finalText: "recovered" });
+        expect(terminalEvents(omp)).toEqual([expect.objectContaining({ type: "turn_completed" })]);
+      } finally {
+        await omp.close();
+        vi.useRealTimers();
+      }
+    });
   });
 
   test("owns and steers an autonomous OMP turn with one provider identity", async () => {

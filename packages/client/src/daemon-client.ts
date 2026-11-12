@@ -167,6 +167,7 @@ import type {
   OmpPluginMarketplaceInfo,
   OmpPluginDoctorCheck,
 } from "@omp-desktop/protocol/messages";
+import type { DesktopPluginCatalogEntry, DesktopPluginExpectedInstallation } from "@omp-desktop/protocol/desktop-plugins";
 
 import type {
   AgentPermissionRequest,
@@ -1235,6 +1236,9 @@ export class DaemonClient {
   private readonly logClientIdHash: string;
   private readonly logGeneration: number | null;
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
+  private baseTimelineSubscriptions:string[]=[];
+  private readonly leasedTimelineSubscriptions=new Map<string,number>();
+  private timelineSubscriptionUpdates:Promise<void>=Promise.resolve();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
@@ -3357,6 +3361,26 @@ export class DaemonClient {
   }
 
   async setAgentTimelineSubscription(agentIds: string[]): Promise<void> {
+    this.baseTimelineSubscriptions=agentIds;
+    return this.updateTimelineSubscriptions();
+  }
+
+  async acquireAgentTimelineSubscription(agentId:string):Promise<()=>void> {
+    this.leasedTimelineSubscriptions.set(agentId,(this.leasedTimelineSubscriptions.get(agentId)??0)+1);
+    const release=()=>{const count=this.leasedTimelineSubscriptions.get(agentId)??0;if(count<=1)this.leasedTimelineSubscriptions.delete(agentId);else this.leasedTimelineSubscriptions.set(agentId,count-1);void this.updateTimelineSubscriptions().catch(error=>this.config.logger?.warn({err:error},"Timeline unsubscribe failed"));};
+    try{await this.updateTimelineSubscriptions();}catch(error){release();throw error;}
+    let active=true;
+    return()=>{if(active){active=false;release();}};
+  }
+
+  private updateTimelineSubscriptions():Promise<void> {
+    const result=this.timelineSubscriptionUpdates.then(()=>this.sendTimelineSubscriptions());
+    this.timelineSubscriptionUpdates=result.catch(()=>undefined);
+    return result;
+  }
+
+  private async sendTimelineSubscriptions():Promise<void> {
+    const agentIds=[...this.baseTimelineSubscriptions,...this.leasedTimelineSubscriptions.keys()];
     // COMPAT(selectiveAgentTimeline): added in v0.1.106. Old daemons keep their
     // legacy global stream and do not understand this RPC. Remove after
     // 2027-01-12 once the supported daemon floor is >= v0.1.106.
@@ -5637,14 +5661,38 @@ export class DaemonClient {
     });
   }
 
-  async getPluginCatalog(): Promise<Array<{ id: string; clientBundle: string }>> {
+  async getPluginCatalogSnapshot() {
     const requestId = this.createRequestId();
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: { type: "plugin.catalog.get.request", requestId },
-      responseType: "plugin.catalog.get.response",
-    });
-    return payload.plugins;
+    return this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.catalog.get.request",requestId},responseType:"plugin.catalog.get.response"});
+  }
+
+  async getPluginCatalog(): Promise<DesktopPluginCatalogEntry[]> {
+    return (await this.getPluginCatalogSnapshot()).plugins;
+  }
+
+  async getPluginStorage(pluginId:string,generation:number) {
+    const requestId=this.createRequestId();
+    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.storage.get.request",requestId,pluginId,generation},responseType:"plugin.storage.get.response"})).snapshot;
+  }
+  async patchPluginStorage(pluginId:string,patch:Record<string,unknown>,expectedRevision:number,generation:number) {
+    const requestId=this.createRequestId();
+    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.storage.patch.request",requestId,pluginId,patch,expectedRevision,generation},responseType:"plugin.storage.patch.response"})).snapshot;
+  }
+  async setPluginSecret(pluginId:string,key:string,operation:"configured"|"set"|"delete",value:string|undefined,generation:number) {
+    const requestId=this.createRequestId();
+    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.secret.request",requestId,pluginId,key,operation,value,generation},responseType:"plugin.secret.response"})).configured;
+  }
+  async approvePlugin(pluginId:string,approval:{trusted:true;version:string;capabilities:string[]},expectedInstallation:DesktopPluginExpectedInstallation) {
+    const requestId=this.createRequestId();
+    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.approve.request",requestId,pluginId,approval,expectedInstallation},responseType:"plugin.approve.response"})).plugin;
+  }
+  async revokePluginTrust(pluginId:string){
+    const requestId=this.createRequestId();
+    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.trust.revoke.request",requestId,pluginId},responseType:"plugin.trust.revoke.response"})).plugin;
+  }
+  async clearPluginData(pluginId:string) {
+    const requestId=this.createRequestId();
+    await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.data.clear.request",requestId,pluginId},responseType:"plugin.data.clear.response"});
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
@@ -5655,6 +5703,16 @@ export class DaemonClient {
       responseType: "plugin.list.response",
     });
     return payload.plugins;
+  }
+
+  async getOmpPluginManagement(input: Omit<Extract<SessionInboundMessage, { type: "ompPlugins.management.get.request" }>, "type" | "requestId">): Promise<Extract<SessionOutboundMessage, { type: "ompPlugins.management.get.response" }>["payload"]> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({ requestId, message: { type: "ompPlugins.management.get.request", ...input }, responseType: "ompPlugins.management.get.response", timeout: 70 * 1000 });
+  }
+
+  async updateOmpPluginManagement(input: Omit<Extract<SessionInboundMessage, { type: "ompPlugins.management.update.request" }>, "type" | "requestId">): Promise<Extract<SessionOutboundMessage, { type: "ompPlugins.management.update.response" }>["payload"]> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({ requestId, message: { type: "ompPlugins.management.update.request", ...input }, responseType: "ompPlugins.management.update.response", timeout: 130 * 1000 });
   }
 
   async listOmpPlugins(cwd?: string): Promise<{
@@ -5877,17 +5935,17 @@ export class DaemonClient {
     });
   }
 
-  async installDirectoryPlugin(path: string, id?: string): Promise<PluginListItem> {
+  async installDirectoryPlugin(path: string, id?: string, options?: {trusted?:boolean;enabled?:boolean;approval?:{trusted:true;version:string;capabilities:string[]}}): Promise<PluginListItem> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
-      message: { type: "plugin.directory.install.request", requestId, path, ...(id ? { id } : {}) },
+      message: { type: "plugin.directory.install.request", requestId, path, ...(id ? { id } : {}), ...options },
       responseType: "plugin.directory.install.response",
     });
     return payload.plugin;
   }
 
-  async inspectDirectoryPlugin(path: string): Promise<{ id: string }> {
+  async inspectDirectoryPlugin(path: string) {
     const requestId = this.createRequestId();
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -5930,7 +5988,7 @@ export class DaemonClient {
     return payload.plugin;
   }
 
-  async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
+  async invokePluginRpc(pluginId: string, method: string, input: unknown, generation:number): Promise<unknown> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -5940,6 +5998,7 @@ export class DaemonClient {
         pluginId,
         method,
         input,
+        generation,
       },
       responseType: "plugin.rpc.invoke.response",
     });

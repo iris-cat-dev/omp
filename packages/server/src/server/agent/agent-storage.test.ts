@@ -48,6 +48,7 @@ function buildManagedAgentConfig(
     toolPolicy: configOverrides.toolPolicy,
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
+    sandbox: configOverrides.sandbox,
   };
   if (Object.prototype.hasOwnProperty.call(configOverrides, "featureValues")) {
     config.featureValues = configOverrides.featureValues;
@@ -151,6 +152,18 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("persists sandbox grants and restores them through durable resume configuration", async () => {
+    const sandbox = { root: path.join(tmpDir, "qq-files") };
+    const agent = createManagedAgent({ provider: "omp", config: { sandbox } });
+    await storage.applySnapshot(agent);
+    await storage.flush();
+    const restored = await new AgentStorage(storagePath, logger).get(agent.id);
+    if (!restored) throw new Error("Expected persisted sandbox agent");
+    expect(restored.config?.sandbox).toEqual(sandbox);
+    expect(buildConfigOverrides(restored).sandbox).toEqual(sandbox);
+    expect(buildSessionConfig(restored)?.sandbox).toEqual(sandbox);
   });
 
   test("restores retired OMP write approvals as ask rather than granting automatic approval", async () => {

@@ -1504,3 +1504,95 @@ test("OMP provider actions use the native management RPCs", async () => {
 
   await client.close();
 });
+
+test("native plugin facade retains exact marketplace identity, scope and empty features over management RPC", async () => {
+  const { client, ws } = await connectClient();
+  const input = { name: "fixture@exact-market", scope: "project" as const, cwd: "/repo/project", patch: { enabledFeatures: [] } };
+  const pending = client.omp.plugins.updateManagement(input);
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(parseSentFrame(ws.sent.at(-1))).toMatchObject({ type: "session", message: { type: "ompPlugins.management.update.request", ...input } });
+  ws.message(sessionMessage({ type: "ompPlugins.management.update.response", payload: { requestId: request.requestId, management: { name: input.name, scope: input.scope, schema: {}, settings: {}, secretConfigured: { token: true }, enabledFeatures: [], availableFeatures: {}, effectiveFeatures: [], overriddenSettings: [], featuresOverridden: false, secretInput: "unavailable", appliesTo: "new-or-resumed-sessions" } } }));
+  const result = await pending;
+  expect(result.management.enabledFeatures).toEqual([]);
+  expect(result.management.secretConfigured.token).toBe(true);
+  await client.close();
+});
+
+function createObserverScenario() {
+  const agent = createAgent();
+  const driver = new DaemonClient({ url: "ws://daemon.test", clientId: "observer" });
+  const listeners = new Map<string, (message: unknown) => void>();
+  const unsubscribe = vi.fn();
+  const release = vi.fn();
+  vi.spyOn(driver, "on").mockImplementation((event, listener) => {
+    listeners.set(event, listener as (message: unknown) => void);
+    return unsubscribe;
+  });
+  const emit = (contentVersion: number) => listeners.get("agent_stream")?.({
+    type: "agent_stream",
+    payload: {
+      agentId: agent.id, timestamp: agent.updatedAt, epoch: "epoch", seq: 7, contentVersion,
+      event: { type: "timeline", provider: "codex", item: { type: "assistant_message", text: `revision-${contentVersion}` } },
+    },
+  });
+  vi.spyOn(driver, "acquireAgentTimelineSubscription").mockResolvedValue(release);
+  vi.spyOn(driver, "fetchAgentTimeline").mockImplementation(async () => {
+    emit(2);
+    emit(3);
+    return {
+      requestId: "timeline", agentId: agent.id, agent, direction: "tail", projection: "canonical",
+      epoch: "epoch", reset: false, staleCursor: false, gap: false,
+      window: { minSeq: 7, maxSeq: 7, nextSeq: 8 },
+      startCursor: { epoch: "epoch", seq: 7, contentVersion: 2 },
+      endCursor: { epoch: "epoch", seq: 7, contentVersion: 2 },
+      contentVersion: 2, hasOlder: false, hasNewer: false, error: null,
+      entries: [{
+        provider: "codex", item: { type: "assistant_message", text: "revision-2" },
+        timestamp: agent.updatedAt, seqStart: 7, seqEnd: 7,
+        sourceSeqRanges: [{ startSeq: 7, endSeq: 7 }], collapsed: [],
+      }],
+    };
+  });
+  vi.spyOn(driver, "fetchAgent").mockResolvedValue({ requestId: "agent", agent, error: null });
+  return { handle: createPaseoApi(driver).agents.ref(agent), driver, unsubscribe, release, emit };
+}
+
+test("agent observer hydrates before Promise-wrapped live delivery and retains same-row revisions", async () => {
+  vi.useFakeTimers();
+  try {
+    const scenario = createObserverScenario();
+    let hydrated = false;
+    const callback = vi.fn((_event: unknown) => expect(hydrated).toBe(true));
+    const observer = await scenario.handle.observe(callback).then(async value => value).then(value => Promise.resolve(value));
+    expect(callback).not.toHaveBeenCalled();
+    hydrated = true;
+    expect(scenario.driver.fetchAgentTimeline).toHaveBeenCalledWith("agent_sdk", { direction: "tail", limit: 0, projection: "canonical" });
+    await vi.runAllTimersAsync();
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback.mock.calls[0]?.[0]).toMatchObject({ seq: 7, contentVersion: 3 });
+    observer.unsubscribe();
+    observer.unsubscribe();
+    expect(scenario.release).toHaveBeenCalledTimes(1);
+    expect(scenario.unsubscribe).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+test("agent observer disposal cancels the initial live flush", async () => {
+  vi.useFakeTimers();
+  try {
+    const scenario = createObserverScenario();
+    const callback = vi.fn();
+    const observer = await scenario.handle.observe(callback);
+    observer.unsubscribe();
+    scenario.emit(4);
+    await vi.runAllTimersAsync();
+    expect(callback).not.toHaveBeenCalled();
+    expect(scenario.release).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});

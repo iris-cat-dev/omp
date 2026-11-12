@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import * as path from "node:path";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
@@ -84,6 +85,7 @@ import {
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
+import { AgentSandboxSchema } from "@omp-desktop/protocol/messages";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import {
@@ -166,6 +168,7 @@ import type {
   OmpFastModeSelection,
   OmpImageContent,
   OmpModel,
+  OmpPromptResult,
   OmpRuntimeEvent,
   OmpSessionState,
   OmpThinkingLevel,
@@ -186,6 +189,7 @@ import {
   type OmpHistoryInput,
   type OmpHistoryPageInput,
 } from "./history.js";
+import { captureLocalSubmission, LOCAL_SUBMISSION_ANNOTATION } from "./local-submission.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
@@ -197,7 +201,7 @@ import {
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
-import { mapOmpToolDetail } from "./tool-call-mapper.js";
+import { mapOmpToolDetail, mapOmpPresentedFiles, mapOmpGeneratedImages } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
@@ -679,6 +683,7 @@ interface OmpModelReference {
 
 interface OmpPersistenceMetadata {
   cwd?: string;
+  sandbox?: AgentSessionConfig["sandbox"];
   model?: string;
   thinkingOptionId?: string;
   modeId?: string;
@@ -1047,7 +1052,7 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
 
 function convertPromptInput(
   prompt: AgentPromptInput,
-  options: { model: OmpModel | null | undefined },
+  options: { model: OmpModel | null | undefined; sandbox?: AgentSessionConfig["sandbox"] },
 ): OmpPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
@@ -1071,11 +1076,18 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(options.sandbox ? "[Image attachment omitted: selected model does not support images]" : renderTextOnlyImageHint(block));
       }
       continue;
     }
 
+    if (options.sandbox) {
+      if (block.type !== "uploaded_file") throw new Error("Sandbox attachment type denied");
+      const relativePath = path.isAbsolute(block.path) ? path.relative(options.sandbox.root, block.path) : block.path;
+      if (!relativePath || relativePath.startsWith("/") || relativePath.split(/[\\/]/).some(part => part === ".." || !part) || /[:\\\0]/.test(relativePath)) throw new Error("Sandbox attachment path denied");
+      textParts.push(`Uploaded file: ${path.basename(relativePath)}\nPath: ${relativePath}\nMIME: ${block.mimeType}\nSize: ${block.size} bytes`);
+      continue;
+    }
     textParts.push(renderPromptAttachmentAsText(block));
   }
 
@@ -1166,6 +1178,7 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
   }
   return {
     ...(typeof metadata.cwd === "string" ? { cwd: metadata.cwd } : {}),
+    ...(metadata.sandbox !== undefined ? { sandbox: AgentSandboxSchema.parse(metadata.sandbox) } : {}),
     ...(typeof metadata.model === "string" ? { model: metadata.model } : {}),
     ...(typeof metadata.thinkingOptionId === "string"
       ? { thinkingOptionId: metadata.thinkingOptionId }
@@ -1193,7 +1206,10 @@ function buildResumeConfig(
   provider: AgentProvider,
 ): OmpResumeConfig {
   const overrideConfig = overrides ?? {};
-  const cwd = overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
+  const sandbox = metadata.sandbox ?? overrideConfig.sandbox;
+  if (metadata.sandbox && overrideConfig.sandbox && metadata.sandbox.root !== overrideConfig.sandbox.root) throw new Error("Sandbox root changes require a new session");
+  if (metadata.sandbox && overrideConfig.sandbox && ((metadata.sandbox.imageGeneration ?? false) !== (overrideConfig.sandbox.imageGeneration ?? false) || (metadata.sandbox.javascript ?? false) !== (overrideConfig.sandbox.javascript ?? false) || metadata.sandbox.network !== overrideConfig.sandbox.network)) throw new Error("Sandbox capability changes require a new session");
+  const cwd = sandbox?.root ?? overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
   const modeId = overrideConfig.modeId ?? metadata.modeId;
@@ -1206,6 +1222,7 @@ function buildResumeConfig(
       ...overrideConfig,
       provider,
       cwd,
+      sandbox,
       model,
       thinkingOptionId,
       modeId,
@@ -1222,6 +1239,7 @@ function buildResumeStartInput(input: {
 }): OmpStartSessionInput {
   return {
     cwd: input.resumeConfig.cwd,
+    sandbox: input.resumeConfig.config.sandbox,
     proxyPolicy: input.resumeConfig.config.proxyPolicy,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
@@ -1231,7 +1249,7 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
     ...(input.launchMode.extraArgs ? { extraArgs: input.launchMode.extraArgs } : {}),
-    systemPrompt: composeSystemPromptParts(
+    systemPrompt: input.resumeConfig.config.sandbox ? input.resumeConfig.config.systemPrompt : composeSystemPromptParts(
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
       getOmpPlatformSystemPrompt(),
@@ -1917,14 +1935,17 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnHasUserMessage = false;
   private hasConversationUserMessage = false;
   private readonly resumedSession: boolean;
-  private activeNoTurnPromptText: string | null = null;
+  private activeNoTurnPromptItem: Extract<AgentTimelineItem, { type: "user_message" }> | null = null;
+  private activeNoTurnPersistence: Promise<string> | null = null;
+  private activeNoTurnPromptInput: AgentPromptInput | null = null;
   private readonly pendingNoTurnOutputs: Array<{
     turnId: string;
     message: string;
   }> = [];
   private activePromptRequestId: string | null = null;
   private activePromptAgentInvoked: boolean | null = null;
-  private readonly pendingPromptResults = new Map<string, boolean>();
+  private activePromptAwaitingAck = false;
+  private readonly pendingPromptResults = new Map<string, OmpPromptResult>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private pendingModelErrorContinuation: {
     timer: NodeJS.Timeout;
@@ -2148,7 +2169,8 @@ export class OmpAgentSession implements AgentSession {
         ownerId: this.backgroundOwnerId,
         legacyOwnerIds: this.legacyBackgroundOwnerIds,
       }) ?? [],
-      this.runtimeSession.listBackgroundJobs?.() ?? [],
+      // Sandboxed SDK sessions cannot load the jobs extension; retained owned daemons remain visible.
+      this.config.sandbox ? [] : (this.runtimeSession.listBackgroundJobs?.() ?? []),
     ]);
     return [...daemons, ...jobs];
   }
@@ -2208,7 +2230,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async stopAllBackgroundProcesses(): Promise<number> {
-    const jobsStopped = (await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0;
+    const jobsStopped = this.config.sandbox ? 0 : ((await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0);
     const daemons = (await this.listBackgroundProcesses()).filter(
       (process) =>
         process.source === "omp-daemon" &&
@@ -2307,7 +2329,7 @@ export class OmpAgentSession implements AgentSession {
     };
     const nativeCommand = await this.prepareNativeExtensionTurn(prompt, origin, signal);
     if (signal.aborted) return { turnId };
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = convertPromptInput(prompt, { model: this.state.model, sandbox: this.config.sandbox });
     const displayPromptText = payload.text;
     if (nativeCommand !== undefined) payload.text = nativeCommand;
     const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
@@ -2359,69 +2381,58 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
-    this.activeNoTurnPromptText = displayPromptText;
+    this.activeNoTurnPromptInput = prompt;
     this.nativeUsage.startTurn(turnId, Date.now(), this.state.model);
     this.usagePoller.startTurn();
     this.startAutomaticCredentialResolution();
 
+    this.activePromptAwaitingAck = true;
     void (async () => {
       try {
         const ack = await this.runtimeSession.prompt(payload.text, payload.images, {
           clientMessageId,
         });
         if (this.activeTurnId !== turnId) return;
+        this.activePromptAwaitingAck = false;
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
           : undefined;
-        if (ack.requestId) {
-          this.pendingPromptResults.delete(ack.requestId);
-        }
-        this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
-        if (correlatedResult === false) {
-          this.scheduleNoTurnPromptCompletion(turnId);
+        this.pendingPromptResults.clear();
+        this.activePromptAgentInvoked = correlatedResult?.agentInvoked ?? ack.agentInvoked ?? null;
+        if (correlatedResult) {
+          this.applyPromptResult(turnId, correlatedResult);
           return;
         }
-        if (correlatedResult !== true && ack.agentInvoked === false) {
+        if (ack.agentInvoked === false) {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
       } catch (error) {
-        if (this.activeTurnId !== turnId) {
-          return;
-        }
-        if (this.activeInterrupt?.turnId === turnId) return;
-        this.terminalizeActiveWork();
-        this.cancelModelErrorContinuation();
-        this.usagePoller.stopTurn();
-        this.finishNativeUsage(turnId);
-        this.stopAutomaticCredentialResolution();
-        this.activeTurnId = null;
-        this.activeClientMessageId = null;
-        this.activeTurnStarted = false;
-        this.activeTurnHasUserMessage = false;
-        this.activeAssistantMessageId = null;
-        this.activeTurnTerminalAssistantMessage = null;
-        this.clearNoTurnBuffers();
-        if (isOmpRequestAbortError(error)) {
-          this.emit({
-            type: "turn_canceled",
-            provider: this.provider,
-            turnId,
-            reason: toDiagnosticErrorMessage(error),
-          });
-          return;
-        }
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: toDiagnosticErrorMessage(error),
-        });
+        this.failActivePrompt(turnId, error);
       }
     })();
 
     return { turnId };
+  }
+
+  private failActivePrompt(turnId: string, error: unknown, status?: "error" | "aborted"): void {
+    if (this.activeTurnId !== turnId || this.activeInterrupt?.turnId === turnId) return;
+    this.terminalizeActiveWork();
+    this.cancelModelErrorContinuation();
+    this.usagePoller.stopTurn();
+    this.finishNativeUsage(turnId);
+    this.stopAutomaticCredentialResolution();
+    this.activeTurnId = null;
+    this.activeClientMessageId = null;
+    this.activeTurnStarted = false;
+    this.activeTurnHasUserMessage = false;
+    this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
+    this.clearNoTurnBuffers();
+    this.emit((status === "aborted" || (status === undefined && isOmpRequestAbortError(error)))
+      ? { type: "turn_canceled", provider: this.provider, turnId, reason: toDiagnosticErrorMessage(error) }
+      : { type: "turn_failed", provider: this.provider, turnId, error: toDiagnosticErrorMessage(error) });
   }
 
   async steerActiveTurn(
@@ -2439,7 +2450,7 @@ export class OmpAgentSession implements AgentSession {
     if (this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable", reason: "turn_mismatch" };
     }
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = convertPromptInput(prompt, { model: this.state.model, sandbox: this.config.sandbox });
     const displayText = payload.text;
     payload.text = this.withToolIntentLocale(payload.text);
     const submittedMessage = {
@@ -3095,6 +3106,7 @@ export class OmpAgentSession implements AgentSession {
       nativeHandle: this.state.sessionFile,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.config.sandbox ? { sandbox: { ...this.config.sandbox } } : {}),
         backgroundOwnerId: this.backgroundOwnerId,
         ...(this.legacyBackgroundOwnerIds.length > 0
           ? { legacyBackgroundOwnerIds: [...this.legacyBackgroundOwnerIds] }
@@ -3658,7 +3670,7 @@ export class OmpAgentSession implements AgentSession {
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
-          this.logger.debug({ err: error }, "OMP local-only settle wait failed");
+          this.failActivePrompt(turnId, error);
         }
       });
   }
@@ -3679,23 +3691,35 @@ export class OmpAgentSession implements AgentSession {
     ) {
       return;
     }
+    const item = this.activeNoTurnPromptItem ?? (this.activeNoTurnPromptInput !== null
+      ? (this.activeNoTurnPromptItem = captureLocalSubmission(this.activeNoTurnPromptInput, this.activeClientMessageId))
+      : null);
+    if (item && (item.text || item.images?.length || item.attachments?.length)) {
+      this.activeNoTurnPersistence ??= this.runtimeSession.appendSessionAnnotation(LOCAL_SUBMISSION_ANNOTATION, item);
+      await this.activeNoTurnPersistence;
+    }
+    if (this.closed || this.activeTurnId !== turnId || this.activeTurnStarted || this.activePromptAgentInvoked || this.activeTurnHasUserMessage) return;
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
 
   private clearNoTurnBuffers(): void {
     this.cancelNoTurnPromptCompletion();
-    this.activeNoTurnPromptText = null;
+    this.activeNoTurnPromptItem = null;
+    this.activeNoTurnPersistence = null;
+    this.activeNoTurnPromptInput = null;
     this.activePromptRequestId = null;
     this.activePromptAgentInvoked = null;
+    this.activePromptAwaitingAck = false;
+    this.pendingPromptResults.clear();
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
   private emitBufferedNoTurnOutputs(turnId: string): void {
-    const promptText = this.activeNoTurnPromptText;
+    const promptItem = this.activeNoTurnPromptItem;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
-    if (promptText) {
+    if (promptItem && (promptItem.text || promptItem.images?.length || promptItem.attachments?.length)) {
       const submitted = this.activeClientMessageId
         ? this.submittedUserMessages.get(this.activeClientMessageId)
         : undefined;
@@ -3704,12 +3728,7 @@ export class OmpAgentSession implements AgentSession {
         type: "timeline",
         provider: this.provider,
         turnId,
-        item: {
-          type: "user_message",
-          text: promptText,
-          rewindStatus: "unavailable",
-          ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
-        },
+        item: promptItem,
       });
     }
     for (const output of outputs) {
@@ -4093,6 +4112,11 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if(event.type==="desktop_plugin_prompt_request"){
+      if (this.config.sandbox) { this.runtimeSession.sendPluginPromptResult?.(event.id, [], "Sandbox plugin prompts denied"); return true; }
+      void (this.paseoTools?.pluginPrompt?.()??Promise.resolve([])).then(contributions=>this.runtimeSession.sendPluginPromptResult?.(event.id,contributions),error=>this.runtimeSession.sendPluginPromptResult?.(event.id,[],error instanceof Error?error.message:String(error)));
+      return true;
+    }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
     this.updateWorkflowModeFromRuntimeEvent(event);
     if (
@@ -4347,22 +4371,28 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private handlePromptResult(event: OmpRuntimeEvent): void {
-    const requestId = optionalString("id" in event ? event.id : undefined);
-    const agentInvoked =
-      "agentInvoked" in event && typeof event.agentInvoked === "boolean"
-        ? event.agentInvoked
-        : undefined;
-    if (!requestId || agentInvoked === undefined) return;
-    if (requestId === this.activePromptRequestId && this.activeTurnId) {
-      this.activePromptAgentInvoked = agentInvoked;
-      if (agentInvoked === false) {
-        this.scheduleNoTurnPromptCompletion(this.activeTurnId);
-      } else {
-        this.cancelNoTurnPromptCompletion();
-      }
-    } else if (this.activePromptRequestId === null) {
-      this.pendingPromptResults.set(requestId, agentInvoked);
+  private handlePromptResult(event: OmpPromptResult): void {
+    const requestId = optionalString(event.id);
+    if (!requestId || typeof event.agentInvoked !== "boolean" || !this.activeTurnId) return;
+    if (requestId === this.activePromptRequestId) {
+      this.applyPromptResult(this.activeTurnId, event);
+    } else if (this.activePromptAwaitingAck && !this.pendingPromptResults.has(requestId)) {
+      this.pendingPromptResults.set(requestId, event);
+    }
+  }
+
+  private applyPromptResult(turnId: string, result: OmpPromptResult): void {
+    // Model events own terminalization and enhanced-error continuation once a run starts.
+    if (this.activeTurnId !== turnId || this.activeTurnStarted) return;
+    this.activePromptAgentInvoked = result.agentInvoked ?? null;
+    if (result.status === "error") {
+      this.failActivePrompt(turnId, result.error?.message ?? "OMP prompt failed", "error");
+    } else if (result.status === "aborted") {
+      this.failActivePrompt(turnId, "provider_aborted", "aborted");
+    } else if (result.agentInvoked === false) {
+      this.scheduleNoTurnPromptCompletion(turnId);
+    } else {
+      this.cancelNoTurnPromptCompletion();
     }
   }
 
@@ -5189,12 +5219,17 @@ export class OmpAgentSession implements AgentSession {
     if (!detail) {
       return false;
     }
+    const presentedFiles=mapOmpPresentedFiles(toolCall,result,status);
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
       name: resolveToolCallName(toolCall, result),
       detail,
-      ...(toolCall.intent ? { metadata: { intent: toolCall.intent } } : {}),
+      metadata: {
+        ...(toolCall.intent ? {intent:toolCall.intent} : {}),
+        ...(presentedFiles.length ? {presentedFiles,presentedFilesSource:"omp-present-image"} : {}),
+        ...mapOmpGeneratedImages(toolCall, result, status),
+      },
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
@@ -5666,6 +5701,9 @@ export class OmpAgentClient implements AgentClient {
     input: OmpStartSessionInput,
     allowBootstrap = true,
   ): Promise<OmpRuntimeSession> {
+    const runtime = input.sandbox && !(this.runtime instanceof OmpSdkRuntime)
+      ? new OmpSdkRuntime({ logger: this.logger, runtimeSettings: this.runtimeSettings, localModelBridge: this.localModelBridge })
+      : this.runtime;
     const env = this.desktopConfigDir
       ? await prepareOmpProviderEnv({
           configDir: this.desktopConfigDir,
@@ -5674,13 +5712,13 @@ export class OmpAgentClient implements AgentClient {
       : input.env;
     const proxyPolicy = input.proxyPolicy ?? this.defaultProxyPolicy;
     try {
-      return await this.runtime.startSession({ ...input, env, proxyPolicy });
+      return await runtime.startSession({ ...input, env, proxyPolicy });
     } catch (error) {
       if (!allowBootstrap || !isOmpRpcMissingModelError(error)) throw error;
       const injected = await this.ensureRpcBootstrapModel();
       if (!injected) throw error;
       this.logger.debug({}, "Retrying OMP RPC after adding a keyless bootstrap model");
-      return await this.runtime.startSession({ ...input, env, proxyPolicy });
+      return await runtime.startSession({ ...input, env, proxyPolicy });
     }
   }
 
@@ -5745,6 +5783,7 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    if (config.sandbox) config = { ...config, cwd: config.sandbox.root, sandbox: AgentSandboxSchema.parse(config.sandbox) };
     const launchMode = this.resolveLaunchMode(config.modeId);
     const backgroundOwnerId = launchContext?.agentId
       ? `desktop:${launchContext.agentId}`
@@ -5755,6 +5794,7 @@ export class OmpAgentClient implements AgentClient {
     };
     const runtimeSession = await this.startConversationRuntimeSession({
       cwd: config.cwd,
+      sandbox: config.sandbox,
       proxyPolicy: config.proxyPolicy,
       protocolMode: "rpc-ui",
       model: config.model,
@@ -5762,7 +5802,7 @@ export class OmpAgentClient implements AgentClient {
       noSession: config.internal === true,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
-      systemPrompt: composeSystemPromptParts(
+      systemPrompt: config.sandbox ? config.systemPrompt : composeSystemPromptParts(
         config.systemPrompt,
         config.daemonAppendSystemPrompt,
         getOmpPlatformSystemPrompt(),
@@ -5771,7 +5811,7 @@ export class OmpAgentClient implements AgentClient {
       getImageGenerationConfig: launchContext?.getImageGenerationConfig,
     });
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      if (!config.sandbox) await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await runtimeSession.getState();
       const oauthAccounts = this.readOAuthAccounts(launchEnv);
       const automaticCredentialId = await this.resolveAutomaticCredentialId(
@@ -5800,7 +5840,7 @@ export class OmpAgentClient implements AgentClient {
           noTurnScheduler: this.noTurnScheduler,
           automaticCredentialScheduler: this.automaticCredentialScheduler,
           usagePollScheduler: this.usagePollScheduler,
-          paseoTools: launchContext?.paseoTools,
+          paseoTools: config.sandbox ? undefined : launchContext?.paseoTools,
           backgroundDaemons: this.createBackgroundDaemons(config.cwd, launchEnv),
           blobDir: join(
             dirname(
@@ -5878,7 +5918,7 @@ export class OmpAgentClient implements AgentClient {
       }),
     );
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      if (!resumeConfig.config.sandbox) await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await runtimeSession.getState();
       const oauthAccounts = this.readOAuthAccounts(launchEnv);
       const automaticCredentialResolver = (state: OmpSessionState) =>
@@ -5909,7 +5949,7 @@ export class OmpAgentClient implements AgentClient {
           noTurnScheduler: this.noTurnScheduler,
           automaticCredentialScheduler: this.automaticCredentialScheduler,
           usagePollScheduler: this.usagePollScheduler,
-          paseoTools: launchContext?.paseoTools,
+          paseoTools: resumeConfig.config.sandbox ? undefined : launchContext?.paseoTools,
           backgroundDaemons: this.createBackgroundDaemons(resumeConfig.config.cwd, launchEnv),
           blobDir: join(
             dirname(

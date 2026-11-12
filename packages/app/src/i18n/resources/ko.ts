@@ -7,6 +7,8 @@ import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ko: TranslationResources = {
+  plugins: en.plugins,
+  nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ko,
   backgroundProcesses: en.backgroundProcesses,
   schedules: schedules.ko,
@@ -2117,6 +2119,7 @@ export const ko: TranslationResources = {
       connections: "호스트 연결",
       chatBehavior: "채팅 동작",
       appearance: "모양",
+      plugins: "플러그인",
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",

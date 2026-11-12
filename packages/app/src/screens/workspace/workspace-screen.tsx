@@ -33,6 +33,7 @@ import { ChevronDown, PanelRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import { PluginWorkspaceMenu, usePluginTabMenuEntries } from "@/plugins/menus";
 import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
@@ -558,6 +559,7 @@ function MobileWorkspaceTabOption({
     }),
     [t],
   );
+  const pluginEntries = usePluginTabMenuEntries({ hostId: normalizedServerId, workspaceId: normalizedWorkspaceId, target: tab.target });
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
@@ -577,6 +579,7 @@ function MobileWorkspaceTabOption({
     onCloseTabsAfter: onCloseTabsBelow,
     onCloseOtherTabs,
     labels: tabMenuLabels,
+    pluginEntries,
   });
 
   const fallbackLabels = useMemo(
@@ -3638,6 +3641,8 @@ function WorkspaceScreenContent({
   const hasDesktopWindowTitlebar = !isMobile && getIsElectronRuntime();
   const workspaceHeaderActions = useMemo(
     () => (
+      <>
+      <PluginWorkspaceMenu hostId={normalizedServerId} workspaceId={toolWorkspaceId} />
       <WorkspaceHeaderActions
         showPanels={Boolean(toolWorkspaceDirectory)}
         showNewTab={Boolean(persistenceKey)}
@@ -3656,6 +3661,7 @@ function WorkspaceScreenContent({
           align="end"
         />
       </WorkspaceHeaderActions>
+      </>
     ),
     [
       focusedPaneIdOrUndefined,
@@ -3668,6 +3674,7 @@ function WorkspaceScreenContent({
       sidePanelToggleLabel,
       splitPaneDownKeys,
       toolWorkspaceDirectory,
+      toolWorkspaceId,
     ],
   );
   const desktopWorkspaceScriptsButton = useMemo(

@@ -474,6 +474,7 @@ export const SETTINGS_SECTION_SLUGS = [
   "chat-behavior",
   "connections",
   "appearance",
+  "plugins",
   "editor",
   "shortcuts",
   "integrations",
@@ -501,7 +502,6 @@ export const HOST_SECTION_SLUGS = [
   "usage",
   "terminals",
   "plugins",
-  "omp-plugins",
   "host",
 ] as const;
 
@@ -511,6 +511,7 @@ const LEGACY_HOST_SECTION_SLUGS: Record<string, HostSectionSlug> = {
   orchestration: "agents",
   daemon: "host",
   connections: "host",
+  "omp-plugins": "plugins",
 };
 
 export function isHostSectionSlug(value: string): value is HostSectionSlug {
@@ -550,6 +551,13 @@ export function buildSettingsHostSectionRoute(serverId: string, section: HostSec
     throw new Error("buildSettingsHostSectionRoute requires a non-empty serverId");
   }
   return `/settings/hosts/${encodeSegment(normalized)}/${section}` as const;
+}
+
+export function buildPluginSettingsRoute(input?: { pluginId?: string; serverId?: string; owner?: "desktop" | "daemon" }) {
+  const base = input?.serverId
+    ? buildSettingsHostSectionRoute(input.serverId, "plugins")
+    : buildSettingsSectionRoute("plugins");
+  return input?.pluginId ? `${base}?plugin=${encodeURIComponent(input.pluginId)}&owner=${input.owner ?? (input.serverId ? "daemon" : "desktop")}` as const : base;
 }
 
 export function buildProjectsSettingsRoute(serverId: string) {

@@ -6,18 +6,18 @@ import * as path from "node:path";
 import pino from "pino";
 import { afterEach, expect, test } from "vitest";
 import { mergeOmpDesktopRpcBootstrapIntoModelsYaml } from "./agent.js";
-import { startOmpLocalModelGateway, type OmpLocalModelGateway } from "./local-model-gateway.js";
+import { startOmpLocalModelGateway, type OmpLocalModelGatewaySource } from "./local-model-gateway.js";
 import { OmpSdkRuntime } from "./sdk-runtime.js";
 import { ompHistoryRuntimeSettings } from "./test-utils/history-sdk.js";
 
 let root: string | undefined;
-let gateway: OmpLocalModelGateway | undefined;
+let gateway: OmpLocalModelGatewaySource | undefined;
 let upstream: http.Server | undefined;
 
 async function openPluginGateway(
   enabled: boolean,
   lateDiscovery = false,
-): Promise<OmpLocalModelGateway> {
+): Promise<OmpLocalModelGatewaySource> {
   root = await fs.mkdtemp(path.join(tmpdir(), "omp-gateway-plugin-"));
   const plugin = path.join(root, ".omp", "plugins", "node_modules", "gateway-fixture");
   await fs.mkdir(plugin, { recursive: true });
@@ -161,6 +161,13 @@ test.each([
   expect(source.models).toContainEqual(
     expect.objectContaining({ provider: "gateway-fixture", id: "plugin-model" }),
   );
+  const catalogUrl = `${source.launchConfig.baseUrl}/models`;
+  expect((await fetch(catalogUrl)).status).toBe(403);
+  const catalogHeaders = { authorization: `Bearer ${source.launchConfig.token}` };
+  expect((await fetch(catalogUrl, { headers: { ...catalogHeaders, origin: "http://localhost" } })).status).toBe(403);
+  const catalog = await fetch(catalogUrl, { headers: catalogHeaders });
+  expect(await catalog.json()).toEqual(source.models);
+  expect(catalog.headers.get("cache-control")).toBe("no-store");
   const response = await source.request(
     {
       modelId: "gateway-fixture/plugin-model",

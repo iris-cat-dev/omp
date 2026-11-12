@@ -11,6 +11,7 @@ import {
 } from "./sdk-host-protocol.js";
 
 const hostModule = z.object({
+  NODE_RPC_SANDBOX_VERSION: z.number().optional(),
   startNodeRpcHost: z.custom<(options: OmpSdkHostLaunch) => Promise<never>>(
     (value) => typeof value === "function",
     "The selected SDK does not export startNodeRpcHost; rebuild its Node artifacts",
@@ -69,6 +70,12 @@ export async function runOmpSdkHost(): Promise<void> {
   const load = createRequire(import.meta.url);
   load(resolveOmpCodexCatalogPreloadPath());
   const sdk = hostModule.parse(load(installation.rpcEntry));
+  if (launch.sandbox) {
+    const requiredVersion = launch.sandbox.imageGeneration ? 3 : launch.sandbox.javascript || launch.sandbox.network ? 2 : 1;
+    const version = sdk.NODE_RPC_SANDBOX_VERSION;
+    if ((version !== 1 && version !== 2 && version !== 3) || version < requiredVersion)
+      throw new Error(`Selected SDK lacks mandatory sandbox support (NODE_RPC_SANDBOX_VERSION=${requiredVersion}); rebuild or update the SDK`);
+  }
   await sdk.startNodeRpcHost(launch);
 }
 

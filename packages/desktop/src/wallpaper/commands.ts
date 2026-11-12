@@ -25,6 +25,8 @@ import {
   type WallpaperDocumentOwner,
   type WallpaperMediaRegistry,
 } from "./media-registry.js";
+import { authorizeLocalPlugin } from "../plugins/local-runtime-electron.js";
+import { getCommittedWallpaperDocumentIdentity } from "./media-request-authorization.js";
 
 export interface WallpaperCommandDependencies {
   registry: WallpaperMediaRegistry;
@@ -35,6 +37,8 @@ export interface WallpaperCommandDependencies {
     options: OpenDialogOptions,
   ) => Promise<OpenDialogReturnValue>;
   validateFile?: typeof validateWallpaperFile;
+  authorize?: typeof authorizeLocalPlugin;
+  beforeAcquire?: (event: IpcMainInvokeEvent, request: WallpaperRequest<"setBackground" | "setPreviews">, owner: WallpaperDocumentOwner, purpose: "background" | "previews") => number;
 }
 
 export function registerWallpaperWindow(
@@ -42,9 +46,18 @@ export function registerWallpaperWindow(
   registry = wallpaperMediaRegistry,
 ): void {
   const contents = window.webContents;
-  // Initial activation happens only once the first real main document commits.
+  // Revoke before a replacement document can request resources, even if navigation fails.
+  contents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
+    if (isMainFrame && !isSameDocument) dispose();
+  });
   contents.on("did-frame-navigate", (_event, _url, _status, _text, isMainFrame) => {
-    if (isMainFrame) registry.activateOwner(contents);
+    if (!isMainFrame) return;
+    const owner = registry.getOwner(contents);
+    // Preserve a canonical Request's pending binding; its native commit is the same tuple.
+    if (owner?.nativeIdentity) return;
+    const identity = getCommittedWallpaperDocumentIdentity(contents);
+    if (identity) registry.bindNativeDocument(contents, identity);
+    else if (!owner) registry.activateOwner(contents);
   });
   const dispose = () => {
     const owner = registry.getOwner(contents);
@@ -115,6 +128,13 @@ export function createWallpaperCommandHandler(dependencies: WallpaperCommandDepe
         }
         if (!registry.isCurrent(owner))
           throw new WallpaperError("stale-document", "The picker document has changed.");
+        try {
+          (dependencies.authorize ?? authorizeLocalPlugin)({ sender: window.webContents,
+            senderFrame: window.webContents.mainFrame } as IpcMainInvokeEvent,
+            request.installationId, request.generation, "manage", "wallpaper.media", "wallpaper");
+        } catch (error) {
+          throw new WallpaperError("unauthorized", error instanceof Error ? error.message : "Wallpaper capability was revoked.");
+        }
         if (selection.canceled) {
           return {
             library: await store.getWallpaperLibrary(),
@@ -152,9 +172,9 @@ export function createWallpaperCommandHandler(dependencies: WallpaperCommandDepe
     },
     removeCandidates: (request) => store.removeWallpaperCandidates(request.candidateIds),
     setBackground: (request, owner) =>
-      registry.setBackground(owner, request.epoch, request.revision, request.candidateId),
+      registry.setBackground(owner, request.epoch, request.revision, request.candidateId, request),
     setPreviews: (request, owner) =>
-      registry.setPreviews(owner, request.epoch, request.revision, request.candidateIds),
+      registry.setPreviews(owner, request.epoch, request.revision, request.candidateIds, request),
   };
 
   return async function handleWallpaperCommand<K extends WallpaperCommand>(
@@ -169,6 +189,7 @@ export function createWallpaperCommandHandler(dependencies: WallpaperCommandDepe
       !window ||
       event.sender.isDestroyed() ||
       !event.senderFrame ||
+      event.senderFrame.detached ||
       event.senderFrame !== event.sender.mainFrame
     ) {
       return {
@@ -180,14 +201,37 @@ export function createWallpaperCommandHandler(dependencies: WallpaperCommandDepe
     const owner = registry.getOwner(event.sender);
     if (!owner)
       return { ok: false, code: "stale-document", message: "No active wallpaper document." };
+    if (owner.nativeIdentity) {
+      const committed = getCommittedWallpaperDocumentIdentity(event.sender);
+      if (!committed) return { ok: false, code: "unsupported", message: "This runtime does not expose committed native document identity for local wallpaper media." };
+      if (committed.contentsId !== owner.nativeIdentity.contentsId || committed.frameId !== owner.nativeIdentity.frameId ||
+          committed.navigationToken !== owner.nativeIdentity.navigationToken) {
+        return { ok: false, code: "stale-document", message: "The requesting document has not committed the current wallpaper owner." };
+      }
+    }
     const parsed = WallpaperRequestSchemas[command].safeParse(args);
     if (!parsed.success)
       return { ok: false, code: "invalid-request", message: "Invalid wallpaper request." };
     const request = parsed.data as WallpaperRequest<K>;
+    try {
+      const purpose = command === "setBackground" &&
+        (request as WallpaperRequest<"setBackground">).candidateId !== null ? "background" : "manage";
+      (dependencies.authorize ?? authorizeLocalPlugin)(event, request.installationId,
+        request.generation, purpose, "wallpaper.media", "wallpaper");
+    } catch (error) {
+      return { ok: false, code: "unauthorized", message: error instanceof Error ? error.message : "Wallpaper capability was revoked." };
+    }
     if ("epoch" in request && request.epoch !== owner.epoch) {
       return { ok: false, code: "stale-document", message: "The document has changed." };
     }
+    if ((command === "getContext" || command === "setBackground" || command === "setPreviews") && !owner.nativeIdentity) {
+      return { ok: false, code: "unsupported", message: "This runtime does not expose native document identity for local wallpaper media." };
+    }
     try {
+      if ((command === "setBackground" || command === "setPreviews") && dependencies.beforeAcquire) {
+        const mediaRequest = request as WallpaperRequest<"setBackground" | "setPreviews">;
+        mediaRequest.revision = dependencies.beforeAcquire(event, mediaRequest, owner, command === "setBackground" ? "background" : "previews");
+      }
       return { ok: true, data: await handlers[command](request, owner, window) };
     } catch (error) {
       if (error instanceof WallpaperError)

@@ -22,12 +22,14 @@ export type PluginWorkspaceTabTarget =
       kind: "plugin";
       pluginId: string;
       panelId: string;
+      owner?: "desktop" | "daemon";
       context: "workspace";
     }
   | {
       kind: "plugin";
       pluginId: string;
       panelId: string;
+      owner?: "desktop" | "daemon";
       context: "agent";
       agentId: string;
     };

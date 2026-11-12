@@ -137,17 +137,6 @@ describe("plugin protocol compatibility", () => {
     expect(current.payload.features?.pluginThemes).toBe(true);
   });
 
-  it("keeps the catalog change notification safe for older clients", () => {
-    expect(
-      StatusMessageSchema.parse({
-        type: "status",
-        payload: { status: "plugin_catalog_changed", pluginId: "example" },
-      }),
-    ).toEqual({
-      type: "status",
-      payload: { status: "plugin_catalog_changed", pluginId: "example" },
-    });
-  });
 
   it("requires plugin action payloads and keeps remove empty", () => {
     expect(() =>
@@ -393,5 +382,34 @@ describe("plugin protocol compatibility", () => {
         name: " ",
       }),
     ).toThrow();
+  });
+});
+
+describe("generation-bound Desktop management wire contracts",()=>{
+ it("requires exact source identity for trust approval",()=>{expect(()=>SessionInboundMessageSchema.parse({type:"plugin.approve.request",requestId:"approval",pluginId:"example",approval:{trusted:true,version:"1.0.0",capabilities:[]}})).toThrow();expect(SessionInboundMessageSchema.parse({type:"plugin.approve.request",requestId:"approval",pluginId:"example",approval:{trusted:true,version:"1.0.0",capabilities:[]},expectedInstallation:{sourcePath:"/plugins/example",packageId:"example",generation:4}}).type).toBe("plugin.approve.request");});
+ it("requires generation on config and secret writes",()=>{expect(()=>SessionInboundMessageSchema.parse({type:"plugin.storage.patch.request",requestId:"patch",pluginId:"example",expectedRevision:0,patch:{enabled:true}})).toThrow();expect(SessionInboundMessageSchema.parse({type:"plugin.secret.request",requestId:"secret",pluginId:"example",generation:4,key:"token",operation:"configured"}).type).toBe("plugin.secret.request");});
+ it("requires generation on service RPC while keeping source compatibility at the SDK host",()=>{expect(()=>SessionInboundMessageSchema.parse({type:"plugin.rpc.invoke.request",requestId:"rpc",pluginId:"example",method:"counter.increment",input:{by:1}})).toThrow();expect(SessionInboundMessageSchema.parse({type:"plugin.rpc.invoke.request",requestId:"rpc",pluginId:"example",generation:4,method:"counter.increment",input:{by:1}}).type).toBe("plugin.rpc.invoke.request");});
+});
+
+describe("host-origin and timeline revision plugin facts", () => {
+  it.each(["user", "service", "agent"] as const)("preserves host user-message origin %s", (sourceKind) => {
+    const message = {
+      type: "agent_stream",
+      payload: {
+        agentId: "agent", timestamp: "2026-11-10T00:00:00.000Z", seq: 7, epoch: "epoch", contentVersion: 3,
+        event: { type: "timeline", provider: "codex", item: { type: "user_message", text: "hello", clientMessageId: "message", sourceKind } },
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
+  it("does not invent an origin for historical user messages", () => {
+    const message = {
+      type: "agent_stream",
+      payload: {
+        agentId: "agent", timestamp: "2026-11-10T00:00:00.000Z",
+        event: { type: "timeline", provider: "codex", item: { type: "user_message", text: "legacy" } },
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
   });
 });

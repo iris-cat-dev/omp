@@ -36,8 +36,30 @@ The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift a
 | [`packages/relay`](../packages/relay)         | Shared E2EE relay transport         |
 | [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                   |
 | [`packages/highlight`](../packages/highlight) | Code and diff highlighting          |
+| [`packages/plugin`](../packages/plugin)       | Shared Desktop plugin SDK, compiler and isolated worker |
+| [`packages/plugins`](../packages/plugins)    | Builtin speed/wallpaper/pet and QQ plugin packages |
 
 The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace uses its own TypeScript configuration; `npm run typecheck` checks those workspaces. To check root configuration files, run `npm exec --no -- tsgo --noEmit -p tsconfig.json`.
+
+### Build Desktop plugins before their consumers
+
+```bash
+npm run build:client
+node scripts/build-desktop-plugins.mjs
+node packages/plugins/qqbot/build.mjs
+npm run build:highlight
+npm run build:lib --workspace=@omp-desktop/server
+npm run build:scripts --workspace=@omp-desktop/server
+npm run build --workspace=@omp-desktop/cli
+npm run build:main:compiled --workspace=@omp-desktop/desktop
+```
+
+The builtin builder clears each selected package's `dist`; finish it before building consumers. QQ has its own builder and external native/npm dependencies. These commands preserve an already staged release SDK; `build:server` selects the development SDK instead.
+
+Trusted plugin clients share the renderer's React, client, SDK and Lucide modules. Selective Lucide imports still resolve directly to licensed icon modules. Namespace imports intentionally retain the full public module, including canonical names, aliases, `icons`, `Icon` and `createLucideIcon`; replacing the namespace with the canonical-icon table breaks external client bundles.
+
+Node consumers import release-operation and activation-scope APIs from `@omp-desktop/plugin/server`. The public `/host` entry also includes renderer React bindings; its historical exports remain available to renderer hosts.
+
 
 ## Runtime and protocol notes
 
@@ -50,6 +72,8 @@ Capable clients receive large history, directory and subagent JSON messages in
 callback-paced 256 KiB chunks without relaxing the 64 MiB physical backlog guard.
 See [chunked daemon messages](../packages/protocol/README.md#chunked-daemon-messages)
 for negotiation, framing, queue limits and reconnect behavior.
+
+Outbound attachment unions must be exercised through the generated WebSocket validator, not only `Schema.parse`. Transformed union options retain their input object discriminator during AOT generation; text and normalized source metadata must survive both warm stream and cold timeline decoding.
 
 OMP `compact` and `prompt` admission RPCs wait for their response, runtime exit, or session close rather than the short control-plane timeout. Prompt admission can wait for compaction, input hooks, and image preparation; a local timeout does not withdraw that input. Native `manual_compaction_start`/`manual_compaction_end` events use the same compaction timeline and deduplication path as Desktop's `/compact` marker.
 
@@ -68,6 +92,10 @@ For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package ro
 Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
 Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.
+
+Node RPC hosts persist the native session header before reporting startup ready, including new idle sessions. `noSession` keeps its existing in-memory contract. Local extension commands that finish without a model turn use `append_session_annotation` for their original submission and complete attachment snapshots. Desktop waits for the SDK's durable acknowledgment before completing the submission; cold history restores the same journal entry rather than a synthetic model message. RPC shutdown stops resource watching, disposes the owned session, and closes presence.
+
+Remote distribution must ship an SDK with the same `append_session_annotation` RPC contract. The currently configured `sdk-v18.14.0-desktop-core.1` release returns `Unknown command: append_session_annotation`; rebuilding Desktop's remote-backend bundles does not update that published SDK. Publish the matching SDK first, then update `omp-sdk/sdk/node-release.json` to its real release and verify a downloaded runtime through startup, durable acknowledgment, and cold resume.
 
 SDK sessions enable `set_ask_dialog` before startup completes. One RPC `extension_ui_request` with `method: "ask"` carries the entire question group. Desktop renders the existing question tabs and returns an ordered `answers` array of `{ id, selectedOptions, customInput? }`, preserving original option labels and separate custom input. IDs keep repeated headers distinct; comma-containing labels remain individual selections. Invalid or incomplete answers leave the permission pending, and closing the form cancels the group. Legacy external CLI startup retains its existing select/editor path. Rebuild the Desktop backend and renderer, then recreate existing sessions to load this bridge change.
 
@@ -290,6 +318,8 @@ Packaged SDK and Desktop image operations use Sharp 0.35.4 and target-native lib
 
 `npm run build:remote-backend` consumes the fixed public SDK release index configured in `omp-sdk/sdk/node-release.json`, not the locally staged SDK. It validates metadata for all four macOS/glibc Linux x64/arm64 targets and generates their Desktop backend npm lockfiles without downloading SDK archives. Only workspace archives, target package/lock files and the schema-2 manifest remain in `remote-backend-dist`; the selected SDK is downloaded and verified during SSH deployment, then extracted separately after `npm ci`. An unavailable, incomplete or version/profile-mismatched release index fails the build. See [SDK release construction](../omp-sdk/docs/sdk.md#platform-specific-desktop-core-releases).
 
+The QQ package declares React Native as an optional, host-provided UI peer. Its daemon service and remote backend install without React Native; the Desktop renderer still provides it when loading the QQ client. Backend assembly uses isolated target lockfiles rather than forcing incompatible UI peers or reinstalling checkout dependencies.
+
 Local remote-backend assembly stages beside `remote-backend-dist` before committing with `rename`, so Windows builds work when the system TEMP directory and checkout are on different drives.
 
 The packaged SDK smoke copies the App outside the checkout, clears `NODE_PATH`, and loads a `.mjs` session-start extension to verify the loaded native capability flags and concurrent RPC sessions. Installation RPC must report the packaged SDK root and version, not a retired standalone executable. Node SDK plugins, custom tools/commands, and eval are JavaScript-only: precompile TS/TSX/JSX sources and dependencies to `.js`, `.mjs`, or `.cjs`. Development selects the server's built JavaScript helpers for internal background-job, image, and local-model extensions instead of asking the SDK to compile their TypeScript sources. CLI command overrides are not SDK entrypoints, and CLI-bound private plugin packages are unsupported. Discovered plugins must support Node; disable Bun-only plugins before using SDK mode.
@@ -450,13 +480,15 @@ A successful build is not native acceptance. Qualify the actual packaged applica
 
 ### Packaged macOS application
 
-To exercise an unpacked application, including its renderer, daemon, bundled Node SDK, CLI, and terminal, use this entry point with a runtime that exposes a CDP debugging endpoint:
+To exercise the actual packaged macOS application, including its visible renderer, daemon, bundled Node SDK, CLI, and terminal, run:
 
 ```bash
 node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/release/mac-arm64/OMP Desktop.app"
 ```
 
-Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The packaged smoke checks macOS Dock visibility, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet image installation.
+macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node preload to drive real `BrowserWindow` APIs; the signed executable, production main entry and application resources remain unchanged. It isolates HOME, userData, credentials/configuration and daemon ports, waits for visible React content, and retains a native PNG and JSON report under the printed evidence directory. Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside the application to choose that directory.
+
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions, the CLI/terminal path, and generated-pet installation without changing the desktop-pet plugin's selected ID.
 
 #### Native window-close interactions
 
