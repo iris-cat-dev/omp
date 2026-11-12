@@ -13,6 +13,7 @@ import {
   mergeOmpAccountProviderUsage,
 } from "@/provider-usage/omp-account";
 import { formatSessionCost, formatTokenCount } from "./context-window-meter.utils";
+import { ContextCompactionCount } from "./context-compaction-count";
 
 interface OmpClaudeQuotaEntryProps {
   serverId?: string;
@@ -21,10 +22,16 @@ interface OmpClaudeQuotaEntryProps {
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
+  compactionCount?: number | null;
   onOpenPromptAnalysis?: () => void;
 }
 
-function ContextUsageDetails({ maxTokens, usedTokens, totalCostUsd }: OmpClaudeQuotaEntryProps) {
+function ContextUsageDetails({
+  maxTokens,
+  usedTokens,
+  totalCostUsd,
+  compactionCount,
+}: OmpClaudeQuotaEntryProps) {
   const { t } = useTranslation();
   const cost = typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
   const hasUsage =
@@ -50,6 +57,7 @@ function ContextUsageDetails({ maxTokens, usedTokens, totalCostUsd }: OmpClaudeQ
           </Text>
         </>
       ) : null}
+      <ContextCompactionCount count={compactionCount} style={styles.detail} />
       {cost ? <Text style={styles.detail}>{t("contextWindow.sessionCost", { cost })}</Text> : null}
     </>
   );

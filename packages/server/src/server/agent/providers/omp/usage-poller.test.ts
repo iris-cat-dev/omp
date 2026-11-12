@@ -87,6 +87,29 @@ describe("OMP usage poller", () => {
     expect(scheduler.activePollCount()).toBe(0);
   });
 
+  test("publishes compaction changes even when token usage is unchanged", async () => {
+    const updates: AgentUsage[] = [];
+    let stats: OmpSessionStats = { compactionCount: 0 };
+    const poller = new OmpUsagePoller({
+      readStats: async () => stats,
+      onUsage: (usage) => updates.push(usage),
+      onPollError: (error) => {
+        throw error;
+      },
+    });
+    try {
+      await poller.refresh();
+      stats = { compactionCount: 2 };
+      await poller.refresh();
+      await poller.refresh();
+      stats = { compactionCount: 1 };
+      await poller.refresh();
+      expect(updates.map((usage) => usage.compactionCount)).toEqual([0, 2, 1]);
+    } finally {
+      poller.close();
+    }
+  });
+
   test("drops an in-flight poll without hiding the final refresh", async () => {
     const scheduler = new ManualPollScheduler();
     const inFlightStats = deferred<OmpSessionStats>();

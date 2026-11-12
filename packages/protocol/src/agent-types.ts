@@ -213,6 +213,8 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /** Persisted compactions on the current native session branch, not attempts. */
+  compactionCount?: number;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

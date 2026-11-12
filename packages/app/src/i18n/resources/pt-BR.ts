@@ -2106,6 +2106,7 @@ export const ptBR: TranslationResources = {
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
+    compactionCount: "Rodadas de compactação: {{count}}",
     sessionCost: "Custo da sessão {{cost}}",
     accessibility: "Janela de contexto {{percentage}}% usada",
   },

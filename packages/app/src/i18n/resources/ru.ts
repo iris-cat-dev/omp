@@ -2108,6 +2108,7 @@ export const ru: TranslationResources = {
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",
     tokens: "Токены: {{used}} / {{max}}",
+    compactionCount: "Раунды сжатия: {{count}}",
     sessionCost: "Стоимость сессии: {{cost}}",
     accessibility: "Использовано {{percentage}}% контекстного окна",
   },

@@ -115,7 +115,7 @@ import { areAttachmentsEqual } from "@/composer/draft/input-draft-core";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
+import type { AgentFeature, AgentUsage } from "@omp-desktop/protocol/agent-types";
 import type { ForgeSearchItem } from "@omp-desktop/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -186,6 +186,7 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
+const EMPTY_AGENT_USAGE: AgentUsage = {};
 
 function noop() {}
 const noopCallback = () => {};
@@ -256,12 +257,13 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const session = state.sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
-    const usage = agent?.lastUsage;
+    const usage = agent?.lastUsage ?? EMPTY_AGENT_USAGE;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: usage?.totalCostUsd ?? null,
+      contextWindowMaxTokens: usage.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage.contextWindowUsedTokens ?? null,
+      totalCostUsd: usage.totalCostUsd ?? null,
+      compactionCount: usage.compactionCount ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
       accountFeature: agent?.features?.find(
@@ -275,6 +277,7 @@ function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
+  compactionCount: number | null,
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
@@ -292,6 +295,7 @@ function renderContextWindowMeter(
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
+      compactionCount={compactionCount}
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
@@ -2086,6 +2090,7 @@ function ComposerContentImpl({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
+        agentState.compactionCount,
         true,
         serverId,
         agentState.provider
@@ -2103,6 +2108,7 @@ function ComposerContentImpl({
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
+      agentState.compactionCount,
       serverId,
       agentState.provider,
       agentState.model,

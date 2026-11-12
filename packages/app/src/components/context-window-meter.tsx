@@ -17,11 +17,13 @@ import {
 import { selectOmpQuotaAccounts } from "@/components/omp-provider-accounts";
 import { formatSessionCost, formatTokenCount } from "./context-window-meter.utils";
 import { OmpClaudeQuotaEntry } from "./omp-claude-quota-entry";
+import { ContextCompactionCount } from "./context-compaction-count";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
   usedTokens: number | null;
   totalCostUsd?: number | null;
+  compactionCount?: number | null;
   showPercentage?: boolean;
   serverId?: string;
   /** The active model's provider namespace, including configured OMP providers. */
@@ -108,6 +110,7 @@ function TokenContextWindowMeter({
   maxTokens,
   usedTokens,
   totalCostUsd,
+  compactionCount,
   showPercentage = false,
   serverId,
   provider,
@@ -270,6 +273,7 @@ function TokenContextWindowMeter({
               max: formatTokenCount(maxTokens),
             })}
           </Text>
+          <ContextCompactionCount count={compactionCount} style={styles.tooltipDetail} />
           {formattedSessionCost ? (
             <Text style={styles.tooltipDetail}>
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}

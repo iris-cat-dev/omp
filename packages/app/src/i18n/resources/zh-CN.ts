@@ -2238,6 +2238,7 @@ export const zhCN: TranslationResources = {
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",
+    compactionCount: "已压缩 {{count}} 轮",
     sessionCost: "会话费用 {{cost}}",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },

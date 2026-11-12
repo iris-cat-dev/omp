@@ -2083,6 +2083,7 @@ export const ja: TranslationResources = {
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",
+    compactionCount: "圧縮回数: {{count}} 回",
     sessionCost: "セッションコスト: {{cost}}",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
   },

@@ -2060,6 +2060,7 @@ export const ar: TranslationResources = {
     title: "نافذة السياق",
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
+    compactionCount: "جولات الضغط: {{count}}",
     sessionCost: "تكلفة الجلسة{{cost}}",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },

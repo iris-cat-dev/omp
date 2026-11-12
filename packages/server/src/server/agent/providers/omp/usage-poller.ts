@@ -12,6 +12,8 @@ interface OmpUsagePollerOptions {
   scheduler?: OmpUsagePollScheduler;
 }
 
+const EMPTY_TOKENS: NonNullable<OmpSessionStats["tokens"]> = {};
+
 function createScheduler(): OmpUsagePollScheduler {
   return {
     schedulePoll: (callback) => {
@@ -22,9 +24,10 @@ function createScheduler(): OmpUsagePollScheduler {
 }
 
 function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
-  const inputTokens = stats.tokens?.input ?? 0;
-  const cachedInputTokens = stats.tokens?.cacheRead ?? 0;
-  const outputTokens = stats.tokens?.output ?? 0;
+  const tokens = stats.tokens ?? EMPTY_TOKENS;
+  const inputTokens = tokens.input ?? 0;
+  const cachedInputTokens = tokens.cacheRead ?? 0;
+  const outputTokens = tokens.output ?? 0;
   const totalCostUsd = stats.cost ?? 0;
   const contextWindowMaxTokens = stats.contextUsage?.contextWindow ?? undefined;
   const contextWindowUsedTokens = stats.contextUsage?.tokens ?? undefined;
@@ -35,7 +38,8 @@ function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
     outputTokens === 0 &&
     totalCostUsd === 0 &&
     contextWindowMaxTokens === undefined &&
-    contextWindowUsedTokens === undefined
+    contextWindowUsedTokens === undefined &&
+    stats.compactionCount === undefined
   ) {
     return undefined;
   }
@@ -48,6 +52,7 @@ function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
     totalCostUsd,
     ...(typeof contextWindowMaxTokens === "number" ? { contextWindowMaxTokens } : {}),
     ...(typeof contextWindowUsedTokens === "number" ? { contextWindowUsedTokens } : {}),
+    ...(stats.compactionCount !== undefined ? { compactionCount: stats.compactionCount } : {}),
   };
 }
 
@@ -58,7 +63,8 @@ function isSameUsage(left: AgentUsage, right: AgentUsage): boolean {
     left.outputTokens === right.outputTokens &&
     left.totalCostUsd === right.totalCostUsd &&
     left.contextWindowMaxTokens === right.contextWindowMaxTokens &&
-    left.contextWindowUsedTokens === right.contextWindowUsedTokens
+    left.contextWindowUsedTokens === right.contextWindowUsedTokens &&
+    left.compactionCount === right.compactionCount
   );
 }
 

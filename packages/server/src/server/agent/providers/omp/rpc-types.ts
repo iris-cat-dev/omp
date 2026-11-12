@@ -227,6 +227,7 @@ export const OmpSessionStatsSchema = z
       .optional(),
     cost: z.number().optional(),
     contextUsage: OmpContextUsageSchema.optional(),
+    compactionCount: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 

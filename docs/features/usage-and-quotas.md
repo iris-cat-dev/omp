@@ -13,6 +13,8 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 
 For the selected host, **Settings → Usage** includes native OMP `/stats`, provider quotas/balances, Codex reset cards, and Claude limit-reset controls beside the affected account. Native totals and provider quotas are never added together. Reset actions require confirmation; changing account login or order remains in **Providers**.
 
+The composer's context-window tooltip shows **Compaction rounds** below token usage; Claude's usage sheet shows the same counter. It counts persisted compaction records on the current native session branch, including older compacted history, and restores that count on resume. Automatic and manual compactions count equally; loading, canceled, failed, and skipped attempts do not add a round. A new session reports zero, while hosts that do not provide the counter omit the row. Rebuild the SDK, backend, and renderer, then restart the backend and session hosts to load this change.
+
 ## Native OMP statistics
 
 The Usage view synchronizes OMP's native `stats.db` for the resolved host/profile before reading totals, across projects rather than only Desktop-created agents. The bundled SDK backend runs its native statistics activity worker in a short-lived Node child: opening Usage builds a missing index, and **Refresh** invalidates cached ranges, ingests new or appended session logs, then reads the index. It does not invoke an external OMP CLI or make model requests. Desktop receives numeric aggregates and never exposes prompts, transcript paths, credentials, worker/CLI output, or raw database errors. Labels/explanations follow the interface language, including Chinese.
