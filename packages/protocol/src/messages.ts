@@ -3474,6 +3474,8 @@ export const ListCommandsRequestSchema = z.object({
   type: z.literal("list_commands_request"),
   agentId: z.string(),
   draftConfig: ListCommandsDraftConfigSchema.optional(),
+  /** Explicit composer interaction may resume an unarchived session without a command snapshot. */
+  resumeIfNeeded: z.boolean().optional(),
   requestId: z.string(),
 });
 

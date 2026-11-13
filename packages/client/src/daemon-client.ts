@@ -597,6 +597,7 @@ interface ListCommandsOptions {
   agentId: string;
   requestId?: string;
   draftConfig?: ListCommandsDraftConfig;
+  resumeIfNeeded?: boolean;
 }
 type LegacyListCommandsOptions = Omit<ListCommandsOptions, "agentId">;
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
@@ -5828,6 +5829,7 @@ export class DaemonClient {
         type: "list_commands_request",
         agentId: options.agentId,
         ...(options.draftConfig ? { draftConfig: options.draftConfig } : {}),
+        ...(options.resumeIfNeeded ? { resumeIfNeeded: true } : {}),
       },
       responseType: "list_commands_response",
     });

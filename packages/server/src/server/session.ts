@@ -133,6 +133,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
   type AgentSessionConfig,
+  type AgentSlashCommand,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -4454,7 +4455,7 @@ export class Session {
   private async handleListCommandsRequest(
     msg: Extract<SessionInboundMessage, { type: "list_commands_request" }>,
   ): Promise<void> {
-    const { agentId, requestId, draftConfig } = msg;
+    const { agentId, requestId, draftConfig, resumeIfNeeded } = msg;
     this.sessionLogger.debug(
       { agentId, draftConfig },
       `Handling list commands request for agent ${agentId}`,
@@ -4482,14 +4483,28 @@ export class Session {
         const cached = ListCommandsResponseSchema.shape.payload.shape.commands.safeParse(
           stored.persistence?.metadata?.commands,
         );
-        if (!cached.success) {
+        let commands: AgentSlashCommand[];
+        if (cached.success) {
+          commands = cached.data;
+        } else if (resumeIfNeeded) {
+          const loaded = await ensureUnarchivedAgentLoaded(agentId, {
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            broadcastTimeline: true,
+            logger: this.sessionLogger,
+          });
+          if (!loaded.session?.listCommands) {
+            throw new Error("Agent does not support listing commands");
+          }
+          commands = await loaded.session.listCommands();
+        } else {
           throw new Error(
             "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
           );
         }
         this.emit({
           type: "list_commands_response",
-          payload: { agentId, commands: cached.data, error: null, requestId },
+          payload: { agentId, commands, error: null, requestId },
         });
         return;
       }

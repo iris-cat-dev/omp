@@ -20,6 +20,7 @@ export type DraftCommandConfig = AgentCommandsDraftConfig;
 interface ListAgentCommandsOptions {
   agentId: string;
   draftConfig?: DraftCommandConfig;
+  resumeIfNeeded?: boolean;
 }
 
 export interface AgentCommandsClient {
@@ -34,6 +35,7 @@ export async function fetchAgentCommands(input: {
   const response = await input.client.listCommands({
     agentId: input.agentId,
     draftConfig: input.draftConfig,
+    ...(input.agentId && !input.draftConfig ? { resumeIfNeeded: true } : {}),
   });
   if (response.error) throw new Error(response.error);
   return response.commands as AgentSlashCommand[];

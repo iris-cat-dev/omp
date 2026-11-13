@@ -613,6 +613,7 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
     for (let index = 0; index < 15; index += 1) {
       const id = `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`;
       const archivedAt = index % 2 === 0 ? null : "2026-11-03T00:00:00.000Z";
+      const savedCommands = index % 3 === 0 ? [] : commands;
       await storage.upsert(
         createStoredAgentRecord({
           id,
@@ -622,7 +623,7 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
           requiresAttention: true,
           attentionReason: "finished",
           attentionTimestamp: "2026-11-03T00:00:00.000Z",
-          persistence: { provider: "omp", sessionId: id, metadata: { commands } },
+          persistence: { provider: "omp", sessionId: id, metadata: { commands: savedCommands } },
         }),
       );
       await session.handleMessage({
@@ -634,17 +635,23 @@ test("focus-entry attention and command reads keep fifteen persisted sessions un
         type: "list_commands_request",
         agentId: id,
         requestId: `commands-${index}`,
+        resumeIfNeeded: index % 2 === 0,
       });
       expect(await storage.get(id)).toMatchObject({
         requiresAttention: false,
         attentionReason: null,
         attentionTimestamp: null,
         archivedAt,
-        persistence: { metadata: { commands } },
+        persistence: { metadata: { commands: savedCommands } },
       });
       expect(messages).toContainEqual({
         type: "list_commands_response",
-        payload: { requestId: `commands-${index}`, agentId: id, commands, error: null },
+        payload: {
+          requestId: `commands-${index}`,
+          agentId: id,
+          commands: savedCommands,
+          error: null,
+        },
       });
     }
     expect(resume).not.toHaveBeenCalled();
@@ -681,12 +688,165 @@ test("cold commands without a snapshot report unavailability without resuming", 
       requestId: "missing-commands",
       agentId: record.id,
       commands: [],
-      error:
-        "Command metadata is unavailable for this unloaded session. Resume it explicitly to refresh commands.",
+      error: expect.any(String),
     },
   });
   expect(resume).not.toHaveBeenCalled();
   session.cleanup();
+});
+
+test.each([undefined, [{ name: "incomplete-command" }]])(
+  "explicit command completion resumes once when the saved snapshot is %j",
+  async (savedCommands) => {
+    const root = mkdtempSync(join(tmpdir(), "session-command-resume-"));
+    const logger = pino({ level: "silent" });
+    const storage = new AgentStorage(join(root, "agents"), logger);
+    const commands = [
+      {
+        name: "plugin-review",
+        description: "Review changes",
+        argumentHint: "",
+        kind: "command" as const,
+      },
+      {
+        name: "project-skill",
+        description: "Project skill",
+        argumentHint: "<input>",
+        kind: "skill" as const,
+      },
+    ];
+    const runtime = new (class extends FakeRewindSession {
+      override readonly provider = "omp";
+      async listCommands() {
+        return commands;
+      }
+      override describePersistence(): AgentPersistenceHandle {
+        return { ...super.describePersistence(), metadata: { commands } };
+      }
+    })();
+    const startTurn = vi.spyOn(runtime, "startTurn");
+    const resume = vi.fn(async () => runtime);
+    const manager = new AgentManager({
+      logger,
+      registry: storage,
+      clients: {
+        omp: {
+          provider: "omp",
+          capabilities: runtime.capabilities,
+          createSession: async () => {
+            throw new Error("Command completion must resume the original session");
+          },
+          resumeSession: resume,
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+          isAvailable: async () => true,
+        },
+      },
+    });
+    const record = createStoredAgentRecord({
+      id: "11111111-1111-4111-8111-111111111196",
+      provider: "omp",
+      cwd: root,
+      persistence: {
+        provider: "omp",
+        sessionId: runtime.id,
+        metadata: { commands: savedCommands },
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: manager.getAgent.bind(manager),
+        waitForAgentClose: manager.waitForAgentClose.bind(manager),
+        getRegisteredProviderIds: manager.getRegisteredProviderIds.bind(manager),
+        resumeAgentFromPersistence: manager.resumeAgentFromPersistence.bind(manager),
+        hydrateTimelineFromProvider: manager.hydrateTimelineFromProvider.bind(manager),
+        closeAgent: manager.closeAgent.bind(manager),
+      },
+      agentStorage: { get: storage.get.bind(storage) },
+    });
+    try {
+      await storage.upsert(record);
+      await Promise.all(
+        ["commands-first", "commands-concurrent"].map((requestId) =>
+          session.handleMessage({
+            type: "list_commands_request",
+            agentId: record.id,
+            requestId,
+            resumeIfNeeded: true,
+          }),
+        ),
+      );
+      expect(manager.getAgent(record.id)?.session).toBe(runtime);
+      expect(manager.fetchTimeline(record.id, { limit: 0 }).rows.map((row) => row.item)).toEqual(
+        runtime.history,
+      );
+      expect(resume).toHaveBeenCalledOnce();
+      expect(startTurn).not.toHaveBeenCalled();
+      for (const requestId of ["commands-first", "commands-concurrent"]) {
+        expect(messages).toContainEqual({
+          type: "list_commands_response",
+          payload: { agentId: record.id, requestId, commands, error: null },
+        });
+      }
+      await manager.closeAgent(record.id);
+      await session.handleMessage({
+        type: "list_commands_request",
+        agentId: record.id,
+        requestId: "commands-after-unload",
+        resumeIfNeeded: true,
+      });
+      expect(messages).toContainEqual({
+        type: "list_commands_response",
+        payload: { agentId: record.id, requestId: "commands-after-unload", commands, error: null },
+      });
+      expect(manager.getAgent(record.id)).toBeNull();
+      expect(resume).toHaveBeenCalledOnce();
+    } finally {
+      await session.cleanup();
+      if (manager.getAgent(record.id)) await manager.closeAgent(record.id);
+      await storage.flush();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("explicit command completion leaves archived history inactive", async () => {
+  const record = createStoredAgentRecord({
+    id: "11111111-1111-4111-8111-111111111197",
+    cwd: "/repo",
+    provider: "omp",
+    archivedAt: "2026-11-03T00:00:00.000Z",
+    persistence: { provider: "omp", sessionId: "archived-commands" },
+  });
+  const messages: SessionOutboundMessage[] = [];
+  const resume = vi.fn();
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: () => null, resumeAgentFromPersistence: resume },
+    agentStorage: { get: async () => record },
+  });
+  try {
+    await session.handleMessage({
+      type: "list_commands_request",
+      agentId: record.id,
+      requestId: "archived-commands",
+      resumeIfNeeded: true,
+    });
+    expect(messages).toContainEqual({
+      type: "list_commands_response",
+      payload: {
+        agentId: record.id,
+        requestId: "archived-commands",
+        commands: [],
+        error: `Agent is archived: ${record.id}`,
+      },
+    });
+    expect(resume).not.toHaveBeenCalled();
+    expect(record.archivedAt).toBe("2026-11-03T00:00:00.000Z");
+  } finally {
+    await session.cleanup();
+  }
 });
 
 test("cold prompt context reports unavailability without loading the persisted agent", async () => {

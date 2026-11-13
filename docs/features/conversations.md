@@ -29,6 +29,8 @@ Conversation rewind removes the selected prompt from the new transcript, while p
 
 Opening OMP history only reads saved messages. Explicit **Rewind** and **Resync message** actions resume the original provider session when its runtime is unloaded, then operate on the hydrated timeline. Concurrent activation requests share the existing loader; archived conversations remain inactive and reject these actions.
 
+Typing `/` in an existing conversation reads its saved command snapshot first. If an older conversation has no valid snapshot, that explicit completion request resumes the original, unarchived session and loads its real built-in, plugin, and skill commands without sending a model prompt. Concurrent requests share the loader; subsequent unloaded reads reuse the saved snapshot. Plain `list_commands_request` reads remain passive unless `resumeIfNeeded: true` is supplied. Draft completion never opts into resuming a saved conversation.
+
 Rewind and resync failures display the underlying runtime or provider error. Message-pending, unavailable-identity, and synchronization failures retain their localized guidance.
 
 Each prompt's rewind control stays disabled while its native message identity is synchronizing and unlocks when confirmation arrives. Earlier confirmed prompts remain rewindable during a new turn; rewind still requires confirmed cancellation of active work. If the identity cannot be located, **Resync message** retries the association without stopping work, changing history, or restoring the composer. Successful resync enables an explicit rewind; an unresolved association remains visible and retryable.
