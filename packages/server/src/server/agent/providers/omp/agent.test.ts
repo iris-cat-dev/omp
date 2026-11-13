@@ -233,15 +233,121 @@ describe("OMP agent client and session", () => {
         ],
       }),
     ]);
+    omp
+      .runtime()
+      .queueStateReports([
+        {
+          ...omp.runtime().state,
+          activeCredential: { provider: "openai-codex", credentialId: 41 },
+        },
+      ]);
     await omp.setFeature("oauth_account_credential", "41");
 
-    expect(omp.recordedPrompts()).toEqual([{ message: "/session pin 1", imageCount: 0 }]);
+    expect(omp.recordedPrompts()).toEqual([
+      { message: "/session pin OAuth credential #41", imageCount: 0 },
+    ]);
     expect(omp.features()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "oauth_account_credential",
           value: "41",
         }),
+      ]),
+    );
+  });
+
+  test("keeps the actual account visible when native account selection did not take effect", async () => {
+    const omp = new OmpHarness({
+      oauthAccounts: [
+        { credentialId: 41, provider: "openai-codex" },
+        { credentialId: 42, provider: "openai-codex" },
+      ],
+      initialActiveCredential: { provider: "openai-codex", credentialId: 41 },
+    });
+    await omp.start({ model: "openai-codex/gpt-5.6" });
+    omp.runtime().promptAck = { agentInvoked: false };
+
+    await expect(omp.setFeature("oauth_account_credential", "42")).rejects.toThrow(
+      "could not confirm OAuth account '42'",
+    );
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "oauth_account_credential",
+          value: "automatic",
+          effectiveValue: "41",
+        }),
+      ]),
+    );
+  });
+
+  test("confirms an initially pinned account from native sticky storage when RPC omits it", async () => {
+    const omp = new OmpHarness({
+      oauthAccounts: [
+        { credentialId: 41, provider: "openai-codex" },
+        { credentialId: 42, provider: "openai-codex" },
+      ],
+      sessionCredentialReader: () => 42,
+    });
+    await omp.start({
+      model: "openai-codex/gpt-5.6",
+      featureValues: { oauth_account_credential: "42" },
+    });
+
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "oauth_account_credential",
+          value: "42",
+          effectiveValue: "42",
+        }),
+      ]),
+    );
+  });
+
+  test("does not replace an explicit empty runtime binding with a stale sticky account", async () => {
+    const omp = new OmpHarness({
+      oauthAccounts: [
+        { credentialId: 41, provider: "openai-codex" },
+        { credentialId: 42, provider: "openai-codex" },
+      ],
+      initialActiveCredential: { provider: "openai-codex", credentialId: 41 },
+      sessionCredentialReader: () => 42,
+    });
+    await omp.start({ model: "openai-codex/gpt-5.6" });
+    omp.runtime().state.activeCredential = null;
+
+    await expect(omp.setFeature("oauth_account_credential", "42")).rejects.toThrow(
+      "could not confirm OAuth account '42'",
+    );
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "oauth_account_credential",
+          value: "automatic",
+          effectiveValue: null,
+        }),
+      ]),
+    );
+  });
+
+  test("aborts an account selection command that unexpectedly starts a model turn", async () => {
+    const omp = new OmpHarness({
+      oauthAccounts: [
+        { credentialId: 41, provider: "openai-codex" },
+        { credentialId: 42, provider: "openai-codex" },
+      ],
+    });
+    await omp.start({ model: "openai-codex/gpt-5.6" });
+    omp.runtime().promptAck = { agentInvoked: true };
+
+    await expect(omp.setFeature("oauth_account_credential", "42")).rejects.toThrow(
+      "account selection unexpectedly started an agent",
+    );
+    expect(omp.wasAborted()).toBe(true);
+    expect(omp.features()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "oauth_account_credential", value: "automatic" }),
       ]),
     );
   });
@@ -427,6 +533,7 @@ describe("OMP agent client and session", () => {
 
     expect(omp.features()).toEqual([expect.objectContaining({ id: "workflow_mode" })]);
 
+    omp.runtime().state.activeCredential = { provider: "openai-codex", credentialId: 42 };
     await omp.setModel("openai-codex", "gpt-5.6");
 
     expect(omp.features()).toEqual([
@@ -448,7 +555,9 @@ describe("OMP agent client and session", () => {
         ],
       }),
     ]);
-    expect(omp.recordedPrompts()).toEqual([{ message: "/session pin 2", imageCount: 0 }]);
+    expect(omp.recordedPrompts()).toEqual([
+      { message: "/session pin OAuth credential #42", imageCount: 0 },
+    ]);
 
     await omp.setModel("custom-openai", "model");
 

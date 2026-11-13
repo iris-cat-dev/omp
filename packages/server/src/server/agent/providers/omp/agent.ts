@@ -700,6 +700,7 @@ interface OmpAgentSessionOptions {
   oauthAccounts?: readonly StoredOmpOAuthAccount[];
   automaticCredentialId?: number;
   automaticCredentialResolver?: (state: OmpSessionState) => Promise<number | undefined>;
+  sessionCredentialReader?: (providerId: string, sessionId: string) => number | undefined;
   observeClaudeCompletion?: (message: OmpAgentMessage, state: OmpSessionState) => void;
   automaticCredentialScheduler?: OmpAutomaticCredentialScheduler;
   runtimeSession: OmpRuntimeSession;
@@ -2048,6 +2049,7 @@ export class OmpAgentSession implements AgentSession {
     this.oauthAccounts = [...(options.oauthAccounts ?? [])];
     this.automaticCredentialId = options.automaticCredentialId;
     this.automaticCredentialResolver = options.automaticCredentialResolver;
+    this.sessionCredentialReader = options.sessionCredentialReader;
     this.observeClaudeCompletion = options.observeClaudeCompletion;
     this.automaticCredentialScheduler =
       options.automaticCredentialScheduler ?? createOmpAutomaticCredentialScheduler();
@@ -2116,6 +2118,10 @@ export class OmpAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly paseoTools?: PaseoToolCatalog;
   private readonly oauthAccounts: readonly StoredOmpOAuthAccount[];
+  private readonly sessionCredentialReader?: (
+    providerId: string,
+    sessionId: string,
+  ) => number | undefined;
   private readonly fastModeSupported: boolean;
   private fastModeSelection: OmpFastModeSelection;
   private modelControls = Promise.resolve();
@@ -2730,10 +2736,6 @@ export class OmpAgentSession implements AgentSession {
       }
       await this.pinOAuthAccount(account);
       this.stopAutomaticCredentialResolution();
-      this.state = {
-        ...this.state,
-        activeCredential: { provider: account.provider, credentialId: account.credentialId },
-      };
       this.config.featureValues = {
         ...this.config.featureValues,
         [OMP_OAUTH_ACCOUNT_FEATURE_ID]: value,
@@ -2870,25 +2872,47 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async pinOAuthAccount(account: StoredOmpOAuthAccount): Promise<void> {
-    let position = -1;
-    let providerPosition = 0;
-    for (const candidate of this.oauthAccounts) {
-      if (candidate.provider !== account.provider) continue;
-      if (candidate.credentialId === account.credentialId) {
-        position = providerPosition;
-        break;
-      }
-      providerPosition += 1;
-    }
-    if (position < 0) {
+    if (
+      !this.oauthAccounts.some(
+        (candidate) =>
+          candidate.provider === account.provider &&
+          candidate.credentialId === account.credentialId,
+      )
+    ) {
       throw new Error(`OMP OAuth account '${account.credentialId}' is unavailable`);
     }
     if (this.activeTurnId) {
       throw new Error("Cannot pin an OMP OAuth account while a turn is active");
     }
-    const ack = await this.runtimeSession.prompt(`/session pin ${position + 1}`);
-    if (ack.requestId) {
-      this.pendingPromptResults.delete(ack.requestId);
+    // The native selector accepts this exact credential identity, independent of
+    // provider account ordering or accounts added since this session started.
+    const ack = await this.runtimeSession.prompt(
+      `/session pin OAuth credential #${account.credentialId}`,
+    );
+    if (ack.agentInvoked === true) {
+      await this.runtimeSession.abort();
+      throw new Error("OMP OAuth account selection unexpectedly started an agent");
+    }
+    const state = await this.runtimeSession.getState();
+    const storedCredentialId =
+      state.activeCredential === undefined
+        ? this.sessionCredentialReader?.(account.provider, state.sessionId)
+        : undefined;
+    const activeCredential =
+      state.activeCredential === undefined && storedCredentialId !== undefined
+        ? { provider: account.provider, credentialId: storedCredentialId }
+        : state.activeCredential;
+    const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
+    this.state = { ...state, activeCredential };
+    this.refreshFeatures();
+    if (findOmpOAuthAccountFeature(this.features)?.effectiveValue !== previousEffectiveValue) {
+      this.emit({ type: "features_changed", provider: this.provider });
+    }
+    if (
+      activeCredential?.provider !== account.provider ||
+      activeCredential.credentialId !== account.credentialId
+    ) {
+      throw new Error(`OMP could not confirm OAuth account '${account.credentialId}' was selected`);
     }
   }
 
@@ -2910,11 +2934,12 @@ export class OmpAgentSession implements AgentSession {
     if (!account) return;
     if (configuredCredentialId) {
       await this.pinOAuthAccount(account);
+    } else {
+      this.state = {
+        ...this.state,
+        activeCredential: { provider: account.provider, credentialId: account.credentialId },
+      };
     }
-    this.state = {
-      ...this.state,
-      activeCredential: { provider: account.provider, credentialId: account.credentialId },
-    };
     this.refreshFeatures();
   }
 
@@ -5606,6 +5631,24 @@ export class OmpAgentClient implements AgentClient {
       }
     };
   }
+  private readSessionCredentialId(
+    providerId: string,
+    sessionId: string,
+    launchEnv?: Record<string, string>,
+  ): number | undefined {
+    return this.sessionCredentialReader
+      ? this.sessionCredentialReader(providerId, sessionId)
+      : readStoredOmpSessionCredentialId(
+          resolveOmpDiagnosticPaths({
+            ...process.env,
+            ...this.runtimeSettings?.env,
+            ...launchEnv,
+          }).agentDb,
+          providerId,
+          sessionId,
+        );
+  }
+
   // null means automatic selection is inapplicable; undefined may still settle in the sticky cache.
   private readAutomaticCredentialId(
     config: AgentSessionConfig,
@@ -5622,17 +5665,7 @@ export class OmpAgentClient implements AgentClient {
     const providerAccounts = accounts.filter((account) => account.provider === provider);
     if (providerAccounts.length < 2) return null;
     try {
-      const credentialId = this.sessionCredentialReader
-        ? this.sessionCredentialReader(provider, sessionId)
-        : readStoredOmpSessionCredentialId(
-            resolveOmpDiagnosticPaths({
-              ...process.env,
-              ...this.runtimeSettings?.env,
-              ...launchEnv,
-            }).agentDb,
-            provider,
-            sessionId,
-          );
+      const credentialId = this.readSessionCredentialId(provider, sessionId, launchEnv);
       return providerAccounts.some((account) => account.credentialId === credentialId)
         ? credentialId
         : undefined;
@@ -5832,6 +5865,8 @@ export class OmpAgentClient implements AgentClient {
           backgroundOwnerId,
           automaticCredentialId,
           automaticCredentialResolver,
+          sessionCredentialReader: (providerId, sessionId) =>
+            this.readSessionCredentialId(providerId, sessionId, launchEnv),
           observeClaudeCompletion: this.createClaudeCompletionObserver(launchEnv),
           currentModeId: launchMode.modeId,
           logger: this.logger,
@@ -5941,6 +5976,8 @@ export class OmpAgentClient implements AgentClient {
           legacyBackgroundOwnerIds,
           automaticCredentialId,
           automaticCredentialResolver,
+          sessionCredentialReader: (providerId, sessionId) =>
+            this.readSessionCredentialId(providerId, sessionId, launchEnv),
           observeClaudeCompletion: this.createClaudeCompletionObserver(launchEnv),
           currentModeId: launchMode.modeId,
           logger: this.logger,

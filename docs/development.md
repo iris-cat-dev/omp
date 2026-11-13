@@ -117,6 +117,23 @@ Each top-level agent runs in a separate Node process with the existing RPC sessi
 
 Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.
 
+Codex and Antigravity model catalogs track the stored OAuth account set. Adding,
+disabling, or removing accounts invalidates that discovery fingerprint, including
+changes from another session/process. Existing sessions resolve account access
+from the current catalog even when holding an older model object; rotating a
+token alone does not force discovery. Offline or failed discovery preserves
+last-known access metadata rather than deleting model permission information.
+
+An explicit account pin takes precedence over advisory discovery membership,
+not plan eligibility, credential health, or session restrictions. Automatic
+selection tries usable accounts before falling back to blocked accounts.
+Desktop pins by durable credential identity and confirms native state or the
+persisted sticky binding before saving the selected feature value. An unexpected
+model invocation or mismatched binding fails the switch instead of reporting
+optimistic success; native credential events continue updating the effective
+account. Rebuild the SDK/backend and restart loaded hosts to apply this fix
+without deleting conversation history.
+
 Node RPC hosts persist the native session header before reporting startup ready, including new idle sessions. `noSession` keeps its existing in-memory contract. Local extension commands that finish without a model turn use `append_session_annotation` for their original submission and complete attachment snapshots. Desktop waits for the SDK's durable acknowledgment before completing the submission; cold history restores the same journal entry rather than a synthetic model message. RPC shutdown stops resource watching, disposes the owned session, and closes presence.
 
 Remote distribution must ship an SDK with the same `append_session_annotation` RPC contract. The currently configured `sdk-v18.14.0-desktop-core.1` release returns `Unknown command: append_session_annotation`; rebuilding Desktop's remote-backend bundles does not update that published SDK. Publish the matching SDK first, then update `omp-sdk/sdk/node-release.json` to its real release and verify a downloaded runtime through startup, durable acknowledgment, and cold resume.
