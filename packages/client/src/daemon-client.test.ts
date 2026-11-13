@@ -429,6 +429,307 @@ test("sets the complete viewed timeline subscription only when the daemon suppor
   });
 });
 
+test("shares provider child leases across views without subscribing unopened child timelines", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_leases",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen({ features: { providerSubagents: true } });
+  await connect;
+
+  const parent = client.acquireProviderSubagentSubscription("parent-z");
+  const first = client.acquireProviderSubagentSubscription("parent-a", "child-b");
+  const second = client.acquireProviderSubagentSubscription("parent-a", "child-b");
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.provider_subagents.set_subscription.request",
+    parentAgentIds: ["parent-a", "parent-z"],
+    timelines: [{ parentAgentId: "parent-a", subagentId: "child-b" }],
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { ...client.getProviderSubagentSubscriptions(), requestId: request.requestId },
+    }),
+  );
+  const [releaseParent, releaseFirst, releaseSecond] = await Promise.all([parent, first, second]);
+  releaseFirst();
+  releaseFirst();
+  await client.syncProviderSubagentSubscriptions();
+  expect(mock.sent).toHaveLength(1);
+  expect(client.getProviderSubagentSubscriptions().timelines).toHaveLength(1);
+
+  releaseParent();
+  releaseSecond();
+  const synchronized = client.syncProviderSubagentSubscriptions();
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(2));
+  const emptyRequest = parseSentFrame(mock.sent[1]);
+  expect(emptyRequest).toMatchObject({ parentAgentIds: [], timelines: [] });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { parentAgentIds: [], timelines: [], requestId: emptyRequest.requestId },
+    }),
+  );
+  await synchronized;
+});
+
+test("serializes provider lease changes during an ACK and restores only live leases on reconnect", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_reconnect",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen({ features: { providerSubagents: true } });
+  await connect;
+  const parent = client.acquireProviderSubagentSubscription("parent");
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+  const child = client.acquireProviderSubagentSubscription("parent", "child");
+  expect(mock.sent).toHaveLength(1);
+  const firstRequest = parseSentFrame(mock.sent[0]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { parentAgentIds: ["parent"], timelines: [], requestId: firstRequest.requestId },
+    }),
+  );
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(2));
+  const childRequest = parseSentFrame(mock.sent[1]);
+  expect(childRequest.timelines).toEqual([{ parentAgentId: "parent", subagentId: "child" }]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { ...client.getProviderSubagentSubscriptions(), requestId: childRequest.requestId },
+    }),
+  );
+  const [releaseParent, releaseChild] = await Promise.all([parent, child]);
+  releaseParent();
+  await client.syncProviderSubagentSubscriptions();
+  expect(mock.sent).toHaveLength(2);
+  mock.triggerClose();
+  const reconnect = client.connect();
+  mock.triggerOpen({ preserveSent: true, features: { providerSubagents: true } });
+  await reconnect;
+  await vi.waitFor(() =>
+    expect(
+      mock.sent.filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      ),
+    ).toHaveLength(3),
+  );
+  const restored = parseSentFrame(
+    mock.sent
+      .filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      )
+      .at(-1),
+  );
+  expect(restored).toMatchObject({
+    parentAgentIds: ["parent"],
+    timelines: [{ parentAgentId: "parent", subagentId: "child" }],
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { ...client.getProviderSubagentSubscriptions(), requestId: restored.requestId },
+    }),
+  );
+  await client.syncProviderSubagentSubscriptions();
+  releaseChild();
+  const synchronized = client.syncProviderSubagentSubscriptions();
+  await vi.waitFor(() =>
+    expect(client.getProviderSubagentSubscriptions()).toEqual({
+      parentAgentIds: [],
+      timelines: [],
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(
+      mock.sent.filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      ),
+    ).toHaveLength(4),
+  );
+  const removed = parseSentFrame(
+    mock.sent
+      .filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      )
+      .at(-1),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { parentAgentIds: [], timelines: [], requestId: removed.requestId },
+    }),
+  );
+  await synchronized;
+});
+
+test("keeps an unacknowledged provider lease alive across a dropped connection", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_pending_reconnect",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: true, baseDelayMs: 30_000 },
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen({ features: { providerSubagents: true } });
+  await connect;
+  const lease = client.acquireProviderSubagentSubscription("parent", "child");
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+  mock.triggerClose();
+  await Promise.resolve();
+  expect(client.getProviderSubagentSubscriptions().timelines).toEqual([
+    { parentAgentId: "parent", subagentId: "child" },
+  ]);
+  const reconnect = client.connect();
+  mock.triggerOpen({ preserveSent: true, features: { providerSubagents: true } });
+  await reconnect;
+  await vi.waitFor(() =>
+    expect(
+      mock.sent.filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      ),
+    ).toHaveLength(2),
+  );
+  const request = parseSentFrame(
+    mock.sent
+      .filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      )
+      .at(-1),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { ...client.getProviderSubagentSubscriptions(), requestId: request.requestId },
+    }),
+  );
+  const release = await lease;
+  release();
+  const synchronized = client.syncProviderSubagentSubscriptions();
+  await vi.waitFor(() =>
+    expect(
+      mock.sent.filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      ),
+    ).toHaveLength(3),
+  );
+  const empty = parseSentFrame(
+    mock.sent
+      .filter(
+        (frame) =>
+          typeof frame === "string" &&
+          frame.includes("agent.provider_subagents.set_subscription.request"),
+      )
+      .at(-1),
+  );
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.provider_subagents.set_subscription.response",
+      payload: { parentAgentIds: [], timelines: [], requestId: empty.requestId },
+    }),
+  );
+  await synchronized;
+});
+
+test("aborts unacknowledged provider leases immediately while disconnected", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_abort",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: true, baseDelayMs: 30_000 },
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen({ features: { providerSubagents: true } });
+  await connect;
+  const controller = new AbortController();
+  const lease = client.acquireProviderSubagentSubscription("parent", "child", {
+    signal: controller.signal,
+  });
+  const canceled = expect(lease).rejects.toMatchObject({ name: "AbortError" });
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+  mock.triggerClose();
+  await Promise.resolve();
+  controller.abort();
+  expect(client.getProviderSubagentSubscriptions()).toEqual({ parentAgentIds: [], timelines: [] });
+  await canceled;
+  await client.syncProviderSubagentSubscriptions();
+  const reconnect = client.connect();
+  mock.triggerOpen({ preserveSent: true, features: { providerSubagents: true } });
+  await reconnect;
+  expect(
+    mock.sent.filter(
+      (frame) =>
+        typeof frame === "string" &&
+        frame.includes("agent.provider_subagents.set_subscription.request"),
+    ),
+  ).toHaveLength(1);
+});
+
+test("finishes provider subscription waits on dispose or disabled reconnect", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_dispose",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: true, baseDelayMs: 30_000 },
+    logger: createMockLogger(),
+  });
+  clients.push(client);
+  const connect = client.connect();
+  mock.triggerOpen({ features: { providerSubagents: true } });
+  await connect;
+  mock.triggerClose();
+  const lease = client.acquireProviderSubagentSubscription("parent", "child");
+  const disposed = expect(lease).rejects.toThrow("disposed");
+  await Promise.resolve();
+  await client.close();
+  await disposed;
+  expect(client.getProviderSubagentSubscriptions()).toEqual({ parentAgentIds: [], timelines: [] });
+
+  const offline = new DaemonClient({
+    url: "ws://test",
+    clientId: "provider_no_reconnect",
+    reconnect: { enabled: false },
+    logger: createMockLogger(),
+  });
+  clients.push(offline);
+  await expect(offline.acquireProviderSubagentSubscription("parent")).rejects.toThrow(
+    "Transport not connected",
+  );
+  expect(offline.getProviderSubagentSubscriptions()).toEqual({ parentAgentIds: [], timelines: [] });
+});
+
 test("normalizes legacy and dedicated agent attention notifications", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
@@ -1393,31 +1694,90 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
 test("round-trips content revision cursors and same-seq revised entries", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
-  const client = new DaemonClient({ url: "ws://test", clientId: "clsk_unit_test", logger,
-    reconnect: { enabled: false }, transportFactory: () => mock.transport });
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
   clients.push(client);
   const connected = client.connect();
   mock.triggerOpen();
   await connected;
-  const revised = client.fetchAgentTimeline("agent-1", { requestId: "revisions-1", direction: "after",
-    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 }, limit: 40 });
-  expect(parseSentFrame(mock.sent[0])).toMatchObject({ type: "fetch_agent_timeline_request",
-    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 } });
-  const payload = { requestId: "revisions-1", agentId: "agent-1", agent: null, direction: "after", projection: "projected",
-    epoch: "epoch-1", reset: false, staleCursor: false, gap: false, contentVersion: 4, hasMoreRevisions: false,
-    window: { minSeq: 1, maxSeq: 42, nextSeq: 43 }, startCursor: null,
-    endCursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 }, hasOlder: true, hasNewer: false, entries: [],
-    revisedEntries: [{ provider: "omp", timestamp: "2026-11-04T00:00:00.000Z", seqStart: 1, seqEnd: 1,
-      sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }], collapsed: [], item: { type: "tool_call", callId: "write-1", name: "write",
-        revision: 4, status: "completed", error: null, detail: { type: "unknown", input: "saved", output: "done" } } }], error: null };
+  const revised = client.fetchAgentTimeline("agent-1", {
+    requestId: "revisions-1",
+    direction: "after",
+    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 },
+    limit: 40,
+  });
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "fetch_agent_timeline_request",
+    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 3 },
+  });
+  const payload = {
+    requestId: "revisions-1",
+    agentId: "agent-1",
+    agent: null,
+    direction: "after",
+    projection: "projected",
+    epoch: "epoch-1",
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    contentVersion: 4,
+    hasMoreRevisions: false,
+    window: { minSeq: 1, maxSeq: 42, nextSeq: 43 },
+    startCursor: null,
+    endCursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 },
+    hasOlder: true,
+    hasNewer: false,
+    entries: [],
+    revisedEntries: [
+      {
+        provider: "omp",
+        timestamp: "2026-11-04T00:00:00.000Z",
+        seqStart: 1,
+        seqEnd: 1,
+        sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+        collapsed: [],
+        item: {
+          type: "tool_call",
+          callId: "write-1",
+          name: "write",
+          revision: 4,
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: "saved", output: "done" },
+        },
+      },
+    ],
+    error: null,
+  };
   mock.triggerMessage(wrapSessionMessage({ type: "fetch_agent_timeline_response", payload }));
   const response = await revised;
   expect(response.revisedEntries?.[0]?.item).toMatchObject({ revision: 4, status: "completed" });
   expect(response.endCursor).toEqual({ epoch: "epoch-1", seq: 42, contentVersion: 4 });
-  const unchanged = client.fetchAgentTimeline("agent-1", { requestId: "revisions-2", direction: "after", cursor: response.endCursor! });
-  expect(parseSentFrame(mock.sent[1])).toMatchObject({ cursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 } });
-  mock.triggerMessage(wrapSessionMessage({ type: "fetch_agent_timeline_response", payload: { ...payload, requestId: "revisions-2", revisedEntries: [] } }));
-  expect(await unchanged).toMatchObject({ reset: false, entries: [], revisedEntries: [], hasNewer: false });
+  const unchanged = client.fetchAgentTimeline("agent-1", {
+    requestId: "revisions-2",
+    direction: "after",
+    cursor: response.endCursor!,
+  });
+  expect(parseSentFrame(mock.sent[1])).toMatchObject({
+    cursor: { epoch: "epoch-1", seq: 42, contentVersion: 4 },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_timeline_response",
+      payload: { ...payload, requestId: "revisions-2", revisedEntries: [] },
+    }),
+  );
+  expect(await unchanged).toMatchObject({
+    reset: false,
+    entries: [],
+    revisedEntries: [],
+    hasNewer: false,
+  });
   expect(logger.warn).not.toHaveBeenCalled();
 });
 

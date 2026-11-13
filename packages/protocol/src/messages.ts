@@ -1,7 +1,28 @@
 import { z } from "zod";
-import { DesktopPluginMetadataSchema, DesktopPluginApprovalSchema, DesktopPluginCatalogEntrySchema, DesktopPluginApproveRequestSchema, DesktopPluginStorageGetRequestSchema, DesktopPluginStoragePatchRequestSchema, DesktopPluginSecretRequestSchema, DesktopPluginDataClearRequestSchema, DesktopPluginApproveResponseSchema, DesktopPluginStorageGetResponseSchema, DesktopPluginStoragePatchResponseSchema, DesktopPluginSecretResponseSchema, DesktopPluginDataClearResponseSchema, OmpPluginManagementGetRequestMessageSchema, OmpPluginManagementUpdateRequestMessageSchema, OmpPluginManagementGetResponseMessageSchema, OmpPluginManagementUpdateResponseMessageSchema } from "./desktop-plugins.js";
+import {
+  DesktopPluginMetadataSchema,
+  DesktopPluginApprovalSchema,
+  DesktopPluginCatalogEntrySchema,
+  DesktopPluginApproveRequestSchema,
+  DesktopPluginStorageGetRequestSchema,
+  DesktopPluginStoragePatchRequestSchema,
+  DesktopPluginSecretRequestSchema,
+  DesktopPluginDataClearRequestSchema,
+  DesktopPluginApproveResponseSchema,
+  DesktopPluginStorageGetResponseSchema,
+  DesktopPluginStoragePatchResponseSchema,
+  DesktopPluginSecretResponseSchema,
+  DesktopPluginDataClearResponseSchema,
+  OmpPluginManagementGetRequestMessageSchema,
+  OmpPluginManagementUpdateRequestMessageSchema,
+  OmpPluginManagementGetResponseMessageSchema,
+  OmpPluginManagementUpdateResponseMessageSchema,
+} from "./desktop-plugins.js";
 export * from "./desktop-plugins.js";
-import { DesktopPluginRevokeTrustRequestSchema,DesktopPluginRevokeTrustResponseSchema } from "./desktop-plugins.js";
+import {
+  DesktopPluginRevokeTrustRequestSchema,
+  DesktopPluginRevokeTrustResponseSchema,
+} from "./desktop-plugins.js";
 import {
   BackgroundProcessListRequestSchema,
   BackgroundProcessOutputRequestSchema,
@@ -563,12 +584,14 @@ const ToolPolicySchema = z
   })
   .strict();
 
-export const AgentSandboxSchema = z.object({
-  root: z.string().min(1),
-  javascript: z.boolean().optional(),
-  network: z.literal("public").optional(),
-  imageGeneration: z.boolean().optional(),
-}).strict();
+export const AgentSandboxSchema = z
+  .object({
+    root: z.string().min(1),
+    javascript: z.boolean().optional(),
+    network: z.literal("public").optional(),
+    imageGeneration: z.boolean().optional(),
+  })
+  .strict();
 
 export type AgentSandbox = z.infer<typeof AgentSandboxSchema>;
 
@@ -843,7 +866,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     clientMessageId: z.string().optional(),
     rewindStatus: AgentUserMessageRewindStatusSchema.optional(),
     sourceAgentId: z.string().min(1).optional(),
-    sourceKind: z.enum(["user","service","agent"]).optional(),
+    sourceKind: z.enum(["user", "service", "agent"]).optional(),
     workingStartedAt: z.string().optional(),
     images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
     attachments: z.array(z.lazy(() => AgentAttachmentSchema)).optional(),
@@ -2346,6 +2369,17 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   cursor: AgentTimelineCursorSchema.optional(),
   limit: z.number().int().nonnegative().optional(),
 });
+
+const ProviderSubagentSubscriptionSchema = z.object({
+  parentAgentIds: z.array(z.string()),
+  timelines: z.array(z.object({ parentAgentId: z.string(), subagentId: z.string() })),
+  requestId: z.string(),
+});
+
+export const SetProviderSubagentSubscriptionRequestMessageSchema =
+  ProviderSubagentSubscriptionSchema.extend({
+    type: z.literal("agent.provider_subagents.set_subscription.request"),
+  });
 
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
@@ -3851,6 +3885,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BackgroundProcessStopRequestSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  SetProviderSubagentSubscriptionRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -5195,7 +5230,16 @@ export const ProviderSubagentUpdateMessageSchema = z.object({
       parentAgentId: z.string(),
       subagentId: z.string(),
     }),
+    z.object({
+      kind: z.literal("invalidate"),
+      parentAgentId: z.string().optional(),
+    }),
   ]),
+});
+
+export const SetProviderSubagentSubscriptionResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.set_subscription.response"),
+  payload: ProviderSubagentSubscriptionSchema,
 });
 
 export const SetAgentTimelineSubscriptionResponseMessageSchema = z.object({
@@ -7590,7 +7634,14 @@ export const PluginDirectoryInstallResponseSchema = z.object({
 
 export const PluginDirectoryInspectResponseSchema = z.object({
   type: z.literal("plugin.directory.inspect.response"),
-  payload: z.object({ requestId: z.string(), id: PluginIdSchema, version: z.string().optional(), metadata: DesktopPluginMetadataSchema.nullable().optional(), capabilities: z.array(z.string()).optional(), format: z.enum(["legacy", "package"]).optional() }),
+  payload: z.object({
+    requestId: z.string(),
+    id: PluginIdSchema,
+    version: z.string().optional(),
+    metadata: DesktopPluginMetadataSchema.nullable().optional(),
+    capabilities: z.array(z.string()).optional(),
+    format: z.enum(["legacy", "package"]).optional(),
+  }),
 });
 
 function pluginActionResponse<const Type extends string>(type: Type) {
@@ -7783,6 +7834,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BackgroundProcessStopResponseSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
+  SetProviderSubagentSubscriptionResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,

@@ -137,48 +137,53 @@ async function waitForProviderSubagent(
   parentAgentId: string,
   status: "running" | "completed",
 ): Promise<Awaited<ReturnType<DaemonClient["listProviderSubagents"]>>["subagents"][number]> {
-  return await new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (
-      subagent: Awaited<ReturnType<DaemonClient["listProviderSubagents"]>>["subagents"][number],
-    ): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      unsubscribe();
-      resolve(subagent);
-    };
-    const unsubscribe = client.on("agent.provider_subagents.update", (message) => {
-      if (
-        message.payload.kind === "upsert" &&
-        message.payload.subagent.parentAgentId === parentAgentId &&
-        message.payload.subagent.status === status
-      ) {
-        finish(message.payload.subagent);
-      }
-    });
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      unsubscribe();
-      reject(new Error(`Timed out waiting for OMP provider subagent status ${status}`));
-    }, TIMEOUT_MS);
-    void client
-      .listProviderSubagents(parentAgentId)
-      .then(({ subagents }) => {
-        const match = subagents.find((subagent) => subagent.status === status);
-        if (match) finish(match);
-        return undefined;
-      })
-      .catch((error: unknown) => {
-        if (settled) return undefined;
+  const release = await client.acquireProviderSubagentSubscription(parentAgentId);
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (
+        subagent: Awaited<ReturnType<DaemonClient["listProviderSubagents"]>>["subagents"][number],
+      ): void => {
+        if (settled) return;
         settled = true;
         clearTimeout(timeout);
         unsubscribe();
-        reject(error);
-        return undefined;
+        resolve(subagent);
+      };
+      const unsubscribe = client.on("agent.provider_subagents.update", (message) => {
+        if (
+          message.payload.kind === "upsert" &&
+          message.payload.subagent.parentAgentId === parentAgentId &&
+          message.payload.subagent.status === status
+        ) {
+          finish(message.payload.subagent);
+        }
       });
-  });
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        reject(new Error(`Timed out waiting for OMP provider subagent status ${status}`));
+      }, TIMEOUT_MS);
+      void client
+        .listProviderSubagents(parentAgentId)
+        .then(({ subagents }) => {
+          const match = subagents.find((subagent) => subagent.status === status);
+          if (match) finish(match);
+          return undefined;
+        })
+        .catch((error: unknown) => {
+          if (settled) return undefined;
+          settled = true;
+          clearTimeout(timeout);
+          unsubscribe();
+          reject(error);
+          return undefined;
+        });
+    });
+  } finally {
+    release();
+  }
 }
 
 beforeAll(preflight, 15_000);

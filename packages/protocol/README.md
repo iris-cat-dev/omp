@@ -45,6 +45,14 @@ Diagnostics report rejected byte counts, buffer usage, limits, message types and
 bounded request identifiers, never message content. History and directory
 schemas, cursors and stored data are unchanged.
 
+Provider subagent pushes have an explicit recovery path instead of closing the
+shared connection on logical queue saturation. The daemon pauses only that feed,
+finishes accepted FIFO messages, then sends one `invalidate` update before
+resuming it. Physical send failures and nonrecoverable pushes retain their
+bounded fail-closed behavior. Queue diagnostics distinguish waiting message
+counts/bytes, reserved errors, the active message's type/age, and physical
+`bufferedAmount`.
+
 ## Compressed JSON messages
 
 Desktop, Web and daemon clients advertise `gzip_json_messages` in hello only
@@ -77,6 +85,36 @@ pending work so stale decompression cannot reach a replacement connection.
 Invalid or unnegotiated compressed frames close the connection explicitly.
 Compression does not change model context, history contents, stream event
 semantics, RPC deadlines or stored data.
+
+## Provider subagent subscriptions
+
+`agent.provider_subagents.set_subscription.request` replaces the requesting
+socket's complete `parentAgentIds` and `timelines` sets. Parent IDs subscribe
+to descriptor upserts/removals; each `{ parentAgentId, subagentId }` timeline
+subscribes to that child's detail stream and implicitly its parent descriptors.
+The response acknowledges the normalized sets and `requestId`. Listing or
+fetching history does not acquire a live subscription. Detaching a socket
+removes only that socket's interests.
+
+Clients acquire reference-counted leases with
+`acquireProviderSubagentSubscription(parentAgentId, subagentId?, { signal }?)`.
+Await its acknowledgment before fetching the initial snapshot, abort pending
+acquisition when a view closes, and release the lease on unmount. Reconnect
+restores only active leases, not every previously cached child.
+
+`agent.provider_subagents.update` with `kind: "invalidate"` requires an
+authoritative list/timeline refresh for active subscriptions. An optional
+`parentAgentId` scopes a history rebuild; its absence invalidates the socket's
+whole provider feed after overloading. This marker is required even if no later
+delta arrives. Clients reject snapshots started before invalidation, preserve
+newer live rows/tool revisions, and continue using the existing epoch/sequence
+gap recovery. Upgrade the daemon and application together for this contract.
+
+Equivalent descriptors do not advance `updatedAt` or broadcast. Live child
+text/reasoning and tool revisions coalesce per parent/child before sequence
+assignment using the ordinary 60 ms stream window. Terminal state and removal
+flush pending content first. Historical hydration builds its snapshot without
+replaying individual rows to every connection, then emits a parent invalidation.
 
 ## Materialized tool timeline rows
 

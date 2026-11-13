@@ -789,13 +789,13 @@ describe("OMP provider subagent mapper", () => {
       });
     const canceled = index.markCanceled(parent, "child");
     expect(canceled).toMatchObject([
-      { event: { type: "upsert", status: "canceled" } },
       {
         event: { type: "timeline", item: { type: "tool_call", callId: "one", status: "canceled" } },
       },
       {
         event: { type: "timeline", item: { type: "tool_call", callId: "two", status: "canceled" } },
       },
+      { event: { type: "upsert", status: "canceled" } },
     ]);
     expect(
       childItems(

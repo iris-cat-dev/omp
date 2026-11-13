@@ -96,9 +96,11 @@ import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtim
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { inspectOmpSessionHistoryAvailability } from "./providers/omp/session-descriptor.js";
+import { ProviderSubagentCoalescer } from "./provider-subagents/coalescer.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
+  type ProviderSubagentInputEvent,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 
@@ -234,6 +236,7 @@ export type AgentManagerEvent =
   | { type: "stored_agent_state"; record: StoredAgentRecord }
   | { type: "agent_deleted"; agentId: string; workspaceId: string | null; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
+  | { type: "provider_subagents_reset"; parentAgentId: string }
   | {
       type: "agent_stream";
       agentId: string;
@@ -775,13 +778,17 @@ export class AgentManager {
   private readonly closedTimelineCache = new Map<string, number>();
   private readonly closedTimelineCacheBytes: number;
   private readonly providerSubagents = new ProviderSubagentStore();
+  private readonly providerSubagentCoalescer: ProviderSubagentCoalescer;
   private readonly providerSubagentHistory = new WeakMap<AgentSession, Promise<void>>();
   private readonly providerSubagentReplayEvents = new Map<string, AgentStreamEvent[]>();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly pendingPromptSources = new Map<string, Map<string, string>>();
-  private readonly pendingPromptKinds = new Map<string,Map<string,"user"|"service"|"agent">>();
+  private readonly pendingPromptKinds = new Map<
+    string,
+    Map<string, "user" | "service" | "agent">
+  >();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly startingForegroundRunTokens = new Set<string>();
@@ -854,6 +861,14 @@ export class AgentManager {
       onFlush: ({ agentId, item, provider, turnId }) => {
         const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
         this.notifyForegroundTurnWaiters(agentId, event);
+      },
+    });
+    this.providerSubagentCoalescer = new ProviderSubagentCoalescer({
+      windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
+      timers: { setTimeout, clearTimeout },
+      onFlush: (parentAgentId, provider, event) => {
+        const update = this.providerSubagents.apply(parentAgentId, provider, event);
+        if (update) this.dispatch({ type: "provider_subagent", event: update });
       },
     });
     this.updateProviderRegistry({
@@ -1353,12 +1368,11 @@ export class AgentManager {
       );
     }
     if (cancelled && this.providerSubagents.get(parentAgentId, subagentId)?.status === "running") {
-      const update = this.providerSubagents.apply(parentAgentId, child.provider, {
+      this.applyProviderSubagentEvent(parentAgentId, child.provider, {
         type: "upsert",
         id: subagentId,
         status: "canceled",
       });
-      this.dispatch({ type: "provider_subagent", event: update });
     }
     const drained = await this.waitWithTimeout({
       operation: this.drainSessionEvents(parentAgentId),
@@ -1712,10 +1726,11 @@ export class AgentManager {
         admission,
       });
       if (!imported.session.streamSubagentHistory) {
+        let changed = false;
         for (const event of imported.providerSubagentEvents ?? []) {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          this.dispatch({ type: "provider_subagent", event: update });
+          if (this.providerSubagents.apply(agent.id, event.provider, event.event)) changed = true;
         }
+        if (changed) this.dispatch({ type: "provider_subagents_reset", parentAgentId: agent.id });
       }
       return agent;
     } finally {
@@ -1792,6 +1807,7 @@ export class AgentManager {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
         // hydrateTimelineFromProvider re-streams the freshly read provider history.
         this.timelineStore.delete(agentId);
+        this.providerSubagentCoalescer.clearParent(agentId, true);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
         }
@@ -2240,16 +2256,16 @@ export class AgentManager {
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
+    this.providerSubagentCoalescer.clearParent(parentAgentId);
     for (const subagent of this.providerSubagents.list(parentAgentId)) {
       if (subagent.status !== "running") {
         continue;
       }
-      const event = this.providerSubagents.apply(parentAgentId, subagent.provider, {
+      this.applyProviderSubagentEvent(parentAgentId, subagent.provider, {
         type: "upsert",
         id: subagent.id,
         status: "canceled",
       });
-      this.dispatch({ type: "provider_subagent", event });
     }
   }
 
@@ -3475,7 +3491,11 @@ export class AgentManager {
     const clientMessageId = options?.clientMessageId;
     if (!clientMessageId) return;
     if (admission.userMessageEcho === "provider") {
-      if(options?.sourceKind){const kinds=this.pendingPromptKinds.get(agent.id)??new Map();kinds.set(clientMessageId,options.sourceKind);this.pendingPromptKinds.set(agent.id,kinds);}
+      if (options?.sourceKind) {
+        const kinds = this.pendingPromptKinds.get(agent.id) ?? new Map();
+        kinds.set(clientMessageId, options.sourceKind);
+        this.pendingPromptKinds.set(agent.id, kinds);
+      }
       if (options?.sourceAgentId) {
         let sources = this.pendingPromptSources.get(agent.id);
         if (!sources) {
@@ -4714,6 +4734,8 @@ export class AgentManager {
     );
     this.clearIdleRuntimeTimer(agent.id);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.providerSubagentReplayEvents.delete(agent.id);
+    this.providerSubagentCoalescer.clearParent(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     this.runtimeInventoryReasons.delete(agent.id);
@@ -4759,6 +4781,8 @@ export class AgentManager {
     this.timelineStore.delete(agentId);
     this.pendingPromptSources.delete(agentId);
     this.pendingPromptKinds.delete(agentId);
+    this.providerSubagentReplayEvents.delete(agentId);
+    this.providerSubagentCoalescer.clearParent(agentId, true);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -4894,13 +4918,33 @@ export class AgentManager {
     }
   }
 
+  private applyProviderSubagentEvent(
+    parentAgentId: string,
+    provider: AgentProvider,
+    event: ProviderSubagentInputEvent,
+  ): void {
+    if (event.type === "timeline") {
+      this.providerSubagentCoalescer.handle(parentAgentId, provider, event);
+      return;
+    }
+    if (
+      event.type === "remove" ||
+      (event.status !== undefined && event.status !== "running") ||
+      (event.status === "running" &&
+        this.providerSubagents.get(parentAgentId, event.id)?.status !== "running")
+    ) {
+      this.providerSubagentCoalescer.flushChild(parentAgentId, event.id);
+    }
+    const update = this.providerSubagents.apply(parentAgentId, provider, event);
+    if (update) this.dispatch({ type: "provider_subagent", event: update });
+  }
+
   private async dispatchSessionEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      this.dispatch({ type: "provider_subagent", event: update });
+      this.applyProviderSubagentEvent(agent.id, event.provider, event.event);
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -5029,24 +5073,28 @@ export class AgentManager {
 
     const broadcast = options?.broadcast ?? false;
 
-    if (options?.force) {
-      const liveEvents: AgentStreamEvent[] = [];
-      this.providerSubagentReplayEvents.set(agent.id, liveEvents);
-      try {
+    const liveEvents: AgentStreamEvent[] = [];
+    this.providerSubagentReplayEvents.set(agent.id, liveEvents);
+    try {
+      await this.drainSessionEvents(agent.id);
+      this.providerSubagentCoalescer.clearParent(agent.id, true);
+      if (this.agents.get(agent.id) !== agent) return;
+      if (options?.force) {
         await this.forceHydrateTimelineFromLegacyProviderHistory(
           agent,
           typeof broadcast === "function" ? broadcast() : broadcast,
         );
-      } finally {
+      } else {
+        await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+      }
+    } finally {
+      if (this.providerSubagentReplayEvents.get(agent.id) === liveEvents) {
         this.providerSubagentReplayEvents.delete(agent.id);
         if (this.agents.get(agent.id) === agent) {
           for (const event of liveEvents) this.enqueueSessionEvent(agent.id, event);
         }
       }
-      return;
     }
-
-    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
   private async hydrateProviderSubagentHistory(
@@ -5057,19 +5105,21 @@ export class AgentManager {
     if (!source) return;
     const previous = this.providerSubagentHistory.get(agent.session);
     if (previous) return previous;
+    const liveEvents: AgentStreamEvent[] = [];
+    this.providerSubagentReplayEvents.set(agent.id, liveEvents);
     const replay = (async () => {
-      for (const event of this.providerSubagents.deleteParent(agent.id)) {
-        if (typeof broadcast === "function" ? broadcast() : broadcast) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
-      }
+      await this.drainSessionEvents(agent.id);
+      this.providerSubagentCoalescer.clearParent(agent.id, true);
+      if (this.agents.get(agent.id) !== agent) return;
+      this.providerSubagents.deleteParent(agent.id);
       for await (const event of source.call(agent.session)) {
         if (this.agents.get(agent.id) !== agent) return;
         if (event.type !== "provider_subagent") continue;
-        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-        if (typeof broadcast === "function" ? broadcast() : broadcast) {
-          this.dispatch({ type: "provider_subagent", event: update });
-        }
+        this.providerSubagents.apply(agent.id, event.provider, event.event);
+      }
+      if (this.agents.get(agent.id) !== agent) return;
+      if (typeof broadcast === "function" ? broadcast() : broadcast) {
+        this.dispatch({ type: "provider_subagents_reset", parentAgentId: agent.id });
       }
     })();
     this.providerSubagentHistory.set(agent.session, replay);
@@ -5080,6 +5130,13 @@ export class AgentManager {
         this.providerSubagentHistory.delete(agent.session);
       }
       throw error;
+    } finally {
+      if (this.providerSubagentReplayEvents.get(agent.id) === liveEvents) {
+        this.providerSubagentReplayEvents.delete(agent.id);
+        if (this.agents.get(agent.id) === agent) {
+          for (const event of liveEvents) this.enqueueSessionEvent(agent.id, event);
+        }
+      }
     }
   }
 
@@ -5104,6 +5161,7 @@ export class AgentManager {
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     const promptSources = await this.getPromptSources(agent.id);
     for await (const rawEvent of agent.session.streamHistory()) {
+      if (this.agents.get(agent.id) !== agent) return;
       const limitedEvent = limitAgentStreamEventContent(rawEvent);
       const event =
         limitedEvent.type === "timeline"
@@ -5119,24 +5177,20 @@ export class AgentManager {
       }
     }
 
+    if (this.agents.get(agent.id) !== agent) return;
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
+    if (this.agents.get(agent.id) !== agent) return;
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
     this.providerSubagentHistory.set(agent.session, Promise.resolve());
 
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
-      }
-    }
+    this.providerSubagents.deleteParent(agent.id);
     for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
-      }
+      this.providerSubagents.apply(agent.id, event.provider, event.event);
     }
+    if (broadcast) this.dispatch({ type: "provider_subagents_reset", parentAgentId: agent.id });
     for (const event of historyEvents) {
       const row = this.recordTimeline(agent.id, event.item, {
         timestamp: event.timestamp,
@@ -5168,23 +5222,20 @@ export class AgentManager {
       event: Extract<AgentStreamEvent, { type: "timeline" }>;
       row: AgentTimelineRow;
     }> = [];
-    const providerSubagentEvents: AgentManagerEvent[] = [];
+    let providerSubagentsChanged = false;
     const promptSources = await this.getPromptSources(agent.id);
     agent.historyPrimed = false;
     try {
       for await (const rawEvent of agent.session.streamHistory()) {
+        if (this.agents.get(agent.id) !== agent) return;
         const limitedEvent = limitAgentStreamEventContent(rawEvent);
         const event =
           limitedEvent.type === "timeline"
             ? { ...limitedEvent, item: restorePromptSource(limitedEvent.item, promptSources) }
             : limitedEvent;
         if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-          if (deferredBroadcast) {
-            providerSubagentEvents.push(managerEvent);
-          } else if (broadcast) {
-            this.dispatch(managerEvent);
+          if (this.providerSubagents.apply(agent.id, event.provider, event.event)) {
+            providerSubagentsChanged = true;
           }
           continue;
         }
@@ -5217,14 +5268,15 @@ export class AgentManager {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
       throw error;
     }
+    if (this.agents.get(agent.id) !== agent) return;
     agent.historyPrimed = true;
     this.providerSubagentHistory.set(agent.session, Promise.resolve());
+    if (providerSubagentsChanged && (typeof broadcast === "function" ? broadcast() : broadcast)) {
+      this.dispatch({ type: "provider_subagents_reset", parentAgentId: agent.id });
+    }
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;
-    }
-    for (const event of providerSubagentEvents) {
-      this.dispatch(event);
     }
     for (const { event, row } of timelineEvents) {
       this.dispatchStream(
@@ -5830,7 +5882,7 @@ export class AgentManager {
       rewindStatus?: AgentUserMessageRewindStatus;
       workingStartedAt?: string;
       sourceAgentId?: string;
-      sourceKind?: "user"|"service"|"agent";
+      sourceKind?: "user" | "service" | "agent";
     },
   ): void {
     if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
@@ -5844,8 +5896,7 @@ export class AgentManager {
       for (const block of prompt) {
         if (block.type === "image") {
           (images ??= []).push({ data: block.data, mimeType: block.mimeType });
-        }
-        else if (block.type !== "text" || "mimeType" in block) (attachments ??= []).push(block);
+        } else if (block.type !== "text" || "mimeType" in block) (attachments ??= []).push(block);
       }
     }
     const item: AgentTimelineItem = {
@@ -5860,7 +5911,7 @@ export class AgentManager {
       ...(options?.workingStartedAt ? { workingStartedAt: options.workingStartedAt } : {}),
       ...(options?.messageId ? { messageId: options.messageId } : {}),
       ...(options?.sourceAgentId ? { sourceAgentId: options.sourceAgentId } : {}),
-      ...(options?.sourceKind ? {sourceKind:options.sourceKind} : {}),
+      ...(options?.sourceKind ? { sourceKind: options.sourceKind } : {}),
     };
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
     if (options?.providerMessageId && options.sourceAgentId) {
@@ -5881,9 +5932,13 @@ export class AgentManager {
     const sourceAgentId = item.sourceAgentId ?? sources?.get(clientMessageId);
     sources?.delete(clientMessageId);
     if (sources?.size === 0) this.pendingPromptSources.delete(agent.id);
-    const kinds=this.pendingPromptKinds.get(agent.id);
-    const sourceKind=kinds?.get(clientMessageId)??(existing?.item.type==="user_message"?existing.item.sourceKind:undefined)??(sourceAgentId?"agent":undefined);
-    kinds?.delete(clientMessageId);if(kinds?.size===0)this.pendingPromptKinds.delete(agent.id);
+    const kinds = this.pendingPromptKinds.get(agent.id);
+    const sourceKind =
+      kinds?.get(clientMessageId) ??
+      (existing?.item.type === "user_message" ? existing.item.sourceKind : undefined) ??
+      (sourceAgentId ? "agent" : undefined);
+    kinds?.delete(clientMessageId);
+    if (kinds?.size === 0) this.pendingPromptKinds.delete(agent.id);
     if (!existing) {
       const prompt: AgentPromptInput = item.images?.length
         ? [
@@ -5897,7 +5952,7 @@ export class AgentManager {
         ...(item.rewindStatus ? { rewindStatus: item.rewindStatus } : {}),
         ...(turnId ? { turnId } : {}),
         ...(sourceAgentId ? { sourceAgentId } : {}),
-        ...(sourceKind?{sourceKind}:{}),
+        ...(sourceKind ? { sourceKind } : {}),
       });
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
@@ -6275,6 +6330,7 @@ export class AgentManager {
 
   private async flushTasks(options: { includeAgentRegistrations: boolean }): Promise<void> {
     this.agentStreamCoalescer.flushAll();
+    this.providerSubagentCoalescer.flushAll();
     // Drain tasks, including tasks spawned while awaiting.
     while (
       this.backgroundTasks.size > 0 ||
@@ -6284,6 +6340,7 @@ export class AgentManager {
         ? [...this.backgroundTasks, ...this.agentRegistrationTasks.keys()]
         : [...this.backgroundTasks];
       await Promise.allSettled(pending);
+      this.providerSubagentCoalescer.flushAll();
     }
   }
 
@@ -6366,6 +6423,13 @@ export class AgentManager {
       ) {
         continue;
       }
+      if (
+        subscriber.agentId &&
+        event.type === "provider_subagents_reset" &&
+        subscriber.agentId !== event.parentAgentId
+      ) {
+        continue;
+      }
       // Skip internal agents for global subscribers (those without a specific agentId)
       if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
         continue;
@@ -6379,6 +6443,9 @@ export class AgentManager {
     if (event.type === "stored_agent_state") return event.record.internal === true;
     if (event.type === "agent_deleted") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
+    if (event.type === "provider_subagents_reset") {
+      return this.agents.get(event.parentAgentId)?.internal === true;
+    }
     if (event.type !== "provider_subagent") return false;
     const parentAgentId =
       event.event.type === "upsert"
@@ -6391,7 +6458,8 @@ export class AgentManager {
     config: AgentSessionConfig,
     options: NormalizeConfigOptions = {},
   ): Promise<AgentSessionConfig> {
-    if (config.sandbox && config.provider !== "omp") throw new Error("Mandatory sandbox requires the OMP provider");
+    if (config.sandbox && config.provider !== "omp")
+      throw new Error("Mandatory sandbox requires the OMP provider");
     const normalized: AgentSessionConfig = { ...config };
     if (normalized.sandbox) normalized.cwd = normalized.sandbox.root;
 
@@ -6490,14 +6558,16 @@ export class AgentManager {
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const launchConfig = storedConfig.sandbox ? { ...storedConfig } : this.applyDaemonAppendSystemPrompt(
-      withRuntimePaseoMcpServer({
-        config: storedConfig,
-        agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpAuthToken,
-      }),
-    );
+    const launchConfig = storedConfig.sandbox
+      ? { ...storedConfig }
+      : this.applyDaemonAppendSystemPrompt(
+          withRuntimePaseoMcpServer({
+            config: storedConfig,
+            agentId,
+            mcpBaseUrl: this.mcpBaseUrl,
+            mcpAuthToken: this.mcpAuthToken,
+          }),
+        );
     return { storedConfig, launchConfig };
   }
 

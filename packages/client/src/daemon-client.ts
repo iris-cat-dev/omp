@@ -167,7 +167,10 @@ import type {
   OmpPluginMarketplaceInfo,
   OmpPluginDoctorCheck,
 } from "@omp-desktop/protocol/messages";
-import type { DesktopPluginCatalogEntry, DesktopPluginExpectedInstallation } from "@omp-desktop/protocol/desktop-plugins";
+import type {
+  DesktopPluginCatalogEntry,
+  DesktopPluginExpectedInstallation,
+} from "@omp-desktop/protocol/desktop-plugins";
 
 import type {
   AgentPermissionRequest,
@@ -692,6 +695,10 @@ export type ProviderSubagentTimelinePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.timeline.get.response" }
 >["payload"];
+export interface ProviderSubagentSubscriptions {
+  parentAgentIds: string[];
+  timelines: { parentAgentId: string; subagentId: string }[];
+}
 export interface FetchProviderSubagentTimelineOptions {
   direction?: ProviderSubagentTimelinePayload["direction"];
   cursor?: FetchAgentTimelineCursor;
@@ -1236,9 +1243,15 @@ export class DaemonClient {
   private readonly logClientIdHash: string;
   private readonly logGeneration: number | null;
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
-  private baseTimelineSubscriptions:string[]=[];
-  private readonly leasedTimelineSubscriptions=new Map<string,number>();
-  private timelineSubscriptionUpdates:Promise<void>=Promise.resolve();
+  private baseTimelineSubscriptions: string[] = [];
+  private readonly leasedTimelineSubscriptions = new Map<string, number>();
+  private timelineSubscriptionUpdates: Promise<void> = Promise.resolve();
+  private readonly providerSubagentParentLeases = new Map<string, number>();
+  private readonly providerSubagentTimelineLeases = new Map<string, Map<string, number>>();
+  private providerSubagentSubscriptionUpdates: Promise<void> | null = null;
+  private providerSubagentSubscriptionWake: (() => void) | null = null;
+  private acknowledgedProviderSubagentSubscriptions: { epoch: number; signature: string } | null =
+    null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
@@ -3301,6 +3314,159 @@ export class DaemonClient {
     });
   }
 
+  async acquireProviderSubagentSubscription(
+    parentAgentId: string,
+    subagentId?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<() => void> {
+    const { signal } = options;
+    if (signal?.aborted)
+      throw signal.reason ?? new DOMException("Subscription canceled", "AbortError");
+    this.providerSubagentParentLeases.set(
+      parentAgentId,
+      (this.providerSubagentParentLeases.get(parentAgentId) ?? 0) + 1,
+    );
+    if (subagentId !== undefined) {
+      let children = this.providerSubagentTimelineLeases.get(parentAgentId);
+      if (!children) {
+        children = new Map();
+        this.providerSubagentTimelineLeases.set(parentAgentId, children);
+      }
+      children.set(subagentId, (children.get(subagentId) ?? 0) + 1);
+    }
+    let active = true;
+    const release = () => {
+      if (!active) return;
+      active = false;
+      signal?.removeEventListener("abort", onAbort);
+      const parents = this.providerSubagentParentLeases;
+      const count = parents.get(parentAgentId) ?? 0;
+      if (count <= 1) parents.delete(parentAgentId);
+      else parents.set(parentAgentId, count - 1);
+      if (subagentId !== undefined) {
+        const children = this.providerSubagentTimelineLeases.get(parentAgentId);
+        const childCount = children?.get(subagentId) ?? 0;
+        if (childCount <= 1) children?.delete(subagentId);
+        else children?.set(subagentId, childCount - 1);
+        if (children?.size === 0) this.providerSubagentTimelineLeases.delete(parentAgentId);
+      }
+      this.providerSubagentSubscriptionWake?.();
+      void this.syncProviderSubagentSubscriptions().catch((error: unknown) => {
+        this.logger.warn({ err: error }, "Provider subagent unsubscribe failed");
+      });
+    };
+    let rejectAborted: ((reason?: unknown) => void) | undefined;
+    const aborted = signal
+      ? new Promise<never>((_resolve, reject) => {
+          rejectAborted = reject;
+        })
+      : undefined;
+    const onAbort = () => {
+      release();
+      rejectAborted?.(signal?.reason ?? new DOMException("Subscription canceled", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    this.providerSubagentSubscriptionWake?.();
+    try {
+      const synchronized = this.syncProviderSubagentSubscriptions();
+      await (aborted ? Promise.race([synchronized, aborted]) : synchronized);
+      return release;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  getProviderSubagentSubscriptions(): ProviderSubagentSubscriptions {
+    const parentAgentIds = [...this.providerSubagentParentLeases.keys()].sort();
+    const timelines: ProviderSubagentSubscriptions["timelines"] = [];
+    for (const parentAgentId of [...this.providerSubagentTimelineLeases.keys()].sort()) {
+      for (const subagentId of [
+        ...this.providerSubagentTimelineLeases.get(parentAgentId)!.keys(),
+      ].sort()) {
+        timelines.push({ parentAgentId, subagentId });
+      }
+    }
+    return { parentAgentIds, timelines };
+  }
+
+  syncProviderSubagentSubscriptions(): Promise<void> {
+    if (this.providerSubagentSubscriptionUpdates) return this.providerSubagentSubscriptionUpdates;
+    const update = Promise.resolve()
+      .then(async () => {
+        // Read desired leases again after each ACK: changes made during the request
+        // belong to this same flight, including the final release of a hidden view.
+        while (true) {
+          const subscriptions = this.getProviderSubagentSubscriptions();
+          if (this.connectionState.status === "disposed")
+            throw new Error("Daemon client is disposed");
+          if (this.connectionState.status !== "connected") {
+            if (subscriptions.parentAgentIds.length === 0 && subscriptions.timelines.length === 0)
+              return;
+            if (
+              this.config.reconnect?.enabled === false &&
+              this.connectionState.status !== "connecting"
+            )
+              throw new Error(`Transport not connected (status: ${this.connectionState.status})`);
+            await new Promise<void>((resolve, reject) => {
+              const wake = () => {
+                this.connectionListeners.delete(onConnection);
+                this.providerSubagentSubscriptionWake = null;
+                resolve();
+              };
+              const onConnection = (connection: ConnectionState) => {
+                if (connection.status === "disposed") {
+                  this.connectionListeners.delete(onConnection);
+                  this.providerSubagentSubscriptionWake = null;
+                  reject(new Error("Daemon client is disposed"));
+                } else if (
+                  connection.status === "connected" ||
+                  (connection.status === "disconnected" && this.config.reconnect?.enabled === false)
+                ) {
+                  wake();
+                }
+              };
+              this.providerSubagentSubscriptionWake = wake;
+              this.connectionListeners.add(onConnection);
+            });
+            continue;
+          }
+          const signature = JSON.stringify(subscriptions);
+          const epoch = this.transportValidationEpoch;
+          const acknowledged = this.acknowledgedProviderSubagentSubscriptions;
+          if (acknowledged?.epoch === epoch && acknowledged.signature === signature) return;
+          const requestId = this.createRequestId();
+          try {
+            await this.sendRequest({
+              requestId,
+              message: SessionInboundMessageSchema.parse({
+                type: "agent.provider_subagents.set_subscription.request",
+                ...subscriptions,
+                requestId,
+              }),
+              options: { skipQueue: true },
+              select: (response) =>
+                response.type === "agent.provider_subagents.set_subscription.response" &&
+                response.payload.requestId === requestId
+                  ? response.payload
+                  : null,
+            });
+          } catch (error) {
+            if (epoch !== this.transportValidationEpoch || !this.isConnected) continue;
+            throw error;
+          }
+          if (epoch === this.transportValidationEpoch) {
+            this.acknowledgedProviderSubagentSubscriptions = { epoch, signature };
+          }
+        }
+      })
+      .finally(() => {
+        this.providerSubagentSubscriptionUpdates = null;
+      });
+    this.providerSubagentSubscriptionUpdates = update;
+    return update;
+  }
+
   async listProviderSubagents(
     parentAgentId: string,
     options: { requestId?: string; timeout?: number } = {},
@@ -3361,26 +3527,49 @@ export class DaemonClient {
   }
 
   async setAgentTimelineSubscription(agentIds: string[]): Promise<void> {
-    this.baseTimelineSubscriptions=agentIds;
+    this.baseTimelineSubscriptions = agentIds;
     return this.updateTimelineSubscriptions();
   }
 
-  async acquireAgentTimelineSubscription(agentId:string):Promise<()=>void> {
-    this.leasedTimelineSubscriptions.set(agentId,(this.leasedTimelineSubscriptions.get(agentId)??0)+1);
-    const release=()=>{const count=this.leasedTimelineSubscriptions.get(agentId)??0;if(count<=1)this.leasedTimelineSubscriptions.delete(agentId);else this.leasedTimelineSubscriptions.set(agentId,count-1);void this.updateTimelineSubscriptions().catch(error=>this.config.logger?.warn({err:error},"Timeline unsubscribe failed"));};
-    try{await this.updateTimelineSubscriptions();}catch(error){release();throw error;}
-    let active=true;
-    return()=>{if(active){active=false;release();}};
+  async acquireAgentTimelineSubscription(agentId: string): Promise<() => void> {
+    this.leasedTimelineSubscriptions.set(
+      agentId,
+      (this.leasedTimelineSubscriptions.get(agentId) ?? 0) + 1,
+    );
+    const release = () => {
+      const count = this.leasedTimelineSubscriptions.get(agentId) ?? 0;
+      if (count <= 1) this.leasedTimelineSubscriptions.delete(agentId);
+      else this.leasedTimelineSubscriptions.set(agentId, count - 1);
+      void this.updateTimelineSubscriptions().catch((error) =>
+        this.config.logger?.warn({ err: error }, "Timeline unsubscribe failed"),
+      );
+    };
+    try {
+      await this.updateTimelineSubscriptions();
+    } catch (error) {
+      release();
+      throw error;
+    }
+    let active = true;
+    return () => {
+      if (active) {
+        active = false;
+        release();
+      }
+    };
   }
 
-  private updateTimelineSubscriptions():Promise<void> {
-    const result=this.timelineSubscriptionUpdates.then(()=>this.sendTimelineSubscriptions());
-    this.timelineSubscriptionUpdates=result.catch(()=>undefined);
+  private updateTimelineSubscriptions(): Promise<void> {
+    const result = this.timelineSubscriptionUpdates.then(() => this.sendTimelineSubscriptions());
+    this.timelineSubscriptionUpdates = result.catch(() => undefined);
     return result;
   }
 
-  private async sendTimelineSubscriptions():Promise<void> {
-    const agentIds=[...this.baseTimelineSubscriptions,...this.leasedTimelineSubscriptions.keys()];
+  private async sendTimelineSubscriptions(): Promise<void> {
+    const agentIds = [
+      ...this.baseTimelineSubscriptions,
+      ...this.leasedTimelineSubscriptions.keys(),
+    ];
     // COMPAT(selectiveAgentTimeline): added in v0.1.106. Old daemons keep their
     // legacy global stream and do not understand this RPC. Remove after
     // 2027-01-12 once the supported daemon floor is >= v0.1.106.
@@ -5663,36 +5852,110 @@ export class DaemonClient {
 
   async getPluginCatalogSnapshot() {
     const requestId = this.createRequestId();
-    return this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.catalog.get.request",requestId},responseType:"plugin.catalog.get.response"});
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.catalog.get.request", requestId },
+      responseType: "plugin.catalog.get.response",
+    });
   }
 
   async getPluginCatalog(): Promise<DesktopPluginCatalogEntry[]> {
     return (await this.getPluginCatalogSnapshot()).plugins;
   }
 
-  async getPluginStorage(pluginId:string,generation:number) {
-    const requestId=this.createRequestId();
-    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.storage.get.request",requestId,pluginId,generation},responseType:"plugin.storage.get.response"})).snapshot;
+  async getPluginStorage(pluginId: string, generation: number) {
+    const requestId = this.createRequestId();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: { type: "plugin.storage.get.request", requestId, pluginId, generation },
+        responseType: "plugin.storage.get.response",
+      })
+    ).snapshot;
   }
-  async patchPluginStorage(pluginId:string,patch:Record<string,unknown>,expectedRevision:number,generation:number) {
-    const requestId=this.createRequestId();
-    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.storage.patch.request",requestId,pluginId,patch,expectedRevision,generation},responseType:"plugin.storage.patch.response"})).snapshot;
+  async patchPluginStorage(
+    pluginId: string,
+    patch: Record<string, unknown>,
+    expectedRevision: number,
+    generation: number,
+  ) {
+    const requestId = this.createRequestId();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: {
+          type: "plugin.storage.patch.request",
+          requestId,
+          pluginId,
+          patch,
+          expectedRevision,
+          generation,
+        },
+        responseType: "plugin.storage.patch.response",
+      })
+    ).snapshot;
   }
-  async setPluginSecret(pluginId:string,key:string,operation:"configured"|"set"|"delete",value:string|undefined,generation:number) {
-    const requestId=this.createRequestId();
-    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.secret.request",requestId,pluginId,key,operation,value,generation},responseType:"plugin.secret.response"})).configured;
+  async setPluginSecret(
+    pluginId: string,
+    key: string,
+    operation: "configured" | "set" | "delete",
+    value: string | undefined,
+    generation: number,
+  ) {
+    const requestId = this.createRequestId();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: {
+          type: "plugin.secret.request",
+          requestId,
+          pluginId,
+          key,
+          operation,
+          value,
+          generation,
+        },
+        responseType: "plugin.secret.response",
+      })
+    ).configured;
   }
-  async approvePlugin(pluginId:string,approval:{trusted:true;version:string;capabilities:string[]},expectedInstallation:DesktopPluginExpectedInstallation) {
-    const requestId=this.createRequestId();
-    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.approve.request",requestId,pluginId,approval,expectedInstallation},responseType:"plugin.approve.response"})).plugin;
+  async approvePlugin(
+    pluginId: string,
+    approval: { trusted: true; version: string; capabilities: string[] },
+    expectedInstallation: DesktopPluginExpectedInstallation,
+  ) {
+    const requestId = this.createRequestId();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: {
+          type: "plugin.approve.request",
+          requestId,
+          pluginId,
+          approval,
+          expectedInstallation,
+        },
+        responseType: "plugin.approve.response",
+      })
+    ).plugin;
   }
-  async revokePluginTrust(pluginId:string){
-    const requestId=this.createRequestId();
-    return (await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.trust.revoke.request",requestId,pluginId},responseType:"plugin.trust.revoke.response"})).plugin;
+  async revokePluginTrust(pluginId: string) {
+    const requestId = this.createRequestId();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: { type: "plugin.trust.revoke.request", requestId, pluginId },
+        responseType: "plugin.trust.revoke.response",
+      })
+    ).plugin;
   }
-  async clearPluginData(pluginId:string) {
-    const requestId=this.createRequestId();
-    await this.sendCorrelatedSessionRequest({requestId,message:{type:"plugin.data.clear.request",requestId,pluginId},responseType:"plugin.data.clear.response"});
+  async clearPluginData(pluginId: string) {
+    const requestId = this.createRequestId();
+    await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.data.clear.request", requestId, pluginId },
+      responseType: "plugin.data.clear.response",
+    });
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
@@ -5705,14 +5968,38 @@ export class DaemonClient {
     return payload.plugins;
   }
 
-  async getOmpPluginManagement(input: Omit<Extract<SessionInboundMessage, { type: "ompPlugins.management.get.request" }>, "type" | "requestId">): Promise<Extract<SessionOutboundMessage, { type: "ompPlugins.management.get.response" }>["payload"]> {
+  async getOmpPluginManagement(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "ompPlugins.management.get.request" }>,
+      "type" | "requestId"
+    >,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "ompPlugins.management.get.response" }>["payload"]
+  > {
     const requestId = this.createRequestId();
-    return this.sendCorrelatedSessionRequest({ requestId, message: { type: "ompPlugins.management.get.request", ...input }, responseType: "ompPlugins.management.get.response", timeout: 70 * 1000 });
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "ompPlugins.management.get.request", ...input },
+      responseType: "ompPlugins.management.get.response",
+      timeout: 70 * 1000,
+    });
   }
 
-  async updateOmpPluginManagement(input: Omit<Extract<SessionInboundMessage, { type: "ompPlugins.management.update.request" }>, "type" | "requestId">): Promise<Extract<SessionOutboundMessage, { type: "ompPlugins.management.update.response" }>["payload"]> {
+  async updateOmpPluginManagement(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "ompPlugins.management.update.request" }>,
+      "type" | "requestId"
+    >,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "ompPlugins.management.update.response" }>["payload"]
+  > {
     const requestId = this.createRequestId();
-    return this.sendCorrelatedSessionRequest({ requestId, message: { type: "ompPlugins.management.update.request", ...input }, responseType: "ompPlugins.management.update.response", timeout: 130 * 1000 });
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "ompPlugins.management.update.request", ...input },
+      responseType: "ompPlugins.management.update.response",
+      timeout: 130 * 1000,
+    });
   }
 
   async listOmpPlugins(cwd?: string): Promise<{
@@ -5935,11 +6222,25 @@ export class DaemonClient {
     });
   }
 
-  async installDirectoryPlugin(path: string, id?: string, options?: {trusted?:boolean;enabled?:boolean;approval?:{trusted:true;version:string;capabilities:string[]}}): Promise<PluginListItem> {
+  async installDirectoryPlugin(
+    path: string,
+    id?: string,
+    options?: {
+      trusted?: boolean;
+      enabled?: boolean;
+      approval?: { trusted: true; version: string; capabilities: string[] };
+    },
+  ): Promise<PluginListItem> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
-      message: { type: "plugin.directory.install.request", requestId, path, ...(id ? { id } : {}), ...options },
+      message: {
+        type: "plugin.directory.install.request",
+        requestId,
+        path,
+        ...(id ? { id } : {}),
+        ...options,
+      },
       responseType: "plugin.directory.install.response",
     });
     return payload.plugin;
@@ -5988,7 +6289,12 @@ export class DaemonClient {
     return payload.plugin;
   }
 
-  async invokePluginRpc(pluginId: string, method: string, input: unknown, generation:number): Promise<unknown> {
+  async invokePluginRpc(
+    pluginId: string,
+    method: string,
+    input: unknown,
+    generation: number,
+  ): Promise<unknown> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -7052,6 +7358,7 @@ export class DaemonClient {
 
   setReconnectEnabled(enabled: boolean): void {
     this.config = { ...this.config, reconnect: { ...this.config.reconnect, enabled } };
+    this.providerSubagentSubscriptionWake?.();
   }
 
   private scheduleReconnect(input?: {
@@ -7185,6 +7492,11 @@ export class DaemonClient {
           this.resubscribeCheckoutDiffSubscriptions();
           this.resubscribeTerminalDirectorySubscriptions();
           this.resubscribeFileSubscriptions();
+          if (this.providerSubagentParentLeases.size > 0) {
+            void this.syncProviderSubagentSubscriptions().catch((error: unknown) => {
+              this.logger.warn({ err: error }, "Provider subagent resubscribe failed");
+            });
+          }
           this.flushPendingSendQueue();
           this.resolveConnect();
         }

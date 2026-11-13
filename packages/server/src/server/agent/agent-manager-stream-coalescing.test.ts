@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -22,6 +22,7 @@ import type {
   AgentTimelineItem,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
+import type { ProviderSubagentInputEvent } from "./provider-subagents/store.js";
 
 /**
  * Contract for AgentManager pre-record stream coalescing.
@@ -377,6 +378,249 @@ async function waitForSessionEventQueue(): Promise<void> {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("provider child pre-record coalescing", () => {
+  function pushChild(session: TestAgentSession, event: ProviderSubagentInputEvent): void {
+    session.pushEvent({ type: "provider_subagent", provider: session.provider, event });
+  }
+
+  test("suppresses equivalent descriptors and records exact text, metadata, and tools before terminal state", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({ provider: "omp" });
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      for (let index = 0; index < 100; index++) {
+        pushChild(session, {
+          type: "upsert",
+          id: "child",
+          title: "Worker",
+          timestamp: String(index),
+        });
+      }
+      const chunks = Array.from({ length: 160 }, (_, index) => `${index}🙂`);
+      for (const text of chunks) {
+        pushChild(session, {
+          type: "timeline",
+          id: "child",
+          item: { type: "assistant_message", text, messageId: "reply", presentation: "plan" },
+        });
+      }
+      const nativeUsage = { scope: "turn" as const, outputTokens: 160 };
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: {
+          type: "assistant_message",
+          text: "",
+          messageId: "reply",
+          presentation: "plan",
+          nativeUsage,
+        },
+      });
+      await waitForSessionEventQueue();
+      expect(harness.events.filter((event) => event.type === "provider_subagent")).toHaveLength(1);
+      expect(harness.manager.fetchProviderSubagentTimeline(agentId, "child").rows).toEqual([]);
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      const textPage = harness.manager.fetchProviderSubagentTimeline(agentId, "child");
+      expect(textPage.rows.map((row) => row.item)).toEqual([
+        {
+          type: "assistant_message",
+          text: chunks.join(""),
+          messageId: "reply",
+          presentation: "plan",
+          nativeUsage,
+        },
+      ]);
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "reasoning", text: "Think " },
+      });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "reasoning", text: "hard" },
+      });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: toolCall({ revision: 1, output: "partial" }),
+      });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: toolCall({ revision: 2, status: "completed", output: "final" }),
+      });
+      pushChild(session, { type: "upsert", id: "child", status: "completed" });
+      await waitForSessionEventQueue();
+      const page = harness.manager.fetchProviderSubagentTimeline(agentId, "child");
+      expect(page.rows.map((row) => row.seq)).toEqual([1, 2, 3]);
+      expect(page.rows[1]?.item).toEqual({ type: "reasoning", text: "Think hard" });
+      expect(page.rows[2]?.item).toMatchObject({
+        type: "tool_call",
+        callId: "tool-1",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "printf ok", output: "final", exitCode: 0 },
+      });
+      const updates = harness.events.flatMap((event) =>
+        event.type === "provider_subagent" ? [event.event] : [],
+      );
+      expect(updates.at(-1)).toMatchObject({ type: "upsert", subagent: { status: "completed" } });
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS * 2);
+      expect(harness.manager.fetchProviderSubagentTimeline(agentId, "child").rows).toEqual(
+        page.rows,
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  test("keeps equal child IDs in different parents and sibling streams separate", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    try {
+      const a = await createManagedSession(harness);
+      mkdirSync(join(harness.workdir, "b"));
+      const b = await createManagedSession(harness, {
+        agentId: AGENT_IDS[1],
+        workdir: join(harness.workdir, "b"),
+      });
+      for (const [session, id, text] of [
+        [a.session, "child", "A1"],
+        [b.session, "child", "B1"],
+        [a.session, "sibling", "S"],
+        [a.session, "child", "A2"],
+      ] as const) {
+        pushChild(session, { type: "upsert", id });
+        pushChild(session, { type: "timeline", id, item: { type: "assistant_message", text } });
+      }
+      await waitForSessionEventQueue();
+      pushChild(a.session, { type: "upsert", id: "child", status: "completed" });
+      await waitForSessionEventQueue();
+      expect(
+        harness.manager.fetchProviderSubagentTimeline(a.agentId, "child").rows[0]?.item,
+      ).toMatchObject({ text: "A1A2" });
+      expect(harness.manager.fetchProviderSubagentTimeline(b.agentId, "child").rows).toEqual([]);
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      expect(
+        harness.manager.fetchProviderSubagentTimeline(b.agentId, "child").rows[0]?.item,
+      ).toMatchObject({ text: "B1" });
+      expect(
+        harness.manager.fetchProviderSubagentTimeline(a.agentId, "sibling").rows[0]?.item,
+      ).toMatchObject({ text: "S" });
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  test("cleans pending child work on removal and parent close", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      pushChild(session, { type: "upsert", id: "child" });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "assistant_message", text: "old" },
+      });
+      pushChild(session, { type: "remove", id: "child" });
+      await waitForSessionEventQueue();
+      const removedCount = harness.events.filter(
+        (event) => event.type === "provider_subagent",
+      ).length;
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS * 2);
+      expect(harness.manager.listProviderSubagents(agentId)).toEqual([]);
+      expect(harness.events.filter((event) => event.type === "provider_subagent")).toHaveLength(
+        removedCount,
+      );
+      pushChild(session, { type: "upsert", id: "child" });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "assistant_message", text: "new" },
+      });
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      expect(harness.manager.fetchProviderSubagentTimeline(agentId, "child").rows).toEqual([
+        expect.objectContaining({ seq: 1, item: { type: "assistant_message", text: "new" } }),
+      ]);
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "assistant_message", text: "closing" },
+      });
+      await waitForSessionEventQueue();
+      await harness.manager.closeAgent(agentId);
+      const closedCount = harness.events.filter(
+        (event) => event.type === "provider_subagent",
+      ).length;
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS * 2);
+      expect(harness.events.filter((event) => event.type === "provider_subagent")).toHaveLength(
+        closedCount,
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  test("replaces pending live data with immediate history and sends one refresh rather than history deltas", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      pushChild(session, { type: "upsert", id: "child" });
+      pushChild(session, {
+        type: "timeline",
+        id: "child",
+        item: { type: "assistant_message", text: "stored " },
+      });
+      await waitForSessionEventQueue();
+      session.setHistory([
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "child", status: "completed" },
+        },
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "stored " },
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "result" },
+          },
+        },
+      ]);
+      harness.events.length = 0;
+      await harness.manager.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+      const page = harness.manager.fetchProviderSubagentTimeline(agentId, "child");
+      expect(page.rows.map((row) => row.item)).toEqual([
+        { type: "assistant_message", text: "stored " },
+        { type: "assistant_message", text: "result" },
+      ]);
+      expect(harness.events.filter((event) => event.type === "provider_subagent")).toEqual([]);
+      expect(harness.events.filter((event) => event.type === "provider_subagents_reset")).toEqual([
+        { type: "provider_subagents_reset", parentAgentId: agentId },
+      ]);
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS * 2);
+      expect(harness.manager.fetchProviderSubagentTimeline(agentId, "child")).toEqual(page);
+    } finally {
+      harness.cleanup();
+    }
+  });
 });
 
 describe("target coalesced behavior", () => {
@@ -738,7 +982,7 @@ describe("target coalesced behavior", () => {
       expect(rows.map((row) => row.seq)).toEqual([1, 2]);
       expect(getTimelineItems(rows)).toEqual([
         toolCall({
-          revision: 5,
+          revision: 4,
           status: "failed",
           output: "Final output",
           error: { message: "Actual failure" },
@@ -754,7 +998,7 @@ describe("target coalesced behavior", () => {
           ? [event.event.item]
           : [],
       );
-      expect(tools.map((item) => item.revision)).toEqual([1, 2, 3, 4, 5]);
+      expect(tools.map((item) => item.revision)).toEqual([1, 2, 3, 4, 4]);
       expect(tools.at(-1)).toEqual(rows[0].item);
     } finally {
       harness.cleanup();

@@ -21,7 +21,13 @@ function createChild(): TestChild {
     exitCode: null as number | null,
     signalCode: null,
     kill: () => {
-      queueMicrotask(() => child.emit("exit", null, "SIGTERM"));
+      queueMicrotask(() => {
+        Object.assign(child, { signalCode: "SIGTERM" });
+        child.emit("exit", null, "SIGTERM");
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", null, "SIGTERM");
+      });
       return true;
     },
   }) as TestChild;
@@ -45,6 +51,9 @@ function exit(child: TestChild) {
   child.stderr.write("proxy TLS handshake failed");
   child.exitCode = 1;
   child.emit("exit", 1, null);
+  child.stdout.end();
+  child.stderr.end();
+  child.emit("close", 1, null);
 }
 
 function announceImageBridge(child: TestChild, port: number) {
@@ -89,8 +98,11 @@ test("does not send image credentials to a cached bridge after its runtime exits
   try {
     expect(bridge.requests).toEqual(["Bearer isolated-image-test-token"]);
     exit(child);
-    // Keep the old listener alive to model port reuse and deliver a stale frame.
-    announceImageBridge(child, bridge.port);
+    // Deliver a callback queued before close after the old listener has been fenced.
+    child.stdout.emit(
+      "data",
+      `${JSON.stringify({ type: "desktop_image_settings_ready", port: bridge.port })}\n`,
+    );
     const failure = await session.prompt("continue").catch((error: unknown) => error);
     expect(bridge.requests).toEqual(["Bearer isolated-image-test-token"]);
     expect(failure).toBeInstanceOf(Error);

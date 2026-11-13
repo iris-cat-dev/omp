@@ -32,7 +32,6 @@ const descriptor: ProviderSubagentDescriptorPayload = {
   toolCallId: "dispatch",
 };
 
-
 function page(epoch: string, chunks: string[], reset = false): ProviderSubagentTimelinePayload {
   return {
     requestId: "tail",
@@ -79,18 +78,33 @@ function displayedText(): string {
 
 function clientWithTimeline(fetch: () => Promise<ProviderSubagentTimelinePayload>) {
   return {
-    listProviderSubagents: vi.fn(async (): Promise<ProviderSubagentListPayload> => ({
-      requestId: "list", parentAgentId: PARENT, subagents: [descriptor], error: null,
-    })),
+    listProviderSubagents: vi.fn(
+      async (): Promise<ProviderSubagentListPayload> => ({
+        requestId: "list",
+        parentAgentId: PARENT,
+        subagents: [descriptor],
+        error: null,
+      }),
+    ),
     fetchProviderSubagentTimeline: vi.fn(fetch),
+    getProviderSubagentSubscriptions: vi.fn(() => ({
+      parentAgentIds: [PARENT],
+      timelines: [{ parentAgentId: PARENT, subagentId: CHILD }],
+    })),
+    syncProviderSubagentSubscriptions: vi.fn(async () => {}),
   };
 }
 
 afterEach(() => {
   useProviderSubagentStore.setState({
-    descriptors: new Map(), timelines: new Map(), hiddenFromTrack: new Set(),
-    connectionGenerations: new Map(), listSync: new Map(), timelineSync: new Map(),
-    liveRevisions: new Map(), runVersions: new Map(),
+    descriptors: new Map(),
+    timelines: new Map(),
+    hiddenFromTrack: new Set(),
+    connectionGenerations: new Map(),
+    listSync: new Map(),
+    timelineSync: new Map(),
+    liveRevisions: new Map(),
+    runVersions: new Map(),
   });
 });
 
@@ -100,18 +114,30 @@ describe("provider child authoritative recovery", () => {
     applyProviderSubagentUpdate(client, SERVER, { kind: "upsert", subagent: descriptor });
     const thinking = { ...live(1, ""), item: { type: "reasoning" as const, text: "Inspect " } };
     applyProviderSubagentUpdate(client, SERVER, thinking);
-    applyProviderSubagentUpdate(client, SERVER, { ...thinking, seq: 2, item: { type: "reasoning", text: "first." } });
+    applyProviderSubagentUpdate(client, SERVER, {
+      ...thinking,
+      seq: 2,
+      item: { type: "reasoning", text: "first." },
+    });
     const tool = {
       ...live(3, ""),
       item: {
-        type: "tool_call" as const, callId: "read-1", name: "read", status: "running" as const,
-        error: null, detail: { type: "unknown" as const, input: { path: "src/index.ts" }, output: null },
+        type: "tool_call" as const,
+        callId: "read-1",
+        name: "read",
+        status: "running" as const,
+        error: null,
+        detail: { type: "unknown" as const, input: { path: "src/index.ts" }, output: null },
       },
     };
     applyProviderSubagentUpdate(client, SERVER, tool);
     applyProviderSubagentUpdate(client, SERVER, {
-      ...tool, seq: 4, item: {
-        ...tool.item, status: "completed", detail: { ...tool.item.detail, output: "source" },
+      ...tool,
+      seq: 4,
+      item: {
+        ...tool.item,
+        status: "completed",
+        detail: { ...tool.item.detail, output: "source" },
       },
     });
     applyProviderSubagentUpdate(client, SERVER, live(5, "Hello "));
@@ -124,7 +150,11 @@ describe("provider child authoritative recovery", () => {
       expect.objectContaining({ text: "Inspect first.", status: "ready" }),
     ]);
     expect(items.filter((item) => item.kind === "tool_call")).toEqual([
-      expect.objectContaining({ payload: expect.objectContaining({ data: expect.objectContaining({ callId: "read-1", status: "completed" }) }) }),
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ callId: "read-1", status: "completed" }),
+        }),
+      }),
     ]);
     expect(client.fetchProviderSubagentTimeline).not.toHaveBeenCalled();
   });
@@ -177,7 +207,148 @@ describe("provider child authoritative recovery", () => {
     expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(2);
   });
 
-  test("reconnects the same client, refreshes cached children, and rejects old-connection responses", async () => {
+  test("recovers a dropped final delta on invalidate while preserving newer output and completion", async () => {
+    const tail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
+    const client = clientWithTimeline(() => tail.promise);
+    applyProviderSubagentUpdate(client, SERVER, { kind: "upsert", subagent: descriptor });
+    applyProviderSubagentUpdate(client, SERVER, live(1, "A"));
+    // The final B delta was dropped: no later seq exists to expose the gap.
+    applyProviderSubagentUpdate(client, SERVER, { kind: "invalidate", parentAgentId: PARENT });
+    const recovery = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    const listRecovery = refreshProviderSubagents(client, SERVER, PARENT);
+    applyProviderSubagentUpdate(client, SERVER, live(3, "C"));
+    applyProviderSubagentUpdate(client, SERVER, {
+      kind: "upsert",
+      subagent: { ...descriptor, status: "completed" },
+    });
+    tail.resolve(page("epoch-1", ["A", "B"]));
+    await Promise.all([recovery, listRecovery]);
+    const state = useProviderSubagentStore.getState();
+    expect(displayedText()).toBe("ABC");
+    expect(state.descriptors.get(KEY)?.status).toBe("completed");
+    expect(state.timelines.get(KEY)?.head).toEqual([]);
+    expect(state.timelines.get(KEY)?.needsRefresh).toBe(false);
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(1);
+  });
+
+  test("starts recovery without waiting for invalidated old snapshots and ignores their late results", async () => {
+    const oldList = Promise.withResolvers<ProviderSubagentListPayload>();
+    const oldTail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
+    const freshTail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
+    const client = clientWithTimeline(() => freshTail.promise);
+    useProviderSubagentStore
+      .getState()
+      .applyUpdate(SERVER, { kind: "upsert", subagent: descriptor });
+    useProviderSubagentStore.getState().replaceTimeline(SERVER, page("epoch-1", ["A"]));
+    client.listProviderSubagents.mockImplementationOnce(() => oldList.promise);
+    client.fetchProviderSubagentTimeline.mockImplementationOnce(() => oldTail.promise);
+    const staleList = refreshProviderSubagents(client, SERVER, PARENT);
+    const staleTail = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    applyProviderSubagentUpdate(client, SERVER, { kind: "invalidate" });
+    const recoveredList = refreshProviderSubagents(client, SERVER, PARENT);
+    const recoveredTail = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    expect(client.listProviderSubagents).toHaveBeenCalledTimes(2);
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(2);
+    applyProviderSubagentUpdate(client, SERVER, live(3, "C"));
+    freshTail.resolve(page("epoch-1", ["A", "B"]));
+    await Promise.all([recoveredList, recoveredTail]);
+    expect(displayedText()).toBe("ABC");
+    oldList.resolve({ requestId: "old-list", parentAgentId: PARENT, subagents: [], error: null });
+    oldTail.resolve(page("epoch-1", ["Stale"]));
+    await Promise.all([staleList, staleTail]);
+    expect(displayedText()).toBe("ABC");
+    expect(useProviderSubagentStore.getState().descriptors.get(KEY)).toEqual(descriptor);
+  });
+
+  test("coalesces repeated invalidations instead of creating unbounded recovery flights", async () => {
+    const oldTail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
+    const recoveryTail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
+    const client = clientWithTimeline(async () => page("epoch-1", ["A", "B", "C"]));
+    client.fetchProviderSubagentTimeline
+      .mockImplementationOnce(() => oldTail.promise)
+      .mockImplementationOnce(() => recoveryTail.promise);
+    useProviderSubagentStore
+      .getState()
+      .applyUpdate(SERVER, { kind: "upsert", subagent: descriptor });
+    const old = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    applyProviderSubagentUpdate(client, SERVER, { kind: "invalidate", parentAgentId: PARENT });
+    const recovery = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    for (let index = 0; index < 20; index += 1) {
+      applyProviderSubagentUpdate(client, SERVER, { kind: "invalidate", parentAgentId: PARENT });
+    }
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(2);
+    recoveryTail.resolve(page("epoch-1", ["A", "B"]));
+    await recovery;
+    expect(displayedText()).toBe("ABC");
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(3);
+    oldTail.resolve(page("epoch-1", ["Stale"]));
+    await old;
+    expect(displayedText()).toBe("ABC");
+  });
+
+  test("marks an inactive child dirty without fetching its timeline for gaps or invalidation", async () => {
+    const client = clientWithTimeline(async () => page("epoch-1", ["A", "B", "C"]));
+    client.getProviderSubagentSubscriptions.mockReturnValue({
+      parentAgentIds: [PARENT],
+      timelines: [],
+    });
+    applyProviderSubagentUpdate(client, SERVER, { kind: "upsert", subagent: descriptor });
+    applyProviderSubagentUpdate(client, SERVER, live(1, "A"));
+    applyProviderSubagentUpdate(client, SERVER, live(3, "C"));
+    expect(useProviderSubagentStore.getState().timelines.get(KEY)?.needsRefresh).toBe(true);
+    applyProviderSubagentUpdate(client, SERVER, { kind: "invalidate" });
+    await refreshProviderSubagents(client, SERVER, PARENT);
+    expect(client.fetchProviderSubagentTimeline).not.toHaveBeenCalled();
+    expect(useProviderSubagentStore.getState().timelines.get(KEY)?.needsRefresh).toBe(true);
+    client.getProviderSubagentSubscriptions.mockReturnValue({
+      parentAgentIds: [PARENT],
+      timelines: [{ parentAgentId: PARENT, subagentId: CHILD }],
+    });
+    await refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
+    expect(displayedText()).toBe("ABC");
+    expect(useProviderSubagentStore.getState().timelines.get(KEY)?.needsRefresh).toBe(false);
+  });
+
+  test("waits for restored lease ACK and refreshes no closed or unrelated cached children", async () => {
+    const ack = Promise.withResolvers<void>();
+    const client = {
+      ...clientWithTimeline(async () => page("epoch-1", ["Recovered"])),
+      subscribeConnectionStatus: vi.fn(),
+    };
+    client.syncProviderSubagentSubscriptions.mockImplementation(() => ack.promise);
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER, { kind: "upsert", subagent: descriptor });
+    store.applyUpdate(SERVER, { kind: "upsert", subagent: { ...descriptor, id: "closed" } });
+    store.replaceTimeline(SERVER, { ...page("epoch-1", ["Closed"]), subagentId: "closed" });
+    store.applyUpdate(SERVER, {
+      kind: "upsert",
+      subagent: { ...descriptor, id: "unrelated-child", parentAgentId: "unrelated" },
+    });
+    let connectionListener!: (connection: ConnectionState) => void;
+    client.subscribeConnectionStatus.mockImplementation((listener: typeof connectionListener) => {
+      connectionListener = listener;
+      listener({ status: "disconnected" });
+      return () => {};
+    });
+    const unbind = bindProviderSubagentRecovery(client, SERVER);
+    connectionListener({ status: "connected" });
+    expect(client.syncProviderSubagentSubscriptions).toHaveBeenCalledTimes(1);
+    expect(client.listProviderSubagents).not.toHaveBeenCalled();
+    expect(client.fetchProviderSubagentTimeline).not.toHaveBeenCalled();
+    ack.resolve();
+    await vi.waitFor(() => expect(displayedText()).toBe("Recovered"));
+    expect(client.listProviderSubagents).toHaveBeenCalledTimes(1);
+    expect(client.listProviderSubagents).toHaveBeenCalledWith(PARENT);
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledTimes(1);
+    expect(client.fetchProviderSubagentTimeline).toHaveBeenCalledWith(
+      PARENT,
+      CHILD,
+      expect.objectContaining({ direction: "tail" }),
+    );
+    unbind();
+  });
+
+  test("reconnects active children after lease ACK and rejects old-connection responses", async () => {
     const completed = { ...descriptor, status: "completed" as const };
     const hidden = { ...completed, id: "hidden" };
     const running = { ...descriptor, updatedAt: "2026-11-01T10:01:00.000Z" };
@@ -190,7 +361,10 @@ describe("provider child authoritative recovery", () => {
       subscribeConnectionStatus: vi.fn(),
     };
     client.listProviderSubagents.mockImplementation(async () => ({
-      requestId: "list", parentAgentId: PARENT, subagents: currentList, error: null,
+      requestId: "list",
+      parentAgentId: PARENT,
+      subagents: currentList,
+      error: null,
     }));
     let connectionListener!: (connection: ConnectionState) => void;
     client.subscribeConnectionStatus.mockImplementation((listener: typeof connectionListener) => {
@@ -213,8 +387,15 @@ describe("provider child authoritative recovery", () => {
     connectionListener({ status: "connected" });
     await refreshProviderSubagents(client, SERVER, PARENT);
     await refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
-    expect(client.fetchProviderSubagentTimeline.mock.calls.length).toBeGreaterThan(callsBeforeReconnect);
-    oldList.resolve({ requestId: "stale", parentAgentId: PARENT, subagents: [completed], error: null });
+    expect(client.fetchProviderSubagentTimeline.mock.calls.length).toBeGreaterThan(
+      callsBeforeReconnect,
+    );
+    oldList.resolve({
+      requestId: "stale",
+      parentAgentId: PARENT,
+      subagents: [completed],
+      error: null,
+    });
     oldTail.resolve(page("epoch-1", ["Stale"]));
     await Promise.all([staleList, staleTimeline]);
     const state = useProviderSubagentStore.getState();
@@ -230,7 +411,9 @@ describe("provider child authoritative recovery", () => {
     const oldList = Promise.withResolvers<ProviderSubagentListPayload>();
     const oldTail = Promise.withResolvers<ProviderSubagentTimelinePayload>();
     const client = clientWithTimeline(async () => page("epoch-1", ["Old", "New"]));
-    useProviderSubagentStore.getState().applyUpdate(SERVER, { kind: "upsert", subagent: completed });
+    useProviderSubagentStore
+      .getState()
+      .applyUpdate(SERVER, { kind: "upsert", subagent: completed });
     useProviderSubagentStore.getState().replaceTimeline(SERVER, page("epoch-1", ["Old"]));
     useProviderSubagentStore.getState().hideFromTrack(SERVER, PARENT, [CHILD]);
     client.listProviderSubagents.mockImplementationOnce(() => oldList.promise);
@@ -238,10 +421,16 @@ describe("provider child authoritative recovery", () => {
     const listRequest = refreshProviderSubagents(client, SERVER, PARENT);
     const tailRequest = refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
     applyProviderSubagentUpdate(client, SERVER, {
-      kind: "upsert", subagent: { ...descriptor, updatedAt: "2026-11-01T10:01:00.000Z" },
+      kind: "upsert",
+      subagent: { ...descriptor, updatedAt: "2026-11-01T10:01:00.000Z" },
     });
     applyProviderSubagentUpdate(client, SERVER, live(2, "New"));
-    oldList.resolve({ requestId: "old", parentAgentId: PARENT, subagents: [completed], error: null });
+    oldList.resolve({
+      requestId: "old",
+      parentAgentId: PARENT,
+      subagents: [completed],
+      error: null,
+    });
     oldTail.resolve(page("epoch-1", ["Old"]));
     await Promise.all([listRequest, tailRequest]);
     expect(useProviderSubagentStore.getState().descriptors.get(KEY)?.status).toBe("running");
@@ -266,15 +455,26 @@ describe("provider child authoritative recovery", () => {
 
   test("settles missing children and permits an explicit retry after a failed fetch", async () => {
     const client = clientWithTimeline(async () => ({ ...page("epoch-1", []), provider: null }));
-    client.listProviderSubagents.mockResolvedValue({ requestId: "list", parentAgentId: PARENT, subagents: [], error: null });
+    client.listProviderSubagents.mockResolvedValue({
+      requestId: "list",
+      parentAgentId: PARENT,
+      subagents: [],
+      error: null,
+    });
     await refreshProviderSubagents(client, SERVER, PARENT);
     await refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
-    expect(useProviderSubagentStore.getState().listSync.get(providerSubagentParentKey(SERVER, PARENT))).toBe("ready");
+    expect(
+      useProviderSubagentStore.getState().listSync.get(providerSubagentParentKey(SERVER, PARENT)),
+    ).toBe("ready");
     expect(useProviderSubagentStore.getState().timelineSync.get(KEY)).toBe("missing");
     client.fetchProviderSubagentTimeline.mockRejectedValueOnce(new Error("offline"));
-    await expect(refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD)).rejects.toThrow("offline");
+    await expect(refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD)).rejects.toThrow(
+      "offline",
+    );
     expect(useProviderSubagentStore.getState().timelineSync.get(KEY)).toBe("error");
-    client.fetchProviderSubagentTimeline.mockResolvedValueOnce(page("epoch-2", ["Recovered"], true));
+    client.fetchProviderSubagentTimeline.mockResolvedValueOnce(
+      page("epoch-2", ["Recovered"], true),
+    );
     await refreshProviderSubagentTimeline(client, SERVER, PARENT, CHILD);
     expect(displayedText()).toBe("Recovered");
     expect(useProviderSubagentStore.getState().timelineSync.get(KEY)).toBe("ready");

@@ -362,6 +362,12 @@ function nativeHelper({ script, request, label, evidence, control, env }) {
     { encoding: "utf8", env, windowsHide: true, timeout: 20_000 },
   );
   if (result.error || result.status !== 0) {
+    writeJson(path.join(evidence, `${label}-native-failure.json`), {
+      status: result.status,
+      error: result.error ? String(result.error) : null,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
     throw new Error(
       `Owned-window native helper ${label} failed: ${result.error || result.stderr || result.stdout}`,
     );
@@ -651,8 +657,6 @@ async function smokeWindows({ command, page, evidence, control, env, report }) {
     "real preload maximize/restore twice plus native minimize/restore; four real normal-window resize-edge hit-tests; DOM/runtime/OS geometry; renderer and guarded owned-foreground native surface screenshots (interactive no-drag CSS is covered separately by browser tests)",
   );
 }
-
-
 
 const STATS_RANGES = {
   "1h": 3_600_000,
@@ -1832,9 +1836,16 @@ async function smokeWindowsPackagedApp({
       );
       report.nativeSurfaceFixture.restoredBeforePluginChecks = true;
     }
-    report.plugins = await runPluginChecks({ page, appPath: stagedApp, env: launchEnv, legacyRecords });
+    report.plugins = await runPluginChecks({
+      page,
+      appPath: stagedApp,
+      env: launchEnv,
+      legacyRecords,
+    });
     report.pluginCapture = await page.snapshot("folder-plugin-settings.png");
-    report.checks.push("actual folder settings install/enable, worker activation, client contribution and real RPC");
+    report.checks.push(
+      "actual folder settings install/enable, worker activation, client contribution and real RPC",
+    );
     report.finalDaemon = await page.evaluate(() =>
       window.paseoDesktop.invoke("desktop_daemon_status"),
     );

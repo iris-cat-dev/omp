@@ -46,9 +46,11 @@ export class OmpSubagentIndex {
     } else if (state.status === "running") {
       state.status = payload.status === "aborted" ? "canceled" : payload.status;
     }
-    const output = [this.upsert(payload.id, state, state.status)];
-    if (state.status === "canceled")
-      output.push(...this.childTimeline(payload.id, state.mapper.cancelRunning()));
+    const output =
+      state.status === "canceled"
+        ? this.childTimeline(payload.id, state.mapper.cancelRunning())
+        : [];
+    output.push(this.upsert(payload.id, state, state.status));
     return output;
   }
 
@@ -67,9 +69,9 @@ export class OmpSubagentIndex {
     const status = mapProgressStatus(payload.progress.status);
     // Progress is not a new-run boundary; stale snapshots cannot revive or replace a terminal state.
     if (state.status === "running") state.status = status;
-    const output = [this.upsert(id, state, state.status)];
-    if (state.status === "canceled")
-      output.push(...this.childTimeline(id, state.mapper.cancelRunning()));
+    const output =
+      state.status === "canceled" ? this.childTimeline(id, state.mapper.cancelRunning()) : [];
+    output.push(this.upsert(id, state, state.status));
     return output;
   }
 
@@ -140,8 +142,8 @@ export class OmpSubagentIndex {
     if (!state || state.status !== "running") return [];
     state.status = "canceled";
     return [
-      this.upsert(id, state, state.status),
       ...this.childTimeline(id, state.mapper.cancelRunning()),
+      this.upsert(id, state, state.status),
     ];
   }
 

@@ -28,7 +28,7 @@ interface ProviderSubagentTimelineRow {
   timestamp: string;
 }
 
-type SyncStatus = "loading" | "ready" | "missing" | "error";
+type SyncStatus = "loading" | "ready" | "missing" | "error" | "stale";
 
 export interface ProviderSubagentTimelineState {
   tail: StreamItem[];
@@ -84,15 +84,53 @@ export function providerSubagentLifecycleStatus(
   return "idle";
 }
 
-type ListClient = Pick<DaemonClient, "listProviderSubagents">;
-type TimelineClient = Pick<DaemonClient, "fetchProviderSubagentTimeline">;
-type RecoveryClient = ListClient & TimelineClient & Pick<DaemonClient, "subscribeConnectionStatus">;
+type SubscriptionClient = Pick<DaemonClient, "getProviderSubagentSubscriptions">;
+type ListClient = Pick<DaemonClient, "listProviderSubagents"> & SubscriptionClient;
+type TimelineClient = Pick<DaemonClient, "fetchProviderSubagentTimeline"> & SubscriptionClient;
+type RecoveryClient = ListClient &
+  TimelineClient &
+  Pick<DaemonClient, "subscribeConnectionStatus" | "syncProviderSubagentSubscriptions">;
 
-const pendingListRequests = new WeakMap<ListClient, Map<string, Promise<void>>>();
-const pendingTimelineRequests = new WeakMap<TimelineClient, Map<string, Promise<void>>>();
+interface SyncFlight {
+  promise: Promise<void>;
+  syncGeneration: number;
+  recovery: boolean;
+}
+
+const pendingListRequests = new WeakMap<ListClient, Map<string, SyncFlight>>();
+const pendingTimelineRequests = new WeakMap<TimelineClient, Map<string, SyncFlight>>();
 
 function generation(serverId: string): number {
   return useProviderSubagentStore.getState().connectionGenerations.get(serverId) ?? 0;
+}
+
+function syncGeneration(serverId: string, parentAgentId: string): number {
+  // Parent-scoped generations share the connection map but use a disjoint key.
+  return (
+    useProviderSubagentStore
+      .getState()
+      .connectionGenerations.get(providerSubagentParentKey(serverId, parentAgentId)) ?? 0
+  );
+}
+
+function isTimelineSubscribed(
+  client: SubscriptionClient,
+  parentAgentId: string,
+  subagentId: string,
+): boolean {
+  return client
+    .getProviderSubagentSubscriptions()
+    .timelines.some(
+      (target) => target.parentAgentId === parentAgentId && target.subagentId === subagentId,
+    );
+}
+
+function activeParents(client: SubscriptionClient): Set<string> {
+  const subscriptions = client.getProviderSubagentSubscriptions();
+  return new Set([
+    ...subscriptions.parentAgentIds,
+    ...subscriptions.timelines.map((target) => target.parentAgentId),
+  ]);
 }
 
 function setSyncStatus(kind: "listSync" | "timelineSync", key: string, status: SyncStatus): void {
@@ -109,6 +147,7 @@ export function refreshProviderSubagents(
 ): Promise<void> {
   const parentKey = providerSubagentParentKey(serverId, parentAgentId);
   const connectionGeneration = generation(serverId);
+  const currentSyncGeneration = syncGeneration(serverId, parentAgentId);
   const requestKey = `${parentKey}\0${connectionGeneration}`;
   let clientRequests = pendingListRequests.get(client);
   if (!clientRequests) {
@@ -116,43 +155,66 @@ export function refreshProviderSubagents(
     pendingListRequests.set(client, clientRequests);
   }
   const pending = clientRequests.get(requestKey);
-  if (pending) return pending;
+  if (pending && (pending.syncGeneration === currentSyncGeneration || pending.recovery))
+    return pending.promise;
 
-  const revisions = new Map(useProviderSubagentStore.getState().liveRevisions);
+  // An invalidated ordinary request cannot hold recovery hostage. Its replacement
+  // owns one flight and folds further invalidations into a fresh snapshot on completion.
+  const flight: SyncFlight = {
+    promise: Promise.resolve(),
+    syncGeneration: currentSyncGeneration,
+    recovery: !!pending,
+  };
+  clientRequests.set(requestKey, flight);
   setSyncStatus("listSync", parentKey, "loading");
-  const request = client
-    .listProviderSubagents(parentAgentId)
-    .then((payload) => {
-      if (generation(serverId) !== connectionGeneration) return undefined;
+  flight.promise = (async () => {
+    while (generation(serverId) === connectionGeneration) {
+      flight.syncGeneration = syncGeneration(serverId, parentAgentId);
+      const revisions = new Map(useProviderSubagentStore.getState().liveRevisions);
+      const payload = await client.listProviderSubagents(parentAgentId);
+      if (
+        generation(serverId) !== connectionGeneration ||
+        clientRequests.get(requestKey) !== flight
+      )
+        return;
+      if (syncGeneration(serverId, parentAgentId) !== flight.syncGeneration) {
+        if (!activeParents(client).has(parentAgentId)) return;
+        continue;
+      }
       if (payload.error) throw new Error(payload.error);
       useProviderSubagentStore
         .getState()
         .replaceList(serverId, parentAgentId, payload.subagents, revisions);
       setSyncStatus("listSync", parentKey, "ready");
       if (client.fetchProviderSubagentTimeline) {
-        const prefix = `${parentKey}\0`;
-        for (const [key, timeline] of useProviderSubagentStore.getState().timelines) {
-          if (!key.startsWith(prefix) || !timeline.needsRefresh) continue;
+        for (const target of client.getProviderSubagentSubscriptions().timelines) {
+          if (target.parentAgentId !== parentAgentId) continue;
+          const key = providerSubagentKey(serverId, parentAgentId, target.subagentId);
+          if (!useProviderSubagentStore.getState().timelines.get(key)?.needsRefresh) continue;
           void refreshProviderSubagentTimeline(
             client as ListClient & TimelineClient,
             serverId,
             parentAgentId,
-            key.slice(prefix.length),
+            target.subagentId,
           ).catch(() => undefined);
         }
       }
-      return undefined;
-    })
+      return;
+    }
+  })()
     .catch((error: unknown) => {
-      if (generation(serverId) === connectionGeneration)
+      if (
+        generation(serverId) === connectionGeneration &&
+        syncGeneration(serverId, parentAgentId) === flight.syncGeneration &&
+        clientRequests.get(requestKey) === flight
+      )
         setSyncStatus("listSync", parentKey, "error");
       throw error;
     })
     .finally(() => {
-      clientRequests?.delete(requestKey);
+      if (clientRequests.get(requestKey) === flight) clientRequests.delete(requestKey);
     });
-  clientRequests.set(requestKey, request);
-  return request;
+  return flight.promise;
 }
 
 function isTimelineSnapshotInvalidated(
@@ -179,6 +241,7 @@ export function refreshProviderSubagentTimeline(
 ): Promise<void> {
   const key = providerSubagentKey(serverId, parentAgentId, subagentId);
   const connectionGeneration = generation(serverId);
+  const currentSyncGeneration = syncGeneration(serverId, parentAgentId);
   const direction = options.direction ?? "tail";
   const requestKey = `${key}\0${connectionGeneration}\0${direction}`;
   let clientRequests = pendingTimelineRequests.get(client);
@@ -187,15 +250,23 @@ export function refreshProviderSubagentTimeline(
     pendingTimelineRequests.set(client, clientRequests);
   }
   const pending = clientRequests.get(requestKey);
-  if (pending) return pending;
+  if (pending && (pending.syncGeneration === currentSyncGeneration || pending.recovery))
+    return pending.promise;
+  const flight: SyncFlight = {
+    promise: Promise.resolve(),
+    syncGeneration: currentSyncGeneration,
+    recovery: !!pending,
+  };
+  clientRequests.set(requestKey, flight);
 
   if (direction === "tail") setSyncStatus("timelineSync", key, "loading");
-  const request = (async () => {
+  flight.promise = (async () => {
     let requestDirection = direction;
     let cursor = options.cursor;
     // A new run or epoch observed in flight invalidates that snapshot. Repeat within
     // the same single flight, rather than racing a second request against the first.
     while (generation(serverId) === connectionGeneration) {
+      flight.syncGeneration = syncGeneration(serverId, parentAgentId);
       const state = useProviderSubagentStore.getState();
       const runVersion = state.runVersions.get(key) ?? 0;
       const before = state.timelines.get(key);
@@ -205,15 +276,34 @@ export function refreshProviderSubagentTimeline(
         direction: requestDirection,
         ...(cursor ? { cursor } : {}),
       });
-      if (generation(serverId) !== connectionGeneration) return;
+      if (
+        generation(serverId) !== connectionGeneration ||
+        clientRequests.get(requestKey) !== flight
+      )
+        return;
+      if (syncGeneration(serverId, parentAgentId) !== flight.syncGeneration) {
+        if (direction !== "tail" || !isTimelineSubscribed(client, parentAgentId, subagentId))
+          return;
+        requestDirection = "tail";
+        cursor = undefined;
+        continue;
+      }
       if (payload.error) throw new Error(payload.error);
       const currentState = useProviderSubagentStore.getState();
       const current = currentState.timelines.get(key);
       if (isTimelineSnapshotInvalidated(currentState, key, before, runVersion, payload)) {
-        if (direction !== "tail") return;
+        if (direction !== "tail" || !isTimelineSubscribed(client, parentAgentId, subagentId))
+          return;
+        requestDirection = "tail";
+        cursor = undefined;
         continue;
       }
-      if (direction !== "tail" && current?.epoch && payload.epoch !== current.epoch) {
+      if (
+        direction !== "tail" &&
+        current?.epoch &&
+        payload.epoch !== current.epoch &&
+        isTimelineSubscribed(client, parentAgentId, subagentId)
+      ) {
         void refreshProviderSubagentTimeline(client, serverId, parentAgentId, subagentId).catch(
           () => undefined,
         );
@@ -221,16 +311,21 @@ export function refreshProviderSubagentTimeline(
       }
       currentState.replaceTimeline(serverId, payload);
       if (payload.hasMoreRevisions || (requestDirection === "after" && payload.hasNewer)) {
+        if (!isTimelineSubscribed(client, parentAgentId, subagentId)) return;
         const loaded = useProviderSubagentStore.getState().timelines.get(key);
         if (!loaded?.epoch) throw new Error("Subagent revision page has no cursor");
         requestDirection = "after";
-        cursor = { epoch: loaded.epoch, seq: loaded.lastSeq,
-          ...(loaded.contentVersion !== undefined ? { contentVersion: loaded.contentVersion } : {}) };
+        cursor = {
+          epoch: loaded.epoch,
+          seq: loaded.lastSeq,
+          ...(loaded.contentVersion !== undefined ? { contentVersion: loaded.contentVersion } : {}),
+        };
         continue;
       }
       if (direction !== "tail") return;
       setSyncStatus("timelineSync", key, payload.provider ? "ready" : "missing");
       if (
+        !isTimelineSubscribed(client, parentAgentId, subagentId) ||
         !payload.provider ||
         !useProviderSubagentStore.getState().timelines.get(key)?.needsRefresh
       )
@@ -238,16 +333,20 @@ export function refreshProviderSubagentTimeline(
     }
   })()
     .catch((error: unknown) => {
-      if (direction === "tail" && generation(serverId) === connectionGeneration) {
+      if (
+        direction === "tail" &&
+        generation(serverId) === connectionGeneration &&
+        syncGeneration(serverId, parentAgentId) === flight.syncGeneration &&
+        clientRequests.get(requestKey) === flight
+      ) {
         setSyncStatus("timelineSync", key, "error");
       }
       throw error;
     })
     .finally(() => {
-      clientRequests?.delete(requestKey);
+      if (clientRequests.get(requestKey) === flight) clientRequests.delete(requestKey);
     });
-  clientRequests.set(requestKey, request);
-  return request;
+  return flight.promise;
 }
 
 export function applyProviderSubagentUpdate(
@@ -255,6 +354,11 @@ export function applyProviderSubagentUpdate(
   serverId: string,
   payload: UpdatePayload,
 ): void {
+  if (payload.kind === "invalidate") {
+    useProviderSubagentStore.getState().applyUpdate(serverId, payload);
+    refreshActiveProviderSubagentSubscriptions(client, serverId, payload.parentAgentId);
+    return;
+  }
   if (payload.kind === "remove") {
     useProviderSubagentStore.getState().applyUpdate(serverId, payload);
     return;
@@ -267,11 +371,12 @@ export function applyProviderSubagentUpdate(
   useProviderSubagentStore.getState().applyUpdate(serverId, payload);
   const state = useProviderSubagentStore.getState();
   if (
-    state.timelines.get(key)?.needsRefresh ||
-    (payload.kind === "upsert" &&
-      !wasRunning &&
-      payload.subagent.status === "running" &&
-      state.timelineSync.has(key))
+    isTimelineSubscribed(client, parentAgentId, subagentId) &&
+    (state.timelines.get(key)?.needsRefresh ||
+      (payload.kind === "upsert" &&
+        !wasRunning &&
+        payload.subagent.status === "running" &&
+        state.timelineSync.has(key)))
   ) {
     void refreshProviderSubagentTimeline(client, serverId, parentAgentId, subagentId).catch(
       () => undefined,
@@ -279,9 +384,30 @@ export function applyProviderSubagentUpdate(
   }
 }
 
+function refreshActiveProviderSubagentSubscriptions(
+  client: ListClient & TimelineClient,
+  serverId: string,
+  parentAgentId?: string,
+): void {
+  for (const parent of activeParents(client)) {
+    if (parentAgentId !== undefined && parent !== parentAgentId) continue;
+    void refreshProviderSubagents(client, serverId, parent).catch(() => undefined);
+  }
+  for (const target of client.getProviderSubagentSubscriptions().timelines) {
+    if (parentAgentId !== undefined && target.parentAgentId !== parentAgentId) continue;
+    void refreshProviderSubagentTimeline(
+      client,
+      serverId,
+      target.parentAgentId,
+      target.subagentId,
+    ).catch(() => undefined);
+  }
+}
+
 export function bindProviderSubagentRecovery(client: RecoveryClient, serverId: string): () => void {
   let wasConnected: boolean | undefined;
-  return client.subscribeConnectionStatus((connection) => {
+  let active = true;
+  const unsubscribe = client.subscribeConnectionStatus((connection) => {
     const connected = connection.status === "connected";
     if (wasConnected === connected) return;
     wasConnected = connected;
@@ -291,31 +417,20 @@ export function bindProviderSubagentRecovery(client: RecoveryClient, serverId: s
         generation(serverId) + 1,
       ),
     }));
-    if (!connected) return;
-
-    const state = useProviderSubagentStore.getState();
-    const serverPrefix = `${serverId}\0`;
-    const parents = new Set<string>();
-    for (const key of state.listSync.keys()) {
-      if (key.startsWith(serverPrefix)) parents.add(key.slice(serverPrefix.length));
-    }
-    const timelineKeys = new Set([...state.timelines.keys(), ...state.timelineSync.keys()]);
-    for (const key of [...state.descriptors.keys(), ...timelineKeys]) {
-      if (!key.startsWith(serverPrefix)) continue;
-      const [parentAgentId] = key.slice(serverPrefix.length).split("\0");
-      parents.add(parentAgentId!);
-    }
-    for (const parentAgentId of parents) {
-      void refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined);
-    }
-    for (const key of timelineKeys) {
-      if (!key.startsWith(serverPrefix)) continue;
-      const [parentAgentId, subagentId] = key.slice(serverPrefix.length).split("\0");
-      void refreshProviderSubagentTimeline(client, serverId, parentAgentId!, subagentId!).catch(
-        () => undefined,
-      );
-    }
+    if (!connected || activeParents(client).size === 0) return;
+    const connectionGeneration = generation(serverId);
+    void client
+      .syncProviderSubagentSubscriptions()
+      .then(() => {
+        if (!active || generation(serverId) !== connectionGeneration) return;
+        refreshActiveProviderSubagentSubscriptions(client, serverId);
+      })
+      .catch(() => undefined);
   });
+  return () => {
+    active = false;
+    unsubscribe();
+  };
 }
 
 const EMPTY_TIMELINE: ProviderSubagentTimelineState = {
@@ -398,7 +513,8 @@ function buildTimelineResponseRows(
     // Unloaded rows are fetched by seq when viewed; edits only hydrate retained rows.
     if (existing?.epoch !== payload.epoch || !existing.rows.has(row.seq)) continue;
     const candidate = { provider, item: row.item, timestamp: row.timestamp };
-    if (!isNewerToolRevision(rows.get(row.seq) ?? candidate, candidate)) rows.set(row.seq, candidate);
+    if (!isNewerToolRevision(rows.get(row.seq) ?? candidate, candidate))
+      rows.set(row.seq, candidate);
   }
   const liveRows =
     existing?.epoch === payload.epoch ? existing.rows : existing?.pendingEpochs.get(payload.epoch);
@@ -660,6 +776,47 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   },
   applyUpdate(serverId, payload) {
     set((state) => {
+      if (payload.kind === "invalidate") {
+        const parentKey =
+          payload.parentAgentId === undefined
+            ? serverId
+            : providerSubagentParentKey(serverId, payload.parentAgentId);
+        const prefix = `${parentKey}\0`;
+        const timelines = new Map(state.timelines);
+        for (const [key, timeline] of timelines) {
+          if (key.startsWith(prefix)) {
+            timelines.set(key, {
+              ...timeline,
+              needsRefresh: true,
+              refreshVersion: timeline.refreshVersion + 1,
+            });
+          }
+        }
+        const listSync = new Map(state.listSync);
+        for (const key of listSync.keys()) {
+          if (key === parentKey || key.startsWith(prefix)) listSync.set(key, "stale");
+        }
+        const parents = new Set<string>();
+        if (payload.parentAgentId !== undefined) {
+          parents.add(parentKey);
+        } else {
+          for (const key of state.listSync.keys()) {
+            if (key.startsWith(prefix)) parents.add(key);
+          }
+          for (const key of new Set([
+            ...state.timelines.keys(),
+            ...state.timelineSync.keys(),
+            ...state.descriptors.keys(),
+          ])) {
+            if (key.startsWith(prefix)) parents.add(key.slice(0, key.lastIndexOf("\0")));
+          }
+        }
+        const connectionGenerations = new Map(state.connectionGenerations);
+        for (const parent of parents) {
+          connectionGenerations.set(parent, (connectionGenerations.get(parent) ?? 0) + 1);
+        }
+        return { timelines, listSync, connectionGenerations };
+      }
       if (payload.kind === "upsert") {
         const key = providerSubagentKey(
           serverId,
@@ -708,8 +865,15 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       return {
         timelines: new Map(state.timelines).set(key, {
           ...next,
-          ...(payload.reset || payload.direction === "after" || existing?.epoch !== payload.epoch || existing?.contentVersion === undefined
-            ? { contentVersion: payload.reset ? payload.contentVersion : Math.max(existing?.contentVersion ?? 0, payload.contentVersion ?? 0) }
+          ...(payload.reset ||
+          payload.direction === "after" ||
+          existing?.epoch !== payload.epoch ||
+          existing?.contentVersion === undefined
+            ? {
+                contentVersion: payload.reset
+                  ? payload.contentVersion
+                  : Math.max(existing?.contentVersion ?? 0, payload.contentVersion ?? 0),
+              }
             : { contentVersion: existing?.contentVersion }),
           retiredEpochs,
           pendingEpochs:

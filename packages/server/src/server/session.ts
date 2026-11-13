@@ -273,10 +273,19 @@ import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
-type ProviderSubagentManagerEvent = Extract<
-  AgentManagerEvent,
-  { type: "provider_subagent" }
->["event"];
+type ProviderSubagentManagerEvent =
+  | Extract<AgentManagerEvent, { type: "provider_subagent" }>["event"]
+  | Extract<AgentManagerEvent, { type: "provider_subagents_reset" }>;
+
+type ProviderSubagentUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.update" }
+>["payload"];
+
+interface ProviderSubagentSubscription {
+  parentAgentIds: ReadonlySet<string>;
+  timelines: ReadonlyMap<string, ReadonlySet<string>>;
+}
 
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
@@ -461,7 +470,29 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
-  pluginRuntime?: Pick<PluginService, "listPlugins" | "getLogs" | "installDirectory" | "inspectDirectory" | "reloadPlugin" | "enablePlugin" | "disablePlugin" | "removePlugin" | "subscribe" | "catalog" | "invokePluginRpc" | "getRevision" | "getGeneration" | "pluginsEnabled" | "approvePlugin" | "revokePluginTrust" | "storageGet" | "storagePatch" | "secret" | "clearData">;
+  pluginRuntime?: Pick<
+    PluginService,
+    | "listPlugins"
+    | "getLogs"
+    | "installDirectory"
+    | "inspectDirectory"
+    | "reloadPlugin"
+    | "enablePlugin"
+    | "disablePlugin"
+    | "removePlugin"
+    | "subscribe"
+    | "catalog"
+    | "invokePluginRpc"
+    | "getRevision"
+    | "getGeneration"
+    | "pluginsEnabled"
+    | "approvePlugin"
+    | "revokePluginTrust"
+    | "storageGet"
+    | "storagePatch"
+    | "secret"
+    | "clearData"
+  >;
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
   terminalManager: TerminalManager | null;
@@ -682,6 +713,10 @@ export class Session {
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
   private readonly clientCapabilitiesBySource = new Map<object, ReadonlySet<ClientCapability>>();
+  private readonly providerSubagentSubscriptionsBySource = new Map<
+    object,
+    ProviderSubagentSubscription
+  >();
   private readonly workspaceTextSearches = new Map<string, AbortController>();
   private readonly defaultTimelineSubscriptionSource = {};
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
@@ -1119,6 +1154,7 @@ export class Session {
   clearAgentTimelineSubscription(source: object): void {
     this.localModelSession.disconnect(source);
     this.clientCapabilitiesBySource.delete(source);
+    this.providerSubagentSubscriptionsBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
       this.rebuildViewedTimelineAgentIds();
     }
@@ -1137,6 +1173,74 @@ export class Session {
       for (const agentId of agentIds) viewedAgentIds.add(agentId);
     }
     this.viewedTimelineAgentIds = viewedAgentIds;
+  }
+
+  private replaceProviderSubagentSubscription(
+    source: object | undefined,
+    parentAgentIds: string[],
+    timelines: { parentAgentId: string; subagentId: string }[],
+  ): { parentAgentIds: string[]; timelines: { parentAgentId: string; subagentId: string }[] } {
+    const subscriptionSource = source ?? this.defaultTimelineSubscriptionSource;
+    const parents = new Set(parentAgentIds);
+    const children = new Map<string, Set<string>>();
+    for (const { parentAgentId, subagentId } of timelines) {
+      parents.add(parentAgentId);
+      let ids = children.get(parentAgentId);
+      if (!ids) {
+        ids = new Set();
+        children.set(parentAgentId, ids);
+      }
+      ids.add(subagentId);
+    }
+    if (parents.size === 0) this.providerSubagentSubscriptionsBySource.delete(subscriptionSource);
+    else
+      this.providerSubagentSubscriptionsBySource.set(subscriptionSource, {
+        parentAgentIds: parents,
+        timelines: children,
+      });
+    return {
+      parentAgentIds: [...parents].sort(),
+      timelines: [...children]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .flatMap(([parentAgentId, ids]) =>
+          [...ids].sort().map((subagentId) => ({ parentAgentId, subagentId })),
+        ),
+    };
+  }
+
+  private forwardProviderSubagentUpdate(payload: ProviderSubagentUpdatePayload): void {
+    const interested = (subscription: ProviderSubagentSubscription | undefined): boolean => {
+      if (!subscription) return false;
+      if (payload.kind === "invalidate") {
+        return payload.parentAgentId === undefined
+          ? subscription.parentAgentIds.size > 0
+          : subscription.parentAgentIds.has(payload.parentAgentId);
+      }
+      if (payload.kind === "timeline") {
+        return subscription.timelines.get(payload.parentAgentId)?.has(payload.subagentId) === true;
+      }
+      const parentAgentId =
+        payload.kind === "upsert" ? payload.subagent.parentAgentId : payload.parentAgentId;
+      return subscription.parentAgentIds.has(parentAgentId);
+    };
+    const message: SessionOutboundMessage = { type: "agent.provider_subagents.update", payload };
+    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (!this.supports(CLIENT_CAPS.providerSubagents)) return;
+      for (const subscription of this.providerSubagentSubscriptionsBySource.values()) {
+        if (interested(subscription)) {
+          this.emit(message);
+          break;
+        }
+      }
+      return;
+    }
+    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      if (
+        capabilities.has(CLIENT_CAPS.providerSubagents) &&
+        interested(this.providerSubagentSubscriptionsBySource.get(source))
+      )
+        this.onMessageToSource(source, message);
+    }
   }
 
   private usesSelectiveTimelineDelivery(): boolean {
@@ -1649,39 +1753,36 @@ export class Session {
           return;
         }
 
+        if (event.type === "provider_subagents_reset") {
+          this.emitProviderSubagentWorkspaceUpdate(event);
+          this.forwardProviderSubagentUpdate({
+            kind: "invalidate",
+            parentAgentId: event.parentAgentId,
+          });
+          return;
+        }
+
         if (event.type === "provider_subagent") {
           this.emitProviderSubagentWorkspaceUpdate(event.event);
-          if (!this.supports(CLIENT_CAPS.providerSubagents)) {
-            return;
-          }
           const update = event.event;
           if (update.type === "upsert") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: { kind: "upsert", subagent: update.subagent },
-            });
+            this.forwardProviderSubagentUpdate({ kind: "upsert", subagent: update.subagent });
           } else if (update.type === "timeline") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "timeline",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-                provider: update.provider,
-                item: update.row.item,
-                timestamp: update.row.timestamp,
-                seq: update.row.seq,
-                epoch: update.epoch,
-              },
+            this.forwardProviderSubagentUpdate({
+              kind: "timeline",
+              parentAgentId: update.parentAgentId,
+              subagentId: update.subagentId,
+              provider: update.provider,
+              item: update.row.item,
+              timestamp: update.row.timestamp,
+              seq: update.row.seq,
+              epoch: update.epoch,
             });
           } else {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "remove",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-              },
+            this.forwardProviderSubagentUpdate({
+              kind: "remove",
+              parentAgentId: update.parentAgentId,
+              subagentId: update.subagentId,
             });
           }
           return;
@@ -2100,38 +2201,84 @@ export class Session {
   }
 
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    if(msg.type==="plugin.trust.revoke.request"){
-      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.revokePluginTrust(msg.pluginId).then(plugin=>{this.emit({type:"plugin.trust.revoke.response",payload:{requestId:msg.requestId,plugin}});});
+    if (msg.type === "plugin.trust.revoke.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.revokePluginTrust(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.trust.revoke.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+      });
     }
-    if(msg.type==="plugin.approve.request") {
-      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.approvePlugin(msg.pluginId,msg.approval,msg.expectedInstallation).then(plugin=>{this.emit({type:"plugin.approve.response",payload:{requestId:msg.requestId,plugin}});});
+    if (msg.type === "plugin.approve.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .approvePlugin(msg.pluginId, msg.approval, msg.expectedInstallation)
+        .then((plugin) => {
+          this.emit({
+            type: "plugin.approve.response",
+            payload: { requestId: msg.requestId, plugin },
+          });
+        });
     }
-    if(msg.type==="plugin.storage.get.request" || msg.type==="plugin.storage.patch.request") {
-      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
-      const snapshot=msg.type==="plugin.storage.get.request"?this.pluginRuntime.storageGet(msg.pluginId,msg.generation):this.pluginRuntime.storagePatch(msg.pluginId,msg.patch,msg.expectedRevision,msg.generation);
-      this.emit({type:msg.type==="plugin.storage.get.request"?"plugin.storage.get.response":"plugin.storage.patch.response",payload:{requestId:msg.requestId,snapshot}});
+    if (msg.type === "plugin.storage.get.request" || msg.type === "plugin.storage.patch.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      const snapshot =
+        msg.type === "plugin.storage.get.request"
+          ? this.pluginRuntime.storageGet(msg.pluginId, msg.generation)
+          : this.pluginRuntime.storagePatch(
+              msg.pluginId,
+              msg.patch,
+              msg.expectedRevision,
+              msg.generation,
+            );
+      this.emit({
+        type:
+          msg.type === "plugin.storage.get.request"
+            ? "plugin.storage.get.response"
+            : "plugin.storage.patch.response",
+        payload: { requestId: msg.requestId, snapshot },
+      });
       return;
     }
-    if(msg.type==="plugin.secret.request") {
-      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
-      const configured=this.pluginRuntime.secret(msg.pluginId,msg.key,msg.operation,msg.value,msg.generation);
-      this.emit({type:"plugin.secret.response",payload:{requestId:msg.requestId,configured}});return;
+    if (msg.type === "plugin.secret.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      const configured = this.pluginRuntime.secret(
+        msg.pluginId,
+        msg.key,
+        msg.operation,
+        msg.value,
+        msg.generation,
+      );
+      this.emit({
+        type: "plugin.secret.response",
+        payload: { requestId: msg.requestId, configured },
+      });
+      return;
     }
-    if(msg.type==="plugin.data.clear.request") {
-      if(!this.pluginRuntime)throw new Error("Plugin service is unavailable");
-      this.pluginRuntime.clearData(msg.pluginId);this.emit({type:"plugin.data.clear.response",payload:{requestId:msg.requestId}});return;
+    if (msg.type === "plugin.data.clear.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      this.pluginRuntime.clearData(msg.pluginId);
+      this.emit({ type: "plugin.data.clear.response", payload: { requestId: msg.requestId } });
+      return;
     }
     if (msg.type === "plugin.directory.install.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.installDirectory({ path: msg.path, id: msg.id, trusted: msg.trusted, enabled: msg.enabled, approval: msg.approval }).then((plugin) => {
-        this.emit({
-          type: "plugin.directory.install.response",
-          payload: { requestId: msg.requestId, plugin },
+      return this.pluginRuntime
+        .installDirectory({
+          path: msg.path,
+          id: msg.id,
+          trusted: msg.trusted,
+          enabled: msg.enabled,
+          approval: msg.approval,
+        })
+        .then((plugin) => {
+          this.emit({
+            type: "plugin.directory.install.response",
+            payload: { requestId: msg.requestId, plugin },
+          });
+          return undefined;
         });
-        return undefined;
-      });
     }
     if (msg.type === "plugin.directory.inspect.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
@@ -2151,7 +2298,15 @@ export class Session {
   ): (() => void) | null {
     if (!pluginRuntime) return null;
     return pluginRuntime.subscribe((pluginId) => {
-      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId, generation: pluginRuntime.getGeneration(pluginId), revision: pluginRuntime.getRevision() } });
+      this.emit({
+        type: "status",
+        payload: {
+          status: "plugin_catalog_changed",
+          pluginId,
+          generation: pluginRuntime.getGeneration(pluginId),
+          revision: pluginRuntime.getRevision(),
+        },
+      });
     });
   }
 
@@ -2223,9 +2378,24 @@ export class Session {
       case "agent_runtime_resource_release_request":
         return this.handleRuntimeResourceRequest(msg, source);
       case "agent.provider_subagents.list.request":
-        return this.handleProviderSubagentListRequest(msg);
+        return this.handleProviderSubagentListRequest(msg, source);
       case "agent.provider_subagents.timeline.get.request":
-        return this.handleProviderSubagentTimelineRequest(msg);
+        return this.handleProviderSubagentTimelineRequest(msg, source);
+      case "agent.provider_subagents.set_subscription.request": {
+        const subscription = this.replaceProviderSubagentSubscription(
+          source,
+          msg.parentAgentIds,
+          msg.timelines,
+        );
+        this.emitForSource(
+          {
+            type: "agent.provider_subagents.set_subscription.response",
+            payload: { ...subscription, requestId: msg.requestId },
+          },
+          source,
+        );
+        return undefined;
+      }
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -7444,7 +7614,6 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
-
   private getTimelineStartCursor(
     selected: AgentTimelineProjectionSelection,
     contentVersion: number | undefined,
@@ -7971,6 +8140,7 @@ export class Session {
 
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
+    source?: object,
   ): Promise<void> {
     try {
       const persistedSubagents = await this.readPersistedOmpSubagents(msg.parentAgentId);
@@ -7981,32 +8151,39 @@ export class Session {
           logger: this.sessionLogger,
         });
       }
-      this.emit({
-        type: "agent.provider_subagents.list.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagents: persistedSubagents
-            ? persistedSubagents.list(msg.parentAgentId)
-            : this.agentManager.listProviderSubagents(msg.parentAgentId),
-          error: null,
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.list.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagents: persistedSubagents
+              ? persistedSubagents.list(msg.parentAgentId)
+              : this.agentManager.listProviderSubagents(msg.parentAgentId),
+            error: null,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
-      this.emit({
-        type: "agent.provider_subagents.list.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagents: [],
-          error: error instanceof Error ? error.message : String(error),
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.list.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagents: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
         },
-      });
+        source,
+      );
     }
   }
 
   private async handleProviderSubagentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.timeline.get.request" }>,
+    source?: object,
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
@@ -8036,56 +8213,62 @@ export class Session {
             msg.subagentId,
             options,
           );
-      this.emit({
-        type: "agent.provider_subagents.timeline.get.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagentId: msg.subagentId,
-          provider: descriptor.provider,
-          direction,
-          epoch: timeline.epoch,
-          contentVersion: timeline.contentVersion,
-          hasMoreRevisions: timeline.hasMoreRevisions,
-          reset: timeline.reset,
-          staleCursor: timeline.staleCursor,
-          gap: timeline.gap,
-          window: timeline.window,
-          hasOlder: timeline.hasOlder,
-          hasNewer: timeline.hasNewer,
-          rows: timeline.rows.map((row) => ({
-            item: row.item,
-            timestamp: row.timestamp,
-            seq: row.seq,
-          })),
-          revisedRows: (timeline.revisedRows ?? []).map((row) => ({
-            item: row.item,
-            timestamp: row.timestamp,
-            seq: row.seq,
-          })),
-          error: null,
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.timeline.get.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagentId: msg.subagentId,
+            provider: descriptor.provider,
+            direction,
+            epoch: timeline.epoch,
+            contentVersion: timeline.contentVersion,
+            hasMoreRevisions: timeline.hasMoreRevisions,
+            reset: timeline.reset,
+            staleCursor: timeline.staleCursor,
+            gap: timeline.gap,
+            window: timeline.window,
+            hasOlder: timeline.hasOlder,
+            hasNewer: timeline.hasNewer,
+            rows: timeline.rows.map((row) => ({
+              item: row.item,
+              timestamp: row.timestamp,
+              seq: row.seq,
+            })),
+            revisedRows: (timeline.revisedRows ?? []).map((row) => ({
+              item: row.item,
+              timestamp: row.timestamp,
+              seq: row.seq,
+            })),
+            error: null,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
-      this.emit({
-        type: "agent.provider_subagents.timeline.get.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagentId: msg.subagentId,
-          provider: null,
-          direction,
-          epoch: "",
-          reset: false,
-          staleCursor: false,
-          gap: false,
-          window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
-          hasOlder: false,
-          hasNewer: false,
-          rows: [],
-          error: error instanceof Error ? error.message : String(error),
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.timeline.get.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagentId: msg.subagentId,
+            provider: null,
+            direction,
+            epoch: "",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+            hasOlder: false,
+            hasNewer: false,
+            rows: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
         },
-      });
+        source,
+      );
     }
   }
 
@@ -8542,6 +8725,7 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.providerSubagentSubscriptionsBySource.clear();
     await this.localModelSession.dispose();
     this.visualFeedbackSession.dispose();
     for (const search of this.workspaceTextSearches.values()) search.abort();

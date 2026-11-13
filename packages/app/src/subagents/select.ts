@@ -146,9 +146,27 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
 
   useEffect(() => {
     if (!client || !supported || params.enabled === false) return;
-    void refreshProviderSubagents(client, params.serverId, params.parentAgentId).catch(
-      () => undefined,
-    );
+    const controller = new AbortController();
+    let disposed = false;
+    let release: (() => void) | undefined;
+    void client
+      .acquireProviderSubagentSubscription(params.parentAgentId, undefined, {
+        signal: controller.signal,
+      })
+      .then((lease) => {
+        if (disposed) {
+          lease();
+          return;
+        }
+        release = lease;
+        return refreshProviderSubagents(client, params.serverId, params.parentAgentId);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      controller.abort();
+      release?.();
+    };
   }, [client, params.enabled, params.parentAgentId, params.serverId, supported]);
 
   return useMemo(() => {

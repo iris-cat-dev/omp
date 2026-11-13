@@ -73,7 +73,13 @@ function createInMemoryChildProcess(): InMemoryChildProcess {
     signalCode: null,
   }) as InMemoryChildProcess;
   child.kill = ((signal?: NodeJS.Signals | number) => {
-    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    queueMicrotask(() => {
+      Object.assign(child, { signalCode: signal ?? null });
+      child.emit("exit", null, signal ?? null);
+      child.stdout.end();
+      child.stderr.end();
+      queueMicrotask(() => child.emit("close", null, signal ?? null));
+    });
     return true;
   }) as ChildProcessWithoutNullStreams["kill"];
   return child;
@@ -120,7 +126,10 @@ describe("JsonlRpcProcess", () => {
       expect(messages).toEqual([]);
       await expect(transport.request({ type: "echo" })).rejects.toThrow("process is closed");
       Object.assign(child, { exitCode: 0 });
-      await expect(transport.close()).resolves.toBeUndefined();
+      const recoveredClose = expect(transport.close()).resolves.toBeUndefined();
+      // The confirmed exit has no close event: advance the bounded stderr drain.
+      await vi.advanceTimersByTimeAsync(500);
+      await recoveredClose;
     } finally {
       vi.useRealTimers();
     }
@@ -216,6 +225,8 @@ describe("JsonlRpcProcess", () => {
         `JSONL RPC process exited with code 7 and signal null\n${diagnostic}`,
       );
       child.emit("exit", 7, null);
+      Object.assign(child, { exitCode: 7 });
+      child.emit("close", 7, null);
 
       await rejection;
       await expect(exit).resolves.toMatchObject({
@@ -242,17 +253,26 @@ describe("JsonlRpcProcess", () => {
   });
 
   test("includes buffered stderr when a request times out", async () => {
+    vi.useFakeTimers();
     const child = createInMemoryChildProcess();
     const transport = startProcess({ child });
 
     try {
       child.stderr.write("still waiting");
 
-      await expect(transport.request({ type: "hang" }, 50)).rejects.toThrow(
+      const timedOut = expect(transport.request({ type: "hang" }, 50)).rejects.toThrow(
         "JSONL RPC request timed out for hang\nstill waiting",
       );
+      await vi.advanceTimersByTimeAsync(50);
+      await timedOut;
     } finally {
-      await transport.close();
+      try {
+        const closing = transport.close();
+        await vi.advanceTimersByTimeAsync(500);
+        await closing;
+      } finally {
+        vi.useRealTimers();
+      }
     }
   });
 
@@ -291,6 +311,80 @@ describe("JsonlRpcProcess", () => {
       signal: null,
       error: expect.objectContaining({
         message: expect.stringContaining("child exploded"),
+      }),
+    });
+  });
+
+  test("waits for close and preserves a split first fatal after exit and warning overflow", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const exits: JsonlRpcExit[] = [];
+    transport.onExit((exit) => exits.push(exit));
+    const request = transport.request({ type: "hang" }, 10);
+    const rejection = expect(request).rejects.toThrow(
+      "[OMP_RPC_FATAL] RPC output failed (stage=spool-write code=ENOSPC syscall=write)",
+    );
+    Object.assign(child, { exitCode: 1 });
+    child.emit("exit", 1, null);
+    await Promise.resolve();
+    expect(exits).toEqual([]);
+    child.stderr.write("[OMP_RPC_FA");
+    child.stderr.write("TAL] RPC output failed (stage=spool-write code=ENOSPC syscall=write)\n");
+    child.stderr.write("SQLite warning\n".repeat(2_000));
+    child.stderr.end();
+    child.stdout.end();
+    child.emit("close", 1, null);
+    await rejection;
+    expect(exits).toHaveLength(1);
+    expect(exits[0]?.error.message).toContain("SQLite warning");
+    expect(exits[0]?.error.message.length).toBeLessThan(10_000);
+    await transport.close();
+  });
+
+  test("bounds stderr draining when inherited pipes never close", async () => {
+    vi.useFakeTimers();
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const exits: JsonlRpcExit[] = [];
+    transport.onExit((exit) => exits.push(exit));
+    const rejection = expect(transport.request({ type: "hang" }, null)).rejects.toThrow(
+      "late fatal",
+    );
+    try {
+      Object.assign(child, { exitCode: 9 });
+      child.emit("exit", 9, null);
+      child.stderr.write("late fatal");
+      await vi.advanceTimersByTimeAsync(499);
+      expect(exits).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejection;
+      expect(exits).toHaveLength(1);
+      expect(child.stderr.destroyed).toBe(true);
+      await transport.close();
+      child.emit("close", 9, null);
+      expect(exits).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("reports spawn errors once after close with stderr and original cause", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const exit = nextExit(transport);
+    const cause = Object.assign(new Error("spawn failed ENOENT"), { code: "ENOENT" });
+    const rejection = expect(transport.request({ type: "hang" }, null)).rejects.toThrow(
+      "spawn failed ENOENT",
+    );
+    child.emit("error", cause);
+    child.stderr.write("spawn diagnostic");
+    child.stderr.end();
+    child.emit("close", null, null);
+    await rejection;
+    await expect(exit).resolves.toMatchObject({
+      error: expect.objectContaining({
+        cause,
+        message: expect.stringContaining("spawn diagnostic"),
       }),
     });
   });

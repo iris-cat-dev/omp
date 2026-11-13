@@ -29,6 +29,9 @@ export interface OutboundJsonMetadata {
   requestId?: string;
   agentStreamType?: string;
   agentStreamAgentId?: string;
+  providerSubagentKind?: string;
+  providerSubagentParentId?: string;
+  providerSubagentId?: string;
 }
 
 interface PendingJsonMessage {
@@ -36,6 +39,7 @@ interface PendingJsonMessage {
   byteLength: number;
   metadata: OutboundJsonMetadata;
   reservedError: boolean;
+  acceptedAt: number;
 }
 
 export type JsonSendResult = "accepted" | "closed" | "too_large" | "queue_full";
@@ -54,12 +58,15 @@ export class JsonOutboundSender {
   private queuedErrors = 0;
   private immediateSends = 0;
   private immediateDrain: PromiseWithResolvers<void> | null = null;
+  private active: PendingJsonMessage | null = null;
+  private activeStartedAt = 0;
 
   constructor(
     private readonly socket: BoundedPhysicalSocket,
     private readonly onHighWater: (frameBytes: number, metadata: OutboundJsonMetadata) => void,
     private readonly onSendError: (error: Error, metadata: OutboundJsonMetadata) => void,
     private readonly onSent?: (metadata: OutboundJsonMetadata) => void,
+    private readonly onDrain?: () => void,
   ) {}
 
   setChunkedJsonMessages(enabled: boolean): void {
@@ -76,6 +83,38 @@ export class JsonOutboundSender {
 
   get maxMessageBytes(): number {
     return this.chunkedJsonMessages ? MAX_JSON_TOTAL_BYTES : MAX_PHYSICAL_SOCKET_BUFFERED_BYTES;
+  }
+
+  rejectionLogFields(byteLength: number, reservedError = false): Record<string, unknown> {
+    const now = Date.now();
+    const messagesFull = reservedError
+      ? this.queuedErrors >= MAX_QUEUED_JSON_ERRORS
+      : this.queuedMessages >= MAX_QUEUED_JSON_MESSAGES;
+    const bytesFull = reservedError
+      ? this.queuedErrorBytes + byteLength > MAX_QUEUED_JSON_ERROR_BYTES
+      : this.queuedBytes + byteLength > MAX_QUEUED_JSON_BYTES;
+    return {
+      queuedMessages: this.queuedMessages,
+      queuedBytes: this.queuedBytes,
+      queuedErrors: this.queuedErrors,
+      queuedErrorBytes: this.queuedErrorBytes,
+      maxQueuedMessages: MAX_QUEUED_JSON_MESSAGES,
+      maxQueuedBytes: MAX_QUEUED_JSON_BYTES,
+      maxQueuedErrors: MAX_QUEUED_JSON_ERRORS,
+      maxQueuedErrorBytes: MAX_QUEUED_JSON_ERROR_BYTES,
+      queueBoundary: messagesFull
+        ? bytesFull
+          ? "messages_and_bytes"
+          : "messages"
+        : bytesFull
+          ? "bytes"
+          : undefined,
+      queueReserve: reservedError ? "error" : "ordinary",
+      activeMessageType: this.active?.metadata.messageType,
+      activeElapsedMs: this.active ? now - this.activeStartedAt : undefined,
+      activeWaitMs: this.active ? this.activeStartedAt - this.active.acceptedAt : undefined,
+      oldestQueuedWaitMs: this.queue[0] ? now - this.queue[0].acceptedAt : undefined,
+    };
   }
 
   send(
@@ -97,7 +136,7 @@ export class JsonOutboundSender {
       return this.sendImmediate(json, byteLength, metadata);
     }
 
-    const message = { json, byteLength, metadata, reservedError };
+    const message = { json, byteLength, metadata, reservedError, acceptedAt: Date.now() };
     if (!this.sending) {
       this.sending = true;
       void this.drain(message);
@@ -134,6 +173,7 @@ export class JsonOutboundSender {
     this.queuedMessages = 0;
     this.queuedErrorBytes = 0;
     this.queuedErrors = 0;
+    this.active = null;
     // A transport may never invoke a pending callback after disconnecting.
     // Abort that wait so the current JSON and chunk scratch are released too.
     const disconnected = new Error("Physical WebSocket disconnected");
@@ -186,6 +226,9 @@ export class JsonOutboundSender {
   }
 
   private async drain(current: PendingJsonMessage | undefined): Promise<void> {
+    let drained = false;
+    this.active = current ?? null;
+    this.activeStartedAt = Date.now();
     try {
       if (this.immediateSends > 0) {
         this.immediateDrain = Promise.withResolvers<void>();
@@ -223,7 +266,10 @@ export class JsonOutboundSender {
           this.queuedMessages -= 1;
           this.queuedBytes -= current.byteLength;
         }
+        this.active = current ?? null;
+        this.activeStartedAt = Date.now();
       }
+      drained = !this.disposed;
     } catch (error) {
       if (!this.disposed && current) {
         const metadata = current.metadata;
@@ -232,7 +278,11 @@ export class JsonOutboundSender {
       }
     } finally {
       this.sending = false;
+      this.active = null;
     }
+    // Reset drain state before invoking user code: it may synchronously send
+    // another asynchronous message and start a new, independent drain.
+    if (drained && !this.disposed) this.onDrain?.();
   }
 
   private async sendChunks(message: PendingJsonMessage): Promise<void> {

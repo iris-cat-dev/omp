@@ -48,7 +48,7 @@ function createOmpChild(options?: {
   }) as OmpChild;
   child.kill = ((signal?: NodeJS.Signals | number) => {
     child.killedSignals.push(signal);
-    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    queueMicrotask(() => finishOmpChild(child, null, signal ?? null));
     return true;
   }) as ChildProcessWithoutNullStreams["kill"];
   // Real OMP writes a `ready` frame immediately after launch; the runtime waits
@@ -66,6 +66,18 @@ function createOmpChild(options?: {
     );
   }
   return child;
+}
+
+function finishOmpChild(
+  child: OmpChild,
+  code: number | null,
+  signal: NodeJS.Signals | number | null = null,
+): void {
+  Object.assign(child, { exitCode: code, signalCode: signal });
+  child.emit("exit", code, signal);
+  child.stdout.end();
+  child.stderr.end();
+  child.emit("close", code, signal);
 }
 
 function createRuntime(
@@ -269,8 +281,17 @@ describe("OMP CLI runtime", () => {
       invalidate(3);
       await expect(session.listBackgroundJobs!()).rejects.toThrow("did not advertise readiness");
       expect(bridge.requests).toHaveLength(1);
-      child.emit("exit", 0, null);
-      announceBackgroundJobs(child, bridge.port, 4);
+      finishOmpChild(child, 0);
+      child.stdout.emit(
+        "data",
+        `${JSON.stringify({
+          type: "desktop_background_jobs_ready",
+          port: bridge.port,
+          generation: 4,
+          token: "secret-4",
+          recoveryCommand,
+        })}\n`,
+      );
       await expect(session.listBackgroundJobs!()).rejects.toThrow("runtime has exited");
       expect(bridge.requests).toHaveLength(1);
       expect(commands).not.toContain("prompt");
@@ -424,7 +445,6 @@ describe("OMP CLI runtime", () => {
       await session.close();
     }
   });
-
 
   test("keeps a packaged preload path out of whitespace-tokenized BUN_OPTIONS", async () => {
     const child = createOmpChild();
@@ -966,7 +986,7 @@ describe("OMP CLI runtime", () => {
       const prompt = session.prompt("waiting for admission");
       const failure = expect(prompt).rejects.toThrow("process exited");
       await waitForImmediate();
-      child.emit("exit", 1, null);
+      finishOmpChild(child, 1);
       await failure;
     } finally {
       await session.close();
@@ -1317,7 +1337,9 @@ describe("OMP CLI runtime", () => {
       cleanup,
     });
     let closed = false;
-    const closing = session.close().then(() => { closed = true; });
+    const closing = session.close().then(() => {
+      closed = true;
+    });
     await cleanupStarted.promise;
     expect(closed).toBe(false);
     expect(cleanup).toHaveBeenCalledTimes(1);
@@ -1379,7 +1401,7 @@ describe("OMP CLI runtime", () => {
     await vi.waitUntil(() => launches.length === 1);
 
     child.stderr.write("startup exploded");
-    child.emit("exit", 7, null);
+    finishOmpChild(child, 7);
 
     await rejection;
   });
@@ -1408,7 +1430,7 @@ describe("OMP CLI runtime", () => {
     const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
     child.stdin.on("data", () => {
       child.stderr.write("negotiation exploded");
-      child.emit("exit", 8, null);
+      finishOmpChild(child, 8);
     });
 
     await expect(createRuntime(child).startSession({ cwd: "/workspace/project" })).rejects.toThrow(

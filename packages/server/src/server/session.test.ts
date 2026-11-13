@@ -719,7 +719,6 @@ test("cold prompt context reports unavailability without loading the persisted a
   }
 });
 
-
 test("returns persisted metadata without resuming malformed OMP history", async () => {
   const root = mkdtempSync(join(tmpdir(), "paseo-malformed-omp-history-"));
   const sessionFile = join(root, "session.jsonl");
@@ -1397,7 +1396,6 @@ test("routes host-scoped agent skills requests through the daemon owner", async 
     payload: { requestId: "save-skills", ...status, confirmationRequired: null },
   });
 });
-
 
 describe("workspace label subscriptions", () => {
   type LabelSubscription = Awaited<ReturnType<WorkspaceLabelService["subscribe"]>>;
@@ -5903,6 +5901,120 @@ test("acknowledges a timeline subscription only to its socket source", async () 
       },
     },
   ]);
+});
+
+test("scopes provider child streams per socket and stops delivery after unsubscribe", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const listeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      getAgent: () => null,
+      subscribe: (listener: (event: AgentManagerEvent) => void) => {
+        listeners.push(listener);
+        return () => {};
+      },
+    },
+  });
+  const detailSocket = {};
+  const listSocket = {};
+  const unrelatedSocket = {};
+  for (const source of [detailSocket, listSocket, unrelatedSocket]) {
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagents]: true }, source);
+  }
+  await session.handleMessage(
+    {
+      type: "agent.provider_subagents.set_subscription.request",
+      parentAgentIds: [],
+      timelines: [{ parentAgentId: "parent", subagentId: "child" }],
+      requestId: "child-detail",
+    },
+    detailSocket,
+  );
+  await session.handleMessage(
+    {
+      type: "agent.provider_subagents.set_subscription.request",
+      parentAgentIds: ["parent"],
+      timelines: [],
+      requestId: "child-list",
+    },
+    listSocket,
+  );
+  const forward = (event: AgentManagerEvent) => {
+    for (const listener of listeners) listener(event);
+  };
+  const descriptor = {
+    id: "child",
+    parentAgentId: "parent",
+    provider: "omp" as const,
+    title: "Research",
+    description: null,
+    model: null,
+    status: "running" as const,
+    createdAt: "2026-11-13T00:00:00Z",
+    updatedAt: "2026-11-13T00:00:00Z",
+    toolCallId: null,
+    cwd: null,
+    subtitle: null,
+  };
+  const delta = (subagentId: string, text: string): AgentManagerEvent => ({
+    type: "provider_subagent",
+    event: {
+      type: "timeline",
+      parentAgentId: "parent",
+      subagentId,
+      provider: "omp",
+      row: { seq: 1, timestamp: descriptor.updatedAt, item: { type: "assistant_message", text } },
+      epoch: "live",
+    },
+  });
+  const visible = (source: object) =>
+    targetedMessages
+      .filter((entry) => entry.source === source)
+      .flatMap(({ message }) => {
+        if (message.type !== "agent.provider_subagents.update") return [];
+        const payload = message.payload;
+        if (payload.kind === "timeline") {
+          return [
+            payload.item.type === "assistant_message" ? payload.item.text : payload.item.type,
+          ];
+        }
+        return [payload.kind === "upsert" ? payload.subagent.title : payload.kind];
+      });
+  forward({ type: "provider_subagent", event: { type: "upsert", subagent: descriptor } });
+  forward(delta("child", "visible text"));
+  forward(delta("unopened-child", "must not arrive"));
+  forward({ type: "provider_subagents_reset", parentAgentId: "parent" });
+  forward({ type: "provider_subagents_reset", parentAgentId: "other-parent" });
+  expect(visible(detailSocket)).toEqual(["Research", "visible text", "invalidate"]);
+  expect(visible(listSocket)).toEqual(["Research", "invalidate"]);
+  expect(visible(unrelatedSocket)).toEqual([]);
+  expect(messages).toEqual([]);
+
+  await session.handleMessage(
+    {
+      type: "agent.provider_subagents.set_subscription.request",
+      parentAgentIds: [],
+      timelines: [],
+      requestId: "close-detail",
+    },
+    detailSocket,
+  );
+  forward(delta("child", "closed detail must stay unchanged"));
+  forward({
+    type: "provider_subagent",
+    event: { type: "upsert", subagent: { ...descriptor, title: "Finished" } },
+  });
+  expect(visible(detailSocket)).toEqual(["Research", "visible text", "invalidate"]);
+  expect(visible(listSocket)).toEqual(["Research", "invalidate", "Finished"]);
+  session.clearAgentTimelineSubscription(listSocket);
+  forward({
+    type: "provider_subagent",
+    event: { type: "remove", parentAgentId: "parent", subagentId: "child" },
+  });
+  expect(visible(listSocket)).toEqual(["Research", "invalidate", "Finished"]);
 });
 
 test("unions viewed timelines across socket sources and removes detached sources", async () => {

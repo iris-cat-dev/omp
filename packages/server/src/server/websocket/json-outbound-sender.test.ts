@@ -112,7 +112,8 @@ test("disconnect aborts a stalled callback and queued work without blocking anot
   const stale = new ControlledSocket();
   const onError = vi.fn();
   const onSent = vi.fn();
-  const sender = new JsonOutboundSender(stale, vi.fn(), onError, onSent);
+  const onDrain = vi.fn();
+  const sender = new JsonOutboundSender(stale, vi.fn(), onError, onSent, onDrain);
   sender.setChunkedJsonMessages(true);
   sender.send(fragmentedJson, Buffer.byteLength(fragmentedJson), metadata);
   sender.send('"old queued response"', 21, { messageType: "queued" });
@@ -130,6 +131,7 @@ test("disconnect aborts a stalled callback and queued work without blocking anot
   expect(sender.send('"late"', 6, metadata)).toBe("closed");
   expect(onError).not.toHaveBeenCalled();
   expect(onSent).not.toHaveBeenCalled();
+  expect(onDrain).not.toHaveBeenCalled();
 
   await finish(replacement);
   expect(receivedJson(replacement)).toEqual([fragmentedJson]);
@@ -147,6 +149,17 @@ test("waiting count is bounded and reserved RPC errors remain FIFO behind accept
     expect(sender.send(json, Buffer.byteLength(json), { messageType: "queued" })).toBe("accepted");
   }
   expect(sender.send('"overflow"', 10, metadata)).toBe("queue_full");
+  expect(sender.rejectionLogFields(10)).toMatchObject({
+    queuedMessages: MAX_QUEUED_JSON_MESSAGES,
+    queuedBytes: queued.reduce((bytes, json) => bytes + Buffer.byteLength(json), 0),
+    queuedErrors: 0,
+    queuedErrorBytes: 0,
+    queueBoundary: "messages",
+    queueReserve: "ordinary",
+    activeMessageType: metadata.messageType,
+    activeElapsedMs: expect.any(Number),
+    oldestQueuedWaitMs: expect.any(Number),
+  });
   const errors: string[] = [];
   for (let index = 0; index < MAX_QUEUED_JSON_ERRORS; index += 1) {
     const json = JSON.stringify({ error: index });
@@ -156,6 +169,11 @@ test("waiting count is bounded and reserved RPC errors remain FIFO behind accept
     );
   }
   expect(sender.send('"overflow"', 10, metadata, true)).toBe("queue_full");
+  expect(sender.rejectionLogFields(10, true)).toMatchObject({
+    queuedErrors: MAX_QUEUED_JSON_ERRORS,
+    queueBoundary: "messages",
+    queueReserve: "error",
+  });
   await finish(socket);
   expect(receivedJson(socket)).toEqual([fragmentedJson, ...queued, ...errors]);
   expect(sender.send('"recovered"', 11, metadata)).toBe("accepted");
@@ -175,6 +193,10 @@ test("waiting UTF-8 bytes and the separate error reserve are bounded independent
     expect(sender.send(json, bytes, metadata)).toBe("accepted");
   }
   expect(sender.send('"more"', 6, metadata)).toBe("queue_full");
+  expect(sender.rejectionLogFields(6)).toMatchObject({
+    queuedBytes: MAX_QUEUED_JSON_BYTES,
+    queueBoundary: "bytes",
+  });
   const largeError = JSON.stringify("中".repeat(MAX_QUEUED_JSON_ERROR_BYTES / 3));
   expect(sender.send(largeError, Buffer.byteLength(largeError), metadata, true)).toBe("queue_full");
   expect(sender.send('"retry"', 7, { messageType: "rpc_error" }, true)).toBe("accepted");
@@ -205,7 +227,8 @@ test("callback failure stops fragmentation and reports rather than swallowing th
   const socket = new ControlledSocket();
   const onError = vi.fn();
   const onSent = vi.fn();
-  const sender = new JsonOutboundSender(socket, vi.fn(), onError, onSent);
+  const onDrain = vi.fn();
+  const sender = new JsonOutboundSender(socket, vi.fn(), onError, onSent, onDrain);
   sender.setChunkedJsonMessages(true);
   sender.send(fragmentedJson, Buffer.byteLength(fragmentedJson), metadata);
   sender.send('"queued"', 8, metadata);
@@ -215,6 +238,7 @@ test("callback failure stops fragmentation and reports rather than swallowing th
   expect(onSent).not.toHaveBeenCalled();
   expect(socket.frames).toHaveLength(1);
   expect(sender.send('"late"', 6, metadata)).toBe("closed");
+  expect(onDrain).not.toHaveBeenCalled();
 });
 
 test("Promise transports pace chunks and surface rejection without sending queued JSON", async () => {
@@ -255,7 +279,8 @@ test("ordinary JSON keeps its text frame and records completion only after the p
   const socket = new ControlledSocket();
   const onSent = vi.fn();
   const onError = vi.fn();
-  const sender = new JsonOutboundSender(socket, vi.fn(), onError, onSent);
+  const onDrain = vi.fn();
+  const sender = new JsonOutboundSender(socket, vi.fn(), onError, onSent, onDrain);
   sender.setChunkedJsonMessages(false);
   const json = JSON.stringify({ response: "small" });
   expect(sender.send(json, Buffer.byteLength(json), metadata)).toBe("accepted");
@@ -263,6 +288,7 @@ test("ordinary JSON keeps its text frame and records completion only after the p
   expect(onSent).not.toHaveBeenCalled();
   await socket.complete();
   expect(onSent).toHaveBeenCalledWith(metadata);
+  expect(onDrain).not.toHaveBeenCalled();
   sender.send(json, Buffer.byteLength(json), metadata);
   const error = new Error("ordinary send failed");
   await socket.complete(error);
@@ -293,4 +319,35 @@ test("fragmentation waits for earlier immediate JSON callbacks without delaying 
   expect(socket.frames).toHaveLength(3);
   await finish(socket);
   expect(receivedJson(socket)).toEqual([first, second, fragmentedJson]);
+});
+
+test("drain runs after all accepted FIFO work and can synchronously start another async drain", async () => {
+  const socket = new ControlledSocket();
+  const onError = vi.fn();
+  let drains = 0;
+  const tail = '"queued during drain callback"';
+  const sender = new JsonOutboundSender(socket, vi.fn(), onError, undefined, () => {
+    drains += 1;
+    expect(sender.rejectionLogFields(0)).toMatchObject({
+      queuedMessages: 0,
+      queuedBytes: 0,
+      queuedErrors: 0,
+      queuedErrorBytes: 0,
+      activeMessageType: undefined,
+    });
+    if (drains === 1) {
+      expect(sender.send(fragmentedJson, Buffer.byteLength(fragmentedJson), metadata)).toBe(
+        "accepted",
+      );
+      expect(sender.send(tail, Buffer.byteLength(tail), { messageType: "tail" })).toBe("accepted");
+    }
+  });
+  sender.setChunkedJsonMessages(true);
+  sender.send(fragmentedJson, Buffer.byteLength(fragmentedJson), metadata);
+  sender.send('"before drain"', 14, { messageType: "queued" });
+  expect(drains).toBe(0);
+  await finish(socket);
+  expect(drains).toBe(2);
+  expect(receivedJson(socket)).toEqual([fragmentedJson, '"before drain"', fragmentedJson, tail]);
+  expect(onError).not.toHaveBeenCalled();
 });

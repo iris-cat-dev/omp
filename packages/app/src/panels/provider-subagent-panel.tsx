@@ -5,6 +5,7 @@ import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
 import { AgentStreamView } from "@/agent-stream/view";
 import { getProviderIcon } from "@/components/provider-icons";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
@@ -55,7 +56,9 @@ function useProviderSubagentDescriptor(
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
   // The task names the tab; the subagent type is supporting detail beside the provider.
   const subagentType = descriptor?.title?.trim();
-  const label = descriptor?.description?.trim() || subagentType ||
+  const label =
+    descriptor?.description?.trim() ||
+    subagentType ||
     (listStatus === "ready" ? t("agentPanel.states.notFound") : "Subagent");
   const providerLabel = `${formatProviderLabel(provider)} subagent`;
   return {
@@ -78,6 +81,7 @@ function ProviderSubagentPanel() {
   const { t } = useTranslation();
   const { serverId, target, openFileInWorkspace } = usePaneContext();
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
+  const isActive = useRetainedPanelActive();
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
   const streamId = `provider:${encodeURIComponent(target.parentAgentId)}:${encodeURIComponent(target.subagentId)}`;
   const { descriptor, timeline, listStatus, timelineStatus } = useProviderSubagentStore(
@@ -101,16 +105,37 @@ function ProviderSubagentPanel() {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
 
   useEffect(() => {
-    if (!client || !supported) return;
-    void refreshProviderSubagents(client, serverId, target.parentAgentId).catch(() => undefined);
-  }, [client, serverId, supported, target.parentAgentId]);
-
-  useEffect(() => {
-    if (!client || !supported) return;
-    void refreshProviderSubagentTimeline(
-      client, serverId, target.parentAgentId, target.subagentId,
-    ).catch(() => undefined);
-  }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
+    if (!client || !supported || !isActive) return;
+    const controller = new AbortController();
+    let disposed = false;
+    let release: (() => void) | undefined;
+    void client
+      .acquireProviderSubagentSubscription(target.parentAgentId, target.subagentId, {
+        signal: controller.signal,
+      })
+      .then((lease) => {
+        if (disposed) {
+          lease();
+          return;
+        }
+        release = lease;
+        return Promise.all([
+          refreshProviderSubagents(client, serverId, target.parentAgentId),
+          refreshProviderSubagentTimeline(
+            client,
+            serverId,
+            target.parentAgentId,
+            target.subagentId,
+          ),
+        ]);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      controller.abort();
+      release?.();
+    };
+  }, [client, isActive, serverId, supported, target.parentAgentId, target.subagentId]);
 
   const loadOlder = useCallback((): boolean => {
     if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
@@ -120,12 +145,17 @@ function ProviderSubagentPanel() {
     if (firstSeq === null) return false;
     setIsLoadingOlder(true);
     void refreshProviderSubagentTimeline(
-      client, serverId, target.parentAgentId, target.subagentId, {
+      client,
+      serverId,
+      target.parentAgentId,
+      target.subagentId,
+      {
         direction: "before",
         cursor: { epoch: timeline.epoch, seq: firstSeq },
         limit: TIMELINE_FETCH_PAGE_SIZE,
       },
-    ).catch(() => undefined)
+    )
+      .catch(() => undefined)
       .finally(() => setIsLoadingOlder(false));
     return true;
   }, [
@@ -176,7 +206,10 @@ function ProviderSubagentPanel() {
     if (!client || !supported) return;
     void refreshProviderSubagents(client, serverId, target.parentAgentId).catch(() => undefined);
     void refreshProviderSubagentTimeline(
-      client, serverId, target.parentAgentId, target.subagentId,
+      client,
+      serverId,
+      target.parentAgentId,
+      target.subagentId,
     ).catch(() => undefined);
   }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
 
@@ -188,8 +221,13 @@ function ProviderSubagentPanel() {
     );
   }
 
-  if (!descriptor && (listStatus === "ready" || timelineStatus === "missing" ||
-    listStatus === "error" || timelineStatus === "error")) {
+  if (
+    !descriptor &&
+    (listStatus === "ready" ||
+      timelineStatus === "missing" ||
+      listStatus === "error" ||
+      timelineStatus === "error")
+  ) {
     const failed = listStatus === "error" || timelineStatus === "error";
     return (
       <View style={styles.unsupported} testID="provider-subagent-panel-unavailable">

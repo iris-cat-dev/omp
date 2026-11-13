@@ -498,6 +498,7 @@ export class PaseoWebSocketServer {
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
   private readonly jsonSenders = new Map<WebSocketLike, JsonOutboundSender>();
+  private readonly dirtyProviderFeeds = new Set<WebSocketLike>();
   private readonly inboundJsonQueues = new Map<
     WebSocketLike,
     { pending: Promise<void>; bytes: number }
@@ -990,6 +991,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.clear();
     for (const sender of this.jsonSenders.values()) sender.dispose();
     this.jsonSenders.clear();
+    this.dirtyProviderFeeds.clear();
     this.inboundJsonQueues.clear();
     this.flushRuntimeMetrics({ final: true });
     this.eventLoopDelayMonitor?.disable();
@@ -1096,7 +1098,27 @@ export class PaseoWebSocketServer {
         event.type === "timeline" ? `timeline:${event.item.type}` : event.type;
       metadata.agentStreamAgentId = agentId;
     }
+    if (innerMessage.type === "agent.provider_subagents.update") {
+      const update = innerMessage.payload;
+      metadata.providerSubagentKind = update.kind;
+      if (update.kind === "upsert") {
+        metadata.providerSubagentParentId = update.subagent.parentAgentId;
+        metadata.providerSubagentId = update.subagent.id;
+      } else {
+        if ("parentAgentId" in update) metadata.providerSubagentParentId = update.parentAgentId;
+        if ("subagentId" in update) metadata.providerSubagentId = update.subagentId;
+      }
+    }
     for (const ws of writableSockets) {
+      // Only this recoverable feed may skip deltas. RPC snapshots and every
+      // other push retain the ordinary bounded queue / fail-closed policy.
+      if (
+        metadata.messageType === "agent.provider_subagents.update" &&
+        metadata.requestId === undefined &&
+        this.dirtyProviderFeeds.has(ws)
+      ) {
+        continue;
+      }
       // Transport heartbeat replies may interleave fragmented business JSON,
       // just like binary frames, so a long history cannot starve the lease.
       if (message.type === "pong") {
@@ -1142,6 +1164,18 @@ export class PaseoWebSocketServer {
             },
             ws.bufferedAmount,
           ),
+        () => {
+          if (!this.dirtyProviderFeeds.delete(ws)) return;
+          // All accepted logical messages have completed. Clear dirty first
+          // so the marker takes the next wire position and normal feed resumes.
+          this.sendToClient(
+            ws,
+            wrapSessionMessage({
+              type: "agent.provider_subagents.update",
+              payload: { kind: "invalidate" },
+            }),
+          );
+        },
       );
       this.jsonSenders.set(ws, sender);
     }
@@ -1159,11 +1193,21 @@ export class PaseoWebSocketServer {
       ...outboundJsonLogFields(metadata),
       frameBytes,
       bufferedAmount: ws.bufferedAmount,
+      physicalBufferedBytes: ws.bufferedAmount,
+      ...sender.rejectionLogFields(frameBytes),
       limit: reason === "too_large" ? sender.maxMessageBytes : MAX_QUEUED_JSON_BYTES,
       maxQueuedMessages: MAX_QUEUED_JSON_MESSAGES,
       reason,
     };
     this.logger.warn(logFields, "Rejected outbound logical JSON message");
+    if (
+      reason === "queue_full" &&
+      metadata.messageType === "agent.provider_subagents.update" &&
+      metadata.requestId === undefined
+    ) {
+      this.dirtyProviderFeeds.add(ws);
+      return;
+    }
     if (metadata.requestId === undefined) {
       this.closePhysicalSocket({
         ws,
@@ -1205,6 +1249,8 @@ export class PaseoWebSocketServer {
           ...outboundJsonLogFields(errorMetadata),
           frameBytes: errorBytes,
           bufferedAmount: ws.bufferedAmount,
+          physicalBufferedBytes: ws.bufferedAmount,
+          ...sender.rejectionLogFields(errorBytes, true),
           limit: MAX_QUEUED_JSON_ERROR_BYTES,
           maxQueuedErrors: MAX_QUEUED_JSON_ERRORS,
         },
@@ -1217,6 +1263,8 @@ export class PaseoWebSocketServer {
           ...outboundJsonLogFields(errorMetadata),
           frameBytes: errorBytes,
           bufferedAmount: ws.bufferedAmount,
+          physicalBufferedBytes: ws.bufferedAmount,
+          ...sender.rejectionLogFields(errorBytes, true),
           limit: sender.maxMessageBytes,
         },
       });
@@ -1299,6 +1347,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.release(ws);
     this.jsonSenders.get(ws)?.dispose();
     this.jsonSenders.delete(ws);
+    this.dirtyProviderFeeds.delete(ws);
     this.inboundJsonQueues.delete(ws);
     if (ws.readyState !== 1) {
       return;
@@ -1921,6 +1970,7 @@ export class PaseoWebSocketServer {
     this.applicationSocketLease.release(ws);
     this.jsonSenders.get(ws)?.dispose();
     this.jsonSenders.delete(ws);
+    this.dirtyProviderFeeds.delete(ws);
     this.inboundJsonQueues.delete(ws);
     const identity = this.socketIdentities.get(ws);
     const identityFields = identity ? toConnectionLogFields(identity) : {};
@@ -2042,6 +2092,7 @@ export class PaseoWebSocketServer {
     for (const socket of connection.sockets) {
       this.jsonSenders.get(socket)?.dispose();
       this.jsonSenders.delete(socket);
+      this.dirtyProviderFeeds.delete(socket);
       this.inboundJsonQueues.delete(socket);
       this.sessions.delete(socket);
       this.socketIdentities.delete(socket);

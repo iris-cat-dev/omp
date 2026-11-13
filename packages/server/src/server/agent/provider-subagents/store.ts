@@ -78,6 +78,7 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
 export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
   private readonly timelines = new InMemoryAgentTimelineStore();
+  private readonly childrenByParent = new Map<string, Set<string>>();
 
   constructor(private readonly epochPrefix?: string) {}
 
@@ -85,13 +86,19 @@ export class ProviderSubagentStore {
     parentAgentId: string,
     provider: AgentProvider,
     event: ProviderSubagentInputEvent,
-  ): ProviderSubagentStoreEvent {
+  ): ProviderSubagentStoreEvent | null {
     const key = storeKey(parentAgentId, event.id);
     if (event.type === "remove") {
       this.descriptors.delete(key);
       this.timelines.delete(key);
+      const children = this.childrenByParent.get(parentAgentId);
+      children?.delete(event.id);
+      if (children?.size === 0) this.childrenByParent.delete(parentAgentId);
       return { type: "remove", parentAgentId, subagentId: event.id };
     }
+    let children = this.childrenByParent.get(parentAgentId);
+    if (!children) this.childrenByParent.set(parentAgentId, (children = new Set()));
+    children.add(event.id);
 
     if (event.type === "timeline") {
       if (!this.timelines.has(key)) {
@@ -137,6 +144,19 @@ export class ProviderSubagentStore {
       cwd: stickyField(event.cwd, previous?.cwd),
       subtitle: stickyField(event.subtitle, previous?.subtitle),
     };
+    if (
+      previous &&
+      previous.provider === subagent.provider &&
+      previous.title === subagent.title &&
+      previous.description === subagent.description &&
+      previous.model === subagent.model &&
+      previous.status === subagent.status &&
+      previous.toolCallId === subagent.toolCallId &&
+      previous.cwd === subagent.cwd &&
+      previous.subtitle === subagent.subtitle
+    ) {
+      return null;
+    }
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };
   }
@@ -166,10 +186,14 @@ export class ProviderSubagentStore {
     const timeline = this.timelines.fetch(key, { ...options, limit });
     if (limit === 0) return timeline;
     const fullRows = this.timelines.fetch(key, { direction: "tail", limit: 0 }).rows;
-    const eligible = timeline.reset || direction === "tail" ? fullRows
-      : fullRows.filter((row) => direction === "after"
-        ? row.seq > (options?.cursor?.seq ?? 0)
-        : row.seq < (options?.cursor?.seq ?? timeline.window.nextSeq));
+    const eligible =
+      timeline.reset || direction === "tail"
+        ? fullRows
+        : fullRows.filter((row) =>
+            direction === "after"
+              ? row.seq > (options?.cursor?.seq ?? 0)
+              : row.seq < (options?.cursor?.seq ?? timeline.window.nextSeq),
+          );
     if (eligible.length === 0) return timeline;
     const selected = selectTimelineWindowByProjectedLimit({
       rows: eligible,
@@ -181,21 +205,20 @@ export class ProviderSubagentStore {
     return {
       ...timeline,
       rows: selected.selectedRows,
-      hasOlder:
-        timeline.hasOlder || (firstRow !== undefined && firstRow.seq > timeline.window.minSeq),
-      hasNewer:
-        timeline.hasNewer || (lastRow !== undefined && lastRow.seq < timeline.window.maxSeq),
+      hasOlder: firstRow !== undefined && firstRow.seq > timeline.window.minSeq,
+      hasNewer: lastRow !== undefined && lastRow.seq < timeline.window.maxSeq,
     };
   }
 
   deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
     const events: ProviderSubagentStoreEvent[] = [];
-    for (const subagent of this.list(parentAgentId)) {
-      const key = storeKey(parentAgentId, subagent.id);
+    for (const subagentId of this.childrenByParent.get(parentAgentId) ?? []) {
+      const key = storeKey(parentAgentId, subagentId);
       this.descriptors.delete(key);
       this.timelines.delete(key);
-      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
+      events.push({ type: "remove", parentAgentId, subagentId });
     }
+    this.childrenByParent.delete(parentAgentId);
     return events;
   }
 }

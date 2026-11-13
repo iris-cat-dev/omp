@@ -28,18 +28,18 @@ The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift a
 
 ## Workspace packages
 
-| Package                                       | Responsibility                      |
-| --------------------------------------------- | ----------------------------------- |
-| [`packages/app`](../packages/app)             | Electron and Web renderer           |
-| [`packages/desktop`](../packages/desktop)     | Electron main process and packaging |
-| [`packages/server`](../packages/server)       | Local daemon and OMP adapter        |
-| [`packages/client`](../packages/client)       | Daemon client                       |
-| [`packages/protocol`](../packages/protocol)   | Shared wire schemas                 |
-| [`packages/relay`](../packages/relay)         | Shared E2EE relay transport         |
-| [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                   |
-| [`packages/highlight`](../packages/highlight) | Code and diff highlighting          |
-| [`packages/plugin`](../packages/plugin)       | Shared Desktop plugin SDK, compiler and isolated worker |
-| [`plugins`](../plugins)                      | Optional plugin packages and source examples; not included in default application builds |
+| Package                                       | Responsibility                                                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`packages/app`](../packages/app)             | Electron and Web renderer                                                                |
+| [`packages/desktop`](../packages/desktop)     | Electron main process and packaging                                                      |
+| [`packages/server`](../packages/server)       | Local daemon and OMP adapter                                                             |
+| [`packages/client`](../packages/client)       | Daemon client                                                                            |
+| [`packages/protocol`](../packages/protocol)   | Shared wire schemas                                                                      |
+| [`packages/relay`](../packages/relay)         | Shared E2EE relay transport                                                              |
+| [`packages/cli`](../packages/cli)             | `omp-desktop` CLI                                                                        |
+| [`packages/highlight`](../packages/highlight) | Code and diff highlighting                                                               |
+| [`packages/plugin`](../packages/plugin)       | Shared Desktop plugin SDK, compiler and isolated worker                                  |
+| [`plugins`](../plugins)                       | Optional plugin packages and source examples; not included in default application builds |
 
 The root `tsconfig.json` covers root `*.config.ts` files only. Each workspace uses its own TypeScript configuration; `npm run typecheck` checks those workspaces. To check root configuration files, run `npm exec --no -- tsgo --noEmit -p tsconfig.json`.
 
@@ -61,18 +61,41 @@ Trusted plugin clients share the renderer's React, client, SDK and Lucide module
 
 Node consumers import release-operation and activation-scope APIs from `@omp-desktop/plugin/server`. The public `/host` entry also includes renderer React bindings; its historical exports remain available to renderer hosts.
 
-
 ## Runtime and protocol notes
 
 Main-process code keeps Electron-compatible `electron` imports; the stock `electron` package is retained only for TypeScript declarations. Project scripts do not download or substitute its runtime. Native runtime version selection and platform constraints are documented in [packaging](packaging.md#native-runtime-selection).
 
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
+RPC output failures mirror a bounded `[OMP_RPC_FATAL]` diagnostic to independent
+stderr before shutdown. It records the first failure's `stage`, safe `code` and
+`syscall`, not protocol frames or private paths. Stages distinguish stdout from
+temporary spool creation/write/read and cleanup; `ENOSPC` alone does not identify
+the failing device. Logger or stderr failures cannot block disposal/exit:
+stderr has a 500 ms bound and disposal a 2 s bound. Desktop retains the first
+fatal diagnostic separately from the stderr tail, and constructs the exit error
+after stdio closes (with a 500 ms fallback for inherited pipes). Rebuild the SDK
+and restart loaded RPC hosts to apply this change.
+
 Desktop/daemon WebSocket framing is separate from the SDK's JSONL transport.
 Capable clients receive large history, directory and subagent JSON messages in
 callback-paced 256 KiB chunks without relaxing the 64 MiB physical backlog guard.
 See [chunked daemon messages](../packages/protocol/README.md#chunked-daemon-messages)
 for negotiation, framing, queue limits and reconnect behavior.
+
+Provider child descriptors are deduplicated and live text/tool updates share
+the 60 ms coalescing window, independently for each parent/child pair. The server
+assigns canonical tool revisions after coalescing; provider input revisions are
+not acknowledgments of an already materialized row. Terminal results cannot be
+replaced by late running progress.
+
+Provider lists and open child details acquire explicit socket-scoped leases.
+Closed or unrelated details receive no live timeline rows. History rebuilds send
+one parent invalidation, not a row-by-row replay. Logical queue saturation pauses
+only provider pushes and sends a global invalidation after accepted work drains,
+without increasing queue limits or silently losing the last delta. Active views
+refresh snapshots with generation fencing; closing a pending view aborts its
+lease immediately. See [provider subscriptions](../packages/protocol/README.md#provider-subagent-subscriptions).
 
 Outbound attachment unions must be exercised through the generated WebSocket validator, not only `Schema.parse`. Transformed union options retain their input object discriminator during AOT generation; text and normalized source metadata must survive both warm stream and cold timeline decoding.
 

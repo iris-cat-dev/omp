@@ -509,7 +509,13 @@ export class InMemoryAgentTimelineStore {
     const key = toolContextKey(item.callId, options?.turnId);
     const existing = state.toolCalls.get(key);
     if (existing) {
-      const merged = mergeToolCallItems(existing.item, item);
+      // Provider revisions and this store's canonical revision counter are different clocks.
+      // Assign the next canonical revision before merging live input; only persisted/projection
+      // merges should compare incoming canonical revisions against the stored row.
+      const merged = mergeToolCallItems(existing.item, {
+        ...item,
+        revision: (existing.item.revision ?? 0) + 1,
+      });
       if (
         merged === existing.item &&
         (options?.providerMessageId === undefined ||
@@ -517,10 +523,7 @@ export class InMemoryAgentTimelineStore {
       ) {
         return cloneRow(state.rows[existing.rowIndex]);
       }
-      existing.item = {
-        ...merged,
-        revision: (existing.item.revision ?? 0) + 1,
-      };
+      existing.item = merged;
       const context = toolForkContext(existing.item);
       const committed = state.contextsAtBoundary.get(key);
       if (context.summary === committed?.summary && context.log === (committed?.log ?? "")) {

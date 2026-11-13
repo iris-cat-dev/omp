@@ -5320,7 +5320,8 @@ test("importProviderSession imports the selected session without listing and pub
   expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
     expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
   ]);
-  expect(events).toHaveLength(3);
+  expect(events).toHaveLength(2);
+  expect(events[1]).toEqual({ type: "provider_subagents_reset", parentAgentId: imported.id });
   expect(events[0]).toMatchObject({
     type: "agent_state",
     agent: {
@@ -5639,15 +5640,10 @@ test("hydrateTimelineFromProvider restores and broadcasts provider children from
       parentAgentId: snapshot.id,
     }),
   ]);
+  expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
   expect(events).toContainEqual({
-    type: "provider_subagent",
-    event: {
-      type: "upsert",
-      subagent: expect.objectContaining({
-        id: "restored-child",
-        parentAgentId: snapshot.id,
-      }),
-    },
+    type: "provider_subagents_reset",
+    parentAgentId: snapshot.id,
   });
 });
 
@@ -5885,13 +5881,10 @@ test("force provider hydration removes children absent from current history", as
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true, broadcast: true });
 
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
+  expect(events.filter((event) => event.type === "provider_subagent")).toEqual([]);
   expect(events).toContainEqual({
-    type: "provider_subagent",
-    event: {
-      type: "remove",
-      parentAgentId: snapshot.id,
-      subagentId: "removed-by-rewind",
-    },
+    type: "provider_subagents_reset",
+    parentAgentId: snapshot.id,
   });
 });
 
@@ -9318,7 +9311,8 @@ test.each(["title", "labels"] as const)(
       const clearing = manager.clearAgentAttention(agent.id);
       await writeStarted.promise;
       expect((await storage.get(agent.id))?.requiresAttention).toBe(true);
-      const patch = field === "title" ? { title: "Renamed while clearing" } : { labels: { read: "yes" } };
+      const patch =
+        field === "title" ? { title: "Renamed while clearing" } : { labels: { read: "yes" } };
       const updating = manager.updateAgentMetadata(agent.id, patch);
       await waitForImmediate();
       writeAllowed.resolve();
@@ -13026,7 +13020,12 @@ test("reading attention preserves an actual pending permission and its unread no
       workspaceId: undefined,
     });
     await manager.runAgent(agent.id, "finished work");
-    const request = { id: "still-pending", provider: "codex", kind: "tool" as const, name: "Write file" };
+    const request = {
+      id: "still-pending",
+      provider: "codex",
+      kind: "tool" as const,
+      name: "Write file",
+    };
     client.sessions[0]!.pushEvent({ type: "permission_requested", provider: "codex", request });
     await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
     await manager.clearAgentAttention(agent.id);
@@ -13141,7 +13140,12 @@ test.each(["same-notification", "new-completion", "new-error", "pending-permissi
         session.pushEvent({
           type: "permission_requested",
           provider: "codex",
-          request: { id: "activation-permission", provider: "codex", kind: "tool", name: "Write file" },
+          request: {
+            id: "activation-permission",
+            provider: "codex",
+            kind: "tool",
+            name: "Write file",
+          },
         });
         await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
       }
@@ -13166,11 +13170,14 @@ test.each(["same-notification", "new-completion", "new-error", "pending-permissi
       expect(await new AgentStorage(storagePath, logger).get(agent.id)).toMatchObject({
         requiresAttention: expectsAttention,
         attentionReason: expectsAttention
-          ? (notification === "new-error" ? "error" : "finished")
+          ? notification === "new-error"
+            ? "error"
+            : "finished"
           : null,
-        attentionTimestamp: expectsAttention && latestAttention.requiresAttention
-          ? latestAttention.attentionTimestamp.toISOString()
-          : null,
+        attentionTimestamp:
+          expectsAttention && latestAttention.requiresAttention
+            ? latestAttention.attentionTimestamp.toISOString()
+            : null,
       });
       if (notification === "pending-permission") {
         expect(live.pendingPermissions.has("activation-permission")).toBe(true);

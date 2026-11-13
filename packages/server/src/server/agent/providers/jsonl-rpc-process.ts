@@ -13,6 +13,9 @@ export const JSONL_RPC_DEFAULT_TIMEOUT_MS = 30_000;
 export const JSONL_RPC_NO_TIMEOUT = null;
 
 const STDERR_BUFFER_LIMIT = 8192;
+const STDERR_FATAL_LIMIT = 1024;
+const STDERR_DRAIN_TIMEOUT_MS = 500;
+const RPC_FATAL_PREFIX = "[OMP_RPC_FATAL] ";
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 const RPC_V2_MAX_FRAME_BYTES = 1024 * 1024;
@@ -115,6 +118,14 @@ export class JsonlRpcProcess {
   private readonly messageSubscribers = new Set<(message: Record<string, unknown>) => void>();
   private readonly exitSubscribers = new Set<(exit: JsonlRpcExit) => void>();
   private stderrBuffer = "";
+  private stderrLine = "";
+  private firstFatalDiagnostic: string | null = null;
+  private termination: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  private processError: Error | null = null;
+  private exitFinalized = false;
+  private childClosed = false;
+  private drainTimer: NodeJS.Timeout | null = null;
+  private readonly exitCompletion = Promise.withResolvers<void>();
   private nextRequestId = 1;
   private disposed = false;
   private stdoutBuffer = "";
@@ -128,24 +139,89 @@ export class JsonlRpcProcess {
       this.handleStdoutChunk(chunk);
     });
     this.child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      this.stderrBuffer += chunk;
-      if (this.stderrBuffer.length > STDERR_BUFFER_LIMIT) {
-        this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
-      }
+      if (!this.exitFinalized) this.handleStderrChunk(chunk);
     });
     this.child.on("error", (error) => {
-      this.failAll(error instanceof Error ? error : new Error(String(error)));
+      this.processError ??= error instanceof Error ? error : new Error(String(error));
+      this.beginTermination(this.child.exitCode, this.child.signalCode);
     });
     this.child.on("exit", (code, signal) => {
-      const error = new Error(
-        `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
-      );
-      const exit = { code, signal, error };
-      for (const subscriber of this.exitSubscribers) {
-        subscriber(exit);
-      }
-      this.failAll(error);
+      this.beginTermination(code, signal);
     });
+    this.child.on("close", (code, signal) => {
+      this.childClosed = true;
+      this.termination = { code, signal };
+      this.finalizeExit();
+    });
+  }
+
+  private handleStderrChunk(chunk: string): void {
+    this.stderrBuffer = (this.stderrBuffer + chunk.slice(-STDERR_BUFFER_LIMIT)).slice(
+      -STDERR_BUFFER_LIMIT,
+    );
+    if (this.firstFatalDiagnostic) return;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf("\n", offset);
+      const end = newline === -1 ? chunk.length : newline;
+      this.stderrLine += chunk.slice(
+        offset,
+        Math.min(end, offset + STDERR_FATAL_LIMIT - this.stderrLine.length),
+      );
+      if (newline === -1) break;
+      if (this.stderrLine.startsWith(RPC_FATAL_PREFIX)) {
+        this.firstFatalDiagnostic = this.stderrLine.trimEnd();
+        break;
+      }
+      this.stderrLine = "";
+      offset = newline + 1;
+    }
+  }
+
+  private stderrDiagnostic(): string {
+    const fatal =
+      this.firstFatalDiagnostic ??
+      (this.stderrLine.startsWith(RPC_FATAL_PREFIX) ? this.stderrLine.trimEnd() : null);
+    return fatal && !this.stderrBuffer.includes(fatal)
+      ? `${fatal}\n${this.stderrBuffer}`
+      : this.stderrBuffer;
+  }
+
+  private beginTermination(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.exitFinalized || this.termination) return;
+    this.termination = { code, signal };
+    // Process death wins over per-request timeouts, but its stderr is not drained until close.
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer ?? undefined);
+      pending.timer = null;
+    }
+    this.drainTimer = setTimeout(() => {
+      this.finalizeExit();
+      // Descendants may inherit pipes and keep them open after the direct child exits.
+      this.child.stdin.destroy();
+      this.child.stdout.destroy();
+      this.child.stderr.destroy();
+    }, STDERR_DRAIN_TIMEOUT_MS);
+  }
+
+  private finalizeExit(): void {
+    if (this.exitFinalized) return;
+    this.exitFinalized = true;
+    clearTimeout(this.drainTimer ?? undefined);
+    this.drainTimer = null;
+    const { code, signal } = this.termination ?? {
+      code: this.child.exitCode,
+      signal: this.child.signalCode,
+    };
+    const error = new Error(
+      `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}${this.processError ? `\n${this.processError.message}` : ""}\n${this.stderrDiagnostic()}`.trim(),
+      this.processError ? { cause: this.processError } : undefined,
+    );
+    this.failAll(error);
+    this.exitCompletion.resolve();
+    for (const subscriber of this.exitSubscribers) {
+      subscriber({ code, signal, error });
+    }
   }
 
   onMessage(callback: (message: Record<string, unknown>) => void): () => void {
@@ -166,7 +242,7 @@ export class JsonlRpcProcess {
     command: { type: string; [key: string]: unknown },
     timeoutMs: number | null = JSONL_RPC_DEFAULT_TIMEOUT_MS,
   ): { id: string; promise: Promise<unknown> } {
-    if (this.disposed) {
+    if (this.disposed || this.termination) {
       return {
         id: "",
         promise: Promise.reject(new Error(`${this.diagnosticName} process is closed`)),
@@ -179,7 +255,7 @@ export class JsonlRpcProcess {
         this.pending.delete(id);
         reject(
           new Error(
-            `${this.diagnosticName} request timed out for ${command.type}\n${this.stderrBuffer}`.trim(),
+            `${this.diagnosticName} request timed out for ${command.type}\n${this.stderrDiagnostic()}`.trim(),
           ),
         );
       });
@@ -197,7 +273,12 @@ export class JsonlRpcProcess {
   }
 
   send(message: Record<string, unknown>): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
+    if (
+      this.disposed ||
+      this.termination ||
+      this.child.stdin.destroyed ||
+      !this.child.stdin.writable
+    ) {
       return;
     }
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -214,6 +295,7 @@ export class JsonlRpcProcess {
 
   private async closeProcess(error: Error): Promise<void> {
     this.failAll(error);
+    if (this.childClosed) return;
     try {
       this.child.stdin.end();
     } catch {
@@ -236,6 +318,8 @@ export class JsonlRpcProcess {
       );
       throw new Error(`${this.diagnosticName} process exit could not be confirmed`);
     }
+    if (!this.termination) this.beginTermination(this.child.exitCode, this.child.signalCode);
+    await this.exitCompletion.promise;
   }
 
   private handleStdoutChunk(chunk: string): void {
@@ -282,7 +366,7 @@ export class JsonlRpcProcess {
 
   /** Route a complete logical frame to its consumer (response or subscriber). */
   private dispatchFrame(message: Record<string, unknown>): void {
-    if (this.disposed) return;
+    if (this.disposed || this.termination) return;
     if (message.type === "response") {
       this.handleResponse(message as unknown as JsonlRpcResponse);
       return;

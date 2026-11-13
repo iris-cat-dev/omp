@@ -2,6 +2,86 @@ import { describe, expect, test } from "vitest";
 import { ProviderSubagentStore } from "./store.js";
 
 describe("ProviderSubagentStore", () => {
+  test("ignores timestamp-only upserts while retaining sticky metadata, model changes, and restarts", () => {
+    const store = new ProviderSubagentStore();
+    const first = store.apply("parent", "omp", {
+      type: "upsert",
+      id: "child",
+      title: "Explore",
+      description: "Find the source",
+      model: "model-a",
+      toolCallId: "tool",
+      cwd: "/workspace",
+      subtitle: "Worker",
+      timestamp: "2026-11-13T10:00:00.000Z",
+    });
+    expect(first?.type).toBe("upsert");
+    const descriptor = store.get("parent", "child");
+    for (let index = 1; index < 100; index++) {
+      expect(
+        store.apply("parent", "omp", {
+          type: "upsert",
+          id: "child",
+          title: "Explore",
+          timestamp: new Date(Date.parse("2026-11-13T10:00:00.000Z") + index).toISOString(),
+        }),
+      ).toBeNull();
+    }
+    expect(store.get("parent", "child")).toBe(descriptor);
+    expect(
+      store.apply("parent", "omp", {
+        type: "upsert",
+        id: "child",
+        model: "model-b",
+        description: null,
+      }),
+    ).toMatchObject({
+      subagent: {
+        title: "Explore",
+        model: "model-b",
+        description: null,
+        toolCallId: "tool",
+        cwd: "/workspace",
+        subtitle: "Worker",
+      },
+    });
+    expect(
+      store.apply("parent", "omp", {
+        type: "upsert",
+        id: "child",
+        status: "completed",
+      }),
+    ).toMatchObject({ subagent: { status: "completed" } });
+    expect(store.apply("parent", "omp", { type: "upsert", id: "child" })).toBeNull();
+    expect(
+      store.apply("parent", "omp", {
+        type: "upsert",
+        id: "child",
+        status: "running",
+      }),
+    ).toMatchObject({ subagent: { status: "running" } });
+  });
+
+  test("deletes a child's timeline even when no descriptor was announced", () => {
+    const store = new ProviderSubagentStore();
+    store.apply("parent", "omp", {
+      type: "timeline",
+      id: "child",
+      item: { type: "assistant_message", text: "orphan" },
+    });
+    expect(store.deleteParent("parent")).toEqual([
+      { type: "remove", parentAgentId: "parent", subagentId: "child" },
+    ]);
+    store.apply("parent", "omp", {
+      type: "timeline",
+      id: "child",
+      item: { type: "assistant_message", text: "new run" },
+    });
+    expect(store.fetchTimeline("parent", "child").rows).toEqual([
+      expect.objectContaining({ seq: 1, item: { type: "assistant_message", text: "new run" } }),
+    ]);
+  });
+
   test("keeps provider children and their timelines scoped to the parent agent", () => {
     const subagents = new ProviderSubagentStore();
 
@@ -78,7 +158,7 @@ describe("ProviderSubagentStore", () => {
       },
     });
 
-    expect(update.type).toBe("timeline");
+    expect(update?.type).toBe("timeline");
     const [row] = subagents.fetchTimeline("parent-a", "child-1").rows;
     expect(row?.item).toMatchObject({
       type: "tool_call",
@@ -145,7 +225,11 @@ test("materializes interleaved child tools and acknowledges revised results with
   });
   const after = subagents.fetchTimeline("parent", "child", {
     direction: "after",
-    cursor: { epoch: before.epoch, seq: before.window.maxSeq, contentVersion: before.contentVersion },
+    cursor: {
+      epoch: before.epoch,
+      seq: before.window.maxSeq,
+      contentVersion: before.contentVersion,
+    },
     limit: 0,
   });
   expect(after.reset).toBe(false);
@@ -160,8 +244,11 @@ test("materializes interleaved child tools and acknowledges revised results with
   const finalItem = after.revisedRows?.[0]?.item;
   if (finalItem?.type !== "tool_call") throw new Error("Expected the completed child tool");
   expect(finalItem.metadata?.streamingArgs).toBeUndefined();
-  const unchanged = subagents.fetchTimeline("parent", "child", { direction: "after",
-    cursor: { epoch: after.epoch, seq: after.window.maxSeq, contentVersion: after.contentVersion }, limit: 1 });
+  const unchanged = subagents.fetchTimeline("parent", "child", {
+    direction: "after",
+    cursor: { epoch: after.epoch, seq: after.window.maxSeq, contentVersion: after.contentVersion },
+    limit: 1,
+  });
   expect(unchanged).toMatchObject({ reset: false, rows: [], revisedRows: [], hasNewer: false });
   subagents.apply("parent", "omp", { type: "upsert", id: "child", status: "completed" });
   expect(subagents.fetchTimeline("parent", "child", { limit: 0 }).rows[0]?.item).toMatchObject({
