@@ -58,6 +58,8 @@ The label belongs to the active run, survives reconnect, and clears when the run
 
 For an idle conversation, choose **Browser use** from the composer's attachment menu for visible browser tools, or **Computer use** for session-specific native desktop capture/input. These run `/browser visible` and `/computer on`, retaining the current draft. They are unavailable while a conversation runs.
 
+Foreground computer control is task-scoped: finishing or interrupting a turn revokes its grant. **Stop** and `computer.close()` release the native worker without disabling Computer use for the conversation; a later desktop call waits for shutdown and starts a fresh worker, with new foreground authorization required. Screenshot frames, AX references, and worker variables must be reacquired after that restart. A physical Escape stop still blocks computer calls until your next message; closing and reopening the worker does not bypass it. The menu enables the capability, not the foreground-control grant.
+
 The external-link browser preference is separate from assistant browser relay/CDP configuration; see [Messages and media](messages-and-media.md#external-browser-selection).
 
 ## Screenshot annotation and text feedback
