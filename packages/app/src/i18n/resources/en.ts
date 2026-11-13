@@ -393,10 +393,10 @@ export const en = {
         fast: "Fast",
         ultrafast: "Ultrafast",
         ultrafastNotice:
-          "8× included usage / 6× purchased credits; supported account and model only.",
+          "Subscription: 8× included usage / 6× purchased credits. API access and rates depend on the provider.",
         standardDescription: "Normal speed and usage rates.",
         ultrafastDescription:
-          "Ultrafast consumes included usage at 8× and purchased credits at 6× the Standard rate. Requires a supported account and model; actual speed varies.",
+          "Subscription access consumes included usage at 8× and purchased credits at 6× the Standard rate. API availability and charges depend on the provider, model, and project. This option does not verify account access; actual speed varies.",
         selectWithValue: "Select speed, current: {{value}}",
         detecting: "Detecting supported speeds…",
         unsupported: "Speed selection is not supported",

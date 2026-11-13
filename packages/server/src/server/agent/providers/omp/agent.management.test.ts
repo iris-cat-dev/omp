@@ -1546,6 +1546,37 @@ providers:
     });
   });
 
+  test.each([
+    { serviceTiers: undefined },
+    { serviceTiers: [] },
+    { serviceTiers: ["priority"] },
+    { serviceTiers: ["ultrafast", "priority"] },
+  ])(
+    "persists custom model tier metadata through add and reload: $serviceTiers",
+    async ({ serviceTiers }) => {
+      const { agentDir, client } = await createClient();
+      const model = {
+        id: "gpt-test",
+        ...(serviceTiers !== undefined ? { serviceTiers } : {}),
+      };
+      await client.addOmpProvider({
+        providerId: "tier-provider",
+        baseUrl: "https://api.example.test/v1",
+        apiKey: "test-key",
+        api: "openai-responses",
+        models: [model],
+      });
+
+      const savedYaml = await readFile(path.join(agentDir, "models.yml"), "utf8");
+      const reloaded = await client.getOmpProviderManagement();
+      const expectedModels = [
+        { ...model, name: "gpt-test", api: "openai-responses", input: ["text"] },
+      ];
+      expect(parse(savedYaml).providers["tier-provider"].models).toEqual(expectedModels);
+      expect(parse(reloaded.configYaml).providers["tier-provider"].models).toEqual(expectedModels);
+    },
+  );
+
   test("preserves existing configuration and rejects duplicate provider IDs without rewriting", async () => {
     const { agentDir, client } = await createClient();
     const configPath = path.join(agentDir, "models.yml");

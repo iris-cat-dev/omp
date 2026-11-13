@@ -387,10 +387,10 @@ export const zhCN: TranslationResources = {
         standard: "标准",
         fast: "快速 (Fast)",
         ultrafast: "极速 (Ultrafast)",
-        ultrafastNotice: "8 倍套餐内用量 / 6 倍购买额度；仅限受支持的账号和模型。",
+        ultrafastNotice: "订阅：8 倍套餐内用量 / 6 倍购买额度；API 费用及权限以服务商为准。",
         standardDescription: "使用常规速度和标准额度消耗速率。",
         ultrafastDescription:
-          "极速 (Ultrafast) 的套餐内额度消耗速率为标准模式的 8 倍，购买额度的消耗速率为 6 倍。需账号和模型支持，实际速度因情况而异。",
+          "订阅接入的套餐内额度消耗速率为标准模式的 8 倍，购买额度为 6 倍。API 的费用与可用性取决于服务商、模型和项目权限。显示此选项不代表已验证账号权限，实际速度因情况而异。",
         selectWithValue: "选择速度，当前：{{value}}",
         detecting: "正在检测可用速度…",
         unsupported: "不支持速度选择",

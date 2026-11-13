@@ -283,10 +283,11 @@ export const ja: TranslationResources = {
         standard: "標準",
         fast: "高速 (Fast)",
         ultrafast: "超高速 (Ultrafast)",
-        ultrafastNotice: "プラン内使用量 8 倍 / 購入クレジット 6 倍。対応アカウント・モデルのみ。",
+        ultrafastNotice:
+          "サブスクリプション：プラン内使用量 8 倍 / 購入クレジット 6 倍。API の利用可否・料金はプロバイダーによります。",
         standardDescription: "通常の速度と使用量の消費率。",
         ultrafastDescription:
-          "Ultrafast は標準の 8 倍の割合でプラン内の使用量を、6 倍の割合で購入済みクレジットを消費します。対応するアカウントとモデルが必要で、実際の速度は状況によって異なります。",
+          "サブスクリプションは標準の 8 倍の割合でプラン内使用量を、6 倍の割合で購入クレジットを消費します。API の利用可否と料金はプロバイダー、モデル、プロジェクトによります。この選択肢はアカウントの権限を確認するものではなく、実際の速度は状況によって異なります。",
         selectWithValue: "速度を選択、現在：{{value}}",
         detecting: "対応する速度を検出中…",
         unsupported: "速度の選択には対応していません",

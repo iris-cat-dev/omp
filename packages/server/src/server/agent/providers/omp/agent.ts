@@ -7022,6 +7022,7 @@ export class OmpAgentClient implements AgentClient {
         input: model.supportsImages ? ["text", "image"] : ["text"],
         ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
         ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
+        ...(model.serviceTiers !== undefined ? { serviceTiers: model.serviceTiers } : {}),
         ...(model.reasoning &&
         (model.supportedReasoningLevels?.length || model.defaultReasoningLevel)
           ? {

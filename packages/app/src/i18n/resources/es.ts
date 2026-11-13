@@ -284,10 +284,10 @@ export const es: TranslationResources = {
         fast: "Rápido (Fast)",
         ultrafast: "Ultrafast",
         ultrafastNotice:
-          "Uso incluido 8× / créditos comprados 6×; solo cuentas y modelos compatibles.",
+          "Suscripción: uso incluido 8× / créditos comprados 6×. Acceso y tarifas de API según el proveedor.",
         standardDescription: "Velocidad normal y tasas de consumo estándar.",
         ultrafastDescription:
-          "Ultrafast consume el uso incluido a 8× y los créditos comprados a 6× la tasa estándar. Requiere una cuenta y un modelo compatibles; la velocidad real puede variar.",
+          "La suscripción consume el uso incluido a 8× y los créditos comprados a 6× la tasa estándar. La disponibilidad y las tarifas de API dependen del proveedor, modelo y proyecto. Esta opción no verifica el acceso de la cuenta; la velocidad real puede variar.",
         selectWithValue: "Seleccionar velocidad, actual: {{value}}",
         detecting: "Detectando velocidades compatibles…",
         unsupported: "La selección de velocidad no es compatible",

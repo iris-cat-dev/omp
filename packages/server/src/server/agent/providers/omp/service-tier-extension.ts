@@ -6,6 +6,7 @@ interface ServiceTierModel {
   provider: string;
   id: string;
   api?: string;
+  baseUrl?: string;
   identity?: { class?: string };
   serviceTiers?: readonly string[];
 }
@@ -37,11 +38,25 @@ function isOpenAIFamily(model: ServiceTierModel | undefined): boolean {
 }
 
 export function isOmpUltrafastModel(model: ServiceTierModel | undefined): boolean {
-  return (
-    isOpenAIFamily(model) &&
-    model?.serviceTiers?.includes("ultrafast") === true &&
-    (model.provider === "openai" || model.api === "openai-codex-responses")
-  );
+  if (
+    !model ||
+    !isOpenAIFamily(model) ||
+    ["openrouter", "github-copilot", "fireworks"].includes(model.provider)
+  )
+    return false;
+  if (model.api === "openai-codex-responses")
+    return model.serviceTiers?.includes("ultrafast") === true;
+  if (model.provider === "openai") return true;
+  if (model.api !== "openai-responses" && model.api !== "openai-completions") return false;
+  // A custom declaration is authoritative, including an explicit empty list.
+  if (model.serviceTiers !== undefined) return model.serviceTiers.includes("ultrafast");
+  if (!model.baseUrl) return false;
+  try {
+    const url = new URL(model.baseUrl);
+    return url.origin === "https://api.openai.com" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 /** Read the native session override, not the boolean Fast RPC's lossy projection. */
@@ -57,7 +72,7 @@ export function readNativeServiceTier(
     model: model ? { provider: model.provider, id: model.id } : null,
     openaiFamily,
     tier: available && openaiFamily ? (pi.getServiceTiers!().openai ?? null) : null,
-    // Advertising the tier is capability evidence, not account entitlement.
+    // API capability is not evidence of model or account entitlement.
     ultrafastAvailable: available && isOmpUltrafastModel(model),
   };
 }

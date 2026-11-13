@@ -59,6 +59,51 @@ describe("discoverOmpProviderModels", () => {
     );
   });
 
+  it("normalizes advertised tier IDs without inferring support from model names", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "advertised",
+                service_tiers: [
+                  " ultrafast ",
+                  { id: "priority" },
+                  { id: "ultrafast" },
+                  "",
+                  " ",
+                  null,
+                  42,
+                  {},
+                  { id: "" },
+                  { id: false },
+                ],
+              },
+              { id: "explicit-negative", service_tiers: [] },
+              { id: "priority-only", service_tiers: [{ id: "priority" }] },
+              { id: "gpt-ultrafast" },
+              { id: "invalid-metadata", service_tiers: "ultrafast" },
+              { id: "invalid-ids", service_tiers: [null, {}, { id: " " }] },
+            ],
+          }),
+        ),
+      ),
+    );
+
+    await expect(
+      discoverOmpProviderModels({ baseUrl: "https://api.example.test", apiKey: "secret" }),
+    ).resolves.toEqual([
+      { id: "advertised", name: "advertised", serviceTiers: ["ultrafast", "priority"] },
+      { id: "explicit-negative", name: "explicit-negative", serviceTiers: [] },
+      { id: "priority-only", name: "priority-only", serviceTiers: ["priority"] },
+      { id: "gpt-ultrafast", name: "gpt-ultrafast" },
+      { id: "invalid-metadata", name: "invalid-metadata" },
+      { id: "invalid-ids", name: "invalid-ids", serviceTiers: [] },
+    ]);
+  });
+
   it("does not append a second version segment", async () => {
     const fetchMock = vi
       .fn()
