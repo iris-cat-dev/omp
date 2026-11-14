@@ -223,6 +223,63 @@ describe("searchDirectoryEntries", () => {
     expect(suffixRootBrowses).toEqual([rootEntries, rootEntries]);
   });
 
+  it.each(["~/.", "~/", "."])("resolves explicit root query %s in suffix mode", async (query) => {
+    const common = {
+      root: searchRoot,
+      query,
+      pathFormat: "absolute" as const,
+      pathQueryPolicy: "rooted" as const,
+      rootAliases: ["~"],
+      includeDirectories: true,
+      includeFiles: false,
+      matchMode: "suffix" as const,
+      limit: 1,
+    };
+    await expect(searchDirectoryEntries(common)).resolves.toEqual([
+      { path: searchRoot, kind: "directory" },
+    ]);
+
+    const emptyRoot = path.join(searchRoot, "empty-root");
+    mkdirSync(emptyRoot);
+    await expect(searchDirectoryEntries({ ...common, root: emptyRoot })).resolves.toEqual([
+      { path: emptyRoot, kind: "directory" },
+    ]);
+  });
+
+  it.each(["~/.", "~/", "."])(
+    "preserves child suggestions for fuzzy root query %s",
+    async (query) => {
+      await expect(
+        searchDirectoryEntries({
+          root: searchRoot,
+          query,
+          pathFormat: "relative",
+          rootAliases: ["~"],
+          includeDirectories: true,
+          includeFiles: false,
+        }),
+      ).resolves.toEqual([
+        { path: "projects", kind: "directory" },
+        { path: "src", kind: "directory" },
+      ]);
+    },
+  );
+
+  it("applies entry kind filtering to exact root retrieval", async () => {
+    await expect(
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "~/.",
+        pathFormat: "absolute",
+        rootAliases: ["~"],
+        includeDirectories: false,
+        includeFiles: true,
+        matchMode: "suffix",
+        limit: 1,
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("matches rooted queries against the full path at any depth", async () => {
     mkdirSync(path.join(searchRoot, "nested", "pso-global"), { recursive: true });
     mkdirSync(path.join(searchRoot, "pso-root"), { recursive: true });

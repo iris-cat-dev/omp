@@ -40,6 +40,7 @@ interface QueryPlan {
   searchTerm: string;
   normalizedQuery: string;
   browseExactPath?: boolean;
+  exactRoot?: boolean;
 }
 
 interface ChildEntry {
@@ -196,7 +197,7 @@ function buildSearchInput(
 }
 
 async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEntry | null> {
-  if (!input.plan.normalizedQuery) return null;
+  if (!input.plan.normalizedQuery && !input.plan.exactRoot) return null;
   const visiblePath = path.resolve(input.root, input.plan.normalizedQuery);
   const resolvedPath = await realpath(visiblePath).catch(() => null);
   if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
@@ -550,7 +551,15 @@ function parseQuery(input: {
   if (!normalized) {
     const explicitlyBrowseRoot = rooted || typed === ".";
     if (!explicitlyBrowseRoot && input.blankBehavior !== "children") return null;
-    return { isPathQuery: true, parentPart: "", searchTerm: "", normalizedQuery: "" };
+    return {
+      isPathQuery: true,
+      parentPart: "",
+      searchTerm: "",
+      normalizedQuery: "",
+      // A dot or trailing slash names the root directory explicitly. Bare
+      // aliases and blank queries continue to suggest children in suffix mode.
+      exactRoot: typed === "." || typed.endsWith("/.") || (rooted && typed.endsWith("/")),
+    };
   }
   if (normalizedInput.isAbsolute && isFilesystemRoot(input.root) && !normalized.includes("/")) {
     return {

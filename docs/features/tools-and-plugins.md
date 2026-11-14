@@ -92,11 +92,15 @@ This is an original implementation inspired by [EditHere's feedback workflow](ht
 
 ## Plugin management and native commands
 
-**Settings → Plugins** manages Desktop-local folder installations, daemon plugins and native OMP plugins. Packages ship only the generic host, with no specific preinstalled plugins. Installed/discovery views show each installation's owner, source, scope, version and runtime state; configuration, permissions and logs belong to that exact installation.
+**Settings → Plugins** shows Desktop-local, daemon-owned and native OMP installations in one searchable list. Each row has its name, version, type/location, state, switch and **Configure** action. Desktop installation IDs distinguish independent instances. Source paths, installation identity and advanced actions are in the details; Desktop details also include permissions and logs. Packages ship the generic host, with no specific preinstalled plugins.
 
-Select a host for daemon and native operations. Desktop-owned controls stay local: changing hosts or losing a remote connection does not move their configuration or resources to that daemon. Two installation IDs using the same source directory remain independent. Disabling/removing an installation keeps its data unless you explicitly choose **Clear data**; disabled installations can still be configured. Pausing source plugins preserves their individual enabled selections.
+Select a host for daemon and native operations. Desktop-owned controls stay local: changing hosts or losing a remote connection does not move their configuration or resources to that daemon. Two installation IDs using the same source directory remain independent. Disabling/removing an installation keeps its data unless you explicitly choose **Clear data**; disabled installations can still be configured. **Plugin settings** contains the host execution switch, project context, marketplace sources and diagnostics. Pausing host execution preserves each daemon plugin's enabled selection and leaves Desktop-local and native OMP plugins unchanged.
 
-To install from a folder, open **Discover**, select the Desktop or daemon target, enter the folder path, and choose **Inspect and install**. Inspecting metadata does not execute the plugin. Review its declared capabilities and confirm trust; then enable the installation. Desktop installations start disabled. Daemon execution also requires **Allow host plugins to run**. For a disabled daemon CLI installation, use `omp-desktop plugin install <folder> --trust --disabled`, then `omp-desktop plugin allow` and `omp-desktop plugin enable <id>`.
+Choose **Add plugin** to install. Available marketplace entries have a direct **Install** action. Without a catalog, the dialog shows **From folder** and **OMP package or URL**; the latter accepts npm packages, Git URLs and `plugin@marketplace` sources.
+
+For a folder, choose **From folder → Choose folder**. The page identifies Desktop and OMP formats before installation; Desktop metadata determines local or daemon ownership. Local folders use the device picker where available, while remote folders are browsed on the selected host. A remote folder cannot install a Desktop-owned plugin onto this device. **Enter path** is an optional alternative, and **Custom installation ID** creates an independent Desktop instance.
+
+Metadata inspection does not execute code. Both formats require trust confirmation before installation. Desktop installations start disabled; enable their switch when ready. Daemon execution also requires **Allow host plugins to run**. For a disabled daemon CLI installation, use `omp-desktop plugin install <folder> --trust --disabled`, then `omp-desktop plugin allow` and `omp-desktop plugin enable <id>`.
 
 Scheduled tasks and heartbeats are supplied by the optional daemon-owned [`schedules` plugin](conversations.md#schedules). Install `plugins/schedules`, approve its declared capabilities and client-code execution on this device, and enable the host and installation switches. The plugin owns scheduling, data, the sidebar/command-center page, and installation-bound tools such as `schedules__create_schedule` and `schedules__create_heartbeat`; these are not built-in Desktop capability tools. Disabling it preserves tasks and history, stops future triggers, and does not replay missed runs on enable.
 
@@ -104,7 +108,7 @@ Historical Desktop `builtin` and daemon `bundled: true` records remain saved but
 
 After installing a daemon-side fix, restart the built-in daemon from the new App when no tasks are running. Closing the App alone can leave the detached daemon running old code; the plugin's **Restart/reload** action does not reload the daemon implementation.
 
-After installing the **QQ connection** plugin from its folder, select its daemon installation, grant its declared capabilities under **Permissions**, then open **Configure**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
+After installing the **QQ connection** plugin from its folder, choose **Configure** on its daemon installation. Grant declared capabilities in **Permissions**, then open **Configuration**. The account page provides **QQ AppID**, **QQ AppSecret**, **Save/replace account** (`保存／替换账号`) and **Scan to bind** (`扫码绑定`). Configuration remains available while execution is paused or the installation is disabled.
 
 Choose **Scan to bind** to request a QR code; opening the settings page alone does not generate one. The selected daemon needs internet access to obtain a Tencent binding URL, which it converts to the displayed QR image. You do not need to enter AppID/AppSecret first. Binding failures appear on the account page; **Refresh QR code** requests a replacement after expiry.
 
@@ -144,7 +148,7 @@ To ask about a QQ image, attach it to the message and @ the bot in a group. With
 
 Supported HTTPS media origins include the exact `multimedia.nt.qq.com.cn` host shown in [Tencent's group-message attachment example](https://bot.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html). Downloads remain size-limited and reject redirects, lookalike hostnames and unrelated `qq.com.cn` subdomains. This trusted service operation does not require enabling sandbox JavaScript or public-network access.
 
-Native marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Upgrade installs the current catalog version, not a repeated install.
+In **Add plugin**, native marketplace entries show **Install**, **Installed** (current), or **Upgrade** (newer catalog version). Choose a project in **Plugin settings** to expose user/project installation scope. Upgrade installs the current catalog version, not a repeated install.
 
 Native installed identity is exactly `plugin-name@marketplace-name`; a same-name plugin from another marketplace does not count. Upgrades preserve that exact entry's user/project scope and enabled state.
 
