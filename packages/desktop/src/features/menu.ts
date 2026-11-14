@@ -93,6 +93,9 @@ function buildLinkContextMenuTemplate(
 
 interface ApplicationMenuOptions {
   onNewWindow: () => void;
+  renderingDiagnosticsEnabled: boolean;
+  onRecordRenderingIssue: (window: BrowserWindow | null) => void;
+  onOpenRenderingLogs: () => void;
 }
 
 function withBrowserWindow(
@@ -202,6 +205,24 @@ function buildApplicationMenuTemplate(
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "togglefullscreen" },
+        ...(process.platform === "win32"
+          ? [
+              { type: "separator" as const },
+              {
+                label: "Record Rendering Issue",
+                accelerator: "CmdOrCtrl+Alt+Shift+D",
+                enabled: options.renderingDiagnosticsEnabled,
+                click: (_item: Electron.MenuItem, baseWin: Electron.BaseWindow | undefined) => {
+                  const window =
+                    baseWin instanceof BrowserWindow && getMainWindows().includes(baseWin)
+                      ? baseWin
+                      : selectMainWindow();
+                  options.onRecordRenderingIssue(window ?? null);
+                },
+              },
+              { label: "Open Rendering Logs", click: options.onOpenRenderingLogs },
+            ]
+          : []),
       ],
     },
     {
@@ -220,17 +241,26 @@ function buildApplicationMenuTemplate(
 let applicationMenuOptions: ApplicationMenuOptions | null = null;
 let capturingShortcut = false;
 const applicationMenuContributions = new Map<string, () => Electron.MenuItemConstructorOptions[]>();
-export function registerApplicationMenuContribution(id: string, items: () => Electron.MenuItemConstructorOptions[]): () => void {
-  if (applicationMenuContributions.has(id)) throw new Error(`Duplicate application menu contribution: ${id}.`);
+export function registerApplicationMenuContribution(
+  id: string,
+  items: () => Electron.MenuItemConstructorOptions[],
+): () => void {
+  if (applicationMenuContributions.has(id))
+    throw new Error(`Duplicate application menu contribution: ${id}.`);
   applicationMenuContributions.set(id, items);
   rebuildApplicationMenu();
-  return () => { applicationMenuContributions.delete(id); rebuildApplicationMenu(); };
+  return () => {
+    applicationMenuContributions.delete(id);
+    rebuildApplicationMenu();
+  };
 }
 
 function rebuildApplicationMenu(): void {
   if (!applicationMenuOptions) return;
   const template = buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut);
-  const pluginItems = [...applicationMenuContributions.entries()].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, items]) => items());
+  const pluginItems = [...applicationMenuContributions.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([, items]) => items());
   if (pluginItems.length) template.push({ label: "Plugins", submenu: pluginItems });
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);

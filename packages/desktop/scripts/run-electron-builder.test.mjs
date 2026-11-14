@@ -184,6 +184,28 @@ describe("packaging runtime compatibility", () => {
     },
   );
 
+  test.each([undefined, true])(
+    "rejects a verified Windows distribution without compositor diagnostics (%j)",
+    async (compositorDiagnostics) => {
+      const fixture = createPackagingFixture("win32", "99.0.0");
+      try {
+        await expect(
+          createQualifiedPackager(
+            fixture.runtimeDist,
+            {
+              ...fixture.runtime,
+              features: { ...fixture.runtime.features, compositorDiagnostics },
+            },
+            fixture.args,
+            fixture.directory,
+          ),
+        ).rejects.toThrow("compositorDiagnostics=1");
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   test.each([
     {
       name: "installer protocol",
@@ -237,7 +259,12 @@ function createPackagingFixture(
     installerProtocol: 1,
     features:
       platform === "win32"
-        ? { nativeClipboardFiles: 1, asyncContextPropagation: 1, asyncStoragePersistence: 1 }
+        ? {
+            nativeClipboardFiles: 1,
+            asyncContextPropagation: 1,
+            asyncStoragePersistence: 1,
+            compositorDiagnostics: 1,
+          }
         : {},
     files: {
       [executable]: createHash("sha256").update(executableBytes).digest("hex"),

@@ -20,7 +20,12 @@ vi.mock("electron", () => ({
 describe("window reload shortcuts", () => {
   it("reloads the selected application window without targeting a guest", () => {
     vi.clearAllMocks();
-    setupApplicationMenu({ onNewWindow: vi.fn() });
+    setupApplicationMenu({
+      onNewWindow: vi.fn(),
+      renderingDiagnosticsEnabled: false,
+      onRecordRenderingIssue: vi.fn(),
+      onOpenRenderingLogs: vi.fn(),
+    });
     const menu = vi.mocked(Menu.buildFromTemplate).mock.calls[0]?.[0];
     const view = menu?.find((entry) => entry.label === "View");
     const actions = Array.isArray(view?.submenu) ? view.submenu : [];
@@ -79,7 +84,12 @@ describe("assistant HTTP link context menu", () => {
     vi.mocked(Menu.buildFromTemplate).mockReturnValue({
       popup: vi.fn(),
     } as unknown as Electron.Menu);
-    setupApplicationMenu({ onNewWindow: vi.fn() });
+    setupApplicationMenu({
+      onNewWindow: vi.fn(),
+      renderingDiagnosticsEnabled: false,
+      onRecordRenderingIssue: vi.fn(),
+      onOpenRenderingLogs: vi.fn(),
+    });
     const handler = vi
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === "paseo:menu:showContextMenu")?.[1];
@@ -113,7 +123,12 @@ describe("assistant file link context menu", () => {
     popup.mockReset();
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(win);
     vi.mocked(Menu.buildFromTemplate).mockReturnValue({ popup } as unknown as Electron.Menu);
-    setupApplicationMenu({ onNewWindow: vi.fn() });
+    setupApplicationMenu({
+      onNewWindow: vi.fn(),
+      renderingDiagnosticsEnabled: false,
+      onRecordRenderingIssue: vi.fn(),
+      onOpenRenderingLogs: vi.fn(),
+    });
     const handler = vi
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === "paseo:menu:showContextMenu")?.[1];
@@ -182,7 +197,12 @@ describe("composer input context menu", () => {
     });
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(win);
     vi.mocked(Menu.buildFromTemplate).mockReturnValue({ popup } as unknown as Electron.Menu);
-    setupApplicationMenu({ onNewWindow: vi.fn() });
+    setupApplicationMenu({
+      onNewWindow: vi.fn(),
+      renderingDiagnosticsEnabled: false,
+      onRecordRenderingIssue: vi.fn(),
+      onOpenRenderingLogs: vi.fn(),
+    });
     const registered = vi
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === "paseo:menu:showContextMenu")?.[1];

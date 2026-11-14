@@ -9,6 +9,7 @@ import type * as AppUpdater from "./features/auto-updater.js";
 import type * as CliInstall from "./integrations/cli-install/install.js";
 
 import path from "node:path";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -24,8 +25,10 @@ import {
   protocol,
   screen,
   session,
+  shell,
   Tray,
   type NativeImage,
+  type Display,
 } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
@@ -101,10 +104,16 @@ import {
   beginMainWindowShutdown,
   markMainWindowLoading,
 } from "./window/main-windows.js";
-import { getLocalPluginRuntime, setupLocalPlugins, handleLocalPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
+import {
+  getLocalPluginRuntime,
+  setupLocalPlugins,
+  handleLocalPluginResource,
+  releaseLocalPluginDocument,
+} from "./plugins/local-runtime-electron.js";
 import { OmpMonitorController } from "./monitor/controller.js";
 import { MONITOR_HTML } from "./monitor/html.js";
 import { MONITOR_PERF_CARD_HTML } from "./monitor/perf-card-html.js";
+import { RenderingDiagnostics } from "./diagnostics/rendering-diagnostics.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "omp-desktop";
@@ -115,6 +124,8 @@ const isPetCreationCli = process.argv.includes("--desktop-pet-install");
 const agentNavigationInbox = new AgentNavigationInbox();
 const closeChoiceRequests = new CloseChoiceRequestBroker();
 let monitorController: OmpMonitorController | null = null;
+let renderingDiagnostics: RenderingDiagnostics | null = null;
+let removeRenderingDiagnosticObservers: (() => void) | null = null;
 let ownsDesktopInstance = false;
 let mainWindowsQuitting = false;
 const presentedMainWindows = new WeakSet<BrowserWindow>();
@@ -753,6 +764,52 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  renderingDiagnostics = new RenderingDiagnostics({
+    directory: path.join(app.getPath("userData"), "logs", "rendering"),
+    enabled: process.platform === "win32" && process.env.OMP_RENDER_DIAGNOSTICS !== "0",
+    identity: {
+      appVersion: app.getVersion(),
+      packaged: app.isPackaged,
+      platform: process.platform,
+      arch: process.arch,
+      osRelease: os.release(),
+      mainPid: process.pid,
+      versions: {
+        miniElectron: process.versions.miniElectron,
+        electron: process.versions.electron,
+        chromium: process.versions.chrome,
+        node: process.versions.node,
+        v8: process.versions.v8,
+      },
+    },
+    runtimeDirectory: path.dirname(process.execPath),
+    logger: log,
+    getDisplayForBounds: (bounds) => screen.getDisplayMatching(bounds),
+    openDirectory: (directory) => shell.openPath(directory),
+  });
+  if (renderingDiagnostics.enabled) {
+    const onWindowCreated = (...args: unknown[]) => {
+      const window = args.find((value): value is BrowserWindow => value instanceof BrowserWindow);
+      if (window) renderingDiagnostics?.observeWindow(window);
+    };
+    const onDisplayAdded = (_event: unknown, display: Display) =>
+      renderingDiagnostics?.recordDisplayEvent("display-added", display);
+    const onDisplayRemoved = (_event: unknown, display: Display) =>
+      renderingDiagnostics?.recordDisplayEvent("display-removed", display);
+    const onDisplayChanged = (_event: unknown, display: Display) =>
+      renderingDiagnostics?.recordDisplayEvent("display-metrics-changed", display);
+    app.on("browser-window-created", onWindowCreated);
+    screen.on("display-added", onDisplayAdded);
+    screen.on("display-removed", onDisplayRemoved);
+    screen.on("display-metrics-changed", onDisplayChanged);
+    removeRenderingDiagnosticObservers = () => {
+      app.removeListener("browser-window-created", onWindowCreated);
+      screen.removeListener("display-added", onDisplayAdded);
+      screen.removeListener("display-removed", onDisplayRemoved);
+      screen.removeListener("display-metrics-changed", onDisplayChanged);
+    };
+    for (const window of BrowserWindow.getAllWindows()) renderingDiagnostics.observeWindow(window);
+  }
   try {
     await getDesktopSettingsStore().getWallpaperLibrary();
   } catch (error) {
@@ -781,7 +838,11 @@ async function bootstrap(): Promise<void> {
       });
     }
 
-    const wallpaperResponse = await handleWallpaperProtocolRequest(request, url, app.isPackaged ? null : new URL(DEV_SERVER_URL).origin);
+    const wallpaperResponse = await handleWallpaperProtocolRequest(
+      request,
+      url,
+      app.isPackaged ? null : new URL(DEV_SERVER_URL).origin,
+    );
     if (wallpaperResponse) return wallpaperResponse;
     const pluginResource = await handleLocalPluginResource(hostname, decodedPath);
     if (pluginResource) return pluginResource;
@@ -816,6 +877,13 @@ async function bootstrap(): Promise<void> {
         log.error("[window] failed to create window from menu", error);
       });
     },
+    renderingDiagnosticsEnabled: renderingDiagnostics.enabled,
+    onRecordRenderingIssue: (window) => {
+      void renderingDiagnostics?.recordIssue(window);
+    },
+    onOpenRenderingLogs: () => {
+      void renderingDiagnostics?.openLogs();
+    },
   });
   ensureNotificationCenterRegistration();
   registerDaemonManager({ prepareForAppUpdate: prepareDesktopToQuit });
@@ -831,8 +899,14 @@ async function bootstrap(): Promise<void> {
   try {
     await setupLocalPlugins({
       startupBarrier: bootstrapComplete,
-      openApp: async () => { await bootstrapComplete; await focusOrCreateWindow(); },
-      openAgent: async (target) => { await bootstrapComplete; focusExistingWindowOnAgent(target); },
+      openApp: async () => {
+        await bootstrapComplete;
+        await focusOrCreateWindow();
+      },
+      openAgent: async (target) => {
+        await bootstrapComplete;
+        focusExistingWindowOnAgent(target);
+      },
     });
   } catch (error) {
     log.error("[desktop-plugins] Local plugin startup failed", error);
@@ -886,7 +960,9 @@ async function bootstrap(): Promise<void> {
 
 void (async () => {
   if (isPetCreationCli) {
-    throw new Error("--desktop-pet-install is no longer supported. Install plugins from a folder in Desktop settings.");
+    throw new Error(
+      "--desktop-pet-install is no longer supported. Install plugins from a folder in Desktop settings.",
+    );
   }
   await runDesktopStartup({
     hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
@@ -894,9 +970,10 @@ void (async () => {
     inheritLoginShellEnv,
     bootstrapGui: bootstrap,
   });
-})().catch((error) => {
+})().catch(async (error) => {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   process.stderr.write(`${message}\n`);
+  await renderingDiagnostics?.shutdown();
   process.exit(1);
 });
 
@@ -913,6 +990,8 @@ async function prepareDesktopToQuit(): Promise<void> {
   beginMainWindowShutdown();
   backgroundModeController.markAppQuitting();
   await getLocalPluginRuntime().dispose();
+  removeRenderingDiagnosticObservers?.();
+  await renderingDiagnostics?.shutdown();
 }
 
 const quitLifecycle = createQuitLifecycle({
@@ -957,6 +1036,7 @@ electronAutoUpdater.on("before-quit-for-update", () => {
 app.on("before-quit", (event) => {
   // A failed-lock relaunch must not stop the primary GUI's daemon or updater.
   if (!ownsDesktopInstance) return;
+  renderingDiagnostics?.recordAppEvent("quit-requested");
   quitLifecycle.handleBeforeQuit(event);
 });
 registerExternalQuitSignals({ signals: process, quit: () => app.quit() });

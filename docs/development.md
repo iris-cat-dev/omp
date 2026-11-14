@@ -65,6 +65,8 @@ Node consumers import release-operation and activation-scope APIs from `@omp-des
 
 Main-process code keeps Electron-compatible `electron` imports; the stock `electron` package is retained only for TypeScript declarations. Project scripts do not download or substitute its runtime. Native runtime version selection and platform constraints are documented in [packaging](packaging.md#native-runtime-selection).
 
+Windows diagnostic builds record bounded, metadata-only rendering history under the Desktop user-data directory. Before refreshing or resizing an affected window, use **View → Record Rendering Issue** (`Ctrl+Alt+Shift+D`). See [Windows rendering diagnostics](windows-rendering-diagnostics.md) for the 2026-11-14 investigation, privacy/retention limits, and the next-incident procedure. Native diagnostics require the locally instrumented mini-electron distribution; rebuilding only Desktop cannot add them to an older runtime.
+
 The daemon decodes OMP's JSONL stdout and diagnostic stderr as UTF-8 streams, preserving Chinese characters and emoji even when their bytes span pipe data blocks. JSONL line framing and protocol-v2 chunk reassembly remain unchanged.
 
 RPC output failures mirror a bounded `[OMP_RPC_FATAL]` diagnostic to independent

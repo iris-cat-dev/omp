@@ -189,6 +189,13 @@ async function qualifyRuntime(runtimeDist, runtime, normalized) {
           "synchronous broker file writes can stall short input and viewport updates.",
       );
     }
+    if (runtime.features?.compositorDiagnostics !== 1) {
+      throw new Error(
+        "Windows packaging requires compositorDiagnostics=1 in the verified mini-electron " +
+          "version.json. Select the instrumented runtime with MINI_ELECTRON_DIST_PATH; " +
+          "the staged executable must pass the native compositor diagnostics smoke.",
+      );
+    }
   }
   return target;
 }

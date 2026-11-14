@@ -120,6 +120,16 @@ durability, and explicit disk-error recovery. This avoids shipping the synchrono
 whole-file write path that can stall even short drafts. Do not add the marker to an
 older executable by editing metadata.
 
+Windows distributions must also declare `version.json.features.compositorDiagnostics === 1`.
+The native staging probe must exercise the actual API and explicit unavailability
+on CPU fallback. This prevents shipping Desktop's recorder with an older runtime
+that cannot supply native evidence. The staging marker is an API capability, not
+proof of hardware presentation or physical scanout. Before delivering an instrumented
+Windows build, also run the full `windows-compositor-diagnostics-smoke.js` without
+`--schema-only` on interactive hardware to exercise reload/resize identities,
+independent windows, and metadata-only query behavior. Do not add this marker to
+an uninstrumented binary.
+
 Packaging uses the installed runtime (or `MINI_ELECTRON_DIST_PATH`) without downloading or downgrading it to a fixed release. Before packaging, refresh an existing installation with:
 
 ```bash
@@ -128,21 +138,14 @@ npx mini-electron --update-runtime
 
 Normal dependency installation reuses an already valid native runtime; updating the npm installer alone does not refresh it. Verify the selected native version in `node_modules/@iriscat/mini-electron/dist/version.json`.
 
-For reproducible Windows x64 builds, select published
-[runtime `0.1.41`](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.41),
-which carries all required capability markers, or use a newer qualified/local
-distribution. An existing installation can select the immutable release with:
-
-```bash
-npx mini-electron --update-runtime 0.1.41
-```
-
-For fresh reproducible installs, set `MINI_ELECTRON_RUNTIME_VERSION=0.1.41`.
-Unmodified runtime `0.1.36` lacks `asyncStoragePersistence`; rebuilding only the
-frontend or updating the npm installer cannot qualify it.
-Runtime `0.1.41` also repairs native Windows HTTPS/WSS system CA trust while
-retaining certificate and hostname verification. The npm installer version and
-macOS runtime channel are independent of this Windows release.
+Published Windows [runtime `0.1.41`](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.41)
+provides the clipboard, async-context, async-storage and native HTTPS/WSS trust
+repairs, but does **not** provide `compositorDiagnostics`. It is an investigation
+baseline, not a qualifying runtime for the current Windows diagnostic package.
+Until an instrumented runtime is published, build the local mini-electron checkout
+and select its qualified distribution with `MINI_ELECTRON_DIST_PATH` below.
+Updating the npm installer, refreshing the published Windows channel, or changing a
+version number alone cannot add native diagnostics. The macOS runtime channel is independent.
 
 The installer checks the downloaded archive and every declared runtime file before atomic replacement. This changes the native runtime, not the pinned npm installer version. The separate upstream symbols ZIP must match the EXE's RSDS GUID and Age; symbols from a previous runtime release are not interchangeable.
 
@@ -158,6 +161,29 @@ MINI_ELECTRON_DIST_PATH=/absolute/path/to/mini-electron/out/mac-arm64/runtime-di
 The packager reads the selected runtime's `version.json`, defaults to that runtime's architecture (including when Node runs under Rosetta), and rejects a different target OS or architecture. `MINI_ELECTRON_DIST_PATH` must point to an extracted distribution for the requested target; it cannot reuse the host's runtime for another platform.
 
 See [local runtime regressions](development.md#locally-repaired-runtime-regressions) before packaging a repaired macOS runtime, and [Windows builds](#windows-builds) for a PowerShell distribution override.
+
+### Windows rendering diagnostic build
+
+Build the instrumented runtime from its source checkout first. Keep the matching
+EXE/PDB pair and allow enough disk space for native symbols as well as the runtime
+and installer outputs:
+
+```powershell
+# From the mini-electron checkout:
+python build.py --jobs 4 --package-dist --dist-output out/windows-x64/runtime-diagnostics-dist
+
+# From the Desktop checkout:
+$env:MINI_ELECTRON_DIST_PATH = "D:/Project/mini-electron/out/windows-x64/runtime-diagnostics-dist"
+npm run build:windows -- '--config.nsis.artifactName=OMP-Desktop-Setup-${version}-${arch}-render-diagnostics.${ext}'
+```
+
+Use the actual qualified distribution path if it was staged elsewhere. The NSIS
+name distinguishes the diagnostic installer without changing workspace package
+versions or publishing an update. Inspect the selected `version.json` capability
+markers and executable inventory; an old EXE in `release/` is not evidence that
+this build succeeded. See [Windows rendering diagnostics](windows-rendering-diagnostics.md)
+for the incident record, local log location, retention/privacy policy and the
+no-reload issue marker.
 
 ## macOS signing
 
