@@ -40,6 +40,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   SendAgentMessageRequest,
   SessionOutboundMessage,
+  ServerInfoStatusPayload,
+  WorkspaceProjectDescriptorPayload,
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
 } from "@omp-desktop/protocol/messages";
@@ -123,6 +125,7 @@ export interface OmpWorkspaceListResult {
   requestId: string;
   subscriptionId?: string | null;
   entries: OmpWorkspace[];
+  emptyProjects: WorkspaceProjectDescriptorPayload[];
   pageInfo: FetchWorkspacesResponseMessage["payload"]["pageInfo"];
 }
 
@@ -196,7 +199,7 @@ export type OmpAgentProvider = OmpAgentSessionConfig["provider"];
 export type OmpProviderFeatureValues = Record<string, unknown>;
 
 export interface OmpAgentConfig {
-  /** Provider and model in `provider/model` format. */
+  /** Provider id, optionally followed by `/model`; omission uses the provider default. */
   provider: string;
   modeId?: OmpAgentSessionConfig["modeId"];
   thinkingOptionId?: OmpAgentSessionConfig["thinkingOptionId"];
@@ -207,6 +210,30 @@ export interface OmpAgentConfig {
   toolPolicy?: OmpAgentSessionConfig["toolPolicy"];
   mcpServers?: OmpAgentSessionConfig["mcpServers"];
   sandbox?: OmpAgentSessionConfig["sandbox"];
+  proxyPolicy?: OmpAgentSessionConfig["proxyPolicy"];
+}
+
+export interface OmpAgentConfiguration extends OmpAgentConfig {
+  model?: string;
+  cwd: string;
+  title?: string | null;
+}
+
+export interface OmpProviderResolveCreateConfigInput {
+  provider: string;
+  cwd: string;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  featureValues?: OmpProviderFeatureValues;
+}
+
+export interface OmpProviderResolvedCreateConfig {
+  provider: string;
+  model?: string;
+  modeId?: string;
+  thinkingOptionId?: string;
+  featureValues?: OmpProviderFeatureValues;
 }
 
 export interface OmpAgentCreateOptions {
@@ -223,6 +250,9 @@ export interface OmpAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  unattended?: boolean;
+  background?: boolean;
+  notifyOnFinish?: boolean;
   requestId?: string;
   labels?: Record<string, string>;
 }
@@ -246,10 +276,16 @@ export interface OmpAgentSendOptions {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+  /** Reject atomically if the target already has an active run. */
+  requireIdle?: boolean;
+  /** Only host-bound plugin service sessions may assert service origin. */
+  sourceKind?: "service";
 }
 
 export interface OmpAgentRunOptions extends OmpAgentSendOptions {
   timeoutMs?: number;
+  /** Cancels this wait only; the underlying agent continues running. */
+  signal?: AbortSignal;
 }
 
 export type OmpAgentRunResult = WaitForFinishResult;
@@ -283,6 +319,8 @@ export interface OmpAgentHandle {
   readonly timeline: OmpAgentTimelineHandle;
   current(): OmpAgent | null;
   refresh(requestId?: string): Promise<OmpAgentRefetchResult | null>;
+  /** Reads persisted create configuration without activating the agent runtime. */
+  configuration(): Promise<OmpAgentConfiguration>;
   send(text: string, options?: OmpAgentSendOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: OmpAgentRunOptions): Promise<OmpAgentRunResult>;
@@ -302,6 +340,8 @@ export interface OmpAgentActions {
   list(options?: OmpAgentListOptions): Promise<OmpAgentListResult>;
   ref(agent: string | OmpAgent): OmpAgentHandle;
   create(options: OmpAgentCreateOptions): Promise<OmpAgentHandle>;
+  /** Leases global agent changes, including archive and deletion, independently of UI listings. */
+  watch(handler: OmpAgentUpdateHandler): Promise<() => void>;
   /**
    * Local event subscription over the low-level driver's agent_update stream.
    * The returned function only removes this SDK listener.
@@ -316,7 +356,7 @@ export interface OmpProviderFeaturesInput extends Omit<
   OmpProviderFeaturesDraft,
   "provider" | "model"
 > {
-  /** Provider and model in `provider/model` format. */
+  /** Provider id, optionally followed by `/model`. */
   provider: string;
 }
 export type OmpProviderFeaturesResult = ListProviderFeaturesResponseMessage["payload"];
@@ -345,6 +385,7 @@ export interface OmpProviderWaitOptions extends OmpProviderListOptions {
 }
 
 export interface OmpProviderActions {
+  resolveCreateConfig(config: OmpProviderResolveCreateConfigInput): Promise<OmpProviderResolvedCreateConfig>;
   listModels(
     provider: OmpAgentProvider,
     options?: OmpProviderListOptions,
@@ -503,6 +544,7 @@ export interface OmpForgeAuthActions {
 
 export interface OmpApi {
   readonly hostId:string;
+  readonly host: { info(): Promise<ServerInfoStatusPayload> };
   readonly plugins:DesktopPluginActions;
   readonly workspaces: OmpWorkspaceActions;
   readonly agents: OmpAgentActions;
@@ -563,6 +605,13 @@ export function createOmpApi(daemonClient: DaemonClient): OmpApi {
 
   return {
     get hostId(){const host=daemonClient.getLastServerInfoMessage()?.serverId;if(!host)throw new Error("Selected daemon host is not connected");return host;},
+    host: {
+      info: async () => {
+        const info = daemonClient.getLastServerInfoMessage();
+        if (!info) throw new Error("Selected daemon host is not connected");
+        return info;
+      },
+    },
     plugins:createDesktopPluginActions(daemonClient),
     workspaces: {
       list: (options) => daemonClient.fetchWorkspaces(options),
@@ -587,12 +636,17 @@ export function createOmpApi(daemonClient: DaemonClient): OmpApi {
       list: (options) => daemonClient.fetchAgents(options),
       ref: (agent) => createAgentHandle(agent),
       create: (options) => createAgent(options),
+      watch: (handler) => daemonClient.watchAgents(handler),
       subscribe: (handler) =>
         daemonClient.on("agent_update", (message) => {
           handler(message.payload);
         }),
     },
     providers: {
+      resolveCreateConfig: ({ provider: providerModel, model: requestedModel, ...config }) => {
+        const { provider, model } = parseProviderModel(providerModel);
+        return daemonClient.resolveProviderCreateConfig({ ...config, provider, model: requestedModel ?? model });
+      },
       listModels: (provider, options) => daemonClient.listProviderModels(provider, options),
       listModes: (provider, options) => daemonClient.listProviderModes(provider, options),
       listFeatures: ({ provider: providerModel, ...draftConfig }, options) => {
@@ -795,16 +849,22 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         current = result?.agent ?? null;
         return result;
       },
+      configuration: async () => {
+        const { providerOptions, ...config } = await daemonClient.getAgentConfiguration(id);
+        return {
+          ...config,
+          provider: config.model ? `${config.provider}/${config.model}` : config.provider,
+          ...(providerOptions !== undefined ? { options: providerOptions } : {}),
+        };
+      },
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
       },
       run: async (text, options) => {
-        const { timeoutMs, ...sendOptions } = options ?? {};
-        await daemonClient.sendAgentMessage(id, text, sendOptions);
-        const result = await daemonClient.waitForFinish(
-          id,
-          timeoutMs ?? DEFAULT_WAIT_FOR_FINISH_MS,
-        );
+        const result = await daemonClient.runAgent(id, text, {
+          ...options,
+          timeoutMs: options?.timeoutMs ?? DEFAULT_WAIT_FOR_FINISH_MS,
+        });
         if (result.final) {
           current = result.final;
         }
@@ -920,8 +980,9 @@ function resolveAgentId(agent: string | OmpAgentHandle): string {
   return typeof agent === "string" ? agent : agent.id;
 }
 
-function parseProviderModel(selection: string): { provider: string; model: string } {
+function parseProviderModel(selection: string): { provider: string; model?: string } {
   const separator = selection.indexOf("/");
+  if (separator === -1 && selection.length > 0) return { provider: selection };
   if (separator <= 0 || separator === selection.length - 1) {
     throw new Error('Expected config.provider in "provider/model" format');
   }

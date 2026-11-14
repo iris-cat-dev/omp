@@ -55,7 +55,6 @@ import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
 } from "@/data/push-router";
-import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
@@ -2285,7 +2284,6 @@ export class HostRuntimeStore {
       // queries refetch now and evicted ones on their next mount.
       void invalidateCheckoutGitQueriesForServer(queryClient, serverId);
       invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
-      void queryClient.invalidateQueries({ queryKey: schedulesQueryBaseKey });
     }
 
     // Runtime owns directory bootstrap policy, including reconnect and delayed

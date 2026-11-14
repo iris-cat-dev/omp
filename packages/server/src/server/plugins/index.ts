@@ -2,7 +2,7 @@ import path from "node:path";
 import type pino from "pino";
 import { PluginIdSchema, type PluginLogEntry, type PluginListItem, type PluginSource } from "@omp-desktop/protocol/messages";
 import type { DesktopPluginCatalogEntry, DesktopPluginApprovalSchema, DesktopPluginExpectedInstallation } from "@omp-desktop/protocol/desktop-plugins";
-import type { z } from "zod";
+import { z } from "zod";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginRuntime, type PluginOmpSessionHost } from "./runtime.js";
 import { inspectPluginPackage, compilePlugin, compilePackageEntries, type InspectedPluginPackage, type CompiledPluginBundles } from "@omp-desktop/plugin/compiler";
@@ -10,6 +10,7 @@ import { PluginDataStore } from "./storage.js";
 import type { PaseoToolDefinition } from "../agent/tools/types.js";
 import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 import { SandboxFileLeases } from "./sandbox-file-leases.js";
+import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 
 type Approval=z.infer<typeof DesktopPluginApprovalSchema>;
 export interface PluginRuntimePort {
@@ -56,6 +57,10 @@ export class PluginService {
  subscribe(listener:(id:string)=>void){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  getRevision(){return this.revision;}
  getGeneration(id:string){return this.runtime.generation?.(id)??this.epochs.get(id)??0;}
+ assertCapability(id:string,capability:string):void{
+  if(!this.canRun(id) || this.managementWorkers.has(id))throw new Error("Plugin service is unavailable");
+  if(!this.descriptions.get(id)?.capabilities.includes(capability) || !this.grants(id).includes(capability))throw new Error(`Plugin capability is not granted: ${capability}`);
+ }
  pluginsEnabled(){return this.configStore.get().pluginsEnabled===true;}
  async start(){
   if(this.started)return;this.started=true;this.globalStartsBlocked=!this.pluginsEnabled();
@@ -186,6 +191,23 @@ export class PluginService {
   return contributions;
  }
  private hostOperation(id:string,operation:string,input:unknown){
+  if(operation==="events.changed"){
+   z.object({}).strict().parse(input??{});
+   if(!this.canRun(id) || this.managementWorkers.has(id))throw new Error("Plugin service is unavailable");
+   this.notify(id);
+   return;
+  }
+  if(operation==="files.data-directory" || operation==="files.resolve-path"){
+   if(!this.grants(id).includes("files.scoped"))throw new Error("Plugin files require files.scoped approval");
+   if(!this.canRun(id) || this.managementWorkers.has(id))throw new Error("Plugin service is unavailable");
+   if(operation==="files.data-directory"){
+    z.object({}).strict().parse(input??{});
+    return this.data.directory(id);
+   }
+   const args=z.object({path:z.string().trim().min(1).optional(),base:z.string().trim().min(1).optional()}).strict().parse(input??{});
+   const base=args.base===undefined?process.cwd():expandUserPath(args.base);
+   return args.path===undefined?base:resolvePathFromBase(base,args.path);
+  }
   if(operation==="files.sandbox"){
    if(!this.grants(id).includes("files.scoped"))throw new Error("Plugin sandbox files require files.scoped approval");
    const generation=this.getGeneration(id);const epoch=this.epochs.get(id)??0;

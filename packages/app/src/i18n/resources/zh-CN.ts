@@ -4,7 +4,6 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 import { visualFeedback } from "./visual-feedback";
 import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
@@ -14,7 +13,6 @@ export const zhCN: TranslationResources = {
   nativePlugin: { details: nativePluginDetails["zh-CN"] },
   providerUsage: providerUsage["zh-CN"],
   backgroundProcesses: backgroundProcesses["zh-CN"],
-  schedules: schedules["zh-CN"],
   visualFeedback: visualFeedback.zhCN,
   promptAnalysis: {
     title: "提示词分析",
@@ -1404,7 +1402,6 @@ export const zhCN: TranslationResources = {
     sections: {
       workspaces: "项目列表",
       sessions: "历史记录",
-      schedules: "计划任务",
     },
     project: {
       actions: {
@@ -2755,14 +2752,6 @@ export const zhCN: TranslationResources = {
               title: "权限处理",
               body: "查看所有 Agent 待处理的权限请求，并批准或拒绝，包括子 Agent 请求执行命令或修改文件的授权。",
             },
-            schedules: {
-              title: "计划任务",
-              body: "创建、查看、修改、暂停、恢复、删除或立即运行 cron 任务；支持时区、最大运行次数、过期时间和历史运行日志。",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "让当前 Agent 按 cron 周期重新收到提示，适合定期检查、提醒或持续巡检。",
-            },
             terminals: {
               title: "终端",
               body: "创建、列出和关闭 Desktop 管理的终端；读取输出并发送文字、Enter、方向键等输入，使 Agent 能启动服务并继续观察或操作。",
@@ -2781,7 +2770,7 @@ export const zhCN: TranslationResources = {
             body: "根据其他设置和宿主能力，还可能注入浏览器自动化、图片生成和语音输出。",
           },
           warning:
-            "高权限访问：Agent 可以创建其他 Agent、操作 worktree、启动终端和定时任务。实际操作仍受会话模式、权限审批、工作目录限制和宿主配置约束。关闭单项能力只会移除对应的一组 OMP Desktop 工具；关闭总开关会移除全部 OMP Desktop 编排工具。两种操作都不会禁用 Agent 原本自带的文件或命令工具。",
+            "高权限访问：Agent 可以创建其他 Agent、操作 worktree 和启动终端。实际操作仍受会话模式、权限审批、工作目录限制和宿主配置约束。关闭单项能力只会移除对应的一组 OMP Desktop 工具；关闭总开关会移除全部 OMP Desktop 编排工具。两种操作都不会禁用 Agent 原本自带的文件或命令工具。",
         },
         proxy: {
           title: "代理",

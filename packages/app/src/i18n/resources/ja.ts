@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ja: TranslationResources = {
@@ -11,7 +10,6 @@ export const ja: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ja,
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules.ja,
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1312,7 +1310,6 @@ export const ja: TranslationResources = {
     sections: {
       workspaces: "ワークスペース",
       sessions: "履歴",
-      schedules: "スケジュール",
     },
     project: {
       actions: {
@@ -2597,14 +2594,6 @@ export const ja: TranslationResources = {
               title: "権限",
               body: "すべてのAgentの保留中の権限要求を確認し、コマンド実行やファイル変更の要求を含めて承認または拒否できます。",
             },
-            schedules: {
-              title: "スケジュール",
-              body: "cronタスクの作成、確認、変更、一時停止、再開、削除、即時実行ができます。タイムゾーン、最大実行回数、有効期限、実行履歴にも対応します。",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "定期確認、リマインダー、継続監視のため、cron周期で現在のAgentにプロンプトを再送します。",
-            },
             terminals: {
               title: "ターミナル",
               body: "Desktop管理ターミナルの作成、一覧、終了、出力の読み取り、文字列、Enter、矢印キーなどの入力ができ、サービスを継続して監視・操作できます。",
@@ -2623,7 +2612,7 @@ export const ja: TranslationResources = {
             body: "他の設定とホストの対応状況により、ブラウザ自動化、画像生成、音声出力も提供される場合があります。",
           },
           warning:
-            "高権限アクセス：Agentは他のAgentの作成、worktreeの操作、ターミナルの起動、スケジュールの作成ができます。セッションモード、権限承認、作業ディレクトリ制限、ホスト設定は引き続き適用されます。個別の機能を無効にすると対応するOMP Desktopツール群だけが削除され、メインスイッチを無効にするとすべてのOMP Desktopオーケストレーションツールが削除されます。どちらの場合もAgent内蔵のファイル・コマンドツールは無効になりません。",
+            "高権限アクセス：Agentは他のAgentの作成、worktreeの操作、ターミナルの起動ができます。セッションモード、権限承認、作業ディレクトリ制限、ホスト設定は引き続き適用されます。個別の機能を無効にすると対応するOMP Desktopツール群だけが削除され、メインスイッチを無効にするとすべてのOMP Desktopオーケストレーションツールが削除されます。どちらの場合もAgent内蔵のファイル・コマンドツールは無効になりません。",
         },
         proxy: {
           title: "プロキシ",

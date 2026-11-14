@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ar: TranslationResources = {
@@ -11,7 +10,6 @@ export const ar: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ar,
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules.ar,
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1297,7 +1295,6 @@ export const ar: TranslationResources = {
     sections: {
       workspaces: "مساحات العمل",
       sessions: "السجل",
-      schedules: "الجداول",
     },
     project: {
       actions: {
@@ -2569,14 +2566,6 @@ export const ar: TranslationResources = {
               title: "الأذونات",
               body: "عرض طلبات الأذونات المعلقة لجميع الوكلاء والموافقة عليها أو رفضها، بما في ذلك طلبات تشغيل الأوامر أو تعديل الملفات.",
             },
-            schedules: {
-              title: "المهام المجدولة",
-              body: "إنشاء مهام cron وعرضها وتعديلها وإيقافها مؤقتًا واستئنافها وحذفها أو تشغيلها فورًا. يدعم المناطق الزمنية والحد الأقصى للتشغيل وانتهاء الصلاحية وسجل التشغيل.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "إعادة إرسال مطالبة إلى الوكيل الحالي وفق جدول cron للفحوصات الدورية أو التذكيرات أو المراقبة المستمرة.",
-            },
             terminals: {
               title: "الطرفيات",
               body: "إنشاء الطرفيات التي يديرها Desktop وعرضها وإغلاقها؛ قراءة المخرجات وإرسال النص وEnter ومفاتيح الأسهم ومدخلات أخرى لمراقبة الخدمات أو تشغيلها.",
@@ -2595,7 +2584,7 @@ export const ar: TranslationResources = {
             body: "قد تتيح إعدادات وإمكانات المضيف الأخرى أيضًا أتمتة المتصفح وإنشاء الصور والإخراج الصوتي.",
           },
           warning:
-            "وصول عالي الصلاحيات: يمكن للوكلاء إنشاء وكلاء آخرين وتعديل worktree وتشغيل الطرفيات وإنشاء الجداول. تظل أوضاع الجلسة وموافقة الأذونات وقيود دليل العمل وإعدادات المضيف سارية. يؤدي إيقاف قدرة واحدة إلى إزالة مجموعة أدوات OMP Desktop المقابلة فقط، بينما يؤدي إيقاف المفتاح الرئيسي إلى إزالة جميع أدوات تنسيق OMP Desktop. لا يؤدي أي من الإجراءين إلى تعطيل أدوات الملفات أو الأوامر المدمجة في الوكيل.",
+            "وصول عالي الصلاحيات: يمكن للوكلاء إنشاء وكلاء آخرين وتعديل worktree وتشغيل الطرفيات. تظل أوضاع الجلسة وموافقة الأذونات وقيود دليل العمل وإعدادات المضيف سارية. يؤدي إيقاف قدرة واحدة إلى إزالة مجموعة أدوات OMP Desktop المقابلة فقط، بينما يؤدي إيقاف المفتاح الرئيسي إلى إزالة جميع أدوات تنسيق OMP Desktop. لا يؤدي أي من الإجراءين إلى تعطيل أدوات الملفات أو الأوامر المدمجة في الوكيل.",
         },
         proxy: {
           title: "الوكيل",

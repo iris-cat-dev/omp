@@ -258,22 +258,18 @@ export const OmpDesktopToolCapabilitiesSchema = z
     workspace: z.boolean(),
     agents: z.boolean(),
     permissions: z.boolean(),
-    schedules: z.boolean(),
-    heartbeat: z.boolean(),
     terminals: z.boolean(),
     scripts: z.boolean(),
     providers: z.boolean(),
     optional: z.boolean(),
   })
-  .strict();
+  .strip();
 export type OmpDesktopToolCapabilities = z.infer<typeof OmpDesktopToolCapabilitiesSchema>;
 
 export const DEFAULT_OMP_DESKTOP_TOOL_CAPABILITIES: OmpDesktopToolCapabilities = {
   workspace: true,
   agents: true,
   permissions: true,
-  schedules: true,
-  heartbeat: true,
   terminals: true,
   scripts: true,
   providers: true,
@@ -1568,8 +1564,46 @@ export const SendAgentMessageRequestSchema = z.object({
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
+  requireIdle: z.boolean().optional(),
+  sourceKind: z.literal("service").optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+});
+
+export const RunAgentRequestSchema = SendAgentMessageRequestSchema.extend({
+  type: z.literal("run_agent_request"),
+  messageId: z.string().min(1),
+  timeoutMs: z.number().int().nonnegative().optional(),
+});
+
+export const AgentConfigurationRequestSchema = z.object({
+  type: z.literal("agent.configuration.request"),
+  requestId: z.string(),
+  agentId: z.string().min(1),
+});
+
+export const AgentEventsSubscribeRequestSchema = z.object({
+  type: z.literal("agent.events.subscribe.request"),
+  requestId: z.string(),
+  subscriptionId: z.string().min(1),
+});
+
+export const AgentEventsUnsubscribeSchema = z.object({
+  type: z.literal("agent.events.unsubscribe"),
+  subscriptionId: z.string().min(1),
+});
+
+export const ResolveProviderCreateConfigRequestSchema = z.object({
+  type: z.literal("provider.resolve_create_config.request"),
+  requestId: z.string(),
+  config: z.object({
+    provider: AgentProviderSchema,
+    cwd: z.string().min(1),
+    model: z.string().nullable().optional(),
+    modeId: z.string().nullable().optional(),
+    thinkingOptionId: z.string().nullable().optional(),
+    featureValues: z.record(z.string(), z.unknown()).optional(),
+  }).strict(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -1577,7 +1611,7 @@ export const WaitForFinishRequestSchema = z.object({
   requestId: z.string(),
   /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
-  timeoutMs: z.number().int().positive().optional(),
+  timeoutMs: z.number().int().nonnegative().optional(),
 });
 
 export const QuickAskRequestSchema = z.object({
@@ -1815,6 +1849,9 @@ export const CreateAgentRequestMessageSchema = z.object({
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
   autoArchive: z.boolean().optional(),
+  unattended: z.boolean().optional(),
+  background: z.boolean().optional(),
+  notifyOnFinish: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
 });
@@ -3790,6 +3827,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SendAgentMessageRequestSchema,
+  RunAgentRequestSchema,
+  AgentConfigurationRequestSchema,
+  AgentEventsSubscribeRequestSchema,
+  AgentEventsUnsubscribeSchema,
+  ResolveProviderCreateConfigRequestSchema,
   WaitForFinishRequestSchema,
   QuickAskRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -4601,6 +4643,16 @@ export const AgentUpdateMessageSchema = z.object({
   ]),
 });
 
+export const AgentEventsSubscribeResponseSchema = z.object({
+  type: z.literal("agent.events.subscribe.response"),
+  payload: z.object({ requestId: z.string(), subscriptionId: z.string() }),
+});
+
+export const AgentEventsUpdateSchema = z.object({
+  type: z.literal("agent.events.update"),
+  payload: z.object({ subscriptionId: z.string(), update: AgentUpdateMessageSchema.shape.payload }),
+});
+
 export const AgentStreamMessageSchema = z.object({
   type: z.literal("agent_stream"),
   payload: z.object({
@@ -5368,6 +5420,30 @@ export const WaitForFinishResponseMessageSchema = z.object({
     final: AgentSnapshotPayloadSchema.nullable(),
     error: z.string().nullable(),
     lastMessage: z.string().nullable(),
+  }),
+});
+
+export const RunAgentResponseSchema = WaitForFinishResponseMessageSchema.extend({
+  type: z.literal("run_agent_response"),
+  payload: WaitForFinishResponseMessageSchema.shape.payload.extend({
+    canceled: z.boolean(),
+    finalText: z.string(),
+    output: z.string(),
+  }),
+});
+
+export const AgentConfigurationResponseSchema = z.object({
+  type: z.literal("agent.configuration.response"),
+  payload: z.object({ requestId: z.string(), config: AgentSessionConfigSchema }),
+});
+
+export const ResolveProviderCreateConfigResponseSchema = z.object({
+  type: z.literal("provider.resolve_create_config.response"),
+  payload: z.object({
+    requestId: z.string(),
+    config: AgentSessionConfigSchema.pick({
+      provider: true, model: true, modeId: true, thinkingOptionId: true, featureValues: true,
+    }),
   }),
 });
 
@@ -7825,6 +7901,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   DeleteWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
+  RunAgentResponseSchema,
+  AgentConfigurationResponseSchema,
+  AgentEventsSubscribeResponseSchema,
+  AgentEventsUpdateSchema,
+  ResolveProviderCreateConfigResponseSchema,
   FetchAgentTimelineResponseMessageSchema,
   AgentRuntimeResourcesResponseSchema,
   AgentPromptContextResponseSchema,
@@ -8307,6 +8388,12 @@ export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessage
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
+export type RunAgentRequest = z.infer<typeof RunAgentRequestSchema>;
+export type RunAgentResponse = z.infer<typeof RunAgentResponseSchema>;
+export type AgentConfigurationRequest = z.infer<typeof AgentConfigurationRequestSchema>;
+export type AgentConfigurationResponse = z.infer<typeof AgentConfigurationResponseSchema>;
+export type ResolveProviderCreateConfigRequest = z.infer<typeof ResolveProviderCreateConfigRequestSchema>;
+export type ResolveProviderCreateConfigResponse = z.infer<typeof ResolveProviderCreateConfigResponseSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type QuickAskRequest = z.infer<typeof QuickAskRequestSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;

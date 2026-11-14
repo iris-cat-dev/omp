@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ru: TranslationResources = {
@@ -11,7 +10,6 @@ export const ru: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ru,
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules.ru,
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1326,7 +1324,6 @@ export const ru: TranslationResources = {
     sections: {
       workspaces: "Рабочие пространства",
       sessions: "История",
-      schedules: "Расписания",
     },
     project: {
       actions: {
@@ -2629,14 +2626,6 @@ export const ru: TranslationResources = {
               title: "Разрешения",
               body: "Просмотр ожидающих запросов разрешений всех агентов и их одобрение или отклонение, включая выполнение команд и изменение файлов.",
             },
-            schedules: {
-              title: "Задачи по расписанию",
-              body: "Создание, просмотр, изменение, приостановка, возобновление, удаление и немедленный запуск cron-задач. Поддерживаются часовой пояс, максимум запусков, срок действия и история.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "Повторная отправка текущему агенту промпта по cron для регулярных проверок, напоминаний и постоянного мониторинга.",
-            },
             terminals: {
               title: "Терминалы",
               body: "Создание, просмотр и закрытие терминалов под управлением Desktop; чтение вывода и отправка текста, Enter, стрелок и других клавиш для наблюдения и управления сервисами.",
@@ -2655,7 +2644,7 @@ export const ru: TranslationResources = {
             body: "Другие настройки и возможности хоста также могут предоставлять автоматизацию браузера, генерацию изображений и голосовой вывод.",
           },
           warning:
-            "Высокие привилегии: агенты могут создавать других агентов, изменять worktree, запускать терминалы и создавать расписания. Продолжают действовать режим сессии, подтверждение разрешений, ограничения рабочего каталога и настройки хоста. Отключение отдельной возможности удаляет только соответствующую группу инструментов OMP Desktop, а главный переключатель удаляет все инструменты оркестрации OMP Desktop. Ни одно из этих действий не отключает встроенные файловые и командные инструменты агента.",
+            "Высокие привилегии: агенты могут создавать других агентов, изменять worktree и запускать терминалы. Продолжают действовать режим сессии, подтверждение разрешений, ограничения рабочего каталога и настройки хоста. Отключение отдельной возможности удаляет только соответствующую группу инструментов OMP Desktop, а главный переключатель удаляет все инструменты оркестрации OMP Desktop. Ни одно из этих действий не отключает встроенные файловые и командные инструменты агента.",
         },
         proxy: {
           title: "Прокси",

@@ -50,12 +50,28 @@ export interface PluginTurnMetricContribution { id: string; component: Component
 export interface PluginBackgroundIntent { requestKey: string; source: { uri: string; kind: "image" | "video" }; opacity: number; onReady(): void; onError(): void }
 export interface PluginBackgroundContribution { id: string; title?: string; subscribe(listener: () => void): PluginCleanup; getSnapshot(): PluginBackgroundIntent | null }
 export interface PluginOverlayContribution { id: string; Component: ComponentType; }
+export interface PluginHostDescriptor {
+  readonly id: string;
+  readonly label: string;
+  readonly online: boolean;
+}
+export interface PluginHostConnection {
+  readonly omp: OmpApi;
+  rpc<I extends ZodType, O extends ZodType>(contract: PluginRpcContract<I, O>, value: input<I>): Promise<output<O>>;
+  subscribe(listener: () => void): () => void;
+}
+export interface PluginHostDirectory {
+  list(): readonly PluginHostDescriptor[];
+  subscribe(listener: () => void): () => void;
+  get(id: string): PluginHostConnection | null;
+}
 export interface PluginClientContext extends PluginContext {
   readonly installation: PluginInstallation;
   readonly signal: AbortSignal;
   readonly mode: "manage" | "active";
   readonly role: "client";
   readonly omp: OmpApi;
+  readonly hosts: PluginHostDirectory;
   readonly storage: PluginStorage;
   readonly secrets: PluginSecrets;
   readonly native: PluginNativeApi;

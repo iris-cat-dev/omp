@@ -21,8 +21,6 @@ const capabilityKeys = [
   "workspace",
   "agents",
   "permissions",
-  "schedules",
-  "heartbeat",
   "terminals",
   "scripts",
   "providers",

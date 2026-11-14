@@ -557,51 +557,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   );
   await sendPromise;
 
-  const runPromise = agent.run("finish the task", {
-    messageId: "run-message-sdk",
-    timeoutMs: 30_000,
-  });
-  const runSendRequest = parseSentSessionMessage(ws.sent.at(-1));
-  expect(runSendRequest).toMatchObject({
-    type: "send_agent_message_request",
-    agentId: "agent_sdk",
-    text: "finish the task",
-    messageId: "run-message-sdk",
-  });
-  ws.message(
-    sessionMessage({
-      type: "send_agent_message_response",
-      payload: {
-        requestId: runSendRequest.requestId,
-        agentId: "agent_sdk",
-        accepted: true,
-        error: null,
-      },
-    }),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const waitRequest = parseSentSessionMessage(ws.sent.at(-1));
-  expect(waitRequest).toMatchObject({
-    type: "wait_for_finish_request",
-    agentId: "agent_sdk",
-    timeoutMs: 30_000,
-  });
   const finishedAgent = createAgent({ title: "Finished" });
-  ws.message(
-    sessionMessage({
-      type: "wait_for_finish_response",
-      payload: {
-        requestId: waitRequest.requestId,
-        agentId: "agent_sdk",
-        status: "idle",
-        final: finishedAgent,
-        error: null,
-        lastMessage: "DONE",
-      },
-    }),
-  );
-  await expect(runPromise).resolves.toMatchObject({ status: "idle", lastMessage: "DONE" });
-  expect(agent.current()).toEqual(finishedAgent);
 
   const defaultWaitPromise = agent.waitForFinish();
   const defaultWaitRequest = parseSentSessionMessage(ws.sent.at(-1));
@@ -1156,12 +1112,12 @@ test("agent config maps provider/model and provider-native options to the daemon
   await client.close();
 });
 
-test("agent config requires provider/model syntax", async () => {
+test("agent config rejects a provider selection with an empty explicit model", async () => {
   const { client } = await connectClient();
 
   await expect(
     client.agents.create({
-      config: { provider: "codex" },
+      config: { provider: "codex/" },
       cwd: "/repo/sdk",
     }),
   ).rejects.toThrow('Expected config.provider in "provider/model" format');

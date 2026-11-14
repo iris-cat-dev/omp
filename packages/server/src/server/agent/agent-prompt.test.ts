@@ -924,6 +924,49 @@ async function createAdmissionScenario() {
   };
 }
 
+test("explicit provider runs bypass host out-of-band commands and own a real foreground turn", async () => {
+  const scenario = await createAdmissionScenario();
+  try {
+    scenario.sessions[0]!.startGate.resolve();
+    const result = await startAgentRun(scenario.manager, scenario.first.id, "/goal pause", scenario.logger, {
+      outOfBandCommands: false,
+      requireIdle: true,
+    });
+    expect(result.disposition).toBe("turn_started");
+    expect(scenario.sessions[0]!.paused).toBe(false);
+    expect(scenario.manager.hasInFlightRun(scenario.first.id)).toBe(true);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("requireIdle rejects queued delivery after another prompt wins admission without steering or replacing", async () => {
+  const scenario = await createAdmissionScenario();
+  try {
+    const first = scenario.send(scenario.first.id, "held provider start");
+    await scenario.sessions[0]!.startEntered.promise;
+    const next = startAgentRun(scenario.manager, scenario.first.id, "idle-only delivery", scenario.logger, {
+      requireIdle: true,
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+    });
+    const rejected = expect(next).rejects.toThrow(`Agent ${scenario.first.id} already has an active run`);
+    scenario.sessions[0]!.startGate.resolve();
+    await first;
+    await rejected;
+    expect(scenario.sessions[0]!.received).toEqual(["held provider start"]);
+    expect(scenario.sessions[0]!.interruptCount).toBe(0);
+    expect(scenario.manager.hasInFlightRun(scenario.first.id)).toBe(true);
+    const finished = scenario.manager.waitForAgentEvent(scenario.first.id, { waitForActive: true });
+    scenario.sessions[0]!.finish();
+    await finished;
+    await startAgentRun(scenario.manager, scenario.first.id, "idle-only continuation", scenario.logger, { requireIdle: true });
+    expect(scenario.sessions[0]!.received).toHaveLength(2);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
 test("slow provider admission queues same-target system reports for steering without interrupting", async () => {
   const scenario = await createAdmissionScenario();
   try {

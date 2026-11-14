@@ -18,6 +18,7 @@ import {
   type PluginContributions,
 } from "./registry";
 import { validatePluginContribution } from "./contribution-validation";
+import { createPluginHostDirectory } from "./host-directory";
 
 export interface PluginClientServices {
   getOmp(): OmpApi;
@@ -76,6 +77,7 @@ export async function setupPluginClient(input: {
     mode: input.mode,
     role: "client",
     get omp() { return services.getOmp(); },
+    hosts: createPluginHostDirectory(input.hostId, installation, scope, input.mode),
     storage: {
       get: <T>() => guarded(() => services.storage.get<T>()),
       patch: <T>(patch: Partial<T>, revision: number) => guarded(() => services.storage.patch<T>(patch, revision)),

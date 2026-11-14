@@ -2,7 +2,6 @@ import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 import { visualFeedback } from "./visual-feedback";
 import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
@@ -12,7 +11,6 @@ export const en = {
   nativePlugin: { details: nativePluginDetails.en },
   providerUsage: providerUsage.en,
   backgroundProcesses: backgroundProcesses.en,
-  schedules: schedules.en,
   visualFeedback: visualFeedback.en,
   promptAnalysis: {
     title: "Prompt analysis",
@@ -1431,7 +1429,6 @@ export const en = {
     sections: {
       workspaces: "Workspaces",
       sessions: "History",
-      schedules: "Schedules",
     },
     project: {
       actions: {
@@ -2859,14 +2856,6 @@ export const en = {
               title: "Permissions",
               body: "List pending permission requests across agents and approve or deny them, including requests to run commands or modify files.",
             },
-            schedules: {
-              title: "Scheduled agents",
-              body: "Create, inspect, edit, pause, resume, delete, or immediately run cron schedules. Configure time zones, maximum runs, expiry, and inspect run history.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "Send the current agent a prompt on a cron cadence for recurring checks, reminders, or continuous inspection.",
-            },
             terminals: {
               title: "Terminals",
               body: "Create, list, and close Desktop-managed terminals; read output and send text, Enter, arrow keys, and other input so agents can keep observing or operating services.",
@@ -2885,7 +2874,7 @@ export const en = {
             body: "Other enabled settings and host support may also expose browser automation and image generation.",
           },
           warning:
-            "High-privilege access: agents can create other agents, modify worktrees, start terminals, and create schedules. Session mode, permission approval, working-directory restrictions, and host configuration still apply. Turning off one capability removes only that group of OMP Desktop tools; turning off the main switch removes every OMP Desktop orchestration tool. Neither action disables an agent's built-in file or command tools.",
+            "High-privilege access: agents can create other agents, modify worktrees, and start terminals. Session mode, permission approval, working-directory restrictions, and host configuration still apply. Turning off one capability removes only that group of OMP Desktop tools; turning off the main switch removes every OMP Desktop orchestration tool. Neither action disables an agent's built-in file or command tools.",
         },
         proxy: {
           title: "Proxy",

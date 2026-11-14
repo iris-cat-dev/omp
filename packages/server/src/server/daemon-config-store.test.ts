@@ -166,15 +166,15 @@ describe("DaemonConfigStore", () => {
     });
 
     store.patch({ mcp: { toolCapabilities: { terminals: false } } });
-    store.patch({ mcp: { toolCapabilities: { schedules: false } } });
+    store.patch({ mcp: { toolCapabilities: { providers: false } } });
 
     expect(store.get().mcp.toolCapabilities).toMatchObject({
       terminals: false,
-      schedules: false,
+      providers: false,
     });
     expect(loadPersistedConfig(paseoHome).daemon?.mcp?.toolCapabilities).toEqual({
       terminals: false,
-      schedules: false,
+      providers: false,
     });
   });
 

@@ -98,6 +98,7 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
+import { waitForAgentWithTimeout } from "./agent/mcp-shared.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
   archiveAgentCommand,
@@ -122,7 +123,7 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
-import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
+import { buildAgentForkContextAttachment, curateAgentActivity } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import {
   resolveStructuredGenerationProviders,
@@ -134,6 +135,7 @@ import {
   type AgentPermissionResponse,
   type AgentSessionConfig,
   type AgentSlashCommand,
+  type AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -216,6 +218,7 @@ import {
   createAgentUpdatesService,
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
+  type AgentUpdatesServiceDeps,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
 import {
@@ -224,7 +227,7 @@ import {
 } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type pino from "pino";
-import { ScheduleService } from "./schedule/service.js";
+import type { ScheduleBackend } from "./plugins/schedule-backend.js";
 import {
   createGitHubService,
   GitHubAuthenticationError,
@@ -440,6 +443,10 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 export interface SessionOptions {
   clientId: string;
   scopes: readonly string[];
+  /** Host-assigned plugin service transport identity; never comes from hello. */
+  serviceOrigin?: boolean;
+  servicePluginId?: string;
+  authorizeServiceCapability?: (capability: string) => void;
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -461,7 +468,7 @@ export interface SessionOptions {
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
-  scheduleService: ScheduleService;
+  scheduleService: ScheduleBackend;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -473,6 +480,7 @@ export interface SessionOptions {
   daemonConfigStore: DaemonConfigStore;
   pluginRuntime?: Pick<
     PluginService,
+    | "assertCapability"
     | "listPlugins"
     | "getLogs"
     | "installDirectory"
@@ -689,6 +697,9 @@ export class Session {
 
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
+  private readonly serviceOrigin: boolean;
+  private readonly servicePluginId: string | undefined;
+  private readonly authorizeServiceCapability: SessionOptions["authorizeServiceCapability"];
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly directorySync: DirectorySyncService;
@@ -722,6 +733,8 @@ export class Session {
   private readonly defaultTimelineSubscriptionSource = {};
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
+  private readonly agentUpdateDependencies: AgentUpdatesServiceDeps;
+  private readonly agentEventWatches = new Map<string, AgentUpdatesService>();
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
   private workspaceLabelSubscription: {
@@ -823,6 +836,9 @@ export class Session {
     this.clientId = clientId;
     this.scopes = [...scopes];
     this.appVersion = appVersion ?? null;
+    this.serviceOrigin = options.serviceOrigin === true;
+    this.servicePluginId = options.servicePluginId;
+    this.authorizeServiceCapability = options.authorizeServiceCapability;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
@@ -1031,7 +1047,7 @@ export class Session {
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
     });
-    this.agentUpdates = createAgentUpdatesService({
+    this.agentUpdateDependencies = {
       emit: (message) => this.emit(message),
       enrichAgentPayload: (payload) => this.enrichAgentPayload(payload),
       buildStoredAgentPayload: (record) => this.buildStoredAgentPayload(record),
@@ -1048,7 +1064,8 @@ export class Session {
           includeSequence,
         ),
       logger: this.sessionLogger,
-    });
+    };
+    this.agentUpdates = createAgentUpdatesService(this.agentUpdateDependencies);
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
@@ -1728,6 +1745,7 @@ export class Session {
             "agent.session.forward_update",
           );
           void this.agentUpdates.forwardLiveAgent(event.agent);
+          for (const watch of this.agentEventWatches.values()) void watch.forwardLiveAgent(event.agent);
           return;
         }
 
@@ -1738,11 +1756,17 @@ export class Session {
               "Failed to forward stored agent update",
             );
           });
+          for (const watch of this.agentEventWatches.values()) {
+            void watch.forwardStoredRecord(event.record).catch((error) => {
+              this.sessionLogger.error({ err: error, agentId: event.record.id }, "Failed to forward watched agent update");
+            });
+          }
           return;
         }
 
         if (event.type === "agent_deleted") {
           void this.agentUpdates.removeAgent(event.agentId);
+          for (const watch of this.agentEventWatches.values()) void watch.removeAgent(event.agentId);
           if (event.workspaceId) {
             void this.emitWorkspaceUpdateForWorkspaceId(event.workspaceId).catch((error) => {
               this.sessionLogger.error(
@@ -1995,8 +2019,10 @@ export class Session {
               payload: {
                 requestId,
                 requestType: msg.type,
-                error: `Request failed: ${err.message}`,
-                code: "handler_error",
+                error: msg.type === "run_agent_request" || msg.type === "agent.configuration.request" || msg.type === "provider.resolve_create_config.request"
+                  ? err.message
+                  : `Request failed: ${err.message}`,
+                code: msg.type === "run_agent_request" && error instanceof AgentRunCancellationError ? error.code : "handler_error",
               },
             });
           } catch (emitError) {
@@ -2454,6 +2480,36 @@ export class Session {
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
+      case "run_agent_request":
+        return this.handleRunAgentRequest(msg);
+      case "agent.events.subscribe.request": {
+        this.agentEventWatches.get(msg.subscriptionId)?.dispose();
+        const watch = createAgentUpdatesService({
+          ...this.agentUpdateDependencies,
+          emit: (message) => {
+            if (message.type === "agent_update") this.emit({
+              type: "agent.events.update",
+              payload: { subscriptionId: msg.subscriptionId, update: message.payload },
+            });
+          },
+          // The directory's own subscription already handles workspace updates.
+          emitWorkspaceUpdateForWorkspaceId: undefined,
+          includeProjectlessAgents: true,
+        });
+        watch.beginSubscription({ subscriptionId: msg.subscriptionId, filter: { includeArchived: true } });
+        this.agentEventWatches.set(msg.subscriptionId, watch);
+        watch.flushBootstrapped(msg.subscriptionId);
+        this.emit({ type: "agent.events.subscribe.response", payload: { requestId: msg.requestId, subscriptionId: msg.subscriptionId } });
+        return;
+      }
+      case "agent.events.unsubscribe":
+        this.agentEventWatches.get(msg.subscriptionId)?.dispose();
+        this.agentEventWatches.delete(msg.subscriptionId);
+        return;
+      case "agent.configuration.request":
+        return this.handleAgentConfigurationRequest(msg);
+      case "provider.resolve_create_config.request":
+        return this.handleResolveProviderCreateConfigRequest(msg);
       case "wait_for_finish_request":
         return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "quick_ask_request":
@@ -3748,7 +3804,7 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
       }
 
-      const { snapshot, liveSnapshot } = await createAgentCommand(
+      const { snapshot, liveSnapshot, background, initialPromptStarted } = await createAgentCommand(
         {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
@@ -3762,6 +3818,10 @@ export class Session {
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
+          unattended: msg.unattended,
+          background: msg.background,
+          notifyOnFinish: msg.notifyOnFinish,
+          callerAgentId: msg.callerAgentId,
           initialPrompt,
           clientMessageId,
           outputSchema,
@@ -3799,8 +3859,11 @@ export class Session {
         agentId: snapshot.id,
         createdWorktree,
       });
+      if (!background && initialPromptStarted) {
+        await waitForAgentWithTimeout(this.agentManager, snapshot.id, { waitForActive: true });
+      }
       if (requestId) {
-        const agentPayload = await this.buildAgentPayload(liveSnapshot);
+        const agentPayload = await this.buildAgentPayload(this.agentManager.getAgent(snapshot.id) ?? liveSnapshot);
         this.emit({
           type: "status",
           payload: {
@@ -8339,6 +8402,138 @@ export class Session {
     }
   }
 
+  private async handleAgentConfigurationRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.configuration.request" }>,
+  ): Promise<void> {
+    if (this.serviceOrigin) {
+      if (!this.servicePluginId || !this.authorizeServiceCapability) {
+        throw new Error("Plugin service configuration access requires host-bound capability authorization");
+      }
+      this.authorizeServiceCapability("agents.configuration");
+    }
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const record = await this.agentStorage.get(resolved.agentId);
+    if (!record || record.internal) throw new Error(`Agent not found: ${resolved.agentId}`);
+    const stored = record.config;
+    // Only agent-owned persisted create fields; never provider settings, runtime handles, or env.
+    const config: AgentSessionConfig = {
+      provider: record.provider,
+      cwd: record.cwd,
+      title: record.title,
+      ...(stored?.model != null ? { model: stored.model } : {}),
+      ...(stored?.modeId != null ? { modeId: stored.modeId } : {}),
+      ...(stored?.thinkingOptionId != null ? { thinkingOptionId: stored.thinkingOptionId } : {}),
+      ...(stored?.featureValues != null ? { featureValues: stored.featureValues } : {}),
+      ...(stored?.providerOptions != null ? { providerOptions: stored.providerOptions } : {}),
+      ...(stored?.toolPolicy != null ? { toolPolicy: stored.toolPolicy } : {}),
+      ...(stored?.systemPrompt != null ? { systemPrompt: stored.systemPrompt } : {}),
+      ...(stored?.mcpServers != null ? { mcpServers: stored.mcpServers } : {}),
+      ...(stored?.proxyPolicy != null ? { proxyPolicy: stored.proxyPolicy } : {}),
+      ...(stored?.sandbox != null ? { sandbox: stored.sandbox } : {}),
+    };
+    this.emit({ type: "agent.configuration.response", payload: { requestId: msg.requestId, config } });
+  }
+
+  private async handleResolveProviderCreateConfigRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.resolve_create_config.request" }>,
+  ): Promise<void> {
+    const input = msg.config;
+    const resolved = await this.providerSnapshotManager.resolveCreateConfig({
+      provider: input.provider,
+      requestedMode: input.modeId ?? undefined,
+      featureValues: input.featureValues,
+      parent: null,
+      unattended: false,
+    });
+    const config = {
+      provider: input.provider,
+      ...(input.model != null ? { model: input.model } : {}),
+      ...(input.thinkingOptionId != null ? { thinkingOptionId: input.thinkingOptionId } : {}),
+      modeId: resolved.modeId,
+      featureValues: resolved.featureValues,
+    };
+    const issues = await this.providerSnapshotManager.validateAgentConfiguration(config);
+    if (issues.length > 0) throw new Error(issues.map((issue) => issue.message).join("; "));
+    this.emit({ type: "provider.resolve_create_config.response", payload: { requestId: msg.requestId, config } });
+  }
+
+  private async dispatchAgentMessage(
+    msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" | "run_agent_request" }>,
+    agentId: string,
+  ) {
+    if (msg.sourceKind && !this.serviceOrigin) {
+      throw new Error("Service prompt origin requires a host-bound plugin service session");
+    }
+    if (msg.sourceKind) {
+      const record = await this.agentStorage.get(agentId);
+      if (record?.archivedAt) throw new Error(`Agent ${agentId} is archived`);
+    }
+    return sendPromptToAgent({
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      agentId,
+      prompt: buildAgentPrompt(msg.text, msg.images, msg.attachments),
+      messageId: msg.messageId,
+      outOfBandCommands: msg.type !== "run_agent_request",
+      sourceKind: this.serviceOrigin ? "service" : "user",
+      requireIdle: msg.requireIdle,
+      activeTurnBehavior: msg.activeTurnBehavior ?? (msg.sourceKind ? "steer" : "interrupt"),
+      clearPendingPermissions: !msg.sourceKind,
+      replaceOnSteerUnavailable: msg.sourceKind ? true : msg.activeTurnBehavior === "steer" ? false : undefined,
+      unarchive: !msg.sourceKind,
+      logger: this.sessionLogger,
+    });
+  }
+
+  private async handleRunAgentRequest(
+    msg: Extract<SessionInboundMessage, { type: "run_agent_request" }>,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) throw new Error(resolved.error);
+    const agentId = resolved.agentId;
+    const timeline: AgentTimelineItem[] = [];
+    let canceled = false;
+    let submitted = false;
+    // Subscribe before dispatch: a provider may complete before send admission returns.
+    const unsubscribe = this.agentManager.subscribe((event) => {
+      if (event.type !== "agent_stream") return;
+      if (event.event.type === "timeline") {
+        const item = event.event.item;
+        if (item.type === "user_message" && item.clientMessageId === msg.messageId) submitted = true;
+        if (submitted) timeline.push(item);
+      } else if (submitted && event.event.type === "turn_canceled") {
+        canceled = true;
+      }
+    }, { agentId, replayState: false });
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await this.dispatchAgentMessage(msg, agentId);
+      if (msg.timeoutMs && msg.timeoutMs > 0) timeout = setTimeout(() => controller.abort("timeout"), msg.timeoutMs);
+      let status: "idle" | "error" | "permission" | "timeout";
+      let lastMessage: string | null = null;
+      try {
+        const result = await this.agentManager.waitForAgentEvent(agentId, { waitForActive: true, signal: controller.signal });
+        status = result.permission ? "permission" : result.status === "error" ? "error" : "idle";
+        lastMessage = result.lastMessage;
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+        status = "timeout";
+      }
+      const final = await this.getAgentPayloadById(agentId);
+      if (!final) throw new Error(`Agent ${agentId} disappeared while waiting`);
+      const finalText = this.agentManager.getLastAssistantMessageFromTimeline(timeline) ?? "";
+      this.emit({
+        type: "run_agent_response",
+        payload: { requestId: msg.requestId, status, final, error: status === "timeout" ? null : resolveWaitForFinishError({ status, final }), lastMessage, canceled, finalText, output: curateAgentActivity(timeline) },
+      });
+    } finally {
+      unsubscribe();
+      clearTimeout(timeout);
+    }
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -8359,31 +8554,9 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
-      this.sessionLogger.trace(
-        {
-          agentId,
-          messageId: msg.messageId,
-          activeTurnBehavior: msg.activeTurnBehavior,
-          textPrefix: msg.text.slice(0, 80),
-        },
-        "agent.session.send_agent_message",
-      );
       let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
       try {
-        dispatchResult = await sendPromptToAgent({
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          agentId,
-          prompt,
-          messageId: msg.messageId,
-          sourceKind: this.clientId.startsWith("plugin:") ? "service" : "user",
-          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
-          // A human message answers any permission the agent is blocked on.
-          clearPendingPermissions: true,
-          replaceOnSteerUnavailable: msg.activeTurnBehavior === "steer" ? false : undefined,
-          logger: this.sessionLogger,
-        });
+        dispatchResult = await this.dispatchAgentMessage(msg, agentId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.handleAgentRunError(agentId, error, "Failed to send agent message");
@@ -8759,6 +8932,8 @@ export class Session {
     this.workspaceLabelSubscription?.unsubscribe();
     this.workspaceLabelSubscription = null;
     this.agentUpdates.dispose();
+    for (const watch of this.agentEventWatches.values()) watch.dispose();
+    this.agentEventWatches.clear();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
       this.unsubscribeTerminalWorkspaceContributionEvents();

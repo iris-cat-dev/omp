@@ -5,8 +5,9 @@ import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import type { ScheduleService } from "./schedule/service.js";
+import type { ScheduleBackend } from "./plugins/schedule-backend.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { SessionOptions } from "./session.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
@@ -228,6 +229,7 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 function createServer(options?: {
   logger?: ReturnType<typeof createLogger>;
   startPaused?: boolean;
+  pluginRuntime?: SessionOptions["pluginRuntime"];
 }) {
   const daemonConfigStore = {
     onApply: vi.fn(() => () => {}),
@@ -263,7 +265,7 @@ function createServer(options?: {
     undefined,
     undefined,
     undefined,
-    createStub<ScheduleService>({}),
+    createStub<ScheduleBackend>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
       scheduleRefreshForCwd: vi.fn(),
@@ -285,6 +287,11 @@ function createServer(options?: {
     undefined,
     undefined,
     createProviderSnapshotManagerStub().manager,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    options?.pluginRuntime,
   );
 }
 
@@ -451,6 +458,41 @@ describe("relay external socket reconnect behavior", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  test("grants service origin only to authenticated plugin IPC sessions", async () => {
+    const assertCapability = vi.fn();
+    const server = createServer({
+      pluginRuntime: createStub<NonNullable<SessionOptions["pluginRuntime"]>>({ assertCapability }),
+    });
+    const spoofedSocket = new MockSocket();
+    await asInternals<WebSocketServerInternals>(server).attachSocket(spoofedSocket, createDirectRequest());
+    spoofedSocket.emit("message", JSON.stringify(createHelloMessage("plugin:spoofed")));
+    expect(spoofedSocket.readyState).toBe(3);
+    expect(spoofedSocket.sent).toHaveLength(0);
+    expect(sessionMock.instances).toHaveLength(0);
+
+    const socket = new MockSocket();
+    await attachDirectAndHello({ server, socket, clientId: "ordinary-ui" });
+    expect(sessionMock.instances[0].args).not.toHaveProperty("serviceOrigin");
+    expect(sessionMock.instances[0].args).not.toHaveProperty("servicePluginId");
+    expect(sessionMock.instances[0].args).not.toHaveProperty("authorizeServiceCapability");
+
+    const plugin = await createPluginIpcSession(server, "trusted-service");
+    try {
+      expect(sessionMock.instances[1].args.serviceOrigin).toBe(true);
+      const args = sessionMock.instances[1].args;
+      expect(args.servicePluginId).toBe("trusted-service");
+      const authorize = args.authorizeServiceCapability;
+      if (typeof authorize !== "function") throw new Error("Missing service authorization callback");
+      authorize("agents.configuration");
+      expect(assertCapability).toHaveBeenCalledWith("trusted-service", "agents.configuration");
+      assertCapability.mockImplementationOnce(() => { throw new Error("Capability approval revoked"); });
+      expect(() => authorize("agents.configuration")).toThrow("Capability approval revoked");
+    } finally {
+      await plugin.close();
+      await server.close();
+    }
   });
 
   test("keeps the same session when relay reconnects within grace window", async () => {

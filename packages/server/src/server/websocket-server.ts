@@ -12,7 +12,7 @@ import { terminalWindowsPtyOptions } from "../terminal/windows-pty.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
-import type { ScheduleService } from "./schedule/service.js";
+import { createSchedulePluginBackend, type ScheduleBackend } from "./plugins/schedule-backend.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -406,6 +406,9 @@ void HUB_HAS_NO_TRUSTED_LIFECYCLE_STATE;
 
 interface SocketSessionOptions {
   clientId: string;
+  serviceOrigin?: boolean;
+  servicePluginId?: string;
+  authorizeServiceCapability?: (capability: string) => void;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
   scopes: readonly string[];
@@ -470,22 +473,17 @@ export class MissingDaemonVersionError extends Error {
 }
 
 interface RequiredWebSocketServices {
-  scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
 }
 
 function requireWebSocketServices(params: {
-  scheduleService?: ScheduleService;
   checkoutDiffManager?: CheckoutDiffManager;
 }): RequiredWebSocketServices {
-  const { scheduleService, checkoutDiffManager } = params;
-  if (!scheduleService) {
-    throw new Error("PaseoWebSocketServer requires a schedule service.");
-  }
+  const { checkoutDiffManager } = params;
   if (!checkoutDiffManager) {
     throw new Error("PaseoWebSocketServer requires a checkout diff manager.");
   }
-  return { scheduleService, checkoutDiffManager };
+  return { checkoutDiffManager };
 }
 
 /**
@@ -514,7 +512,7 @@ export class PaseoWebSocketServer {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
-  private readonly scheduleService: ScheduleService;
+  private readonly scheduleService: ScheduleBackend;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -577,7 +575,7 @@ export class PaseoWebSocketServer {
     onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
     projectRegistry?: ProjectRegistry,
     workspaceRegistry?: WorkspaceRegistry,
-    scheduleService?: ScheduleService,
+    scheduleService?: ScheduleBackend,
     checkoutDiffManager?: CheckoutDiffManager,
     serviceProxy?: ServiceProxySubsystem | null,
     scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null,
@@ -625,10 +623,9 @@ export class PaseoWebSocketServer {
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
     const requiredServices = requireWebSocketServices({
-      scheduleService,
       checkoutDiffManager,
     });
-    this.scheduleService = requiredServices.scheduleService;
+    this.scheduleService = scheduleService ?? createSchedulePluginBackend(pluginRuntime);
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
@@ -1464,6 +1461,16 @@ export class PaseoWebSocketServer {
 
     const session = this.createSocketSession({
       clientId,
+      ...(lifecycle.kind === "ephemeral-plugin"
+        ? {
+            serviceOrigin: true,
+            servicePluginId: lifecycle.pluginId,
+            authorizeServiceCapability: (capability: string) => {
+              if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+              this.pluginRuntime.assertCapability(lifecycle.pluginId, capability);
+            },
+          }
+        : {}),
       appVersion,
       clientCapabilities,
       scopes: ["*"],
@@ -1534,6 +1541,13 @@ export class PaseoWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       clientId: options.clientId,
+      ...(options.serviceOrigin
+        ? {
+            serviceOrigin: true,
+            servicePluginId: options.servicePluginId,
+            authorizeServiceCapability: options.authorizeServiceCapability,
+          }
+        : {}),
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       scopes: options.scopes,

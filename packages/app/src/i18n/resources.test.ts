@@ -670,14 +670,4 @@ describe("translation resources", () => {
     expect(en.startup.logs.loadFailed).toBe("Unable to load daemon logs: {{message}}");
   });
 
-  it("includes schedules screen and form keys", () => {
-    expect(en.schedules.title).toBe("Schedules");
-    expect(en.schedules.new).toBe("New schedule");
-    expect(en.schedules.emptyTitle).toBe("No active schedules");
-    expect(en.schedules.form.create).toBe("Create schedule");
-    expect(en.schedules.form.defaultMode).toBe("Default mode");
-    expect(en.schedules.cadence.presets["every-minute"]).toBe("Every minute");
-    expect(en.schedules.cadence.errors.fiveFields).toBe("Cron expressions must have 5 fields");
-    expect(zhCN.schedules.title).toBe("计划任务");
-  });
 });

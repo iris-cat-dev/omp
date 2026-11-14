@@ -4,13 +4,13 @@ import { ScheduleSession } from "./schedule-session.js";
 import { createStub } from "../../test-utils/class-mocks.js";
 import { findByType } from "../../test-utils/session-stubs.js";
 import type { SessionOutboundMessage } from "../../messages.js";
-import type { ScheduleService } from "../../schedule/service.js";
+import { SchedulePluginUnavailableError, type ScheduleBackend } from "../../plugins/schedule-backend.js";
 
-function makeSession(schedule: { [K in keyof ScheduleService]?: unknown }) {
+function makeSession(schedule: { [K in keyof ScheduleBackend]?: unknown }) {
   const emitted: SessionOutboundMessage[] = [];
   const session = new ScheduleSession({
     host: { emit: (message) => emitted.push(message) },
-    scheduleService: createStub<ScheduleService>(schedule),
+    scheduleService: createStub<ScheduleBackend>(schedule),
     logger: pino({ level: "silent" }),
   });
   return { session, emitted };
@@ -62,7 +62,7 @@ describe("ScheduleSession", () => {
   });
 
   it("schedule/create remaps a self target to an agent target before creating", async () => {
-    let received: Parameters<ScheduleService["create"]>[0] | undefined;
+    let received: Parameters<ScheduleBackend["create"]>[0] | undefined;
     const stored = {
       id: "s2",
       name: null,
@@ -80,7 +80,7 @@ describe("ScheduleSession", () => {
       runs: [],
     };
     const { session, emitted } = makeSession({
-      create: async (input: Parameters<ScheduleService["create"]>[0]) => {
+      create: async (input: Parameters<ScheduleBackend["create"]>[0]) => {
         received = input;
         return stored;
       },
@@ -96,5 +96,18 @@ describe("ScheduleSession", () => {
 
     expect(received?.target).toEqual({ type: "agent", agentId: "agent-9" });
     expect(findByType(emitted, "schedule/create/response")?.payload.error).toBeNull();
+  });
+  it("reports an unavailable plugin through the legacy RPC error boundary", async () => {
+    const error = new SchedulePluginUnavailableError("install and enable schedules in Plugins.");
+    const { session, emitted } = makeSession({ list: async () => { throw error; } });
+
+    await session.handleScheduleListRequest({ type: "schedule/list", requestId: "missing-plugin" });
+
+    expect(findByType(emitted, "rpc_error")?.payload).toEqual({
+      requestId: "missing-plugin",
+      requestType: "schedule/list",
+      error: error.message,
+      code: "plugin_unavailable",
+    });
   });
 });

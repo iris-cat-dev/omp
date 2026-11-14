@@ -22,7 +22,7 @@ The packaged app uses `~/.omp-desktop`. OMP keeps its own configuration, credent
 
 `omp-sdk/` is a Git submodule of [iris-cat-dev/omp-sdk](https://github.com/iris-cat-dev/omp-sdk), pinned to the commit recorded by Desktop. Use `git clone --recurse-submodules` for a fresh checkout, or rerun `git submodule update --init --recursive` after pulling Desktop changes. Commit SDK changes in `omp-sdk/` and push them to its own remote before committing and pushing an updated submodule pointer here. The SDK package root is `omp-sdk/packages/coding-agent`; initializing the submodule does not install its dependencies or build its Node artifacts.
 
-`plugins/` is a Git submodule of [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins). It contains the `agent-speed`, `wallpaper`, `desktop-pet`, and `qqbot` workspace packages, plus source examples under `plugins/examples/`. The shared plugin SDK and compiler remain in `packages/plugin`. Initialize both submodules before `npm install`; push plugin changes to their own remote before updating Desktop's gitlink. Package versions and dependencies are recorded in Desktop's root lockfile.
+`plugins/` is a Git submodule of [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins). It contains the `agent-speed`, `wallpaper`, `desktop-pet`, `qqbot`, and `schedules` workspace packages, plus source examples under `plugins/examples/`. The shared plugin SDK and compiler remain in `packages/plugin`. Initialize both submodules before `npm install`; push plugin changes to their own remote before updating Desktop's gitlink. Package versions and dependencies are recorded in Desktop's root lockfile.
 
 The syntax highlighter pins `@codemirror/legacy-modes` to `6.5.3`, whose Swift and Dart stream parsers use the same CodeMirror 6 language types as the application. Keep this pin when updating dependencies; `6.5.5` uses incompatible streamparser types.
 
@@ -55,7 +55,7 @@ npm run build --workspace=@omp-desktop/cli
 npm run build:main:compiled --workspace=@omp-desktop/desktop
 ```
 
-Specific plugins are built separately: for example, `node scripts/build-desktop-plugins.mjs plugins/wallpaper`; QQ uses `node plugins/qqbot/build.mjs` and its own native/npm dependencies. The external-package builder requires explicit package folders and clears each selected package's `dist`. These commands preserve an already staged release SDK; `build:server` selects the development SDK instead.
+Specific plugins are built separately: for example, `node scripts/build-desktop-plugins.mjs plugins/wallpaper`; QQ uses `node plugins/qqbot/build.mjs` and its own native/npm dependencies, and schedules uses `node plugins/schedules/build.mjs`. The external-package builder requires explicit package folders and clears each selected package's `dist`. These commands preserve an already staged release SDK; `build:server` selects the development SDK instead.
 
 Trusted plugin clients share the renderer's React, client, SDK and Lucide modules. Selective Lucide imports still resolve directly to licensed icon modules. Namespace imports intentionally retain the full public module, including canonical names, aliases, `icons`, `Icon` and `createLucideIcon`; replacing the namespace with the canonical-icon table breaks external client bundles.
 

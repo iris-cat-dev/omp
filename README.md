@@ -8,7 +8,7 @@ Current source version: **0.7.0**. Packaged applications are available from [Git
 
 - OMP conversations with model/provider settings, approval modes, workflows, and managed subagents.
 - Project workspaces with split conversations, files, Git changes, terminals, and background processes.
-- Scheduled tasks and heartbeats, provider usage and quotas, native OMP tools, and plugins.
+- Provider usage and quotas, native OMP tools, and optional plugins for scheduled tasks and heartbeats.
 - Desktop appearance controls and image/media previews; folder-installed plugins can extend settings, menus, backgrounds, and overlays.
 - SSH-managed remote hosts that can use locally configured models without copying credentials, plus Web access through a hosted or self-hosted relay.
 

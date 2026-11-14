@@ -153,6 +153,7 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   SendAgentMessageRequest,
+  ResolveProviderCreateConfigRequest,
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
@@ -425,6 +426,8 @@ export interface SendMessageOptions {
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+  requireIdle?: boolean;
+  sourceKind?: "service";
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -453,6 +456,9 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  unattended?: boolean;
+  background?: boolean;
+  notifyOnFinish?: boolean;
   // COMPAT(createAgentWorktree): low-level old callers may still send the
   // create-agent worktree field. Added in v0.2.0; remove after 2027-01-17.
   worktreeName?: string;
@@ -929,6 +935,10 @@ export interface WaitForFinishResult {
   final: AgentSnapshotPayload | null;
   error: string | null;
   lastMessage: string | null;
+  /** Present for runAgent: observed from real turn events. */
+  canceled?: boolean;
+  finalText?: string;
+  output?: string;
 }
 
 interface Waiter<T> {
@@ -1866,9 +1876,11 @@ export class DaemonClient {
     requestId: string;
     message: SessionInboundMessage;
     timeout?: number;
+    signal?: AbortSignal;
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    params.signal?.throwIfAborted();
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
       (msg) => {
@@ -1893,20 +1905,27 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId },
     );
 
+    const onAbort = () => cancel(params.signal?.reason instanceof Error
+      ? params.signal.reason
+      : new DOMException("Agent wait aborted", "AbortError"));
+    params.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      await this.sendSessionMessageOrThrow(params.message);
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      cancel(err);
-      void promise.catch(() => undefined);
-      throw err;
+      try {
+        const sent = this.sendSessionMessageOrThrow(params.message);
+        if (params.signal) await Promise.race([sent, promise]);
+        else await sent;
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        cancel(err);
+        void promise.catch(() => undefined);
+        throw err;
+      }
+      const result = await promise;
+      if (result.kind === "error") throw result.error;
+      return result.value;
+    } finally {
+      params.signal?.removeEventListener("abort", onAbort);
     }
-
-    const result = await promise;
-    if (result.kind === "error") {
-      throw result.error;
-    }
-    return result.value;
   }
 
   private async sendCorrelatedRequest<
@@ -1916,6 +1935,7 @@ export class DaemonClient {
     requestId: string;
     message: SessionInboundMessage;
     timeout?: number;
+    signal?: AbortSignal;
     responseType: TResponseType;
     options?: { skipQueue?: boolean };
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
@@ -1924,6 +1944,7 @@ export class DaemonClient {
       requestId: params.requestId,
       message: params.message,
       timeout: params.timeout,
+      signal: params.signal,
       options: params.options,
       select: (msg) => {
         const correlated = msg as CorrelatedResponseMessage;
@@ -2210,6 +2231,35 @@ export class DaemonClient {
   // ============================================================================
   // Agent RPCs (requestId-correlated)
   // ============================================================================
+
+  async watchAgents(
+    handler: (update: Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"]) => void,
+  ): Promise<() => void> {
+    const subscriptionId = crypto.randomUUID();
+    const requestId = this.createRequestId();
+    let active = true;
+    const unsubscribe = this.on("agent.events.update", (message) => {
+      if (active && message.payload.subscriptionId === subscriptionId) handler(message.payload.update);
+    });
+    const release = () => {
+      if (!active) return;
+      active = false;
+      unsubscribe();
+      this.sendSessionMessage({ type: "agent.events.unsubscribe", subscriptionId });
+    };
+    try {
+      await this.sendCorrelatedRequest({
+        requestId,
+        message: SessionInboundMessageSchema.parse({ type: "agent.events.subscribe.request", requestId, subscriptionId }),
+        responseType: "agent.events.subscribe.response",
+        options: { skipQueue: true },
+      });
+      return release;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
 
   async fetchAgents(options?: FetchAgentsOptions): Promise<FetchAgentsPayload> {
     const resolvedRequestId = this.createRequestId(options?.requestId);
@@ -2751,6 +2801,9 @@ export class DaemonClient {
       ...(options.git ? { git: options.git } : {}),
       ...(options.worktree ? { worktree: options.worktree } : {}),
       ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
+      ...(options.unattended !== undefined ? { unattended: options.unattended } : {}),
+      ...(options.background !== undefined ? { background: options.background } : {}),
+      ...(options.notifyOnFinish !== undefined ? { notifyOnFinish: options.notifyOnFinish } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
@@ -3639,6 +3692,50 @@ export class DaemonClient {
   // Agent Interaction
   // ============================================================================
 
+  async getAgentConfiguration(agentId: string): Promise<AgentSessionConfig> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({ type: "agent.configuration.request", requestId, agentId }),
+      responseType: "agent.configuration.response",
+    });
+    return payload.config;
+  }
+
+  async resolveProviderCreateConfig(
+    config: ResolveProviderCreateConfigRequest["config"],
+  ) {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedRequest({
+      requestId,
+      message: SessionInboundMessageSchema.parse({ type: "provider.resolve_create_config.request", requestId, config }),
+      responseType: "provider.resolve_create_config.response",
+    });
+    return payload.config;
+  }
+
+  async runAgent(
+    agentId: string,
+    text: string,
+    options: SendMessageOptions & { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<WaitForFinishResult> {
+    const { signal, timeoutMs = 60000, ...sendOptions } = options;
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "run_agent_request", requestId, agentId, text,
+      ...sendOptions,
+      messageId: sendOptions.messageId ?? crypto.randomUUID(),
+      timeoutMs,
+    });
+    const payload = await this.sendCorrelatedRequest({
+      requestId, message, responseType: "run_agent_response",
+      timeout: timeoutMs > 0 ? timeoutMs + 5000 : 0,
+      signal,
+      options: { skipQueue: true },
+    });
+    return payload;
+  }
+
   async sendAgentMessage(
     agentId: string,
     text: string,
@@ -3653,6 +3750,8 @@ export class DaemonClient {
       text,
       ...(messageId ? { messageId } : {}),
       ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
+      ...(options?.requireIdle !== undefined ? { requireIdle: options.requireIdle } : {}),
+      ...(options?.sourceKind ? { sourceKind: options.sourceKind } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
     });

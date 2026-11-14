@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const fr: TranslationResources = {
@@ -11,7 +10,6 @@ export const fr: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.fr,
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules.fr,
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1334,7 +1332,6 @@ export const fr: TranslationResources = {
     sections: {
       workspaces: "Espaces de travail",
       sessions: "Historique",
-      schedules: "Planifications",
     },
     project: {
       actions: {
@@ -2635,14 +2632,6 @@ export const fr: TranslationResources = {
               title: "Autorisations",
               body: "Afficher toutes les demandes d’autorisation en attente et les accepter ou refuser, notamment pour exécuter des commandes ou modifier des fichiers.",
             },
-            schedules: {
-              title: "Tâches planifiées",
-              body: "Créer, consulter, modifier, suspendre, reprendre, supprimer ou lancer immédiatement des tâches cron. Configurer fuseau horaire, nombre maximal d’exécutions, expiration et historique.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "Envoyer périodiquement une invite à l’agent actuel via cron pour les contrôles, rappels ou inspections continues.",
-            },
             terminals: {
               title: "Terminaux",
               body: "Créer, lister et fermer les terminaux gérés par Desktop ; lire leur sortie et envoyer du texte, Entrée, les flèches et d’autres saisies pour observer ou piloter des services.",
@@ -2661,7 +2650,7 @@ export const fr: TranslationResources = {
             body: "D’autres réglages et capacités de l’hôte peuvent aussi exposer l’automatisation du navigateur, la génération d’images et la sortie vocale.",
           },
           warning:
-            "Accès à privilèges élevés : les agents peuvent créer d’autres agents, modifier des worktrees, démarrer des terminaux et créer des tâches planifiées. Le mode de session, l’approbation des autorisations, les limites du répertoire de travail et la configuration de l’hôte restent applicables. Désactiver une capacité retire uniquement ce groupe d’outils OMP Desktop ; désactiver l’interrupteur principal retire tous les outils d’orchestration OMP Desktop. Aucune de ces actions ne désactive les outils de fichiers ou de commandes intégrés à l’agent.",
+            "Accès à privilèges élevés : les agents peuvent créer d’autres agents, modifier des worktrees et démarrer des terminaux. Le mode de session, l’approbation des autorisations, les limites du répertoire de travail et la configuration de l’hôte restent applicables. Désactiver une capacité retire uniquement ce groupe d’outils OMP Desktop ; désactiver l’interrupteur principal retire tous les outils d’orchestration OMP Desktop. Aucune de ces actions ne désactive les outils de fichiers ou de commandes intégrés à l’agent.",
         },
         proxy: {
           title: "Proxy",

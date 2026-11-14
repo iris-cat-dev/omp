@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ko: TranslationResources = {
@@ -11,7 +10,6 @@ export const ko: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.ko,
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules.ko,
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1308,7 +1306,6 @@ export const ko: TranslationResources = {
     sections: {
       workspaces: "워크스페이스",
       sessions: "기록",
-      schedules: "일정",
     },
     project: {
       actions: {
@@ -2588,14 +2585,6 @@ export const ko: TranslationResources = {
               title: "권한",
               body: "모든 Agent의 대기 중인 권한 요청을 확인하고 명령 실행이나 파일 수정 요청을 포함해 승인 또는 거부합니다.",
             },
-            schedules: {
-              title: "예약 작업",
-              body: "cron 작업을 생성, 조회, 수정, 일시 중지, 재개, 삭제하거나 즉시 실행합니다. 시간대, 최대 실행 횟수, 만료 시간 및 실행 기록을 지원합니다.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "정기 점검, 알림 또는 지속적인 검사를 위해 현재 Agent가 cron 주기로 프롬프트를 다시 받게 합니다.",
-            },
             terminals: {
               title: "터미널",
               body: "Desktop 관리 터미널을 생성, 조회, 종료하고 출력을 읽으며 텍스트, Enter, 방향키 등을 보내 서비스 관찰과 조작을 계속할 수 있습니다.",
@@ -2614,7 +2603,7 @@ export const ko: TranslationResources = {
             body: "다른 설정과 호스트 지원 여부에 따라 브라우저 자동화, 이미지 생성 및 음성 출력도 제공될 수 있습니다.",
           },
           warning:
-            "높은 권한의 접근입니다. Agent는 다른 Agent 생성, worktree 조작, 터미널 실행 및 예약 작업 생성을 수행할 수 있습니다. 세션 모드, 권한 승인, 작업 디렉터리 제한 및 호스트 설정은 계속 적용됩니다. 개별 기능을 끄면 해당 OMP Desktop 도구 그룹만 제거되고, 기본 스위치를 끄면 모든 OMP Desktop 오케스트레이션 도구가 제거됩니다. 어느 경우에도 Agent의 기본 파일 또는 명령 도구는 비활성화되지 않습니다.",
+            "높은 권한의 접근입니다. Agent는 다른 Agent 생성, worktree 조작 및 터미널 실행을 수행할 수 있습니다. 세션 모드, 권한 승인, 작업 디렉터리 제한 및 호스트 설정은 계속 적용됩니다. 개별 기능을 끄면 해당 OMP Desktop 도구 그룹만 제거되고, 기본 스위치를 끄면 모든 OMP Desktop 오케스트레이션 도구가 제거됩니다. 어느 경우에도 Agent의 기본 파일 또는 명령 도구는 비활성화되지 않습니다.",
         },
         proxy: {
           title: "프록시",

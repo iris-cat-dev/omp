@@ -216,9 +216,13 @@ Reading cold history, focus, attention, or model metadata does not start an SDK 
 
 ## Schedules
 
-On **Schedules**, use a task's **⋮ → Pause / Resume**, including heartbeats prompting an existing Agent. Paused tasks display **Paused** and retain cadence, prompt, target, and limits. Pausing prevents future triggers without interrupting started executions. Resume computes the next trigger from the original cadence without replaying missed runs.
+Install `plugins/schedules` through **Settings → Plugins → Discover** on the target daemon. Confirm its declared capabilities and this device's client-code trust, enable **Allow host plugins to run**, then enable the installation. The plugin supplies the **Schedules** sidebar and command-center entries, management page, scheduler, storage, and Agent tools; application packages do not include it.
 
-Agent tools `list_schedules`, `pause_schedule`, and `resume_schedule` manage only new-Agent schedules. Existing-Agent heartbeats are managed on the Schedules page; absence from those tools does not imply a different task ID.
+Use **New schedule** to create a new-Agent task. Existing-Agent heartbeats appear on the same page. Tasks retain cron/timezone or exact interval cadence, project, local/worktree isolation, provider/model/mode/thinking, archive behavior, maximum runs, and expiry. Each task has **Edit**, **Pause / Resume**, **Run now**, **Run history**, and **Delete** actions. Pausing prevents future triggers without interrupting started executions. Resume computes the next trigger from the original cadence without replaying missed runs.
+
+The canonical installation ID `schedules` imports the daemon's old `<daemon home>/schedules` records once, preserving IDs, paused state, and history without overwriting plugin records or removing the original files. Other installation IDs keep independent data. Disabling the installation or host execution stops future triggers and preserves tasks, history, and paused state; enabling it does not replay missed runs. Legacy CLI and WebSocket schedule calls forward to this enabled canonical plugin and report `plugin_unavailable` when it is unavailable.
+
+Agent tools use installation-bound names such as `schedules__list_schedules`, `schedules__pause_schedule`, and `schedules__resume_schedule`. These manage new-Agent schedules. Existing-Agent heartbeats are managed on the page or through the caller's heartbeat tools; they do not appear in the new-Agent schedule list.
 
 ## Notifications
 

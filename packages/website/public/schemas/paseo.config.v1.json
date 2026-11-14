@@ -78,12 +78,6 @@
                 "permissions": {
                   "type": "boolean"
                 },
-                "schedules": {
-                  "type": "boolean"
-                },
-                "heartbeat": {
-                  "type": "boolean"
-                },
                 "terminals": {
                   "type": "boolean"
                 },

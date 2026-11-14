@@ -3,14 +3,12 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "no
 import { sep } from "node:path";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
-import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
-import {
-  createDaemonTestContext,
-  type DaemonClient,
-  type DaemonTestContext,
-} from "./test-utils/index.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
+import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/daemon-test-context.js";
+import type { DaemonClient } from "./test-utils/daemon-client.js";
 import type { SessionOutboundMessage } from "./messages.js";
 import { getPaseoWorktreesRoot } from "../utils/worktree.js";
 
@@ -24,9 +22,39 @@ type ScheduleWithRuns = NonNullable<
 
 let ctx: DaemonTestContext;
 const tempRoots: string[] = [];
+const scheduleAgentConfig = {
+  provider: "codex",
+  model: "gpt-5.4-mini",
+  modeId: "full-access",
+  thinkingOptionId: "medium",
+};
 
 beforeEach(async () => {
-  ctx = await createDaemonTestContext();
+  const agentClients = createTestAgentClients();
+  const codex = agentClients.codex;
+  const fetchCatalog = codex.fetchCatalog.bind(codex);
+  // Declare supported reasoning levels on the existing test client's real catalog boundary.
+  codex.fetchCatalog = async (...args) => {
+    const catalog = await fetchCatalog(...args);
+    return {
+      ...catalog,
+      models: catalog.models.map((model) => ({
+        ...model,
+        thinkingOptions: [
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+        ],
+        defaultThinkingOptionId: "medium",
+      })),
+    };
+  };
+  ctx = await createDaemonTestContext({ agentClients });
+  await ctx.client.patchDaemonConfig({ pluginsEnabled: true });
+  await ctx.client.installDirectoryPlugin(
+    fileURLToPath(new URL("../../../../plugins/schedules", import.meta.url)),
+    "schedules",
+    { trusted: true },
+  );
 });
 
 afterEach(async () => {
@@ -214,7 +242,7 @@ test("archiveOnFinish=false local scheduled run emits upserts and remains active
     target: {
       type: "new-agent",
       config: {
-        ...getFullAccessConfig("codex"),
+        ...scheduleAgentConfig,
         cwd,
         archiveOnFinish: false,
         isolation: "local",
@@ -247,7 +275,7 @@ test("archiveOnFinish=true scheduled run emits a workspace remove", async () => 
     target: {
       type: "new-agent",
       config: {
-        ...getFullAccessConfig("codex"),
+        ...scheduleAgentConfig,
         cwd,
         archiveOnFinish: true,
         isolation: "local",
@@ -284,7 +312,7 @@ test("worktree isolation creates a run worktree and archiveOnFinish removes it",
     target: {
       type: "new-agent",
       config: {
-        ...getFullAccessConfig("codex"),
+        ...scheduleAgentConfig,
         cwd: repoDir,
         archiveOnFinish: true,
         isolation: "worktree",
@@ -332,7 +360,7 @@ test("update_schedule patches thinking, archive behavior, and isolation for the 
     target: {
       type: "new-agent",
       config: {
-        ...getFullAccessConfig("codex"),
+        ...scheduleAgentConfig,
         cwd: repoDir,
         archiveOnFinish: true,
         isolation: "local",
@@ -344,7 +372,7 @@ test("update_schedule patches thinking, archive behavior, and isolation for the 
   await updateSchedule({
     id: schedule.id,
     newAgentConfig: {
-      thinkingOptionId: "think-hard",
+      thinkingOptionId: "high",
       archiveOnFinish: false,
       isolation: "worktree",
     },
@@ -354,7 +382,7 @@ test("update_schedule patches thinking, archive behavior, and isolation for the 
   const agentId = requireCompletedAgentId(ran);
   const agent = await activeAgent(agentId);
 
-  expect(agent.thinkingOptionId).toBe("think-hard");
+  expect(agent.thinkingOptionId).toBe("high");
   expect(agent.cwd.startsWith(`${expectedRoot}${sep}`)).toBe(true);
   expect(agent.cwd).not.toBe(repoDir);
   expect(await activeAgentIds()).toContain(agentId);

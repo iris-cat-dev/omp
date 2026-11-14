@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { PluginIdSchema } from "@omp-desktop/protocol/messages";
 export class PluginDataStore {
  constructor(private readonly home:string) {}
- private directory(id:string){PluginIdSchema.parse(id); return path.join(this.home,"plugins",id);}
+ directory(id:string){PluginIdSchema.parse(id); return path.join(this.home,"plugins",id);}
  private read<T>(id:string,name:string,fallback:T):T {try{return JSON.parse(readFileSync(path.join(this.directory(id),name),"utf8")) as T;}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return fallback;throw error;}}
  private write(id:string,name:string,value:unknown){const directory=this.directory(id);mkdirSync(directory,{recursive:true,mode:0o700});const file=path.join(directory,name);const temporary=file+"."+randomUUID();writeFileSync(temporary,JSON.stringify(value),{mode:0o600});renameSync(temporary,file);}
  get(id:string){return this.read(id,"storage.json",{revision:0,values:{} as Record<string,unknown>});}

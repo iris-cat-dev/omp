@@ -1,6 +1,5 @@
 import { router, usePathname, type Href } from "expo-router";
 import {
-  CalendarClock,
   ChevronDown,
   ChevronUp,
   CircleUserRound,
@@ -118,7 +117,6 @@ import type { ProviderSelectorProvider } from "@/provider-selection/provider-sel
 import {
   buildHostAgentDetailRoute,
   buildOpenProjectRoute,
-  buildSchedulesRoute,
   buildSessionsRoute,
   buildSettingsAddHostRoute,
   buildSettingsRoute,
@@ -175,7 +173,6 @@ interface SidebarLabels {
   home: string;
   settings: string;
   sessions: string;
-  schedules: string;
   closeSidebar: string;
   projectDropHint: string;
   projectDropFailed: string;
@@ -186,7 +183,6 @@ interface MobileSidebarProps extends SidebarSharedProps {
   insetsBottom: number;
   closeSidebar: () => void;
   handleViewMoreNavigate: () => void;
-  handleViewSchedulesNavigate: () => void;
 }
 
 interface DesktopSidebarProps extends SidebarSharedProps {
@@ -195,7 +191,6 @@ interface DesktopSidebarProps extends SidebarSharedProps {
   localServerId: string | null;
   openLocalProject: (path: string) => Promise<OpenProjectResult>;
   handleViewMore: () => void;
-  handleViewSchedules: () => void;
 }
 
 export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boolean }) {
@@ -319,9 +314,6 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     router.push(buildSessionsRoute());
   }, []);
 
-  const handleViewSchedulesNavigate = useCallback(() => {
-    router.push(buildSchedulesRoute());
-  }, []);
 
   const newWorkspaceKeys = useShortcutKeys("new-workspace");
   const labels = useMemo(
@@ -332,7 +324,6 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
       home: t("sidebar.actions.home"),
       settings: t("sidebar.actions.settings"),
       sessions: t("sidebar.sections.sessions"),
-      schedules: t("sidebar.sections.schedules"),
       closeSidebar: t("sidebar.actions.closeSidebar"),
       projectDropHint: t("sidebar.project.drop.hint"),
       projectDropFailed: t("sidebar.project.drop.failed"),
@@ -374,7 +365,6 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
         handleAddHost={handleAddHostMobile}
         handleOpenHostSettings={handleOpenHostSettingsMobile}
         handleViewMoreNavigate={handleViewMoreNavigate}
-        handleViewSchedulesNavigate={handleViewSchedulesNavigate}
       />
     </RetainedPanelActivity>
   ) : (
@@ -392,7 +382,6 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
         handleViewMore={handleViewMoreNavigate}
         localServerId={localServerId}
         openLocalProject={openImportedProject}
-        handleViewSchedules={handleViewSchedulesNavigate}
       />
     </RetainedPanelActivity>
   );
@@ -1615,12 +1604,10 @@ function MobileSidebar({
   insetsBottom,
   closeSidebar,
   handleViewMoreNavigate,
-  handleViewSchedulesNavigate,
 }: MobileSidebarProps) {
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const isSessionsActive = pathname.includes("/sessions");
-  const isSchedulesActive = pathname.includes("/schedules");
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
   const dragGestureHostPresented = useIsMobilePanelPresented("agent-list");
 
@@ -1629,10 +1616,6 @@ function MobileSidebar({
     handleViewMoreNavigate();
   }, [closeSidebar, handleViewMoreNavigate]);
 
-  const handleViewSchedules = useCallback(() => {
-    closeSidebar();
-    handleViewSchedulesNavigate();
-  }, [closeSidebar, handleViewSchedulesNavigate]);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -1676,14 +1659,6 @@ function MobileSidebar({
             onPress={handleViewMore}
             isActive={isSessionsActive}
             testID="sidebar-sessions"
-            variant="compact"
-          />
-          <SidebarHeaderRow
-            icon={CalendarClock}
-            label={labels.schedules}
-            onPress={handleViewSchedules}
-            isActive={isSchedulesActive}
-            testID="sidebar-schedules"
             variant="compact"
           />
           <PluginSidebarItems onNavigate={closeSidebar} />
@@ -1773,12 +1748,10 @@ function DesktopSidebar({
   localServerId,
   openLocalProject,
   handleViewMore,
-  handleViewSchedules,
 }: DesktopSidebarProps) {
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const isSessionsActive = pathname.includes("/sessions");
-  const isSchedulesActive = pathname.includes("/schedules");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
@@ -1889,14 +1862,6 @@ function DesktopSidebar({
             onPress={handleViewMore}
             isActive={isSessionsActive}
             testID="sidebar-sessions"
-            variant="compact"
-          />
-          <SidebarHeaderRow
-            icon={CalendarClock}
-            label={labels.schedules}
-            onPress={handleViewSchedules}
-            isActive={isSchedulesActive}
-            testID="sidebar-schedules"
             variant="compact"
           />
           <PluginSidebarItems />

@@ -58,6 +58,10 @@ export interface CreateAgentFromSessionInput {
   config: AgentSessionConfig;
   workspaceId: string;
   worktreeName?: string;
+  unattended?: boolean;
+  background?: boolean;
+  notifyOnFinish?: boolean;
+  callerAgentId?: string;
   initialPrompt?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
@@ -197,13 +201,13 @@ export async function createAgentCommand(
     initialPromptError = sendResult.error ?? null;
   }
 
-  if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
+  if (input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
     setupFinishNotification({
       agentManager: dependencies.agentManager,
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
       callerAgentId: input.callerAgentId,
-      requireParentOwnership: !input.detached,
+      requireParentOwnership: input.kind === "session" || !input.detached,
       logger: dependencies.logger,
     });
   }
@@ -250,8 +254,8 @@ async function resolveSessionCreateAgent(
     provider: builtSessionConfig.provider,
     requestedMode: builtSessionConfig.modeId,
     featureValues: builtSessionConfig.featureValues,
-    parent: null,
-    unattended: false,
+    parent: input.callerAgentId ? requireParentAgent(dependencies.agentManager, input.callerAgentId) : null,
+    unattended: input.unattended ?? false,
   });
   const sessionConfig: AgentSessionConfig = {
     ...builtSessionConfig,
@@ -285,7 +289,7 @@ async function resolveSessionCreateAgent(
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
     setupContinuation,
-    background: true,
+    background: input.background ?? true,
     promptFailure: "throw",
     promptLogger: dependencies.logger.child({
       clientMessageId: resolveClientMessageId(input.clientMessageId),

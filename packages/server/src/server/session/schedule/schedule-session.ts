@@ -1,6 +1,7 @@
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
-import type { ScheduleService } from "../../schedule/service.js";
+import type { ScheduleSummary, StoredSchedule } from "@omp-desktop/protocol/schedule/types";
+import { SchedulePluginUnavailableError, type ScheduleBackend } from "../../plugins/schedule-backend.js";
 
 export interface ScheduleSessionHost {
   emit(msg: SessionOutboundMessage): void;
@@ -8,13 +9,13 @@ export interface ScheduleSessionHost {
 
 export interface ScheduleSessionOptions {
   host: ScheduleSessionHost;
-  scheduleService: ScheduleService;
+  scheduleService: ScheduleBackend;
   logger: pino.Logger;
 }
 
 export class ScheduleSession {
   private readonly host: ScheduleSessionHost;
-  private readonly scheduleService: ScheduleService;
+  private readonly scheduleService: ScheduleBackend;
   private readonly logger: pino.Logger;
 
   constructor(options: ScheduleSessionOptions) {
@@ -23,12 +24,7 @@ export class ScheduleSession {
     this.logger = options.logger;
   }
 
-  private toScheduleSummary(
-    schedule: Awaited<ReturnType<ScheduleService["inspect"]>>,
-  ): Extract<
-    SessionOutboundMessage,
-    { type: "schedule/list/response" }
-  >["payload"]["schedules"][number] {
+  private toScheduleSummary(schedule: StoredSchedule): ScheduleSummary {
     const { runs: _runs, ...summary } = schedule;
     return summary;
   }
@@ -59,7 +55,7 @@ export class ScheduleSession {
         requestId: request.requestId,
         requestType: request.type,
         error: message,
-        code: "schedule_request_failed",
+        code: error instanceof SchedulePluginUnavailableError ? "plugin_unavailable" : "schedule_request_failed",
       },
     });
   }

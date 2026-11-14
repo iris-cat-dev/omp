@@ -946,7 +946,6 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
     storeReady &&
     (pathname === "/open-project" ||
       pathname === "/sessions" ||
-      pathname === "/schedules" ||
       pathname === "/file-preview" ||
       routeHasKnownHost);
 
@@ -974,7 +973,6 @@ function RootStack() {
         <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
-        <Stack.Screen name="schedules" />
         <Stack.Screen name="file-preview" />
         <Stack.Screen name="plugin/[pluginId]/[contributionKind]/[contributionId]" />
       </Stack.Protected>

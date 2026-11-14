@@ -3,7 +3,6 @@ import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { providerUsage } from "./provider-usage";
-import { schedules } from "./schedules";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const ptBR: TranslationResources = {
@@ -11,7 +10,6 @@ export const ptBR: TranslationResources = {
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage["pt-BR"],
   backgroundProcesses: en.backgroundProcesses,
-  schedules: schedules["pt-BR"],
   visualFeedback: en.visualFeedback,
   runtimeRetention: en.runtimeRetention,
   runtimeResources: en.runtimeResources,
@@ -1331,7 +1329,6 @@ export const ptBR: TranslationResources = {
     sections: {
       workspaces: "Espaços de trabalho",
       sessions: "Histórico",
-      schedules: "Agendamentos",
     },
     project: {
       actions: {
@@ -2622,14 +2619,6 @@ export const ptBR: TranslationResources = {
               title: "Permissões",
               body: "Veja solicitações de permissão pendentes de todos os agentes e aprove ou negue, incluindo pedidos para executar comandos ou modificar arquivos.",
             },
-            schedules: {
-              title: "Tarefas agendadas",
-              body: "Crie, veja, altere, pause, retome, exclua ou execute imediatamente tarefas cron. Configure fuso horário, máximo de execuções, expiração e histórico.",
-            },
-            heartbeat: {
-              title: "Heartbeat",
-              body: "Envie novamente um prompt ao agente atual em uma cadência cron para verificações, lembretes ou inspeção contínua.",
-            },
             terminals: {
               title: "Terminais",
               body: "Crie, liste e feche terminais gerenciados pelo Desktop; leia a saída e envie texto, Enter, setas e outras entradas para observar ou operar serviços.",
@@ -2648,7 +2637,7 @@ export const ptBR: TranslationResources = {
             body: "Outras configurações e recursos do host também podem expor automação de navegador, geração de imagens e saída de voz.",
           },
           warning:
-            "Acesso de alto privilégio: agentes podem criar outros agentes, modificar worktrees, iniciar terminais e criar tarefas agendadas. Modo da sessão, aprovação de permissões, limites do diretório de trabalho e configuração do host ainda se aplicam. Desativar uma capacidade remove apenas esse grupo de ferramentas do OMP Desktop; desativar o interruptor principal remove todas as ferramentas de orquestração do OMP Desktop. Nenhuma das ações desativa as ferramentas internas de arquivo ou comando do agente.",
+            "Acesso de alto privilégio: agentes podem criar outros agentes, modificar worktrees e iniciar terminais. Modo da sessão, aprovação de permissões, limites do diretório de trabalho e configuração do host ainda se aplicam. Desativar uma capacidade remove apenas esse grupo de ferramentas do OMP Desktop; desativar o interruptor principal remove todas as ferramentas de orquestração do OMP Desktop. Nenhuma das ações desativa as ferramentas internas de arquivo ou comando do agente.",
         },
         proxy: {
           title: "Proxy",

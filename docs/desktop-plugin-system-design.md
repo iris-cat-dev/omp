@@ -179,6 +179,10 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 
 客户端注册表按主机执行“快照 + 订阅”的 catalog 同步，忽略旧修订，并在替换／断连时清理旧实例。保留每个安装实例独立的 QueryClient／缓存语义。只读工作区／agent selector 使用当前归一化客户端快照；仅列出／打开面板不能通过 RPC 拉取活动上下文。宿主 DTO 是不可变输入，不是可写存储。
 
+SDK 只为 API 命名空间与所属激活的资源句柄加调用 guard；普通 DTO 和数组按原值返回，不递归代理数据或数组回调生成的 React element。API 调用先检查能力与 generation；异步结果及回调交付时再次检查 generation。
+
+客户端通过公开的 `ctx.hosts.list()/subscribe()/get(id)` 访问同一 daemon 插件的跨主机目录。`list()` 返回主机 ID、显示名与在线状态，并保留已见离线主机；`get()` 仅返回已在线、客户端已获本机信任、package ID 与 installation ID 都匹配的 active 实例，提供 `omp`、类型化 `rpc` 与变更 `subscribe`。调用同时受发起端和目标端能力授权约束，远端 grant 不能提升发起端权限；断连、撤销或 generation 替换使旧结果／回调失效。management 模式不能取得运行型连接。
+
 管理器路由和 catalog 返回真实运行时支持。只有运行时已经接通才能恢复 `plugin.*` 分发；`plugins/pluginManagement/pluginLogs/pluginThemes` 能力标记必须反映已实现能力。当前无条件发布的标记不能声称缺失服务可用。OMP `ompPlugins.*` 保留独立传输协议，但使用同一个管理页面。
 
 ## 运行时与生命周期契约
@@ -225,6 +229,11 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 - 已授权的工作区／agent 创建、消息提交、取消、权限响应。
 - 原生悬浮窗口／显示器／输入／菜单操作及应用导航。
 - 根背景槽位和主题可读性策略。
+- `agents.configuration` 独立授权 `agent.configuration()` 的完整 agent-owned 创建配置；冷读不恢复运行时，不返回 launch env 或全局模型凭据。只有 `agents.events` 的插件不能读取该配置。
+- `agents.events` 下的 `agents.watch()` 持有独立生命周期订阅及释放句柄，不替换普通 directory 订阅。仍存在但没有 project 的 Agent 发 `upsert`、`project:null`；实际删除才发 `remove`，归档保留 Agent 快照。
+- `agents.prompt` 下的 `agent.run()` 提交真实 provider turn 并观察完成／失败；`send()` 保留宿主 out-of-band 命令语义。foreground 创建带 prompt 时等待真实回合，取消调用方等待不取消底层 Agent。
+- `agents.tools` 授权安装实例绑定的 Agent 工具注册；`files.scoped` 授权 `files.data-directory` 与 `files.resolve-path` 原生操作，返回所属安装目录及主机解析后的路径。
+- `events.changed` 必须显式声明并批准；插件完成持久化后调用该原生操作，发布现有插件变更通知，客户端订阅刷新业务状态，不引入轮询。
 
 宿主绑定安装实例、角色、进程或 `webContents/mainFrame`、文档 epoch 和激活实例，调用方不能自行选择 owner 字段。明确批准的 Node 代码仍拥有运行用户的系统权限。受控接口能阻止协议内跨所有者操作，但不能让高权限 Node worker 或可信渲染代码变成无害代码。
 
@@ -235,6 +244,14 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 设置协议不把 QQ AppSecret／模型凭据作为普通配置返回。secret 通过专用操作提交，读取只返回已配置状态。secret 句柄和签名不能进入日志、agent 上下文、面板状态或其他客户端。宠物资源不能授予能力或引入可执行内容。
 
 ## 功能边界：迁移实际行为，不只迁移开关
+
+### 计划任务
+
+`plugins/schedules` 是可选 daemon 插件，独立拥有侧栏／命令中心入口、管理页、cron／every 调度、心跳、持久化、运行记录与十一项 Agent 工具。核心不再启动调度引擎或注册计划任务工具；CLI 与旧 WebSocket 入口仅通过薄适配器转发启用的 canonical 安装实例，不保留第二套实现。未安装、未授权或禁用时明确返回 `plugin_unavailable`。
+
+保留新建 Agent 和既有 Agent 心跳、项目选择、local／worktree、provider／model／mode／thinking、自动归档、最大次数、过期、错误与日志。页面通过公共主机目录聚合同 package／installation 的多主机任务，所有动作保留实际所属主机。心跳观察真实 Agent 生命周期，包括暂停期间的归档／删除；暂时缺少 project 不代表目标已删除。
+
+只有安装 ID `schedules` 一次性接管 `<daemon home>/schedules` 的旧记录：持久化导入 marker、保留原文件，不覆盖插件已有记录；其他 ID 保持独立存储。任务 ID、历史与暂停状态保留。禁用插件／暂停主机执行停止未来触发，保留数据；重新启用从当前时间计算下一次，不补跑错过的触发。正在执行的普通 Agent 不因插件停止被终止。
 
 ### 桌面宠物
 
@@ -355,7 +372,7 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 - `packages/desktop` 拥有通用本机 worker／受控接口生命周期；app／main 入口不硬编码宠物、壁纸或速度挂载。
 - 原生 SDK 插件发现、模型执行、工具、审批、AuthStorage、指标事实采集保留在当前归属方。管理器是投影／适配层，不替换 harness。
 - Desktop 和远端 backend 分发保留源码编译支持及基础执行入口，不包含具体插件代码／资源、`hatch-pet` 或宠物安装命令。独立核心监控保留。原生 API 依赖按目标／ABI 验收，不能从开发 Node 环境推断。
-- 功能插件与源码示例位于根目录 `plugins/` 子模块，对应 [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins)；四个插件包直接位于该仓库根目录，历史源码示例位于 `examples/`。共享插件 SDK 与编译器继续由 Desktop 的 `packages/plugin` 提供。
+- 功能插件与源码示例位于根目录 `plugins/` 子模块，对应 [iris-cat-dev/omp-plugins](https://github.com/iris-cat-dev/omp-plugins)；五个插件包直接位于该仓库根目录，历史源码示例位于 `examples/`。共享插件 SDK 与编译器继续由 Desktop 的 `packages/plugin` 提供。
 
 由一个集成负责人统一负责注册表、激活状态、RPC 授权和 schema 切换。各功能负责人基于确定的契约迁移独立包，不能各自引入管理器、全局事件总线、设置存储或 daemon 连接。
 
@@ -370,10 +387,17 @@ peer 映射以 Bot AppID、scope、peer OpenID 为键，指向真实 host／work
 - [壁纸插件源码](../plugins/wallpaper/src/builtin.ts)、[客户端](../plugins/wallpaper/src/client.tsx)、[背景控制器](../plugins/wallpaper/src/controller.ts)、[壁纸使用指南](features/appearance.md#wallpaper)；不随默认发行分发。
 - [速度插件](../plugins/agent-speed/src/index.tsx)、[实时算法](../plugins/agent-speed/src/metrics.ts)、[刷新订阅](../plugins/agent-speed/src/use-output-rate.ts)、[完成值](../plugins/agent-speed/src/completed.ts)、[turn-token-stats](../packages/app/src/agent-stream/turn-token-stats.ts)；默认应用不挂载该插件。
 - [QQ 插件](../plugins/qqbot)包含独立网关、会话与事件适配、访问／配对、问答／审批和文件工具；当前 producer 将有效 QQ SDK 内联到 CJS／MJS 服务产物。
+- [计划任务插件](../plugins/schedules)、[引擎](../plugins/schedules/engine.ts)、[迁移器](../plugins/schedules/importer.ts)、[管理页](../plugins/schedules/ui/page.tsx)、[使用指南](features/conversations.md#schedules)；默认应用不携带或启动该插件。
 
 历史 [插件 SDK 契约](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/plugin/src/contracts.ts)、[服务运行时](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/server/src/server/plugins/runtime.ts)、[插件面板](https://github.com/getpaseo/paseo/blob/4092c2926500d51af6510bbe295591af0dfe52f7/packages/app/src/plugins/workspace-panels/panel.tsx)构成旧契约基线，不能据此认定文件是在最近一次合并时被删除。Agent Speed 是从独立原生应用移植的算法／功能，尚未证实存在对应历史 Paseo 插件包。
 
 当前 macOS arm64 本地签名包已通过完整原生验收：旧启用预装记录不展示、不执行，真实设置 UI 从包外文件夹安装并确认信任，显式启用后 worker 写入文件，客户端贡献实际 RPC 返回安装 ID、generation 与调用计数。独立 daemon CLI 同 ID 重装保留原存储，真实 counter RPC 从 10 增加到 13、重载后到 15，并保留其他配置。实际 App 与四目标远端清单保留基础 SDK，不携带具体插件包。该结果不扩展文末可选插件的历史专项验收范围。
+
+计划任务迁移已在两台隔离测试 daemon 与真实插件 worker 中执行：未安装／禁用错误、旧暂停记录及历史接管、cron 手动运行、暂停心跳随目标归档完成、禁用跨过 due 后不触发及重新启用不补跑均通过。独立 WebSocket 生命周期回归覆盖缺 project 的 live／cold stored Agent、归档与实际删除，并保留原 directory 投影语义。
+
+真实 Web renderer 已通过客户端信任授权、侧栏与命令中心导航、双主机聚合及筛选，以及新建／编辑／删除确认、暂停／恢复、立即运行与运行记录。固定间隔 `1000001` ms 在名称编辑后重新打开仍保持精确值；实际选择模型、模式和 thinking，并将任务改为 `15 9 * * 1-5`／`Asia/Tokyo` 与新建工作树，保留最大次数、到期与完成后归档。local 与 worktree 两次实际执行均成功，运行记录保留各自 Agent／工作区与输出 `timeline test`；执行使用确定性测试 provider。既有心跳在目标归档后显示已完成，编辑最大次数不重新激活；禁用第一主机后其所选侧栏入口消失，第二主机仍能通过插件命令独立管理任务，重新启用恢复聚合、旧任务与暂停状态。
+
+实际模型菜单暴露的冻结 React element Proxy 错误已按上述数据／句柄边界修复，SDK 回归与真实服务端插件执行回归通过。计划任务的这些结果仅覆盖隔离 daemon／worker 与 Web renderer，尚未进行打包 Native 或跨平台专项验收。
 
 设计阶段在隔离 Node／tsx 进程中调用了当前速度函数：使用 7,000 到 10,000 ms 的已完成请求、120 个 output token，再加一个在途请求。
 

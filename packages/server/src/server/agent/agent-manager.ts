@@ -4256,7 +4256,7 @@ export class AgentManager {
     return await this.getLastAssistantMessageFromStores(agentId);
   }
 
-  private getLastAssistantMessageFromTimeline(
+  getLastAssistantMessageFromTimeline(
     timeline: readonly AgentTimelineItem[],
   ): string | null {
     // Collect the last contiguous assistant messages (Claude streams chunks)

@@ -62,7 +62,9 @@ export interface AgentUpdatesServiceDeps {
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
-  emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
+  emitWorkspaceUpdateForWorkspaceId?(workspaceId: string): Promise<void>;
+  /** Lifecycle watches retain agents even when directory placement is unavailable. */
+  includeProjectlessAgents?: boolean;
   sequenceAgentUpdate<T extends AgentUpdatePayload>(
     payload: T,
     agent: AgentSnapshotPayload | null,
@@ -94,7 +96,7 @@ function agentThinkingOptionMatchesFilter(
 
 function matchesAgentStructuralFilter(
   agent: AgentSnapshotPayload,
-  project: ProjectPlacementPayload,
+  project: ProjectPlacementPayload | null,
   filter: AgentUpdatesFilter,
 ): boolean {
   if (filter.statuses && filter.statuses.length > 0) {
@@ -120,7 +122,7 @@ function matchesAgentStructuralFilter(
 
   if (filter.projectKeys && filter.projectKeys.length > 0) {
     const projectKeys = new Set(filter.projectKeys.filter((item) => item.trim().length > 0));
-    if (projectKeys.size > 0 && !projectKeys.has(project.projectKey)) {
+    if (projectKeys.size > 0 && (!project || !projectKeys.has(project.projectKey))) {
       return false;
     }
   }
@@ -134,7 +136,7 @@ function matchesAgentStructuralFilter(
  */
 export function matchesAgentUpdatesFilter(input: {
   agent: AgentSnapshotPayload;
-  project: ProjectPlacementPayload;
+  project: ProjectPlacementPayload | null;
   filter?: AgentUpdatesFilter;
 }): boolean {
   const { agent, project, filter } = input;
@@ -261,7 +263,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     const project = payload.workspaceId
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
-    if (!project) {
+    if (!project && !deps.includeProjectlessAgents) {
       bufferOrEmit(
         sub,
         sequence(sub, { kind: "remove", agentId: payload.id }, null, null, payload.id),
@@ -304,7 +306,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
         const project = payload.workspaceId
           ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
           : null;
-        if (!project) {
+        if (!project && !deps.includeProjectlessAgents) {
           bufferOrEmit(
             sub,
             sequence(sub, { kind: "remove", agentId: payload.id }, null, null, payload.id),
@@ -352,7 +354,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       // A lifecycle change updates exactly the agent's owning workspace, never
       // every workspace sharing its cwd. Ownership is the agent's workspaceId.
       if (payload.workspaceId) {
-        await deps.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
+        await deps.emitWorkspaceUpdateForWorkspaceId?.(payload.workspaceId);
       }
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
@@ -388,7 +390,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return enqueueAgentUpdate(record.id, async () => {
       const payload = await emitStoredRecord(record);
       if (payload.workspaceId) {
-        await deps.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
+        await deps.emitWorkspaceUpdateForWorkspaceId?.(payload.workspaceId);
       }
     });
   }

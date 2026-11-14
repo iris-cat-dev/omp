@@ -30,6 +30,9 @@ export type AgentRunController = Pick<
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   activeTurnBehavior?: ActiveTurnBehavior;
+  requireIdle?: boolean;
+  /** Defaults true for send/control; false for callers explicitly executing a provider turn. */
+  outOfBandCommands?: boolean;
   runOptions?: AgentRunOptions;
   /**
    * Defaults true. Set false when the caller must never interrupt the target
@@ -100,6 +103,9 @@ async function startOrReplaceRun(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
   replaced: boolean;
 }> {
+  if (options?.requireIdle && agentManager.hasInFlightRun(agentId)) {
+    throw new Error(`Agent ${agentId} already has an active run`);
+  }
   const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const iterator = replaced
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
@@ -132,9 +138,9 @@ export async function startAgentRun(
     "agent.session.start_stream.request",
   );
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
-  // in-flight turn — replaceAgentRun would interrupt the running turn. The
-  // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  // in-flight turn — replaceAgentRun would interrupt the running turn.
+  // Explicit provider-turn callers can bypass host command interception.
+  if (!options?.requireIdle && options?.outOfBandCommands !== false && agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
   }
   const epochs = agentManager.captureRunAdmission(agentId);
@@ -165,6 +171,14 @@ async function admitAgentRun(
   options?: StartAgentRunOptions,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
+  if (options?.requireIdle) {
+    if (agentManager.hasInFlightRun(agentId)) {
+      throw new Error(`Agent ${agentId} already has an active run`);
+    }
+    if (options.outOfBandCommands !== false && agentManager.tryRunOutOfBand(agentId, prompt, options.runOptions)) {
+      return { disposition: "out_of_band" };
+    }
+  }
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
     return steered;
@@ -269,6 +283,8 @@ export interface SendPromptToAgentParams {
   sourceAgentId?: string;
   sourceKind?: "user" | "service" | "agent";
   activeTurnBehavior?: ActiveTurnBehavior;
+  requireIdle?: boolean;
+  outOfBandCommands?: boolean;
   /**
    * Defaults true. Set false for prompts whose delivery must not cancel the
    * target's managed subtree when steering is unsupported.
@@ -379,6 +395,8 @@ export async function sendPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     activeTurnBehavior: params.activeTurnBehavior,
+    requireIdle: params.requireIdle,
+    outOfBandCommands: params.outOfBandCommands,
     replaceOnSteerUnavailable: params.replaceOnSteerUnavailable,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,

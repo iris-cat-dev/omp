@@ -15,6 +15,7 @@ import type {
 } from "../agent/provider-snapshot-manager.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
+import type { ScheduleBackend } from "../plugins/schedule-backend.js";
 import type {
   HubExecutionAgentValidationIssue,
   SessionOutboundMessage,
@@ -62,8 +63,8 @@ export function asPushNotifications(
   return createStub<SessionOptions["pushNotifications"]>(stub);
 }
 
-export function asScheduleService(): SessionOptions["scheduleService"] {
-  return createStub<SessionOptions["scheduleService"]>({});
+export function asScheduleBackend(): ScheduleBackend {
+  return createStub<ScheduleBackend>({});
 }
 
 export function asCheckoutDiffManager(stub: {

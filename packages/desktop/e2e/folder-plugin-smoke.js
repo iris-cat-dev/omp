@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 
-const ADDON_PACKAGES = new Set(["plugin-desktop-pet", "plugin-wallpaper", "plugin-agent-speed", "plugin-qqbot"]);
+const ADDON_PACKAGES = new Set(["plugin-desktop-pet", "plugin-wallpaper", "plugin-agent-speed", "plugin-qqbot", "plugin-schedules"]);
 const RETIRED_PLUGIN_MODULES = new Set(["builtin-descriptors.js", "image-converter.js", "records.js"]);
 const FIXTURE_ID = "folder-smoke";
 

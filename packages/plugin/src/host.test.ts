@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAttachmentSource, defineRpc } from "./index.js";
+import { createElement, memo } from "react";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
 import type { OmpApi, OmpAgent } from "@omp-desktop/client";
 import { createActivationScope } from "./activation.js";
@@ -138,4 +139,31 @@ describe("controlled agent observer cleanup", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(() => observation.snapshot).toThrow("generation is no longer active");
   });
+});
+
+it("does not expose agent configuration to an event-only plugin", () => {
+  const scope = createActivationScope(1);
+  const installation: PluginInstallation = {
+    id: "observer", packageId: "observer", owner: "daemon", version: "1.0.0", generation: 1,
+    enabled: true, declaredCapabilities: ["agents.events"], grantedCapabilities: ["agents.events"],
+  };
+  const api = { agents: { ref: () => ({ configuration: () => { throw new Error("Agent configuration was exposed"); } }) } } as unknown as OmpApi;
+  const controlled = createPluginOmpApi(api, installation, scope, { mode: "active" });
+  expect(() => controlled.agents.ref({} as OmpAgent).configuration()).toThrow("Plugin capability is not granted: agents.configuration");
+});
+
+it("keeps provider model data usable by React without proxying frozen element types", async () => {
+  const scope = createActivationScope(1);
+  const installation: PluginInstallation = {
+    id: "models", packageId: "models", owner: "daemon", version: "1.0.0", generation: 1,
+    enabled: true, declaredCapabilities: ["agents.events"], grantedCapabilities: ["agents.events"],
+  };
+  const api = { providers: { listModels: async () => ({ models: [{ id: "codex-mini" }] }) } } as unknown as OmpApi;
+  const controlled = createPluginOmpApi(api, installation, scope, { mode: "active" });
+  const Label = memo(({ id }: { id: string }) => createElement("span", null, id));
+  const models = await controlled.providers.listModels("codex");
+  const elements = models.models.map(model => createElement(Label, { id: model.id }));
+  expect(elements[0].type).toBe(Label);
+  await scope.dispose();
+  expect(() => controlled.providers.listModels("codex")).toThrow("generation is no longer active");
 });
