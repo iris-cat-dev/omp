@@ -2080,6 +2080,7 @@ export const OmpCustomProviderModelInputSchema = z.object({
   reasoning: z.boolean().optional(),
   defaultReasoningLevel: z.string().trim().min(1).optional(),
   supportedReasoningLevels: z.array(z.string().trim().min(1)).optional(),
+  serviceTiers: z.array(z.string().trim().min(1)).optional(),
 });
 
 export const OmpCustomProviderInputSchema = z.object({
@@ -7144,6 +7145,7 @@ export const OmpProviderModelDiscoveryResponseMessageSchema = z.object({
         reasoning: z.boolean().optional(),
         defaultReasoningLevel: z.string().trim().min(1).optional(),
         supportedReasoningLevels: z.array(z.string().trim().min(1)).optional(),
+        serviceTiers: z.array(z.string().trim().min(1)).optional(),
       }),
     ),
   }),

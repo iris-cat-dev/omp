@@ -44,6 +44,7 @@ import { resolveOmpBuiltinToolArgsForLaunch } from "./provider-config.js";
 import { LOCAL_MODEL_PROVIDER } from "@omp-desktop/protocol/local-models";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
+import { isOmpUltrafastModel } from "./service-tier-extension.js";
 import {
   prepareOmpImageSettingsLaunch,
   OMP_IMAGE_SETTINGS_TOKEN_ENV,
@@ -790,7 +791,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async getState(): Promise<OmpSessionState> {
     return this.runModelControl(async () => {
       const state = OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
-      if (!this.serviceTierEndpointPort) return state;
+      if (!this.serviceTierEndpointPort) return { ...state, ultrafastSupported: false };
       const native = await this.requestServiceTier();
       if (native.model?.provider !== state.model?.provider || native.model?.id !== state.model?.id)
         throw new Error("OMP model changed during service tier readback");
@@ -798,8 +799,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
         ...state,
         ...(native.available && native.openaiFamily ? { fastModeTier: native.tier } : {}),
         ultrafastSupported:
+          native.available &&
           native.ultrafastAvailable &&
-          state.model?.serviceTiers?.includes("ultrafast") === true &&
+          isOmpUltrafastModel(state.model ?? undefined) &&
           (await this.supportsUltrafastCommand()),
       };
     });

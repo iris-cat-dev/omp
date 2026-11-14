@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   GetProvidersSnapshotResponseMessageSchema,
+  OmpCustomProviderInputSchema,
+  OmpProviderModelDiscoveryResponseMessageSchema,
   ProviderSnapshotEntrySchema,
   ProvidersSnapshotUpdateMessageSchema,
 } from "./messages.js";
@@ -92,5 +94,62 @@ describe("provider snapshot message schemas", () => {
     });
 
     expect(parsed.payload.entries[0]?.enabled).toBe(true);
+  });
+});
+
+describe("custom provider tier metadata schemas", () => {
+  test.each([
+    { serviceTiers: undefined },
+    { serviceTiers: [] },
+    { serviceTiers: ["priority"] },
+    { serviceTiers: ["ultrafast", "priority"] },
+  ])(
+    "preserves advertised tiers through discovery and provider input: $serviceTiers",
+    ({ serviceTiers }) => {
+      const model = {
+        id: "gpt-test",
+        name: "GPT Test",
+        ...(serviceTiers !== undefined ? { serviceTiers } : {}),
+      };
+      const discovery = OmpProviderModelDiscoveryResponseMessageSchema.parse({
+        type: "omp.provider.models.discover.response",
+        payload: { requestId: "discover", models: [model] },
+      });
+      const provider = OmpCustomProviderInputSchema.parse({
+        providerId: "custom",
+        baseUrl: "https://api.example.test/v1",
+        apiKey: "secret",
+        api: "openai-responses",
+        models: discovery.payload.models,
+      });
+
+      expect(provider.models[0]).toEqual(model);
+    },
+  );
+
+  test.each([
+    { serviceTiers: [""] },
+    { serviceTiers: [" "] },
+    { serviceTiers: [42] },
+    { serviceTiers: [{ id: "ultrafast" }] },
+    { serviceTiers: "ultrafast" },
+    { serviceTiers: null },
+  ])("rejects invalid internal tier declarations: $serviceTiers", ({ serviceTiers }) => {
+    const model = { id: "gpt-test", name: "GPT Test", serviceTiers };
+    expect(
+      OmpProviderModelDiscoveryResponseMessageSchema.safeParse({
+        type: "omp.provider.models.discover.response",
+        payload: { requestId: "discover", models: [model] },
+      }).success,
+    ).toBe(false);
+    expect(
+      OmpCustomProviderInputSchema.safeParse({
+        providerId: "custom",
+        baseUrl: "https://api.example.test/v1",
+        apiKey: "secret",
+        api: "openai-responses",
+        models: [model],
+      }).success,
+    ).toBe(false);
   });
 });

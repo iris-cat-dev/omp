@@ -36,6 +36,7 @@ import {
 import { buildOmpLaunch } from "../runtime.js";
 import { resolveOmpApprovalMode } from "../provider-config.js";
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
+import { isOmpUltrafastModel } from "../service-tier-extension.js";
 
 type FakeOmpSubagentSubscriptionLevel = "off" | "progress" | "events";
 
@@ -97,11 +98,11 @@ export class FakeOmp implements OmpRuntime {
         fastModeEnabled: tier === "priority" || tier === "ultrafast",
         fastModeActive:
           tier === "priority" ||
-          (tier === "ultrafast" && this.initialModel?.serviceTiers?.includes("ultrafast") === true),
+          (tier === "ultrafast" && isOmpUltrafastModel(session.state.model ?? undefined)),
       };
     }
     session.state.ultrafastSupported =
-      this.ultrafastSupported && this.initialModel?.serviceTiers?.includes("ultrafast") === true;
+      this.ultrafastSupported && isOmpUltrafastModel(session.state.model ?? undefined);
     if (!this.fastModeSupported) {
       session.state = { ...session.state, fastModeEnabled: undefined, fastModeActive: undefined };
     }
@@ -233,8 +234,16 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private readonly hostToolResultWaiters: Array<(result: OmpRpcHostToolResult) => void> = [];
   private readonly promptWaiters: Array<() => void> = [];
   private readonly subagentMessageResults = new Map<string, OmpSubagentMessagesResult[]>();
-  private nextHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
-  private activeHeldPrompt: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } | null = null;
+  private nextHeldPrompt: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null = null;
+  private activeHeldPrompt: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null = null;
   private releaseLogin: (() => void) | null = null;
 
   constructor(launch: OmpRuntimeLaunch) {
@@ -435,21 +444,27 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw new Error("FakeOmp setModel requires setModelResult to be scripted");
     }
     const model = this.setModelResult;
-    const openaiFamily = model.provider === "openai" || model.provider === "openai-codex";
+    const openaiFamily =
+      model.provider === "openai" ||
+      model.provider === "openai-codex" ||
+      (model.provider !== "fireworks" &&
+        model.provider !== "github-copilot" &&
+        model.identity?.class === "openai" &&
+        ["openai-responses", "openai-completions", "openai-codex-responses"].includes(
+          model.api ?? "",
+        ));
     const tier = openaiFamily ? this.nativeOpenAITier : undefined;
     this.state = {
       ...this.state,
       model,
-      ultrafastSupported:
-        this.nativeUltrafastSupported && model.serviceTiers?.includes("ultrafast") === true,
+      ultrafastSupported: this.nativeUltrafastSupported && isOmpUltrafastModel(model),
       fastModeTier: tier,
       ...(this.nativeOpenAITier !== undefined
         ? {
             fastModeEnabled: openaiFamily && (tier === "priority" || tier === "ultrafast"),
             fastModeActive:
               openaiFamily &&
-              (tier === "priority" ||
-                (tier === "ultrafast" && model.serviceTiers?.includes("ultrafast") === true)),
+              (tier === "priority" || (tier === "ultrafast" && isOmpUltrafastModel(model))),
           }
         : {}),
     };
@@ -483,7 +498,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
       this.state.model.id !== model.id
     )
       throw new Error("OMP Ultrafast is unavailable for the current model");
-    if (value === "on" && !this.state.model.serviceTiers?.includes("priority")) {
+    if (
+      value === "on" &&
+      this.state.model.api === "openai-codex-responses" &&
+      this.state.model.serviceTiers?.length &&
+      !this.state.model.serviceTiers.includes("priority")
+    ) {
       throw new Error("OMP Fast is unavailable for the current model");
     }
     this.setFastModeTierRequests.push(value);

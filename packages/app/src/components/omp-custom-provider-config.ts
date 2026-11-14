@@ -24,6 +24,7 @@ export interface OmpProviderModelDraft {
   reasoning?: boolean;
   defaultReasoningLevel?: string;
   supportedReasoningLevels?: string[];
+  serviceTiers?: string[];
 }
 
 export interface OmpProviderDraft {
@@ -68,6 +69,7 @@ export function configureDiscoveredProviderModels(
     reasoning?: boolean;
     defaultReasoningLevel?: string;
     supportedReasoningLevels?: readonly string[];
+    serviceTiers?: readonly string[];
   }>,
   createKey: () => string,
 ): OmpProviderModelDraft[] {
@@ -75,6 +77,8 @@ export function configureDiscoveredProviderModels(
     current.filter((model) => model.id.trim()).map((model) => [model.id.trim(), model]),
   );
   return discovered.map((model) => {
+    const serviceTierMetadata =
+      model.serviceTiers !== undefined ? { serviceTiers: [...model.serviceTiers] } : {};
     const existing = currentById.get(model.id);
     if (existing) {
       return {
@@ -97,6 +101,7 @@ export function configureDiscoveredProviderModels(
         ...(model.supportedReasoningLevels
           ? { supportedReasoningLevels: [...model.supportedReasoningLevels] }
           : {}),
+        ...serviceTierMetadata,
       };
     }
     return {
@@ -114,6 +119,7 @@ export function configureDiscoveredProviderModels(
       ...(model.supportedReasoningLevels
         ? { supportedReasoningLevels: [...model.supportedReasoningLevels] }
         : {}),
+      ...serviceTierMetadata,
     };
   });
 }
@@ -160,6 +166,7 @@ export function parseCustomProviderDraft(
             maxTokens?: unknown;
             input?: unknown;
             reasoning?: unknown;
+            serviceTiers?: unknown;
             thinking?: {
               efforts?: unknown;
               defaultLevel?: unknown;
@@ -197,6 +204,17 @@ export function parseCustomProviderDraft(
                     (level): level is string => typeof level === "string" && level.length > 0,
                   )
                 : undefined,
+              ...(Array.isArray(model.serviceTiers)
+                ? {
+                    serviceTiers: [
+                      ...new Set(
+                        model.serviceTiers.flatMap((tier: unknown) =>
+                          typeof tier === "string" && tier.trim() ? [tier.trim()] : [],
+                        ),
+                      ),
+                    ],
+                  }
+                : {}),
             },
           ]
         : [],
@@ -216,6 +234,39 @@ export function parseCustomProviderDraft(
   }
 }
 
+export function customProviderDraftToInput(
+  draft: OmpProviderDraft,
+  parsePositiveInteger: (value: string, field: "contextWindow" | "maxTokens") => number | undefined,
+): OmpCustomProviderInput {
+  return {
+    providerId: draft.providerId,
+    name: draft.name.trim(),
+    baseUrl: draft.baseUrl.trim(),
+    apiKey: draft.apiKey.trim(),
+    api: draft.models[0]?.api ?? "openai-responses",
+    models: draft.models.map((model) => ({
+      id: model.id.trim(),
+      api: model.api,
+      ...(model.name.trim() ? { name: model.name.trim() } : {}),
+      ...(model.contextWindow.trim()
+        ? { contextWindow: parsePositiveInteger(model.contextWindow, "contextWindow") }
+        : {}),
+      ...(model.maxTokens.trim()
+        ? { maxTokens: parsePositiveInteger(model.maxTokens, "maxTokens") }
+        : {}),
+      ...(model.supportsImages ? { supportsImages: true } : {}),
+      ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
+      ...(model.defaultReasoningLevel
+        ? { defaultReasoningLevel: model.defaultReasoningLevel }
+        : {}),
+      ...(model.supportedReasoningLevels
+        ? { supportedReasoningLevels: model.supportedReasoningLevels }
+        : {}),
+      ...(model.serviceTiers !== undefined ? { serviceTiers: model.serviceTiers } : {}),
+    })),
+  };
+}
+
 function providerInputToYamlValue(provider: OmpCustomProviderInput) {
   return {
     ...(provider.name?.trim() ? { name: provider.name.trim() } : {}),
@@ -231,6 +282,7 @@ function providerInputToYamlValue(provider: OmpCustomProviderInput) {
       ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
       ...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
       ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
+      ...(model.serviceTiers !== undefined ? { serviceTiers: model.serviceTiers } : {}),
       ...(model.reasoning && (model.supportedReasoningLevels?.length || model.defaultReasoningLevel)
         ? {
             thinking: {

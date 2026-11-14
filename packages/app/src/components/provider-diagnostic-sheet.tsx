@@ -61,14 +61,11 @@ import { formatTimeAgo } from "@/utils/time";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { compareMatchScores, scoreTextFields } from "@omp-desktop/protocol/search/text-match";
 import type { AgentModelDefinition } from "@omp-desktop/protocol/agent-types";
-import type {
-  OmpCustomProviderInput,
-  OmpProviderApi,
-  OmpProviderManagement,
-} from "@omp-desktop/protocol/messages";
+import type { OmpProviderApi, OmpProviderManagement } from "@omp-desktop/protocol/messages";
 import {
   createEmptyProviderDraft,
   configureDiscoveredProviderModels,
+  customProviderDraftToInput,
   OMP_PROVIDER_APIS,
   parseCustomProviderDraft,
   updateCustomProviderConfigYaml,
@@ -1374,46 +1371,20 @@ function OmpProviderForm({
     setAdding(true);
     setError(null);
     try {
-      const provider: OmpCustomProviderInput = {
-        providerId: editingProviderId ?? draft.providerId,
-        name: draft.name.trim(),
-        baseUrl: draft.baseUrl.trim(),
-        apiKey: draft.apiKey.trim(),
-        api: draft.models[0]?.api ?? "openai-responses",
-        models: draft.models.map((model) => ({
-          id: model.id.trim(),
-          api: model.api,
-          ...(model.name.trim() ? { name: model.name.trim() } : {}),
-          ...(model.contextWindow.trim()
-            ? {
-                contextWindow: parseOptionalPositiveInteger(
-                  model.contextWindow,
-                  t("settings.providers.omp.custom.positiveInteger", {
-                    field: t("settings.providers.omp.custom.contextWindow"),
-                  }),
-                ),
-              }
-            : {}),
-          ...(model.maxTokens.trim()
-            ? {
-                maxTokens: parseOptionalPositiveInteger(
-                  model.maxTokens,
-                  t("settings.providers.omp.custom.positiveInteger", {
-                    field: t("settings.providers.omp.custom.maxOutputTokens"),
-                  }),
-                ),
-              }
-            : {}),
-          ...(model.supportsImages ? { supportsImages: true } : {}),
-          ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
-          ...(model.defaultReasoningLevel
-            ? { defaultReasoningLevel: model.defaultReasoningLevel }
-            : {}),
-          ...(model.supportedReasoningLevels
-            ? { supportedReasoningLevels: model.supportedReasoningLevels }
-            : {}),
-        })),
-      };
+      const provider = customProviderDraftToInput(
+        { ...draft, providerId: editingProviderId ?? draft.providerId },
+        (value, field) =>
+          parseOptionalPositiveInteger(
+            value,
+            t("settings.providers.omp.custom.positiveInteger", {
+              field: t(
+                field === "contextWindow"
+                  ? "settings.providers.omp.custom.contextWindow"
+                  : "settings.providers.omp.custom.maxOutputTokens",
+              ),
+            }),
+          ),
+      );
       const result =
         editingProviderId && configYaml !== undefined
           ? await client.saveOmpProviderConfig(
