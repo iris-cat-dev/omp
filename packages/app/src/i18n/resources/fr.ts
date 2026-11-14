@@ -2147,11 +2147,8 @@ export const fr: TranslationResources = {
       chatBehavior: "Comportement du chat",
       appearance: "Apparence",
       plugins: "Plugins",
-      editor: "Éditeur",
       shortcuts: "Raccourcis",
-      notifications: "Notifications",
       permissions: "Autorisations",
-      diagnostics: "Diagnostic",
       about: "À propos",
     },
     editor: {

@@ -2311,11 +2311,8 @@ export const en = {
       chatBehavior: "Chat behavior",
       appearance: "Appearance",
       plugins: "Plugins",
-      editor: "Editor",
       shortcuts: "Shortcuts",
-      notifications: "Notifications",
       permissions: "Permissions",
-      diagnostics: "Diagnostics",
       about: "About",
     },
     editor: {

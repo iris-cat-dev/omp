@@ -28,12 +28,9 @@ import {
   Gauge,
   Image,
   Keyboard,
-  Stethoscope,
   Info,
-  Bell,
   Puzzle,
   FolderGit2,
-  Code2,
   Sparkles,
   Globe2,
   MessageSquare,
@@ -132,7 +129,6 @@ interface SidebarSectionItem {
   labelKey: string;
   icon: ComponentType<{ size: number; color: string }>;
   desktopOnly?: boolean;
-  webOnly?: boolean;
 }
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
@@ -141,15 +137,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "connections", labelKey: "settings.sections.connections", icon: Network },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   { id: "plugins", labelKey: "settings.sections.plugins", icon: Puzzle },
-  { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
-  {
-    id: "notifications",
-    labelKey: "settings.sections.notifications",
-    icon: Bell,
-    desktopOnly: true,
-  },
-  { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
   { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
@@ -866,9 +854,7 @@ function SettingsSidebar({
   const hasHosts = sortedHosts.length > 0;
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
-  const items = SIDEBAR_SECTION_ITEMS.filter(
-    (item) => (!item.desktopOnly || isDesktopApp) && (!item.webOnly || isWeb),
-  );
+  const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const outerContainerStyle = useMemo(
@@ -1179,6 +1165,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               />
               {isDesktopApp ? <DesktopBrowserSection /> : null}
               {isDesktopApp ? <DesktopStartupSection /> : null}
+              {isWeb ? <EditorSection /> : null}
+              {isDesktopApp ? <DesktopNotificationsSection /> : null}
+              <DiagnosticsSection
+                useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
+                onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
+              />
             </>
           );
         case "chat-behavior":
@@ -1199,19 +1191,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           return <AppearanceSection />;
         case "plugins":
           return <PluginsPage serverId={activeHostServerId ?? undefined} />;
-        case "editor":
-          return isWeb ? <EditorSection /> : null;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
-        case "notifications":
-          return isDesktopApp ? <DesktopNotificationsSection /> : null;
-        case "diagnostics":
-          return (
-            <DiagnosticsSection
-              useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
-              onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
-            />
-          );
         case "about":
           return <AboutSection appVersionText={appVersionText} />;
       }

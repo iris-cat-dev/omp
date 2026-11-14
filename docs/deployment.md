@@ -39,6 +39,16 @@ The build-time `EXPO_PUBLIC_RELAY_SERVER_ADDRESS` sets the default Relay for new
 
 On `HZProxyServer` (`114.55.112.128`), `/etc/nginx/conf.d/omp-relay.conf` terminates TLS and serves `/var/www/omp-web/current`. `/ws`, `/health`, `/ready` and `/metrics` still forward to `127.0.0.1:4000`. Nginx falls back to `index.html` for application routes, returns `404` for missing exported assets, serves precompressed files, and revalidates HTML instead of caching an obsolete app shell.
 
+The backend is managed by `/etc/systemd/system/omp-relay-hz.service`, enabled for `multi-user.target` to start at boot. It runs the pinned Podman image with environment from `/etc/omp-relay-hz.env`, retries failed starts with `Restart=on-failure`, and waits for `/ready` before completing startup. Its `podman run --replace --rm` command replaces stale `omp-relay-hz` containers so name collisions cannot block a restart.
+
+Enable, start and check the relay independently of the Web export:
+
+```bash
+ssh HZProxyServer 'systemctl enable --now omp-relay-hz.service && systemctl is-active omp-relay-hz.service && systemctl is-enabled omp-relay-hz.service'
+curl --fail https://omp.myzhijieyun.cn/health
+curl --fail https://omp.myzhijieyun.cn/ready
+```
+
 Keep TCP `80` and `443` allowed in the cloud security group. Port `80` redirects to HTTPS except for the ACME challenge path. Clients using the old public `:4000` endpoint must switch to WSS if that port is no longer allowed.
 
 Build and publish another version from the repository root:

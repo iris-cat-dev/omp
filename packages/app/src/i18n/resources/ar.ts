@@ -2093,11 +2093,8 @@ export const ar: TranslationResources = {
       chatBehavior: "سلوك الدردشة",
       appearance: "مظهر",
       plugins: "الإضافات",
-      editor: "المحرر",
       shortcuts: "الاختصارات",
-      notifications: "الإشعارات",
       permissions: "الأذونات",
-      diagnostics: "التشخيص",
       about: "عن",
     },
     editor: {

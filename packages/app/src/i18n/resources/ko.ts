@@ -2110,11 +2110,8 @@ export const ko: TranslationResources = {
       chatBehavior: "채팅 동작",
       appearance: "모양",
       plugins: "플러그인",
-      editor: "편집기",
       shortcuts: "단축키",
-      notifications: "알림",
       permissions: "권한",
-      diagnostics: "진단",
       about: "정보",
     },
     editor: {

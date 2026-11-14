@@ -2271,11 +2271,8 @@ export const zhCN: TranslationResources = {
       chatBehavior: "聊天行为",
       appearance: "外观",
       plugins: "插件",
-      editor: "编辑器",
       shortcuts: "快捷键",
-      notifications: "通知",
       permissions: "权限",
-      diagnostics: "诊断",
       about: "关于",
     },
     editor: {

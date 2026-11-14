@@ -2116,11 +2116,8 @@ export const ja: TranslationResources = {
       chatBehavior: "チャットの動作",
       appearance: "外観",
       plugins: "プラグイン",
-      editor: "エディター",
       shortcuts: "ショートカット",
-      notifications: "通知",
       permissions: "権限",
-      diagnostics: "診断",
       about: "アプリ情報",
     },
     editor: {

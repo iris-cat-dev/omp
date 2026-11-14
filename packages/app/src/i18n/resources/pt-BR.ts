@@ -2139,11 +2139,8 @@ export const ptBR: TranslationResources = {
       chatBehavior: "Comportamento do chat",
       appearance: "Aparência",
       plugins: "Plugins",
-      editor: "Editor",
       shortcuts: "Atalhos",
-      notifications: "Notificações",
       permissions: "Permissões",
-      diagnostics: "Diagnósticos",
       about: "Sobre",
     },
     editor: {

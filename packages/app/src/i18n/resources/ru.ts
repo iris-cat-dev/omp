@@ -2141,11 +2141,8 @@ export const ru: TranslationResources = {
       chatBehavior: "Поведение чата",
       appearance: "Оформление",
       plugins: "Плагины",
-      editor: "Редактор",
       shortcuts: "Сочетания клавиш",
-      notifications: "Уведомления",
       permissions: "Разрешения",
-      diagnostics: "Диагностика",
       about: "О приложении",
     },
     editor: {

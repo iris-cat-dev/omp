@@ -441,7 +441,6 @@ export function buildSessionsRoute() {
   return "/sessions" as const;
 }
 
-
 export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }
@@ -472,11 +471,8 @@ export const SETTINGS_SECTION_SLUGS = [
   "connections",
   "appearance",
   "plugins",
-  "editor",
   "shortcuts",
-  "notifications",
   "permissions",
-  "diagnostics",
   "about",
 ] as const;
 
@@ -548,11 +544,17 @@ export function buildSettingsHostSectionRoute(serverId: string, section: HostSec
   return `/settings/hosts/${encodeSegment(normalized)}/${section}` as const;
 }
 
-export function buildPluginSettingsRoute(input?: { pluginId?: string; serverId?: string; owner?: "desktop" | "daemon" }) {
+export function buildPluginSettingsRoute(input?: {
+  pluginId?: string;
+  serverId?: string;
+  owner?: "desktop" | "daemon";
+}) {
   const base = input?.serverId
     ? buildSettingsHostSectionRoute(input.serverId, "plugins")
     : buildSettingsSectionRoute("plugins");
-  return input?.pluginId ? `${base}?plugin=${encodeURIComponent(input.pluginId)}&owner=${input.owner ?? (input.serverId ? "daemon" : "desktop")}` as const : base;
+  return input?.pluginId
+    ? (`${base}?plugin=${encodeURIComponent(input.pluginId)}&owner=${input.owner ?? (input.serverId ? "daemon" : "desktop")}` as const)
+    : base;
 }
 
 export function buildProjectsSettingsRoute(serverId: string) {
