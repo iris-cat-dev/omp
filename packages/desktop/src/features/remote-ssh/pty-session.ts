@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as pty from "node-pty";
 import { MarkerBuffer } from "./marker-buffer.js";
+import { PtyShellCommands } from "./pty-shell.js";
 import { buildSshArguments, resolveSshExecutable } from "./target.js";
 import type { RemoteSshTarget } from "./types.js";
 
@@ -24,7 +25,8 @@ export class SshPtySession {
   private readonly markers = new MarkerBuffer();
   private readonly process: pty.IPty;
   private readonly target: RemoteSshTarget;
-  private readonly controlPath: string;
+  private readonly controlPath: string | undefined;
+  private readonly shellCommands: PtyShellCommands | undefined;
   private readonly sshExecutable: string;
   private readonly commands = new Set<ChildProcessWithoutNullStreams>();
   private interactive = true;
@@ -33,10 +35,16 @@ export class SshPtySession {
   constructor(options: SshPtySessionOptions) {
     this.target = options.target;
     this.sshExecutable = resolveSshExecutable();
-    this.controlPath = path.join(
-      os.tmpdir(),
-      `omp-ssh-${process.pid}-${randomUUID().slice(0, 8)}.sock`,
-    );
+    this.controlPath =
+      process.platform === "win32"
+        ? undefined
+        : path.join(os.tmpdir(), `omp-ssh-${process.pid}-${randomUUID().slice(0, 8)}.sock`);
+    this.shellCommands = this.controlPath
+      ? undefined
+      : new PtyShellCommands({
+          writeCommand: (command) => this.writeCommand(command),
+          waitForBlock: (start, end, timeoutMs) => this.markers.waitForBlock(start, end, timeoutMs),
+        });
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,
@@ -47,7 +55,7 @@ export class SshPtySession {
       [
         ...buildSshArguments(options.target, {
           controlPath: this.controlPath,
-          controlMaster: true,
+          controlMaster: this.controlPath !== undefined,
         }),
         options.remoteCommand,
       ],
@@ -94,10 +102,19 @@ export class SshPtySession {
   }
 
   executeCommand(remoteCommand: string): Promise<string> {
-    return this.runMultiplexedCommand(remoteCommand);
+    return this.shellCommands
+      ? this.shellCommands.executeCommand(remoteCommand)
+      : this.runMultiplexedCommand(remoteCommand);
   }
 
-  async uploadFile(remotePath: string, contents: Buffer | Readable, expectedHash: string): Promise<void> {
+  async uploadFile(
+    remotePath: string,
+    contents: Buffer | Readable,
+    expectedHash: string,
+  ): Promise<void> {
+    if (this.shellCommands) {
+      return this.shellCommands.uploadFile(remotePath, contents, expectedHash);
+    }
     const directory = path.posix.dirname(remotePath);
     const quotedPath = shellQuote(remotePath);
     const remoteCommand = `umask 077; mkdir -p ${shellQuote(directory)} && cat > ${quotedPath} && if command -v sha256sum >/dev/null 2>&1; then sha256sum ${quotedPath} | awk '{print $1}'; else shasum -a 256 ${quotedPath} | awk '{print $1}'; fi`;
@@ -107,7 +124,10 @@ export class SshPtySession {
     }
   }
 
-  private async runMultiplexedCommand(remoteCommand: string, input?: Buffer | Readable): Promise<string> {
+  private async runMultiplexedCommand(
+    remoteCommand: string,
+    input?: Buffer | Readable,
+  ): Promise<string> {
     if (this.closed) throw new Error("The SSH session is closed");
     const child = spawn(
       this.sshExecutable,
@@ -164,6 +184,7 @@ export class SshPtySession {
   }
 
   private removeControlSocket(): void {
+    if (!this.controlPath) return;
     try {
       unlinkSync(this.controlPath);
     } catch {
