@@ -410,6 +410,8 @@ The frontend Babel pipeline resolves Lucide's actual named exports to individual
 
 Metro resolves relative `.js` imports to TypeScript source throughout the repository workspace, including optional plugin packages under `plugins/`; installed `node_modules` dependencies retain their own resolution. Default application exports load only installed plugins' client bundles, with no fixed plugin imports.
 
+Conversation footers include output speed without installing Agent Speed. Completed speed is this turn's valid native `measuredOutputTokens / (measuredDurationMs / 1000)`, with completed replay taking precedence over retained live usage; untimed output remains in token totals but does not enter speed. Live speed uses the three-second native-request window and refreshes every 500 ms, pausing for hidden conversations/documents and cancellation. In-flight estimates use recent own-agent or same-model own-request references and identify their source in the tooltip/accessibility label. Missing native timing remains unknown; the footer never substitutes its wall-clock elapsed time. An active, host-matching `output-speed` plugin contribution replaces the built-in metric without duplicating it.
+
 Draft text changes keep the 200 ms checkpoint interval without scheduling attachment
 GC. GC is scheduled when active image references change, including nested visual
 feedback originals/previews, or when lifecycle changes release references. Equivalent

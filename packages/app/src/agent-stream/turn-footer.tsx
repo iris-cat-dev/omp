@@ -8,7 +8,7 @@ import { TurnFileChangesBar } from "./turn-file-changes-bar";
 import type { TurnTokenStats } from "./turn-token-stats";
 import { formatTokenCount } from "./turn-token-stats";
 import type { PluginTurnMetricProps } from "@omp-desktop/plugin";
-import { PluginTurnMetrics } from "@/plugins/turn-metrics";
+import { TurnMetrics } from "@/plugins/turn-metrics";
 import type { StreamItem } from "@/types/stream";
 import {
   collectAssistantResponseContentForStreamRenderStrategy,
@@ -174,7 +174,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-elapsed"
         />
       ) : null}
-      <PluginTurnMetrics {...metricProps} />
+      <TurnMetrics {...metricProps} />
     </View>
   );
 });
@@ -238,6 +238,10 @@ function CompletedTurnFooter({
     }
     return onForkAssistantTurn?.({ boundary });
   }, [boundary, onForkAssistantTurn]);
+  const metrics = useMemo(
+    () => (metricProps ? <TurnMetrics {...metricProps} /> : null),
+    [metricProps],
+  );
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
@@ -245,7 +249,7 @@ function CompletedTurnFooter({
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         tokenTotalLabel={turnTokenStats ? formatTokenCount(turnTokenStats.totalTokens) : null}
-        metrics={metricProps ? <PluginTurnMetrics {...metricProps} /> : null}
+        metrics={metrics}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
       />
     </View>
