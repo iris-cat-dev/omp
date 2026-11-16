@@ -4,12 +4,20 @@ import desktopServiceTier, {
   readNativeServiceTier,
   type NativeServiceTierApi,
 } from "./service-tier-extension.js";
+import type { OmpModel } from "./rpc-types.js";
 
 const model = {
   provider: "openai-codex",
   id: "gpt-6.1-sol",
   api: "openai-codex-responses",
   serviceTiers: ["priority", "ultrafast"],
+};
+const apiModel: OmpModel = {
+  provider: "custom-openai",
+  id: "gpt-api",
+  identity: { class: "openai" },
+  api: "openai-responses",
+  baseUrl: "https://api.openai.com/v1",
 };
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -30,9 +38,9 @@ function createNative() {
   return { api, tiers };
 }
 
-async function startBridge() {
+async function startBridge(initialModel: OmpModel = model) {
   const native = createNative();
-  let currentModel = { ...model };
+  let currentModel = initialModel;
   const context = {
     get model() {
       return currentModel;
@@ -106,6 +114,79 @@ describe("native OMP service tier control", () => {
     ]);
     expect(tiers.anthropic).toBe("priority");
   });
+
+  test.each([
+    apiModel,
+    { ...apiModel, api: "openai-completions", baseUrl: "https://api.openai.com:443/v1" },
+    { ...apiModel, baseUrl: "https://gateway.example/v1", serviceTiers: ["ultrafast"] },
+    { ...apiModel, provider: "openai", baseUrl: "https://api.openai.com/v1" },
+  ])("applies native API speed choices for $provider/$api", (candidate) => {
+    const { api, tiers } = createNative();
+    expect(readNativeServiceTier(api, candidate).ultrafastAvailable).toBe(true);
+    for (const [selection, tier] of [
+      ["ultrafast", "ultrafast"],
+      ["on", "priority"],
+      ["off", null],
+    ] as const) {
+      expect(applyNativeServiceTier(api, candidate, candidate, selection).tier).toBe(tier);
+      expect(tiers.anthropic).toBe("priority");
+    }
+  });
+
+  test.each([
+    { ...apiModel, baseUrl: "https://gateway.example/v1" },
+    { ...apiModel, serviceTiers: [] },
+    { ...apiModel, serviceTiers: ["priority"] },
+    { ...apiModel, baseUrl: "https://gateway.example/v1", serviceTiers: ["priority"] },
+    { ...apiModel, baseUrl: "https://api.openai.com.evil.example/v1" },
+    { ...apiModel, baseUrl: "https://api.openai.com@evil.example/v1" },
+    { ...apiModel, baseUrl: "https://user:password@api.openai.com/v1" },
+    { ...apiModel, baseUrl: "http://api.openai.com/v1" },
+    { ...apiModel, baseUrl: "https://api.openai.com:8443/v1" },
+    { ...apiModel, baseUrl: "not a URL" },
+    { ...apiModel, identity: { class: "anthropic" }, serviceTiers: ["ultrafast"] },
+    { ...apiModel, api: "anthropic-messages", serviceTiers: ["ultrafast"] },
+    { ...apiModel, provider: "openrouter", serviceTiers: ["ultrafast"] },
+    { ...apiModel, provider: "github-copilot", serviceTiers: ["ultrafast"] },
+    { ...apiModel, provider: "fireworks", serviceTiers: ["ultrafast"] },
+  ])(
+    "refuses ineligible API declarations and origins: $provider/$baseUrl/$serviceTiers",
+    (candidate) => {
+      const { api, tiers } = createNative();
+      expect(readNativeServiceTier(api, candidate).ultrafastAvailable).toBe(false);
+      expect(() => applyNativeServiceTier(api, candidate, candidate, "ultrafast")).toThrow(
+        "unavailable",
+      );
+      expect(api.setServiceTier).not.toHaveBeenCalled();
+      expect(tiers).toEqual({ anthropic: "priority" });
+    },
+  );
+
+  test.each(["openai-responses", "openai-completions"])(
+    "selects API Ultrafast, Fast, and Standard over the real private HTTP bridge: %s",
+    async (api) => {
+      const candidate = { ...apiModel, api };
+      const h = await startBridge(candidate);
+      expect(await (await h.request()).json()).toMatchObject({
+        ultrafastAvailable: true,
+        tier: null,
+      });
+      for (const [value, tier] of [
+        ["ultrafast", "ultrafast"],
+        ["on", "priority"],
+        ["off", null],
+      ] as const) {
+        const response = await h.request({
+          method: "POST",
+          body: JSON.stringify({ value, model: candidate }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ ultrafastAvailable: true, tier });
+        expect(await (await h.request()).json()).toMatchObject({ tier });
+        expect(h.tiers.anthropic).toBe("priority");
+      }
+    },
+  );
 
   test.each([
     { ...model, serviceTiers: ["priority"] },

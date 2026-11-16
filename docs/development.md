@@ -134,6 +134,25 @@ optimistic success; native credential events continue updating the effective
 account. Rebuild the SDK/backend and restart loaded hosts to apply this fix
 without deleting conversation history.
 
+API GPT models use the same **Standard / Fast / Ultrafast** speed selector as
+eligible subscription models. Built-in OpenAI API models support the UF request
+field; custom OpenAI Responses/Chat Completions models qualify through an exact
+`https://api.openai.com` origin or an explicit per-model `serviceTiers` declaration.
+For custom APIs, an explicit list (including `[]`) takes precedence over endpoint
+inference. Codex still requires discovery to advertise `ultrafast`; OpenRouter,
+Copilot and Fireworks do not acquire API UF support through this inference.
+
+The provider editor preserves `/models` `service_tiers` strings or `{ id }`
+records through discovery, save and reload. A missing declaration is unknown,
+not confirmed access. Discovery and selection send no billed model probe.
+Selecting UF requests `service_tier: "ultrafast"` on the next model turn; it does
+not verify model/project entitlement or guarantee speed. Eligible custom API
+responses retain an explicit served-tier echo, including a downgrade to
+`default`, without inventing a tier when the echo is absent or applying OpenAI
+billing multipliers to a custom provider. API charges follow the provider,
+model and project, not the subscription usage notice. Rebuild the SDK/backend
+and renderer and restart loaded hosts to apply this change.
+
 Node RPC hosts persist the native session header before reporting startup ready, including new idle sessions. `noSession` keeps its existing in-memory contract. Local extension commands that finish without a model turn use `append_session_annotation` for their original submission and complete attachment snapshots. Desktop waits for the SDK's durable acknowledgment before completing the submission; cold history restores the same journal entry rather than a synthetic model message. RPC shutdown stops resource watching, disposes the owned session, and closes presence.
 
 Remote distribution must ship an SDK with the same `append_session_annotation` RPC contract. The currently configured `sdk-v18.14.0-desktop-core.1` release returns `Unknown command: append_session_annotation`; rebuilding Desktop's remote-backend bundles does not update that published SDK. Publish the matching SDK first, then update `omp-sdk/sdk/node-release.json` to its real release and verify a downloaded runtime through startup, durable acknowledgment, and cold resume.

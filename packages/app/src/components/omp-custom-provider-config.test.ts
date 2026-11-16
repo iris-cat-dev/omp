@@ -1,7 +1,12 @@
 import { parse, parseDocument } from "yaml";
 import { describe, expect, it } from "vitest";
 import {
+  OmpCustomProviderInputSchema,
+  OmpProviderModelDiscoveryResponseMessageSchema,
+} from "@omp-desktop/protocol/messages";
+import {
   configureDiscoveredProviderModels,
+  customProviderDraftToInput,
   parseCustomProviderDraft,
   updateCustomProviderConfigYaml,
   resolveDiscoveredModelApi,
@@ -287,6 +292,64 @@ describe("OMP custom provider editing", () => {
         "openai-responses",
       ]),
     ).toBe("openai-responses");
+  });
+
+  it.each([
+    { tiers: undefined, expected: ["ultrafast"] },
+    { tiers: [], expected: [] },
+    { tiers: ["priority"], expected: ["priority"] },
+    { tiers: ["priority", "ultrafast"], expected: ["priority", "ultrafast"] },
+  ])("saves and reloads refreshed tier declarations: $tiers", ({ tiers, expected }) => {
+    const document = parseDocument(configYaml);
+    document.setIn(["providers", "mintcat", "models", 0, "serviceTiers"], ["ultrafast"]);
+    const originalYaml = document.toString();
+    const draft = parseCustomProviderDraft(originalYaml, "mintcat")!;
+    const discovery = OmpProviderModelDiscoveryResponseMessageSchema.parse({
+      type: "omp.provider.models.discover.response",
+      payload: {
+        requestId: "discover-tiers",
+        models: [
+          {
+            id: "gpt-old",
+            name: "GPT Old",
+            ...(tiers !== undefined ? { serviceTiers: tiers } : {}),
+          },
+          { id: "gpt-new", name: "GPT New" },
+          { id: "new-advertised", name: "New Advertised", serviceTiers: ["ultrafast"] },
+        ],
+      },
+    });
+    const models = configureDiscoveredProviderModels(
+      draft.models,
+      discovery.payload.models,
+      () => "model-new",
+    );
+    const input = OmpCustomProviderInputSchema.parse(
+      customProviderDraftToInput({ ...draft, models }, (value) => Number(value)),
+    );
+    const saved = updateCustomProviderConfigYaml(originalYaml, "mintcat", input);
+    const reloaded = parseCustomProviderDraft(saved, "mintcat")!;
+
+    expect(reloaded.models[0]?.serviceTiers).toEqual(expected);
+    expect(reloaded.models[1]).not.toHaveProperty("serviceTiers");
+    expect(reloaded.models[2]?.serviceTiers).toEqual(["ultrafast"]);
+    expect(parse(saved).providers.mintcat.models[0].serviceTiers).toEqual(expected);
+    expect(reloaded.models[0]?.supportedReasoningLevels).toEqual(["low", "medium", "high"]);
+    expect(reloaded.models[0]?.contextWindow).toBe("128000");
+  });
+
+  it("retains tier declarations while editing without discovery", () => {
+    const document = parseDocument(configYaml);
+    document.setIn(["providers", "mintcat", "models", 0, "serviceTiers"], []);
+    const draft = parseCustomProviderDraft(document.toString(), "mintcat")!;
+    draft.models[0]!.name = "Renamed";
+    const input = customProviderDraftToInput(draft, (value) => Number(value));
+    const saved = updateCustomProviderConfigYaml(document.toString(), "mintcat", input);
+
+    expect(parseCustomProviderDraft(saved, "mintcat")?.models[0]).toMatchObject({
+      name: "Renamed",
+      serviceTiers: [],
+    });
   });
 
   it("prefers native API formats for recognized model families", () => {

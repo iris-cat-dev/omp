@@ -282,10 +282,10 @@ export const ko: TranslationResources = {
         fast: "빠름 (Fast)",
         ultrafast: "초고속 (Ultrafast)",
         ultrafastNotice:
-          "요금제 포함 사용량 8배 / 구매 크레딧 6배. 지원 계정과 모델만 사용할 수 있습니다.",
+          "구독: 포함 사용량 8배 / 구매 크레딧 6배. API 이용 권한과 요금은 제공업체에 따라 다릅니다.",
         standardDescription: "일반 속도와 표준 사용량 차감률입니다.",
         ultrafastDescription:
-          "Ultrafast는 표준 대비 요금제에 포함된 사용량을 8배, 구매한 크레딧을 6배의 비율로 차감합니다. 지원되는 계정과 모델이 필요하며 실제 속도는 상황에 따라 달라집니다.",
+          "구독은 표준 대비 포함 사용량을 8배, 구매 크레딧을 6배의 비율로 차감합니다. API 이용 가능 여부와 요금은 제공업체, 모델, 프로젝트에 따라 다릅니다. 이 옵션은 계정 권한을 확인하지 않으며 실제 속도는 상황에 따라 달라집니다.",
         selectWithValue: "속도 선택, 현재: {{value}}",
         detecting: "지원되는 속도 감지 중…",
         unsupported: "속도 선택을 지원하지 않습니다",

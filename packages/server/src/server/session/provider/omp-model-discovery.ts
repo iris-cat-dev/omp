@@ -13,6 +13,7 @@ export interface OmpDiscoveredProviderModel {
   reasoning?: boolean;
   defaultReasoningLevel?: string;
   supportedReasoningLevels?: string[];
+  serviceTiers?: string[];
 }
 
 interface DiscoveryInput {
@@ -56,6 +57,23 @@ function parseReasoningLevels(value: unknown): string[] | undefined {
     ),
   ];
   return levels.length > 0 ? levels : undefined;
+}
+
+function parseServiceTiers(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return [
+    ...new Set(
+      value.flatMap((tier: unknown) => {
+        let id: unknown;
+        if (typeof tier === "string") {
+          id = tier;
+        } else if (tier && typeof tier === "object" && "id" in tier) {
+          id = tier.id;
+        }
+        return typeof id === "string" && id.trim() ? [id.trim()] : [];
+      }),
+    ),
+  ];
 }
 
 function parseModels(value: unknown): OmpDiscoveredProviderModel[] {
@@ -119,6 +137,7 @@ function parseModels(value: unknown): OmpDiscoveredProviderModel[] {
         ? candidate.default_reasoning_level.trim()
         : undefined;
     const supportedReasoningLevels = parseReasoningLevels(candidate?.supported_reasoning_levels);
+    const serviceTiers = parseServiceTiers(candidate?.service_tiers);
     seen.add(id);
     models.push({
       id,
@@ -130,6 +149,7 @@ function parseModels(value: unknown): OmpDiscoveredProviderModel[] {
       ...(reasoning !== undefined ? { reasoning } : {}),
       ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
       ...(supportedReasoningLevels ? { supportedReasoningLevels } : {}),
+      ...(serviceTiers !== undefined ? { serviceTiers } : {}),
     });
   }
 

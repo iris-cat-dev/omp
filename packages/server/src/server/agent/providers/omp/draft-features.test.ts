@@ -9,6 +9,13 @@ const model: OmpModel = {
   api: "openai-codex-responses",
   serviceTiers: ["priority", "ultrafast"],
 };
+const apiModel: OmpModel = {
+  provider: "custom-openai",
+  id: "gpt-api",
+  identity: { class: "openai" },
+  api: "openai-responses",
+  baseUrl: "https://api.openai.com/v1",
+};
 
 describe("OMP catalog draft features", () => {
   test("offers all advertised speed choices without needing an active session", () => {
@@ -26,6 +33,41 @@ describe("OMP catalog draft features", () => {
     expect(features.map((feature) => feature.id)).toEqual(["workflow_mode", "fast_mode"]);
     expect(features.find((feature) => feature.id === "workflow_mode")?.value).toBe("standard");
     expect(mapOmpModel(model, "omp").metadata?.serviceTiers).toEqual(["priority", "ultrafast"]);
+  });
+  test.each([
+    apiModel,
+    { ...apiModel, api: "openai-completions" },
+    { ...apiModel, baseUrl: "https://gateway.example/v1", serviceTiers: ["ultrafast"] },
+  ])("offers API speed choices from catalog capability alone: $api/$baseUrl", (candidate) => {
+    const features = createOmpDraftFeatures({
+      model: candidate,
+      capabilities: { fastMode: true, ultrafast: true },
+    });
+    expect(features.find((feature) => feature.id === "fast_mode")).toMatchObject({
+      type: "select",
+      value: "off",
+      options: [{ id: "off" }, { id: "on" }, { id: "ultrafast" }],
+    });
+  });
+
+  test.each([
+    { candidate: apiModel, nativeUltra: false },
+    { candidate: { ...apiModel, baseUrl: "https://gateway.example/v1" }, nativeUltra: true },
+    { candidate: { ...apiModel, serviceTiers: [] }, nativeUltra: true },
+    { candidate: { ...apiModel, serviceTiers: ["priority"] }, nativeUltra: true },
+    {
+      candidate: { ...apiModel, baseUrl: "https://api.openai.com.evil.example/v1" },
+      nativeUltra: true,
+    },
+  ])("keeps ordinary API Fast when Ultrafast is unavailable", ({ candidate, nativeUltra }) => {
+    const features = createOmpDraftFeatures({
+      model: candidate,
+      capabilities: { fastMode: true, ultrafast: nativeUltra },
+    });
+    expect(features.find((feature) => feature.id === "fast_mode")).toMatchObject({
+      type: "toggle",
+      value: false,
+    });
   });
 
   test.each([
