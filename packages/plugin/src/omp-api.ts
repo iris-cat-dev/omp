@@ -28,7 +28,8 @@ export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,sc
     const returnsOwnedObject=key==="ref" || key==="create" || key==="open" || key==="observe";
     return (...args:unknown[])=>{
      scope.assertCurrent(installation.generation);
-     if(options.mode!=="active")throw new Error("Agent operations are unavailable in management mode");
+     const managementAuthoring=installation.owner==="desktop" && (next[0]==="providers" || (next.length===2 && next[0]==="host" && key==="info") || (next[0]==="workspaces" && next[1]==="create" && (next.length===2 || (next.length===4 && next[2]==="agents" && key==="create"))));
+     if(options.mode!=="active" && !managementAuthoring)throw new Error("Agent operations are unavailable in management mode");
      const required=capability(next);
      if(!options.legacy && (!installation.declaredCapabilities.includes(required)||!installation.grantedCapabilities.includes(required)))throw new Error(`Plugin capability is not granted: ${required}`);
      const guarded=args.map(argument=>typeof argument==="function"?(...values:unknown[])=>{if(scope.signal.aborted)return;scope.assertCurrent(installation.generation);return argument(...values);}:argument);

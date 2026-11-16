@@ -48,7 +48,7 @@ function pluginLogs(): LocalPluginLogs { logs ??= new LocalPluginLogs(app.getPat
 function pluginSecrets(): LocalPluginSecrets { secrets ??= new LocalPluginSecrets(app.getPath("userData")); return secrets; }
 export function getLocalPluginRuntime(): LocalPluginRuntime {
   runtime ??= new LocalPluginRuntime(getDesktopSettingsStore(), serviceNative, (record, scope) => loadExternalLocalPlugin(record, scope, {
-    logs: pluginLogs(), hostCall: workerHostCall, subscribe,
+    logs: pluginLogs(), hostCall: workerHostCall, subscribe, environment: { OMP_ELECTRON_USER_DATA_DIR: app.getPath("userData") },
     fail: (id, generation, message) => getLocalPluginRuntime().fail(id, generation, message),
     waiting: (id, generation, reason) => getLocalPluginRuntime().waiting(id, generation, reason),
     clearData: (id) => pluginSecrets().clear(id),
@@ -267,7 +267,8 @@ function registerLocalPluginIpc(): void {
       if (input.method === "menu.register" && binding.mode !== "active") throw new Error("Management cannot acquire plugin execution resources.");
       let result: unknown;
       if (input.method.startsWith("overlay.")) throw new Error("Native overlays are owned by the active Desktop service.");
-      if (input.method === "dialog.open") result = await openPluginDialog(record, input.input, event);
+      if (input.method === "client.identity") result = { senderId: binding.senderId };
+      else if (input.method === "dialog.open") result = await openPluginDialog(record, input.input, event);
       else if (input.method === "menu.register") result = registerPluginNativeMenu(event, binding, input.input, local);
       else if (input.method === "menu.unregister") result = unregisterPluginNativeMenu(event, binding, input.input);
       else if (["secrets.configured", "secrets.set", "secrets.delete"].includes(input.method)) { requireCapability(record, "secrets.scoped"); const request = z.object({ key: z.string(), value: z.string().optional() }).parse(input.input); result = await pluginSecrets().invoke(record.id, { ...request, operation: input.method.slice("secrets.".length) }, authorizeCommit); }

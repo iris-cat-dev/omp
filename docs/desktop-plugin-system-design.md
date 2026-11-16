@@ -181,7 +181,9 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 
 SDK 只为 API 命名空间与所属激活的资源句柄加调用 guard；普通 DTO 和数组按原值返回，不递归代理数据或数组回调生成的 React element。API 调用先检查能力与 generation；异步结果及回调交付时再次检查 generation。
 
-客户端通过公开的 `ctx.hosts.list()/subscribe()/get(id)` 访问同一 daemon 插件的跨主机目录。`list()` 返回主机 ID、显示名与在线状态，并保留已见离线主机；`get()` 仅返回已在线、客户端已获本机信任、package ID 与 installation ID 都匹配的 active 实例，提供 `omp`、类型化 `rpc` 与变更 `subscribe`。调用同时受发起端和目标端能力授权约束，远端 grant 不能提升发起端权限；断连、撤销或 generation 替换使旧结果／回调失效。management 模式不能取得运行型连接。
+客户端通过公开的 `ctx.hosts.list()/subscribe()/get(id)` 访问主机目录。daemon-owned 插件只返回同 package／installation 的受信任 active 实例，调用同时受发起端和目标端授权约束；management 模式不能取得这类连接。Desktop-owned 插件使用应用已有的真实主机连接，不要求远端安装同一个插件；仅在线主机可取得 `omp` 与变更订阅，本机服务 RPC 使用 `ctx.rpc()`。撤销和 generation 替换使旧调用／回调失效。
+
+Desktop management 模式保留受限创作能力：`agents.events` 允许 provider 数据和 `host.info()`，`agents.create` 允许新建工作区及在该新工作区内创建会话。既有工作区／会话的读取和修改仍禁止；daemon management 的限制不变。公开 `omp.agents.list()` 保留协议的可选 `sync` 目录修订，用于完成读取后的 freshness 与 generation 再验证。
 
 管理器路由和 catalog 返回真实运行时支持。只有运行时已经接通才能恢复 `plugin.*` 分发；`plugins/pluginManagement/pluginLogs/pluginThemes` 能力标记必须反映已实现能力。当前无条件发布的标记不能声称缺失服务可用。OMP `ompPlugins.*` 保留独立传输协议，但使用同一个管理页面。
 
@@ -255,13 +257,15 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 
 ### 桌面宠物
 
-将宠物库／schema、动画与气泡规则、任务到宠物状态的投影、设置和创作流程移入 `desktop-pet`。通用设置发布、应用启动／退出协调、原生窗口／输入、媒体／图像转换和导航保留在宿主受控接口中。
+宠物库／schema、PNG 验证与转换、动画与气泡规则、任务到宠物状态的投影、设置和创作流程由 `desktop-pet` 提供。通用设置发布、应用启动／退出协调、原生窗口／输入和导航保留在宿主受控接口中。
 
-提取前必须解除一处具体耦合：`pets/controller.ts` 当前广播所有 Desktop 设置变更。该广播需移到共享设置服务，避免禁用宠物后其他设置停止更新。
+目录服务直接初始化自己的 `PetLibrary`，不能通过尚未激活的自身 RPC 加载所选宠物。`setup` 和 `manage` 注册同一组库／创作 RPC；宿主向两类 worker 注入 `OMP_ELECTRON_USER_DATA_DIR`。客户端仅使用公开 context 与共享模块，不依赖固定 builtin 或额外的 host configure 调用。共享设置发布独立于宠物开关。
 
 保留多个主窗口共享一个不抢焦点的宠物、透明像素输入穿透、显示器边界内拖动、真实任务／主机身份、活动新鲜度、语言／字体更新、减少动态效果、原有 Iris 行为及每个资源的气泡。运行时动画／对白不调用模型。等待现有 startup-ready 条件；离线和启动错误页面也可满足就绪，且就绪前禁用不能闪现宠物窗口。
 
 `pet.json` 继续只包含已校验数据和 PNG 资源。保留 20 MiB／4096×4096 限制、图集校验、五个必需动画状态、旧资源可选气泡，以及新图像创作必须完整提供气泡的更强约束。导入不执行额外文件、不覆盖已有资源、不自动选择或启用新宠物。
+
+库返回经过验证的 PNG data URL，不恢复宠物专用资源路由。窗口请求使用 wire lease 与 `pet.overlay-action`／`pet.overlay-position` 方法名，不跨 IPC 传函数或 lease 对象；停止时等待释放完成。活动发布通过已授权的 `client.identity` 取得实际窗口身份，并复用应用已有工作区目录订阅，不另行接管该订阅。
 
 **使用 OMP 创建（Create with OMP）**仍建立独立本机创作工作区和普通 OMP 会话，使用用户独立选择的创作模型／Thinking／mode／features。`hatch-pet` 属于插件的 `assets/skills/hatch-pet/`，随插件分发，只复制到创作工作区的 `.omp/skills/hatch-pet/`，不加入 Desktop 的全局技能目录。新工作区的 helper 使用 bundled Electron 的 Node 模式直接运行插件的 `dist/cjs/install-pet.js`；转换／安装实现和 `sharp` 运行依赖由插件提供，不恢复已移除的 Desktop `--desktop-pet-install` 命令，也不启动 GUI／daemon 或参与升级退出清理。现有工作区保留复制的技能与旧脚本，使用新 helper 需要新建创作工作区；禁用／移除插件不删除普通创作会话，运行 helper 时需保留插件及其运行依赖。
 

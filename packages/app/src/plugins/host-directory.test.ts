@@ -9,20 +9,21 @@ import { pluginClientRegistry } from "./registry";
 const runtime = vi.hoisted(() => ({
   hosts: [{ serverId: "home", label: "Home" }, { serverId: "office", label: "Office" }],
   online: new Set(["home", "office"]),
+  client: {},
 }));
 vi.mock("@/runtime/host-runtime", () => ({
   getHostRuntimeStore: () => ({
     getHosts: () => runtime.hosts,
-    getSnapshot: (id: string) => ({ connectionStatus: runtime.online.has(id) ? "online" : "offline" }),
+    getSnapshot: (id: string) => ({ connectionStatus: runtime.online.has(id) ? "online" : "offline", client: runtime.client }),
     subscribeAll: () => () => {},
     subscribeHostList: () => () => {},
   }),
 }));
 
-async function install(hostId: string, capabilities: string[], packageId = "schedules") {
+async function install(hostId: string, capabilities: string[], packageId = "schedules", owner: "desktop" | "daemon" = "daemon") {
   const scope = createActivationScope(1);
   const installation: PluginInstallation = {
-    id: "schedules", packageId, owner: "daemon", version: "0.7.0", generation: 1,
+    id: "schedules", packageId, owner, version: "0.7.0", generation: 1,
     enabled: true, declaredCapabilities: capabilities, grantedCapabilities: capabilities,
   };
   const api = { agents: { create() { throw new Error("Unexpected privileged operation"); } } } as unknown as OmpApi;
@@ -75,4 +76,18 @@ it("does not inherit a remote creation grant and fences captured RPCs after remo
   await office.scope.dispose();
   const rpc = defineRpc({ name: "inspect", input: z.object({}), output: z.string() });
   await expect(connection.rpc(rpc, {})).rejects.toThrow("Plugin generation is no longer active");
+});
+
+it("lets a Desktop installation discover hosts without requiring remote plugin installations", async () => {
+  const desktop = await install("desktop", ["agents.events"], "desktop-pet", "desktop");
+  expect(desktop.context.hosts.list()).toEqual([
+    { id: "home", label: "Home", online: true }, { id: "office", label: "Office", online: true },
+  ]);
+  const connection = desktop.context.hosts.get("office");
+  if (!connection) throw new Error("Office is missing");
+  expect(() => connection.omp.agents.create({ config: { provider: "codex/test" }, cwd: "/tmp" })).toThrow("Plugin capability is not granted: agents.create");
+  runtime.online.delete("office");
+  expect(desktop.context.hosts.get("office")).toBeNull();
+  await desktop.scope.dispose();
+  expect(() => connection.omp.agents.list()).toThrow("Plugin generation is no longer active");
 });

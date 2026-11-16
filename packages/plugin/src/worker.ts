@@ -16,6 +16,7 @@ export interface IsolatedPluginWorkerOptions {
  format:"legacy"|"package";
  /** Cancels an initialization that has not yet returned its cleanup handle. */
  signal?:AbortSignal;
+ environment?:Readonly<Record<string,string>>;
  hostCall(operation:string,input:unknown):unknown|Promise<unknown>;
  onLog?(stream:"stdout"|"stderr",message:string):void;
  onFailure?(error:Error):void;
@@ -30,7 +31,7 @@ export class IsolatedPluginWorker {
  private stopping:Promise<void>|undefined;
  private readonly logRedactor=new PluginLogRedactor();
  private constructor(private readonly options:IsolatedPluginWorkerOptions){
-  this.child=fork(fileURLToPath(getPluginWorkerUrl()),[],{serialization:"advanced",stdio:["ignore","pipe","pipe","ipc"],env:{...process.env,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:"1"}:{})},execArgv:import.meta.url.endsWith(".ts")?["--experimental-strip-types","--import",`data:text/javascript,${encodeURIComponent('import {register} from "node:module"; register('+JSON.stringify(new URL("./worker-loader.ts",import.meta.url).href)+');')}`]:[]});
+  this.child=fork(fileURLToPath(getPluginWorkerUrl()),[],{serialization:"advanced",stdio:["ignore","pipe","pipe","ipc"],env:{...process.env,...options.environment,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:"1"}:{})},execArgv:import.meta.url.endsWith(".ts")?["--experimental-strip-types","--import",`data:text/javascript,${encodeURIComponent('import {register} from "node:module"; register('+JSON.stringify(new URL("./worker-loader.ts",import.meta.url).href)+');')}`]:[]});
   new PluginOutputCapture(this.child,(stream,message,truncated)=>options.onLog?.(stream,this.logRedactor.redact(message,truncated)));
   this.child.on("message",raw=>this.receive(raw as PluginProcessMessage));
   this.child.on("error",error=>{this.ready.reject(error);if(!this.stopped){options.onFailure?.(error);void this.stop();}});

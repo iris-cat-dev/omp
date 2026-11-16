@@ -1,6 +1,7 @@
 import type {
   AgentSnapshotPayload,
   CreateAgentRequestMessage,
+  FetchAgentsResponseMessage,
   FetchWorkspacesRequestMessage,
   FetchWorkspacesResponseMessage,
   GetProvidersSnapshotResponseMessage,
@@ -113,6 +114,7 @@ export interface OmpAgentListResult {
   subscriptionId?: string | null;
   entries: FetchAgentsEntry[];
   pageInfo: FetchAgentsPageInfo;
+  sync?: FetchAgentsResponseMessage["payload"]["sync"];
 }
 export type OmpWorkspaceListOptions = Omit<
   FetchWorkspacesRequestMessage,
@@ -242,6 +244,7 @@ export interface OmpAgentCreateOptions {
   parent?: string | OmpAgentHandle;
   title?: OmpAgentSessionConfig["title"];
   env?: CreateAgentRequestMessage["env"];
+  locale?: CreateAgentRequestMessage["locale"];
   prompt?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;

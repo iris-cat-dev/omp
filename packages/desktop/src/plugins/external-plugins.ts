@@ -14,6 +14,7 @@ export async function inspectLocalPluginDirectory(directory: string): Promise<Lo
 export interface LocalPluginWorkerBridge { invoke(method: string, input: unknown, generation: number): Promise<unknown>; emit(event: string, payload: unknown): void }
 export interface ExternalLocalPluginDependencies {
   logs: LocalPluginLogs;
+  environment?: Readonly<Record<string, string>>;
   hostCall(record: LocalPluginRecord, scope: PluginActivationScope, mode: "active" | "manage", worker: LocalPluginWorkerBridge, operation: string, input: unknown): Promise<unknown>;
   subscribe(event: string, listener: (payload: unknown) => void): () => void;
   fail(id: string, generation: number, message: string): void;
@@ -35,7 +36,7 @@ export async function loadExternalLocalPlugin(record: LocalPluginRecord, scope: 
     if (starting) return starting;
     workerMode = mode;
     dependencies.logs.append(record.id, "host", `Starting ${mode} generation ${scope.generation}`);
-    starting = IsolatedPluginWorker.start({ installation: record, format: inspected.format, signal: scope.signal, serviceEntry: inspected.serviceEntry!, serverBundle: bundles.serverBundle, mode,
+    starting = IsolatedPluginWorker.start({ installation: record, format: inspected.format, signal: scope.signal, serviceEntry: inspected.serviceEntry!, serverBundle: bundles.serverBundle, mode, environment: dependencies.environment,
       hostCall: (operation, input) => dependencies.hostCall(record, scope, mode, bridge, operation, input),
       onLog: (stream, message) => dependencies.logs.append(record.id, stream, message),
       onFailure: (error) => { dependencies.logs.append(record.id, "stderr", error.message); if (mode === "active") dependencies.fail(record.id, scope.generation, error.message); },

@@ -167,3 +167,25 @@ it("keeps provider model data usable by React without proxying frozen element ty
   await scope.dispose();
   expect(() => controlled.providers.listModels("codex")).toThrow("generation is no longer active");
 });
+
+it("limits disabled Desktop authoring to newly created workspaces and preserves capability checks", async () => {
+  const scope = createActivationScope(1);
+  const installation: PluginInstallation = {
+    id: "authoring", packageId: "authoring", owner: "desktop", version: "1.0.0", generation: 1,
+    enabled: false, declaredCapabilities: ["agents.events", "agents.create"], grantedCapabilities: ["agents.events", "agents.create"],
+  };
+  const workspace = { id: "new-workspace", agents: { create: async () => ({ id: "new-agent" }) }, archive() { throw new Error("Existing workspace mutation reached the host"); } };
+  const api = { workspaces: { create: async () => workspace, ref() { throw new Error("Existing workspace reached the host"); } }, agents: { create() { throw new Error("Unplaced agent creation reached the host"); } } } as unknown as OmpApi;
+  const managed = createPluginOmpApi(api, installation, scope, { mode: "manage" });
+  const created = await managed.workspaces.create({ source: { kind: "directory", path: "/tmp/authoring" } });
+  await created.agents.create({ config: { provider: "codex/test" } });
+  expect(() => created.archive()).toThrow("Agent operations are unavailable in management mode");
+  expect(() => managed.workspaces.ref("existing")).toThrow("Agent operations are unavailable in management mode");
+  expect(() => managed.agents.create({ config: { provider: "codex/test" }, cwd: "/tmp" })).toThrow("Agent operations are unavailable in management mode");
+  const unapproved = createPluginOmpApi(api, { ...installation, grantedCapabilities: ["agents.events"] }, scope, { mode: "manage" });
+  expect(() => unapproved.workspaces.create({ source: { kind: "directory", path: "/tmp/authoring" } })).toThrow("Plugin capability is not granted: agents.create");
+  const daemon = createPluginOmpApi(api, { ...installation, owner: "daemon" }, scope, { mode: "manage" });
+  expect(() => daemon.workspaces.create({ source: { kind: "directory", path: "/tmp/authoring" } })).toThrow("Agent operations are unavailable in management mode");
+  await scope.dispose();
+  expect(() => created.agents.create({ config: { provider: "codex/test" } })).toThrow("Plugin generation is no longer active");
+});
