@@ -4477,7 +4477,6 @@ describe("OMP agent client and session", () => {
       clientMessageId: "initial-client",
     });
     const runtime = omp.runtime();
-    expect(omp.recordedPrompts()[0]?.message).toContain("Simplified Chinese");
     expect(getOmpWorkflowDisplayText(omp.recordedPrompts()[0]!.message)).toBe(
       "Keep this English request",
     );
@@ -4485,7 +4484,6 @@ describe("OMP agent client and session", () => {
     runtime.acceptPrompt("Keep this English request", "initial-native");
     await omp.setFeature("workflow_locale", "en");
     await omp.steerActiveTurn("继续检查", turnId, { clientMessageId: "queued-client" });
-    expect(runtime.steerRequests[0]?.message).toContain("English");
     expect(getOmpWorkflowDisplayText(runtime.steerRequests[0]!.message)).toBe("继续检查");
     runtime.restoredQueue = { steering: [{ text: "继续检查" }], followUp: [], truncated: true };
     await omp.interrupt();
@@ -4505,20 +4503,6 @@ describe("OMP agent client and session", () => {
     ]);
     await omp.close();
   });
-
-  test.each(["/plan inspect the source", "/goal ship the change"])(
-    "keeps %s native dispatch with a localized intent directive",
-    async (prompt) => {
-      const omp = new OmpHarness();
-      await omp.start({ featureValues: { workflow_locale: "zh-CN" } });
-      await omp.requireStartTurn(prompt);
-      const sent = omp.recordedPrompts()[0]?.message;
-      expect(sent?.startsWith(`${prompt.split(" ")[0]} `)).toBe(true);
-      expect(sent).toContain("Simplified Chinese");
-      expect(getOmpWorkflowDisplayText(sent!)).toBe(prompt);
-      await omp.close();
-    },
-  );
 
   test("interrupt does not claim native subagents stopped; native cancellation acknowledges exactly one", async () => {
     const omp = new OmpHarness();

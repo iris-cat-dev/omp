@@ -63,6 +63,8 @@ Inspection requires a resident OMP runtime with `get_prompt_context` support. An
 
 Native token usage, duration, context and quota facts remain available without plugins. Live speed widgets and plugin-derived speed footers require an explicitly installed and enabled speed plugin; the default application no longer loads Agent Speed's calculation or UI. Historical assistant messages retain their native per-turn facts for replay and footer restoration, including Plan messages. After reconnecting, completed replayed facts take precedence over retained in-flight samples.
 
+Desktop instructs OMP to write tool-call intent labels, including the live working label, in the interface language resolved when the prompt is sent. This also applies to `/skill:<name>` requests, with or without arguments. The hidden directive stays out of displayed prompts and reopened history; response language and other tool arguments are unchanged.
+
 ## Workflow and approval modes
 
 **Standard**, **Enhanced**, **Plan**, and **Goal** have hover descriptions localized in all nine supported interface languages. **Enhanced** uses the same Sparkles icon in the workflow menu and current-mode control, whether in the toolbar or compact settings sheet.

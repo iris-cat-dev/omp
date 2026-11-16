@@ -30,9 +30,15 @@ const OMP_WORKFLOW_DISPLAY_PREFIXES = [
   OMP_STANDARD_TURN_PREFIX,
   ...Object.keys(OMP_TOOL_INTENT_LANGUAGES).filter(isOmpToolIntentLocale).map(toolIntentDirective),
 ];
+const OMP_WORKFLOW_DISPLAY_DIRECTIVES = OMP_WORKFLOW_DISPLAY_PREFIXES.map((prefix) =>
+  prefix.trimEnd(),
+);
 
 export function buildOmpToolIntentPrompt(prompt: string, locale: unknown): string {
   if (!isOmpToolIntentLocale(locale)) return prompt;
+  // Keep skill dispatch at the start; the extra separator preserves bare commands and argument whitespace.
+  const skill = /^(\s*\/skill:[^\s]+)([\s\S]*)$/.exec(prompt);
+  if (skill) return `${skill[1]}\n${toolIntentDirective(locale)}${skill[2]}`;
   // Preserve native workflow dispatch. Other slash commands retain their exact arguments.
   const command = /^(\s*\/(?:plan|goal)\s+)([\s\S]+)$/.exec(prompt);
   if (command) return `${command[1]}${toolIntentDirective(locale)}${command[2]}`;
@@ -55,6 +61,13 @@ export function getOmpWorkflowDisplayText(prompt: string): string {
     if (prefix) {
       text = text.slice(prefix.length);
       continue;
+    }
+    // OMP trims bare skill prompts and arguments before recording them.
+    if (OMP_WORKFLOW_DISPLAY_DIRECTIVES.includes(text)) return "";
+    const skill = /^(\s*\/skill:[^\s]+)\n([\s\S]+)$/.exec(text);
+    if (skill) {
+      const displayArgs = getOmpWorkflowDisplayText(skill[2]!);
+      if (displayArgs !== skill[2]) return `${skill[1]}${displayArgs}`;
     }
     const command = /^(\s*\/(?:plan|goal)\s+)([\s\S]+)$/.exec(text);
     if (command) {
