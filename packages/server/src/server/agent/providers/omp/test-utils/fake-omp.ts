@@ -449,7 +449,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
       model.provider === "openai-codex" ||
       (model.provider !== "fireworks" &&
         model.provider !== "github-copilot" &&
-        model.identity?.class === "openai" &&
+        typeof model.identity === "object" &&
+        model.identity !== null &&
+        "class" in model.identity &&
+        model.identity.class === "openai" &&
         ["openai-responses", "openai-completions", "openai-codex-responses"].includes(
           model.api ?? "",
         ));

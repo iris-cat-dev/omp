@@ -91,7 +91,8 @@ export class ProviderUsageService {
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
     // Discover login credentials on each refresh, not just at daemon startup.
     const fetchers =
-      this.fetchers ?? createProviderUsageFetchers({
+      this.fetchers ??
+      createProviderUsageFetchers({
         logger: this.logger,
         fetch: this.fetchApi,
         fetchForProvider: this.fetchForProvider,

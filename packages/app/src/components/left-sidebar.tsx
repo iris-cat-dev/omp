@@ -314,7 +314,6 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     router.push(buildSessionsRoute());
   }, []);
 
-
   const newWorkspaceKeys = useShortcutKeys("new-workspace");
   const labels = useMemo(
     (): SidebarLabels => ({
@@ -1615,7 +1614,6 @@ function MobileSidebar({
     closeSidebar();
     handleViewMoreNavigate();
   }, [closeSidebar, handleViewMoreNavigate]);
-
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();

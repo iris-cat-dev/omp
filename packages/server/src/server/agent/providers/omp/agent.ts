@@ -201,7 +201,11 @@ import {
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
-import { mapOmpToolDetail, mapOmpPresentedFiles, mapOmpGeneratedImages } from "./tool-call-mapper.js";
+import {
+  mapOmpToolDetail,
+  mapOmpPresentedFiles,
+  mapOmpGeneratedImages,
+} from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpNativeUsageTracker } from "./native-usage.js";
 import {
@@ -1077,16 +1081,31 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(options.sandbox ? "[Image attachment omitted: selected model does not support images]" : renderTextOnlyImageHint(block));
+        textParts.push(
+          options.sandbox
+            ? "[Image attachment omitted: selected model does not support images]"
+            : renderTextOnlyImageHint(block),
+        );
       }
       continue;
     }
 
     if (options.sandbox) {
       if (block.type !== "uploaded_file") throw new Error("Sandbox attachment type denied");
-      const relativePath = path.isAbsolute(block.path) ? path.relative(options.sandbox.root, block.path) : block.path;
-      if (!relativePath || relativePath.startsWith("/") || relativePath.split(/[\\/]/).some(part => part === ".." || !part) || /[:\\\0]/.test(relativePath)) throw new Error("Sandbox attachment path denied");
-      textParts.push(`Uploaded file: ${path.basename(relativePath)}\nPath: ${relativePath}\nMIME: ${block.mimeType}\nSize: ${block.size} bytes`);
+      const relativePath = path.isAbsolute(block.path)
+        ? path.relative(options.sandbox.root, block.path)
+        : block.path;
+      if (
+        !relativePath ||
+        relativePath.startsWith("/") ||
+        relativePath.split(/[\\/]/).some((part) => part === ".." || !part) ||
+        /[:\\]/.test(relativePath) ||
+        relativePath.includes("\0")
+      )
+        throw new Error("Sandbox attachment path denied");
+      textParts.push(
+        `Uploaded file: ${path.basename(relativePath)}\nPath: ${relativePath}\nMIME: ${block.mimeType}\nSize: ${block.size} bytes`,
+      );
       continue;
     }
     textParts.push(renderPromptAttachmentAsText(block));
@@ -1179,7 +1198,9 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
   }
   return {
     ...(typeof metadata.cwd === "string" ? { cwd: metadata.cwd } : {}),
-    ...(metadata.sandbox !== undefined ? { sandbox: AgentSandboxSchema.parse(metadata.sandbox) } : {}),
+    ...(metadata.sandbox !== undefined
+      ? { sandbox: AgentSandboxSchema.parse(metadata.sandbox) }
+      : {}),
     ...(typeof metadata.model === "string" ? { model: metadata.model } : {}),
     ...(typeof metadata.thinkingOptionId === "string"
       ? { thinkingOptionId: metadata.thinkingOptionId }
@@ -1201,6 +1222,61 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
   };
 }
 
+interface OmpEmittedUserMessage {
+  item: Extract<AgentTimelineItem, { type: "user_message" }>;
+  nativeText: string;
+  turnId?: string;
+}
+
+interface OmpSubmittedUserMessage {
+  text: string;
+  displayText: string;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  nativeState: "submitted" | "accepted_legacy" | "accepted_identified" | "withdrawn";
+}
+
+interface OmpSteeredUserMessage {
+  text: string;
+  displayText: string;
+  clientMessageId: string | null;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+}
+
+interface OmpLiveUserMessageIdentity {
+  clientMessageId: string | null;
+  previous: OmpEmittedUserMessage | undefined;
+  submittedSteer: OmpSteeredUserMessage | undefined;
+  matchesSubmittedPrompt: boolean;
+}
+
+function assertOmpResumeSandboxCompatibility(
+  saved: AgentSessionConfig["sandbox"],
+  next: AgentSessionConfig["sandbox"],
+): void {
+  if (!saved || !next) return;
+  if (saved.root !== next.root) throw new Error("Sandbox root changes require a new session");
+  if (
+    (saved.imageGeneration ?? false) !== (next.imageGeneration ?? false) ||
+    (saved.javascript ?? false) !== (next.javascript ?? false) ||
+    saved.network !== next.network
+  ) {
+    throw new Error("Sandbox capability changes require a new session");
+  }
+}
+
+function readOmpImageInputErrorStatus(error: string): number | undefined {
+  const embeddedStatus =
+    /\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+status(?:\s+code)?)?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /^\s*(?:Error\s*:?\s*)?(\d{3})\b/iu.exec(error)?.[1] ??
+    /\berror\s+code\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
+    /["']?status(?:Code|_code|\s+code)?["']?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1];
+  return embeddedStatus ? Number(embeddedStatus) : undefined;
+}
+
+function isOmpImageInputValidationStatus(status: number | undefined): boolean {
+  return status === undefined || status === 400 || status === 413 || status === 422;
+}
+
 function buildResumeConfig(
   metadata: OmpPersistenceMetadata,
   overrides: Partial<AgentSessionConfig> | undefined,
@@ -1208,8 +1284,7 @@ function buildResumeConfig(
 ): OmpResumeConfig {
   const overrideConfig = overrides ?? {};
   const sandbox = metadata.sandbox ?? overrideConfig.sandbox;
-  if (metadata.sandbox && overrideConfig.sandbox && metadata.sandbox.root !== overrideConfig.sandbox.root) throw new Error("Sandbox root changes require a new session");
-  if (metadata.sandbox && overrideConfig.sandbox && ((metadata.sandbox.imageGeneration ?? false) !== (overrideConfig.sandbox.imageGeneration ?? false) || (metadata.sandbox.javascript ?? false) !== (overrideConfig.sandbox.javascript ?? false) || metadata.sandbox.network !== overrideConfig.sandbox.network)) throw new Error("Sandbox capability changes require a new session");
+  assertOmpResumeSandboxCompatibility(metadata.sandbox, overrideConfig.sandbox);
   const cwd = sandbox?.root ?? overrideConfig.cwd ?? metadata.cwd ?? process.cwd();
   const model = overrideConfig.model ?? metadata.model;
   const thinkingOptionId = overrideConfig.thinkingOptionId ?? metadata.thinkingOptionId;
@@ -1250,11 +1325,13 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
     ...(input.launchMode.extraArgs ? { extraArgs: input.launchMode.extraArgs } : {}),
-    systemPrompt: input.resumeConfig.config.sandbox ? input.resumeConfig.config.systemPrompt : composeSystemPromptParts(
-      input.resumeConfig.config.systemPrompt,
-      input.resumeConfig.config.daemonAppendSystemPrompt,
-      getOmpPlatformSystemPrompt(),
-    ),
+    systemPrompt: input.resumeConfig.config.sandbox
+      ? input.resumeConfig.config.systemPrompt
+      : composeSystemPromptParts(
+          input.resumeConfig.config.systemPrompt,
+          input.resumeConfig.config.daemonAppendSystemPrompt,
+          getOmpPlatformSystemPrompt(),
+        ),
   };
 }
 
@@ -1339,13 +1416,8 @@ function isOmpImageInputValidationError(
   message: Extract<OmpAgentMessage, { role: "assistant" }>,
 ): boolean {
   const error = message.errorMessage ?? "";
-  const embeddedStatus =
-    /\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+status(?:\s+code)?)?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
-    /^\s*(?:Error\s*:?\s*)?(\d{3})\b/iu.exec(error)?.[1] ??
-    /\berror\s+code\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
-    /["']?status(?:Code|_code|\s+code)?["']?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1];
-  const status = message.errorStatus ?? (embeddedStatus ? Number(embeddedStatus) : undefined);
-  if (status !== undefined && status !== 400 && status !== 413 && status !== 422) return false;
+  const status = message.errorStatus ?? readOmpImageInputErrorStatus(error);
+  if (!isOmpImageInputValidationStatus(status)) return false;
   if (
     /\b(?:unauthorized|forbidden|authentication|auth[_ ]?unavailable|no auth available|(?:invalid|no)[_ ]?api[_ ]?key)\b/iu.test(
       error,
@@ -1936,7 +2008,8 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnHasUserMessage = false;
   private hasConversationUserMessage = false;
   private readonly resumedSession: boolean;
-  private activeNoTurnPromptItem: Extract<AgentTimelineItem, { type: "user_message" }> | null = null;
+  private activeNoTurnPromptItem: Extract<AgentTimelineItem, { type: "user_message" }> | null =
+    null;
   private activeNoTurnPersistence: Promise<string> | null = null;
   private activeNoTurnPromptInput: AgentPromptInput | null = null;
   private readonly pendingNoTurnOutputs: Array<{
@@ -1991,37 +2064,13 @@ export class OmpAgentSession implements AgentSession {
   private readonly chatProDeliveries = new ChatProDeliveries();
   private initialUsageProbeStarted = false;
   private readonly emittedUserMessageIds = new Set<string>();
-  private readonly submittedUserMessages = new Map<
-    string,
-    {
-      text: string;
-      displayText: string;
-      images?: Array<{ type: "image"; data: string; mimeType: string }>;
-      nativeState: "submitted" | "accepted_legacy" | "accepted_identified" | "withdrawn";
-    }
-  >();
-  private readonly emittedClientUserMessages = new Map<
-    string,
-    {
-      item: Extract<AgentTimelineItem, { type: "user_message" }>;
-      nativeText: string;
-      turnId?: string;
-    }
-  >();
-  private lastEmittedLiveUserMessage: {
-    item: Extract<AgentTimelineItem, { type: "user_message" }>;
-    nativeText: string;
-    turnId?: string;
-  } | null = null;
+  private readonly submittedUserMessages = new Map<string, OmpSubmittedUserMessage>();
+  private readonly emittedClientUserMessages = new Map<string, OmpEmittedUserMessage>();
+  private lastEmittedLiveUserMessage: OmpEmittedUserMessage | null = null;
   private lastSubmittedPromptText: string | null = null;
   private lastSubmittedPromptDisplayText: string | null = null;
   private lastSubmittedPromptClientMessageId: string | null = null;
-  private readonly pendingSteeredUserMessages: Array<{
-    text: string;
-    displayText: string;
-    clientMessageId: string | null;
-    images?: Array<{ type: "image"; data: string; mimeType: string }>;
-  }> = [];
+  private readonly pendingSteeredUserMessages: OmpSteeredUserMessage[] = [];
   private planContextResetPending: boolean;
   private readonly backgroundDaemons?: OmpBackgroundDaemons;
   private readonly backgroundOwnerId: string;
@@ -2236,7 +2285,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async stopAllBackgroundProcesses(): Promise<number> {
-    const jobsStopped = this.config.sandbox ? 0 : ((await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0);
+    const jobsStopped = this.config.sandbox
+      ? 0
+      : ((await this.runtimeSession.stopAllBackgroundJobs?.()) ?? 0);
     const daemons = (await this.listBackgroundProcesses()).filter(
       (process) =>
         process.source === "omp-daemon" &&
@@ -2335,7 +2386,10 @@ export class OmpAgentSession implements AgentSession {
     };
     const nativeCommand = await this.prepareNativeExtensionTurn(prompt, origin, signal);
     if (signal.aborted) return { turnId };
-    const payload = convertPromptInput(prompt, { model: this.state.model, sandbox: this.config.sandbox });
+    const payload = convertPromptInput(prompt, {
+      model: this.state.model,
+      sandbox: this.config.sandbox,
+    });
     const displayPromptText = payload.text;
     if (nativeCommand !== undefined) payload.text = nativeCommand;
     const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
@@ -2436,9 +2490,21 @@ export class OmpAgentSession implements AgentSession {
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.clearNoTurnBuffers();
-    this.emit((status === "aborted" || (status === undefined && isOmpRequestAbortError(error)))
-      ? { type: "turn_canceled", provider: this.provider, turnId, reason: toDiagnosticErrorMessage(error) }
-      : { type: "turn_failed", provider: this.provider, turnId, error: toDiagnosticErrorMessage(error) });
+    this.emit(
+      status === "aborted" || (status === undefined && isOmpRequestAbortError(error))
+        ? {
+            type: "turn_canceled",
+            provider: this.provider,
+            turnId,
+            reason: toDiagnosticErrorMessage(error),
+          }
+        : {
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: toDiagnosticErrorMessage(error),
+          },
+    );
   }
 
   async steerActiveTurn(
@@ -2456,7 +2522,10 @@ export class OmpAgentSession implements AgentSession {
     if (this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable", reason: "turn_mismatch" };
     }
-    const payload = convertPromptInput(prompt, { model: this.state.model, sandbox: this.config.sandbox });
+    const payload = convertPromptInput(prompt, {
+      model: this.state.model,
+      sandbox: this.config.sandbox,
+    });
     const displayText = payload.text;
     payload.text = this.withToolIntentLocale(payload.text);
     const submittedMessage = {
@@ -3716,14 +3785,29 @@ export class OmpAgentSession implements AgentSession {
     ) {
       return;
     }
-    const item = this.activeNoTurnPromptItem ?? (this.activeNoTurnPromptInput !== null
-      ? (this.activeNoTurnPromptItem = captureLocalSubmission(this.activeNoTurnPromptInput, this.activeClientMessageId))
-      : null);
+    const item =
+      this.activeNoTurnPromptItem ??
+      (this.activeNoTurnPromptInput !== null
+        ? (this.activeNoTurnPromptItem = captureLocalSubmission(
+            this.activeNoTurnPromptInput,
+            this.activeClientMessageId,
+          ))
+        : null);
     if (item && (item.text || item.images?.length || item.attachments?.length)) {
-      this.activeNoTurnPersistence ??= this.runtimeSession.appendSessionAnnotation(LOCAL_SUBMISSION_ANNOTATION, item);
+      this.activeNoTurnPersistence ??= this.runtimeSession.appendSessionAnnotation(
+        LOCAL_SUBMISSION_ANNOTATION,
+        item,
+      );
       await this.activeNoTurnPersistence;
     }
-    if (this.closed || this.activeTurnId !== turnId || this.activeTurnStarted || this.activePromptAgentInvoked || this.activeTurnHasUserMessage) return;
+    if (
+      this.closed ||
+      this.activeTurnId !== turnId ||
+      this.activeTurnStarted ||
+      this.activePromptAgentInvoked ||
+      this.activeTurnHasUserMessage
+    )
+      return;
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
@@ -3744,7 +3828,10 @@ export class OmpAgentSession implements AgentSession {
     const promptItem = this.activeNoTurnPromptItem;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
-    if (promptItem && (promptItem.text || promptItem.images?.length || promptItem.attachments?.length)) {
+    if (
+      promptItem &&
+      (promptItem.text || promptItem.images?.length || promptItem.attachments?.length)
+    ) {
       const submitted = this.activeClientMessageId
         ? this.submittedUserMessages.get(this.activeClientMessageId)
         : undefined;
@@ -4137,9 +4224,20 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
-    if(event.type==="desktop_plugin_prompt_request"){
-      if (this.config.sandbox) { this.runtimeSession.sendPluginPromptResult?.(event.id, [], "Sandbox plugin prompts denied"); return true; }
-      void (this.paseoTools?.pluginPrompt?.()??Promise.resolve([])).then(contributions=>this.runtimeSession.sendPluginPromptResult?.(event.id,contributions),error=>this.runtimeSession.sendPluginPromptResult?.(event.id,[],error instanceof Error?error.message:String(error)));
+    if (event.type === "desktop_plugin_prompt_request") {
+      if (this.config.sandbox) {
+        this.runtimeSession.sendPluginPromptResult?.(event.id, [], "Sandbox plugin prompts denied");
+        return true;
+      }
+      void (this.paseoTools?.pluginPrompt?.() ?? Promise.resolve([])).then(
+        (contributions) => this.runtimeSession.sendPluginPromptResult?.(event.id, contributions),
+        (error) =>
+          this.runtimeSession.sendPluginPromptResult?.(
+            event.id,
+            [],
+            error instanceof Error ? error.message : String(error),
+          ),
+      );
       return true;
     }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
@@ -4198,37 +4296,7 @@ export class OmpAgentSession implements AgentSession {
       }
       return true;
     }
-    const mappedEvent = mapOmpRuntimeEventToTimelineItem(event);
-    if (!mappedEvent.handled) {
-      return false;
-    }
-    if (mappedEvent.item) {
-      if (mappedEvent.item.type === "compaction") {
-        this.emitCompactionTimeline({
-          turnId: this.currentTurnIdForEvent(),
-          item: mappedEvent.item,
-        });
-        return true;
-      }
-      if (mappedEvent.item.type === "tool_call") {
-        if (mappedEvent.item.status === "running") {
-          this.activeRuntimeToolCalls.set(mappedEvent.item.callId, mappedEvent.item);
-        } else {
-          this.activeRuntimeToolCalls.delete(mappedEvent.item.callId);
-        }
-      }
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        item: mappedEvent.item,
-      });
-    } else {
-      this.logger.debug(
-        { event, reason: mappedEvent.logReason },
-        "Dropped unsupported OMP runtime event",
-      );
-    }
-    return true;
+    return this.handleMappedRuntimeTimelineEvent(event);
   }
 
   private emitNativeTaskCall(toolCallId: string): boolean {
@@ -4996,15 +5064,58 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private handleUserMessageEnd(
-    message: Extract<OmpAgentMessage, { role: "user" }>,
+  private handleMappedRuntimeTimelineEvent(event: OmpRuntimeEvent): boolean {
+    const mappedEvent = mapOmpRuntimeEventToTimelineItem(event);
+    if (!mappedEvent.handled) {
+      return false;
+    }
+    if (mappedEvent.item) {
+      if (mappedEvent.item.type === "compaction") {
+        this.emitCompactionTimeline({
+          turnId: this.currentTurnIdForEvent(),
+          item: mappedEvent.item,
+        });
+        return true;
+      }
+      if (mappedEvent.item.type === "tool_call") {
+        if (mappedEvent.item.status === "running") {
+          this.activeRuntimeToolCalls.set(mappedEvent.item.callId, mappedEvent.item);
+        } else {
+          this.activeRuntimeToolCalls.delete(mappedEvent.item.callId);
+        }
+      }
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        item: mappedEvent.item,
+      });
+    } else {
+      this.logger.debug(
+        { event, reason: mappedEvent.logReason },
+        "Dropped unsupported OMP runtime event",
+      );
+    }
+    return true;
+  }
+
+  private isLegacyLiveUserMessageReplay(
+    originalText: string,
     turnId: string | undefined,
-    withdrawnFromQueue?: boolean,
-  ): void {
-    const text = getUserMessageText(message.content);
-    const nativeImages = getUserMessageImages(message.content);
-    if (!text && !nativeImages) return;
-    const originalText = getOmpWorkflowDisplayText(text);
+    matchesSubmittedPrompt: boolean,
+  ): boolean {
+    const last = this.lastEmittedLiveUserMessage;
+    if (!last) return false;
+    return (
+      getOmpWorkflowDisplayText(last.nativeText) === originalText &&
+      (!turnId || !matchesSubmittedPrompt)
+    );
+  }
+
+  private resolveLiveUserMessageIdentity(
+    message: Extract<OmpAgentMessage, { role: "user" }>,
+    originalText: string,
+    turnId: string | undefined,
+  ): OmpLiveUserMessageIdentity | null {
     const nativeClientMessageId = message.clientMessageId;
     const matchingSteers = this.pendingSteeredUserMessages.filter((submitted) =>
       nativeClientMessageId
@@ -5022,26 +5133,31 @@ export class OmpAgentSession implements AgentSession {
       (matchingSteers.length === 0 && matchesSubmittedPrompt
         ? this.lastSubmittedPromptClientMessageId
         : null);
-    const nativeMessage = message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
-    const messageId = readNativeMessageId(nativeMessage);
     let previous = clientMessageId
       ? this.emittedClientUserMessages.get(clientMessageId)
       : undefined;
     // Legacy image frames can replay after settlement with a different native
     // ID. A replay with no structured identity may enrich only a no-ID row.
-    const last = this.lastEmittedLiveUserMessage;
     if (
       !nativeClientMessageId &&
       !submittedSteer &&
       matchingSteers.length === 0 &&
-      last &&
-      getOmpWorkflowDisplayText(last.nativeText) === originalText &&
-      (!turnId || !matchesSubmittedPrompt)
+      this.isLegacyLiveUserMessageReplay(originalText, turnId, matchesSubmittedPrompt)
     ) {
-      if (last.item.messageId) return;
+      const last = this.lastEmittedLiveUserMessage!;
+      if (last.item.messageId) return null;
       previous = last;
       clientMessageId = last.item.clientMessageId ?? null;
     }
+    return { clientMessageId, previous, submittedSteer, matchesSubmittedPrompt };
+  }
+
+  private acceptUserMessageSubmission(
+    clientMessageId: string | null,
+    submittedSteer: OmpSteeredUserMessage | undefined,
+    nativeClientMessageId: string | undefined,
+    withdrawnFromQueue: boolean | undefined,
+  ): OmpSubmittedUserMessage | undefined {
     const submitted = clientMessageId ? this.submittedUserMessages.get(clientMessageId) : undefined;
     if (submitted) {
       if (withdrawnFromQueue) submitted.nativeState = "withdrawn";
@@ -5056,16 +5172,46 @@ export class OmpAgentSession implements AgentSession {
       const index = this.pendingSteeredUserMessages.indexOf(submittedSteer);
       if (index >= 0) this.pendingSteeredUserMessages.splice(index, 1);
     }
+    return submitted;
+  }
+
+  private resolveLiveUserMessageImages(
+    identity: OmpLiveUserMessageIdentity,
+    submitted: OmpSubmittedUserMessage | undefined,
+  ) {
+    return (
+      identity.previous?.item.images ??
+      getUserMessageImages(submitted?.images ?? identity.submittedSteer?.images ?? [])
+    );
+  }
+
+  private handleUserMessageEnd(
+    message: Extract<OmpAgentMessage, { role: "user" }>,
+    turnId: string | undefined,
+    withdrawnFromQueue?: boolean,
+  ): void {
+    const text = getUserMessageText(message.content);
+    const nativeImages = getUserMessageImages(message.content);
+    if (!text && !nativeImages) return;
+    const originalText = getOmpWorkflowDisplayText(text);
+    const identity = this.resolveLiveUserMessageIdentity(message, originalText, turnId);
+    if (!identity) return;
+    const { clientMessageId, previous, submittedSteer, matchesSubmittedPrompt } = identity;
+    const nativeMessage = message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
+    const messageId = readNativeMessageId(nativeMessage);
+    const submitted = this.acceptUserMessageSubmission(
+      clientMessageId,
+      submittedSteer,
+      message.clientMessageId,
+      withdrawnFromQueue,
+    );
     const displayText =
       previous?.item.text ??
       submitted?.displayText ??
       submittedSteer?.displayText ??
       (matchesSubmittedPrompt ? this.lastSubmittedPromptDisplayText : null) ??
       originalText;
-    const images =
-      previous?.item.images ??
-      getUserMessageImages(submitted?.images ?? submittedSteer?.images ?? []) ??
-      nativeImages;
+    const images = this.resolveLiveUserMessageImages(identity, submitted) ?? nativeImages;
     const emitUserMessage = (resolvedMessageId?: string): void => {
       const existing = clientMessageId
         ? this.emittedClientUserMessages.get(clientMessageId)
@@ -5244,15 +5390,17 @@ export class OmpAgentSession implements AgentSession {
     if (!detail) {
       return false;
     }
-    const presentedFiles=mapOmpPresentedFiles(toolCall,result,status);
+    const presentedFiles = mapOmpPresentedFiles(toolCall, result, status);
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
       name: resolveToolCallName(toolCall, result),
       detail,
       metadata: {
-        ...(toolCall.intent ? {intent:toolCall.intent} : {}),
-        ...(presentedFiles.length ? {presentedFiles,presentedFilesSource:"omp-present-image"} : {}),
+        ...(toolCall.intent ? { intent: toolCall.intent } : {}),
+        ...(presentedFiles.length
+          ? { presentedFiles, presentedFilesSource: "omp-present-image" }
+          : {}),
         ...mapOmpGeneratedImages(toolCall, result, status),
       },
     };
@@ -5734,9 +5882,14 @@ export class OmpAgentClient implements AgentClient {
     input: OmpStartSessionInput,
     allowBootstrap = true,
   ): Promise<OmpRuntimeSession> {
-    const runtime = input.sandbox && !(this.runtime instanceof OmpSdkRuntime)
-      ? new OmpSdkRuntime({ logger: this.logger, runtimeSettings: this.runtimeSettings, localModelBridge: this.localModelBridge })
-      : this.runtime;
+    const runtime =
+      input.sandbox && !(this.runtime instanceof OmpSdkRuntime)
+        ? new OmpSdkRuntime({
+            logger: this.logger,
+            runtimeSettings: this.runtimeSettings,
+            localModelBridge: this.localModelBridge,
+          })
+        : this.runtime;
     const env = this.desktopConfigDir
       ? await prepareOmpProviderEnv({
           configDir: this.desktopConfigDir,
@@ -5816,7 +5969,12 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    if (config.sandbox) config = { ...config, cwd: config.sandbox.root, sandbox: AgentSandboxSchema.parse(config.sandbox) };
+    if (config.sandbox)
+      config = {
+        ...config,
+        cwd: config.sandbox.root,
+        sandbox: AgentSandboxSchema.parse(config.sandbox),
+      };
     const launchMode = this.resolveLaunchMode(config.modeId);
     const backgroundOwnerId = launchContext?.agentId
       ? `desktop:${launchContext.agentId}`
@@ -5835,16 +5993,19 @@ export class OmpAgentClient implements AgentClient {
       noSession: config.internal === true,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
-      systemPrompt: config.sandbox ? config.systemPrompt : composeSystemPromptParts(
-        config.systemPrompt,
-        config.daemonAppendSystemPrompt,
-        getOmpPlatformSystemPrompt(),
-      ),
+      systemPrompt: config.sandbox
+        ? config.systemPrompt
+        : composeSystemPromptParts(
+            config.systemPrompt,
+            config.daemonAppendSystemPrompt,
+            getOmpPlatformSystemPrompt(),
+          ),
       env: launchEnv,
       getImageGenerationConfig: launchContext?.getImageGenerationConfig,
     });
     try {
-      if (!config.sandbox) await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      if (!config.sandbox)
+        await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await runtimeSession.getState();
       const oauthAccounts = this.readOAuthAccounts(launchEnv);
       const automaticCredentialId = await this.resolveAutomaticCredentialId(
@@ -5953,7 +6114,8 @@ export class OmpAgentClient implements AgentClient {
       }),
     );
     try {
-      if (!resumeConfig.config.sandbox) await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      if (!resumeConfig.config.sandbox)
+        await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await runtimeSession.getState();
       const oauthAccounts = this.readOAuthAccounts(launchEnv);
       const automaticCredentialResolver = (state: OmpSessionState) =>

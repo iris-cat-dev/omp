@@ -1596,14 +1596,16 @@ export const AgentEventsUnsubscribeSchema = z.object({
 export const ResolveProviderCreateConfigRequestSchema = z.object({
   type: z.literal("provider.resolve_create_config.request"),
   requestId: z.string(),
-  config: z.object({
-    provider: AgentProviderSchema,
-    cwd: z.string().min(1),
-    model: z.string().nullable().optional(),
-    modeId: z.string().nullable().optional(),
-    thinkingOptionId: z.string().nullable().optional(),
-    featureValues: z.record(z.string(), z.unknown()).optional(),
-  }).strict(),
+  config: z
+    .object({
+      provider: AgentProviderSchema,
+      cwd: z.string().min(1),
+      model: z.string().nullable().optional(),
+      modeId: z.string().nullable().optional(),
+      thinkingOptionId: z.string().nullable().optional(),
+      featureValues: z.record(z.string(), z.unknown()).optional(),
+    })
+    .strict(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -5443,7 +5445,11 @@ export const ResolveProviderCreateConfigResponseSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     config: AgentSessionConfigSchema.pick({
-      provider: true, model: true, modeId: true, thinkingOptionId: true, featureValues: true,
+      provider: true,
+      model: true,
+      modeId: true,
+      thinkingOptionId: true,
+      featureValues: true,
     }),
   }),
 });
@@ -8394,8 +8400,12 @@ export type RunAgentRequest = z.infer<typeof RunAgentRequestSchema>;
 export type RunAgentResponse = z.infer<typeof RunAgentResponseSchema>;
 export type AgentConfigurationRequest = z.infer<typeof AgentConfigurationRequestSchema>;
 export type AgentConfigurationResponse = z.infer<typeof AgentConfigurationResponseSchema>;
-export type ResolveProviderCreateConfigRequest = z.infer<typeof ResolveProviderCreateConfigRequestSchema>;
-export type ResolveProviderCreateConfigResponse = z.infer<typeof ResolveProviderCreateConfigResponseSchema>;
+export type ResolveProviderCreateConfigRequest = z.infer<
+  typeof ResolveProviderCreateConfigRequestSchema
+>;
+export type ResolveProviderCreateConfigResponse = z.infer<
+  typeof ResolveProviderCreateConfigResponseSchema
+>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type QuickAskRequest = z.infer<typeof QuickAskRequestSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;

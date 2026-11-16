@@ -667,7 +667,10 @@ export class OmpHarness {
     return this.requireSession().run(message, options);
   }
 
-  async startTurn(message: AgentPromptInput, options?: AgentRunOptions) {
+  async startTurn(
+    message: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
     return this.requireSession().startTurn(message, options);
   }
 
@@ -686,7 +689,10 @@ export class OmpHarness {
     return await this.requireSession().steerActiveTurn(message, { ...options, expectedTurnId });
   }
 
-  async resolveUserMessageId(input: { clientMessageId: string; text: string }): Promise<string | null> {
+  async resolveUserMessageId(input: {
+    clientMessageId: string;
+    text: string;
+  }): Promise<string | null> {
     return this.requireSession().resolveUserMessageId(input);
   }
 

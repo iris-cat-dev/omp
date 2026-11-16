@@ -715,7 +715,7 @@ const OmpSubagentEventSchema = z
 export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   ...OmpAgentSessionEventSchema.options,
   OmpExtensionUiRequestSchema,
-  z.object({type:z.literal("desktop_plugin_prompt_request"),id:z.string()}),
+  z.object({ type: z.literal("desktop_plugin_prompt_request"), id: z.string() }),
   z.object({
     type: z.literal("extension_error"),
     extensionPath: z.string(),
@@ -729,14 +729,17 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
       status: z.enum(["completed", "aborted", "error"]).optional(),
-      error: z.object({
-        message: z.string(),
-        provider: z.string().optional(),
-        model: z.string().optional(),
-        httpStatus: z.number().optional(),
-        retryable: z.boolean().optional(),
-        code: z.literal("cost_cap").optional(),
-      }).passthrough().optional(),
+      error: z
+        .object({
+          message: z.string(),
+          provider: z.string().optional(),
+          model: z.string().optional(),
+          httpStatus: z.number().optional(),
+          retryable: z.boolean().optional(),
+          code: z.literal("cost_cap").optional(),
+        })
+        .passthrough()
+        .optional(),
       sessionSettled: z.boolean().optional(),
     })
     .passthrough(),
@@ -753,7 +756,12 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
 
 const OmpCommandBase = { id: z.string().optional() };
 export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
-  z.object({ ...OmpCommandBase, type: z.literal("append_session_annotation"), customType: z.string().min(1), data: z.unknown() }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("append_session_annotation"),
+    customType: z.string().min(1),
+    data: z.unknown(),
+  }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("prompt"),
