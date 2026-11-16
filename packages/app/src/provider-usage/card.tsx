@@ -14,6 +14,7 @@ import { OmpExtraUsageDetails } from "./extra-usage";
 import { OmpClaudeQuotaNotices } from "@/components/omp-claude-quota-notices";
 import { OmpCodexQuotaNotices } from "@/components/omp-codex-quota-notices";
 import { isOmpQuotaStale } from "@/components/omp-provider-quota";
+import { ProviderUsageUnsupportedNotice } from "./unsupported-notice";
 
 interface ProviderUsageIconProps {
   iconKey: string;
@@ -32,6 +33,7 @@ const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted 
 
 function statusText(usage: ProviderUsage, t: TFunction): string | null {
   if (usage.status === "available") return null;
+  if (usage.unsupportedReason) return t("providerUsage.openaiBalance.unsupported");
   return usage.status === "error"
     ? t("providerUsage.status.error")
     : t("providerUsage.status.unavailable");
@@ -106,14 +108,15 @@ export function ProviderUsageCard({
       </View>
 
       {notices}
+      <ProviderUsageUnsupportedNotice usage={usage} />
       {!usage.accountQuota && usage.error ? (
-        <Text style={styles.error} numberOfLines={3}>
+        <Text testID="provider-usage-error" style={styles.error} numberOfLines={3}>
           {usage.error}
         </Text>
       ) : null}
 
       {usage.windows.length > 0 || balances.length > 0 ? (
-        <View style={styles.bars}>
+        <View testID="provider-usage-metrics" style={styles.bars}>
           {usage.windows.map((window) => (
             <ProviderUsageWindowBar
               key={window.id}

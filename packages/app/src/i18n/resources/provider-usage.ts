@@ -126,6 +126,13 @@ const en = {
     http: "Usage query failed (HTTP {{status}})",
     invalid_response: "Usage query returned an invalid response",
   },
+  openaiBalance: {
+    unsupported: "Balance query unsupported",
+    explanation:
+      "This credential cannot query your account balance. Please check the OpenAI billing page.",
+    billing: "OpenAI billing",
+    usage: "OpenAI usage",
+  },
   extraUsage: {
     title: "Extra usage",
     enabled: "Enabled",
@@ -279,6 +286,12 @@ export const providerUsage = {
       http: "用量查询失败（HTTP {{status}}）",
       invalid_response: "用量查询响应无效",
     },
+    openaiBalance: {
+      unsupported: "不支持余额查询",
+      explanation: "此凭据不支持查询账户余额，请到 OpenAI 账单页查看",
+      billing: "OpenAI 账单页",
+      usage: "OpenAI 用量页",
+    },
     extraUsage: {
       title: "额外用量",
       enabled: "已启用",
@@ -313,6 +326,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} 週間",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "残高照会には非対応",
+      explanation:
+        "この認証情報ではアカウント残高を照会できません。OpenAI の請求ページでご確認ください。",
+      billing: "OpenAI の請求ページ",
+      usage: "OpenAI の使用量ページ",
+    },
     extraUsage: {
       title: "追加使用量",
       enabled: "有効",
@@ -360,6 +380,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} 주간",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "잔액 조회 미지원",
+      explanation:
+        "이 인증 정보로는 계정 잔액을 조회할 수 없습니다. OpenAI 청구 페이지에서 확인하세요.",
+      billing: "OpenAI 청구 페이지",
+      usage: "OpenAI 사용량 페이지",
+    },
     extraUsage: {
       title: "추가 사용량",
       enabled: "활성화됨",
@@ -407,6 +434,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} hebdomadaire",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "Consultation du solde non prise en charge",
+      explanation:
+        "Ces identifiants ne permettent pas de consulter le solde du compte. Consultez la page de facturation OpenAI.",
+      billing: "Facturation OpenAI",
+      usage: "Utilisation OpenAI",
+    },
     extraUsage: {
       title: "Utilisation supplémentaire",
       enabled: "Activée",
@@ -454,6 +488,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} semanal",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "Consulta de saldo no compatible",
+      explanation:
+        "Esta credencial no permite consultar el saldo de la cuenta. Consulta la página de facturación de OpenAI.",
+      billing: "Facturación de OpenAI",
+      usage: "Uso de OpenAI",
+    },
     extraUsage: {
       title: "Uso adicional",
       enabled: "Activado",
@@ -501,6 +542,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} semanal",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "Consulta de saldo não suportada",
+      explanation:
+        "Esta credencial não permite consultar o saldo da conta. Consulte a página de faturamento da OpenAI.",
+      billing: "Faturamento da OpenAI",
+      usage: "Uso da OpenAI",
+    },
     extraUsage: {
       title: "Uso extra",
       enabled: "Ativado",
@@ -548,6 +596,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} за неделю",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "Запрос баланса не поддерживается",
+      explanation:
+        "Эти учётные данные не позволяют запросить баланс аккаунта. Проверьте его на странице оплаты OpenAI.",
+      billing: "Оплата OpenAI",
+      usage: "Использование OpenAI",
+    },
     extraUsage: {
       title: "Дополнительное использование",
       enabled: "Включено",
@@ -595,6 +650,13 @@ export const providerUsage = {
     ...en,
     modelWeekly: "{{model}} أسبوعيًا",
     models: { opus: "Opus", sonnet: "Sonnet" },
+    openaiBalance: {
+      unsupported: "الاستعلام عن الرصيد غير مدعوم",
+      explanation:
+        "لا تتيح بيانات الاعتماد هذه الاستعلام عن رصيد الحساب. يُرجى الاطلاع على صفحة فوترة OpenAI.",
+      billing: "فوترة OpenAI",
+      usage: "استخدام OpenAI",
+    },
     extraUsage: {
       title: "الاستخدام الإضافي",
       enabled: "مفعّل",

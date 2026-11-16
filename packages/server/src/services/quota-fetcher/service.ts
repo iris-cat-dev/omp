@@ -74,6 +74,14 @@ export class ProviderUsageService {
       ? new ZhipuQuotaProvider({ ...options, logger: this.logger, fetch })
       : new CustomQuotaProvider({ ...options, logger: this.logger, fetch });
     try {
+      if (new URL(options.baseUrl).origin === "https://api.openai.com") {
+        // Model-call keys cannot query official balances. Admin usage/costs
+        // endpoints require separate credentials and do not provide a balance.
+        return {
+          ...unavailableUsage(fetcher),
+          unsupportedReason: "openai_balance_credentials",
+        };
+      }
       return await fetcher.fetchUsage();
     } catch {
       // Do not propagate fetch/parse errors: their messages can contain credentials.

@@ -73,6 +73,7 @@ import { formatOmpModelQuotaLabel } from "@/provider-usage/omp-account";
 import type { ProviderUsageView } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { ProviderUsageWindowBar } from "@/provider-usage/window-bar";
+import { ProviderUsageUnsupportedNotice } from "@/provider-usage/unsupported-notice";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -645,6 +646,7 @@ function SidebarProviderUsageDetails({
     return <Text style={styles.sidebarQuotaLoading}>{t("providerUsage.empty")}</Text>;
   }
   if (usage.accountQuota) return <ProviderUsageCard usage={usage} compact />;
+  if (usage.unsupportedReason) return <ProviderUsageUnsupportedNotice usage={usage} />;
   if (usage.status !== "available") {
     return (
       <Text style={styles.sidebarQuotaLoading}>{usage.error ?? t("providerUsage.errorTitle")}</Text>

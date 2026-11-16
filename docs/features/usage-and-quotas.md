@@ -108,6 +108,17 @@ Expand the sidebar's provider details to see balances from custom `/v1/usage` pr
 
 Balance queries share a five-minute frontend cache per host and provider, including across new conversations. Refreshing is on demand, not periodic polling; opening a new conversation within the cache period reuses the existing result.
 
+The official `https://api.openai.com` API does not provide a stable public balance
+query using an ordinary model-call API key. Desktop skips `/v1/usage` for that
+origin and shows **Balance query unsupported** in the sidebar, context tooltip,
+and Usage card, with links to [OpenAI billing](https://platform.openai.com/settings/organization/billing/overview)
+and [OpenAI usage](https://platform.openai.com/usage). This is neither a zero
+balance nor an invalid-key/model-availability result. Organization Usage and
+Costs APIs require separate Admin credentials; consumed cost is not remaining
+balance. Do not put an Admin key in the model-key field. Third-party providers
+that implement the existing `/v1/usage` contract still return balances normally,
+and genuine request failures remain distinct and credential-redacted.
+
 ## Zhipu Coding Plan
 
 Built-in `zhipu-coding-plan` reuses keys saved through OMP sign-in. Each enabled stored key has its own labeled usage entry, so a rejected key cannot hide another key's quota. No `models.yml` entry is needed for built-in usage.

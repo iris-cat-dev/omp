@@ -7348,6 +7348,7 @@ export const ProviderUsageSchema = z.object({
   providerId: z.string(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
+  unsupportedReason: z.enum(["openai_balance_credentials"]).optional(),
   planLabel: z.string().nullable(),
   sourceLabel: z.string().nullable().optional(),
   fetchedAt: z.string().nullable().optional(),
