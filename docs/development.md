@@ -130,9 +130,13 @@ selection tries usable accounts before falling back to blocked accounts.
 Desktop pins by durable credential identity and confirms native state or the
 persisted sticky binding before saving the selected feature value. An unexpected
 model invocation or mismatched binding fails the switch instead of reporting
-optimistic success; native credential events continue updating the effective
-account. Rebuild the SDK/backend and restart loaded hosts to apply this fix
-without deleting conversation history.
+optimistic success. Current live assistant frames supply the actual request's
+`credentialId`, including automatic tool-use continuations; native credential
+events remain supported. New requests clear an unconfirmed effective account,
+and older snapshots or sticky reads cannot overwrite newer request evidence.
+The configured automatic/manual policy is separate from the effective identity.
+Rebuild the backend and renderer and restart loaded hosts to apply these display
+updates without deleting conversation history; no SDK change is required.
 
 API GPT models use the same **Standard / Fast / Ultrafast** speed selector as
 eligible subscription models. Built-in OpenAI API models support the UF request

@@ -78,6 +78,7 @@ const OmpAssistantMessageSchema = z
     provider: z.string().optional(),
     model: z.string().optional(),
     api: z.string().optional(),
+    credentialId: z.number().int().positive().optional(),
     entryId: z.string().optional(),
     timestamp: z.number().nullable().optional(),
     duration: z.number().nullable().optional(),

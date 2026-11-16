@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { AgentRunResult } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
@@ -12,7 +13,6 @@ import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
-import type { AgentRunResult } from "../../agent-sdk-types.js";
 
 const GROUPED_ASK_QUESTIONS = [
   {
@@ -516,6 +516,226 @@ describe("OMP agent client and session", () => {
         }),
       ]),
     );
+  });
+
+  describe("live request OAuth identity", () => {
+    let omp: OmpHarness;
+    let stickyCredentialId: number;
+    const message = (
+      responseId: string,
+      credentialId?: number,
+      provider = "openai-codex",
+      model = "gpt-6.1-sol",
+    ): Extract<OmpAgentMessage, { role: "assistant" }> => ({
+      role: "assistant",
+      content: [],
+      provider,
+      model,
+      responseId,
+      ...(credentialId === undefined ? {} : { credentialId }),
+    });
+    const account = () =>
+      omp.features().find((feature) => feature.id === "oauth_account_credential");
+
+    beforeEach(async () => {
+      stickyCredentialId = 8;
+      omp = new OmpHarness({
+        oauthAccounts: [
+          { credentialId: 5, provider: "openai-codex" },
+          { credentialId: 8, provider: "openai-codex" },
+          { credentialId: 15, provider: "anthropic" },
+          { credentialId: 18, provider: "anthropic" },
+        ],
+        sessionCredentialReader: (provider) => (provider === "anthropic" ? 18 : stickyCredentialId),
+      });
+      await omp.start({ model: "openai-codex/gpt-6.1-sol" });
+    });
+
+    afterEach(async () => {
+      await omp.close();
+    });
+
+    test("replaces startup affinity on every successful tool-use continuation", () => {
+      expect(account()).toMatchObject({ value: "automatic", effectiveValue: "8" });
+      omp.runtime().beginTurn();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      for (let index = 0; index < 5; index += 1) {
+        const frame = { ...message(`request-${index}`, 5), stopReason: "toolUse" };
+        omp.runtime().emit({ type: "message_start", message: frame });
+        omp.runtime().emit({ type: "message_end", message: { ...frame } });
+        expect(account()).toMatchObject({ value: "automatic", effectiveValue: "5" });
+      }
+      expect(omp.eventTypes()).toContain("features_changed");
+      expect(omp.recordedPrompts()).toEqual([]);
+    });
+
+    test("orders native changes and later request frames without freezing native authority", () => {
+      omp.runtime().beginTurn();
+      omp.emitCredentialChanged("openai-codex", 8);
+      const first = message("first");
+      omp.runtime().emit({ type: "message_start", message: first });
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+      omp.runtime().emit({
+        type: "message_update",
+        message: { ...first, credentialId: 5 },
+        assistantMessageEvent: { type: "text_delta", delta: "reply" },
+      });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+      omp.emitCredentialChanged("openai-codex", 8);
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+      omp.runtime().emit({ type: "message_end", message: { ...first, credentialId: 5 } });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+      omp.runtime().emit({ type: "message_start", message: message("second", 8) });
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+    });
+
+    test("keeps unknown and explicit null bindings empty instead of reviving stale affinity", async () => {
+      omp.runtime().beginTurn();
+      const known = message("known", 5);
+      omp.runtime().emit({ type: "message_start", message: known });
+      omp.runtime().emit({ type: "message_end", message: known });
+      const unknown = message("unknown");
+      omp.runtime().emit({ type: "message_start", message: unknown });
+      expect(account()).toMatchObject({ effectiveValue: null });
+      omp.runtime().state.activeCredential = { provider: "openai-codex", credentialId: 8 };
+      await omp.runtimeInfo();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      omp.runtime().emit({ type: "message_end", message: unknown });
+      await waitForImmediate();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      omp.runtime().state.activeCredential = null;
+      await omp.runtimeInfo();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      delete omp.runtime().state.activeCredential;
+      await omp.runtimeInfo();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      const afterNull = message("after-null");
+      omp.runtime().emit({ type: "message_start", message: afterNull });
+      omp.runtime().emit({ type: "message_end", message: afterNull });
+      await waitForImmediate();
+      expect(account()).toMatchObject({ effectiveValue: null });
+      omp.runtime().emit({ type: "message_start", message: message("later-known", 5) });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+    });
+
+    test("allows changed legacy affinity on a later unknown request after native evidence", async () => {
+      omp.runtime().beginTurn();
+      const known = message("known", 5);
+      omp.runtime().emit({ type: "message_start", message: known });
+      omp.runtime().emit({ type: "message_end", message: known });
+      const unknown = message("legacy");
+      omp.runtime().emit({ type: "message_start", message: unknown });
+      stickyCredentialId = 5;
+      omp.runtime().emit({ type: "message_end", message: unknown });
+      await waitForImmediate();
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+    });
+
+    test("resets identity context for same-provider and cross-provider model changes", async () => {
+      omp.emitCredentialChanged("openai-codex", 5);
+      stickyCredentialId = 8;
+      await omp.setModel("openai-codex", "gpt-5.6");
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+      omp.runtime().beginTurn();
+      omp.runtime().emit({ type: "message_start", message: message("old-model", 5) });
+      expect(account()).toMatchObject({ effectiveValue: null });
+      const current = message("current-model", 5, "openai-codex", "gpt-5.6");
+      omp.runtime().emit({ type: "message_start", message: current });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+      await omp.setModel("anthropic", "claude-test");
+      expect(account()).toBeUndefined();
+      omp.emitCredentialChanged("openai-codex", 8);
+      omp.runtime().emit({ type: "message_end", message: current });
+      await omp.setModel("openai-codex", "gpt-6.1-sol");
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+      omp.runtime().emit({
+        type: "message_start",
+        message: message("other-provider", 15, "anthropic", "claude-test"),
+      });
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+    });
+
+    test("does not bind the main session to a subagent's model or output identity", () => {
+      omp.runtime().beginTurn();
+      omp.runtime().emit({ type: "message_start", message: message("main", 5) });
+      omp.runtime().emit({
+        type: "subagent_progress",
+        payload: {
+          id: "child-1",
+          agent: "worker",
+          index: 0,
+          progress: {
+            id: "child-1",
+            status: "running",
+            resolvedModel: "openai-codex/gpt-6.1-sol",
+            recentOutput: [message("child", 8)],
+          },
+        },
+      });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+    });
+
+    test("ignores history, unstarted frames, and late ends from earlier requests or turns", async () => {
+      const old = message("old", 8);
+      omp.runtime().emit({ type: "message_end", message: old });
+      omp.runtime().emit({ type: "message_start", message: old });
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+      omp.runtime().beginTurn();
+      omp.runtime().emit({ type: "message_start", message: old });
+      omp.runtime().emit({ type: "message_start", message: message("current", 5) });
+      omp.runtime().emit({ type: "message_end", message: old });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+      omp.runtime().beginTurn();
+      omp.runtime().emit({ type: "message_end", message: message("current", 8) });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+      await omp.interrupt();
+      omp.runtime().emit({ type: "message_end", message: old });
+      expect(account()).toMatchObject({ effectiveValue: "5" });
+    });
+
+    test.each([null, { provider: "openai-codex", credentialId: 8 }])(
+      "rejects a snapshot started before new request evidence: %j",
+      async (activeCredential) => {
+        const stale = { ...omp.runtime().state, activeCredential };
+        const pending = deferred<OmpSessionState>();
+        vi.spyOn(omp.runtime(), "getState").mockReturnValueOnce(pending.promise);
+        const refresh = omp.runtimeInfo();
+        omp.runtime().beginTurn();
+        omp.runtime().emit({ type: "message_start", message: message("current", 5) });
+        pending.resolve(stale);
+        await refresh;
+        expect(account()).toMatchObject({ effectiveValue: "5" });
+      },
+    );
+
+    test("rejects an in-flight sticky result when a newer native event arrives", async () => {
+      omp.runtime().beginTurn();
+      const unknown = message("unknown");
+      omp.runtime().emit({ type: "message_start", message: unknown });
+      stickyCredentialId = 5;
+      omp.runtime().emit({
+        type: "message_update",
+        message: unknown,
+        assistantMessageEvent: { type: "text_delta", delta: "reply" },
+      });
+      omp.emitCredentialChanged("openai-codex", 8);
+      await waitForImmediate();
+      expect(account()).toMatchObject({ effectiveValue: "8" });
+    });
+
+    test("keeps the manual pin policy while reporting the actual request identity", async () => {
+      await omp.setFeature("oauth_account_credential", "8");
+      expect(account()).toMatchObject({ value: "8", effectiveValue: "8" });
+      omp.runtime().beginTurn();
+      const unknown = message("manual");
+      omp.runtime().emit({ type: "message_start", message: unknown });
+      expect(account()).toMatchObject({ value: "8", effectiveValue: null });
+      omp.runtime().emit({ type: "message_end", message: { ...unknown, credentialId: 5 } });
+      expect(account()).toMatchObject({ value: "8", effectiveValue: "5" });
+      expect(omp.recordedPrompts()).toEqual([
+        { message: "/session pin OAuth credential #8", imageCount: 0 },
+      ]);
+    });
   });
 
   test("refreshes OAuth account selection immediately when the model provider changes", async () => {

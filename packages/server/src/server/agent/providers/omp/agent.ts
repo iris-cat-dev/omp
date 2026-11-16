@@ -1344,6 +1344,15 @@ function readNativeMessageId(
   return typeof message.entryId === "string" ? message.entryId : undefined;
 }
 
+function isSameOmpAssistantRequest(
+  current: Extract<OmpAgentMessage, { role: "assistant" }>,
+  message: Extract<OmpAgentMessage, { role: "assistant" }>,
+): boolean {
+  if (current === message) return true;
+  if (current.responseId && message.responseId) return current.responseId === message.responseId;
+  return typeof current.timestamp === "number" && current.timestamp === message.timestamp;
+}
+
 function isOmpRequestAbortError(error: unknown): boolean {
   if (error instanceof Error && error.name === "AbortError") {
     return true;
@@ -2058,6 +2067,12 @@ export class OmpAgentSession implements AgentSession {
   private automaticCredentialRetryAbort: AbortController | null = null;
   private automaticCredentialRetryIndex = 0;
   private automaticCredentialGeneration = 0;
+  private credentialRevision = 0;
+  private nativeCredentialEvidence = false;
+  private pendingNativeCredentialEvent = false;
+  private credentialRequestEvidence = false;
+  private unconfirmedCredentialId: number | undefined;
+  private credentialMessage: Extract<OmpAgentMessage, { role: "assistant" }> | null = null;
   private closed = false;
   private terminationConfirmed = false;
   private live: boolean;
@@ -2103,6 +2118,7 @@ export class OmpAgentSession implements AgentSession {
     this.automaticCredentialScheduler =
       options.automaticCredentialScheduler ?? createOmpAutomaticCredentialScheduler();
     this.state = options.initialState;
+    this.nativeCredentialEvidence = options.initialState.activeCredential !== undefined;
     const initialTodo = mapOmpTodoState(this.state)[0];
     this.lastTodoItem = initialTodo?.type === "todo" ? initialTodo : null;
     const configuredModeId = options.currentModeId ?? null;
@@ -2962,20 +2978,22 @@ export class OmpAgentSession implements AgentSession {
       await this.runtimeSession.abort();
       throw new Error("OMP OAuth account selection unexpectedly started an agent");
     }
+    const credentialRevision = this.credentialRevision;
     const state = await this.runtimeSession.getState();
     const storedCredentialId =
       state.activeCredential === undefined
         ? this.sessionCredentialReader?.(account.provider, state.sessionId)
         : undefined;
-    const activeCredential =
-      state.activeCredential === undefined && storedCredentialId !== undefined
-        ? { provider: account.provider, credentialId: storedCredentialId }
-        : state.activeCredential;
-    const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
-    this.state = { ...state, activeCredential };
-    this.refreshFeatures();
-    if (findOmpOAuthAccountFeature(this.features)?.effectiveValue !== previousEffectiveValue) {
-      this.emit({ type: "features_changed", provider: this.provider });
+    let activeCredential = this.state.activeCredential;
+    if (credentialRevision === this.credentialRevision) {
+      activeCredential = state.activeCredential;
+      if (activeCredential === undefined && storedCredentialId !== undefined) {
+        activeCredential = { provider: account.provider, credentialId: storedCredentialId };
+      }
+      this.nativeCredentialEvidence ||= state.activeCredential !== undefined;
+      this.credentialRequestEvidence = false;
+      this.state = state;
+      this.applyCredentialBinding(activeCredential);
     }
     if (
       activeCredential?.provider !== account.provider ||
@@ -3003,7 +3021,7 @@ export class OmpAgentSession implements AgentSession {
     if (!account) return;
     if (configuredCredentialId) {
       await this.pinOAuthAccount(account);
-    } else {
+    } else if (this.state.activeCredential === undefined) {
       this.state = {
         ...this.state,
         activeCredential: { provider: account.provider, credentialId: account.credentialId },
@@ -4335,25 +4353,125 @@ export class OmpAgentSession implements AgentSession {
     this.emit({ type: "timeline", provider: this.provider, turnId, item });
   }
 
+  private applyCredentialBinding(activeCredential: OmpSessionState["activeCredential"]): void {
+    const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
+    this.credentialRevision += 1;
+    this.state = { ...this.state, activeCredential };
+    this.refreshFeatures();
+    if (findOmpOAuthAccountFeature(this.features)?.effectiveValue !== previousEffectiveValue) {
+      this.emit({ type: "features_changed", provider: this.provider });
+    }
+  }
+
   private handleCredentialChanged(
     event: Extract<OmpRuntimeEvent, { type: "credential_changed" }>,
   ): void {
-    const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
-    this.state = {
-      ...this.state,
-      activeCredential: {
-        provider: event.provider,
-        credentialId: event.credentialId,
-      },
-    };
-    this.refreshFeatures();
-    const effectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
-    if (effectiveValue !== previousEffectiveValue) {
-      this.emit({ type: "features_changed", provider: this.provider });
+    const provider =
+      this.state.model?.provider ?? parseModelReference(this.config.model ?? null)?.provider;
+    if (
+      this.closed ||
+      this.runtimeUnloading ||
+      this.activeInterrupt ||
+      event.provider !== provider
+    ) {
+      return;
     }
-    if (effectiveValue) {
+    this.nativeCredentialEvidence = true;
+    this.credentialRequestEvidence = true;
+    this.pendingNativeCredentialEvent = this.credentialMessage === null;
+    this.stopAutomaticCredentialResolution();
+    this.applyCredentialBinding({ provider: event.provider, credentialId: event.credentialId });
+  }
+
+  private handleMessageCredential(
+    event: Extract<
+      OmpAgentSessionEvent,
+      { type: "message_start" | "message_update" | "message_end" }
+    >,
+  ): void {
+    const message = event.message;
+    const model = this.state.model ?? parseModelReference(this.config.model ?? null);
+    if (
+      message.role !== "assistant" ||
+      !model?.provider ||
+      !this.activeTurnStarted ||
+      !this.activeTurnId ||
+      this.activeInterrupt ||
+      this.runtimeUnloading ||
+      message.provider !== model.provider ||
+      message.model !== model.id
+    )
+      return;
+    if (event.type === "message_start") {
+      if (!this.pendingNativeCredentialEvent) {
+        this.startAutomaticCredentialResolution(false);
+      }
+      this.credentialMessage = message;
+      this.pendingNativeCredentialEvent = false;
+    } else {
+      const current = this.credentialMessage;
+      if (!current || !isSameOmpAssistantRequest(current, message)) return;
+      this.credentialMessage = message;
+    }
+    if (typeof message.credentialId === "number") {
+      // The SDK stamps each actual auth attempt on its assistant frames, including
+      // tool-use continuations. This evidence is newer than startup affinity/pins.
+      this.nativeCredentialEvidence = true;
+      this.credentialRequestEvidence = true;
       this.stopAutomaticCredentialResolution();
+      this.applyCredentialBinding({ provider: model.provider, credentialId: message.credentialId });
+    } else if (!this.nativeCredentialEvidence && event.type !== "message_start") {
+      // Only a changed legacy affinity can confirm an otherwise unknown request.
+      // Re-reading the previous request's sticky account is not fresh evidence.
+      this.stopAutomaticCredentialResolution();
+      this.refreshAutomaticCredential();
     }
+    if (event.type === "message_end") this.credentialMessage = null;
+  }
+
+  private readSessionCredential(provider: string, sessionId: string): number | undefined {
+    try {
+      return this.sessionCredentialReader?.(provider, sessionId);
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP session credential lookup failed");
+      return undefined;
+    }
+  }
+
+  private applyRuntimeState(state: OmpSessionState, credentialRevision: number): void {
+    const previous = this.state;
+    const sameContext =
+      state.sessionId === previous.sessionId &&
+      state.model?.provider === previous.model?.provider &&
+      state.model?.id === previous.model?.id;
+    if (!sameContext && credentialRevision === this.credentialRevision) {
+      this.stopAutomaticCredentialResolution();
+      this.credentialMessage = null;
+      this.pendingNativeCredentialEvent = false;
+      this.credentialRequestEvidence = false;
+      this.nativeCredentialEvidence = false;
+      this.unconfirmedCredentialId = undefined;
+    }
+    let activeCredential = previous.activeCredential;
+    if (credentialRevision === this.credentialRevision) {
+      if (state.activeCredential !== undefined) {
+        // A request (even one still unknown) is newer than a cached binding.
+        // Explicit native null still invalidates it; never resurrect an old ID.
+        if (!sameContext || !this.credentialRequestEvidence || state.activeCredential === null) {
+          this.nativeCredentialEvidence = true;
+          activeCredential = state.activeCredential;
+        }
+      } else if (!this.credentialRequestEvidence && !this.nativeCredentialEvidence) {
+        const provider = state.model?.provider;
+        const credentialId = provider
+          ? this.readSessionCredential(provider, state.sessionId)
+          : undefined;
+        activeCredential =
+          provider && credentialId !== undefined ? { provider, credentialId } : null;
+      }
+    }
+    this.state = state;
+    this.applyCredentialBinding(activeCredential);
   }
 
   private isAutomaticCredentialPending(generation = this.automaticCredentialGeneration): boolean {
@@ -4361,6 +4479,7 @@ export class OmpAgentSession implements AgentSession {
     return (
       generation === this.automaticCredentialGeneration &&
       !this.closed &&
+      !this.nativeCredentialEvidence &&
       !this.activeInterrupt &&
       this.activeTurnId !== null &&
       Boolean(this.automaticCredentialResolver) &&
@@ -4369,9 +4488,25 @@ export class OmpAgentSession implements AgentSession {
     );
   }
 
-  private startAutomaticCredentialResolution(): void {
+  private startAutomaticCredentialResolution(resolveUnknown = true): void {
+    const previousCredentialId = this.state.activeCredential?.credentialId;
+    const hadNativeEvidence = this.nativeCredentialEvidence;
+    this.unconfirmedCredentialId = previousCredentialId ?? this.unconfirmedCredentialId;
+    const provider =
+      this.state.model?.provider ?? parseModelReference(this.config.model ?? null)?.provider;
+    if (provider && (previousCredentialId !== undefined || hadNativeEvidence)) {
+      this.unconfirmedCredentialId =
+        this.readSessionCredential(provider, this.state.sessionId) ?? previousCredentialId;
+    }
     this.stopAutomaticCredentialResolution();
-    this.requestAutomaticCredentialRefresh();
+    this.credentialMessage = null;
+    this.pendingNativeCredentialEvent = false;
+    this.nativeCredentialEvidence = false;
+    this.credentialRequestEvidence = true;
+    this.applyCredentialBinding(null);
+    if (resolveUnknown && previousCredentialId === undefined && !hadNativeEvidence) {
+      this.requestAutomaticCredentialRefresh();
+    }
   }
 
   private stopAutomaticCredentialResolution(): void {
@@ -4398,7 +4533,12 @@ export class OmpAgentSession implements AgentSession {
         this.automaticCredentialRefresh = null;
       }
       if (this.isAutomaticCredentialPending(generation)) {
-        this.scheduleAutomaticCredentialRetry(generation);
+        // An unchanged known affinity needs a new request frame, not polling.
+        if (this.unconfirmedCredentialId === undefined) {
+          this.scheduleAutomaticCredentialRetry(generation);
+        }
+      } else if (this.isAutomaticCredentialPending()) {
+        this.requestAutomaticCredentialRefresh();
       }
     });
   }
@@ -4439,8 +4579,24 @@ export class OmpAgentSession implements AgentSession {
 
   private async resolveAndApplyAutomaticCredential(generation: number): Promise<void> {
     try {
-      const credentialId = await this.automaticCredentialResolver?.(this.state);
-      if (!credentialId || !this.isAutomaticCredentialPending(generation)) return;
+      const revision = this.credentialRevision;
+      const sessionId = this.state.sessionId;
+      const model = this.state.model;
+      const credentialId = await this.automaticCredentialResolver?.({
+        ...this.state,
+        // This resolver is only for a runtime lacking native identity evidence.
+        activeCredential: undefined,
+      });
+      if (
+        !credentialId ||
+        credentialId === this.unconfirmedCredentialId ||
+        !this.isAutomaticCredentialPending(generation) ||
+        revision !== this.credentialRevision ||
+        sessionId !== this.state.sessionId ||
+        model?.provider !== this.state.model?.provider ||
+        model?.id !== this.state.model?.id
+      )
+        return;
       const modelProvider =
         this.state.model?.provider ?? parseModelReference(this.config.model ?? null)?.provider;
       const account = this.oauthAccounts.find(
@@ -4448,17 +4604,11 @@ export class OmpAgentSession implements AgentSession {
           candidate.credentialId === credentialId && candidate.provider === modelProvider,
       );
       if (!account) return;
-      const previousEffectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
-      this.state = {
-        ...this.state,
-        activeCredential: { provider: account.provider, credentialId: account.credentialId },
-      };
-      this.refreshFeatures();
       this.stopAutomaticCredentialResolution();
-      const effectiveValue = findOmpOAuthAccountFeature(this.features)?.effectiveValue;
-      if (effectiveValue !== previousEffectiveValue) {
-        this.emit({ type: "features_changed", provider: this.provider });
-      }
+      this.applyCredentialBinding({
+        provider: account.provider,
+        credentialId: account.credentialId,
+      });
     } catch (error) {
       this.logger.debug({ err: error }, "OMP automatic credential refresh failed");
     }
@@ -4615,7 +4765,13 @@ export class OmpAgentSession implements AgentSession {
   // Session events intentionally share one exhaustive state-transition dispatcher.
   // eslint-disable-next-line complexity
   private handleSessionEvent(event: OmpAgentSessionEvent): void {
-    this.refreshAutomaticCredential();
+    if (
+      event.type === "message_start" ||
+      event.type === "message_update" ||
+      event.type === "message_end"
+    ) {
+      this.handleMessageCredential(event);
+    }
     if (
       (event.type === "agent_start" || event.type === "turn_start") &&
       this.activeTurnId === null
@@ -4628,6 +4784,7 @@ export class OmpAgentSession implements AgentSession {
         this.activeTurnGeneration += 1;
         this.cancelModelErrorContinuation();
         this.activeTurnStarted = true;
+        this.credentialMessage = null;
         this.streamedClaudeCompletionKey = null;
         this.clearNoTurnBuffers();
         this.emit({
@@ -4640,6 +4797,7 @@ export class OmpAgentSession implements AgentSession {
         this.activeTurnGeneration += 1;
         this.cancelModelErrorContinuation();
         this.activeTurnStarted = true;
+        this.credentialMessage = null;
         this.clearNoTurnBuffers();
         this.emit({
           type: "turn_started",
@@ -5512,14 +5670,14 @@ export class OmpAgentSession implements AgentSession {
   ): Promise<void> {
     while (this.ownsActiveTurn(turnId, generation) && this.activeTurnStarted) {
       try {
+        const credentialRevision = this.credentialRevision;
+        const modelRevision = this.modelControlRevision;
         const state = await this.runtimeSession.getState();
         if (!this.ownsActiveTurn(turnId, generation) || !this.activeTurnStarted) {
           return;
         }
-        this.state = {
-          ...state,
-          activeCredential: state.activeCredential ?? this.state.activeCredential,
-        };
+        if (modelRevision !== this.modelControlRevision) continue;
+        this.applyRuntimeState(state, credentialRevision);
         if (!state.isStreaming && !state.isCompacting) {
           this.completeTurn(turnId, messages, generation);
           return;
@@ -5543,13 +5701,11 @@ export class OmpAgentSession implements AgentSession {
     const previousFastValue = previousFastMode?.value;
     const previousFastType = previousFastMode?.type;
     const revision = this.modelControlRevision;
+    const credentialRevision = this.credentialRevision;
     const state = await this.runtimeSession.getState();
     if (this.closed || this.runtimeUnloading || revision !== this.modelControlRevision)
       return false;
-    this.state = {
-      ...state,
-      activeCredential: state.activeCredential ?? this.state.activeCredential,
-    };
+    this.applyRuntimeState(state, credentialRevision);
     if (state.approvalMode) {
       this.currentModeId = mapOmpApprovalMode(state.approvalMode);
       this.config.modeId = this.currentModeId;
@@ -5812,6 +5968,14 @@ export class OmpAgentClient implements AgentClient {
     if (!provider || !sessionId) return null;
     const providerAccounts = accounts.filter((account) => account.provider === provider);
     if (providerAccounts.length < 2) return null;
+    if (state.activeCredential !== undefined) {
+      return state.activeCredential?.provider === provider &&
+        providerAccounts.some(
+          (account) => account.credentialId === state.activeCredential?.credentialId,
+        )
+        ? state.activeCredential.credentialId
+        : null;
+    }
     try {
       const credentialId = this.readSessionCredentialId(provider, sessionId, launchEnv);
       return providerAccounts.some((account) => account.credentialId === credentialId)

@@ -116,6 +116,45 @@ describe("OMP account feature selection", () => {
     expect(selection.effectiveValue).toBe("42");
   });
 
+  test("keeps an unconfirmed pin selected without claiming its account identity", () => {
+    const selection = resolveOmpAccountFeatureSelection({
+      value: "42",
+      effectiveValue: null,
+      options: [
+        { id: "automatic", label: "Automatic", metadata: { selectionMode: "automatic" } },
+        { id: "41", label: "Account 41" },
+        { id: "42", label: "Account 42" },
+      ],
+    });
+    expect(selection).toMatchObject({
+      isAutomatic: false,
+      configuredValue: "42",
+      effectiveValue: "",
+    });
+  });
+
+  test("preserves legacy manual identity only when effectiveValue is omitted", () => {
+    const feature = {
+      value: "42",
+      options: [
+        { id: "automatic", label: "Automatic", metadata: { selectionMode: "automatic" } },
+        { id: "42", label: "Account 42" },
+      ],
+    };
+    expect(resolveOmpAccountFeatureSelection(feature)).toMatchObject({
+      configuredValue: "42",
+      effectiveValue: "42",
+      isAutomatic: false,
+    });
+    expect(
+      resolveOmpAccountFeatureSelection({ ...feature, effectiveValue: undefined }),
+    ).toMatchObject({ configuredValue: "42", effectiveValue: "42" });
+    expect(resolveOmpAccountFeatureSelection({ ...feature, effectiveValue: null })).toMatchObject({
+      configuredValue: "42",
+      effectiveValue: "",
+    });
+  });
+
   test("resolves automatic selection with effective value during resolution", () => {
     const selection = resolveOmpAccountFeatureSelection({
       value: "automatic",

@@ -72,10 +72,14 @@ export function resolveOmpAccountFeatureSelection(feature: OmpAccountFeatureSele
     orderOmpAccountFeatureOptions(feature.options).find(isOmpAutomaticAccountOption) ?? null;
   const isAutomatic =
     feature.value === null || (automaticOption !== null && feature.value === automaticOption.id);
+  let effectiveValue = feature.effectiveValue ?? "";
+  if (feature.effectiveValue === undefined && !isAutomatic) {
+    effectiveValue = feature.value ?? "";
+  }
   return {
     automaticOptionId: automaticOption?.id ?? null,
     configuredValue: isAutomatic ? (automaticOption?.id ?? "") : (feature.value ?? ""),
-    effectiveValue: feature.effectiveValue ?? (isAutomatic ? "" : (feature.value ?? "")),
+    effectiveValue,
     isAutomatic,
   };
 }

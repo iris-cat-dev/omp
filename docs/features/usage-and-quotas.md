@@ -174,6 +174,16 @@ Claude accounts do not show Codex reset actions or subscription-expiry controls.
 
 Percentages mean **remaining quota**; unknown is not 100% remaining. Context tooltips list labeled accounts instead of guessing from provider namespace. Settings/sidebar show live compact countdowns such as `3d21h` and `2h12min`; deadlines trigger server refresh and an awaiting-refresh state, never assumed recovery.
 
+In **Automatic** mode, the active conversation's account label and associated
+quota follow the credential reported by each actual model request, including
+tool-use continuations after automatic rotation. While a new request's identity
+is unknown, Desktop shows **Determining the account for this response…** rather
+than retaining the previous account or its quota. This display does not change
+automatic selection or manual pin policy; older snapshots and late messages
+cannot replace newer request identity. Load the updated backend and renderer
+and restart loaded session hosts to apply the fix; no SDK update or history
+deletion is required.
+
 **Credits** in host Usage and provider account details preserve the authenticated API's exact decimal balance string without rounding or interpreting it as currency, or display the reported unlimited/disabled state. Missing balances are unavailable, not zero. Credits, five-hour/weekly quota, and banked reset cards are separate. Desktop neither infers a currency nor scrapes ChatGPT browser cookies.
 
 ### Failed refreshes and recovery
