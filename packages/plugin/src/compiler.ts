@@ -349,6 +349,7 @@ export async function compilePlugin(entryPath: string): Promise<CompiledPluginBu
 }
 
 export async function compilePackageEntries(entries: { clientEntry?: string; serviceEntry?: string }): Promise<CompiledPluginBundles> {
+  if (!entries.clientEntry && !entries.serviceEntry) return { clientBundle: "", serverBundle: "" };
   const {build}=loadEsbuild();
   const compile = async (entry:string|undefined,target:"client"|"server") => {
     if(!entry) return "";

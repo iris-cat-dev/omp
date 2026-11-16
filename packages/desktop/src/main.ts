@@ -102,9 +102,11 @@ import {
   markMainWindowLoading,
 } from "./window/main-windows.js";
 import { getLocalPluginRuntime, setupLocalPlugins, handleLocalPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
-import { OmpMonitorController } from "./monitor/controller.js";
-import { MONITOR_HTML } from "./monitor/html.js";
-import { MONITOR_PERF_CARD_HTML } from "./monitor/perf-card-html.js";
+import {
+  getPluginNativeTrayItems,
+  onPluginNativeTrayItemsChanged,
+  handlePluginNativeDocument,
+} from "./plugins/native-entry.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "omp-desktop";
@@ -114,7 +116,6 @@ const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const isPetCreationCli = process.argv.includes("--desktop-pet-install");
 const agentNavigationInbox = new AgentNavigationInbox();
 const closeChoiceRequests = new CloseChoiceRequestBroker();
-let monitorController: OmpMonitorController | null = null;
 let ownsDesktopInstance = false;
 let mainWindowsQuitting = false;
 const presentedMainWindows = new WeakSet<BrowserWindow>();
@@ -526,19 +527,14 @@ function updateBackgroundTrayContextMenu(): void {
   backgroundTray.setContextMenu(
     Menu.buildFromTemplate([
       { label: labels.showApp, click: backgroundTrayActions.restore },
-      {
-        label: app.getLocale().startsWith("zh") ? "OMP 本地监控" : "OMP Local Monitor",
-        click: () => {
-          void bootstrapComplete
-            .then(() => monitorController?.open())
-            .catch((error: unknown) => log.error("[local-monitor] Failed to open", error));
-        },
-      },
+      ...getPluginNativeTrayItems(),
       { type: "separator" },
       { label: labels.quitApp, click: backgroundTrayActions.quit },
     ]),
   );
 }
+
+onPluginNativeTrayItemsChanged(updateBackgroundTrayContextMenu);
 
 const backgroundModeController = new BackgroundModeController({
   promptForCloseChoice: async (window) => {
@@ -771,14 +767,8 @@ async function bootstrap(): Promise<void> {
     const url = new URL(request.url);
     const { hostname, pathname, search, hash } = url;
     const decodedPath = decodeURIComponent(pathname);
-    if (hostname === "monitor") {
-      let html: string;
-      if (decodedPath === "/local-monitor") html = MONITOR_HTML;
-      else if (decodedPath === "/local-perf-card") html = MONITOR_PERF_CARD_HTML;
-      else return new Response("Not found", { status: 404 });
-      return new Response(html, {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      });
+    if (hostname === "plugin-native") {
+      return handlePluginNativeDocument(decodedPath) ?? new Response("Not found", { status: 404 });
     }
 
     const wallpaperResponse = await handleWallpaperProtocolRequest(request, url, app.isPackaged ? null : new URL(DEV_SERVER_URL).origin);
@@ -826,8 +816,6 @@ async function bootstrap(): Promise<void> {
   registerEditorTargetHandlers();
   registerRemoteSshHandlers();
   registerScreenshotHandler();
-  monitorController = new OmpMonitorController();
-  monitorController.initialize();
   try {
     await setupLocalPlugins({
       startupBarrier: bootstrapComplete,
@@ -907,12 +895,11 @@ function showDaemonShutdownDialog(): void {
 }
 
 async function prepareDesktopToQuit(): Promise<void> {
-  await monitorController?.dispose();
+  await getLocalPluginRuntime().dispose();
   mainWindowsQuitting = true;
   rendererLossRecoveryController.beginShutdown();
   beginMainWindowShutdown();
   backgroundModeController.markAppQuitting();
-  await getLocalPluginRuntime().dispose();
 }
 
 const quitLifecycle = createQuitLifecycle({
@@ -940,7 +927,7 @@ const quitLifecycle = createQuitLifecycle({
   },
   createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
   onPrepareError: (error) => {
-    log.error("[local monitor] quit cancelled because settings could not be saved", error);
+    log.error("[desktop-plugins] quit cancelled because plugin state could not be saved", error);
   },
   onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);

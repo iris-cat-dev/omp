@@ -641,11 +641,26 @@ Remove-Item Env:ELECTRON_PATH
 
 Choose **Reload window**, then click **Verify interaction** in the replacement. The smoke uses a temporary profile and terminates only its own renderer child; it does not use an existing Desktop process or require Inspector/CDP.
 
-### Local monitor native regression
+### Agent Speed native regression
+
+#### Folder-plugin integration
 
 ```bash
+npm run build --workspace=@omp-desktop/plugin-agent-speed
+npm run build:main:compiled --workspace=@omp-desktop/desktop
+node packages/desktop/e2e/agent-speed-plugin-smoke.cjs
+```
+
+This smoke installs the actual folder package through production main-preload IPC in an isolated mini-electron profile. It grants `native.main`, checks disabled/startup gating, native menu and RPC dispatch, and observes 100 output tokens over a measured 1000 ms in the real collector. It visits dashboard, orb, history, settings, 38-currency pricing, orb preview, board and performance-card documents. Disable/re-enable must close and restore owned resources while preserving saved preferences. Clear-data disables the installation; enabling it again must keep cleared usage empty and leave legacy originals intact. Quit must close open native windows and revoke documents/menu entries.
+
+The script prints an evidence directory containing native PNGs, numeric reports and runtime logs. It uses synthetic numeric sessions, not provider credentials or model calls. macOS proves the owned IPC, rendered surfaces and lifecycle; Windows compositor, file-dialog and physical-input qualification remains separate. The monitor retains its original Windows-specific icon font, which can produce fallback squares on macOS.
+
+#### Windows surface qualification
+
+```bash
+npm run build --workspace=@omp-desktop/plugin-agent-speed
 npm run build:main --workspace=@omp-desktop/desktop
-node packages/desktop/e2e/local-monitor-smoke.js
+node plugins/agent-speed/e2e/local-monitor-smoke.cjs
 ```
 
 This Windows surface smoke copies the configured official mini-electron runtime into an owned temporary profile and uses the real product controller, both production preloads, HTML, collector, and worker with synthetic numeric OMP files. It exercises a transparent orb plus separate dashboard/history/settings panels: original instruments and dark/porcelain pixels, nine title themes, four effect levels, measured-completion/peak feedback, independent project scopes, eight-orb capacity, hidden/click-through recovery, native pinning/menu/geometry, full and selected-date CSV, 38 offline currencies, worker failure, missing sources and cold reopen.
@@ -666,4 +681,4 @@ Selector acceptance requires a pointer-opened, visibly painted option list and a
 
 For redraw regressions, drive the production collector with owned numeric JSONL, including a large backfilled file and many project scopes. Measure incoming state messages and option/ladder mutations separately from trusted click-to-frame callbacks; do not substitute a prebuilt snapshot or infer hardware input latency from those callbacks. Also visit the lazily rendered Cost/Orb/Data pages, change a currency, persist it, and verify a real project filter reduces the displayed usage. A worker publication is one scoped batch: an obsolete scope entry must not discard valid sibling entries from the same poll.
 
-Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` to retain its numeric report and native compositor PNGs elsewhere. Focused filesystem/pricing/lifecycle/CSV/resource regressions are under `packages/desktop/src/monitor`; run that directory only, not the full repository suite. The pricing tests use deterministic transports; a separate real public-data exercise is needed to qualify live network availability.
+Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` to retain its numeric report and native compositor PNGs elsewhere. Focused filesystem/pricing/lifecycle/CSV/resource regressions are under `plugins/agent-speed/src/monitor`; run that directory only, not the full repository suite. Migration regressions are in `plugins/agent-speed/src/migration.test.ts`; generic native-entry lifecycle/authorization regressions are in `packages/desktop/src/plugins/native-entry.test.ts`. The pricing tests use deterministic transports; a separate real public-data exercise is needed to qualify live network availability.

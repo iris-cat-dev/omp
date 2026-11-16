@@ -1,10 +1,4 @@
 const en = {
-  localMonitor: {
-    title: "Local monitor",
-    description: "Live throughput, agent activity and system resources",
-    open: "Open monitor",
-    openFailed: "The local monitor could not open. Retry or check the Desktop logs.",
-  },
   nativeStats: {
     title: "Usage overview",
     scope: "This host · {{profile}}",
@@ -168,12 +162,6 @@ export const providerUsage = {
   en,
   "zh-CN": {
     ...en,
-    localMonitor: {
-      title: "本地监控",
-      description: "实时吞吐、代理活动与系统资源",
-      open: "打开监控",
-      openFailed: "无法打开本地监控，请重试或检查 Desktop 日志。",
-    },
     nativeStats: {
       title: "用量概览",
       scope: "此主机 · {{profile}}",

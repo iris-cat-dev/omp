@@ -2,9 +2,9 @@ import { z } from "zod";
 const id = z.string().regex(/^[a-z][a-z0-9-]*$/);
 export const DesktopPluginMetadataSchema = z.object({
   apiVersion: z.literal(1), id, owner: z.enum(["desktop", "daemon"]),
-  entries: z.object({ client: z.string().min(1).optional(), service: z.string().min(1).optional() }).strict().refine(v => !!(v.client || v.service), "At least one entry is required"),
+  entries: z.object({ client: z.string().min(1).optional(), service: z.string().min(1).optional(), native: z.string().min(1).optional() }).strict().refine(v => !!(v.client || v.service || v.native), "At least one entry is required"),
   capabilities: z.array(z.string().min(1)).default([]),
-}).strict();
+}).strict().refine(v => !v.entries.native || (v.owner === "desktop" && v.capabilities.includes("native.main")), "Native entries require desktop ownership and the native.main capability");
 export type DesktopPluginMetadata = z.infer<typeof DesktopPluginMetadataSchema>;
 export const DesktopPluginApprovalSchema = z.object({ version: z.string(), capabilities: z.array(z.string()), trusted: z.literal(true) }).strict();
 export const DesktopPluginExpectedInstallationSchema=z.object({sourcePath:z.string().min(1),packageId:z.string().min(1),generation:z.number().int().nonnegative()}).strict();

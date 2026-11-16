@@ -290,7 +290,6 @@ export interface DesktopHostBridge {
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
   plugins?: DesktopPluginsBridge;
-  monitor?: { open: () => Promise<void> };
   screenshot?: { capture: () => Promise<VisualFeedbackImage | null> };
   events?: DesktopEventsBridge;
   remoteSsh?: DesktopRemoteSshBridge;

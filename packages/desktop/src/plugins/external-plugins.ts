@@ -5,6 +5,7 @@ import type { PluginActivationScope } from "@omp-desktop/plugin/host";
 import type { LocalPluginRecord, LocalPluginDirectoryInspection } from "@omp-desktop/protocol/desktop-local-plugins";
 import type { LocalPluginDefinition } from "./local-runtime.js";
 import type { LocalPluginLogs } from "./logs.js";
+import { createPluginNativeEntry, type PluginNativeEntryDependencies } from "./native-entry.js";
 
 export async function inspectLocalPluginDirectory(directory: string): Promise<LocalPluginDirectoryInspection> {
   const inspected = await inspectPluginPackage(await realpath(directory));
@@ -20,6 +21,7 @@ export interface ExternalLocalPluginDependencies {
   fail(id: string, generation: number, message: string): void;
   waiting(id: string, generation: number, reason: string | null): void;
   clearData(id: string): Promise<void>;
+  native?: PluginNativeEntryDependencies;
 }
 export async function loadExternalLocalPlugin(record: LocalPluginRecord, scope: PluginActivationScope, dependencies: ExternalLocalPluginDependencies): Promise<LocalPluginDefinition> {
   const inspected = await inspectLocalPluginDirectory(record.source.identity);
@@ -27,6 +29,8 @@ export async function loadExternalLocalPlugin(record: LocalPluginRecord, scope: 
   if (inspected.id !== record.packageId || inspected.version !== record.version || inspected.capabilities.some((capability) => !record.grantedCapabilities.includes(capability))) throw new Error("Plugin source changed its version, identity or capabilities. Inspect and approve this source before reloading.");
   const bundles = inspected.format === "legacy" ? await compilePlugin(inspected.serviceEntry!) : await compilePackageEntries(inspected);
   scope.assertCurrent();
+  if (inspected.nativeEntry && !dependencies.native) throw new Error("Desktop native host integration is unavailable.");
+  const native = inspected.nativeEntry ? createPluginNativeEntry(record, scope, inspected, dependencies.native!) : undefined;
   let worker: IsolatedPluginWorker | undefined;
   let workerMode: "active" | "manage" | undefined;
   let starting: Promise<IsolatedPluginWorker> | undefined;
@@ -57,7 +61,11 @@ export async function loadExternalLocalPlugin(record: LocalPluginRecord, scope: 
   return {
     id: record.id,
     clientBundle: inspected.clientEntry || inspected.format === "legacy" ? bundles.clientBundle : undefined,
-    setup: inspected.serviceEntry ? async () => { await start("active"); } : undefined,
+    setup: inspected.serviceEntry || native ? async (context) => {
+      if (inspected.serviceEntry) await start("active");
+      return native?.setup(context);
+    } : undefined,
+    prepareToStop: native?.prepareToStop,
     invoke: inspected.serviceEntry ? async (method, input, generation) => { const instance = await start("active"); return instance.invoke(method, input, generation); } : undefined,
     manageInvoke: inspected.serviceEntry ? async (method, input, generation) => { const instance = await start("manage"); return instance.invoke(method, input, generation); } : undefined,
     clearData: () => dependencies.clearData(record.id),

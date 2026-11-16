@@ -173,7 +173,7 @@ export function createQuitLifecycle({
       }
 
       // No validated updater owns exit. Preserve the existing macOS
-      // window-all-closed bypass, after actual monitor persistence has completed.
+      // window-all-closed bypass, after plugin persistence has completed.
       app.exit(0);
     })();
   }

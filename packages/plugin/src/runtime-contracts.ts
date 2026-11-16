@@ -100,6 +100,23 @@ export interface PluginServiceContext extends PluginContext {
 export type PluginClientSetup = (context: PluginClientContext) => void | PluginCleanup | Promise<void | PluginCleanup>;
 export type PluginServiceSetup = (context: PluginServiceContext) => void | PluginCleanup | Promise<void | PluginCleanup>;
 
+export interface PluginDesktopNativeTrayItem { id: string; label: string; onSelect(): void | Promise<void> }
+/** Trusted Desktop main-process entry. Requires explicit native.main approval. */
+export interface PluginDesktopNativeContext extends PluginServiceContext {
+  readonly desktop: {
+    readonly dataDirectory: string;
+    registerDocument(id: string, html: string): string;
+    addTrayItem(item: PluginDesktopNativeTrayItem): PluginCleanup;
+    /** Flush durable state before revocation. Rejection leaves this generation available for retry. */
+    beforeStop(prepare: () => void | Promise<void>): PluginCleanup;
+    readonly launchAtLogin: {
+      get(): { enabled: boolean; supported: boolean };
+      set(enabled: boolean): { enabled: boolean; supported: boolean };
+    };
+  };
+}
+export type PluginDesktopNativeSetup = (context: PluginDesktopNativeContext) => void | PluginCleanup | Promise<void | PluginCleanup>;
+
 export interface PluginManagementContext extends Pick<PluginServiceContext,"installation"|"signal"|"storage"|"secrets"|"own"> {
   readonly mode: "manage";
   readonly role: "management";

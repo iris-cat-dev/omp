@@ -4,9 +4,9 @@ import { mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises"
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { isPluginReleaseOperation, type PluginActivationScope, type PluginNativeApi, type PluginNativeOverlayRequest, type PluginNativeOverlayLease, type PluginNativeOverlayWireRequest } from "@omp-desktop/plugin/server";
-import { LocalPluginActionSchema, LocalPluginInvocationSchema, LocalPluginPatchSchema, LocalPluginSelectionSchema, LocalPluginDirectoryInstallSchema, LocalPluginRecordSchema, LocalPluginClientScopeSchema, type LocalPluginRecord, type LocalPluginSnapshot, type LocalPluginDirectoryInstall } from "@omp-desktop/protocol/desktop-local-plugins";
+import { LocalPluginActionSchema, LocalPluginInvocationSchema, LocalPluginPatchSchema, LocalPluginSelectionSchema, LocalPluginDirectoryInstallSchema, LocalPluginRecordSchema, LocalPluginClientScopeSchema, type LocalPluginRecord, type LocalPluginSnapshot, type LocalPluginDirectoryInstall, type LocalPluginPatch } from "@omp-desktop/protocol/desktop-local-plugins";
 import { isWallpaperCommand, type WallpaperCommand } from "@omp-desktop/protocol/desktop-wallpaper";
-import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { getDesktopSettingsStore, launchAtLoginController } from "../settings/desktop-settings-electron.js";
 import { getMainWindows, getMainWindowDocumentVersion, isMainWindowSender, onMainWindowRemoved, selectMainWindow } from "../window/main-windows.js";
 import { wallpaperMediaRegistry, type WallpaperDocumentOwner } from "../wallpaper/media-registry.js";
 import { createWallpaperCommandHandler } from "../wallpaper/commands.js";
@@ -19,6 +19,7 @@ import { LocalPluginLogs } from "./logs.js";
 import { LocalPluginSecrets, LocalPluginSecretRequestSchema } from "./secrets.js";
 import { registerPluginNativeMenu, unregisterPluginNativeMenu, revokePluginNativeMenus, releasePluginDocumentMenus, releasePluginClientMenus } from "./native-menu.js";
 import { LocalPluginClientScopes, type ClientScopeBinding } from "./client-scopes.js";
+import { clearPluginNativeData } from "./native-entry.js";
 
 interface Navigation { openApp(): void | Promise<void>; openAgent(target: { serverId: string; agentId: string }): void | Promise<void>; startupBarrier: Promise<void> }
 let navigation: Navigation | undefined;
@@ -52,8 +53,35 @@ export function getLocalPluginRuntime(): LocalPluginRuntime {
     fail: (id, generation, message) => getLocalPluginRuntime().fail(id, generation, message),
     waiting: (id, generation, reason) => getLocalPluginRuntime().waiting(id, generation, reason),
     clearData: (id) => pluginSecrets().clear(id),
+    native: {
+      userDataPath: app.getPath("userData"),
+      launchAtLogin: launchAtLoginController,
+      assertAuthorized: (record, scope) => { getLocalPluginRuntime().assertServiceAuthorized(record.id, scope.generation); },
+      onError: (id, message) => pluginLogs().append(id, "stderr", message),
+    },
   }), (id, message) => pluginLogs().append(id, "stderr", message));
   return runtime;
+}
+async function patchLocalPlugin(input: LocalPluginPatch): Promise<LocalPluginSnapshot> {
+  const local = getLocalPluginRuntime(), store = getDesktopSettingsStore();
+  const record = local.getSnapshot().installations.find(({ id }) => id === input.installationId);
+  if (!record || record.revision !== input.expectedRevision) throw new Error("Plugin installation changed.");
+  const patch = input.patch;
+  const executionChanged = (patch.enabled !== undefined && patch.enabled !== record.enabled)
+    || (patch.trusted !== undefined && patch.trusted !== record.trusted)
+    || (patch.grantedCapabilities !== undefined && (patch.grantedCapabilities.length !== record.grantedCapabilities.length
+      || patch.grantedCapabilities.some((capability, index) => capability !== record.grantedCapabilities[index])));
+  if (!executionChanged) {
+    await store.patchPlugin(input);
+  } else {
+    try {
+      await local.suspend(record.id);
+      await store.patchPlugin(input);
+    } finally {
+      await local.resume(record.id);
+    }
+  }
+  return local.getSnapshot();
 }
 function requireCapability(record: LocalPluginRecord, capability: string): void { if (!record.grantedCapabilities.includes(capability)) throw new Error(`Plugin capability is not granted: ${capability}.`); }
 const OpenDialogSchema = z.object({ title: z.string().optional(), directory: z.boolean().optional(), multiple: z.boolean().optional(), filters: z.array(z.object({ name: z.string(), extensions: z.array(z.string()) })).optional() });
@@ -96,7 +124,7 @@ async function commonNativeOperation(record: LocalPluginRecord, scope: PluginAct
   if (operation.startsWith("files.")) return scopedFileOperation(record, operation, input);
   if (operation === "dialog.open") return openPluginDialog(record, input);
   if (operation === "navigation.openApp" || operation === "navigation.openAgent") { requireCapability(record, "native.navigation"); if (!navigation) throw new Error("Application navigation is not ready."); return operation === "navigation.openApp" ? navigation.openApp() : navigation.openAgent(z.object({ serverId: z.string(), agentId: z.string() }).parse(input)); }
-  if (operation === "plugin.setEnabled") { const { enabled } = z.object({ enabled: z.boolean() }).parse(input); const current = (await getDesktopSettingsStore().getPlugins()).installations.find(({ id }) => id === record.id)!; return getDesktopSettingsStore().patchPlugin({ installationId: record.id, expectedRevision: current.revision, patch: { enabled } }); }
+  if (operation === "plugin.setEnabled") { const { enabled } = z.object({ enabled: z.boolean() }).parse(input); const current = (await getDesktopSettingsStore().getPlugins()).installations.find(({ id }) => id === record.id)!; return patchLocalPlugin({ installationId: record.id, expectedRevision: current.revision, patch: { enabled } }); }
   if (operation === "plugin.fail") { const { message } = z.object({ message: z.string() }).parse(input); getLocalPluginRuntime().fail(record.id, scope.generation, message); dialog.showErrorBox("Desktop plugin", message); return; }
   return getLocalPluginRuntime().invoke(record.id, scope.generation, operation, input);
 }
@@ -209,6 +237,7 @@ async function refreshDirectoryInstallation(record: LocalPluginRecord, installed
   if (inspected.id !== record.packageId) throw new Error("Source package identity changed. Install it with a different identity.");
   const sameApproval = inspected.version === record.version && inspected.capabilities.every((capability) => record.grantedCapabilities.includes(capability));
   const document = await store.getPlugins();
+  if (document.installations.find(({ id }) => id === record.id)?.revision !== record.revision) throw new Error("Plugin installation changed.");
   await store.installPlugin({ ...record, installed, version: inspected.version, format: inspected.format, metadata: inspected.metadata, declaredCapabilities: inspected.capabilities, grantedCapabilities: record.grantedCapabilities.filter((capability) => inspected.capabilities.includes(capability)), trusted: record.trusted && sameApproval }, document.revision);
 }
 let ipcRegistered = false;
@@ -235,7 +264,7 @@ function registerLocalPluginIpc(): void {
   ipcMain.handle("omp:plugins:releaseClientScope", (event, raw) => { const input = LocalPluginClientScopeSchema.omit({ mode: true }).parse(raw); requireMainFrame(event, input.documentEpoch); clientScopes.close(input, event.sender.id); });
   ipcMain.handle("omp:plugins:startup-ready", async (event) => { const epoch = requireMainFrame(event); await initializing; await navigation!.startupBarrier; requireMainFrame(event, epoch); getLocalPluginRuntime().startupReady(); });
   ipcMain.handle("omp:plugins:get", async (event) => { requireMainFrame(event); await initializing; return getLocalPluginRuntime().getSnapshot(); });
-  ipcMain.handle("omp:plugins:patch", async (event, raw) => { requireMainFrame(event); await initializing; await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); });
+  ipcMain.handle("omp:plugins:patch", async (event, raw) => { requireMainFrame(event); await initializing; return patchLocalPlugin(LocalPluginPatchSchema.parse(raw)); });
   ipcMain.handle("omp:plugins:inspectDirectory", async (event, raw) => { requireMainFrame(event); return inspectLocalPluginDirectory(z.object({ directory: z.string() }).parse(raw).directory); });
   ipcMain.handle("omp:plugins:installDirectory", async (event, raw) => { requireMainFrame(event); await initializing; return installLocalPluginDirectory(LocalPluginDirectoryInstallSchema.parse(raw)); });
   ipcMain.handle("omp:plugins:getLogs", async (event, raw) => { requireMainFrame(event); const { installationId } = z.object({ installationId: z.string() }).parse(raw); if (!getLocalPluginRuntime().getSnapshot().installations.some(({ id }) => id === installationId)) throw new Error("Plugin is not installed."); return pluginLogs().get(installationId); });
@@ -245,16 +274,23 @@ function registerLocalPluginIpc(): void {
     const input = LocalPluginActionSchema.parse(raw), local = getLocalPluginRuntime(), store = getDesktopSettingsStore();
     const record = local.getSnapshot().installations.find(({ id }) => id === input.installationId);
     if (!record || record.revision !== input.expectedRevision) throw new Error("Plugin installation changed.");
-    if (action === "reload") {
+    try {
       await local.suspend(record.id);
-      try { if (record.source.type === "local") await refreshDirectoryInstallation(record, record.installed); await local.reload(record.id); }
-      catch (error) { local.fail(record.id, record.generation, error instanceof Error ? error.message : String(error)); throw error; }
-    } else if (action === "clearData") {
-      await local.suspend(record.id); await local.clearData(record.id); await pluginSecrets().clear(record.id);
-      const current = (await store.getPlugins()).installations.find(({ id }) => id === record.id)!;
-      await store.resetPluginConfiguration(record.id, {}, current.revision);
-    } else if (action === "reinstall" && record.source.type === "local") await refreshDirectoryInstallation({ ...record, enabled: false }, true);
-    else await store.setPluginInstalled(record.id, action === "reinstall", record.revision);
+      if (action === "reload") {
+        await refreshDirectoryInstallation(record, record.installed);
+      } else if (action === "clearData") {
+        await local.clearData(record.id);
+        await pluginSecrets().clear(record.id);
+        await clearPluginNativeData(app.getPath("userData"), record.id);
+        await store.resetPluginConfiguration(record.id, {}, record.revision);
+      } else if (action === "reinstall" && record.source.type === "local") {
+        await refreshDirectoryInstallation({ ...record, enabled: false }, true);
+      } else {
+        await store.setPluginInstalled(record.id, action === "reinstall", record.revision);
+      }
+    } finally {
+      await local.resume(record.id);
+    }
     return local.getSnapshot();
   });
   ipcMain.handle("omp:plugins:invoke", async (event, raw) => {
@@ -291,7 +327,7 @@ function registerLocalPluginIpc(): void {
     } finally { clientScopes.finish(binding); }
   });
 }
-export function createLocalPluginCommandHandlers() { return { get_desktop_plugins: () => getLocalPluginRuntime().getSnapshot(), patch_desktop_plugin: async (raw: unknown) => { await getDesktopSettingsStore().patchPlugin(LocalPluginPatchSchema.parse(raw)); return getLocalPluginRuntime().getSnapshot(); } }; }
+export function createLocalPluginCommandHandlers() { return { get_desktop_plugins: () => getLocalPluginRuntime().getSnapshot(), patch_desktop_plugin: (raw: unknown) => patchLocalPlugin(LocalPluginPatchSchema.parse(raw)) }; }
 export function requireLocalPluginCommandDocument(event: IpcMainInvokeEvent): void { requireMainFrame(event); }
 export async function handleLocalPluginResource(hostname: string, pathname: string): Promise<Response | null> {
   if (hostname === "overlay" && pathname.startsWith("/plugin-overlay/")) {

@@ -11,6 +11,7 @@ export interface LocalPluginDefinition {
   invoke?: (method: string, input: unknown, generation: number) => Promise<unknown>;
   manageInvoke?: (method: string, input: unknown, generation: number) => Promise<unknown>;
   clearData?: () => Promise<void>;
+  prepareToStop?: () => Promise<void>;
 }
 interface Instance {
   record: LocalPluginRecord;
@@ -20,6 +21,7 @@ interface Instance {
   error: string | null;
   started: boolean;
   handlers: Map<string, (input: unknown) => Promise<unknown>>;
+  stopping?: Promise<void>;
 }
 function executionIdentity(record: LocalPluginRecord): string {
   return JSON.stringify([record.installed, record.enabled, record.trusted, record.version, record.source, record.declaredCapabilities, record.grantedCapabilities]);
@@ -34,6 +36,7 @@ export class LocalPluginRuntime {
   private stopped = false;
   private queue: Promise<void> = Promise.resolve();
   private unsubscribe: (() => void) | undefined;
+  private disposing: Promise<void> | undefined;
   constructor(
     private readonly store: DesktopSettingsStore,
     private readonly native: (record: LocalPluginRecord, scope: PluginActivationScope) => PluginNativeApi,
@@ -46,7 +49,7 @@ export class LocalPluginRuntime {
     this.unsubscribe = this.store.subscribePlugins((document) => {
       for (const record of document.installations) {
         const instance = this.instances.get(record.id);
-        if (instance && executionIdentity(instance.record) !== executionIdentity(record)) {
+        if (instance && !instance.definition?.prepareToStop && executionIdentity(instance.record) !== executionIdentity(record)) {
           for (const listener of this.revocations) listener(record.id, instance.scope.generation);
           void instance.scope.dispose().catch((error) => this.onError(record.id, String(error)));
         }
@@ -80,10 +83,15 @@ export class LocalPluginRuntime {
     const snapshot = this.getSnapshot();
     for (const listener of this.listeners) listener(snapshot);
   }
-  private async stop(instance: Instance): Promise<void> {
-    for (const listener of this.revocations) listener(instance.record.id, instance.scope.generation);
-    await instance.scope.dispose();
-    instance.handlers.clear();
+  private async stop(instance: Instance, prepared = false): Promise<void> {
+    if (instance.stopping) return instance.stopping;
+    instance.stopping = (async () => {
+      if (!prepared && !instance.scope.signal.aborted) await instance.definition?.prepareToStop?.();
+      for (const listener of this.revocations) listener(instance.record.id, instance.scope.generation);
+      await instance.scope.dispose();
+      instance.handlers.clear();
+    })().finally(() => { instance.stopping = undefined; });
+    return instance.stopping;
   }
   private async reconcile(): Promise<void> {
     if (this.stopped) return;
@@ -97,7 +105,7 @@ export class LocalPluginRuntime {
         const record = updated.installations.find(({ id }) => id === listed.id)!;
         instance = { record, scope: createActivationScope(record.generation), status: record.enabled ? "waiting" : "disabled", error: null, started: false, handlers: new Map() };
         this.instances.set(record.id, instance);
-        if (!record.installed || !record.trusted) continue;
+        if (!record.installed || !record.trusted || record.declaredCapabilities.some((capability) => !record.grantedCapabilities.includes(capability))) continue;
         try {
           instance.definition = await this.loadLocal(record, instance.scope);
           instance.scope.assertCurrent();
@@ -152,8 +160,14 @@ export class LocalPluginRuntime {
       }
       instance.scope.assertCurrent();
       if (cleanup) instance.scope.own(cleanup);
+      if (executionIdentity(instance.record) !== executionIdentity(this.document.installations.find(({ id }) => id === instance.record.id)!)) { await this.stop(instance); return; }
       if (instance.status === "activating") instance.status = "active";
-    } catch (error) { if (!instance.scope.signal.aborted) this.fail(instance.record.id, instance.scope.generation, error instanceof Error ? error.message : String(error)); }
+    } catch (error) {
+      if (!instance.scope.signal.aborted) {
+        this.fail(instance.record.id, instance.scope.generation, error instanceof Error ? error.message : String(error));
+        try { await this.stop(instance); } catch (cleanupError) { this.onError(instance.record.id, String(cleanupError)); }
+      }
+    }
   }
   assertAuthorized(id: string, generation: number, purpose: "manage" | "background" | "active", capability?: string): LocalPluginRecord {
     if (this.stopped) throw new Error("Desktop plugins are stopping.");
@@ -181,10 +195,10 @@ export class LocalPluginRuntime {
     if (manage) return manage(input);
     if (definition?.manageInvoke && instance?.status !== "active") return definition.manageInvoke(operation, input, generation);
     this.assertAuthorized(id, generation, "active");
-    if (definition?.invoke) return definition.invoke(operation, input, generation);
     const handler = instance!.handlers.get(operation);
-    if (!handler) throw new Error(`Unknown plugin operation: ${operation}.`);
-    return handler(input);
+    if (handler) return handler(input);
+    if (definition?.invoke) return definition.invoke(operation, input, generation);
+    throw new Error(`Unknown plugin operation: ${operation}.`);
   }
   async whenIdle(): Promise<void> { for (;;) { const pending = this.queue; await pending; if (pending === this.queue) return; } }
   async reload(id: string): Promise<void> { const record = this.document.installations.find((record) => record.id === id); if (!record || record.source.type !== "local") throw new Error("Only folder plugins can be reloaded."); const instance = this.instances.get(id); if (instance) { await this.stop(instance); this.instances.delete(id); } this.enqueue(); await this.whenIdle(); const current = this.instances.get(id); if (current?.status === "failed") throw new Error(current.error ?? "Plugin reload failed."); }
@@ -193,12 +207,35 @@ export class LocalPluginRuntime {
     if (!instance || instance.scope.generation !== generation) return;
     instance.status = "failed"; instance.error = message;
     this.onError(id, message);
-    for (const listener of this.revocations) listener(id, generation);
-    void instance.scope.dispose().catch((error) => this.onError(id, String(error)));
+    void this.stop(instance).catch((error) => this.onError(id, String(error)));
     this.publish();
   }
   waiting(id: string, generation: number, reason: string | null): void { const instance = this.instances.get(id); if (!instance || instance.scope.generation !== generation || instance.scope.signal.aborted) return; instance.status = reason ? "waiting" : "active"; instance.error = reason; this.publish(); }
+  async prepareToStop(id: string): Promise<void> { const instance = this.instances.get(id); if (instance && !instance.scope.signal.aborted) await instance.definition?.prepareToStop?.(); }
   async suspend(id: string): Promise<void> { const instance = this.instances.get(id); if (instance) await this.stop(instance); }
+  async resume(id: string): Promise<void> {
+    const record = this.document.installations.find((record) => record.id === id);
+    if (!record || record.source.type !== "local") throw new Error("Only folder plugins can be resumed.");
+    const instance = this.instances.get(id);
+    if (instance?.scope.signal.aborted) this.instances.delete(id);
+    this.enqueue();
+    await this.whenIdle();
+    const current = this.instances.get(id);
+    if (current?.status === "failed") throw new Error(current.error ?? "Plugin resume failed.");
+  }
   async clearData(id: string): Promise<void> { const record = this.document.installations.find((record) => record.id === id); if (!record || record.source.type !== "local") throw new Error("Only folder plugins can clear their data."); const definition = this.instances.get(id)?.definition; await definition?.clearData?.(); }
-  async dispose(): Promise<void> { if (this.stopped) return; this.stopped = true; this.unsubscribe?.(); await Promise.all([...this.instances.values()].map((instance) => this.stop(instance))); this.instances.clear(); }
+  async dispose(): Promise<void> {
+    if (this.stopped) return;
+    if (this.disposing) return this.disposing;
+    this.disposing = (async () => {
+      await this.whenIdle();
+      const instances = [...this.instances.values()];
+      await Promise.all(instances.map((instance) => this.prepareToStop(instance.record.id)));
+      this.stopped = true;
+      this.unsubscribe?.();
+      await Promise.all(instances.map((instance) => this.stop(instance, true)));
+      this.instances.clear();
+    })().finally(() => { this.disposing = undefined; });
+    return this.disposing;
+  }
 }

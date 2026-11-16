@@ -57,9 +57,6 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       await ipcRenderer.invoke("omp:plugins:releaseClientScope", { ...input, documentEpoch });
     },
   },
-  monitor: {
-    open: () => ipcRenderer.invoke("paseo:monitor:open") as Promise<void>,
-  },
   screenshot:
     process.platform === "darwin" || process.platform === "win32"
       ? {
