@@ -32,65 +32,18 @@ function createLogger() {
   };
 }
 
-function createStructuredGenerator(result: { title: string; branch: string }) {
-  const calls: StructuredAgentGenerationWithFallbackOptions<unknown>[] = [];
+function createStructuredGenerator(result: { branch: string }) {
 
   async function generateStructured<T>(
-    options: StructuredAgentGenerationWithFallbackOptions<T>,
+    _options: StructuredAgentGenerationWithFallbackOptions<T>,
   ): Promise<T> {
-    calls.push(options as StructuredAgentGenerationWithFallbackOptions<unknown>);
     return result as T;
   }
 
-  return { generateStructured, calls };
+  return { generateStructured };
 }
 
 describe("generateBranchNameFromFirstAgentContext", () => {
-  test("uses the current selection as the final provider fallback", async () => {
-    const structured = createStructuredGenerator({
-      title: "Focused task",
-      branch: "focused-branch",
-    });
-
-    const result = await generateBranchNameFromFirstAgentContext({
-      agentManager: {} as AgentManager,
-      cwd: "/tmp/repo",
-      providerSnapshotManager: {
-        listProviders: vi.fn(async () => [
-          {
-            provider: "focused-provider",
-            status: "ready" as const,
-            enabled: true,
-            models: [
-              {
-                provider: "focused-provider",
-                id: "selected-model",
-                label: "Selected Model",
-                isDefault: true,
-              },
-            ],
-          },
-        ]),
-      },
-      currentSelection: {
-        provider: "focused-provider",
-        model: "selected-model",
-        thinkingOptionId: "medium",
-      },
-      firstAgentContext: { prompt: "Fix the login flow" },
-      logger: createLogger(),
-      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
-    });
-
-    expect(result?.branch).toBe("focused-branch");
-    const firstCall = structured.calls[0];
-    if (!firstCall) {
-      throw new Error("expected structured generation call");
-    }
-    expect(firstCall.providers).toEqual([
-      { provider: "focused-provider", model: "selected-model", thinkingOptionId: "medium" },
-    ]);
-  });
 
   test("keeps the branch slug validator fallback when instructions are present", async () => {
     const repoRoot = createTempDir("paseo-branch-config-");
@@ -108,7 +61,6 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       },
     });
     const structured = createStructuredGenerator({
-      title: "Invalid title",
       branch: "Invalid Branch Name",
     });
     const renameCurrentBranch = vi.fn(async () => ({

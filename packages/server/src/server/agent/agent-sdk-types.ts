@@ -469,6 +469,13 @@ export type AgentTimelineItem =
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
+  | {
+      type: "session_title_changed";
+      provider: AgentProvider;
+      sessionId: string;
+      title: string;
+      source?: "auto" | "user";
+    }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "working_intent"; provider: AgentProvider; turnId: string; intent: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
@@ -724,6 +731,8 @@ export interface AgentSession {
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void | AgentProviderNotice>;
+  /** Rename the native session explicitly, when supported by the provider. */
+  setTitle?(title: string): Promise<void>;
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(
     requestId: string,

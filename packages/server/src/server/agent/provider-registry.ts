@@ -339,6 +339,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     getAvailableModes: () => inner.getAvailableModes(),
     getCurrentMode: () => inner.getCurrentMode(),
     setMode: (modeId) => inner.setMode(modeId),
+    setTitle: inner.setTitle?.bind(inner),
     getPendingPermissions: () => inner.getPendingPermissions(),
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
@@ -400,7 +401,7 @@ function wrapClientProvider(
     setDefaultProxyPolicy: inner.setDefaultProxyPolicy?.bind(inner),
     readHistoryPage: inner.readHistoryPage?.bind(inner),
     streamPersistedSubagentHistory: inner.streamPersistedSubagentHistory?.bind(inner),
-    createSession: async (config, launchContext) =>
+    createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
         await inner.createSession(
@@ -409,6 +410,7 @@ function wrapClientProvider(
             provider: inner.provider,
           },
           launchContext,
+          options,
         ),
       ),
     resumeSession: async (handle, overrides, launchContext, options) =>

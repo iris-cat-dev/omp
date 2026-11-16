@@ -22,6 +22,8 @@ export function serializeAgentSnapshot(
 }
 
 export function serializeAgentStreamEvent(event: AgentStreamEvent): AgentStreamEventPayload | null {
+  // Native titles are persisted and projected through agent/workspace snapshots.
+  if (event.type === "session_title_changed") return null;
   if (event.type === "attention_required") {
     // Providers may emit attention_required without per-client notification context.
     // The websocket server emits attention_required with shouldNotify computed per client.

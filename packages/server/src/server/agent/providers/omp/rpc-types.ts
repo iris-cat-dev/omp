@@ -187,6 +187,7 @@ export const OmpSessionStateSchema = z
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
+    titleSource: z.enum(["auto", "user"]).optional(),
     messageCount: z.number().int().nonnegative(),
     queuedMessageCount: z.number().int().nonnegative(),
     contextUsage: OmpContextUsageSchema.optional(),
@@ -718,6 +719,12 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpExtensionUiRequestSchema,
   z.object({ type: z.literal("desktop_plugin_prompt_request"), id: z.string() }),
   z.object({
+    type: z.literal("session_info_update"),
+    sessionId: z.string(),
+    title: z.string().optional(),
+    titleSource: z.enum(["auto", "user"]).optional(),
+  }).passthrough(),
+  z.object({
     type: z.literal("extension_error"),
     extensionPath: z.string(),
     event: z.string(),
@@ -788,6 +795,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("abort_and_restore_queue") }),
   z.object({ ...OmpCommandBase, type: z.literal("cancel_subagent"), subagentId: z.string() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_session_name"), name: z.string() }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("execute_extension_command"),

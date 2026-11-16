@@ -46,14 +46,15 @@ const PersistedWorkspaceRecordSchema = z.object({
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
-  // User-set title layered over the derived displayName. In Model B the title is
-  // the workspace identity; branch/directory are backing metadata. Reconciliation
-  // never touches this. Null means "use the derived displayName".
+  // The workspace identity; branch/directory remain backing metadata.
+  // Reconciliation never rewrites titles. Null falls back to displayName.
   title: z
     .string()
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Missing on legacy records: a nonempty title with unknown source is preserved.
+  titleSource: z.enum(["auto", "user"]).nullable().default(null),
   // The worktree's git branch. Decoupled from displayName/title by construction:
   // displayName holds the human name (title), branch holds the git branch. Only
   // worktree workspaces carry a branch; directory/local_checkout leave it null.
@@ -724,6 +725,7 @@ export function createPersistedWorkspaceRecord(input: {
   kind: PersistedWorkspaceKind;
   displayName: string;
   title?: string | null;
+  titleSource?: PersistedWorkspaceRecord["titleSource"];
   branch?: string | null;
   worktreeRoot?: string | null;
   baseBranch?: string | null;
@@ -739,6 +741,7 @@ export function createPersistedWorkspaceRecord(input: {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
     title: input.title ?? null,
+    titleSource: input.titleSource === undefined ? (input.title ? "user" : "auto") : input.titleSource,
     branch: input.branch ?? null,
     worktreeRoot: input.worktreeRoot ?? null,
     baseBranch: input.baseBranch ?? null,

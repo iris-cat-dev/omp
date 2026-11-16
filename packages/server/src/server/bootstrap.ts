@@ -1082,14 +1082,9 @@ export async function createPaseoDaemon(
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
       resolveFirstAgentPromptTitle(firstAgentContext),
+      undefined,
+      { titleSource: "auto" },
     );
-    if (firstAgentContext) {
-      workspaceAutoName.scheduleForDirectory({
-        workspaceId: workspace.workspaceId,
-        cwd: workspace.cwd,
-        firstAgentContext,
-      });
-    }
     return workspace.workspaceId;
   };
   const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
@@ -1155,6 +1150,17 @@ export async function createPaseoDaemon(
       await emitWorkspaceUpdatesExternal([workspaceId]);
     },
     logger,
+  });
+  const unsubscribeWorkspaceTitles = agentManager.subscribe((message) => {
+    if (message.type !== "agent_stream" || message.event.type !== "session_title_changed") return;
+    void workspaceAutoName
+      .applyNativeSessionTitle({
+        agentId: message.agentId,
+        title: message.event.title,
+      })
+      .catch((error) => {
+        logger.warn({ err: error, agentId: message.agentId }, "Failed to sync native workspace title");
+      });
   });
 
   setupAutoArchiveOnMerge({
@@ -1624,6 +1630,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    unsubscribeWorkspaceTitles();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     configureGitCredentialEnvironmentProvider(null);

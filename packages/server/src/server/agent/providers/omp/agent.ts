@@ -42,6 +42,8 @@ import {
   type OmpProviderLoginStart,
   type AgentClient,
   type AgentFeature,
+  type AgentCreateSessionOptions,
+  type AgentResumeSessionOptions,
   type AgentInterruptReason,
   type AgentLaunchContext,
   type AgentMetadata,
@@ -730,6 +732,7 @@ interface OmpAgentSessionOptions {
    * timeline items.
    */
   live?: boolean;
+  purpose?: AgentResumeSessionOptions["purpose"];
 }
 
 function initialOmpNativeWorkflowMode(
@@ -1312,6 +1315,7 @@ function buildResumeStartInput(input: {
   sessionFile: string;
   launchContext: AgentLaunchContext | undefined;
   launchMode: { modeId: string | null; extraArgs?: string[] };
+  purpose?: AgentResumeSessionOptions["purpose"];
 }): OmpStartSessionInput {
   return {
     cwd: input.resumeConfig.cwd,
@@ -1321,6 +1325,7 @@ function buildResumeStartInput(input: {
     env: input.launchContext?.env,
     getImageGenerationConfig: input.launchContext?.getImageGenerationConfig,
     session: input.sessionFile,
+    autoTitle: input.resumeConfig.config.internal !== true && input.purpose !== "history",
     model: input.resumeConfig.model,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
@@ -2050,6 +2055,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly queuedSubagentRuntimeEvents: OmpRuntimeEvent[] = [];
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
+  private sessionTitle: Extract<AgentStreamEvent, { type: "session_title_changed" }> | null = null;
+  private titleRevision = 0;
   private currentModeId: string | null;
   private activeWorkflowMode: OmpWorkflowMode | null;
   private workflowModePending: OmpWorkflowSelection | null;
@@ -2098,11 +2105,13 @@ export class OmpAgentSession implements AgentSession {
   private readonly getDefaultProxyPolicy: () => ProxyPolicy;
   private readonly onClosed?: () => void;
   private proxyPolicyUpdate: Promise<void> = Promise.resolve();
+  private readonly purpose: AgentResumeSessionOptions["purpose"];
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
     this.live = options.live ?? true;
+    this.purpose = options.purpose;
     this.getDefaultProxyPolicy = options.getDefaultProxyPolicy ?? (() => DIRECT_PROXY_POLICY);
     this.onClosed = options.onClosed;
     this.blobDir = options.blobDir;
@@ -2118,6 +2127,7 @@ export class OmpAgentSession implements AgentSession {
     this.automaticCredentialScheduler =
       options.automaticCredentialScheduler ?? createOmpAutomaticCredentialScheduler();
     this.state = options.initialState;
+    this.updateSessionTitle(this.state.sessionId, this.state.sessionName, this.state.titleSource);
     this.nativeCredentialEvidence = options.initialState.activeCredential !== undefined;
     const initialTodo = mapOmpTodoState(this.state)[0];
     this.lastTodoItem = initialTodo?.type === "todo" ? initialTodo : null;
@@ -2573,6 +2583,7 @@ export class OmpAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    if (this.sessionTitle) callback(this.sessionTitle);
     for (const event of this.queuedSubagentRuntimeEvents.splice(0)) {
       this.handleExtraRuntimeEvent(event);
     }
@@ -2583,6 +2594,34 @@ export class OmpAgentSession implements AgentSession {
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  async setTitle(title: string): Promise<void> {
+    this.assertRuntimeWorkAllowed();
+    const name = title.trim();
+    if (!name) return;
+    await this.runtimeSession.setSessionName(name);
+    // Older hosts omit titleSource, but this command is always an explicit rename.
+    this.updateSessionTitle(this.state.sessionId, name, "user");
+  }
+
+  private updateSessionTitle(
+    sessionId: string,
+    name: string | undefined,
+    source: "auto" | "user" | undefined,
+  ): void {
+    const title = name?.trim();
+    if (!title || sessionId !== this.state.sessionId) return;
+    if (source !== "user" && (this.sessionTitle?.source === "user" || this.config.title?.trim()))
+      return;
+    const previous = this.sessionTitle;
+    if (previous?.sessionId === sessionId && previous.title === title && previous.source === source)
+      return;
+    this.titleRevision += 1;
+    this.sessionTitle = { type: "session_title_changed", provider: this.provider, sessionId, title, source };
+    this.state = { ...this.state, sessionName: title, titleSource: source };
+    if (source === "user") this.config.title = title;
+    this.emit(this.sessionTitle);
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -2979,6 +3018,7 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("OMP OAuth account selection unexpectedly started an agent");
     }
     const credentialRevision = this.credentialRevision;
+    const titleRevision = this.titleRevision;
     const state = await this.runtimeSession.getState();
     const storedCredentialId =
       state.activeCredential === undefined
@@ -2992,7 +3032,11 @@ export class OmpAgentSession implements AgentSession {
       }
       this.nativeCredentialEvidence ||= state.activeCredential !== undefined;
       this.credentialRequestEvidence = false;
-      this.state = state;
+      this.state = titleRevision === this.titleRevision
+        ? state
+        : { ...state, sessionName: this.state.sessionName, titleSource: this.state.titleSource };
+      if (titleRevision === this.titleRevision)
+        this.updateSessionTitle(state.sessionId, state.sessionName, state.titleSource);
       this.applyCredentialBinding(activeCredential);
     }
     if (
@@ -3032,6 +3076,11 @@ export class OmpAgentSession implements AgentSession {
 
   async initialize(): Promise<void> {
     await this.subagentSubscription;
+    const explicitTitle = this.config.title?.trim();
+    if (
+      this.purpose !== "history" && !this.config.internal && explicitTitle &&
+      (this.state.sessionName !== explicitTitle || this.state.titleSource !== "user")
+    ) await this.setTitle(explicitTitle);
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
     // Capture dynamic metadata while activation is already explicit. Cold UI reads
@@ -4242,6 +4291,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (event.type === "session_info_update") {
+      this.updateSessionTitle(event.sessionId, event.title, event.titleSource);
+      return true;
+    }
     if (event.type === "desktop_plugin_prompt_request") {
       if (this.config.sandbox) {
         this.runtimeSession.sendPluginPromptResult?.(event.id, [], "Sandbox plugin prompts denied");
@@ -4438,7 +4491,7 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private applyRuntimeState(state: OmpSessionState, credentialRevision: number): void {
+  private applyRuntimeState(state: OmpSessionState, credentialRevision: number, titleRevision: number): void {
     const previous = this.state;
     const sameContext =
       state.sessionId === previous.sessionId &&
@@ -4470,7 +4523,11 @@ export class OmpAgentSession implements AgentSession {
           provider && credentialId !== undefined ? { provider, credentialId } : null;
       }
     }
-    this.state = state;
+    this.state = titleRevision === this.titleRevision
+      ? state
+      : { ...state, sessionName: previous.sessionName, titleSource: previous.titleSource };
+    if (titleRevision === this.titleRevision)
+      this.updateSessionTitle(state.sessionId, state.sessionName, state.titleSource);
     this.applyCredentialBinding(activeCredential);
   }
 
@@ -5672,12 +5729,13 @@ export class OmpAgentSession implements AgentSession {
       try {
         const credentialRevision = this.credentialRevision;
         const modelRevision = this.modelControlRevision;
+        const titleRevision = this.titleRevision;
         const state = await this.runtimeSession.getState();
         if (!this.ownsActiveTurn(turnId, generation) || !this.activeTurnStarted) {
           return;
         }
         if (modelRevision !== this.modelControlRevision) continue;
-        this.applyRuntimeState(state, credentialRevision);
+        this.applyRuntimeState(state, credentialRevision, titleRevision);
         if (!state.isStreaming && !state.isCompacting) {
           this.completeTurn(turnId, messages, generation);
           return;
@@ -5702,10 +5760,11 @@ export class OmpAgentSession implements AgentSession {
     const previousFastType = previousFastMode?.type;
     const revision = this.modelControlRevision;
     const credentialRevision = this.credentialRevision;
+    const titleRevision = this.titleRevision;
     const state = await this.runtimeSession.getState();
     if (this.closed || this.runtimeUnloading || revision !== this.modelControlRevision)
       return false;
-    this.applyRuntimeState(state, credentialRevision);
+    this.applyRuntimeState(state, credentialRevision, titleRevision);
     if (state.approvalMode) {
       this.currentModeId = mapOmpApprovalMode(state.approvalMode);
       this.config.modeId = this.currentModeId;
@@ -6132,6 +6191,7 @@ export class OmpAgentClient implements AgentClient {
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     if (config.sandbox)
       config = {
@@ -6154,7 +6214,8 @@ export class OmpAgentClient implements AgentClient {
       protocolMode: "rpc-ui",
       model: config.model,
       thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
-      noSession: config.internal === true,
+      noSession: config.internal === true || options?.persistSession === false,
+      autoTitle: config.internal !== true && options?.persistSession !== false,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
       systemPrompt: config.sandbox
@@ -6241,6 +6302,7 @@ export class OmpAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -6275,6 +6337,7 @@ export class OmpAgentClient implements AgentClient {
         sessionFile,
         launchContext: { ...launchContext, env: launchEnv },
         launchMode,
+        purpose: options?.purpose,
       }),
     );
     try {
@@ -6325,6 +6388,7 @@ export class OmpAgentClient implements AgentClient {
             "blobs",
           ),
           live: false,
+          purpose: options?.purpose,
         },
         oauthAccounts,
       );

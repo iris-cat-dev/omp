@@ -31,6 +31,7 @@ describe("persistence hooks", () => {
     const record = createRecord({
       title: "Configured agent",
       config: {
+        title: "Explicit native title",
         modeId: "default",
         model: "gpt-5.4-mini",
         thinkingOptionId: "minimal",
@@ -54,6 +55,7 @@ describe("persistence hooks", () => {
 
     expect(buildConfigOverrides(record)).toMatchObject({
       cwd: "/tmp/project",
+      title: "Explicit native title",
       modeId: "default",
       model: "gpt-5.4-mini",
       thinkingOptionId: "minimal",
@@ -73,6 +75,7 @@ describe("persistence hooks", () => {
         },
       },
     });
+    expect(buildSessionConfig(record)?.title).toBe("Explicit native title");
   });
 
   test("buildSessionConfig keeps an omitted mode omitted on resume", () => {
@@ -95,6 +98,7 @@ describe("persistence hooks", () => {
     expect(buildSessionConfig(record)).toMatchObject({
       provider: "codex",
       cwd: "/tmp/project",
+      title: undefined,
       modeId: undefined,
       model: "gpt-5.4-mini",
       systemPrompt: "Confirm first.",

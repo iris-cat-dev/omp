@@ -43,7 +43,11 @@ When old layouts merge into one project, tab state remains, the first split tree
 
 The sidebar and its conversation shortcuts list independent conversations. A worktree containing only active managed children stays accessible through the parent's subagent track, not as another top-level conversation. Explicitly opening a child keeps its own execution workspace even when its tab is hosted beside the parent. Detaching makes it independent and visible; empty workspaces, unknown agent inventories, and mixed workspaces with an active independent root remain visible.
 
+Ordinary workspaces follow their independent OMP session's native name. The first prompt can appear as a provisional name; native naming then replaces it without a separate Desktop naming-model request. Restoring a session synchronizes its saved name without starting a turn. Managed child names never rename the parent's workspace. Git branch naming remains independent and never changes workspace titles.
+
 Double-click a sidebar conversation row to rename inline; **Enter** confirms and **Esc** cancels/restores the original. The row's Rename action uses the same editor, and tab context menus also rename. Renaming a primary conversation changes its workspace name; additional conversations retain their own titles.
+
+Manual workspace names are persistent overrides, including a cleared title, and native naming cannot overwrite them after restart. Nonempty older titles without a recorded source are preserved.
 
 Accepted names update tabs immediately, without waiting for directory events, and remain visible across tab changes even for unloaded conversations or unavailable provider history. Each tab's title and rename target come from its conversation's own workspace, including mixed-workspace tabs within one project. Focus changes may change tools' active workspace, never a conversation's primary-workspace identity or saved name. Tab-width measurements do not own names or selection. Saved metadata is published for unloaded conversations, and session initialization preserves concurrent renames.
 

@@ -284,6 +284,7 @@ describe("AgentStorage", () => {
     expect(records).toHaveLength(1);
     const [record] = records;
     expect(record.provider).toBe("claude");
+    expect(record.config?.title).toBe("Initial title");
     expect(record.config?.modeId).toBe("coding");
     expect(record.config?.model).toBe("gpt-5.1");
     expect(record.config?.systemPrompt).toBe("Be terse and explicit.");
@@ -301,6 +302,9 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
+    expect(persisted.config?.title).toBe("Initial title");
+    expect(buildConfigOverrides(persisted).title).toBe("Initial title");
+    expect(buildSessionConfig(persisted)?.title).toBe("Initial title");
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

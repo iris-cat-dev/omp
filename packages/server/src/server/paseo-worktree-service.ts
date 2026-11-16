@@ -99,6 +99,7 @@ async function createPaseoWorktreeWithPriority(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      titleSource: input.title?.trim() ? "user" : "auto",
       expectsInitialAgent: Boolean(input.firstAgentContext),
     });
 

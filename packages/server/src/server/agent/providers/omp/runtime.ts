@@ -46,6 +46,7 @@ export interface OmpRuntimeLaunch {
   modeId?: string;
   session?: string;
   noSession?: boolean;
+  autoTitle?: boolean;
   systemPrompt?: string;
   extraArgs?: string[];
 }
@@ -71,6 +72,7 @@ export interface OmpStartSessionInput {
   modeId?: string;
   session?: string;
   noSession?: boolean;
+  autoTitle?: boolean;
   systemPrompt?: string;
   extraArgs?: string[];
 }
@@ -104,6 +106,8 @@ export interface OmpRuntimeSession {
   abortAndRestoreQueue(): Promise<OmpAbortAndRestoreQueueResult>;
   cancelSubagent?(subagentId: string): Promise<boolean>;
   getState(): Promise<OmpSessionState>;
+  /** Native explicit rename; the host records its source as user. */
+  setSessionName(name: string): Promise<void>;
   setApprovalMode(mode: OmpApprovalMode): Promise<OmpApprovalMode>;
   listBackgroundJobs?(): Promise<BackgroundProcess[]>;
   getBackgroundJobOutput?(processId: string, cursor?: number): Promise<BackgroundProcessOutput>;
@@ -197,6 +201,7 @@ export function buildOmpLaunch(input: {
     modeId: input.session.modeId,
     session: input.session.session,
     noSession: input.session.noSession,
+    autoTitle: input.session.autoTitle,
     systemPrompt,
     extraArgs: input.session.extraArgs,
   };

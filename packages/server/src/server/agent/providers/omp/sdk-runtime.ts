@@ -105,6 +105,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,
+      autoTitle: input.autoTitle === true && input.noSession !== true,
       systemPrompt: input.systemPrompt,
       env: {
         ...env,
@@ -266,6 +267,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,
+      autoTitle: launch.autoTitle,
       extraArgs: input.sandbox ? [] : [
         ...(input.extraArgs ?? []),
         ...launch.argv.slice(command.length),

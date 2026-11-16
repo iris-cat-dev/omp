@@ -3595,6 +3595,7 @@ export class Session {
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
         title: nextTitle,
+        titleSource: "user",
         updatedAt,
       }));
       if (!updated) {
@@ -3838,20 +3839,18 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       if (resolvedIntent.shouldNameWorkspace && workspacePromptTitle) {
-        await this.workspaceRegistry.update(resolvedIntent.intent.workspaceId, (current) => ({
-          ...current,
-          title: current.title ?? workspacePromptTitle,
-          updatedAt: new Date().toISOString(),
-        }));
+        await this.workspaceRegistry.update(resolvedIntent.intent.workspaceId, (current) => {
+          if (current.title !== null || current.titleSource === "user" || current.archivedAt) {
+            return current;
+          }
+          return {
+            ...current,
+            title: workspacePromptTitle,
+            titleSource: "auto",
+            updatedAt: new Date().toISOString(),
+          };
+        });
         await this.emitWorkspaceUpdateForWorkspaceId(resolvedIntent.intent.workspaceId);
-        this.workspaceAutoName.scheduleForDirectory(
-          {
-            workspaceId: resolvedIntent.intent.workspaceId,
-            cwd: resolvedIntent.config.cwd,
-            firstAgentContext,
-          },
-          { currentSelection: this.getFocusedAgentSelectionForCwd(resolvedIntent.config.cwd) },
-        );
       }
       await this.agentUpdates.forwardLiveAgent(snapshot);
       this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
@@ -6543,7 +6542,10 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext) },
+      {
+        expectsInitialAgent: Boolean(request.firstAgentContext),
+        titleSource: explicitTitle ? "user" : "auto",
+      },
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -6568,17 +6570,6 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
-    if (request.firstAgentContext) {
-      const firstAgentContext = request.firstAgentContext;
-      this.workspaceAutoName.scheduleForDirectory(
-        {
-          workspaceId: workspace.workspaceId,
-          cwd: workspace.cwd,
-          firstAgentContext,
-        },
-        { currentSelection: this.getFocusedAgentSelectionForCwd(workspace.cwd) },
-      );
-    }
   }
 
   private async handleWorkspaceCreateWorktree(

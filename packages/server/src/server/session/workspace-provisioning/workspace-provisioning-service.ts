@@ -44,6 +44,7 @@ export interface CreateWorktreeWorkspaceInput {
   branch: string | null;
   baseBranch: string | null;
   title: string | null;
+  titleSource?: PersistedWorkspaceRecord["titleSource"];
   expectsInitialAgent?: boolean;
 }
 
@@ -58,7 +59,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; titleSource?: PersistedWorkspaceRecord["titleSource"] },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -210,7 +211,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; titleSource?: PersistedWorkspaceRecord["titleSource"] },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await getDirectoryCheckout(normalizedCwd);
@@ -224,6 +225,7 @@ export function createWorkspaceProvisioningService(deps: {
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
       title: title?.trim() || null,
+      titleSource: context?.titleSource,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -256,6 +258,7 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      titleSource: input.titleSource,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -343,6 +346,7 @@ export function createWorkspaceProvisioningService(deps: {
     return (
       await createWorkspaceForDirectory(input.cwd, input.initialTitle, undefined, {
         expectsInitialAgent: true,
+        titleSource: "auto",
       })
     ).workspaceId;
   }

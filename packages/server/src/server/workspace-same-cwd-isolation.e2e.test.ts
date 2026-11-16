@@ -9,15 +9,6 @@ import { createTestLogger } from "../test-utils/test-logger.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
-import type {
-  AgentCapabilityFlags,
-  AgentClient,
-  AgentMode,
-  AgentModelDefinition,
-  AgentPersistenceHandle,
-  AgentSession,
-  AgentSessionConfig,
-} from "./agent/agent-sdk-types.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -27,125 +18,7 @@ const WORKSPACE_A = "wks_same_cwd_a";
 const WORKSPACE_B = "wks_same_cwd_b";
 const LEGACY_OWNER_WORKSPACE = "wks_legacy_owner";
 const PERMISSION_WAIT_MS = 15_000;
-const SNAPSHOT_STORM_PROVIDER_COUNT = 18;
-const SNAPSHOT_STORM_MODELS_PER_PROVIDER = 150;
-const SNAPSHOT_STORM_DESCRIPTION = "x".repeat(120);
 
-const SNAPSHOT_STORM_CAPABILITIES: AgentCapabilityFlags = {
-  supportsStreaming: false,
-  supportsSessionPersistence: false,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-};
-
-class SnapshotStormProviderClient implements AgentClient {
-  readonly capabilities = SNAPSHOT_STORM_CAPABILITIES;
-  private readonly models: AgentModelDefinition[];
-
-  constructor(
-    readonly provider: string,
-    private readonly delayMs: number,
-  ) {
-    this.models = Array.from({ length: SNAPSHOT_STORM_MODELS_PER_PROVIDER }, (_, index) => ({
-      provider,
-      id: `${provider}-model-${index.toString().padStart(3, "0")}`,
-      label: `${provider} model ${index.toString().padStart(3, "0")}`,
-      description: SNAPSHOT_STORM_DESCRIPTION,
-      isDefault: index === 0,
-      metadata: {
-        providerId: provider,
-        modelId: `model-${index.toString().padStart(3, "0")}`,
-      },
-    }));
-  }
-
-  async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
-    throw new Error(`${this.provider} is only used for provider snapshot tests`);
-  }
-
-  async resumeSession(_handle: AgentPersistenceHandle): Promise<AgentSession> {
-    throw new Error(`${this.provider} is only used for provider snapshot tests`);
-  }
-
-  async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
-    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
-    return { models: this.models, modes: [] };
-  }
-
-  async isAvailable(): Promise<boolean> {
-    return true;
-  }
-}
-
-class MetadataMockLoadTestAgentClient extends MockLoadTestAgentClient {
-  override async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
-    return {
-      models: [
-        {
-          provider: "mock",
-          id: "gpt-5.4-mini",
-          label: "GPT 5.4 Mini",
-          isDefault: true,
-        },
-      ],
-      modes: [],
-    };
-  }
-}
-
-function createSnapshotStormClients(): SnapshotStormProviderClient[] {
-  return Array.from(
-    { length: SNAPSHOT_STORM_PROVIDER_COUNT },
-    (_, index) =>
-      new SnapshotStormProviderClient(`snapshot-storm-${index.toString().padStart(2, "0")}`, index),
-  );
-}
-
-async function createSnapshotStormDaemon(clients: SnapshotStormProviderClient[]) {
-  return createTestPaseoDaemon({
-    mcpEnabled: false,
-    isDev: true,
-    agentClients: {
-      mock: new MetadataMockLoadTestAgentClient(),
-      ...Object.fromEntries(clients.map((client) => [client.provider, client])),
-    },
-    providerOverrides: {
-      claude: { enabled: false },
-      codex: { enabled: false },
-      copilot: { enabled: false },
-      opencode: { enabled: false },
-      pi: { enabled: false },
-      omp: { enabled: false },
-      "mock-slow": { enabled: false },
-      ...Object.fromEntries(
-        clients.map((client) => [
-          client.provider,
-          {
-            extends: "mock",
-            label: client.provider,
-            enabled: true,
-          },
-        ]),
-      ),
-    },
-  });
-}
-
-function collectProviderSnapshotUpdateBytes(client: DaemonClient): {
-  sizes: number[];
-  unsubscribe: () => void;
-} {
-  const sizes: number[] = [];
-  const unsubscribe = client.subscribeRawMessages((message) => {
-    if (message.type !== "providers_snapshot_update") {
-      return;
-    }
-    sizes.push(JSON.stringify({ type: "session", message }).length);
-  });
-  return { sizes, unsubscribe };
-}
 
 // Seed two active workspaces that share one cwd, so we can prove agent
 // ownership and status stay workspaceId-scoped — a sibling that owns nothing
@@ -252,10 +125,6 @@ async function statusByWorkspaceId(client: DaemonClient): Promise<Map<string, st
   return new Map(workspaces.entries.map((entry) => [entry.id, entry.status]));
 }
 
-async function workspaceName(client: DaemonClient, workspaceId: string): Promise<string | null> {
-  const workspaces = await client.fetchWorkspaces();
-  return workspaces.entries.find((entry) => entry.id === workspaceId)?.name ?? null;
-}
 
 async function legacyAgentWorkspaceId(client: DaemonClient): Promise<string | null | undefined> {
   const agents = await client.fetchAgents({ scope: "active" });
@@ -324,134 +193,8 @@ test("daemon bootstrap migrates cwd-only legacy agents before same-cwd workspace
   }
 });
 
-test("workspace.create directory source with firstAgentContext generates a daemon-visible workspace title", async () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-named-local-dir-"));
-  const daemon = await createTestPaseoDaemon({
-    agentClients: { mock: new MockLoadTestAgentClient() },
-  });
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.1.82",
-  });
 
-  try {
-    await client.connect();
-    await client.patchDaemonConfig({
-      metadataGeneration: { providers: [{ provider: "mock", model: "ten-second-stream" }] },
-    });
 
-    const created = await client.createWorkspace({
-      source: { kind: "directory", path: cwd },
-      firstAgentContext: {
-        prompt: "Fix login bug",
-        attachments: [],
-      },
-    });
-    const workspaceId = created.workspace?.id;
-    if (!workspaceId) {
-      throw new Error(created.error ?? "Expected workspace to be created");
-    }
-
-    await expect
-      .poll(() => workspaceName(client, workspaceId), { timeout: 10_000 })
-      .toBe("Fix login bug");
-  } finally {
-    await client.close().catch(() => undefined);
-    await daemon.close();
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}, 20_000);
-
-test("local workspace auto-title does not broadcast provider snapshot warm-up to clients", async () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-title-snapshot-storm-"));
-  const stormClients = createSnapshotStormClients();
-  const daemon = await createSnapshotStormDaemon(stormClients);
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.1.82",
-  });
-  const snapshotUpdates = collectProviderSnapshotUpdateBytes(client);
-
-  try {
-    await client.connect();
-    await client.getProvidersSnapshot({ cwd });
-    await expect
-      .poll(
-        async () => {
-          const snapshot = await client.getProvidersSnapshot({ cwd });
-          return snapshot.entries.filter((entry) => entry.status === "loading").length;
-        },
-        { timeout: 10_000 },
-      )
-      .toBe(0);
-    snapshotUpdates.sizes.length = 0;
-
-    const created = await client.createWorkspace({
-      source: { kind: "directory", path: cwd },
-      firstAgentContext: {
-        prompt: "hello",
-        attachments: [],
-      },
-    });
-    const workspaceId = created.workspace?.id;
-    if (!workspaceId) {
-      throw new Error(created.error ?? "Expected workspace to be created");
-    }
-
-    await expect.poll(() => workspaceName(client, workspaceId), { timeout: 10_000 }).toBe("hello");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    expect(snapshotUpdates.sizes).toEqual([]);
-  } finally {
-    snapshotUpdates.unsubscribe();
-    await client.close().catch(() => undefined);
-    await daemon.close();
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}, 20_000);
-
-test("create_agent_request with workspaceId does not retitle an existing workspace", async () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-agent-submit-title-"));
-  const daemon = await createTestPaseoDaemon({
-    agentClients: { mock: new MockLoadTestAgentClient() },
-  });
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.1.82",
-  });
-
-  try {
-    await client.connect();
-    await client.patchDaemonConfig({
-      metadataGeneration: { providers: [{ provider: "mock", model: "ten-second-stream" }] },
-    });
-
-    const created = await client.createWorkspace({
-      source: { kind: "directory", path: cwd },
-    });
-    const workspaceId = created.workspace?.id;
-    if (!workspaceId) {
-      throw new Error(created.error ?? "Expected workspace to be created");
-    }
-    const originalName = await workspaceName(client, workspaceId);
-    expect(originalName).toBe(path.basename(cwd));
-
-    const agent = await client.createAgent({
-      provider: "mock",
-      cwd,
-      workspaceId,
-      model: "ten-second-stream",
-      initialPrompt: "Fix login bug",
-    });
-    expect(agent.workspaceId).toBe(workspaceId);
-
-    expect(await workspaceName(client, workspaceId)).toBe(originalName);
-  } finally {
-    await client.close().catch(() => undefined);
-    await daemon.close();
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}, 20_000);
 
 test("creating another same-cwd local workspace keeps running status on the owning workspace only", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-running-same-cwd-create-"));

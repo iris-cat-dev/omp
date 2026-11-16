@@ -807,6 +807,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
   }
 
+  async setSessionName(name: string): Promise<void> {
+    await this.request({ type: "set_session_name", name });
+  }
+
   async getPromptContext(): Promise<AgentPromptContext> {
     return AgentPromptContextSchema.parse(await this.request({ type: "get_prompt_context" }));
   }

@@ -67,6 +67,8 @@ export class FakeOmp implements OmpRuntime {
   private initialModel: OmpModel | null = null;
   private initialStats: OmpSessionStats | null = null;
   private initialActiveCredential: OmpSessionState["activeCredential"];
+  private initialSessionTitle: Pick<OmpSessionState, "sessionName" | "titleSource"> = {};
+  private initialSessionFile: string | undefined;
   private readonly queuedStartErrors: Error[] = [];
 
   constructor(command: [string, ...string[]] = ["omp"]) {
@@ -87,6 +89,8 @@ export class FakeOmp implements OmpRuntime {
       ...session.state,
       model: this.initialModel ?? getDraftModel(input),
       activeCredential: this.initialActiveCredential,
+      ...this.initialSessionTitle,
+      sessionFile: input.session ?? this.initialSessionFile ?? session.state.sessionFile,
     };
     session.nativeUltrafastSupported = this.ultrafastSupported;
     if (this.initialFastModeTier !== undefined) {
@@ -141,6 +145,12 @@ export class FakeOmp implements OmpRuntime {
   }
   setInitialActiveCredential(activeCredential: OmpSessionState["activeCredential"]): void {
     this.initialActiveCredential = activeCredential;
+  }
+  setInitialSessionTitle(sessionName: string, titleSource?: "auto" | "user"): void {
+    this.initialSessionTitle = { sessionName, titleSource };
+  }
+  setInitialSessionFile(sessionFile: string): void {
+    this.initialSessionFile = sessionFile;
   }
   setInitialStats(stats: OmpSessionStats): void {
     this.initialStats = stats;
@@ -436,6 +446,16 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (this.setApprovalModeError) throw this.setApprovalModeError;
     this.state = { ...this.state, approvalMode: mode };
     return mode;
+  }
+
+  async setSessionName(name: string): Promise<void> {
+    this.state = { ...this.state, sessionName: name, titleSource: "user" };
+    this.emit({
+      type: "session_info_update",
+      sessionId: this.state.sessionId,
+      title: name,
+      titleSource: "user",
+    });
   }
 
   async setModel(provider: string, modelId: string): Promise<OmpModel> {

@@ -2555,7 +2555,11 @@ export class AgentManager {
     if (!normalizedTitle) {
       return;
     }
-    if (
+    if (agent.session?.setTitle) {
+      await agent.session.setTitle(normalizedTitle);
+      await this.drainSessionEvents(agent.id);
+      agent.config.title = normalizedTitle;
+    } else if (
       this.agentsAwaitingInitialSnapshotPersist.has(agent.id) &&
       this.registry &&
       (await this.registry.get(agent.id)) === null
@@ -4536,6 +4540,8 @@ export class AgentManager {
       }
       this.emitState(managed, { persist: false });
       this.subscribeToSession(managed);
+      await this.drainSessionEvents(managed.id);
+      this.assertAgentRegistrationActive(managed, options?.admission);
       this.assertRunAdmission(options?.admission, getParentAgentIdFromLabels(managed.labels));
       return { ...managed };
     } catch (error) {
@@ -4850,12 +4856,12 @@ export class AgentManager {
       return;
     }
     const steerBarrier = this.steerEventBarriers.get(agentId);
-    if (steerBarrier) {
+    if (steerBarrier && event.type !== "session_title_changed") {
       steerBarrier.events.push(event);
       return;
     }
     const pendingRun = this.runs.getPendingRun(agentId);
-    if (pendingRun && !pendingRun.started) {
+    if (pendingRun && !pendingRun.started && event.type !== "session_title_changed") {
       pendingRun.stagedEvents.push(event);
       return;
     }
@@ -5465,6 +5471,8 @@ export class AgentManager {
       case "thread_started":
         this.onStreamThreadStarted(agent);
         return undefined;
+      case "session_title_changed":
+        return this.onStreamSessionTitleChanged(agent, event);
       case "usage_updated":
         this.onStreamUsageUpdated(agent, event);
         return undefined;
@@ -5526,6 +5534,26 @@ export class AgentManager {
       default:
         return undefined;
     }
+  }
+
+  private async onStreamSessionTitleChanged(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "session_title_changed" }>,
+  ): Promise<void> {
+    if (agent.internal) return;
+    const title = event.title.trim();
+    if (!title || (agent.persistence?.sessionId && agent.persistence.sessionId !== event.sessionId))
+      return;
+    // A missing source is legacy metadata, never authority to replace an existing title.
+    if (event.source !== "user" && agent.config.title?.trim()) return;
+    const stored = this.registry ? await this.registry.get(agent.id) : null;
+    if (event.source === undefined && stored?.title?.trim()) return;
+    const explicitTitleChanged = event.source === "user" && agent.config.title !== title;
+    if (event.source === "user") agent.config.title = title;
+    if (stored?.title === title && !explicitTitleChanged) return;
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent, { title });
+    this.emitState(agent, { persist: false });
   }
 
   private onStreamControlEvent(

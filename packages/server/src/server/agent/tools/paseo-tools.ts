@@ -2199,6 +2199,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       await options.workspaceRegistry.upsert({
         ...existing,
         title,
+        titleSource: "user",
         updatedAt: new Date().toISOString(),
       });
       await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);

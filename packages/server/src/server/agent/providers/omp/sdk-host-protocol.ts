@@ -18,6 +18,7 @@ export const OmpSdkHostLaunchSchema = z
     thinkingOptionId: z.string().optional(),
     session: z.string().optional(),
     noSession: z.boolean().optional(),
+    autoTitle: z.boolean().optional(),
     extraArgs: z.array(z.string()).optional(),
     extensions: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),

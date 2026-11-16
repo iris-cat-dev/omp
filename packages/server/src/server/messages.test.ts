@@ -174,8 +174,15 @@ describe("serializeAgentStreamEvent", () => {
         provider: "codex",
         thinkingOptionId: "high",
       },
+      {
+        type: "session_title_changed",
+        provider: "omp",
+        sessionId: "session-1",
+        title: "Native session title",
+        source: "auto",
+      },
     ];
 
-    expect(events.map((event) => serializeAgentStreamEvent(event))).toEqual([null, null, null]);
+    expect(events.map((event) => serializeAgentStreamEvent(event))).toEqual([null, null, null, null]);
   });
 });

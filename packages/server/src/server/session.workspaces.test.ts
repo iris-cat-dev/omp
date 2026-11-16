@@ -43,7 +43,7 @@ import {
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
-import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
+import type { GeneratedBranchName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -570,7 +570,7 @@ function createSessionForWorkspaceTests(
       cwd: string,
       newName: string,
     ) => Promise<{ previousBranch: string | null; currentBranch: string | null }>;
-    generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
+    generateBranchName?: () => Promise<GeneratedBranchName | null>;
   } = {},
 ): TestSession {
   const logger = {
@@ -711,7 +711,7 @@ function createSessionForWorkspaceTests(
         emitWorkspaceUpdateForCwd: async () => {},
         emitWorkspaceUpdateForWorkspaceId: async () => {},
         logger: asSessionLogger(logger),
-        generateWorkspaceName: options.generateWorkspaceName,
+        generateBranchName: options.generateBranchName,
       }),
       renameCurrentBranch: options.renameCurrentBranch,
       daemonConfigStore: asDaemonConfigStore({
@@ -1208,16 +1208,11 @@ test("create_agent_request launches from an exact subdirectory in a created work
 });
 
 test.each([
-  { title: null, generatedTitle: "Login repair", expectedTitle: "Login repair" },
-  { title: null, generatedTitle: null, expectedTitle: "Fix login bug" },
-  {
-    title: "Pinned conversation",
-    generatedTitle: "Login repair",
-    expectedTitle: "Pinned conversation",
-  },
+  { title: null, expectedTitle: "Fix login bug" },
+  { title: "Pinned conversation", expectedTitle: "Pinned conversation" },
 ])(
-  "create_agent_request names an empty workspace and rejects a second root ($title, $generatedTitle)",
-  async ({ title, generatedTitle, expectedTitle }) => {
+  "create_agent_request seeds a provisional title without a model call and rejects a second root ($title)",
+  async ({ title, expectedTitle }) => {
     vi.useFakeTimers();
     const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
     try {
@@ -1321,9 +1316,9 @@ test.each([
             emitWorkspaceUpdateForCwd: async () => {},
             emitWorkspaceUpdateForWorkspaceId: async () => {},
             logger: asSessionLogger(logger),
-            generateWorkspaceName: async () => {
+            generateBranchName: async () => {
               generateCalls += 1;
-              return generatedTitle ? { title: generatedTitle, branch: null } : null;
+              return { branch: "unexpected-title-model-call" };
             },
           }),
           providerSnapshotManager: createProviderSnapshotManagerStub().manager,
@@ -1343,7 +1338,7 @@ test.each([
 
       const [createdAgent] = agentManager.listAgents();
       expect(createdAgent?.workspaceId).toBe("ws-existing");
-      expect(generateCalls).toBe(title ? 0 : 1);
+      expect(generateCalls).toBe(0);
       await vi.waitFor(async () => {
         expect(await workspaceRegistry.get("ws-existing")).toMatchObject({ title: expectedTitle });
       });
@@ -1355,8 +1350,7 @@ test.each([
         ),
       ).toBe(true);
 
-      // Clearing a conversation title must not let a later create bypass the
-      // one-root-per-workspace invariant or trigger another title generation.
+      // Clearing a conversation title must not bypass the one-root-per-workspace invariant.
       await workspaceRegistry.update("ws-existing", (current) => ({ ...current, title: null }));
       await session.handleMessage({
         type: "create_agent_request",
@@ -1368,7 +1362,7 @@ test.each([
       });
       await vi.runAllTimersAsync();
       await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({ title: null });
-      expect(generateCalls).toBe(title ? 0 : 1);
+      expect(generateCalls).toBe(0);
       expect(
         filterByType(emitted, "status").filter(
           (message) => message.payload.status === "agent_created",
@@ -9132,146 +9126,9 @@ test("workspace.create worktree source checks out a GitHub PR from githubPrNumbe
 // Worktree-source forwarding for action/refName/worktreeSlug is also covered
 // end-to-end against a daemon in workspace-create-worktree-source.e2e.test.ts.
 
-test("failed local create_agent_request does not schedule workspace title generation", async () => {
-  vi.useFakeTimers();
-  const emitted: SessionOutboundMessage[] = [];
-  let generateCalls = 0;
-  const session = createSessionForWorkspaceTests({
-    onMessage: (message) => emitted.push(message),
-    generateWorkspaceName: async () => {
-      generateCalls += 1;
-      return { title: "Should Not Be Written", branch: null };
-    },
-  });
 
-  try {
-    await session.handleMessage({
-      type: "create_agent_request",
-      requestId: "req-failed-local-title",
-      workspaceId: "ws-repo-running",
-      config: { provider: "codex", cwd: REPO_CWD },
-      initialPrompt: "This create will fail before an agent exists",
-      attachments: [],
-    });
-    await vi.runAllTimersAsync();
-
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_create_failed",
-      requestId: "req-failed-local-title",
-    });
-    expect(generateCalls).toBe(0);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-test("workspace auto-name keeps a manual title written before the scheduled title lands", async () => {
-  vi.useFakeTimers();
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: "ws-manual-title",
-    projectId: "proj-manual-title",
-    cwd: REPO_CWD,
-    kind: "directory",
-    displayName: "repo",
-    title: "Fix login bug",
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
-  });
-  const stored = new Map([[workspace.workspaceId, workspace]]);
-  const emittedWorkspaceIds: string[] = [];
-  const workspaceAutoName = new WorkspaceAutoName({
-    agentManager: asAgentManager({}),
-    workspaceRegistry: {
-      update: async (workspaceId, updater) => {
-        const current = stored.get(workspaceId);
-        if (!current) return null;
-        const updated = updater(current);
-        stored.set(workspaceId, updated);
-        return updated;
-      },
-    },
-    workspaceGitService: createNoopWorkspaceGitService(),
-    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
-    gitMutation: { notifyGitMutation: async () => {} },
-    emitWorkspaceUpdateForCwd: async () => {},
-    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
-      emittedWorkspaceIds.push(workspaceId);
-    },
-    logger: asSessionLogger(createTestLogger()),
-    generateWorkspaceName: async () => ({ title: "Generated login fix", branch: null }),
-  });
-
-  try {
-    workspaceAutoName.scheduleForDirectory({
-      workspaceId: workspace.workspaceId,
-      cwd: workspace.cwd,
-      firstAgentContext: { prompt: "Fix login bug" },
-    });
-    stored.set(workspace.workspaceId, {
-      ...workspace,
-      title: "User rename",
-      updatedAt: "2026-03-01T12:01:00.000Z",
-    });
-    await vi.runAllTimersAsync();
-
-    expect(stored.get(workspace.workspaceId)?.title).toBe("User rename");
-    expect(emittedWorkspaceIds).toEqual([workspace.workspaceId]);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-test("workspace auto-name replaces the unchanged prompt title", async () => {
-  vi.useFakeTimers();
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: "ws-prompt-title",
-    projectId: "proj-prompt-title",
-    cwd: REPO_CWD,
-    kind: "directory",
-    displayName: "repo",
-    title: "Fix login bug",
-    createdAt: "2026-03-01T12:00:00.000Z",
-    updatedAt: "2026-03-01T12:00:00.000Z",
-  });
-  const stored = new Map([[workspace.workspaceId, workspace]]);
-  const workspaceAutoName = new WorkspaceAutoName({
-    agentManager: asAgentManager({}),
-    workspaceRegistry: {
-      update: async (workspaceId, updater) => {
-        const current = stored.get(workspaceId);
-        if (!current) return null;
-        const updated = updater(current);
-        stored.set(workspaceId, updated);
-        return updated;
-      },
-    },
-    workspaceGitService: createNoopWorkspaceGitService(),
-    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
-    gitMutation: { notifyGitMutation: async () => {} },
-    emitWorkspaceUpdateForCwd: async () => {},
-    emitWorkspaceUpdateForWorkspaceId: async () => {},
-    logger: asSessionLogger(createTestLogger()),
-    generateWorkspaceName: async () => ({ title: "Generated login fix", branch: null }),
-  });
-
-  try {
-    workspaceAutoName.scheduleForDirectory({
-      workspaceId: workspace.workspaceId,
-      cwd: workspace.cwd,
-      firstAgentContext: { prompt: "Fix login bug" },
-    });
-    await vi.runAllTimersAsync();
-
-    expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
-  } finally {
-    vi.useRealTimers();
-  }
-});
 
 test("workspace auto-name uses the backing root for a nested worktree", async () => {
-  vi.useFakeTimers();
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-auto-name-rejected-")));
   const repoDir = path.join(tempDir, "repo");
   mkdirSync(repoDir);
@@ -9307,7 +9164,6 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   const stored = new Map([[workspace.workspaceId, workspace]]);
-  let generateCalls = 0;
   const gitMutations: string[] = [];
   const emittedCwds: string[] = [];
   const workspaceAutoName = new WorkspaceAutoName({
@@ -9334,10 +9190,7 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
     },
     emitWorkspaceUpdateForWorkspaceId: async () => {},
     logger: asSessionLogger(createTestLogger()),
-    generateWorkspaceName: async () => {
-      generateCalls += 1;
-      return { title: "Generated Invalid Branch Title", branch: "Invalid Branch Name" };
-    },
+    generateBranchName: async () => ({ branch: "Invalid Branch Name" }),
   });
 
   try {
@@ -9345,11 +9198,11 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
       workspace,
       firstAgentContext: { prompt: "Fix checkout title" },
     });
-    await vi.runAllTimersAsync();
-
-    expect(generateCalls).toBe(1);
+    await vi.waitFor(() => {
+      expect(readPaseoWorktreeMetadata(repoDir)?.firstAgentBranchAutoName?.status).toBe("attempted");
+    });
     expect(stored.get(workspace.workspaceId)).toMatchObject({
-      title: "Generated Invalid Branch Title",
+      title: "Fix checkout title",
       branch: "placeholder-branch",
     });
     expect(
@@ -9365,9 +9218,8 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
       },
     });
     expect(gitMutations).toEqual([]);
-    expect(emittedCwds).toEqual([workspaceCwd]);
+    expect(emittedCwds).toEqual([]);
   } finally {
-    vi.useRealTimers();
     rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
