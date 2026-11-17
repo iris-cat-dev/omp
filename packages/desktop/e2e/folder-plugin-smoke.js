@@ -73,34 +73,37 @@ function assertNoPackagedAddons(appPath) {
 }
 
 function seedLegacyPluginProfile(userData, daemonHome) {
-  const installations = ["desktop-pet", "wallpaper", "agent-speed"].map((id) => ({
-    id,
-    packageId: id,
-    owner: "desktop",
-    version: "0.7.0",
-    generation: 7,
-    enabled: true,
-    installed: true,
-    source: { type: "builtin", identity: `builtin:${id}` },
-    trusted: true,
-    config:
-      id === "desktop-pet"
-        ? { size: "large", selectedId: "iris", position: { x: 12, y: 34 } }
-        : id === "wallpaper"
-          ? {
-              source: "url",
-              candidateId: null,
-              url: "http://127.0.0.1:1/legacy-must-not-load.png",
-              opacity: 0.7,
-            }
-          : {},
-    declaredCapabilities: [],
-    grantedCapabilities: [],
-    revision: 0,
-    migrationVersion: 1,
-    format: "builtin",
-    metadata: null,
-  }));
+  const installations = ["desktop-pet", "wallpaper", "agent-speed"].map((id) => {
+    let config = {};
+    if (id === "desktop-pet") {
+      config = { size: "large", selectedId: "iris", position: { x: 12, y: 34 } };
+    } else if (id === "wallpaper") {
+      config = {
+        source: "url",
+        candidateId: null,
+        url: "http://127.0.0.1:1/legacy-must-not-load.png",
+        opacity: 0.7,
+      };
+    }
+    return {
+      id,
+      packageId: id,
+      owner: "desktop",
+      version: "0.7.0",
+      generation: 7,
+      enabled: true,
+      installed: true,
+      source: { type: "builtin", identity: `builtin:${id}` },
+      trusted: true,
+      config,
+      declaredCapabilities: [],
+      grantedCapabilities: [],
+      revision: 0,
+      migrationVersion: 1,
+      format: "builtin",
+      metadata: null,
+    };
+  });
   fs.mkdirSync(userData, { recursive: true });
   fs.writeFileSync(
     path.join(userData, "desktop-settings.json"),
@@ -162,10 +165,14 @@ async function waitFor(label, predicate, timeout = 60_000) {
 }
 
 async function openPluginSettings(page) {
-  await waitFor("real settings navigation control", () =>
-    page.evaluate(() => !!document.querySelector('[data-testid="sidebar-settings"]')),
+  const navigation = await waitFor("real settings navigation state", () =>
+    page.evaluate(() => {
+      if (document.querySelector('[data-testid="settings-sidebar"]')) return "settings";
+      if (document.querySelector('[data-testid="sidebar-settings"]')) return "workspace";
+      return false;
+    }),
   );
-  await click(page, '[data-testid="sidebar-settings"]');
+  if (navigation === "workspace") await click(page, '[data-testid="sidebar-settings"]');
   await waitFor("real settings sidebar", () =>
     page.evaluate(() => !!document.querySelector('[data-testid="settings-sidebar"]')),
   );
@@ -174,9 +181,9 @@ async function openPluginSettings(page) {
       .querySelector('[data-testid="settings-sidebar"]')
       .querySelectorAll('[role="button"], button');
     const button = Array.from(buttons).find(
-      (button) =>
-        !button.getAttribute("data-testid")?.startsWith("settings-host-section-") &&
-        /^(Plugins|插件)$/.test(button.textContent?.trim() ?? ""),
+      (candidate) =>
+        !candidate.getAttribute("data-testid")?.startsWith("settings-host-section-") &&
+        /^(Plugins|插件)$/.test(candidate.textContent?.trim() ?? ""),
     );
     if (!button) return false;
     button.click();
@@ -189,8 +196,8 @@ async function openPluginSettings(page) {
 }
 
 async function click(page, selector) {
-  const clicked = await page.evaluate((selector) => {
-    const element = document.querySelector(selector);
+  const clicked = await page.evaluate((targetSelector) => {
+    const element = document.querySelector(targetSelector);
     if (!element || element.getAttribute("aria-disabled") === "true" || element.disabled)
       return false;
     element.click();
@@ -260,19 +267,16 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
   if (checkDaemonPlugins)
     assert.deepEqual(await checkDaemonPlugins(), [], "New daemon registry must start empty");
   if (legacyRecords.length) {
-    const rejected = await page.evaluate(async () => {
-      try {
-        await window.paseoDesktop.plugins.patch({
+    await assert.rejects(
+      page.evaluate(() =>
+        window.paseoDesktop.plugins.patch({
           installationId: "desktop-pet",
           expectedRevision: 0,
           patch: { enabled: true },
-        });
-        return false;
-      } catch (error) {
-        return /Legacy bundled/.test(String(error));
-      }
-    });
-    assert.equal(rejected, true, "A direct legacy activation request must fail explicitly");
+        }),
+      ),
+      "A direct legacy activation request must fail explicitly",
+    );
     for (const record of legacyRecords)
       assert.equal(
         fs.existsSync(
@@ -341,11 +345,11 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
     await waitFor("folder path input", () =>
       page.evaluate(() => !!document.querySelector('[data-testid="plugins-folder-picker-path"]')),
     );
-    await page.evaluate((directory) => {
+    await page.evaluate((sourceDirectory) => {
       const input = document.querySelector('[data-testid="plugins-folder-picker-path"]');
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value").set;
-      setter.call(input, directory);
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: directory }));
+      setter.call(input, sourceDirectory);
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: sourceDirectory }));
     }, directory);
     await waitFor("enabled folder selection", () =>
       page.evaluate(() => {
