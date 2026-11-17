@@ -651,6 +651,8 @@ node packages/desktop/e2e/packaged-app-smoke.js \
 
 The Windows driver uses a copied official runtime, isolated native profile paths, real renderer/preload/IPC/daemon/CLI/terminal/OMP, and synthetic numeric SQLite fixtures. It checks maximize/restore/minimize presentation, native resize-edge hit-tests, continuous restore-to-top dragging, Chinese Usage ranges/refresh and real folder-plugin UI/service/RPC.
 
+The plugin phase accepts either the workspace's Settings entry point or an already-open Settings sidebar, so the Chinese Usage phase can hand off directly to the real plugin installation flow.
+
 Native screen captures reject foreign-window overlap and use an owned opaque backing for transparent gaps. Only the copied main is temporarily topmost during window/Usage surface scenarios; its original native flag is checked after restoration. Other programs are never hidden, moved, or reconfigured. Input targets only verified owned windows; initial foreground acquisition does not loosen OS foreground policy or force repaint during restore measurements.
 
 The continuous titlebar regression requires a safe native `HTCAPTION`, then uses one physical left-button press to drag a maximized window into its restored state and back to the current monitor's top edge. It records button state, window bounds, and the owned GUI thread's system move-loop state while held, then requires native maximization after release. It aborts on foreground/input contention, releases only its injected button, and restores the cursor only if the user has not taken it over. Keep the desktop unlocked and avoid mouse/keyboard input during this check.
