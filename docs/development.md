@@ -427,6 +427,16 @@ On Windows, the renderer normally reports content readiness after app settings l
 
 Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster stop scheduling animation while their retained panel or application is inactive. The homepage route supplies its navigation focus to the retained-panel context, so opening Settings also stops the covered poster while the window stays focused. Retained poster resources are reused within the mounted component and released on unmount or when the existing home-effects switch is disabled. Loaders share one timer at the six visible step boundaries per 950 ms cycle, not a permanent display-rate worklet. Reduced-motion preferences remain respected.
 
+Web Unistyles 3.3.0 uses the checked-in `react-native-unistyles+3.3.0.patch`
+to update individual CSSOM rules instead of rewriting the global stylesheet on
+every style registration/removal. Unchanged declarations and unrelated rules are
+retained; media-query order, theme variables and SSR hydration remain supported.
+The postinstall hook applies the patch to source, ESM and CommonJS builds.
+After upgrading Unistyles, regenerate the patch and run the app browser regressions
+`src/styles/unistyles-css-state.browser.test.ts` and
+`src/lib/scroll-view-ref.browser.test.tsx`. Packaged apps need a frontend rebuild
+and a newly loaded window to use the change; an already-running bundle is unchanged.
+
 The frontend Babel pipeline resolves Lucide's actual named exports to individual icon modules, including legacy aliases; public type imports remain unchanged. Electron web exports use UTF-8 instead of ASCII-escaped strings. Protocol validator generation shares repeated, non-mutating IR containers without removing validation, defaults, transforms, or fallback schema behavior; see the [protocol code generator guide](../packages/protocol/codegen/README.md).
 
 Metro resolves relative `.js` imports to TypeScript source throughout the repository workspace, including optional plugin packages under `plugins/`; installed `node_modules` dependencies retain their own resolution. Default application exports load only installed plugins' client bundles, with no fixed plugin imports.

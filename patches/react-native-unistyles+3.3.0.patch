@@ -1,0 +1,566 @@
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+index 7c7214e..84162a3 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js
+@@ -21,6 +21,11 @@ class CSSState {
+   mqMap = new Map();
+   styleTag = null;
+   themesCSS = new Map();
++  ruleGroups = new Map();
++  dirtyRules = new Map();
++  themesDirty = false;
++  themeRuleCount = 0;
++  needsHydration = false;
+   constructor(services) {
+     this.services = services;
+     if ((0, _utils.isServer)()) {
+@@ -29,6 +34,7 @@ class CSSState {
+     const ssrTag = document.getElementById('unistyles-web');
+     if (ssrTag) {
+       this.styleTag = ssrTag;
++      this.needsHydration = true;
+       return;
+     }
+     this.styleTag = document.createElement('style');
+@@ -45,16 +51,91 @@ class CSSState {
+     const firstLevelMap = isMq ? this.mqMap : this.mainMap;
+     const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery);
+     const thirdLevelMap = safeGetMap(secondLevelMap, className);
++    if (thirdLevelMap.has(propertyKey) && thirdLevelMap.get(propertyKey) === value) {
++      return;
++    }
+     thirdLevelMap.set(propertyKey, value);
++    if (this.styleTag) {
++      const dirty = this.dirtyRules.get(secondLevelMap) ?? new Set();
++      dirty.add(className);
++      this.dirtyRules.set(secondLevelMap, dirty);
++    }
+   };
+   add = (hash, values) => {
+     (0, _core.convertToCSS)(hash, (0, _convert.convertUnistyles)(values, this.services.runtime), this);
+     this.recreate();
+   };
+   recreate = () => {
+-    if (this.styleTag) {
+-      this.styleTag.innerText = this.getStyles();
++    if (!this.styleTag) {
++      return;
+     }
++    const sheet = this.styleTag.sheet;
++    // Adopt SSR text once. Subsequent updates must retain unrelated CSS rules.
++    if (this.needsHydration) {
++      while (sheet.cssRules.length) {
++        sheet.deleteRule(0);
++      }
++      this.needsHydration = false;
++    }
++    if (this.themesDirty) {
++      while (this.themeRuleCount) {
++        sheet.deleteRule(0);
++        this.themeRuleCount--;
++      }
++      for (const css of this.themesCSS.values()) {
++        sheet.insertRule(css, this.themeRuleCount++);
++      }
++      this.themesDirty = false;
++    }
++    let groupIndex = this.themeRuleCount;
++    for (const map of [this.mainMap, this.mqMap]) {
++      for (const [mediaQuery, styles] of map) {
++        let group = this.ruleGroups.get(styles);
++        const dirty = this.dirtyRules.get(styles);
++        if (dirty) {
++          if (!group) {
++            const parent = mediaQuery ? sheet.cssRules[sheet.insertRule(`${mediaQuery}{}`, groupIndex)] : sheet;
++            group = {
++              sheet: parent,
++              rules: new Map()
++            };
++            this.ruleGroups.set(styles, group);
++          }
++          for (const className of dirty) {
++            const values = styles.get(className);
++            const rule = group.rules.get(className);
++            if (!values) {
++              if (rule) {
++                for (let i = 0; i < group.sheet.cssRules.length; i++) {
++                  if (group.sheet.cssRules[i] === rule) {
++                    group.sheet.deleteRule(i);
++                    break;
++                  }
++                }
++                group.rules.delete(className);
++              }
++              continue;
++            }
++            let declarations = '';
++            for (const [key, value] of values) {
++              if (value !== undefined) {
++                declarations += `${(0, _utils.hyphenate)(key)}:${value};`;
++              }
++            }
++            if (rule) {
++              rule.style.cssText = declarations;
++            } else {
++              const index = group.sheet.insertRule(`.${className}{${declarations}}`, mediaQuery ? group.sheet.cssRules.length : groupIndex + group.rules.size);
++              group.rules.set(className, group.sheet.cssRules[index]);
++            }
++          }
++        }
++        if (group) {
++          groupIndex += mediaQuery ? 1 : group.rules.size;
++        }
++      }
++    }
++    this.dirtyRules.clear();
+   };
+   addTheme = (theme, values) => {
+     let themeVars = '';
+@@ -68,17 +149,29 @@ class CSSState {
+     };
+     Object.entries(values).forEach(([key, value]) => convertToCSS(key, value));
+     if (theme === 'light' || theme === 'dark') {
+-      this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++      const key = `media ${theme}`;
++      const css = `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`;
++      if (this.themesCSS.get(key) !== css) {
++        this.themesCSS.set(key, css);
++        this.themesDirty = true;
++      }
++    }
++    const css = `:root.${theme}{${themeVars}}`;
++    if (this.themesCSS.get(theme) !== css) {
++      this.themesCSS.set(theme, css);
++      this.themesDirty = true;
+     }
+-    this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`);
+   };
+   remove = hash => {
+-    this.mainMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
+-    this.mqMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
++    for (const map of [this.mainMap, this.mqMap]) {
++      for (const styles of map.values()) {
++        if (styles.delete(hash)) {
++          const dirty = this.dirtyRules.get(styles) ?? new Set();
++          dirty.add(hash);
++          this.dirtyRules.set(styles, dirty);
++        }
++      }
++    }
+     this.recreate();
+   };
+   getStyles = () => {
+@@ -155,6 +248,14 @@ class CSSState {
+   reset = () => {
+     this.mqMap.clear();
+     this.mainMap.clear();
++    this.dirtyRules.clear();
++    this.ruleGroups.clear();
++    if (this.styleTag) {
++      const sheet = this.styleTag.sheet;
++      while (sheet.cssRules.length > this.themeRuleCount) {
++        sheet.deleteRule(this.themeRuleCount);
++      }
++    }
+   };
+ }
+ exports.CSSState = CSSState;
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js.map b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js.map
+index c60fce5..577d191 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js.map
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/css/state.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["_convert","require","_utils","_core","safeGetMap","map","key","nextLevelMap","get","newMap","Map","set","CSSState","mainMap","mqMap","styleTag","themesCSS","constructor","services","isServer","ssrTag","document","getElementById","createElement","id","head","appendChild","className","propertyKey","value","mediaQuery","isMq","firstLevelMap","secondLevelMap","thirdLevelMap","add","hash","values","convertToCSS","convertUnistyles","runtime","recreate","innerText","getStyles","addTheme","theme","themeVars","prev","Object","entries","forEach","nestedKey","nestedValue","hyphenate","remove","styles","delete","Array","from","reduce","acc","themeCss","generate","undefined","getState","classNames","style","property","mainState","mqState","config","state","getConfig","hydrate","hydrateState","reset","clear","exports"],"sourceRoot":"../../../../src","sources":["web/css/state.ts"],"mappings":"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","ignoreList":[]}
++{"version":3,"names":["_convert","require","_utils","_core","safeGetMap","map","key","nextLevelMap","get","newMap","Map","set","CSSState","mainMap","mqMap","styleTag","themesCSS","ruleGroups","dirtyRules","themesDirty","themeRuleCount","needsHydration","constructor","services","isServer","ssrTag","document","getElementById","createElement","id","head","appendChild","className","propertyKey","value","mediaQuery","isMq","firstLevelMap","secondLevelMap","thirdLevelMap","has","dirty","Set","add","hash","values","convertToCSS","convertUnistyles","runtime","recreate","sheet","cssRules","length","deleteRule","css","insertRule","groupIndex","styles","group","parent","rules","rule","i","delete","declarations","undefined","hyphenate","style","cssText","index","size","clear","addTheme","theme","themeVars","prev","Object","entries","forEach","nestedKey","nestedValue","remove","getStyles","Array","from","reduce","acc","themeCss","generate","getState","classNames","property","mainState","mqState","config","state","getConfig","hydrate","hydrateState","reset","exports"],"sourceRoot":"../../../../src","sources":["web/css/state.ts"],"sourcesContent":["import type { UnistylesValues } from '../../types'\nimport type { UnistylesServices } from '../types'\n\nimport { convertUnistyles } from '../convert'\nimport { hyphenate, isServer } from '../utils'\nimport { convertToCSS } from './core'\n\ntype MapType = Map<string, Map<string, Map<string, any>>>\ntype RuleGroup = {\n    sheet: CSSStyleSheet | CSSGroupingRule\n    rules: Map<string, CSSStyleRule>\n}\ntype SetProps = {\n    mediaQuery?: string\n    className: string\n    isMq?: boolean\n    propertyKey: string\n    value: any\n}\ntype HydrateState = Array<[string, Array<[string, Array<[string, any]>]>]>\n\nconst safeGetMap = (map: Map<string, Map<string, any>>, key: string) => {\n    const nextLevelMap = map.get(key)\n\n    if (!nextLevelMap) {\n        const newMap = new Map<string, any>()\n\n        map.set(key, newMap)\n\n        return newMap\n    }\n\n    return nextLevelMap\n}\n\nexport class CSSState {\n    mainMap: MapType = new Map()\n    mqMap: MapType = new Map()\n    private styleTag: HTMLStyleElement | null = null\n    private themesCSS = new Map<string, string>()\n    private ruleGroups = new Map<Map<string, Map<string, any>>, RuleGroup>()\n    private dirtyRules = new Map<Map<string, Map<string, any>>, Set<string>>()\n    private themesDirty = false\n    private themeRuleCount = 0\n    private needsHydration = false\n\n    constructor(private services: UnistylesServices) {\n        if (isServer()) {\n            return\n        }\n\n        const ssrTag = document.getElementById('unistyles-web')\n\n        if (ssrTag) {\n            this.styleTag = ssrTag as HTMLStyleElement\n            this.needsHydration = true\n\n            return\n        }\n\n        this.styleTag = document.createElement('style')\n        this.styleTag.id = 'unistyles-web'\n        document.head.appendChild(this.styleTag)\n    }\n\n    set = ({ className, propertyKey, value, mediaQuery = '', isMq }: SetProps) => {\n        const firstLevelMap = isMq ? this.mqMap : this.mainMap\n        const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery)\n        const thirdLevelMap = safeGetMap(secondLevelMap, className)\n        if (thirdLevelMap.has(propertyKey) && thirdLevelMap.get(propertyKey) === value) {\n            return\n        }\n\n        thirdLevelMap.set(propertyKey, value)\n        if (this.styleTag) {\n            const dirty = this.dirtyRules.get(secondLevelMap) ?? new Set<string>()\n            dirty.add(className)\n            this.dirtyRules.set(secondLevelMap, dirty)\n        }\n    }\n\n    add = (hash: string, values: UnistylesValues) => {\n        convertToCSS(hash, convertUnistyles(values, this.services.runtime), this)\n        this.recreate()\n    }\n\n    recreate = () => {\n        if (!this.styleTag) {\n            return\n        }\n\n        const sheet = this.styleTag.sheet!\n        // Adopt SSR text once. Subsequent updates must retain unrelated CSS rules.\n        if (this.needsHydration) {\n            while (sheet.cssRules.length) {\n                sheet.deleteRule(0)\n            }\n            this.needsHydration = false\n        }\n\n        if (this.themesDirty) {\n            while (this.themeRuleCount) {\n                sheet.deleteRule(0)\n                this.themeRuleCount--\n            }\n            for (const css of this.themesCSS.values()) {\n                sheet.insertRule(css, this.themeRuleCount++)\n            }\n            this.themesDirty = false\n        }\n\n        let groupIndex = this.themeRuleCount\n        for (const map of [this.mainMap, this.mqMap]) {\n            for (const [mediaQuery, styles] of map) {\n                let group = this.ruleGroups.get(styles)\n                const dirty = this.dirtyRules.get(styles)\n                if (dirty) {\n                    if (!group) {\n                        const parent = mediaQuery\n                            ? sheet.cssRules[sheet.insertRule(`${mediaQuery}{}`, groupIndex)] as CSSGroupingRule\n                            : sheet\n                        group = { sheet: parent, rules: new Map() }\n                        this.ruleGroups.set(styles, group)\n                    }\n\n                    for (const className of dirty) {\n                        const values = styles.get(className)\n                        const rule = group.rules.get(className)\n                        if (!values) {\n                            if (rule) {\n                                for (let i = 0; i < group.sheet.cssRules.length; i++) {\n                                    if (group.sheet.cssRules[i] === rule) {\n                                        group.sheet.deleteRule(i)\n                                        break\n                                    }\n                                }\n                                group.rules.delete(className)\n                            }\n                            continue\n                        }\n\n                        let declarations = ''\n                        for (const [key, value] of values) {\n                            if (value !== undefined) {\n                                declarations += `${hyphenate(key)}:${value};`\n                            }\n                        }\n                        if (rule) {\n                            rule.style.cssText = declarations\n                        } else {\n                            const index = group.sheet.insertRule(\n                                `.${className}{${declarations}}`,\n                                mediaQuery ? group.sheet.cssRules.length : groupIndex + group.rules.size,\n                            )\n                            group.rules.set(className, group.sheet.cssRules[index] as CSSStyleRule)\n                        }\n                    }\n                }\n                if (group) {\n                    groupIndex += mediaQuery ? 1 : group.rules.size\n                }\n            }\n        }\n        this.dirtyRules.clear()\n    }\n\n    addTheme = (theme: string, values: Record<string, any>) => {\n        let themeVars = ''\n\n        const convertToCSS = (key: string, value: any, prev = '-') => {\n            if (typeof value === 'object' && value !== null) {\n                Object.entries(value).forEach(([nestedKey, nestedValue]) =>\n                    convertToCSS(nestedKey, nestedValue, `${prev}-${key}`),\n                )\n            }\n\n            if (typeof value === 'string') {\n                themeVars += `${prev}-${hyphenate(key)}:${value};`\n            }\n        }\n\n        Object.entries(values).forEach(([key, value]) => convertToCSS(key, value))\n\n        if (theme === 'light' || theme === 'dark') {\n            const key = `media ${theme}`\n            const css = `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`\n            if (this.themesCSS.get(key) !== css) {\n                this.themesCSS.set(key, css)\n                this.themesDirty = true\n            }\n        }\n\n        const css = `:root.${theme}{${themeVars}}`\n        if (this.themesCSS.get(theme) !== css) {\n            this.themesCSS.set(theme, css)\n            this.themesDirty = true\n        }\n    }\n\n    remove = (hash: string) => {\n        for (const map of [this.mainMap, this.mqMap]) {\n            for (const styles of map.values()) {\n                if (styles.delete(hash)) {\n                    const dirty = this.dirtyRules.get(styles) ?? new Set<string>()\n                    dirty.add(hash)\n                    this.dirtyRules.set(styles, dirty)\n                }\n            }\n        }\n        this.recreate()\n    }\n\n    getStyles = () => {\n        let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {\n            return acc + themeCss\n        }, '')\n\n        const generate = (mediaQuery: string, secondLevelMap: Map<string, Map<string, string>>) => {\n            if (mediaQuery) {\n                styles += `${mediaQuery}{`\n            }\n\n            for (const [className, thirdLevelMap] of secondLevelMap) {\n                styles += `.${className}{`\n\n                for (const [propertyKey, value] of thirdLevelMap) {\n                    if (value === undefined) {\n                        continue\n                    }\n\n                    styles += `${hyphenate(propertyKey)}:${value};`\n                }\n\n                styles += '}'\n            }\n\n            if (mediaQuery) {\n                styles += '}'\n            }\n        }\n\n        for (const [mediaQuery, secondLevelMap] of this.mainMap) {\n            generate(mediaQuery, secondLevelMap)\n        }\n\n        for (const [mediaQuery, secondLevelMap] of this.mqMap) {\n            generate(mediaQuery, secondLevelMap)\n        }\n\n        return styles\n    }\n\n    getState = () => {\n        const getState = (map: MapType) => {\n            return Array.from(map).map(([mediaQuery, classNames]) => {\n                return [\n                    mediaQuery,\n                    Array.from(classNames.entries()).map(([className, style]) => {\n                        return [\n                            className,\n                            Array.from(style.entries()).map(([property, value]) => {\n                                return [property, value]\n                            }),\n                        ]\n                    }),\n                ]\n            }) as HydrateState\n        }\n\n        const mainState = getState(this.mainMap)\n        const mqState = getState(this.mqMap)\n        const config = this.services.state.getConfig()\n\n        return { mainState, mqState, config }\n    }\n\n    hydrate = ({ mainState, mqState }: ReturnType<typeof this.getState>) => {\n        const hydrateState = (map: HydrateState, isMq = false) => {\n            map.forEach(([mediaQuery, classNames]) => {\n                classNames.forEach(([className, style]) => {\n                    style.forEach(([propertyKey, value]) => {\n                        this.set({\n                            className,\n                            propertyKey,\n                            value,\n                            mediaQuery,\n                            isMq,\n                        })\n                    })\n                })\n            })\n        }\n\n        hydrateState(mainState)\n        hydrateState(mqState, true)\n    }\n\n    reset = () => {\n        this.mqMap.clear()\n        this.mainMap.clear()\n        this.dirtyRules.clear()\n        this.ruleGroups.clear()\n        if (this.styleTag) {\n            const sheet = this.styleTag.sheet!\n            while (sheet.cssRules.length > this.themeRuleCount) {\n                sheet.deleteRule(this.themeRuleCount)\n            }\n        }\n    }\n}\n"],"mappings":"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","ignoreList":[]}
+\ No newline at end of file
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/state.js b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+index 88e02b3..6a3c484 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/state.js
++++ b/node_modules/react-native-unistyles/lib/module/web/css/state.js
+@@ -17,6 +17,11 @@ export class CSSState {
+   mqMap = new Map();
+   styleTag = null;
+   themesCSS = new Map();
++  ruleGroups = new Map();
++  dirtyRules = new Map();
++  themesDirty = false;
++  themeRuleCount = 0;
++  needsHydration = false;
+   constructor(services) {
+     this.services = services;
+     if (isServer()) {
+@@ -25,6 +30,7 @@ export class CSSState {
+     const ssrTag = document.getElementById('unistyles-web');
+     if (ssrTag) {
+       this.styleTag = ssrTag;
++      this.needsHydration = true;
+       return;
+     }
+     this.styleTag = document.createElement('style');
+@@ -41,16 +47,91 @@ export class CSSState {
+     const firstLevelMap = isMq ? this.mqMap : this.mainMap;
+     const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery);
+     const thirdLevelMap = safeGetMap(secondLevelMap, className);
++    if (thirdLevelMap.has(propertyKey) && thirdLevelMap.get(propertyKey) === value) {
++      return;
++    }
+     thirdLevelMap.set(propertyKey, value);
++    if (this.styleTag) {
++      const dirty = this.dirtyRules.get(secondLevelMap) ?? new Set();
++      dirty.add(className);
++      this.dirtyRules.set(secondLevelMap, dirty);
++    }
+   };
+   add = (hash, values) => {
+     convertToCSS(hash, convertUnistyles(values, this.services.runtime), this);
+     this.recreate();
+   };
+   recreate = () => {
+-    if (this.styleTag) {
+-      this.styleTag.innerText = this.getStyles();
++    if (!this.styleTag) {
++      return;
+     }
++    const sheet = this.styleTag.sheet;
++    // Adopt SSR text once. Subsequent updates must retain unrelated CSS rules.
++    if (this.needsHydration) {
++      while (sheet.cssRules.length) {
++        sheet.deleteRule(0);
++      }
++      this.needsHydration = false;
++    }
++    if (this.themesDirty) {
++      while (this.themeRuleCount) {
++        sheet.deleteRule(0);
++        this.themeRuleCount--;
++      }
++      for (const css of this.themesCSS.values()) {
++        sheet.insertRule(css, this.themeRuleCount++);
++      }
++      this.themesDirty = false;
++    }
++    let groupIndex = this.themeRuleCount;
++    for (const map of [this.mainMap, this.mqMap]) {
++      for (const [mediaQuery, styles] of map) {
++        let group = this.ruleGroups.get(styles);
++        const dirty = this.dirtyRules.get(styles);
++        if (dirty) {
++          if (!group) {
++            const parent = mediaQuery ? sheet.cssRules[sheet.insertRule(`${mediaQuery}{}`, groupIndex)] : sheet;
++            group = {
++              sheet: parent,
++              rules: new Map()
++            };
++            this.ruleGroups.set(styles, group);
++          }
++          for (const className of dirty) {
++            const values = styles.get(className);
++            const rule = group.rules.get(className);
++            if (!values) {
++              if (rule) {
++                for (let i = 0; i < group.sheet.cssRules.length; i++) {
++                  if (group.sheet.cssRules[i] === rule) {
++                    group.sheet.deleteRule(i);
++                    break;
++                  }
++                }
++                group.rules.delete(className);
++              }
++              continue;
++            }
++            let declarations = '';
++            for (const [key, value] of values) {
++              if (value !== undefined) {
++                declarations += `${hyphenate(key)}:${value};`;
++              }
++            }
++            if (rule) {
++              rule.style.cssText = declarations;
++            } else {
++              const index = group.sheet.insertRule(`.${className}{${declarations}}`, mediaQuery ? group.sheet.cssRules.length : groupIndex + group.rules.size);
++              group.rules.set(className, group.sheet.cssRules[index]);
++            }
++          }
++        }
++        if (group) {
++          groupIndex += mediaQuery ? 1 : group.rules.size;
++        }
++      }
++    }
++    this.dirtyRules.clear();
+   };
+   addTheme = (theme, values) => {
+     let themeVars = '';
+@@ -64,17 +145,29 @@ export class CSSState {
+     };
+     Object.entries(values).forEach(([key, value]) => convertToCSS(key, value));
+     if (theme === 'light' || theme === 'dark') {
+-      this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`);
++      const key = `media ${theme}`;
++      const css = `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`;
++      if (this.themesCSS.get(key) !== css) {
++        this.themesCSS.set(key, css);
++        this.themesDirty = true;
++      }
++    }
++    const css = `:root.${theme}{${themeVars}}`;
++    if (this.themesCSS.get(theme) !== css) {
++      this.themesCSS.set(theme, css);
++      this.themesDirty = true;
+     }
+-    this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`);
+   };
+   remove = hash => {
+-    this.mainMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
+-    this.mqMap.forEach(styles => {
+-      styles.delete(hash);
+-    });
++    for (const map of [this.mainMap, this.mqMap]) {
++      for (const styles of map.values()) {
++        if (styles.delete(hash)) {
++          const dirty = this.dirtyRules.get(styles) ?? new Set();
++          dirty.add(hash);
++          this.dirtyRules.set(styles, dirty);
++        }
++      }
++    }
+     this.recreate();
+   };
+   getStyles = () => {
+@@ -151,6 +244,14 @@ export class CSSState {
+   reset = () => {
+     this.mqMap.clear();
+     this.mainMap.clear();
++    this.dirtyRules.clear();
++    this.ruleGroups.clear();
++    if (this.styleTag) {
++      const sheet = this.styleTag.sheet;
++      while (sheet.cssRules.length > this.themeRuleCount) {
++        sheet.deleteRule(this.themeRuleCount);
++      }
++    }
+   };
+ }
+ //# sourceMappingURL=state.js.map
+diff --git a/node_modules/react-native-unistyles/lib/module/web/css/state.js.map b/node_modules/react-native-unistyles/lib/module/web/css/state.js.map
+index f05f1f5..733953a 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/css/state.js.map
++++ b/node_modules/react-native-unistyles/lib/module/web/css/state.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["convertUnistyles","hyphenate","isServer","convertToCSS","safeGetMap","map","key","nextLevelMap","get","newMap","Map","set","CSSState","mainMap","mqMap","styleTag","themesCSS","constructor","services","ssrTag","document","getElementById","createElement","id","head","appendChild","className","propertyKey","value","mediaQuery","isMq","firstLevelMap","secondLevelMap","thirdLevelMap","add","hash","values","runtime","recreate","innerText","getStyles","addTheme","theme","themeVars","prev","Object","entries","forEach","nestedKey","nestedValue","remove","styles","delete","Array","from","reduce","acc","themeCss","generate","undefined","getState","classNames","style","property","mainState","mqState","config","state","getConfig","hydrate","hydrateState","reset","clear"],"sourceRoot":"../../../../src","sources":["web/css/state.ts"],"mappings":"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","ignoreList":[]}
++{"version":3,"names":["convertUnistyles","hyphenate","isServer","convertToCSS","safeGetMap","map","key","nextLevelMap","get","newMap","Map","set","CSSState","mainMap","mqMap","styleTag","themesCSS","ruleGroups","dirtyRules","themesDirty","themeRuleCount","needsHydration","constructor","services","ssrTag","document","getElementById","createElement","id","head","appendChild","className","propertyKey","value","mediaQuery","isMq","firstLevelMap","secondLevelMap","thirdLevelMap","has","dirty","Set","add","hash","values","runtime","recreate","sheet","cssRules","length","deleteRule","css","insertRule","groupIndex","styles","group","parent","rules","rule","i","delete","declarations","undefined","style","cssText","index","size","clear","addTheme","theme","themeVars","prev","Object","entries","forEach","nestedKey","nestedValue","remove","getStyles","Array","from","reduce","acc","themeCss","generate","getState","classNames","property","mainState","mqState","config","state","getConfig","hydrate","hydrateState","reset"],"sourceRoot":"../../../../src","sources":["web/css/state.ts"],"sourcesContent":["import type { UnistylesValues } from '../../types'\nimport type { UnistylesServices } from '../types'\n\nimport { convertUnistyles } from '../convert'\nimport { hyphenate, isServer } from '../utils'\nimport { convertToCSS } from './core'\n\ntype MapType = Map<string, Map<string, Map<string, any>>>\ntype RuleGroup = {\n    sheet: CSSStyleSheet | CSSGroupingRule\n    rules: Map<string, CSSStyleRule>\n}\ntype SetProps = {\n    mediaQuery?: string\n    className: string\n    isMq?: boolean\n    propertyKey: string\n    value: any\n}\ntype HydrateState = Array<[string, Array<[string, Array<[string, any]>]>]>\n\nconst safeGetMap = (map: Map<string, Map<string, any>>, key: string) => {\n    const nextLevelMap = map.get(key)\n\n    if (!nextLevelMap) {\n        const newMap = new Map<string, any>()\n\n        map.set(key, newMap)\n\n        return newMap\n    }\n\n    return nextLevelMap\n}\n\nexport class CSSState {\n    mainMap: MapType = new Map()\n    mqMap: MapType = new Map()\n    private styleTag: HTMLStyleElement | null = null\n    private themesCSS = new Map<string, string>()\n    private ruleGroups = new Map<Map<string, Map<string, any>>, RuleGroup>()\n    private dirtyRules = new Map<Map<string, Map<string, any>>, Set<string>>()\n    private themesDirty = false\n    private themeRuleCount = 0\n    private needsHydration = false\n\n    constructor(private services: UnistylesServices) {\n        if (isServer()) {\n            return\n        }\n\n        const ssrTag = document.getElementById('unistyles-web')\n\n        if (ssrTag) {\n            this.styleTag = ssrTag as HTMLStyleElement\n            this.needsHydration = true\n\n            return\n        }\n\n        this.styleTag = document.createElement('style')\n        this.styleTag.id = 'unistyles-web'\n        document.head.appendChild(this.styleTag)\n    }\n\n    set = ({ className, propertyKey, value, mediaQuery = '', isMq }: SetProps) => {\n        const firstLevelMap = isMq ? this.mqMap : this.mainMap\n        const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery)\n        const thirdLevelMap = safeGetMap(secondLevelMap, className)\n        if (thirdLevelMap.has(propertyKey) && thirdLevelMap.get(propertyKey) === value) {\n            return\n        }\n\n        thirdLevelMap.set(propertyKey, value)\n        if (this.styleTag) {\n            const dirty = this.dirtyRules.get(secondLevelMap) ?? new Set<string>()\n            dirty.add(className)\n            this.dirtyRules.set(secondLevelMap, dirty)\n        }\n    }\n\n    add = (hash: string, values: UnistylesValues) => {\n        convertToCSS(hash, convertUnistyles(values, this.services.runtime), this)\n        this.recreate()\n    }\n\n    recreate = () => {\n        if (!this.styleTag) {\n            return\n        }\n\n        const sheet = this.styleTag.sheet!\n        // Adopt SSR text once. Subsequent updates must retain unrelated CSS rules.\n        if (this.needsHydration) {\n            while (sheet.cssRules.length) {\n                sheet.deleteRule(0)\n            }\n            this.needsHydration = false\n        }\n\n        if (this.themesDirty) {\n            while (this.themeRuleCount) {\n                sheet.deleteRule(0)\n                this.themeRuleCount--\n            }\n            for (const css of this.themesCSS.values()) {\n                sheet.insertRule(css, this.themeRuleCount++)\n            }\n            this.themesDirty = false\n        }\n\n        let groupIndex = this.themeRuleCount\n        for (const map of [this.mainMap, this.mqMap]) {\n            for (const [mediaQuery, styles] of map) {\n                let group = this.ruleGroups.get(styles)\n                const dirty = this.dirtyRules.get(styles)\n                if (dirty) {\n                    if (!group) {\n                        const parent = mediaQuery\n                            ? sheet.cssRules[sheet.insertRule(`${mediaQuery}{}`, groupIndex)] as CSSGroupingRule\n                            : sheet\n                        group = { sheet: parent, rules: new Map() }\n                        this.ruleGroups.set(styles, group)\n                    }\n\n                    for (const className of dirty) {\n                        const values = styles.get(className)\n                        const rule = group.rules.get(className)\n                        if (!values) {\n                            if (rule) {\n                                for (let i = 0; i < group.sheet.cssRules.length; i++) {\n                                    if (group.sheet.cssRules[i] === rule) {\n                                        group.sheet.deleteRule(i)\n                                        break\n                                    }\n                                }\n                                group.rules.delete(className)\n                            }\n                            continue\n                        }\n\n                        let declarations = ''\n                        for (const [key, value] of values) {\n                            if (value !== undefined) {\n                                declarations += `${hyphenate(key)}:${value};`\n                            }\n                        }\n                        if (rule) {\n                            rule.style.cssText = declarations\n                        } else {\n                            const index = group.sheet.insertRule(\n                                `.${className}{${declarations}}`,\n                                mediaQuery ? group.sheet.cssRules.length : groupIndex + group.rules.size,\n                            )\n                            group.rules.set(className, group.sheet.cssRules[index] as CSSStyleRule)\n                        }\n                    }\n                }\n                if (group) {\n                    groupIndex += mediaQuery ? 1 : group.rules.size\n                }\n            }\n        }\n        this.dirtyRules.clear()\n    }\n\n    addTheme = (theme: string, values: Record<string, any>) => {\n        let themeVars = ''\n\n        const convertToCSS = (key: string, value: any, prev = '-') => {\n            if (typeof value === 'object' && value !== null) {\n                Object.entries(value).forEach(([nestedKey, nestedValue]) =>\n                    convertToCSS(nestedKey, nestedValue, `${prev}-${key}`),\n                )\n            }\n\n            if (typeof value === 'string') {\n                themeVars += `${prev}-${hyphenate(key)}:${value};`\n            }\n        }\n\n        Object.entries(values).forEach(([key, value]) => convertToCSS(key, value))\n\n        if (theme === 'light' || theme === 'dark') {\n            const key = `media ${theme}`\n            const css = `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`\n            if (this.themesCSS.get(key) !== css) {\n                this.themesCSS.set(key, css)\n                this.themesDirty = true\n            }\n        }\n\n        const css = `:root.${theme}{${themeVars}}`\n        if (this.themesCSS.get(theme) !== css) {\n            this.themesCSS.set(theme, css)\n            this.themesDirty = true\n        }\n    }\n\n    remove = (hash: string) => {\n        for (const map of [this.mainMap, this.mqMap]) {\n            for (const styles of map.values()) {\n                if (styles.delete(hash)) {\n                    const dirty = this.dirtyRules.get(styles) ?? new Set<string>()\n                    dirty.add(hash)\n                    this.dirtyRules.set(styles, dirty)\n                }\n            }\n        }\n        this.recreate()\n    }\n\n    getStyles = () => {\n        let styles = Array.from(this.themesCSS.entries()).reduce((acc, [, themeCss]) => {\n            return acc + themeCss\n        }, '')\n\n        const generate = (mediaQuery: string, secondLevelMap: Map<string, Map<string, string>>) => {\n            if (mediaQuery) {\n                styles += `${mediaQuery}{`\n            }\n\n            for (const [className, thirdLevelMap] of secondLevelMap) {\n                styles += `.${className}{`\n\n                for (const [propertyKey, value] of thirdLevelMap) {\n                    if (value === undefined) {\n                        continue\n                    }\n\n                    styles += `${hyphenate(propertyKey)}:${value};`\n                }\n\n                styles += '}'\n            }\n\n            if (mediaQuery) {\n                styles += '}'\n            }\n        }\n\n        for (const [mediaQuery, secondLevelMap] of this.mainMap) {\n            generate(mediaQuery, secondLevelMap)\n        }\n\n        for (const [mediaQuery, secondLevelMap] of this.mqMap) {\n            generate(mediaQuery, secondLevelMap)\n        }\n\n        return styles\n    }\n\n    getState = () => {\n        const getState = (map: MapType) => {\n            return Array.from(map).map(([mediaQuery, classNames]) => {\n                return [\n                    mediaQuery,\n                    Array.from(classNames.entries()).map(([className, style]) => {\n                        return [\n                            className,\n                            Array.from(style.entries()).map(([property, value]) => {\n                                return [property, value]\n                            }),\n                        ]\n                    }),\n                ]\n            }) as HydrateState\n        }\n\n        const mainState = getState(this.mainMap)\n        const mqState = getState(this.mqMap)\n        const config = this.services.state.getConfig()\n\n        return { mainState, mqState, config }\n    }\n\n    hydrate = ({ mainState, mqState }: ReturnType<typeof this.getState>) => {\n        const hydrateState = (map: HydrateState, isMq = false) => {\n            map.forEach(([mediaQuery, classNames]) => {\n                classNames.forEach(([className, style]) => {\n                    style.forEach(([propertyKey, value]) => {\n                        this.set({\n                            className,\n                            propertyKey,\n                            value,\n                            mediaQuery,\n                            isMq,\n                        })\n                    })\n                })\n            })\n        }\n\n        hydrateState(mainState)\n        hydrateState(mqState, true)\n    }\n\n    reset = () => {\n        this.mqMap.clear()\n        this.mainMap.clear()\n        this.dirtyRules.clear()\n        this.ruleGroups.clear()\n        if (this.styleTag) {\n            const sheet = this.styleTag.sheet!\n            while (sheet.cssRules.length > this.themeRuleCount) {\n                sheet.deleteRule(this.themeRuleCount)\n            }\n        }\n    }\n}\n"],"mappings":"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","ignoreList":[]}
+\ No newline at end of file
+diff --git a/node_modules/react-native-unistyles/lib/typescript/src/web/css/state.d.ts b/node_modules/react-native-unistyles/lib/typescript/src/web/css/state.d.ts
+index 783d6fe..8210e9c 100644
+--- a/node_modules/react-native-unistyles/lib/typescript/src/web/css/state.d.ts
++++ b/node_modules/react-native-unistyles/lib/typescript/src/web/css/state.d.ts
+@@ -15,6 +15,11 @@ export declare class CSSState {
+     mqMap: MapType;
+     private styleTag;
+     private themesCSS;
++    private ruleGroups;
++    private dirtyRules;
++    private themesDirty;
++    private themeRuleCount;
++    private needsHydration;
+     constructor(services: UnistylesServices);
+     set: ({ className, propertyKey, value, mediaQuery, isMq }: SetProps) => void;
+     add: (hash: string, values: UnistylesValues) => void;
+diff --git a/node_modules/react-native-unistyles/src/web/css/state.ts b/node_modules/react-native-unistyles/src/web/css/state.ts
+index a0eea57..802bf7f 100644
+--- a/node_modules/react-native-unistyles/src/web/css/state.ts
++++ b/node_modules/react-native-unistyles/src/web/css/state.ts
+@@ -6,6 +6,10 @@ import { hyphenate, isServer } from '../utils'
+ import { convertToCSS } from './core'
+ 
+ type MapType = Map<string, Map<string, Map<string, any>>>
++type RuleGroup = {
++    sheet: CSSStyleSheet | CSSGroupingRule
++    rules: Map<string, CSSStyleRule>
++}
+ type SetProps = {
+     mediaQuery?: string
+     className: string
+@@ -34,6 +38,11 @@ export class CSSState {
+     mqMap: MapType = new Map()
+     private styleTag: HTMLStyleElement | null = null
+     private themesCSS = new Map<string, string>()
++    private ruleGroups = new Map<Map<string, Map<string, any>>, RuleGroup>()
++    private dirtyRules = new Map<Map<string, Map<string, any>>, Set<string>>()
++    private themesDirty = false
++    private themeRuleCount = 0
++    private needsHydration = false
+ 
+     constructor(private services: UnistylesServices) {
+         if (isServer()) {
+@@ -44,6 +53,7 @@ export class CSSState {
+ 
+         if (ssrTag) {
+             this.styleTag = ssrTag as HTMLStyleElement
++            this.needsHydration = true
+ 
+             return
+         }
+@@ -57,8 +67,16 @@ export class CSSState {
+         const firstLevelMap = isMq ? this.mqMap : this.mainMap
+         const secondLevelMap = safeGetMap(firstLevelMap, mediaQuery)
+         const thirdLevelMap = safeGetMap(secondLevelMap, className)
++        if (thirdLevelMap.has(propertyKey) && thirdLevelMap.get(propertyKey) === value) {
++            return
++        }
+ 
+         thirdLevelMap.set(propertyKey, value)
++        if (this.styleTag) {
++            const dirty = this.dirtyRules.get(secondLevelMap) ?? new Set<string>()
++            dirty.add(className)
++            this.dirtyRules.set(secondLevelMap, dirty)
++        }
+     }
+ 
+     add = (hash: string, values: UnistylesValues) => {
+@@ -67,9 +85,83 @@ export class CSSState {
+     }
+ 
+     recreate = () => {
+-        if (this.styleTag) {
+-            this.styleTag.innerText = this.getStyles()
++        if (!this.styleTag) {
++            return
++        }
++
++        const sheet = this.styleTag.sheet!
++        // Adopt SSR text once. Subsequent updates must retain unrelated CSS rules.
++        if (this.needsHydration) {
++            while (sheet.cssRules.length) {
++                sheet.deleteRule(0)
++            }
++            this.needsHydration = false
++        }
++
++        if (this.themesDirty) {
++            while (this.themeRuleCount) {
++                sheet.deleteRule(0)
++                this.themeRuleCount--
++            }
++            for (const css of this.themesCSS.values()) {
++                sheet.insertRule(css, this.themeRuleCount++)
++            }
++            this.themesDirty = false
++        }
++
++        let groupIndex = this.themeRuleCount
++        for (const map of [this.mainMap, this.mqMap]) {
++            for (const [mediaQuery, styles] of map) {
++                let group = this.ruleGroups.get(styles)
++                const dirty = this.dirtyRules.get(styles)
++                if (dirty) {
++                    if (!group) {
++                        const parent = mediaQuery
++                            ? sheet.cssRules[sheet.insertRule(`${mediaQuery}{}`, groupIndex)] as CSSGroupingRule
++                            : sheet
++                        group = { sheet: parent, rules: new Map() }
++                        this.ruleGroups.set(styles, group)
++                    }
++
++                    for (const className of dirty) {
++                        const values = styles.get(className)
++                        const rule = group.rules.get(className)
++                        if (!values) {
++                            if (rule) {
++                                for (let i = 0; i < group.sheet.cssRules.length; i++) {
++                                    if (group.sheet.cssRules[i] === rule) {
++                                        group.sheet.deleteRule(i)
++                                        break
++                                    }
++                                }
++                                group.rules.delete(className)
++                            }
++                            continue
++                        }
++
++                        let declarations = ''
++                        for (const [key, value] of values) {
++                            if (value !== undefined) {
++                                declarations += `${hyphenate(key)}:${value};`
++                            }
++                        }
++                        if (rule) {
++                            rule.style.cssText = declarations
++                        } else {
++                            const index = group.sheet.insertRule(
++                                `.${className}{${declarations}}`,
++                                mediaQuery ? group.sheet.cssRules.length : groupIndex + group.rules.size,
++                            )
++                            group.rules.set(className, group.sheet.cssRules[index] as CSSStyleRule)
++                        }
++                    }
++                }
++                if (group) {
++                    groupIndex += mediaQuery ? 1 : group.rules.size
++                }
++            }
+         }
++        this.dirtyRules.clear()
+     }
+ 
+     addTheme = (theme: string, values: Record<string, any>) => {
+@@ -90,19 +182,31 @@ export class CSSState {
+         Object.entries(values).forEach(([key, value]) => convertToCSS(key, value))
+ 
+         if (theme === 'light' || theme === 'dark') {
+-            this.themesCSS.set(`media ${theme}`, `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`)
++            const key = `media ${theme}`
++            const css = `@media (prefers-color-scheme: ${theme}){:root{${themeVars}}}`
++            if (this.themesCSS.get(key) !== css) {
++                this.themesCSS.set(key, css)
++                this.themesDirty = true
++            }
+         }
+ 
+-        this.themesCSS.set(theme, `:root.${theme}{${themeVars}}`)
++        const css = `:root.${theme}{${themeVars}}`
++        if (this.themesCSS.get(theme) !== css) {
++            this.themesCSS.set(theme, css)
++            this.themesDirty = true
++        }
+     }
+ 
+     remove = (hash: string) => {
+-        this.mainMap.forEach((styles) => {
+-            styles.delete(hash)
+-        })
+-        this.mqMap.forEach((styles) => {
+-            styles.delete(hash)
+-        })
++        for (const map of [this.mainMap, this.mqMap]) {
++            for (const styles of map.values()) {
++                if (styles.delete(hash)) {
++                    const dirty = this.dirtyRules.get(styles) ?? new Set<string>()
++                    dirty.add(hash)
++                    this.dirtyRules.set(styles, dirty)
++                }
++            }
++        }
+         this.recreate()
+     }
+ 
+@@ -194,5 +298,13 @@ export class CSSState {
+     reset = () => {
+         this.mqMap.clear()
+         this.mainMap.clear()
++        this.dirtyRules.clear()
++        this.ruleGroups.clear()
++        if (this.styleTag) {
++            const sheet = this.styleTag.sheet!
++            while (sheet.cssRules.length > this.themeRuleCount) {
++                sheet.deleteRule(this.themeRuleCount)
++            }
++        }
+     }
+ }
