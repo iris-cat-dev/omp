@@ -601,6 +601,8 @@ macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node 
 
 Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Add plugin → From folder, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted, including rejection of direct activation requests; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
 
+The JSON report records the direct legacy activation refusal in `plugins.legacyActivationError`.
+
 #### Native window-close interactions
 
 Verify the packaged app with system mouse events, not direct `NSWindow.sendEvent` calls or a substituted close dialog:
