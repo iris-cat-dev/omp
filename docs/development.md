@@ -117,6 +117,18 @@ Each top-level agent runs in a separate Node process with the existing RPC sessi
 
 Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.
 
+**Cursor upstream ports**
+
+The source SDK includes these selectively ported `can1357/oh-my-pi` changes, retaining Node transport, proxy policies, and runtime adapters:
+
+- Model discovery and cache v6: `b4e0bf241166` ([#18248](https://github.com/can1357/oh-my-pi/pull/18248)); hidden/Cmd-K-only model filtering: `51adeafb7f24`.
+- Hook-added context and server-history replay: `d47018947a77` ([#19156](https://github.com/can1357/oh-my-pi/pull/19156)).
+- TLS reset and RunSSE fallback: `8215aa30af09`, `b202a2f096c5`, `a295dae85344` ([#17985](https://github.com/can1357/oh-my-pi/pull/17985)); ClientHello fixture correction: `526f30567435`.
+- Native/MCP tool ordering: `0a1390308492` ([#18434](https://github.com/can1357/oh-my-pi/pull/18434)), `8b8611eb8e20`, `b1fba1dc937b` ([#18502](https://github.com/can1357/oh-my-pi/pull/18502)); shared concurrency resolution: `ad77cd087769`.
+- Gemini 4 Carbon dated pricing: `0de8205510f1` ([#18734](https://github.com/can1357/oh-my-pi/pull/18734)).
+
+Rebuild the SDK and restart its session hosts to use these changes. The package version remains `18.14.0`; the fixed public SDK release in `sdk/node-release.json` is unchanged and does not acquire these source changes until a matching SDK is published.
+
 Codex and Antigravity model catalogs track the stored OAuth account set. Adding,
 disabling, or removing accounts invalidates that discovery fingerprint, including
 changes from another session/process. Existing sessions resolve account access
