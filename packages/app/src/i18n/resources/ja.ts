@@ -2027,6 +2027,7 @@ export const ja: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "画像を生成",
     presentImage: "画像を表示",
     error: "エラー",

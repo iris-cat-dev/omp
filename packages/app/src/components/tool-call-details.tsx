@@ -7,10 +7,15 @@ import {
   type ViewStyle,
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import type { ToolCallDetail } from "@omp-desktop/protocol/agent-types";
+import { Circle, CircleCheck, CircleDot, CircleMinus, CircleX, Square } from "lucide-react-native";
+import type {
+  ShellExecution,
+  ShellExecutionState,
+  ToolCallDetail,
+} from "@omp-desktop/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
@@ -21,6 +26,7 @@ import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
+import type { Theme } from "@/styles/theme";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
@@ -145,15 +151,17 @@ function useDiffLines(detail: ToolCallDetail | undefined): DiffLine[] | undefine
 interface ShellDetailProps {
   command: string;
   output: string | null | undefined;
+  execution?: ShellExecution;
   ds: DetailStyles;
 }
 
-function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+function ShellDetailSection({ command, output, execution, ds }: ShellDetailProps) {
   const normalizedCommand = command.replace(/\n+$/, "");
   const commandOutput = (output ?? "").replace(/^\n+/, "");
   const hasOutput = commandOutput.length > 0;
   return (
     <View style={ds.sectionFillStyle}>
+      {execution ? <ShellExecutionSummary execution={execution} /> : null}
       <View style={ds.codeBlockFillStyle}>
         <ScrollView
           style={ds.codeVerticalScrollStyle}
@@ -177,6 +185,132 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
           </ScrollView>
         </ScrollView>
       </View>
+    </View>
+  );
+}
+
+const shellStepIcons = {
+  ok: CircleCheck,
+  fail: CircleX,
+  running: CircleDot,
+  skipped: CircleMinus,
+  canceled: Square,
+  pending: Circle,
+};
+
+function ShellStepIconBase({
+  state,
+  colors,
+}: {
+  state: ShellExecutionState;
+  colors: Theme["colors"];
+}) {
+  const Icon = shellStepIcons[state];
+  let color = colors.foregroundMuted;
+  if (state === "fail") color = colors.destructive;
+  else if (state === "ok") color = colors.success;
+  else if (state === "running") color = colors.accent;
+  return <Icon size={14} color={color} />;
+}
+
+const ShellStepIcon = withUnistyles(ShellStepIconBase, (theme: Theme) => ({
+  colors: theme.colors,
+}));
+
+function shellProgressText(progress: ShellExecution["progress"]): string | undefined {
+  if (progress?.kind === "percentage") return `${progress.percentage}%`;
+  if (progress) return `${progress.completed}/${progress.total}`;
+  return undefined;
+}
+
+function ShellBuildProgress({
+  progress,
+  state,
+}: {
+  progress: NonNullable<ShellExecution["progress"]>;
+  state: ShellExecutionState;
+}) {
+  const { t } = useTranslation();
+  const value = progress.kind === "percentage" ? progress.percentage : progress.completed;
+  const maximum = progress.kind === "fraction" ? progress.total : 100;
+  const progressText = shellProgressText(progress);
+  const accessibilityValue = useMemo(
+    () => ({ min: 0, max: maximum, now: value, text: progressText }),
+    [maximum, value, progressText],
+  );
+  return (
+    <View
+      style={styles.progressTrack}
+      accessibilityRole="progressbar"
+      accessibilityLabel={t("toolCallDetails.shell.buildProgress")}
+      accessibilityValue={accessibilityValue}
+      aria-valuemin={isWeb ? 0 : undefined}
+      aria-valuemax={isWeb ? maximum : undefined}
+      aria-valuenow={isWeb ? value : undefined}
+      aria-valuetext={isWeb ? progressText : undefined}
+      testID="shell-build-progress"
+    >
+      <View
+        style={[
+          styles.progressFill,
+          state === "fail" && styles.progressFailed,
+          state === "canceled" && styles.progressCanceled,
+          inlineUnistylesStyle<ViewStyle>({ width: `${(value / maximum) * 100}%` }),
+        ]}
+      />
+    </View>
+  );
+}
+
+export function ShellExecutionSummary({ execution }: { execution: ShellExecution }) {
+  const { t } = useTranslation();
+  const progress = execution.progress;
+  const progressText = shellProgressText(progress);
+  const current = execution.steps.find((step) => step.id === execution.currentStepId);
+  return (
+    <View style={styles.execution} testID="shell-execution">
+      <View style={styles.executionHeading}>
+        <ShellStepIcon state={execution.state} />
+        <Text style={styles.executionStatus}>
+          {t(
+            execution.termination === "timed_out" && execution.state !== "canceled"
+              ? "toolCallDetails.shell.timedOut"
+              : `toolCallDetails.shell.${execution.state}`,
+          )}
+        </Text>
+        {progressText ? <Text style={styles.executionCount}>{progressText}</Text> : null}
+      </View>
+      {current ? (
+        <Text selectable numberOfLines={2} style={styles.executionCommand}>
+          {current.command}
+        </Text>
+      ) : null}
+      {progress?.label ? (
+        <Text selectable numberOfLines={2} style={styles.executionLabel}>
+          {progress.label}
+        </Text>
+      ) : null}
+      {progress ? <ShellBuildProgress progress={progress} state={execution.state} /> : null}
+      {execution.steps.length > 1 ? (
+        <ScrollView style={styles.executionSteps} nestedScrollEnabled>
+          {execution.steps.map((step) => (
+            <View key={step.id} style={styles.executionStep}>
+              <ShellStepIcon state={step.state} />
+              <Text selectable numberOfLines={2} style={styles.executionStepCommand}>
+                {step.command}
+              </Text>
+              <Text style={styles.executionStepStatus}>
+                {t(`toolCallDetails.shell.${step.state}`)}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
+      {execution.truncated ? (
+        <Text style={styles.executionLabel}>
+          {t("toolCallDetails.shell.truncated", { count: execution.totalSteps })}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -635,7 +769,13 @@ function buildDetailSections(
   if (!detail) return [];
   if (detail.type === "shell") {
     return [
-      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+      <ShellDetailSection
+        key="shell"
+        command={detail.command}
+        output={detail.output}
+        execution={detail.execution}
+        ds={ds}
+      />,
     ];
   }
   if (detail.type === "worktree_setup") {
@@ -872,6 +1012,60 @@ const styles = StyleSheet.create((theme) => {
           }
         : null),
     },
+    execution: {
+      padding: theme.spacing[3],
+      gap: theme.spacing[2],
+      borderBottomWidth: theme.borderWidth[1],
+      borderBottomColor: theme.colors.border,
+      backgroundColor: theme.colors.surface1,
+    },
+    executionHeading: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+    executionStatus: {
+      flex: 1,
+      fontSize: theme.fontSize.sm,
+      fontWeight: theme.fontWeight.semibold,
+      color: theme.colors.foreground,
+    },
+    executionCount: {
+      fontFamily: theme.fontFamily.mono,
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foreground,
+    },
+    executionCommand: {
+      fontFamily: theme.fontFamily.mono,
+      fontSize: theme.fontSize.code,
+      color: theme.colors.foreground,
+      lineHeight: 18,
+    },
+    executionLabel: {
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foregroundMuted,
+      lineHeight: 18,
+    },
+    progressTrack: {
+      height: 4,
+      borderRadius: theme.borderRadius.full,
+      overflow: "hidden",
+      backgroundColor: theme.colors.surface3,
+    },
+    progressFill: { height: "100%", backgroundColor: theme.colors.accent },
+    progressFailed: { backgroundColor: theme.colors.destructive },
+    progressCanceled: { backgroundColor: theme.colors.foregroundMuted },
+    executionSteps: { maxHeight: 144 },
+    executionStep: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingVertical: theme.spacing[1],
+    },
+    executionStepCommand: {
+      flex: 1,
+      fontFamily: theme.fontFamily.mono,
+      fontSize: theme.fontSize.code,
+      color: theme.colors.foregroundMuted,
+      lineHeight: 18,
+    },
+    executionStepStatus: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
     shellPrompt: {
       color: theme.colors.foregroundMuted,
     },

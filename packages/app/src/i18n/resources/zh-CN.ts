@@ -2184,6 +2184,17 @@ export const zhCN: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: {
+      pending: "等待执行",
+      running: "正在执行",
+      ok: "已完成",
+      fail: "执行失败",
+      skipped: "已跳过",
+      canceled: "已停止",
+      timedOut: "执行超时",
+      buildProgress: "编译进度",
+      truncated: "显示最近步骤 · 共 {{count}} 条命令",
+    },
     generateImage: "生成图片",
     presentImage: "展示图片",
     error: "错误",

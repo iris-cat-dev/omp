@@ -579,10 +579,25 @@ export const UserMessage = memo(function UserMessage({
             <View style={attachmentPreviewContainerStyle}>
               {attachments.map((attachment, index) => {
                 const content = getAgentAttachmentPillContent(attachment, t);
-                const label = <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />;
+                const label = (
+                  <AttachmentLabel
+                    icon={content.icon}
+                    title={content.title}
+                    subtitle={content.subtitle}
+                  />
+                );
                 const key = `${attachment.type}:${"number" in attachment ? attachment.number : index}`;
                 if (attachment.type === "text" && attachment.externalResource) {
-                  return <ExternalTextAttachmentFrame key={key} title={content.title} text={attachment.text} externalResource={attachment.externalResource}>{label}</ExternalTextAttachmentFrame>;
+                  return (
+                    <ExternalTextAttachmentFrame
+                      key={key}
+                      title={content.title}
+                      text={attachment.text}
+                      externalResource={attachment.externalResource}
+                    >
+                      {label}
+                    </ExternalTextAttachmentFrame>
+                  );
                 }
                 return <AttachmentFrame key={key}>{label}</AttachmentFrame>;
               })}
@@ -3316,7 +3331,7 @@ export const ToolCall = memo(function ToolCall({
   maxDetailHeight = 400,
 }: ToolCallProps) {
   const { t } = useTranslation();
-  const { openToolCall } = useToolCallSheet();
+  const { openToolCall, updateToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
@@ -3350,6 +3365,21 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd, t],
   );
+  const previousSheetDetail = useRef(effectiveDetail);
+  useEffect(() => {
+    if (effectiveDetail?.type === "shell" && effectiveDetail.execution) {
+      updateToolCall(previousSheetDetail.current, {
+        displayName: presentation.displayName,
+        summary: presentation.summary,
+        detail: effectiveDetail,
+        errorText: presentation.errorText,
+        icon: presentation.icon,
+        showLoadingSkeleton: presentation.isLoadingDetails,
+      });
+    }
+    previousSheetDetail.current = effectiveDetail;
+  }, [effectiveDetail, presentation, updateToolCall]);
+
   const handleOpenFile = useMemo(() => {
     const openFileTarget = presentation.openFileTarget;
     if (!openFileTarget || !onOpenFileTarget) {

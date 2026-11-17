@@ -2020,6 +2020,7 @@ export const ko: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "이미지 생성",
     presentImage: "이미지 표시",
     error: "오류",

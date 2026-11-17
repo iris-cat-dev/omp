@@ -2004,6 +2004,7 @@ export const ar: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "إنشاء صورة",
     presentImage: "عرض صورة",
     error: "خطأ",

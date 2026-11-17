@@ -1308,6 +1308,27 @@ function mergeToolCallMetadata(
   return { ...existing, ...incoming };
 }
 
+type ShellToolCallDetail = Extract<ToolCallDetail, { type: "shell" }>;
+
+function mergeShellToolCallDetail(
+  existing: ShellToolCallDetail,
+  incoming: ShellToolCallDetail,
+): ShellToolCallDetail {
+  const execution =
+    existing.execution && incoming.execution && incoming.execution.seq < existing.execution.seq
+      ? existing.execution
+      : (incoming.execution ?? existing.execution);
+  if (hasSameIncomingFields(existing, incoming) && execution === existing.execution)
+    return existing;
+  return {
+    ...existing,
+    ...incoming,
+    output: incoming.output ?? existing.output,
+    exitCode: incoming.exitCode ?? existing.exitCode,
+    ...(execution ? { execution } : {}),
+  };
+}
+
 export function mergeToolCallDetail(
   existing: ToolCallDetail,
   incoming: ToolCallDetail,
@@ -1334,6 +1355,9 @@ export function mergeToolCallDetail(
     };
   }
 
+  if (existing.type === "shell" && incoming.type === "shell") {
+    return mergeShellToolCallDetail(existing, incoming);
+  }
   if (existing.type === incoming.type) {
     if (hasSameIncomingFields(existing, incoming)) {
       return existing;
@@ -1368,6 +1392,57 @@ function mergeAgentToolCallStatus(
   return "running";
 }
 
+function resolveIncomingToolCallStatus(
+  existing: AgentToolCallStatus,
+  data: AgentToolCallData,
+): AgentToolCallStatus {
+  if (existing === "canceled") return "canceled";
+  if (data.revision !== undefined) return data.status;
+  return mergeAgentToolCallStatus(existing, data.status);
+}
+
+type TerminalShellState = "canceled" | "fail" | "ok";
+
+function terminalShellState(
+  execution: NonNullable<ShellToolCallDetail["execution"]>,
+  status: AgentToolCallStatus,
+) {
+  if (status === "canceled" || execution.termination === "canceled") return "canceled";
+  if (status === "failed" || execution.state === "fail") return "fail";
+  return "ok";
+}
+
+function settleShellStep(
+  step: NonNullable<ShellToolCallDetail["execution"]>["steps"][number],
+  state: TerminalShellState,
+): typeof step {
+  if (step.state === "pending") return { ...step, state: "skipped" };
+  if (step.state === "running") return { ...step, state };
+  return step;
+}
+
+function finalizeShellToolCallDetail(
+  detail: ToolCallDetail,
+  status: AgentToolCallStatus,
+): ToolCallDetail {
+  if (detail.type !== "shell" || !detail.execution || status === "running") return detail;
+  const execution = detail.execution;
+  const state = terminalShellState(execution, status);
+  if (
+    execution.state === state &&
+    !execution.steps.some((step) => step.state === "running" || step.state === "pending")
+  )
+    return detail;
+  return {
+    ...detail,
+    execution: {
+      ...execution,
+      state,
+      steps: execution.steps.map((step) => settleShellStep(step, state)),
+    },
+  };
+}
+
 export function mergeAgentToolCallItem(
   existing: AgentToolCallItem,
   data: AgentToolCallData,
@@ -1399,10 +1474,7 @@ export function mergeAgentToolCallItem(
     return existing;
   }
   if (existing.payload.data.status !== "running" && data.status === "running") return existing;
-  const mergedStatus =
-    data.revision !== undefined
-      ? data.status
-      : mergeAgentToolCallStatus(existing.payload.data.status, data.status);
+  const mergedStatus = resolveIncomingToolCallStatus(existing.payload.data.status, data);
   const mergedError =
     mergedStatus === "failed"
       ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
@@ -1412,7 +1484,10 @@ export function mergeAgentToolCallItem(
     mergedMetadata = { ...mergedMetadata };
     delete mergedMetadata.streamingArgs;
   }
-  const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
+  const mergedDetail = finalizeShellToolCallDetail(
+    mergeToolCallDetail(existing.payload.data.detail, data.detail),
+    mergedStatus,
+  );
 
   return {
     ...existing,

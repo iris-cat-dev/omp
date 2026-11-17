@@ -28,6 +28,7 @@ export interface ToolCallSheetData {
 interface ToolCallSheetContextValue {
   openToolCall: (data: ToolCallSheetData) => void;
   closeToolCall: () => void;
+  updateToolCall: (previousDetail: ToolCallDetail | undefined, data: ToolCallSheetData) => void;
 }
 
 // ----- Context -----
@@ -95,6 +96,12 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
     setSheetData(data);
     setIsSheetOpen(true);
   }, []);
+  const updateToolCall = useCallback(
+    (previousDetail: ToolCallDetail | undefined, data: ToolCallSheetData) => {
+      setSheetData((current) => (current && current.detail === previousDetail ? data : current));
+    },
+    [],
+  );
 
   const closeToolCall = useCallback(() => {
     setIsSheetOpen(false);
@@ -122,8 +129,8 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
   );
 
   const contextValue = useMemo(
-    () => ({ openToolCall, closeToolCall }),
-    [openToolCall, closeToolCall],
+    () => ({ openToolCall, closeToolCall, updateToolCall }),
+    [openToolCall, closeToolCall, updateToolCall],
   );
 
   return (

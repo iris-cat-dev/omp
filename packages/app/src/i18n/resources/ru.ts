@@ -2051,6 +2051,7 @@ export const ru: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "Создать изображение",
     presentImage: "Показать изображение",
     error: "Ошибка",

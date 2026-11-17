@@ -2057,6 +2057,7 @@ export const fr: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "Générer une image",
     presentImage: "Afficher une image",
     error: "Erreur",

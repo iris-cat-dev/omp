@@ -2049,6 +2049,7 @@ export const ptBR: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "Gerar imagem",
     presentImage: "Mostrar imagem",
     error: "Erro",

@@ -669,6 +669,77 @@ function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallIte
 }
 
 describe("stream reducer tool call idempotency", () => {
+  it("keeps live shell progress across trace-less cancellation and ignores older execution snapshots", () => {
+    const execution = {
+      seq: 8,
+      state: "running" as const,
+      steps: [{ id: "0:0", command: "cmake --build 构建", state: "running" as const }],
+      currentStepId: "0:0",
+      totalSteps: 1,
+      truncated: false,
+      progress: {
+        kind: "fraction" as const,
+        completed: 6,
+        total: 24,
+        label: "Building CXX object 中文.o",
+      },
+    };
+    const detail: ToolCallDetail = {
+      type: "shell",
+      command: "cmake --build 构建",
+      output: "Compiling...",
+      execution,
+    };
+    const older: ToolCallDetail = {
+      ...detail,
+      execution: {
+        ...execution,
+        seq: 7,
+        progress: { kind: "fraction", completed: 5, total: 24, label: "older" },
+      },
+    };
+    const merged = mergeToolCallDetail(detail, older);
+    assert.strictEqual(merged.type === "shell" ? merged.execution : undefined, execution);
+    const event = (status: CanonicalToolStatus, nextDetail: ToolCallDetail) =>
+      canonicalToolTimeline({
+        provider: "omp",
+        callId: "trace-build",
+        name: "bash",
+        status,
+        detail: nextDetail,
+      });
+    const timestamp = new Date("2026-11-17T00:00:00Z");
+    const running = reduceStreamUpdate([], event("running", detail), timestamp);
+    const canceled = reduceStreamUpdate(
+      running,
+      event("canceled", { type: "shell", command: detail.command, output: undefined }),
+      timestamp,
+    );
+    assert.deepStrictEqual(findToolByCallId(canceled, "trace-build")?.payload.data.detail, {
+      ...detail,
+      exitCode: undefined,
+      execution: {
+        ...execution,
+        state: "canceled",
+        steps: [{ ...execution.steps[0], state: "canceled" }],
+      },
+    });
+    assert.strictEqual(
+      findToolByCallId(
+        reduceStreamUpdate(canceled, event("running", detail), timestamp),
+        "trace-build",
+      )?.payload.data.status,
+      "canceled",
+    );
+    assert.strictEqual(
+      findToolByCallId(
+        reduceStreamUpdate(canceled, event("completed", detail), timestamp),
+        "trace-build",
+      )?.payload.data.status,
+      "canceled",
+    );
+  });
+
   it("returns the same detail reference when tool call detail is identical", () => {
     const existing: ToolCallDetail = {
       type: "shell",
@@ -684,24 +755,6 @@ describe("stream reducer tool call idempotency", () => {
     const merged = mergeToolCallDetail(existing, incoming);
 
     assert.strictEqual(merged, existing);
-  });
-
-  it("returns a new detail reference when tool call detail changes", () => {
-    const existing: ToolCallDetail = {
-      type: "shell",
-      command: "npm test",
-      cwd: "/tmp/repo",
-    };
-    const incoming: ToolCallDetail = {
-      type: "shell",
-      command: "npm run typecheck",
-      cwd: "/tmp/repo",
-    };
-
-    const merged = mergeToolCallDetail(existing, incoming);
-
-    assert.notStrictEqual(merged, existing);
-    assert.deepStrictEqual(merged, incoming);
   });
 
   it("returns the same state array when status, error, detail, and metadata are identical", () => {

@@ -27,6 +27,46 @@ function fakeResolveIcon(
 }
 
 describe("tool-call presentation", () => {
+  it("shows the current build and measured progress in a collapsed shell badge", () => {
+    const input = {
+      toolName: "bash",
+      status: "running" as const,
+      error: null,
+      detail: {
+        type: "shell" as const,
+        command: "cmake --build 构建",
+        execution: {
+          seq: 4,
+          state: "running" as const,
+          steps: [{ id: "0:0", command: "cmake --build 构建", state: "running" as const }],
+          currentStepId: "0:0",
+          totalSteps: 1,
+          truncated: false,
+          progress: {
+            kind: "fraction" as const,
+            completed: 6,
+            total: 24,
+            label: "Building CXX object 中文.o",
+          },
+        },
+      },
+      resolveIcon: fakeResolveIcon,
+      t: i18n.getFixedT("en"),
+    };
+    expect(buildToolCallPresentation(input).summary).toBe(
+      "Running · 6/24 · Building CXX object 中文.o",
+    );
+    expect(buildToolCallPresentation({ ...input, status: "canceled" }).summary).toBe(
+      "Stopped · 6/24 · Building CXX object 中文.o",
+    );
+    expect(
+      buildToolCallPresentation({
+        ...input,
+        detail: { ...input.detail, execution: { ...input.detail.execution, progress: undefined } },
+      }).summary,
+    ).toBe("Running · cmake --build 构建");
+  });
+
   it("builds badge, detail, icon, and file-open policy in one model", () => {
     const presentation = buildToolCallPresentation({
       toolName: "read_file",

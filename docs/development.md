@@ -89,6 +89,8 @@ assigns canonical tool revisions after coalescing; provider input revisions are
 not acknowledgments of an already materialized row. Terminal results cannot be
 replaced by late running progress.
 
+Bash tool updates carry bounded native `details.trace` snapshots. The OMP adapter validates and projects them in `shell-execution.ts` into the smaller protocol `execution` detail shared by live, historical, and subagent cards; the full syntax/journal is not forwarded over Desktop WebSockets. Source ranges are UTF-8 byte offsets. Compiler progress is read from the current output producer's CMake `[N%]` or Ninja `[N/M]` records, never from elapsed time or an assumed step count.
+
 Provider lists and open child details acquire explicit socket-scoped leases.
 Closed or unrelated details receive no live timeline rows. History rebuilds send
 one parent invalidation, not a row-by-row replay. Logical queue saturation pauses
@@ -126,6 +128,7 @@ The source SDK includes these selectively ported `can1357/oh-my-pi` changes, ret
 - TLS reset and RunSSE fallback: `8215aa30af09`, `b202a2f096c5`, `a295dae85344` ([#17985](https://github.com/can1357/oh-my-pi/pull/17985)); ClientHello fixture correction: `526f30567435`.
 - Native/MCP tool ordering: `0a1390308492` ([#18434](https://github.com/can1357/oh-my-pi/pull/18434)), `8b8611eb8e20`, `b1fba1dc937b` ([#18502](https://github.com/can1357/oh-my-pi/pull/18502)); shared concurrency resolution: `ad77cd087769`.
 - Gemini 4 Carbon dated pricing: `0de8205510f1` ([#18734](https://github.com/can1357/oh-my-pi/pull/18734)).
+- Shell execution trace: `488cafa0e0d0`, with the required shell engine from `44711a78c1be` and trace/encoding fixes pinned through `1bdbf6d242d9`. This selective port replaces Brush while retaining Node SDK, Desktop/core feature trimming, PTY/external-shell routes, artifact capture, and the fork's owned Stop and Git guard contracts. It does not import upstream CLI updater, TUI line movement, or TTY writer optimizations.
 
 Rebuild the SDK and restart its session hosts to use these changes. The package version remains `18.14.0`; the fixed public SDK release in `sdk/node-release.json` is unchanged and does not acquire these source changes until a matching SDK is published.
 

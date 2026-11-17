@@ -8,6 +8,7 @@ import type {
   AgentUserMessageRewindStatus,
   AgentUsage,
   ProviderOptions,
+  ShellExecution,
   ToolPolicy,
 } from "@omp-desktop/protocol/agent-types";
 import type {
@@ -287,6 +288,7 @@ export type ToolCallDetail =
       cwd?: string;
       output?: string;
       exitCode?: number | null;
+      execution?: ShellExecution;
     }
   | {
       type: "read";

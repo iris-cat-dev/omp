@@ -77,27 +77,82 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
   if (incoming.type === "unknown" && existing.type !== "unknown") {
     return existing;
   }
+  if (existing.type === "shell" && incoming.type === "shell") {
+    const execution =
+      existing.execution && incoming.execution && incoming.execution.seq < existing.execution.seq
+        ? existing.execution
+        : (incoming.execution ?? existing.execution);
+    return {
+      ...existing,
+      ...incoming,
+      output: incoming.output ?? existing.output,
+      exitCode: incoming.exitCode ?? existing.exitCode,
+      ...(execution ? { execution } : {}),
+    };
+  }
   return incoming;
+}
+
+type ShellDetail = Extract<ToolCallDetail, { type: "shell" }>;
+type ShellExecution = NonNullable<ShellDetail["execution"]>;
+type ShellStep = ShellExecution["steps"][number];
+
+function settleShellStep(step: ShellStep, state: ShellExecution["state"]): ShellStep {
+  if (step.state === "pending") return { ...step, state: "skipped" };
+  if (step.state === "running") return { ...step, state };
+  return step;
+}
+
+function settleShellDetail(
+  detail: ToolCallDetail,
+  status: Extract<AgentTimelineItem, { type: "tool_call" }>["status"],
+): ToolCallDetail {
+  if (detail.type !== "shell" || !detail.execution || status === "running") return detail;
+  const execution = detail.execution;
+  let state: ShellExecution["state"] = "ok";
+  if (status === "canceled" || execution.termination === "canceled") state = "canceled";
+  else if (status === "failed" || execution.state === "fail") state = "fail";
+  if (
+    execution.state === state &&
+    !execution.steps.some((step) => step.state === "running" || step.state === "pending")
+  ) {
+    return detail;
+  }
+  return {
+    ...detail,
+    execution: {
+      ...execution,
+      state,
+      steps: execution.steps.map((step) => settleShellStep(step, state)),
+    },
+  };
 }
 
 export function mergeToolCallItems(
   existing: Extract<AgentTimelineItem, { type: "tool_call" }>,
   incoming: Extract<AgentTimelineItem, { type: "tool_call" }>,
 ): Extract<AgentTimelineItem, { type: "tool_call" }> {
-  if (incoming.revision !== undefined && existing.revision !== undefined &&
-      incoming.revision < existing.revision) {
+  if (
+    incoming.revision !== undefined &&
+    existing.revision !== undefined &&
+    incoming.revision < existing.revision
+  ) {
     return existing;
   }
   if (existing.status !== "running" && incoming.status === "running") {
     return existing;
   }
-  const mergedDetail = mergeToolCallDetail(existing.detail, incoming.detail);
+  const status = existing.status === "canceled" ? "canceled" : incoming.status;
+  const mergedDetail = settleShellDetail(
+    mergeToolCallDetail(existing.detail, incoming.detail),
+    status,
+  );
   const mergedMetadata =
     existing.metadata || incoming.metadata
       ? { ...existing.metadata, ...incoming.metadata }
       : undefined;
 
-  const merged: Extract<AgentTimelineItem, { type: "tool_call" }> = {
+  const merged = {
     ...existing,
     ...incoming,
     detail: mergedDetail,
@@ -108,15 +163,9 @@ export function mergeToolCallItems(
     delete merged.metadata.streamingArgs;
   }
 
-  if (incoming.status === "failed") {
-    merged.error = incoming.error;
-  } else if (incoming.status === "completed" || incoming.status === "canceled") {
-    merged.error = null;
-  } else if (incoming.error !== undefined) {
-    merged.error = incoming.error;
-  }
-
-  return merged;
+  return status === "failed"
+    ? { ...merged, status, error: incoming.error }
+    : { ...merged, status, error: null };
 }
 
 function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[] {

@@ -38,7 +38,10 @@ export interface OmpHistoryMapperHooks {
   mapToolDetail?: (
     toolCall: OmpTrackedToolCall,
     result: OmpToolResult,
-    context: { toolCallId: string; toolCallStatus?: "running" | "completed" | "failed" },
+    context: {
+      toolCallId: string;
+      toolCallStatus?: "running" | "completed" | "failed" | "canceled";
+    },
   ) => ToolCallDetail | null;
   mapToolResult?: (
     toolCall: OmpTrackedToolCall,
@@ -330,7 +333,11 @@ export class OmpHistoryMapper {
         isError: Boolean(message.isError),
         detail,
         intent: tracked.intent,
-        generatedMetadata: mapOmpGeneratedImages(tracked, result, message.isError ? "failed" : "completed"),
+        generatedMetadata: mapOmpGeneratedImages(
+          tracked,
+          result,
+          message.isError ? "failed" : "completed",
+        ),
         errorText: extractTextFromToolResult(result) ?? "Tool call failed",
       }),
     };
@@ -372,7 +379,7 @@ export class OmpHistoryMapper {
     const hook = this.hooks.mapToolDetail;
     return hook
       ? hook(toolCall, result, { toolCallId, toolCallStatus })
-      : mapToolDetail(toolCall, result);
+      : mapToolDetail(toolCall, result, toolCallStatus);
   }
 }
 
@@ -397,9 +404,27 @@ function toToolResultTimelineItem(input: {
   detail: ToolCallDetail;
   errorText: string;
   intent?: string;
-  generatedMetadata?: { generatedImagesSource?: "omp-sandbox-image"; generatedImages?: Array<{ path: string; mimeType: string; name?: string }> };
+  generatedMetadata?: {
+    generatedImagesSource?: "omp-sandbox-image";
+    generatedImages?: Array<{ path: string; mimeType: string; name?: string }>;
+  };
 }): AgentTimelineItem {
-  const generatedMetadata = input.generatedMetadata?.generatedImagesSource === "omp-sandbox-image" && input.generatedMetadata.generatedImages?.length ? input.generatedMetadata : undefined;
+  const generatedMetadata =
+    input.generatedMetadata?.generatedImagesSource === "omp-sandbox-image" &&
+    input.generatedMetadata.generatedImages?.length
+      ? input.generatedMetadata
+      : undefined;
+  if (input.detail.type === "shell" && input.detail.execution?.termination === "canceled") {
+    return {
+      type: "tool_call",
+      callId: input.callId,
+      name: input.name,
+      status: "canceled",
+      detail: input.detail,
+      ...(input.intent ? { metadata: { intent: input.intent } } : {}),
+      error: null,
+    };
+  }
   if (input.isError) {
     return {
       type: "tool_call",

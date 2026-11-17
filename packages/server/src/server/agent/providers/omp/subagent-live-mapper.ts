@@ -579,13 +579,21 @@ export class OmpSubagentLiveMapper {
       delete tool.metadata.streamingArgs;
     }
     const tracked = parseToolArgs(tool.name, tool.args);
+    if (
+      tracked.toolName === "bash" &&
+      tool.result &&
+      typeof tool.result !== "string" &&
+      tool.result.details?.cancelled === true
+    ) {
+      tool.status = "canceled";
+    }
     const emittedId = OMP_HISTORY_MAPPER_HOOKS.resolveToolCallId?.(id, tracked) ?? id;
     const specialized = OMP_HISTORY_MAPPER_HOOKS.mapToolResult?.(tracked, tool.result, {
       toolCallId: id,
     });
     const detail = OMP_HISTORY_MAPPER_HOOKS.mapToolDetail?.(tracked, tool.result, {
       toolCallId: id,
-      toolCallStatus: tool.status === "canceled" ? "failed" : tool.status,
+      toolCallStatus: tool.status,
     });
     const item: AgentTimelineItem | null =
       specialized ??

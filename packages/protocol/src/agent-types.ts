@@ -231,6 +231,31 @@ export const TOOL_CALL_ICON_NAMES = [
 
 export type ToolCallIconName = (typeof TOOL_CALL_ICON_NAMES)[number];
 
+export type ShellExecutionState = "pending" | "running" | "ok" | "fail" | "skipped" | "canceled";
+
+export interface ShellExecutionStep {
+  id: string;
+  command: string;
+  state: ShellExecutionState;
+  exitCode?: number;
+}
+
+export type ShellBuildProgress =
+  | { kind: "percentage"; percentage: number; label: string }
+  | { kind: "fraction"; completed: number; total: number; label: string };
+
+/** Small display projection of a native shell trace, never its replay journal. */
+export interface ShellExecution {
+  seq: number;
+  state: ShellExecutionState;
+  termination?: "canceled" | "timed_out";
+  steps: ShellExecutionStep[];
+  currentStepId?: string;
+  totalSteps: number;
+  truncated: boolean;
+  progress?: ShellBuildProgress;
+}
+
 export type ToolCallDetail =
   | {
       type: "shell";
@@ -238,6 +263,7 @@ export type ToolCallDetail =
       cwd?: string;
       output?: string;
       exitCode?: number | null;
+      execution?: ShellExecution;
     }
   | {
       type: "read";

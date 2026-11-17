@@ -7,6 +7,7 @@ Configure native OMP tool requests, manage runtime plugins, and enable image gen
 - [OMP built-in tools](#omp-built-in-tools)
 - [Desktop host tools](#desktop-host-tools)
 - [OMP working status](#omp-working-status)
+- [Bash execution and build progress](#bash-execution-and-build-progress)
 - [Browser and computer use](#browser-and-computer-use)
 - [Screenshot annotation and text feedback](#screenshot-annotation-and-text-feedback)
 - [Plugin management and native commands](#plugin-management-and-native-commands)
@@ -52,6 +53,14 @@ Intent text uses the same looping shimmer as running tool-call labels, without c
 New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering; it does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
 
 The label belongs to the active run, survives reconnect, and clears when the run completes, fails, or stops. Late events from another or closed run cannot replace it. Saved tool history retains its original intent metadata without turning completed history into a live working status.
+
+## Bash execution and build progress
+
+Expand a Bash tool card to follow the current command, executed steps, and live stdout/stderr. The collapsed card keeps the current stage and compiler-reported progress visible.
+
+CMake's `[N%]` output supplies a percentage; Ninja's `[N/M]` output supplies a completed/total counter and its corresponding progress bar. Commands without a reported total show their stage and logs without an estimated percentage. Progress belongs to the command producing it, so a previous command's `100%` does not carry into the next one.
+
+Failed, cancelled, and timed-out calls retain their output and last reported progress. Reconnected history and child-agent tool cards use the same execution display.
 
 ## Browser and computer use
 

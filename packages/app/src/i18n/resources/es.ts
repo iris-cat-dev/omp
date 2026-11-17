@@ -2056,6 +2056,7 @@ export const es: TranslationResources = {
     },
   },
   toolCallDetails: {
+    shell: en.toolCallDetails.shell,
     generateImage: "Generar imagen",
     presentImage: "Mostrar imagen",
     error: "Error",

@@ -683,6 +683,50 @@ const WorktreeSetupDetailPayloadSchema = z.object({
   truncated: z.boolean().optional(),
 });
 
+const ShellExecutionStateSchema = z.enum([
+  "pending",
+  "running",
+  "ok",
+  "fail",
+  "skipped",
+  "canceled",
+]);
+const ShellExecutionSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  state: ShellExecutionStateSchema,
+  termination: z.enum(["canceled", "timed_out"]).optional(),
+  steps: z
+    .array(
+      z.object({
+        id: z.string().max(64),
+        command: z.string().max(1024),
+        state: ShellExecutionStateSchema,
+        exitCode: z.number().int().optional(),
+      }),
+    )
+    .max(64),
+  currentStepId: z.string().max(64).optional(),
+  totalSteps: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  progress: z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("percentage"),
+        percentage: z.number().min(0).max(100),
+        label: z.string().max(256),
+      }),
+      z
+        .object({
+          kind: z.literal("fraction"),
+          completed: z.number().int().nonnegative(),
+          total: z.number().int().positive(),
+          label: z.string().max(256),
+        })
+        .refine((value) => value.completed <= value.total),
+    ])
+    .optional(),
+});
+
 const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discriminatedUnion(
   "type",
   [
@@ -693,6 +737,7 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       cwd: z.string().optional(),
       output: z.string().optional(),
       exitCode: z.number().nullable().optional(),
+      execution: ShellExecutionSchema.optional(),
     }),
     z.object({
       type: z.literal("read"),

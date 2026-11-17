@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import { projectShellExecution, type ShellToolStatus } from "./shell-execution.js";
 
 interface BashToolInput {
   command: string;
@@ -62,6 +63,10 @@ interface OmpToolResultDetails {
   diff?: string;
   mode?: string;
   xdev?: unknown;
+  trace?: unknown;
+  cancelled?: unknown;
+  timedOut?: unknown;
+  exitCode?: unknown;
 }
 
 interface OmpToolResultTextContent {
@@ -369,22 +374,53 @@ function parseDeviceInput(rawArgs: unknown): { tool: string; args: unknown } | n
   }
 }
 
+function mapBashToolDetail(
+  toolCall: OmpTrackedToolCall,
+  result: OmpToolResult,
+  status?: ShellToolStatus,
+): ToolCallDetail | undefined {
+  const summary = resolveToolCallOutput(result);
+  const details = result && typeof result !== "string" ? result.details : undefined;
+  let termination: "canceled" | "timed_out" | undefined;
+  if (details?.cancelled === true) termination = "canceled";
+  else if (details?.timedOut === true) termination = "timed_out";
+  const execution = projectShellExecution(details?.trace, summary.output, status, termination);
+  let command: string | undefined;
+  if (toolCall.kind === "bash") {
+    command = toolCall.args.command;
+  } else if (execution) {
+    const trace = details?.trace;
+    if (
+      trace &&
+      typeof trace === "object" &&
+      "script" in trace &&
+      typeof trace.script === "string"
+    ) {
+      command = trace.script;
+    }
+  }
+  if (command === undefined) return undefined;
+  return {
+    type: "shell",
+    command,
+    output: summary.output,
+    exitCode: summary.exitCode,
+    ...(execution ? { execution } : {}),
+  };
+}
+
 export function mapToolDetail(
   toolCall: OmpTrackedToolCall,
   result?: OmpToolResult,
+  status?: ShellToolStatus,
 ): ToolCallDetail {
   const parsedResult = result ?? null;
+  if (toolCall.toolName === "bash") {
+    const detail = mapBashToolDetail(toolCall, parsedResult, status);
+    if (detail) return detail;
+  }
 
   switch (toolCall.kind) {
-    case "bash": {
-      const summary = resolveToolCallOutput(parsedResult);
-      return {
-        type: "shell",
-        command: toolCall.args.command,
-        output: summary.output,
-        exitCode: summary.exitCode,
-      };
-    }
     case "read":
       return {
         type: "read",
@@ -468,6 +504,10 @@ function resolveToolCallOutput(result: OmpToolResult): ToolCallOutputSummary {
   }
   if (typeof result.code === "number") {
     summary.exitCode = result.code;
+    return summary;
+  }
+  if (typeof result.details?.exitCode === "number" && Number.isFinite(result.details.exitCode)) {
+    summary.exitCode = result.details.exitCode;
     return summary;
   }
   summary.exitCode = null;

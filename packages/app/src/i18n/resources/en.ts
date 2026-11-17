@@ -1605,8 +1605,10 @@ export const en = {
       create: "Create with OMP",
       creating: "Opening conversation...",
       createFailed: "Unable to start pet creation: {{message}}",
-      creationPermissionRequired: "Grant this plugin permission to create agents before creating a pet.",
-      creationReadPermissionRequired: "Grant this plugin access to agent events to load creation controls.",
+      creationPermissionRequired:
+        "Grant this plugin permission to create agents before creating a pet.",
+      creationReadPermissionRequired:
+        "Grant this plugin access to agent events to load creation controls.",
       creationHost: "Local host",
       noLocalHost: "Connect the local OMP host to create a pet.",
       noOmpModel: "Waiting for a usable OMP model. Check the local host's model configuration.",
@@ -2224,6 +2226,17 @@ export const en = {
     },
   },
   toolCallDetails: {
+    shell: {
+      pending: "Pending",
+      running: "Running",
+      ok: "Completed",
+      fail: "Failed",
+      skipped: "Skipped",
+      canceled: "Stopped",
+      timedOut: "Timed out",
+      buildProgress: "Build progress",
+      truncated: "Showing recent steps · {{count}} commands",
+    },
     generateImage: "Generate image",
     presentImage: "Present image",
     error: "Error",

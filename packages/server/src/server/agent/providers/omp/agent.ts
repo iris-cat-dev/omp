@@ -2618,7 +2618,13 @@ export class OmpAgentSession implements AgentSession {
     if (previous?.sessionId === sessionId && previous.title === title && previous.source === source)
       return;
     this.titleRevision += 1;
-    this.sessionTitle = { type: "session_title_changed", provider: this.provider, sessionId, title, source };
+    this.sessionTitle = {
+      type: "session_title_changed",
+      provider: this.provider,
+      sessionId,
+      title,
+      source,
+    };
     this.state = { ...this.state, sessionName: title, titleSource: source };
     if (source === "user") this.config.title = title;
     this.emit(this.sessionTitle);
@@ -3032,9 +3038,10 @@ export class OmpAgentSession implements AgentSession {
       }
       this.nativeCredentialEvidence ||= state.activeCredential !== undefined;
       this.credentialRequestEvidence = false;
-      this.state = titleRevision === this.titleRevision
-        ? state
-        : { ...state, sessionName: this.state.sessionName, titleSource: this.state.titleSource };
+      this.state =
+        titleRevision === this.titleRevision
+          ? state
+          : { ...state, sessionName: this.state.sessionName, titleSource: this.state.titleSource };
       if (titleRevision === this.titleRevision)
         this.updateSessionTitle(state.sessionId, state.sessionName, state.titleSource);
       this.applyCredentialBinding(activeCredential);
@@ -3078,9 +3085,12 @@ export class OmpAgentSession implements AgentSession {
     await this.subagentSubscription;
     const explicitTitle = this.config.title?.trim();
     if (
-      this.purpose !== "history" && !this.config.internal && explicitTitle &&
+      this.purpose !== "history" &&
+      !this.config.internal &&
+      explicitTitle &&
       (this.state.sessionName !== explicitTitle || this.state.titleSource !== "user")
-    ) await this.setTitle(explicitTitle);
+    )
+      await this.setTitle(explicitTitle);
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
     // Capture dynamic metadata while activation is already explicit. Cold UI reads
@@ -4491,7 +4501,11 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private applyRuntimeState(state: OmpSessionState, credentialRevision: number, titleRevision: number): void {
+  private applyRuntimeState(
+    state: OmpSessionState,
+    credentialRevision: number,
+    titleRevision: number,
+  ): void {
     const previous = this.state;
     const sameContext =
       state.sessionId === previous.sessionId &&
@@ -4523,9 +4537,10 @@ export class OmpAgentSession implements AgentSession {
           provider && credentialId !== undefined ? { provider, credentialId } : null;
       }
     }
-    this.state = titleRevision === this.titleRevision
-      ? state
-      : { ...state, sessionName: previous.sessionName, titleSource: previous.titleSource };
+    this.state =
+      titleRevision === this.titleRevision
+        ? state
+        : { ...state, sessionName: previous.sessionName, titleSource: previous.titleSource };
     if (titleRevision === this.titleRevision)
       this.updateSessionTitle(state.sessionId, state.sessionName, state.titleSource);
     this.applyCredentialBinding(activeCredential);
@@ -5584,6 +5599,14 @@ export class OmpAgentSession implements AgentSession {
     error: unknown,
     originatingTurnId?: string,
   ): boolean {
+    if (
+      toolCall.toolName === "bash" &&
+      result &&
+      typeof result !== "string" &&
+      result.details?.cancelled === true
+    ) {
+      status = "canceled";
+    }
     const task = this.nativeTaskCalls.get(toolCallId);
     const turnId = task ? task.turnId : (originatingTurnId ?? this.currentTurnIdForEvent());
     if (toolCall.toolName === "task") {
@@ -5596,12 +5619,7 @@ export class OmpAgentSession implements AgentSession {
         lastEmission: task?.lastEmission,
       });
     }
-    const detail = this.mapToolDetail(
-      toolCallId,
-      toolCall,
-      result,
-      status === "canceled" ? "failed" : status,
-    );
+    const detail = this.mapToolDetail(toolCallId, toolCall, result, status);
     if (!detail) {
       return false;
     }
@@ -5640,7 +5658,7 @@ export class OmpAgentSession implements AgentSession {
     toolCallId: string,
     toolCall: OmpTrackedToolCall,
     result: OmpToolResult,
-    toolCallStatus?: "running" | "completed" | "failed",
+    toolCallStatus?: "running" | "completed" | "failed" | "canceled",
   ): ToolCallDetail | null {
     return mapOmpToolDetail(toolCall, result, {
       toolCallId,
