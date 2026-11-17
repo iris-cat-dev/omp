@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -48,6 +48,7 @@ async function smoke(staged, temporary) {
     content: "native SDK artifact\n",
   });
   assert.equal(await readFile(path.join(work, "hello.txt"), "utf8"), "native SDK artifact\n");
+  await smokeSandbox(staged, temporary, sdk);
   const result = await new sdk.ReadTool(session).execute("artifact-read", {
     path: "hello.txt:raw",
   });
@@ -142,6 +143,89 @@ async function smoke(staged, temporary) {
     }
   }
   await smokeEval(staged, temporary, work);
+}
+
+async function smokeSandbox(staged, temporary, sdk) {
+  const { openSandboxFs } = await import(
+    pathToFileURL(path.join(staged.directory, "dist/node/sandbox.mjs")).href
+  );
+  const root = path.join(await realpath(temporary), "QQ 沙箱");
+  await mkdir(root);
+  const files = await openSandboxFs({ root, maxBytes: 1024 });
+  let session;
+  const auth = await sdk.AuthStorage.create(path.join(temporary, "sandbox-auth.db"));
+  try {
+    files.mkdir("nested/中文");
+    files.write("nested/中文/note.txt", Buffer.from("你好"), { exclusive: true });
+    assert.equal(files.read("nested/中文/note.txt").toString(), "你好");
+    assert.deepEqual(files.list("nested/中文").map(entry => entry.name), ["note.txt"]);
+    assert.equal(files.stat("nested/中文/note.txt").size, 6);
+    assert.throws(() => files.write("nested/中文/note.txt", Buffer.from("replace"), { exclusive: true }), /denied/);
+    files.write("nested/中文/note.txt", Buffer.from("updated"));
+    assert.equal(files.read("nested/中文/note.txt").toString(), "updated");
+    assert.throws(() => files.write("large", Buffer.alloc(1025)), /denied/);
+    assert.throws(() => files.read("nested/中文/note.txt", 3), /denied/);
+    files.remove("nested/中文/note.txt");
+    assert.deepEqual(files.list("nested/中文"), []);
+    const outside = path.join(temporary, "outside-sandbox");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "secret"), "outside-secret");
+    await symlink(outside, path.join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+    await link(path.join(outside, "secret"), path.join(root, "hardlink"));
+    for (const target of ["../outside-sandbox/secret", path.join(outside, "secret"), "C:\\secret", "note:stream", "linked/secret", "hardlink"]) {
+      assert.throws(() => files.read(target), /denied/);
+      assert.throws(() => files.write(target, Buffer.from("tamper")), /denied/);
+      assert.throws(() => files.stat(target), /denied/);
+      assert.throws(() => files.remove(target), /denied/);
+    }
+    assert.throws(() => files.mkdir("linked/created"), /denied/);
+    assert.throws(() => files.list("."), /denied/);
+    assert.equal(await readFile(path.join(outside, "secret"), "utf8"), "outside-secret");
+    await rm(path.join(root, "linked"));
+    await rm(path.join(root, "hardlink"));
+    const registry = new sdk.ModelRegistry(auth, path.join(temporary, "sandbox-models.yml"));
+    const model = registry.find("openai", "gpt-4o-mini");
+    assert.ok(model, "Sandbox smoke requires the bundled model catalog");
+    ({ session } = await sdk.createAgentSession({
+      cwd: root, agentDir: path.join(temporary, "sandbox-agent"), sandbox: { root },
+      authStorage: auth, modelRegistry: registry, model,
+      settings: sdk.Settings.isolated({ "memory.backend": "off" }),
+      sessionManager: sdk.SessionManager.inMemory(root),
+    }));
+    assert.deepEqual(session.agent.state.tools.map(tool => tool.name).sort(), ["sandbox_list", "sandbox_read", "sandbox_write"]);
+    await session.getToolByName("sandbox_write").execute("qq-startup-write", { path: "ready.txt", content: "QQ sandbox ready" });
+    assert.equal(await readFile(path.join(root, "ready.txt"), "utf8"), "QQ sandbox ready");
+    const denied = await session.getToolByName("sandbox_read").execute("qq-startup-denied", { path: "../outside-sandbox/secret" });
+    assert.equal(denied.isError, true);
+    assert.throws(() => session.executeBash("whoami"), /Sandbox/);
+    const original = path.join(temporary, "original-sandbox");
+    await rename(root, original);
+    await mkdir(root);
+    await writeFile(path.join(root, "ready.txt"), "replacement-secret");
+    assert.equal(files.read("ready.txt").toString(), "QQ sandbox ready");
+    files.write("ready.txt", Buffer.from("still-pinned"));
+    assert.equal(await readFile(path.join(root, "ready.txt"), "utf8"), "replacement-secret");
+    files.close();
+    assert.throws(() => files.read("ready.txt"), /denied/);
+    await session.dispose();
+    session = undefined;
+    ({ session } = await sdk.createAgentSession({
+      cwd: root, agentDir: path.join(temporary, "host-agent"),
+      authStorage: auth, modelRegistry: registry, model, enableMCP: false, enableLsp: false,
+      settings: sdk.Settings.isolated({ "memory.backend": "off" }),
+      sessionManager: sdk.SessionManager.inMemory(root),
+    }));
+    const hostRead = await session.getToolByName("read").execute("qq-normal-read", { path: "../outside-sandbox/secret:raw" });
+    assert.notEqual(hostRead.isError, true);
+    assert.ok(hostRead.content.some(item => item.type === "text" && item.text.includes("outside-secret")));
+    await session.getToolByName("write").execute("qq-normal-write", { path: "../outside-sandbox/normal-note", content: "host tools restored" });
+    assert.equal(await readFile(path.join(outside, "normal-note"), "utf8"), "host tools restored");
+    console.log("SDK artifact sandbox passed native isolation, bounded files and real QQ-style session startup");
+  } finally {
+    files.close();
+    await session?.dispose();
+    auth.close();
+  }
 }
 
 async function smokeEval(staged, temporary, work) {
