@@ -43,6 +43,9 @@ const DEFAULT_DESKTOP: DesktopSettings = {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
+  window: {
+    showSystemTray: true,
+  },
 };
 
 export function createFakeDesktopBridge(

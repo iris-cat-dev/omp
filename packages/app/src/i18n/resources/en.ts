@@ -2469,6 +2469,10 @@ export const en = {
     },
     general: {
       title: "General",
+      systemTray: {
+        label: "System tray",
+        description: "Show the app icon and menu in the system tray",
+      },
       defaultSend: {
         label: "Default send",
         descriptions: {

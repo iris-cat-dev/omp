@@ -425,6 +425,7 @@ describe("loadSettingsFromStorage", () => {
         browser: { target: "system", custom: { executable: "", args: ["{url}"] } },
         notifications: { playSound: true },
         daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+        window: { showSystemTray: true },
       },
     });
     const deps = makeDeps({

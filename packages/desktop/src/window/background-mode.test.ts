@@ -69,6 +69,9 @@ function createHarness(choice: BackgroundModeCloseChoice) {
     createTray: (actions) => {
       trayActions = actions;
     },
+    destroyTray: () => {
+      trayActions = null;
+    },
     getWindows: () => [window],
     createWindow: vi.fn().mockResolvedValue(window),
     showWindow,
@@ -94,6 +97,7 @@ describe("background window mode", () => {
     const controller = new BackgroundModeController({
       promptForCloseChoice: vi.fn(),
       createTray: vi.fn(),
+      destroyTray: vi.fn(),
       getWindows: () => [],
       createWindow: async () => window,
       showWindow,
@@ -114,6 +118,7 @@ describe("background window mode", () => {
     const controller = new BackgroundModeController({
       promptForCloseChoice: vi.fn(),
       createTray: vi.fn(),
+      destroyTray: vi.fn(),
       getWindows: () => [first, second],
       createWindow: vi.fn(),
       showWindow,
@@ -137,6 +142,7 @@ describe("background window mode", () => {
     const controller = new BackgroundModeController({
       promptForCloseChoice: vi.fn(),
       createTray: vi.fn(),
+      destroyTray: vi.fn(),
       getWindows: () => [],
       createWindow: () => creation,
       showWindow,
@@ -153,13 +159,38 @@ describe("background window mode", () => {
     expect(window.focusedCount).toBe(0);
   });
 
-  it("creates the tray eagerly and only once", () => {
+  it("keeps a disabled startup tray hidden when a window enters background mode", async () => {
     const harness = createHarness("background");
-    harness.controller.initializeTray();
-    const trayActions = harness.getTrayActions();
-    harness.controller.initializeTray();
-    expect(trayActions).not.toBeNull();
-    expect(harness.getTrayActions()).toBe(trayActions);
+    harness.controller.setTrayEnabled(false);
+
+    harness.window.close();
+    await vi.waitFor(() => expect(harness.window.visible).toBe(false));
+    expect(harness.getTrayActions()).toBeNull();
+    expect(harness.quitApp).not.toHaveBeenCalled();
+
+    harness.controller.restoreWindows();
+    expect(harness.window.visible).toBe(true);
+  });
+
+  it("removes the tray immediately and recreates a working restore menu when re-enabled", async () => {
+    const harness = createHarness("background");
+    harness.controller.setTrayEnabled(true);
+    const originalActions = harness.getTrayActions();
+
+    harness.controller.setTrayEnabled(false);
+    expect(harness.getTrayActions()).toBeNull();
+    harness.window.close();
+    await vi.waitFor(() => expect(harness.window.visible).toBe(false));
+    expect(harness.getTrayActions()).toBeNull();
+
+    harness.controller.setTrayEnabled(true);
+    const restoredActions = harness.getTrayActions();
+    expect(restoredActions).not.toBeNull();
+    expect(restoredActions).not.toBe(originalActions);
+    restoredActions?.restore();
+    expect(harness.window.visible).toBe(true);
+    expect(harness.window.focusedCount).toBe(1);
+    expect(harness.quitApp).not.toHaveBeenCalled();
   });
 
   it("keeps the window alive in the tray and restores it on tray click", async () => {

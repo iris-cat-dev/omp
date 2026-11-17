@@ -414,6 +414,8 @@ Lazy-loaded CommonJS desktop modules must use typed `require`, not runtime `impo
 
 On Windows, the renderer normally reports content readiness after app settings load. If that signal never arrives, a bounded main-process fallback presents the successfully loaded first document. Navigation, close, hide, minimize, or normal readiness cancels it; the fallback cannot reopen a window hidden to the tray. macOS remains gated on its native paint handoff.
 
+**Settings → General → System tray** controls the native tray icon and menu. It defaults to enabled, applies immediately, and persists as `settings.window.showSystemTray` in `desktop-settings.json`. Window-close preferences remain independent: entering background mode does not recreate a disabled tray.
+
 ### Frontend work and generated output
 
 Desktop/web status rings, synchronized loaders, and the homepage WebGPU poster stop scheduling animation while their retained panel or application is inactive. The homepage route supplies its navigation focus to the retained-panel context, so opening Settings also stops the covered poster while the window stays focused. Retained poster resources are reused within the mounted component and released on unmount or when the existing home-effects switch is disabled. Loaders share one timer at the six visible step boundaries per 950 ms cycle, not a permanent display-rate worklet. Reduced-motion preferences remain respected.

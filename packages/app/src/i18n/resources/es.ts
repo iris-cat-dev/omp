@@ -2246,6 +2246,10 @@ export const es: TranslationResources = {
     },
     general: {
       title: "General",
+      systemTray: {
+        label: "Bandeja del sistema",
+        description: "Mostrar el icono y el menú de la aplicación en la bandeja del sistema",
+      },
       defaultSend: {
         label: "Envío predeterminado",
         descriptions: {

@@ -2210,6 +2210,10 @@ export const ko: TranslationResources = {
     },
     general: {
       title: "일반",
+      systemTray: {
+        label: "시스템 트레이",
+        description: "시스템 트레이에 앱 아이콘과 메뉴 표시",
+      },
       defaultSend: {
         label: "기본 전송",
         descriptions: {

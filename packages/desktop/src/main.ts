@@ -581,6 +581,12 @@ const backgroundModeController = new BackgroundModeController({
     updateBackgroundTrayContextMenu();
     log.info("[background mode] system tray created", { iconPath });
   },
+  destroyTray: () => {
+    backgroundTray?.destroy();
+    backgroundTray = null;
+    backgroundTrayActions = null;
+    log.info("[background mode] system tray destroyed");
+  },
   getWindows: getMainWindows,
   createWindow: async () => {
     await bootstrapComplete;
@@ -799,7 +805,11 @@ async function bootstrap(): Promise<void> {
   });
 
   await applyAppIcon();
-  backgroundModeController.initializeTray();
+  const settingsStore = getDesktopSettingsStore();
+  backgroundModeController.setTrayEnabled((await settingsStore.get()).window.showSystemTray);
+  settingsStore.subscribe((settings) => {
+    backgroundModeController.setTrayEnabled(settings.window.showSystemTray);
+  });
   setupApplicationMenu({
     onNewWindow: () => {
       void createWindow().catch((error) => {

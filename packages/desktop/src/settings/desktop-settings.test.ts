@@ -378,6 +378,27 @@ describe("desktop-settings", () => {
     expect(settings.window.closeBehavior).toBe("background");
   });
 
+  it("persists tray visibility independently of a remembered close choice", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+    await store.patch({ window: { closeBehavior: "background" } });
+    await store.patch({ window: { showSystemTray: false } });
+
+    const restarted = createDesktopSettingsStore({ userDataPath });
+    expect((await restarted.get()).window).toEqual({
+      closeBehavior: "background",
+      showSystemTray: false,
+    });
+    await restarted.patch({ notifications: { playSound: false } });
+    expect((await restarted.get()).window.showSystemTray).toBe(false);
+    await restarted.patch({ window: { showSystemTray: true } });
+    expect((await createDesktopSettingsStore({ userDataPath }).get()).window).toEqual({
+      closeBehavior: "background",
+      showSystemTray: true,
+    });
+  });
+
   it("does not let stale legacy renderer settings override an explicit desktop patch", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);

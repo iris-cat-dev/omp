@@ -2240,6 +2240,10 @@ export const ptBR: TranslationResources = {
     },
     general: {
       title: "Geral",
+      systemTray: {
+        label: "Bandeja do sistema",
+        description: "Mostrar o ícone e o menu do aplicativo na bandeja do sistema",
+      },
       defaultSend: {
         label: "Envio padrão",
         descriptions: {

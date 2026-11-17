@@ -2193,6 +2193,10 @@ export const ar: TranslationResources = {
     },
     general: {
       title: "عام",
+      systemTray: {
+        label: "علبة النظام",
+        description: "إظهار أيقونة التطبيق وقائمته في علبة النظام",
+      },
       defaultSend: {
         label: "إرسال افتراضي",
         descriptions: {

@@ -30,6 +30,9 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
+  window: {
+    showSystemTray: boolean;
+  };
 }
 
 export interface DesktopSettingsPatch {
@@ -37,6 +40,7 @@ export interface DesktopSettingsPatch {
   browser?: Partial<DesktopSettings["browser"]>;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
+  window?: Partial<DesktopSettings["window"]>;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -51,6 +55,9 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
+  },
+  window: {
+    showSystemTray: true,
   },
 };
 
@@ -207,6 +214,7 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
   const daemon = isRecord(record.daemon) ? record.daemon : {};
   const browser = isRecord(record.browser) ? record.browser : {};
   const customBrowser = isRecord(browser.custom) ? browser.custom : {};
+  const window = isRecord(record.window) ? record.window : {};
 
   return {
     releaseChannel: record.releaseChannel === "beta" ? "beta" : "stable",
@@ -239,6 +247,12 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
           ? daemon.keepRunningAfterQuit
           : DEFAULT_DESKTOP_SETTINGS.daemon.keepRunningAfterQuit,
     },
+    window: {
+      showSystemTray:
+        typeof window.showSystemTray === "boolean"
+          ? window.showSystemTray
+          : DEFAULT_DESKTOP_SETTINGS.window.showSystemTray,
+    },
   };
 }
 
@@ -260,6 +274,10 @@ function mergeDesktopSettings(
       ...current.daemon,
       ...updates.daemon,
     },
+    window: {
+      ...current.window,
+      ...updates.window,
+    },
   };
 }
 
@@ -269,6 +287,7 @@ function normalizePatch(updates: DesktopSettingsPatch): Record<string, unknown> 
     ...(updates.browser ? { browser: updates.browser } : {}),
     ...(updates.notifications ? { notifications: updates.notifications } : {}),
     ...(updates.daemon ? { daemon: updates.daemon } : {}),
+    ...(updates.window ? { window: updates.window } : {}),
   };
 }
 

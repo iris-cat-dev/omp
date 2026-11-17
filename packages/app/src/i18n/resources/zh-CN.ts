@@ -2372,6 +2372,10 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      systemTray: {
+        label: "系统托盘",
+        description: "在系统托盘中显示应用图标和菜单",
+      },
       defaultSend: {
         label: "默认发送",
         descriptions: {

@@ -73,6 +73,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifications-section";
 import { DesktopStartupSection } from "@/desktop/components/desktop-startup-section";
 import { DesktopBrowserSection } from "@/desktop/components/desktop-browser-section";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { isElectronRuntime } from "@/desktop/host";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { useDesktopUpdate } from "@/desktop/updates/desktop-update-provider";
@@ -228,6 +229,7 @@ let retainedDesktopSidebarScrollOffset = 0;
 
 interface GeneralSectionProps {
   settings: AppSettings;
+  isDesktopApp: boolean;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
 }
@@ -347,8 +349,38 @@ function ChatBehaviorSection({
   );
 }
 
+function DesktopSystemTrayRow() {
+  const { t } = useTranslation();
+  const { settings, isLoading, isSaving, updateSettings } = useDesktopSettings();
+  const handleChange = useCallback(
+    (showSystemTray: boolean) => {
+      void updateSettings({ window: { showSystemTray } }).catch(() => {
+        // useDesktopSettings owns the user-visible IPC error.
+      });
+    },
+    [updateSettings],
+  );
+
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.general.systemTray.label")}</Text>
+        <Text style={settingsStyles.rowHint}>{t("settings.general.systemTray.description")}</Text>
+      </View>
+      <Switch
+        value={settings.window.showSystemTray}
+        onValueChange={handleChange}
+        disabled={isLoading || isSaving}
+        accessibilityLabel={t("settings.general.systemTray.label")}
+        testID="desktop-system-tray-switch"
+      />
+    </View>
+  );
+}
+
 function GeneralSection({
   settings,
+  isDesktopApp,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
@@ -439,6 +471,7 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {isDesktopApp ? <DesktopSystemTrayRow /> : null}
       </View>
     </SettingsSection>
   );
@@ -1160,6 +1193,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             <>
               <GeneralSection
                 settings={settings}
+                isDesktopApp={isDesktopApp}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
               />

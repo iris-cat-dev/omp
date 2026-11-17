@@ -15,6 +15,7 @@ export type BackgroundModeCloseChoice = "background" | "quit" | "cancel";
 interface BackgroundModeDependencies {
   promptForCloseChoice(window: BackgroundModeWindow): Promise<BackgroundModeCloseChoice>;
   createTray(actions: { restore: () => void; quit: () => void }): void;
+  destroyTray(): void;
   getWindows(): BackgroundModeWindow[];
   createWindow(): Promise<BackgroundModeWindow>;
   showWindow(window: BackgroundModeWindow, focus: boolean): void;
@@ -28,6 +29,7 @@ export class BackgroundModeController {
   private readonly immediateCloseWindows = new WeakSet<BackgroundModeWindow>();
   private readonly rendererUnavailableWindows = new WeakSet<BackgroundModeWindow>();
   private trayCreated = false;
+  private trayEnabled = true;
   private appQuitting = false;
 
   constructor(private readonly dependencies: BackgroundModeDependencies) {}
@@ -37,8 +39,14 @@ export class BackgroundModeController {
       this.handleWindowClose(window, event);
     });
   }
-  initializeTray(): void {
-    this.ensureTray();
+  setTrayEnabled(enabled: boolean): void {
+    this.trayEnabled = enabled;
+    if (enabled) {
+      this.ensureTray();
+    } else if (this.trayCreated) {
+      this.dependencies.destroyTray();
+      this.trayCreated = false;
+    }
   }
 
   markAppQuitting(): void {
@@ -109,7 +117,7 @@ export class BackgroundModeController {
   }
 
   private ensureTray(): void {
-    if (this.trayCreated) {
+    if (!this.trayEnabled || this.trayCreated || this.appQuitting) {
       return;
     }
 

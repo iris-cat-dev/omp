@@ -37,6 +37,7 @@ export interface DesktopSettings {
   };
   window: {
     closeBehavior: "ask" | "background" | "quit";
+    showSystemTray: boolean;
   };
 }
 
@@ -104,6 +105,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   },
   window: {
     closeBehavior: "ask",
+    showSystemTray: true,
   },
 };
 
@@ -223,6 +225,10 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     if (closeBehavior) {
       result.window.closeBehavior = closeBehavior;
     }
+    const showSystemTray = coerceBoolean(input.window.showSystemTray);
+    if (showSystemTray !== null) {
+      result.window.showSystemTray = showSystemTray;
+    }
   }
 
   return result;
@@ -276,9 +282,17 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
   }
 
   if (isRecord(input.window)) {
+    const windowPatch: Partial<DesktopSettings["window"]> = {};
     const closeBehavior = coerceCloseBehavior(input.window.closeBehavior);
     if (closeBehavior) {
-      patch.window = { closeBehavior };
+      windowPatch.closeBehavior = closeBehavior;
+    }
+    const showSystemTray = coerceBoolean(input.window.showSystemTray);
+    if (showSystemTray !== null) {
+      windowPatch.showSystemTray = showSystemTray;
+    }
+    if (Object.keys(windowPatch).length > 0) {
+      patch.window = windowPatch;
     }
   }
 

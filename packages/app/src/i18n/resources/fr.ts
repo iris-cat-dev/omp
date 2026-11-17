@@ -2249,6 +2249,10 @@ export const fr: TranslationResources = {
     },
     general: {
       title: "Général",
+      systemTray: {
+        label: "Zone de notification",
+        description: "Afficher l’icône et le menu de l’application dans la zone de notification",
+      },
       defaultSend: {
         label: "Envoi par défaut",
         descriptions: {

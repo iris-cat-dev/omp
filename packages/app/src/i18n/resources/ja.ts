@@ -2218,6 +2218,10 @@ export const ja: TranslationResources = {
     },
     general: {
       title: "一般",
+      systemTray: {
+        label: "システムトレイ",
+        description: "システムトレイにアプリのアイコンとメニューを表示",
+      },
       defaultSend: {
         label: "デフォルトの送信",
         descriptions: {

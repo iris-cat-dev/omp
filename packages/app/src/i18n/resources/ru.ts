@@ -2242,6 +2242,10 @@ export const ru: TranslationResources = {
     },
     general: {
       title: "Основные",
+      systemTray: {
+        label: "Системный трей",
+        description: "Показывать значок и меню приложения в системном трее",
+      },
       defaultSend: {
         label: "Отправка по умолчанию",
         descriptions: {
