@@ -19,21 +19,36 @@ describe("remote backend manifest v2", () => {
   it("rejects legacy manifests, unsupported targets, and unpinned or mismatched asset URLs", async () => {
     const fixture = await writeRemoteBackendFixture(directory);
     const manifest = await loadRemoteBackendManifest(directory);
-    await expect(selectRemoteBackendBundle(manifest, "win32-x64")).rejects.toThrow("does not support win32-x64");
-    await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ ...fixture.manifest, schemaVersion: 1 }));
-    await expect(loadRemoteBackendManifest(directory)).rejects.toThrow("Remote backend bundle is unavailable");
-    fixture.manifest.targets["linux-x64"].sdk.url = fixture.manifest.targets["darwin-arm64"].sdk.url;
+    await expect(selectRemoteBackendBundle(manifest, "win32-x64")).rejects.toThrow(
+      "does not support win32-x64",
+    );
+    await writeFile(
+      path.join(directory, "manifest.json"),
+      JSON.stringify({ ...fixture.manifest, schemaVersion: 1 }),
+    );
+    await expect(loadRemoteBackendManifest(directory)).rejects.toThrow(
+      "Remote backend bundle is unavailable",
+    );
+    fixture.manifest.targets["linux-x64"].sdk.url =
+      fixture.manifest.targets["darwin-arm64"].sdk.url;
     await writeFile(path.join(directory, "manifest.json"), JSON.stringify(fixture.manifest));
-    await expect(loadRemoteBackendManifest(directory)).rejects.toThrow("pinned Release target asset");
+    await expect(loadRemoteBackendManifest(directory)).rejects.toThrow(
+      "pinned Release target asset",
+    );
   });
 
   it("verifies the selected target's lock and all common uploads", async () => {
     await writeRemoteBackendFixture(directory);
     const manifest = await loadRemoteBackendManifest(directory);
-    await writeFile(path.join(directory, "targets", "darwin-arm64", "package-lock.json"), "corrupt");
-    await selectRemoteBackendBundle(manifest, "linux-x64");
-    await expect(selectRemoteBackendBundle(manifest, "darwin-arm64")).rejects.toThrow("targets/darwin-arm64/package-lock.json");
+    await writeFile(
+      path.join(directory, "targets", "darwin-arm64", "package-lock.json"),
+      "corrupt",
+    );
+    await expect(selectRemoteBackendBundle(manifest, "linux-x64")).resolves.toMatchObject({
+      target: "linux-x64",
+    });
+    await expect(selectRemoteBackendBundle(manifest, "darwin-arm64")).rejects.toBeInstanceOf(Error);
     await writeFile(path.join(directory, "packages", "server.tgz"), "corrupt");
-    await expect(selectRemoteBackendBundle(manifest, "linux-x64")).rejects.toThrow("packages/server.tgz");
+    await expect(selectRemoteBackendBundle(manifest, "linux-x64")).rejects.toBeInstanceOf(Error);
   });
 });

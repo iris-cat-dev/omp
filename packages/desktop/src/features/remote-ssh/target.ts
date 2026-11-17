@@ -11,13 +11,21 @@ export interface RemoteTargetInfo {
 
 export function parseRemoteTargetInfo(value: string): RemoteTargetInfo {
   const [system, machine, encodedHome, libc] = value.trim().split("|");
-  const platform = system === "Linux" ? "linux" : system === "Darwin" ? "darwin" : null;
-  const arch = machine === "x86_64" ? "x64" : machine === "arm64" || machine === "aarch64" ? "arm64" : null;
+  let platform: RemoteTargetInfo["platform"] | null = null;
+  if (system === "Linux") platform = "linux";
+  else if (system === "Darwin") platform = "darwin";
+  let arch: RemoteTargetInfo["arch"] | null = null;
+  if (machine === "x86_64") arch = "x64";
+  else if (machine === "arm64" || machine === "aarch64") arch = "arm64";
   if (!platform || !arch || !encodedHome) {
-    throw new Error(`Unsupported SSH host platform: ${system || "unknown"} ${machine || "unknown"}`);
+    throw new Error(
+      `Unsupported SSH host platform: ${system || "unknown"} ${machine || "unknown"}`,
+    );
   }
   if (platform === "linux" && !libc?.startsWith("glibc ")) {
-    throw new Error(`Unsupported SSH host libc: ${libc || "unknown"}. Linux remote hosts require glibc; musl is unsupported.`);
+    throw new Error(
+      `Unsupported SSH host libc: ${libc || "unknown"}. Linux remote hosts require glibc; musl is unsupported.`,
+    );
   }
   return { platform, arch, home: Buffer.from(encodedHome, "base64").toString("utf8") };
 }
@@ -64,8 +72,13 @@ export function buildSshArguments(
     "-o",
     "ServerAliveCountMax=4",
   ];
-  if (options.controlPath) args.push("-S", options.controlPath);
-  if (options.controlMaster) args.push("-M", "-o", "ControlPersist=no");
+  if (options.controlMaster === false) {
+    // Override user ssh_config too: native Windows OpenSSH cannot use mux sockets.
+    args.push("-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no");
+  } else {
+    if (options.controlPath) args.push("-S", options.controlPath);
+    if (options.controlMaster) args.push("-M", "-o", "ControlPersist=no");
+  }
   if (options.batchMode) args.push("-o", "BatchMode=yes");
   if (target.port !== undefined) args.push("-p", String(target.port));
   if (target.identityFile) args.push("-i", target.identityFile);

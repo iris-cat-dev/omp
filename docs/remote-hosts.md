@@ -2,6 +2,8 @@
 
 The Desktop app can provision a remote daemon from **Settings → General → Add host → Connect via SSH**. It uses the system OpenSSH client, including `~/.ssh/config`, agent identities, `ProxyJump`, host-key verification, passwords, passphrases, and MFA prompts.
 
+On Windows, provisioning explicitly disables OpenSSH `ControlMaster`, `ControlPath`, and `ControlPersist`, including settings inherited from `~/.ssh/config`. Commands and checksum-verified uploads use the original authenticated terminal instead, avoiding `getsockname failed: Not a socket` without prompting again for passwords, key passphrases, or MFA. The application does not modify your SSH configuration. macOS and Linux clients continue using connection multiplexing.
+
 ## Connection and security model
 
 SSH is used only to inspect the host, upload the version-matched backend, start the daemon, and obtain its pairing offer. After pairing, SSH closes and the app connects through the configured end-to-end encrypted Relay. The remote daemon remains bound to `127.0.0.1:6770`; **do not expose that port to the Internet**.
