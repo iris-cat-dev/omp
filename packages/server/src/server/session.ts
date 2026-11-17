@@ -4719,6 +4719,7 @@ export class Session {
         regexp: msg.regexp,
         includeGlobs: msg.includeGlobs,
         excludeGlobs: msg.excludeGlobs,
+        runtimeSettings: this.daemonConfigStore.get().providers.omp,
         signal: controller.signal,
       });
       this.emit({

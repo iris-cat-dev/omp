@@ -24,6 +24,7 @@ async function createWorkspace(): Promise<string> {
 function options(cwd: string) {
   return {
     cwd,
+    runtimeSettings: { ompSdkPath: process.env.OMP_DESKTOP_TEST_SDK_ROOT },
     query: "render",
     caseSensitive: true,
     wholeWord: true,
@@ -63,7 +64,7 @@ describe("searchWorkspaceText", () => {
     ]);
   });
 
-  test("converts ripgrep byte offsets to UTF-16 preview ranges", async () => {
+  test("preserves Unicode match positions for highlighting", async () => {
     const cwd = await createWorkspace();
 
     const result = await searchWorkspaceText({
@@ -83,6 +84,26 @@ describe("searchWorkspaceText", () => {
     expect(result.matchCount).toBe(2);
   });
 
+  test("keeps match highlights when cropping a long preview", async () => {
+    const cwd = await createWorkspace();
+    await writeFile(path.join(cwd, "src", "long.ts"), `${"x".repeat(6_000)}needle needle\r\n`);
+
+    const result = await searchWorkspaceText({
+      ...options(cwd),
+      query: "needle",
+      wholeWord: false,
+    });
+
+    expect(result.matchCount).toBe(2);
+    const match = result.files.find((file) => file.path === "src/long.ts")!.matches[0];
+    expect(match.text.length).toBeLessThanOrEqual(4_000);
+    expect(match.text.startsWith("…")).toBe(true);
+    expect(match.ranges.map(({ start, length }) => match.text.slice(start, start + length))).toEqual([
+      "needle",
+      "needle",
+    ]);
+  });
+
   test("returns regex errors without treating them as empty results", async () => {
     const cwd = await createWorkspace();
 
@@ -100,6 +121,7 @@ describe("searchWorkspaceText", () => {
 
   test("keeps total counts when visible results are capped", async () => {
     const cwd = await createWorkspace();
+    await writeFile(path.join(cwd, "src", "more.ts"), "hit\n");
 
     const result = await searchWorkspaceText({
       ...options(cwd),
@@ -109,8 +131,8 @@ describe("searchWorkspaceText", () => {
     });
 
     expect(result).toMatchObject({
-      matchCount: 3,
-      fileCount: 1,
+      matchCount: 4,
+      fileCount: 2,
       complete: true,
       visibleLimitHit: true,
     });

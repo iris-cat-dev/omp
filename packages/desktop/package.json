@@ -32,7 +32,6 @@
     "@iriscat/mini-electron": "0.1.12",
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
-    "@vscode/ripgrep-universal": "^1.18.0",
     "electron": "^41.2.0",
     "electron-builder": "26.8.1",
     "typescript": "5.9.3",

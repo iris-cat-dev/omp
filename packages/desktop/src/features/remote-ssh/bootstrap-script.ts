@@ -85,6 +85,25 @@ PATH="$NODE_HOME/bin:$PATH" "$NPM" ci --prefix "$UPLOAD" --omit=dev --include=op
 SDK="$UPLOAD/node_modules/@oh-my-pi/pi-coding-agent"
 mkdir -p "$SDK" || fail "Cannot create SDK installation directory"
 tar -xzf "$UPLOAD/packages/omp-sdk.tgz" -C "$SDK" --strip-components=1 || fail "SDK archive extraction failed"
+PATH="$NODE_HOME/bin:$PATH" "$NODE" --input-type=module - "$SDK" "$UPLOAD" >"$UPLOAD/sdk-search-check.log" 2>&1 <<'OMP_SDK_SEARCH_CHECK' || fail "The downloaded OMP SDK does not support structured file search. Update the pinned SDK release before deployment."
+import { createRequire } from "node:module";
+import fs from "node:fs/promises";
+import path from "node:path";
+const scratch = await fs.mkdtemp(path.join(process.argv[3], "sdk-search-check-"));
+try {
+  process.env.PI_NATIVES_DIR = path.join(scratch, "natives");
+  const native = createRequire(path.join(process.argv[2], "package.json"))("@oh-my-pi/pi-natives");
+  const probe = path.join(scratch, "content.txt");
+  await fs.writeFile(probe, "needle needle");
+  const result = await native.searchFiles({ path: probe, pattern: "needle", fixedStrings: true, maxMatches: 3 });
+  const match = result.matches[0];
+  if (result.totalMatches !== 2 || match?.ranges.length !== 2 || match.ranges[1].start !== 7) {
+    throw new Error("OMP SDK structured file search returned an incompatible result");
+  }
+} finally {
+  await fs.rm(scratch, { recursive: true, force: true });
+}
+OMP_SDK_SEARCH_CHECK
 STAGED_CLI="$UPLOAD/node_modules/@omp-desktop/cli/bin/omp-desktop"
 [ -f "$STAGED_CLI" ] || fail "Installed backend CLI is missing"
 

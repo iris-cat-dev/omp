@@ -25,7 +25,6 @@ import {
 import {
   createNodeEntrypointInvocation,
   resolveDesktopSdkRoot,
-  resolveBundledRipgrepPath,
   resolveDaemonRunnerEntrypoint,
 } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
@@ -411,7 +410,6 @@ async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
 }
 function createDaemonEnvironment(invocationEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sdkRoot = resolveDesktopSdkRoot(invocationEnv);
-  const bundledRipgrepPath = resolveBundledRipgrepPath();
   return {
     PASEO_DESKTOP_MANAGED: "1",
     PASEO_DESKTOP_DISTRIBUTION_IDENTITY: DESKTOP_DISTRIBUTION_IDENTITY,
@@ -419,7 +417,6 @@ function createDaemonEnvironment(invocationEnv: NodeJS.ProcessEnv): NodeJS.Proce
     PASEO_WEB_UI_ENABLED: "false",
     OMP_DESKTOP_SDK_ROOT: sdkRoot,
     OMP_COMMAND: undefined,
-    ...(bundledRipgrepPath ? { PASEO_RIPGREP_PATH: bundledRipgrepPath } : {}),
     OMP_DESKTOP_BUNDLED_PLUGINS: undefined,
   };
 }

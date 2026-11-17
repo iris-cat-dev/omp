@@ -29,7 +29,6 @@ files:
   - "!node_modules/@omp-desktop/**/*.test.*"
   - "!node_modules/@omp-desktop/**/*.spec.*"
   - "!node_modules/@omp-desktop/server/dist/server/web-ui/**"
-  - "!node_modules/@vscode/ripgrep*/**"
   - "!node_modules/@omp-desktop/plugin-*{,/**/*}"
   - "!node_modules/@omp-desktop/**/.env"
   - "!node_modules/@omp-desktop/server/dist/server/skills/hatch-pet{,/**/*}"

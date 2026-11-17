@@ -100,7 +100,13 @@ function install(home: string) {
       nodeVersion: process.versions.node,
       bundleHash: "a".repeat(64),
     }),
-    env: { ...process.env, HOME: home },
+    env: {
+      ...process.env,
+      HOME: home,
+      NPM_CONFIG_OFFLINE: "true",
+      NPM_CONFIG_AUDIT: "false",
+      NPM_CONFIG_FUND: "false",
+    },
     encoding: "utf8",
     timeout: 20_000,
   });
@@ -140,7 +146,23 @@ describe.skipIf(process.platform === "win32")("standalone remote SDK installatio
       expect(probe.status, probe.stderr).toBe(0);
       expect(probe.stdout.trim()).toBe("backend:bundled-sdk");
     });
-  });
+  }, 30_000);
+
+  it("preserves the active release when the SDK lacks structured file search", async () => {
+    await withInstallFixture(async (upload, home) => {
+      const runtime = path.join(home, ".omp-desktop", "remote-runtime");
+      const previous = path.join(runtime, "releases", "previous");
+      await mkdir(previous, { recursive: true });
+      await writeFile(path.join(previous, "state"), "previous-release");
+      await symlink(previous, path.join(runtime, "current"));
+      const result = install(home);
+      expect(result.status).toBe(1);
+      const marker = result.stdout.match(/__OMP_ERROR_sdkinstallfixture__([^\n]+)/);
+      expect(Buffer.from(marker![1], "base64").toString()).toMatch(/SDK.*structured file search/);
+      expect(await readlink(path.join(runtime, "current"))).toBe(previous);
+      expect(await readFile(path.join(previous, "state"), "utf8")).toBe("previous-release");
+    });
+  }, 30_000);
 
   it("does not switch an existing release when the SDK archive cannot be extracted", async () => {
     await withInstallFixture(async (upload, home) => {
@@ -154,5 +176,5 @@ describe.skipIf(process.platform === "win32")("standalone remote SDK installatio
       expect(await readlink(path.join(runtime, "current"))).toBe(previous);
       expect(await readFile(path.join(previous, "state"), "utf8")).toBe("previous-release");
     });
-  });
+  }, 30_000);
 });

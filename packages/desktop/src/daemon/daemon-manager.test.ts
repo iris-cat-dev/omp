@@ -74,7 +74,6 @@ vi.mock("./runtime-paths.js", () => ({
   resolveDesktopSdkRoot: vi.fn(
     () => "/tmp/resources/omp-sdk/node_modules/@oh-my-pi/pi-coding-agent",
   ),
-  resolveBundledRipgrepPath: vi.fn(() => "/tmp/resources/bin/rg"),
   resolveDaemonRunnerEntrypoint: vi.fn(() => ({
     entryPath: "/tmp/daemon.js",
     execArgv: [],
@@ -901,7 +900,6 @@ describe("daemon-manager commands", () => {
           PASEO_WEB_UI_ENABLED: "false",
           OMP_DESKTOP_SDK_ROOT: "/tmp/resources/omp-sdk/node_modules/@oh-my-pi/pi-coding-agent",
           OMP_COMMAND: undefined,
-          PASEO_RIPGREP_PATH: "/tmp/resources/bin/rg",
         }),
       }),
     );

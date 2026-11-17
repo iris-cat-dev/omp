@@ -50,18 +50,6 @@ export function resolveDesktopSdkRoot(env: NodeJS.ProcessEnv = process.env): str
   return path.resolve(desktopRoot, "..", "..", "omp-sdk", "packages", "coding-agent");
 }
 
-export function resolveBundledRipgrepPath(): string | null {
-  if (!app.isPackaged) return null;
-  return assertPathExists({
-    label: "Bundled ripgrep executable",
-    filePath: path.join(
-      process.resourcesPath,
-      "bin",
-      process.platform === "win32" ? "rg.exe" : "rg",
-    ),
-  });
-}
-
 export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   if (app.isPackaged) {
     return {

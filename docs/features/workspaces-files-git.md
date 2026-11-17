@@ -147,6 +147,14 @@ Editable source tabs use **Ctrl+/** to toggle comments in the current file type;
 
 On Windows, desktop file-manager actions normalize forward or mixed path separators to native backslashes before opening a directory or revealing an entry in Explorer. This includes paths with spaces, Unicode names, and UNC shares; macOS/Linux paths remain unchanged.
 
+### Search file contents
+
+Open content search in **Files**, enter text, and click a matching line to open its source position. **Enter** opens the first match. Use the case, whole-word, and regex toggles to refine matching; regex mode uses Rust regex syntax and shows invalid-pattern errors. Include/exclude filters accept comma-separated globs, for example include `*.ts,*.tsx` and exclude `*.test.ts`.
+
+Search scans complete files, including large-file tails. Hidden files and repository-ignored paths are excluded by default; include globs can explicitly select them. Ignore files outside a Git repository do not apply, and unignored `node_modules` is searchable. Counts represent occurrences, including multiple matches on one line; Unicode highlights use source character positions.
+
+Results show at most 2,000 matching lines while retaining complete counts. The 100,000-occurrence or 10-second search limit produces partial results. Collapse/expand controls affect display only; **Refresh** reruns the current search after files change. Changing the query or closing search cancels the old request, and late responses cannot replace the current results. **Escape** clears the query first, then closes an empty search.
+
 ## Git changes
 
 ### Comparison modes

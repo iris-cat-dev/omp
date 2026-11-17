@@ -115,6 +115,10 @@ Desktop-managed configuration ignores legacy `ompBackend: "cli"` and CLI command
 
 For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package root. Runtime `agents.providers.omp.ompSdkPath` also selects a package root, not a CLI executable or individual module. Installed packages must contain `package.json` and canonical `dist/node/` SDK, RPC, host, plugin-management, and module-registry artifacts.
 
+Workspace content search loads `@oh-my-pi/pi-natives.searchFiles` from the selected SDK. Custom SDK packages must provide this structured API; older packages report a capability error. When changing native public APIs, run `bun run build:bindings` in `omp-sdk/packages/natives` before rebuilding the Desktop SDK, so generated JS/TypeScript exports match the addon.
+
+SSH bootstrap exercises `searchFiles` in the downloaded SDK before stopping the old daemon or switching `current`. The pinned public SDK assets must include this API; the existing `sdk-v18.14.0-desktop-core.1` assets do not. Publish a compatible SDK and update `sdk/node-release.json` before deploying the new remote backend.
+
 Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
 Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.

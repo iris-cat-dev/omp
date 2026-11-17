@@ -158,7 +158,6 @@ if (target === "win32-x64") {
       "conpty/OpenConsole.exe",
       "conpty/conpty.dll",
     ]);
-    universalPayload("@vscode/ripgrep-universal", "bin/win32-x64", ["rg.exe"]);
 
     // Fetch and validate every archive before changing the installed dependency tree.
     for (const { source, destination } of replacements) {
