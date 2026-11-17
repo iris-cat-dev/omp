@@ -473,7 +473,7 @@ test.each([
   },
 );
 
-function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "generic" } = {}) {
+function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "generic", profile = "core" } = {}) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "omp-sdk-stage-"));
   const source = path.join(directory, "source");
   const sdkName = "@oh-my-pi/pi-coding-agent";
@@ -496,6 +496,7 @@ function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "g
     [`${artifact}/modules.json`]: JSON.stringify({
       version: 1,
       buildTarget,
+      profile,
       modules: { [sdkName]: "./modules/root.mjs" },
     }),
   };
@@ -532,6 +533,7 @@ function createSdkFixture(buildTarget = "desktop", { native = buildTarget === "g
   files[`${artifact}/runtime-dependencies.json`] = JSON.stringify({
     version: 1,
     buildTarget,
+    profile,
     optionalCapabilities: { fixture: ["sdk-optional-capability"] },
     packages,
   });
@@ -734,7 +736,7 @@ describe("SDK artifact target staging", () => {
   test.each(["full", "core"])(
     "packs the generic %s package and tar without its source",
     async (profile) => {
-      const fixture = createSdkFixture("generic");
+      const fixture = createSdkFixture("generic", { profile });
       try {
         // Desktop artifacts must not leak into the generic package.
         mkdirSync(path.join(fixture.source, "dist/node-desktop"), {
@@ -841,8 +843,37 @@ describe("SDK artifact target staging", () => {
     },
   );
 
+  test.each([
+    { file: "modules.json", compiledProfile: "full", requestedProfile: "core" },
+    { file: "runtime-dependencies.json", compiledProfile: "core", requestedProfile: "full" },
+    { file: "modules.json", compiledProfile: undefined, requestedProfile: "core" },
+  ])(
+    "rejects $file compiled for $compiledProfile when staging $requestedProfile without replacing the ready SDK",
+    async ({ file, compiledProfile, requestedProfile }) => {
+      const fixture = createSdkFixture("generic", { profile: requestedProfile });
+      try {
+        const metadataFile = path.join(fixture.source, fixture.artifact, file);
+        const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
+        metadata.profile = compiledProfile;
+        writeFileSync(metadataFile, JSON.stringify(metadata));
+        mkdirSync(fixture.output);
+        writeFileSync(path.join(fixture.output, "ready"), "previous working SDK");
+        await expect(
+          stageNodeSdk(fixture.source, fixture.output, {
+            buildTarget: "generic",
+            profile: requestedProfile,
+            buildMode: "development",
+          }),
+        ).rejects.toThrow("SDK build profile mismatch");
+        expect(readFileSync(path.join(fixture.output, "ready"), "utf8")).toBe("previous working SDK");
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   test("accepts legacy generic artifact metadata with an explicit generic target", async () => {
-    const fixture = createSdkFixture("generic");
+    const fixture = createSdkFixture("generic", { profile: "full" });
     try {
       for (const name of ["modules.json", "runtime-dependencies.json"]) {
         const file = path.join(fixture.source, fixture.artifact, name);
@@ -876,7 +907,7 @@ describe("SDK artifact target staging", () => {
   ])(
     "rejects $artifactTarget $file metadata target $target",
     async ({ artifactTarget, file, target }) => {
-      const fixture = createSdkFixture(artifactTarget);
+      const fixture = createSdkFixture(artifactTarget, { profile: "full" });
       try {
         const metadataFile = path.join(fixture.source, fixture.artifact, file);
         const metadata = JSON.parse(readFileSync(metadataFile, "utf8"));
@@ -911,7 +942,7 @@ describe("SDK artifact target staging", () => {
   test.each(["missing", "full local addon", "full platform package"])(
     "rejects desktop native staging with %s instead of an isolated addon",
     async (fallback) => {
-      const fixture = createSdkFixture("desktop", { native: true });
+      const fixture = createSdkFixture("desktop", { native: true, profile: "full" });
       try {
         const natives = path.join(fixture.source, "node_modules/@oh-my-pi/pi-natives");
         if (fallback === "missing") {
@@ -1019,7 +1050,7 @@ describe("SDK artifact target staging", () => {
   ])(
     "rejects desktop native metadata with $name",
     async ({ sidecar, overrides, buildMode = "release" }) => {
-      const fixture = createSdkFixture("desktop", { native: true });
+      const fixture = createSdkFixture("desktop", { native: true, profile: "full" });
       try {
         const filename = `pi_natives.${process.platform}-${process.arch}.node`;
         const directory = path.join(

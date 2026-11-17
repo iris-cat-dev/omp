@@ -100,11 +100,13 @@ test("rejects a modern-only Windows SDK without replacing the ready SDK", async 
       "dist/node/modules.json": JSON.stringify({
         version: 1,
         buildTarget,
+        profile,
         modules: { sdk: "sdk.mjs" },
       }),
       "dist/node/runtime-dependencies.json": JSON.stringify({
         version: 1,
         buildTarget,
+        profile,
         packages: { [sdk.name]: { files: ["package.json"] } },
         optionalCapabilities: { voice: ["unused-voice-package"] },
       }),
@@ -230,11 +232,13 @@ async function createReleaseFixture({
       "dist/node/modules.json": JSON.stringify({
         version: 1,
         buildTarget,
+        profile,
         modules: { sdk: "modules/sdk.mjs" },
       }),
       "dist/node/runtime-dependencies.json": JSON.stringify({
         version: 1,
         buildTarget,
+        profile,
         packages: { [sdk.name]: { files: ["package.json"] } },
         optionalCapabilities: { voice: ["unused-voice-package"] },
       }),

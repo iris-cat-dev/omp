@@ -387,13 +387,17 @@ The Desktop target builds `dist/node-desktop/` and installs it canonically at `d
 
 The Desktop native addon omits PDF text extraction, Jujutsu (Git remains),
 Snapcompact image-based context compression, recording/playback, local word
-prediction, spelling, and Apple Foundation Models, in addition to SmolLM,
-native WebRTC/Opus, and WASM grammars. Both `core` and `full` enforce this native
-boundary. Saved settings cannot activate omitted engines; explicit requests
-fail before native construction. Existing Snapcompact archives, ordinary images,
-browser PDF screenshots/printing, and caller-owned SDP signaling remain usable.
+prediction, spelling, Apple Foundation Models, and syntect TUI syntax highlighting,
+in addition to SmolLM, native WebRTC/Opus, and WASM grammars. Both `core` and `full`
+enforce this native boundary. Desktop code blocks, previews, and editors retain
+their independent Lezer highlighter; native AST/edit syntax checking remains.
+Saved settings cannot activate omitted engines; explicit requests fail before
+native construction. Existing Snapcompact archives, ordinary images, browser PDF
+screenshots/printing, and caller-owned SDP signaling remain usable.
 
-Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. The installed package records its profile; launch-time environment changes cannot restore excluded capabilities.
+Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper implementations from the JavaScript build graph, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. Compiled metadata and the installed package must record the same profile; launch-time environment changes cannot restore excluded capabilities.
+
+Node SDK builds exclude the Bun-only plugin loading/rewrite graph while retaining ESM/CJS host aliases, shared module identity, reload behavior, and adjacent resources. Bun CLI loading remains unchanged. Staged Koffi contains its JavaScript entries, target addon, and licenses, without source, documentation, types, or build configuration.
 
 SDK native dependencies must match the build host's OS and architecture. Windows x64 applications require Windows x64 builds; macOS arm64 applications require macOS arm64 builds. macOS core packaging resolves both the App resources root and addon to their real paths, rejects addons outside that root, and breaks packager hardlinks before stripping the release copy and signing; source addons remain unchanged.
 
