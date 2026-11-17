@@ -27,7 +27,7 @@ const sharedModules: Record<string, unknown> = {
   "@omp-desktop/client": OmpClient,
 };
 
-/** Only call after this exact client bundle has been approved on this machine. */
+/** Only call for an installation whose source and requested capabilities are approved on this machine. */
 export function loadTrustedPluginClient(bundle: string): PluginClientSetup {
   const factory: unknown = new Function(`"use strict"; return (${bundle});`)();
   if (typeof factory !== "function") throw new Error("Plugin client bundle must export a CommonJS factory");

@@ -59,6 +59,12 @@ Specific plugins are built separately: for example, `node scripts/build-desktop-
 
 Trusted plugin clients share the renderer's React, client, SDK and Lucide modules. Selective Lucide imports still resolve directly to licensed icon modules. Namespace imports intentionally retain the full public module, including canonical names, aliases, `icons`, `Icon` and `createLucideIcon`; replacing the namespace with the canonical-icon table breaks external client bundles.
 
+Daemon plugin client approvals on a device are keyed by host ID, installation ID, package ID and source directory, not package version or client-bundle digest. Reinstallation, version updates and rebuilt client code reuse that source's explicitly approved capabilities. A different identity/source or capability outside its approved set still needs device approval; daemon trust remains a separate gate. Revocation removes every source approval for the installation.
+
+`client-trust.ts` migrates version-bound v1 records to source-bound v2 records, merging only capabilities previously approved for the same source. Browser Web Locks serialize loading, migration and writes across windows; storage events invalidate affected client activations. Native AsyncStorage operations retain a single-runtime queue. Reads use current persisted state, and failed writes remain retryable. A durable v2 record stays authoritative if obsolete-key cleanup fails.
+
+Installation and restoration save the returned installation identity with the inspected package ID and user-confirmed capabilities. Direct approval saves the identity and capabilities shown in the confirmation, rather than a replacement package returned after the RPC. Later catalog changes cannot expand device approval.
+
 Node consumers import release-operation and activation-scope APIs from `@omp-desktop/plugin/server`. The public `/host` entry also includes renderer React bindings; its historical exports remain available to renderer hosts.
 
 ## Runtime and protocol notes
@@ -593,7 +599,7 @@ node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/rel
 
 macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node preload to drive real `BrowserWindow` APIs; the signed executable, production main entry and application resources remain unchanged. It isolates HOME, userData, credentials/configuration and daemon ports, waits for visible React content, and retains a native PNG and JSON report under the printed evidence directory. Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside the application to choose that directory.
 
-Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Add plugin → From folder, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Add plugin → From folder, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted, including rejection of direct activation requests; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
 
 #### Native window-close interactions
 
