@@ -192,6 +192,8 @@ Connected clients refresh directories and history/search caches after deletion. 
 
 Agent-scoped `create_agent` creates a child in the caller's workspace by default. Each workspace can have only one unarchived independent root conversation. For another independent conversation, call `create_workspace`, then `create_agent` with `detached: true` and its returned `workspaceId`. Assigning a child to another worktree keeps its parent relationship and execution workspace; it does not make it an independent conversation.
 
+To use a specific model for one new child, look up the model with `list_models` and pass `provider: "omp/<model-id>"` to `create_agent`, for example `omp/cursor/gemini-4-hydrogen`. This leaves the [configured built-in worker models](models-and-providers.md#subagent-model-overrides) unchanged. Native `task` uses those settings for ordinary workers; its `model` argument is reserved for `seance` history consults.
+
 A new workspace starts without a conversation. `create_workspace` instructs the caller to use `create_agent` with that ID so work appears as the workspace's own conversation. Built-in task subagents retain the caller's workspace: editing another worktree changes its files, but does not relocate the conversation.
 
 Managed children remain in their parent's subagent track, including children in another worktree. Child-only workspaces do not add sidebar conversation rows or automatically open tabs. Opening a child in the same project keeps it with the parent pane while preserving its own working directory and workspace; children in another project open in that project's layout. Detaching restores independent conversation visibility; empty workspaces and workspaces with an active independent root remain visible.

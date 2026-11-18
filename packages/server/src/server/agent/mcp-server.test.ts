@@ -7,9 +7,12 @@ import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
+import Ajv from "ajv";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
+import { serializeOmpHostTools } from "./providers/omp/host-tools.js";
+import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -2526,6 +2529,48 @@ describe("create_agent MCP tool", () => {
       workspace: { kind: "current" },
       notifyOnFinish: true,
     });
+  });
+
+  it("exposes the canonical OMP contract for a model-pinned child", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parent = createManagedAgent({
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "omp",
+    });
+    const child = createManagedAgent({ ...parent, id: "child-agent" });
+    spies.agentManager.getAgent.mockImplementation((id) => (id === parent.id ? parent : child));
+    spies.agentManager.createAgent.mockResolvedValue(child);
+    const catalog = createPaseoToolCatalog({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: parent.id,
+      logger,
+    });
+    const definition = serializeOmpHostTools(catalog).find((tool) => tool.name === "create_agent")!;
+    const validate = new Ajv({ strict: false }).compile(definition.parameters);
+    const input = {
+      title: "Review the frontend",
+      provider: "omp/cursor/gemini-4-hydrogen",
+      initialPrompt: "Inspect the frontend without editing files.",
+      notifyOnFinish: false,
+    };
+
+    expect(validate({ ...input, i: "创建审阅子代理" })).toBe(false);
+    expect(validate({ ...input, background: true })).toBe(false);
+    expect(validate(input)).toBe(true);
+    const result = await catalog.executeTool("create_agent", input);
+    expect(result.structuredContent).toMatchObject({ agentId: child.id, workspaceId: "wks_parent" });
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "omp", model: "cursor/gemini-4-hydrogen" }),
+      undefined,
+      expect.objectContaining({
+        workspaceId: "wks_parent",
+        labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      }),
+    );
   });
 
   it("returns notify-on-finish guidance for caller-created agents", async () => {

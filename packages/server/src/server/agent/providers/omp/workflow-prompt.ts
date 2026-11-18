@@ -22,13 +22,19 @@ function isOmpToolIntentLocale(locale: unknown): locale is keyof typeof OMP_TOOL
 }
 
 function toolIntentDirective(locale: keyof typeof OMP_TOOL_INTENT_LANGUAGES): string {
+  return `<system-directive>\nDesktop tool intent locale: ${locale}. When a tool's schema includes an \`i\` intent label, write it in ${OMP_TOOL_INTENT_LANGUAGES[locale]}. Do not pass \`i\` to tools whose schemas do not declare it. This instruction replaces earlier Desktop tool intent locale directives. It does not change assistant response language, commands, code, or other tool arguments.\n</system-directive>\n\n`;
+}
+
+function legacyToolIntentDirective(locale: keyof typeof OMP_TOOL_INTENT_LANGUAGES): string {
   return `<system-directive>\nDesktop tool intent locale: ${locale}. Write only tool-call i intent labels in ${OMP_TOOL_INTENT_LANGUAGES[locale]}. This instruction replaces earlier Desktop tool intent locale directives. It does not change assistant response language, commands, code, or other tool arguments.\n</system-directive>\n\n`;
 }
 
 const OMP_WORKFLOW_DISPLAY_PREFIXES = [
   OMP_PLAN_TURN_PREFIX,
   OMP_STANDARD_TURN_PREFIX,
-  ...Object.keys(OMP_TOOL_INTENT_LANGUAGES).filter(isOmpToolIntentLocale).map(toolIntentDirective),
+  ...Object.keys(OMP_TOOL_INTENT_LANGUAGES)
+    .filter(isOmpToolIntentLocale)
+    .flatMap((locale) => [toolIntentDirective(locale), legacyToolIntentDirective(locale)]),
 ];
 const OMP_WORKFLOW_DISPLAY_DIRECTIVES = OMP_WORKFLOW_DISPLAY_PREFIXES.map((prefix) =>
   prefix.trimEnd(),

@@ -511,6 +511,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       title: config.title,
       description: config.description ?? name,
       inputSchema: config.inputSchema,
+      inputJsonSchema: config.inputJsonSchema,
       outputSchema: config.outputSchema,
       handler: handler as PaseoToolDefinition["handler"],
     });
@@ -895,6 +896,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .optional()
       .describe("Legacy GitHub PR number. Prefer workspace.source.target.githubPrNumber."),
   };
+  // Keep legacy placement fields intact until the handler selects their compatibility schema.
   const createAgentInputSchema = z
     .object(callerAgentId ? agentToAgentInputSchema : canonicalTopLevelInputSchema)
     .passthrough();
@@ -1321,8 +1323,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create agent",
       description:
-        "Create an OMP agent. Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace; pass a workspaceId from create_workspace to run it in that workspace as its conversation. Independent roots require a workspace with no unarchived root; call create_workspace first for another conversation. Top-level creation without workspaceId creates a new local workspace. Requires omp/model and an initial prompt. Call list_models before choosing a model.",
+        "Create an OMP agent. To assign a specific model to a new subagent, call list_models and pass the exact ID as provider: \"omp/<model-id>\" here. The native task tool uses the configured worker model; task.model is reserved for seance history consults. " +
+        "Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace; pass a workspaceId from create_workspace to run it in that workspace as its conversation. Independent roots require a workspace with no unarchived root; call create_workspace first for another conversation. Top-level creation without workspaceId creates a new local workspace. An initial prompt is required.",
       inputSchema: createAgentInputSchema,
+      // Publish the canonical contract to OMP. An open catchall is interpreted
+      // by the SDK as owning the harness's `i` field, so it would forward it.
+      inputJsonSchema: z.toJSONSchema(
+        callerAgentId ? agentToAgentCreateAgentArgsSchema : canonicalTopLevelCreateAgentArgsSchema,
+        { target: "draft-07", io: "input" },
+      ),
       outputSchema: {
         agentId: z.string(),
         type: AgentProviderEnum,

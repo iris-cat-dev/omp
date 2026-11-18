@@ -50,7 +50,7 @@ During an OMP run, the conversation footer shows the latest tool intent next to 
 
 Intent text uses the same looping shimmer as running tool-call labels, without changing its font size, single-line truncation, token speed, or elapsed-time layout. The shimmer pauses while the conversation pane is inactive and resumes when it becomes visible again.
 
-New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering; it does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
+New tool intent labels follow **App Settings → General → Language**, including the resolved system language. Desktop supplies an intent-only language instruction before ordinary messages and steering. OMP-generated `i` intent labels are display metadata; arguments passed to tools follow their own schemas. The instruction does not change assistant response language, commands, code, paths, or other tool arguments. Existing labels are retained as generated, not translated when the interface language changes.
 
 The label belongs to the active run, survives reconnect, and clears when the run completes, fails, or stops. Late events from another or closed run cannot replace it. Saved tool history retains its original intent metadata without turning completed history into a live working status.
 

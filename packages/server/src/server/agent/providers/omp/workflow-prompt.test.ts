@@ -35,6 +35,14 @@ describe("skill tool intent locale", () => {
     expect(getOmpWorkflowDisplayText(prompt)).toBe(prompt);
   });
 
+  test("hides the previous locale directive in saved history", () => {
+    const prompt = "请创建一个审阅子代理";
+    const saved =
+      "<system-directive>\nDesktop tool intent locale: zh-CN. Write only tool-call i intent labels in Simplified Chinese. This instruction replaces earlier Desktop tool intent locale directives. It does not change assistant response language, commands, code, or other tool arguments.\n</system-directive>\n\n";
+
+    expect(getOmpWorkflowDisplayText(`${saved}${prompt}`)).toBe(prompt);
+  });
+
   test.each(["/skill:", "/skills list", "/wechat /skill:browser inspect", "/plan", "/goal"])(
     "leaves non-skill control input %s unchanged",
     (prompt) => {
