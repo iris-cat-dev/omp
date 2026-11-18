@@ -34,6 +34,10 @@ import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type { OmpImageSettingsGetter } from "./image-settings.js";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
+import type {
+  OmpProviderApiKeyOperation,
+  OmpProviderApiKeyResult,
+} from "./provider-api-key-extension.js";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
@@ -67,6 +71,8 @@ export interface OmpStartSessionInput {
   localModelGateway?: boolean;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
+  /** Enable the private credential IPC only on an SDK management session. */
+  providerApiKeyManagement?: true;
   model?: string;
   thinkingOptionId?: string;
   modeId?: string;
@@ -131,6 +137,7 @@ export interface OmpRuntimeSession {
   getServiceTierCapabilities?(): Promise<OmpServiceTierCapabilities>;
   getLocalModelGatewayPort?(): Promise<number>;
   getLoginProviders(): Promise<OmpLoginProvider[]>;
+  manageProviderApiKeys?(command: OmpProviderApiKeyOperation): Promise<OmpProviderApiKeyResult>;
   login(providerId: string): Promise<void>;
   setModel(provider: string, modelId: string): Promise<OmpModel>;
   setThinkingLevel(level: OmpThinkingLevel): Promise<void>;

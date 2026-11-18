@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
@@ -2123,6 +2124,7 @@ export const fr: TranslationResources = {
   },
   settings: {
     memory: ompMemorySettings.fr,
+    modelConnectionChat: modelConnectionChat.fr,
     title: "Paramètres",
     loading: "Chargement des paramètres...",
     groups: {
@@ -2806,7 +2808,7 @@ export const fr: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings.fr,
-      title: "Fournisseurs",
+      title: "Connexions aux modèles",
       addProvider: "Ajouter un fournisseur",
       providerDetails: "Détails du fournisseur{{name}}",
       enableProvider: "Activer{{name}}",

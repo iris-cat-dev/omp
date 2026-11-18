@@ -163,6 +163,7 @@ function assertOmpExtensions(resourcesDir) {
   for (const filename of [
     "background-jobs-extension.js",
     "image-settings-extension.js",
+    "provider-api-key-extension.js",
     "service-tier-extension.js",
   ]) {
     const extensionPath = path.join(extensionsDir, filename);

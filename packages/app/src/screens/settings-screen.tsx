@@ -1252,6 +1252,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     </>
   ) : null;
 
+  const contentStyle =
+    view.kind === "host" && view.section === "providers"
+      ? [styles.content, styles.modelConnectionsContent]
+      : styles.content;
+
   // Mobile root: full-screen sidebar-as-list.
   if (isCompactLayout && view.kind === "root") {
     return (
@@ -1281,7 +1286,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           onBack={handleBackFromDetail}
         />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
-          <View style={styles.content}>{content}</View>
+          <View style={contentStyle}>{content}</View>
         </ScrollView>
       </View>
     );
@@ -1310,7 +1315,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               leftStyle={desktopStyles.detailLeft}
             />
             <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
-              <View style={styles.content}>{content}</View>
+              <View style={contentStyle}>{content}</View>
             </ScrollView>
           </View>
         </WindowChromeRegion>
@@ -1347,6 +1352,9 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: 720,
     alignSelf: "center",
+  },
+  modelConnectionsContent: {
+    maxWidth: 880,
   },
   hostConnectionActions: {
     flexDirection: "row",

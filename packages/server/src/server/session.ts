@@ -2887,6 +2887,8 @@ export class Session {
         return this.providerCatalogSession.handleOmpInstallStatusRequest(msg);
       case "omp.install.request":
         return this.providerCatalogSession.handleOmpInstallRequest(msg);
+      case "omp.provider.api_key.set.request":
+        return this.providerCatalogSession.handleOmpProviderApiKeySetRequest(msg);
       case "omp.provider.login.start.request":
         return this.providerCatalogSession.handleOmpProviderLoginStartRequest(msg);
       case "omp.provider.login.finish.request":

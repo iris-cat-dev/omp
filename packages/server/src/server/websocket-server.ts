@@ -1780,6 +1780,7 @@ export class PaseoWebSocketServer {
         providersSnapshotCwd: true,
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: true,
+        ompProviderApiKey: true,
         ompCodexResetCredits: true,
         ompClaudeLimitResets: true,
         // COMPAT(ompSubagentSettings): added in v0.2.8, remove gate after 2027-03-13.
@@ -2137,10 +2138,12 @@ export class PaseoWebSocketServer {
     log: pino.Logger;
   }): void {
     const { ws, parsed, parsedMessage, pendingConnection, activeConnection, log } = args;
+    const sensitive = isProviderApiKeyRequest(parsed);
+    const validationError = sensitive ? "Invalid OMP API key request" : parsedMessage.error.message;
     this.incrementRuntimeCounter("validationFailed");
     if (pendingConnection) {
       pendingConnection.connectionLogger.warn(
-        { error: parsedMessage.error.message },
+        { error: validationError },
         "Rejected pending message before hello",
       );
       this.clearPendingConnection(ws);
@@ -2154,6 +2157,7 @@ export class PaseoWebSocketServer {
 
     const requestInfo = extractRequestInfoFromUnknownWsInbound(parsed);
     const isUnknownSchema =
+      !sensitive &&
       requestInfo?.requestId != null &&
       typeof parsed === "object" &&
       parsed != null &&
@@ -2165,7 +2169,7 @@ export class PaseoWebSocketServer {
         clientId: activeConnection?.kind === "trusted" ? activeConnection.clientId : undefined,
         requestId: requestInfo?.requestId,
         requestType: requestInfo?.requestType,
-        error: parsedMessage.error.message,
+        error: validationError,
       },
       "WS inbound message validation failed",
     );
@@ -2188,7 +2192,7 @@ export class PaseoWebSocketServer {
       return;
     }
 
-    const errorMessage = `Invalid message: ${parsedMessage.error.message}`;
+    const errorMessage = `Invalid message: ${validationError}`;
     this.sendToClient(
       ws,
       wrapSessionMessage({
@@ -2471,8 +2475,13 @@ export class PaseoWebSocketServer {
     log: pino.Logger;
   }): void {
     const { ws, data, error, log } = params;
-    const err = error instanceof Error ? error : new Error(String(error));
     const { rawPayload, parsedPayload } = this.decodeRawMessagePayloadForError(data);
+    // JSON parser exceptions can quote the input. Secret-bearing and unparseable
+    // frames therefore get a fixed diagnostic without either payload or error.
+    const sensitive = rawPayload === null || isProviderApiKeyRequest(parsedPayload);
+    const err = sensitive
+      ? new Error("Invalid message")
+      : error instanceof Error ? error : new Error(String(error));
 
     const trimmedRawPayload =
       typeof rawPayload === "string" && rawPayload.length > 2000
@@ -2482,8 +2491,7 @@ export class PaseoWebSocketServer {
     log.error(
       {
         err,
-        rawPayload: trimmedRawPayload,
-        parsedPayload,
+        ...(sensitive ? {} : { rawPayload: trimmedRawPayload, parsedPayload }),
       },
       "Failed to parse/handle message",
     );
@@ -2537,12 +2545,8 @@ export class PaseoWebSocketServer {
       const buffer = bufferFromWsData(data);
       rawPayload = buffer.toString();
       parsedPayload = JSON.parse(rawPayload);
-    } catch (payloadError) {
-      rawPayload = rawPayload ?? "<unreadable>";
-      parsedPayload = parsedPayload ?? rawPayload;
-      const payloadErr =
-        payloadError instanceof Error ? payloadError : new Error(String(payloadError));
-      this.logger.error({ err: payloadErr }, "Failed to decode raw payload");
+    } catch {
+      return { rawPayload: null, parsedPayload: null };
     }
     return { rawPayload, parsedPayload };
   }
@@ -3080,6 +3084,15 @@ function getControlRpcLogInfo(
     };
   }
   return null;
+}
+
+function isProviderApiKeyRequest(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const message = "message" in payload ? payload.message : payload;
+  return !!message &&
+    typeof message === "object" &&
+    "type" in message &&
+    message.type === "omp.provider.api_key.set.request";
 }
 
 function extractRequestInfoFromUnknownWsInbound(

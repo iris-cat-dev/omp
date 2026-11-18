@@ -1,19 +1,24 @@
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
+import { router } from "expo-router";
 import {
   AlertTriangle,
+  ArrowLeft,
+  Building2,
   ChevronDown,
   ChevronUp,
   ChevronRight,
   Copy,
   ExternalLink,
   FileText,
+  Gauge,
   LogIn,
   LogOut,
   Pencil,
   Plus,
   RotateCw,
   Save,
+  Search,
   Settings2,
   Trash2,
   X,
@@ -21,13 +26,21 @@ import {
 import type { TFunction } from "i18next";
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
+import {
+  Pressable,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+  Text,
+  View,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AdaptiveModalSheet,
   AdaptiveTextInput,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
+import { ModelProviderBrandIcon } from "@/components/icons/model-provider-brand-icon";
+import { OmpBuiltinApiKeyForm } from "@/components/omp-builtin-api-key-form";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -36,7 +49,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { SettingsTextArea } from "@/components/settings-textarea";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
@@ -54,8 +66,10 @@ import {
 import { PROVIDER_USAGE_QUERY_PREFIX } from "@/provider-usage/use-provider-usage";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { ModelConnectionChat } from "@/screens/settings/model-connection-chat";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
+import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatTimeAgo } from "@/utils/time";
@@ -81,6 +95,13 @@ import {
   type OmpDiscoveredModelGroup,
   type ProviderDiscoveredModelsCache,
 } from "./provider-diagnostic-models";
+import {
+  buildOmpProviderDirectory,
+  canStartOmpBrowserLogin,
+  searchOmpProviderDirectory,
+  type OmpProviderSummary,
+} from "./omp-provider-directory";
+import { connectionStyles } from "./omp-provider-connection-styles";
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -89,7 +110,10 @@ interface ProviderDiagnosticSheetProps {
   serverId: string;
   inline?: boolean;
 }
+
 const NOOP = () => undefined;
+const EXPANDED_STATE = { expanded: true };
+const COLLAPSED_STATE = { expanded: false };
 
 function rankModels<T>(items: T[], query: string, fields: (item: T) => string[]): T[] {
   if (!query.trim()) return items;
@@ -225,7 +249,7 @@ function CollapsibleSectionHeader({
   testID,
 }: {
   title: string;
-  count: number;
+  count?: number;
   expanded: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -250,17 +274,9 @@ function CollapsibleSectionHeader({
         )}
         <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
       </View>
-      <Text style={settingsStyles.sectionHeaderTitle}>{count}</Text>
+      {count !== undefined ? <Text style={connectionStyles.count}>{count}</Text> : null}
     </Pressable>
   );
-}
-interface OmpProviderSummary {
-  id: string;
-  name?: string;
-  modelCount: number;
-  models?: OmpManagedProviderModel[];
-  login?: OmpProviderManagement["loginProviders"][number];
-  deviceCodeLogin?: OmpProviderManagement["loginProviders"][number];
 }
 
 const EMPTY_OMP_ACCOUNT_NOTES: Record<string, string> = {};
@@ -360,7 +376,7 @@ function OmpProviderAccountRow({
         </View>
       ) : (
         <>
-          <View style={sheetStyles.providerSummaryText}>
+          <View style={sheetStyles.accountIdentity}>
             <Text style={sheetStyles.accountTitle}>{accountLabel}</Text>
             {identity.secondary ? (
               <Text style={sheetStyles.mutedText} numberOfLines={1}>
@@ -435,6 +451,8 @@ function OmpProviderAccountRow({
 
 interface OmpProviderSummaryRowProps {
   summary: OmpProviderSummary;
+  serverId: string;
+  onApiKey?: (summary: OmpProviderSummary) => void;
   loggingInProviderId: string | null;
   loggingOutProviderId: string | null;
   loggingOutCredentialId: number | null;
@@ -468,15 +486,12 @@ function OmpProviderSummaryActions({
   loggingOutAll,
   loginFlowActive,
   removingProviderId,
-  canConfigureModels,
-  canEdit,
-  canRemove,
-  canLogout,
   onConfigureModels,
   onEdit,
   onRemove,
   onLogin,
   onLogout,
+  onApiKey,
 }: {
   summary: OmpProviderSummary;
   login: OmpProviderSummary["login"];
@@ -486,20 +501,30 @@ function OmpProviderSummaryActions({
   loggingOutAll: boolean;
   loginFlowActive: boolean;
   removingProviderId?: string | null;
-  canConfigureModels: boolean;
-  canEdit: boolean;
-  canRemove: boolean;
-  canLogout: boolean;
-  onConfigureModels: () => void;
-  onEdit: () => void;
-  onRemove: () => void;
+  onConfigureModels?: () => void;
+  onEdit?: () => void;
+  onRemove?: () => void;
   onLogin: (providerId: string) => void;
-  onLogout: () => void;
+  onLogout?: () => void;
+  onApiKey?: (summary: OmpProviderSummary) => void;
 }) {
   const { t } = useTranslation();
   const accounts = login?.accounts ?? [];
+  const [showDeviceCode, setShowDeviceCode] = useState(false);
+  const browserAvailable = canStartOmpBrowserLogin(login);
+  const deviceAvailable = canStartOmpBrowserLogin(summary.deviceCodeLogin);
+  const loginId = login?.id;
+  const deviceLoginId = summary.deviceCodeLogin?.id;
+  const handleLogin = useCallback(() => {
+    if (loginId !== undefined) onLogin(loginId);
+  }, [loginId, onLogin]);
+  const handleDeviceLogin = useCallback(() => {
+    if (deviceLoginId !== undefined) onLogin(deviceLoginId);
+  }, [deviceLoginId, onLogin]);
+  const handleApiKey = useCallback(() => onApiKey?.(summary), [onApiKey, summary]);
+  const toggleDeviceCode = useCallback(() => setShowDeviceCode((current) => !current), []);
   function renderConfigureModelsAction(): ReactElement | null {
-    if (!login || !summary.models || summary.models.length === 0 || !canConfigureModels) {
+    if (!summary.models?.length || !onConfigureModels) {
       return null;
     }
     return (
@@ -516,38 +541,38 @@ function OmpProviderSummaryActions({
   }
 
   function renderLoginAction(): ReactElement | null {
-    if (!login || !loginAction) {
+    if (!login || !loginAction || !browserAvailable) {
       return null;
+    }
+    let label: string;
+    if (loggingInProviderId === login.id) {
+      label = t("settings.providers.omp.provider.starting");
+    } else if (deviceAvailable) {
+      label = t(login.authenticated
+        ? "settings.providers.omp.provider.codexBrowserAddAccount"
+        : "settings.providers.omp.provider.codexBrowserSignIn");
+    } else {
+      label = t(loginAction === "add-account"
+        ? "settings.providers.omp.multiAccount.add"
+        : "settings.providers.omp.provider.signIn");
     }
     return (
       <Button
-        variant={summary.deviceCodeLogin?.available ? "default" : "secondary"}
+        variant={!login.authenticated ? "default" : "secondary"}
         size="sm"
         leftIcon={loggingInProviderId === login.id ? undefined : LogIn}
-        onPress={() => onLogin(login.id)}
+        onPress={handleLogin}
         disabled={Boolean(loggingInProviderId || loggingOutProviderId || loginFlowActive)}
         testID={`omp-login-provider-${login.id}`}
       >
-        {loggingInProviderId === login.id
-          ? t("settings.providers.omp.provider.starting")
-          : summary.deviceCodeLogin?.available
-            ? t(
-                login.authenticated
-                  ? "settings.providers.omp.provider.codexBrowserAddAccount"
-                  : "settings.providers.omp.provider.codexBrowserSignIn",
-              )
-            : t(
-                loginAction === "add-account"
-                  ? "settings.providers.omp.multiAccount.add"
-                  : "settings.providers.omp.provider.signIn",
-              )}
+        {label}
       </Button>
     );
   }
 
   function renderDeviceCodeLoginAction(): ReactElement | null {
     const deviceLogin = summary.deviceCodeLogin;
-    if (!deviceLogin?.available || !login) {
+    if (!deviceLogin || !deviceAvailable || !login) {
       return null;
     }
     return (
@@ -555,7 +580,7 @@ function OmpProviderSummaryActions({
         variant="secondary"
         size="sm"
         leftIcon={loggingInProviderId === deviceLogin.id ? undefined : LogIn}
-        onPress={() => onLogin(deviceLogin.id)}
+        onPress={handleDeviceLogin}
         disabled={Boolean(loggingInProviderId || loggingOutProviderId || loginFlowActive)}
         testID={`omp-login-provider-${deviceLogin.id}`}
       >
@@ -571,7 +596,7 @@ function OmpProviderSummaryActions({
   }
 
   function renderLogoutAction(): ReactElement | null {
-    if (!login?.authenticated || !canLogout) {
+    if (!login?.authenticated || !onLogout) {
       return null;
     }
     return (
@@ -595,7 +620,7 @@ function OmpProviderSummaryActions({
   }
 
   function renderEditAction(): ReactElement | null {
-    if (login || !canEdit) {
+    if (!onEdit) {
       return null;
     }
     return (
@@ -613,7 +638,7 @@ function OmpProviderSummaryActions({
   }
 
   function renderRemoveAction(): ReactElement | null {
-    if (login || !canRemove) {
+    if (!onRemove) {
       return null;
     }
     return (
@@ -633,10 +658,30 @@ function OmpProviderSummaryActions({
   }
 
   return (
-    <View style={sheetStyles.providerSummaryActions}>
+    <View style={connectionStyles.actions}>
       {renderConfigureModelsAction()}
       {renderLoginAction()}
-      {renderDeviceCodeLoginAction()}
+      {deviceAvailable && browserAvailable ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={showDeviceCode ? ChevronUp : ChevronDown}
+          accessibilityState={showDeviceCode ? EXPANDED_STATE : COLLAPSED_STATE}
+          onPress={toggleDeviceCode}
+          testID={`omp-provider-device-fallback-${summary.id}`}
+        >
+          {t("settings.providers.omp.connections.deviceFallback")}
+        </Button>
+      ) : null}
+      {!browserAvailable || showDeviceCode ? renderDeviceCodeLoginAction() : null}
+      {onApiKey ? (
+        <Button variant="secondary" size="sm" onPress={handleApiKey} testID={`omp-provider-api-key-${summary.id}`}>
+          {t("settings.providers.omp.connections.apiKey")}
+        </Button>
+      ) : null}
+      {login?.available && !browserAvailable && !deviceAvailable ? (
+        <Text style={sheetStyles.mutedText}>{t("settings.providers.omp.connections.terminalLogin")}</Text>
+      ) : null}
       {renderLogoutAction()}
       {renderEditAction()}
       {renderRemoveAction()}
@@ -808,6 +853,27 @@ function OmpProviderAccounts({
   );
 }
 
+function OmpProviderBrand({
+  summary,
+  caption,
+}: {
+  summary: OmpProviderSummary;
+  caption?: string;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={connectionStyles.brandIdentity}>
+      <View style={connectionStyles.brandMark}>
+        <ModelProviderBrandIcon brandId={summary.brandId} size={24} color={theme.colors.foreground} />
+      </View>
+      <View style={connectionStyles.brandText}>
+        <Text style={connectionStyles.brandName}>{summary.brand}</Text>
+        {caption ? <Text style={sheetStyles.mutedText}>{caption}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 function OmpProviderSummaryIdentity({ summary }: { summary: OmpProviderSummary }) {
   const { t } = useTranslation();
   const { login } = summary;
@@ -816,38 +882,42 @@ function OmpProviderSummaryIdentity({ summary }: { summary: OmpProviderSummary }
     summary.modelCount === 1 ? "settings.providers.models.one" : "settings.providers.models.many",
     { count: summary.modelCount },
   );
-  let loginStatus = "";
-  if (login) {
-    loginStatus = login.authenticated
-      ? ` · ${t("settings.providers.omp.provider.signedIn")}`
-      : ` · ${t("settings.providers.omp.provider.notSignedIn")}`;
-    if (accountCount > 0) {
-      loginStatus += ` · ${t(
+  let status: string;
+  if (login?.authenticated) {
+    const keyOnly = login.supportsApiKey &&
+      !canStartOmpBrowserLogin(login) &&
+      !canStartOmpBrowserLogin(summary.deviceCodeLogin) &&
+      accountCount === 0;
+    status = t(keyOnly
+      ? "settings.providers.omp.connections.keySaved"
+      : "settings.providers.omp.provider.signedIn");
+  } else {
+    status = t(summary.custom
+      ? "settings.providers.omp.connections.custom"
+      : "settings.providers.omp.connections.modelsDiscovered");
+  }
+  const accountLabel = accountCount > 0
+    ? t(
         accountCount === 1
           ? "settings.providers.omp.multiAccount.countOne"
           : "settings.providers.omp.multiAccount.countMany",
         { count: accountCount },
-      )}`;
-    }
-  }
+      )
+    : null;
   return (
-    <View style={sheetStyles.providerSummaryText}>
-      <Text style={sheetStyles.modelTitle}>{summary.name ?? login?.name ?? summary.id}</Text>
-      <Text style={sheetStyles.mutedText}>
-        {modelCount}
-        {loginStatus}
-      </Text>
-      {login?.available && summary.deviceCodeLogin?.available ? (
-        <Text style={sheetStyles.mutedText}>
-          {t("settings.providers.omp.provider.codexLoginHint")}
-        </Text>
-      ) : null}
-    </View>
+    <OmpProviderBrand
+      summary={summary}
+      caption={[summary.name !== summary.brand ? summary.name : null, status, modelCount, accountLabel]
+        .filter(Boolean)
+        .join(" · ")}
+    />
   );
 }
 
 function OmpProviderSummaryRow({
   summary,
+  serverId,
+  onApiKey,
   loggingInProviderId,
   loggingOutProviderId,
   loggingOutCredentialId,
@@ -871,6 +941,8 @@ function OmpProviderSummaryRow({
   onSaveAccountNote,
   onCancelAccountNote,
 }: OmpProviderSummaryRowProps) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
   const { login } = summary;
   const accounts = login?.accounts ?? [];
   const loginAction = login ? resolveOmpLoginAction(login) : null;
@@ -888,54 +960,79 @@ function OmpProviderSummaryRow({
   const handleConfigureModels = useCallback(() => {
     onConfigureModels?.(summary.id);
   }, [onConfigureModels, summary.id]);
+  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
+  const openUsage = useCallback(() => {
+    router.push(buildSettingsHostSectionRoute(serverId, "usage"));
+  }, [serverId]);
   return (
-    <View style={sheetStyles.providerSummaryBlock}>
-      <View
-        style={[
-          sheetStyles.providerSummaryRow,
-          summary.deviceCodeLogin?.available && sheetStyles.providerSummaryRowWithMethods,
-        ]}
-      >
-        <OmpProviderSummaryIdentity summary={summary} />
-        <OmpProviderSummaryActions
-          summary={summary}
-          login={login}
-          loginAction={loginAction}
-          loggingInProviderId={loggingInProviderId}
-          loggingOutProviderId={loggingOutProviderId}
-          loggingOutAll={loggingOutAll}
-          loginFlowActive={loginFlowActive}
-          removingProviderId={removingProviderId}
-          canConfigureModels={Boolean(onConfigureModels)}
-          canEdit={Boolean(onEdit)}
-          canRemove={Boolean(onRemove)}
-          canLogout={Boolean(onLogout)}
-          onConfigureModels={handleConfigureModels}
-          onEdit={handleEdit}
-          onRemove={handleRemove}
-          onLogin={onLogin}
-          onLogout={handleLogout}
-        />
+    <View style={connectionStyles.summaryCard} testID={`omp-connected-provider-${summary.id}`}>
+      <View style={connectionStyles.summaryHeader}>
+        <View style={connectionStyles.summaryBrand}>
+          <OmpProviderSummaryIdentity summary={summary} />
+        </View>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={expanded ? ChevronUp : ChevronDown}
+          accessibilityState={expanded ? EXPANDED_STATE : COLLAPSED_STATE}
+          onPress={toggleExpanded}
+          testID={`omp-manage-provider-${summary.id}`}
+        >
+          {t("settings.providers.omp.connections.manage")}
+        </Button>
       </View>
-      <OmpProviderAccounts
-        summary={summary}
-        accounts={accounts}
-        loggingInProviderId={loggingInProviderId}
-        loggingOutProviderId={loggingOutProviderId}
-        loggingOutCredentialId={loggingOutCredentialId}
-        reorderingProviderId={reorderingProviderId}
-        accountNotesLoading={accountNotesLoading}
-        accountNotes={accountNotes}
-        editingAccountId={editingAccountId}
-        accountNoteDraft={accountNoteDraft}
-        savingAccountNoteId={savingAccountNoteId}
-        onEditAccountNote={onEditAccountNote}
-        onChangeAccountNote={onChangeAccountNote}
-        onSaveAccountNote={onSaveAccountNote}
-        onCancelAccountNote={onCancelAccountNote}
-        onLogoutAccount={onLogoutAccount}
-        onReorderAccounts={onReorderAccounts}
-      />
+      <ModelConnectionChat key={`${serverId}:${summary.id}`} serverId={serverId} providerId={summary.id} />
+      {expanded ? (
+        <View style={connectionStyles.details}>
+          <OmpProviderSummaryActions
+            summary={summary}
+            login={login}
+            loginAction={loginAction}
+            loggingInProviderId={loggingInProviderId}
+            loggingOutProviderId={loggingOutProviderId}
+            loggingOutAll={loggingOutAll}
+            loginFlowActive={loginFlowActive}
+            removingProviderId={removingProviderId}
+            onConfigureModels={onConfigureModels ? handleConfigureModels : undefined}
+            onEdit={onEdit ? handleEdit : undefined}
+            onRemove={onRemove ? handleRemove : undefined}
+            onLogin={onLogin}
+            onLogout={onLogout ? handleLogout : undefined}
+            onApiKey={onApiKey}
+          />
+          {accounts.some((account) => account.quota) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              style={connectionStyles.browseButton}
+              leftIcon={Gauge}
+              onPress={openUsage}
+              testID={`omp-provider-usage-${summary.id}`}
+            >
+              {t("settings.providers.omp.connections.quota")}
+            </Button>
+          ) : null}
+          <OmpProviderAccounts
+            summary={summary}
+            accounts={accounts}
+            loggingInProviderId={loggingInProviderId}
+            loggingOutProviderId={loggingOutProviderId}
+            loggingOutCredentialId={loggingOutCredentialId}
+            reorderingProviderId={reorderingProviderId}
+            accountNotesLoading={accountNotesLoading}
+            accountNotes={accountNotes}
+            editingAccountId={editingAccountId}
+            accountNoteDraft={accountNoteDraft}
+            savingAccountNoteId={savingAccountNoteId}
+            onEditAccountNote={onEditAccountNote}
+            onChangeAccountNote={onChangeAccountNote}
+            onSaveAccountNote={onSaveAccountNote}
+            onCancelAccountNote={onCancelAccountNote}
+            onLogoutAccount={onLogoutAccount}
+            onReorderAccounts={onReorderAccounts}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1100,22 +1197,26 @@ function OmpApiMenuItem({
 function OmpApiFormatSelect({
   value,
   onChange,
+  disabled,
 }: {
-  value: OmpProviderApi;
+  value?: OmpProviderApi;
   onChange: (api: OmpProviderApi) => void;
+  disabled: boolean;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const label = value ?? t("settings.providers.omp.gatewayForm.chooseFormat");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         style={sheetStyles.apiSelectTrigger}
         accessibilityRole="button"
+        disabled={disabled}
         accessibilityLabel={t("settings.providers.omp.custom.apiFormatAccessibility", {
-          format: value,
+          format: label,
         })}
       >
-        <Text style={sheetStyles.apiSelectText}>{value}</Text>
+        <Text style={sheetStyles.apiSelectText}>{label}</Text>
         <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="start" width={280}>
@@ -1132,11 +1233,15 @@ function OmpProviderModelEditor({
   revision,
   canRemove,
   onChange,
+  advanced,
+  disabled,
   onRemove,
 }: {
   model: OmpProviderModelDraft;
   revision: number;
   canRemove: boolean;
+  advanced: boolean;
+  disabled: boolean;
   onChange: (key: string, patch: Partial<OmpProviderModelDraft>) => void;
   onRemove: (key: string) => void;
 }) {
@@ -1172,6 +1277,7 @@ function OmpProviderModelEditor({
             variant="secondary"
             size="sm"
             leftIcon={Trash2}
+            disabled={disabled}
             onPress={handleRemove}
             accessibilityLabel={t("settings.providers.omp.custom.removeModel", {
               model: model.id || model.key,
@@ -1186,70 +1292,95 @@ function OmpProviderModelEditor({
         initialValue={model.id}
         resetKey={`${revision}-${model.key}-id`}
         onChangeText={updateId}
+        accessibilityLabel={t("settings.providers.omp.custom.modelId")}
+        editable={!disabled}
+        testID={`omp-gateway-model-id-${model.key}`}
         placeholder="gpt-5.4"
         autoCapitalize="none"
         autoCorrect={false}
         style={sheetStyles.formInput}
       />
-      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.displayName")}</Text>
-      <AdaptiveTextInput
-        initialValue={model.name}
-        resetKey={`${revision}-${model.key}-name`}
-        onChangeText={updateName}
-        placeholder="GPT-5.4"
-        style={sheetStyles.formInput}
-      />
       <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.apiFormat")}</Text>
-      <OmpApiFormatSelect value={model.api} onChange={updateApi} />
-      <View style={sheetStyles.formColumns}>
-        <View style={sheetStyles.formColumn}>
-          <Text style={sheetStyles.formLabel}>
-            {t("settings.providers.omp.custom.contextWindow")}
-          </Text>
+      <OmpApiFormatSelect value={model.api} onChange={updateApi} disabled={disabled} />
+      {advanced ? (
+        <>
+          <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.displayName")}</Text>
           <AdaptiveTextInput
-            initialValue={model.contextWindow}
-            resetKey={`${revision}-${model.key}-context`}
-            onChangeText={updateContextWindow}
-            placeholder="128000"
-            inputMode="numeric"
+            accessibilityLabel={t("settings.providers.omp.custom.displayName")}
+            editable={!disabled}
+            initialValue={model.name}
+            resetKey={`${revision}-${model.key}-name`}
+            onChangeText={updateName}
+            placeholder="GPT-5.4"
             style={sheetStyles.formInput}
           />
-        </View>
-        <View style={sheetStyles.formColumn}>
-          <Text style={sheetStyles.formLabel}>
-            {t("settings.providers.omp.custom.maxOutputTokens")}
-          </Text>
-          <AdaptiveTextInput
-            initialValue={model.maxTokens}
-            resetKey={`${revision}-${model.key}-max`}
-            onChangeText={updateMaxTokens}
-            placeholder="16384"
-            inputMode="numeric"
-            style={sheetStyles.formInput}
-          />
-        </View>
-      </View>
-      <View style={sheetStyles.modelInputRow}>
-        <View style={sheetStyles.modelInputMeta}>
-          <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.imageInput")}</Text>
-          <Text style={sheetStyles.modelInputHint}>
-            {t("settings.providers.omp.custom.imageInputHint")}
-          </Text>
-        </View>
-        <Switch
-          value={model.supportsImages}
-          onValueChange={updateSupportsImages}
-          accessibilityLabel={t("settings.providers.omp.custom.imageInputAccessibility", {
-            model: model.name.trim() || model.id.trim() || model.key,
-          })}
-          testID={`omp-model-image-input-${model.key}`}
-        />
-      </View>
+          <View style={sheetStyles.formColumns}>
+            <View style={sheetStyles.formColumn}>
+              <Text style={sheetStyles.formLabel}>
+                {t("settings.providers.omp.custom.contextWindow")}
+              </Text>
+              <AdaptiveTextInput
+                accessibilityLabel={t("settings.providers.omp.custom.contextWindow")}
+                editable={!disabled}
+                initialValue={model.contextWindow}
+                resetKey={`${revision}-${model.key}-context`}
+                onChangeText={updateContextWindow}
+                placeholder="128000"
+                inputMode="numeric"
+                style={sheetStyles.formInput}
+              />
+            </View>
+            <View style={sheetStyles.formColumn}>
+              <Text style={sheetStyles.formLabel}>
+                {t("settings.providers.omp.custom.maxOutputTokens")}
+              </Text>
+              <AdaptiveTextInput
+                accessibilityLabel={t("settings.providers.omp.custom.maxOutputTokens")}
+                editable={!disabled}
+                initialValue={model.maxTokens}
+                resetKey={`${revision}-${model.key}-max`}
+                onChangeText={updateMaxTokens}
+                placeholder="16384"
+                inputMode="numeric"
+                style={sheetStyles.formInput}
+              />
+            </View>
+          </View>
+          <View style={sheetStyles.modelInputRow}>
+            <View style={sheetStyles.modelInputMeta}>
+              <Text style={sheetStyles.formLabel}>
+                {t("settings.providers.omp.custom.imageInput")}
+              </Text>
+              <Text style={sheetStyles.modelInputHint}>
+                {t("settings.providers.omp.custom.imageInputHint")}
+              </Text>
+            </View>
+            <Switch
+              disabled={disabled}
+              value={model.supportsImages}
+              onValueChange={updateSupportsImages}
+              accessibilityLabel={t("settings.providers.omp.custom.imageInputAccessibility", {
+                model: model.name.trim() || model.id.trim() || model.key,
+              })}
+              testID={`omp-model-image-input-${model.key}`}
+            />
+          </View>
+        </>
+      ) : null}
     </View>
   );
 }
 
 type OmpManagementClient = NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+
+function parseGatewayUrl(value: string): URL | null {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
 
 function OmpProviderForm({
   client,
@@ -1277,20 +1408,52 @@ function OmpProviderForm({
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState(false);
-  const [discoveredCount, setDiscoveredCount] = useState<number | null>(null);
+  const [discoveryFailed, setDiscoveryFailed] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [endpointTouched, setEndpointTouched] = useState(false);
+  const [undetectedApis, setUndetectedApis] = useState<ReadonlySet<string> | null>(null);
+  const endpoint = parseGatewayUrl(draft.baseUrl);
+  const canDiscover = endpoint !== null && draft.apiKey.trim().length > 0;
+  const busy = discovering || adding;
+  const modelCount = draft.models.filter((model) => model.id.trim()).length;
+  const needsFormat = draft.models.some((model) => undetectedApis?.has(model.key));
+  const canAdd =
+    canDiscover && modelCount > 0 && modelCount === draft.models.length && !needsFormat;
+  const touchEndpoint = useCallback(() => setEndpointTouched(true), []);
+  const toggleManual = useCallback(() => setManual((current) => !current), []);
+  const toggleAdvanced = useCallback(() => setAdvanced((current) => !current), []);
+  const updateUndetectedApi = useCallback(
+    (api: OmpProviderApi) => {
+      if (!undetectedApis) return;
+      setDraft((current) => ({
+        ...current,
+        models: current.models.map((model) =>
+          undetectedApis.has(model.key) ? { ...model, api } : model,
+        ),
+      }));
+      setUndetectedApis(null);
+    },
+    [undetectedApis],
+  );
   const updateName = useCallback(
     (name: string) => setDraft((current) => ({ ...current, name })),
     [],
   );
-  const updateBaseUrl = useCallback(
-    (baseUrl: string) => setDraft((current) => ({ ...current, baseUrl })),
-    [],
-  );
-  const updateApiKey = useCallback(
-    (apiKey: string) => setDraft((current) => ({ ...current, apiKey })),
-    [],
-  );
+  const updateBaseUrl = useCallback((baseUrl: string) => {
+    setDiscoveryFailed(false);
+    setDraft((current) => ({ ...current, baseUrl }));
+  }, []);
+  const updateApiKey = useCallback((apiKey: string) => {
+    setDiscoveryFailed(false);
+    setDraft((current) => ({ ...current, apiKey }));
+  }, []);
   const updateModel = useCallback((key: string, patch: Partial<OmpProviderModelDraft>) => {
+    if (patch.api) {
+      setUndetectedApis((current) =>
+        current?.has(key) ? new Set([...current].filter((modelKey) => modelKey !== key)) : current,
+      );
+    }
     setDraft((current) => ({
       ...current,
       models: current.models.map((model) => (model.key === key ? { ...model, ...patch } : model)),
@@ -1313,7 +1476,7 @@ function OmpProviderForm({
           key,
           id: "",
           name: "",
-          api: "openai-responses",
+          api: current.models[0]?.api ?? "openai-responses",
           contextWindow: "",
           maxTokens: "",
           supportsImages: false,
@@ -1321,7 +1484,6 @@ function OmpProviderForm({
       ],
     }));
   }, []);
-  const handleAddModelPress = useCallback(() => addModel(), [addModel]);
   const enableImageInputForAll = useCallback(() => {
     setDraft((current) => ({
       ...current,
@@ -1332,48 +1494,72 @@ function OmpProviderForm({
     (model) => model.id.trim().length > 0 && !model.supportsImages,
   );
   const discoverModels = useCallback(async () => {
-    if (!draft.baseUrl.trim() || !draft.apiKey.trim()) return;
+    if (!canDiscover || busy) return;
     setDiscovering(true);
-    setDiscoveredCount(null);
+    setDiscoveryFailed(false);
     setError(null);
     try {
-      const result = await client.discoverOmpProviderModels({
+      const { models } = await client.discoverOmpProviderModels({
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim(),
       });
-      if (result.models.length === 0) return;
-      setDraft((current) => ({
-        ...current,
-        models: configureDiscoveredProviderModels(current.models, result.models, () => {
-          const key = `model-${nextModelKey.current}`;
-          nextModelKey.current += 1;
-          return key;
-        }),
-      }));
+      if (models.length === 0) {
+        setDiscoveryFailed(true);
+        setManual(true);
+        return;
+      }
+      const configured = configureDiscoveredProviderModels(draft.models, models, () => {
+        const key = `model-${nextModelKey.current}`;
+        nextModelKey.current += 1;
+        return key;
+      });
+      // A gateway's list can be filtered by key. Keep existing, explicitly configured IDs on edit.
+      const discoveredIds = new Set(configured.map((model) => model.id));
+      const retained = editingProviderId
+        ? draft.models.filter((model) => model.id.trim() && !discoveredIds.has(model.id.trim()))
+        : [];
+      const existingKeys = new Set(draft.models.map((model) => model.key));
+      const modelKeys = new Set(
+        configured.flatMap((model, index) =>
+          (!existingKeys.has(model.key) || undetectedApis?.has(model.key)) &&
+          !models[index]?.supportedApis?.length
+            ? [model.key]
+            : [],
+        ),
+      );
+      setUndetectedApis(modelKeys.size > 0 ? modelKeys : null);
+      setDraft((current) => ({ ...current, models: [...configured, ...retained] }));
       setRevision((current) => current + 1);
-      setDiscoveredCount(result.models.length);
-    } catch (discoverError) {
-      setError(discoverError instanceof Error ? discoverError.message : String(discoverError));
+      setManual(false);
+    } catch {
+      setDiscoveryFailed(true);
+      setManual(true);
     } finally {
       setDiscovering(false);
     }
-  }, [client, draft.apiKey, draft.baseUrl]);
+  }, [
+    busy,
+    canDiscover,
+    client,
+    draft.apiKey,
+    draft.baseUrl,
+    draft.models,
+    editingProviderId,
+    undetectedApis,
+  ]);
   const handleDiscoverModelsPress = useCallback(() => void discoverModels(), [discoverModels]);
-  const canDiscover = draft.baseUrl.trim().length > 0 && draft.apiKey.trim().length > 0;
-  const canAdd =
-    draft.name.trim().length > 0 &&
-    draft.baseUrl.trim().length > 0 &&
-    draft.apiKey.trim().length > 0 &&
-    draft.models.length > 0 &&
-    draft.models.every((model) => model.id.trim().length > 0);
 
   const addProvider = useCallback(async () => {
-    if (!canAdd) return;
+    if (!canAdd || busy || endpoint === null) return;
     setAdding(true);
     setError(null);
     try {
       const provider = customProviderDraftToInput(
-        { ...draft, providerId: editingProviderId ?? draft.providerId },
+        {
+          ...draft,
+          name: draft.name.trim() || endpoint.hostname,
+          providerId: editingProviderId ?? draft.providerId,
+        },
         (value, field) =>
           parseOptionalPositiveInteger(
             value,
@@ -1386,124 +1572,230 @@ function OmpProviderForm({
             }),
           ),
       );
-      const result =
-        editingProviderId && configYaml !== undefined
-          ? await client.saveOmpProviderConfig(
-              updateCustomProviderConfigYaml(configYaml, editingProviderId, provider),
-            )
-          : await client.addOmpProvider(provider);
-      onSaved(result);
-      if (!editingProviderId) {
-        const key = `model-${nextModelKey.current}`;
-        nextModelKey.current += 1;
-        setDraft(createEmptyProviderDraft(key));
-        setRevision((current) => current + 1);
+      try {
+        const result =
+          editingProviderId && configYaml !== undefined
+            ? await client.saveOmpProviderConfig(
+                updateCustomProviderConfigYaml(configYaml, editingProviderId, provider),
+              )
+            : await client.addOmpProvider(provider);
+        onSaved(result);
+      } catch {
+        setError(t("settings.providers.omp.gatewayForm.saveFailed"));
       }
-    } catch (addError) {
-      setError(addError instanceof Error ? addError.message : String(addError));
+    } catch (validationError) {
+      setAdvanced(true);
+      setError(validationError instanceof Error ? validationError.message : String(validationError));
     } finally {
       setAdding(false);
     }
-  }, [canAdd, client, configYaml, draft, editingProviderId, onSaved, t]);
+  }, [busy, canAdd, client, configYaml, draft, editingProviderId, endpoint, onSaved, t]);
   const handleAddPress = useCallback(() => void addProvider(), [addProvider]);
-  let addProviderLabel = t("settings.providers.omp.custom.addWithCount", {
-    count: draft.models.length,
-  });
-  if (adding) {
-    addProviderLabel = t(
-      editingProviderId
-        ? "settings.providers.omp.custom.savingProvider"
-        : "settings.providers.omp.custom.validating",
+  function getSaveLabel() {
+    if (adding) {
+      return t(
+        editingProviderId
+          ? "settings.providers.omp.custom.savingProvider"
+          : "settings.providers.omp.custom.validating",
+      );
+    }
+    if (editingProviderId) return t("settings.providers.omp.custom.saveProvider");
+    return t("settings.providers.omp.custom.addWithCount", { count: modelCount });
+  }
+
+  const manualAccessibilityState = useMemo(() => ({ expanded: manual }), [manual]);
+  const advancedAccessibilityState = useMemo(() => ({ expanded: advanced }), [advanced]);
+
+  function renderDiscoveryStatus() {
+    if (discoveryFailed) {
+      return (
+        <Text accessibilityRole="alert" style={sheetStyles.errorText}>
+          {t("settings.providers.omp.gatewayForm.discoveryFailed")}
+        </Text>
+      );
+    }
+    if (modelCount > 0) {
+      return (
+        <Text accessibilityLiveRegion="polite" style={sheetStyles.mutedText}>
+          {t("settings.providers.omp.gatewayForm.modelsReady", { count: modelCount })}
+        </Text>
+      );
+    }
+    if (manual || advanced) return null;
+    return (
+      <Text style={sheetStyles.mutedText}>
+        {t("settings.providers.omp.gatewayForm.discoverHint")}
+      </Text>
     );
-  } else if (editingProviderId) {
-    addProviderLabel = t("settings.providers.omp.custom.saveProvider");
+  }
+
+  function renderModelSetup() {
+    return (
+      <View style={sheetStyles.modelList}>
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.gatewayForm.modelSetup")}</Text>
+        {renderDiscoveryStatus()}
+        <View style={sheetStyles.modelListActions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={discovering ? undefined : RotateCw}
+            onPress={handleDiscoverModelsPress}
+            disabled={!canDiscover || busy}
+            testID="omp-gateway-fetch-models"
+          >
+            {t(
+              discovering
+                ? "settings.providers.omp.custom.fetchingModels"
+                : "settings.providers.omp.custom.fetchModels",
+            )}
+          </Button>
+          {!advanced ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={manual ? ChevronDown : ChevronRight}
+              onPress={toggleManual}
+              disabled={busy}
+              accessibilityState={manualAccessibilityState}
+              testID="omp-gateway-manual"
+            >
+              {t(
+                modelCount === 0
+                  ? "settings.providers.omp.gatewayForm.manual"
+                  : "settings.providers.omp.gatewayForm.editModels",
+              )}
+            </Button>
+          ) : null}
+        </View>
+        {needsFormat ? (
+          <>
+            <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.apiFormat")}</Text>
+            <Text style={sheetStyles.mutedText}>
+              {t("settings.providers.omp.gatewayForm.undetectedFormat")}
+            </Text>
+            <OmpApiFormatSelect disabled={busy} onChange={updateUndetectedApi} />
+          </>
+        ) : null}
+        <View style={sheetStyles.modelListActions}>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={advanced ? ChevronDown : ChevronRight}
+            onPress={toggleAdvanced}
+            disabled={busy}
+            accessibilityState={advancedAccessibilityState}
+            testID="omp-gateway-advanced"
+          >
+            {t("settings.providers.omp.gatewayForm.advanced")}
+          </Button>
+        </View>
+        {manual || advanced ? (
+          <>
+            {modelCount === 0 && !discoveryFailed ? (
+              <Text style={sheetStyles.mutedText}>
+                {t("settings.providers.omp.gatewayForm.manualHint")}
+              </Text>
+            ) : null}
+            <Text style={sheetStyles.mutedText}>
+              {t("settings.providers.omp.gatewayForm.apiFormatHint")}
+            </Text>
+            {advanced && hasTextOnlyModels ? (
+              <View style={sheetStyles.modelListActions}>
+                <Button variant="secondary" size="sm" onPress={enableImageInputForAll} disabled={busy}>
+                  {t("settings.providers.omp.custom.enableImageInputForAll")}
+                </Button>
+              </View>
+            ) : null}
+            {draft.models.map((model) => (
+              <OmpProviderModelEditor
+                key={model.key}
+                model={model}
+                revision={revision}
+                canRemove={draft.models.length > 1}
+                advanced={advanced}
+                disabled={busy}
+                onChange={updateModel}
+                onRemove={removeModel}
+              />
+            ))}
+            <View style={sheetStyles.modelListActions}>
+              <Button variant="secondary" size="sm" leftIcon={Plus} onPress={addModel} disabled={busy}>
+                {t("settings.providers.omp.custom.addAnotherModel")}
+              </Button>
+            </View>
+          </>
+        ) : null}
+      </View>
+    );
   }
 
   return (
     <View style={sheetStyles.formGroup}>
-      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.providerName")}</Text>
-      <AdaptiveTextInput
-        initialValue={draft.name}
-        resetKey={`${revision}-provider-name`}
-        onChangeText={updateName}
-        placeholder={t("settings.providers.omp.custom.providerNamePlaceholder")}
-        accessibilityLabel={t("settings.providers.omp.custom.providerName")}
-        testID="omp-provider-name"
-        autoCorrect={false}
-        style={sheetStyles.formInput}
-      />
-      <Text style={sheetStyles.descriptionInline}>
-        {t("settings.providers.omp.custom.providerNameHint")}
-      </Text>
-      {editingProviderId ? (
-        <Text selectable style={sheetStyles.mutedText} testID="omp-provider-stable-id">
-          {t("settings.providers.omp.custom.stableId", { id: editingProviderId })}
-        </Text>
-      ) : null}
-      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.endpointUrl")}</Text>
-      <AdaptiveTextInput
-        initialValue={draft.baseUrl}
-        resetKey={`${revision}-base-url`}
-        onChangeText={updateBaseUrl}
-        placeholder="https://api.example.com/v1"
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={sheetStyles.formInput}
-      />
-      <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.apiKey")}</Text>
-      <AdaptiveTextInput
-        initialValue={draft.apiKey}
-        resetKey={`${revision}-api-key`}
-        onChangeText={updateApiKey}
-        placeholder="sk-..."
-        autoCapitalize="none"
-        autoCorrect={false}
-        secureTextEntry
-        style={sheetStyles.formInput}
-      />
-      <Button
-        variant="secondary"
-        size="sm"
-        leftIcon={RotateCw}
-        onPress={handleDiscoverModelsPress}
-        disabled={!canDiscover || discovering || adding}
-      >
-        {t(
-          discovering
-            ? "settings.providers.omp.custom.fetchingModels"
-            : "settings.providers.omp.custom.fetchModels",
-        )}
-      </Button>
-      {discoveredCount !== null ? (
-        <Text style={sheetStyles.descriptionInline}>
-          {t("settings.providers.omp.custom.modelsConfiguredWithImageDefault", {
-            count: discoveredCount,
-          })}
-        </Text>
-      ) : null}
-      {hasTextOnlyModels ? (
-        <View style={sheetStyles.modelListActions}>
-          <Button variant="secondary" size="sm" onPress={enableImageInputForAll}>
-            {t("settings.providers.omp.custom.enableImageInputForAll")}
-          </Button>
+      {editingProviderId || advanced ? (
+        <View style={sheetStyles.modelList}>
+          <Text style={sheetStyles.formLabel}>
+            {t("settings.providers.omp.custom.providerName")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={draft.name}
+            onChangeText={updateName}
+            placeholder={endpoint?.hostname || t("settings.providers.omp.custom.providerNamePlaceholder")}
+            accessibilityLabel={t("settings.providers.omp.custom.providerName")}
+            testID="omp-provider-name"
+            editable={!busy}
+            autoCorrect={false}
+            style={sheetStyles.formInput}
+          />
+          {editingProviderId && advanced ? (
+            <Text selectable style={sheetStyles.mutedText} testID="omp-provider-stable-id">
+              {t("settings.providers.omp.custom.stableId", { id: editingProviderId })}
+            </Text>
+          ) : null}
         </View>
       ) : null}
       <View style={sheetStyles.modelList}>
-        {draft.models.map((model) => (
-          <OmpProviderModelEditor
-            key={model.key}
-            model={model}
-            revision={revision}
-            canRemove={draft.models.length > 1}
-            onChange={updateModel}
-            onRemove={removeModel}
-          />
-        ))}
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.endpointUrl")}</Text>
+        <AdaptiveTextInput
+          accessibilityLabel={t("settings.providers.omp.custom.endpointUrl")}
+          initialValue={draft.baseUrl}
+          onBlur={touchEndpoint}
+          onChangeText={updateBaseUrl}
+          placeholder="https://api.example.com/v1"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!busy}
+          inputMode="url"
+          style={sheetStyles.formInput}
+          testID="omp-gateway-endpoint"
+        />
+        {endpointTouched && draft.baseUrl.trim() && !endpoint ? (
+          <Text accessibilityRole="alert" style={sheetStyles.errorText}>
+            {t("settings.providers.omp.gatewayForm.invalidEndpoint")}
+          </Text>
+        ) : (
+          <Text style={sheetStyles.mutedText}>
+            {t("settings.providers.omp.gatewayForm.endpointHint")}
+          </Text>
+        )}
       </View>
-      <Button variant="secondary" size="sm" leftIcon={Plus} onPress={handleAddModelPress}>
-        {t("settings.providers.omp.custom.addAnotherModel")}
-      </Button>
-      {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+      <View style={sheetStyles.modelList}>
+        <Text style={sheetStyles.formLabel}>{t("settings.providers.omp.custom.apiKey")}</Text>
+        <AdaptiveTextInput
+          accessibilityLabel={t("settings.providers.omp.custom.apiKey")}
+          initialValue={draft.apiKey}
+          onChangeText={updateApiKey}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect={false}
+          editable={!busy}
+          secureTextEntry
+          spellCheck={false}
+          style={sheetStyles.formInput}
+          testID="omp-gateway-api-key"
+        />
+      </View>
+      {renderModelSetup()}
+      {error ? <Text accessibilityRole="alert" style={sheetStyles.errorText}>{error}</Text> : null}
       <View style={sheetStyles.formActions}>
         <Button variant="secondary" size="sm" onPress={onCancel} disabled={adding}>
           {t("common.actions.cancel")}
@@ -1513,15 +1805,14 @@ function OmpProviderForm({
           size="sm"
           leftIcon={adding ? undefined : Plus}
           onPress={handleAddPress}
-          disabled={!canAdd || adding}
+          disabled={!canAdd || busy}
         >
-          {addProviderLabel}
+          {getSaveLabel()}
         </Button>
       </View>
     </View>
   );
 }
-type OmpManagementTab = "sign-in" | "custom";
 interface OmpProviderLoginFlowState {
   flowId: string;
   providerId: string;
@@ -1530,108 +1821,92 @@ interface OmpProviderLoginFlowState {
   instructions?: string;
 }
 
-function isCustomOmpProvider(
-  provider: OmpProviderManagement["providerModels"][number],
-  loginProviderIds: Set<string>,
-): boolean {
-  return (
-    provider.source === "custom" ||
-    (provider.source === undefined && !loginProviderIds.has(provider.id))
-  );
-}
-
-function OmpCustomProvidersTab({
-  providers,
+function OmpAdvancedYaml({
   management,
   configYaml,
   saving,
-  removingProviderId,
-  onOpenAddProvider,
-  onRemoveProvider,
   onConfigYamlChange,
-  onEditProvider,
   onSave,
 }: {
-  providers: OmpProviderSummary[];
   management: OmpProviderManagement;
   configYaml: string;
   saving: boolean;
-  removingProviderId: string | null;
-  onOpenAddProvider: () => void;
-  onRemoveProvider: (providerId: string) => void;
   onConfigYamlChange: (configYaml: string) => void;
   onSave: () => void;
-  onEditProvider: (providerId: string) => void;
 }) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
   return (
-    <View style={sheetStyles.tabContent}>
-      <View style={sheetStyles.customProviderHeader}>
-        <Text style={settingsStyles.sectionHeaderTitle}>
-          {t("settings.providers.omp.tabs.custom")}
-        </Text>
-        <Button
-          variant="default"
-          size="sm"
-          leftIcon={Plus}
-          onPress={onOpenAddProvider}
-          testID="omp-add-custom-provider"
-        >
-          {t("settings.providers.omp.custom.add")}
-        </Button>
-      </View>
-      {providers.length > 0 ? (
-        <View style={settingsStyles.card}>
-          {providers.map((summary) => (
-            <OmpProviderSummaryRow
-              key={summary.id}
-              summary={summary}
-              loggingInProviderId={null}
-              loggingOutProviderId={null}
-              loggingOutCredentialId={null}
-              loginFlowActive={false}
-              removingProviderId={removingProviderId}
-              onLogin={NOOP}
-              onEdit={onEditProvider}
-              onRemove={onRemoveProvider}
-            />
-          ))}
+    <View style={connectionStyles.section}>
+      <CollapsibleSectionHeader
+        title={t("settings.providers.omp.yaml.title")}
+        expanded={expanded}
+        onPress={toggleExpanded}
+        testID="omp-models-yaml-toggle"
+      />
+      {expanded ? (
+        <View style={connectionStyles.section}>
+          <Text style={sheetStyles.mutedText} selectable>{management.configPath}</Text>
+          <SettingsTextArea
+            key={`${management.configPath}:${management.configYaml}`}
+            accessibilityLabel={t("settings.providers.omp.yaml.accessibility")}
+            value={configYaml}
+            onChangeText={onConfigYamlChange}
+            testID="omp-models-yaml"
+            style={sheetStyles.yamlInput}
+          />
+          <View style={sheetStyles.advancedActions}>
+            <Text style={sheetStyles.descriptionInline}>{t("settings.providers.omp.yaml.hint")}</Text>
+            <Button
+              variant="default"
+              size="sm"
+              leftIcon={saving ? undefined : Save}
+              onPress={onSave}
+              disabled={saving || configYaml === management.configYaml}
+            >
+              {saving
+                ? t("settings.providers.omp.yaml.saving")
+                : t("settings.providers.omp.yaml.save")}
+            </Button>
+          </View>
         </View>
-      ) : (
-        <SurfaceCard>
-          <Text style={sheetStyles.emptyCardText}>{t("settings.providers.omp.empty.custom")}</Text>
-        </SurfaceCard>
-      )}
-      <View style={sheetStyles.section}>
-        <SectionHeader
-          title={t("settings.providers.omp.yaml.title")}
-          hint={management.configPath}
-        />
-        <SettingsTextArea
-          key={`${management.configPath}:${management.configYaml}`}
-          accessibilityLabel={t("settings.providers.omp.yaml.accessibility")}
-          value={configYaml}
-          onChangeText={onConfigYamlChange}
-          testID="omp-models-yaml"
-          style={sheetStyles.yamlInput}
-        />
-        <View style={sheetStyles.advancedActions}>
-          <Text style={sheetStyles.mutedText}>{t("settings.providers.omp.yaml.hint")}</Text>
-          <Button
-            variant="default"
-            size="sm"
-            leftIcon={saving ? undefined : Save}
-            onPress={onSave}
-            disabled={saving || configYaml === management.configYaml}
-          >
-            {saving
-              ? t("settings.providers.omp.yaml.saving")
-              : t("settings.providers.omp.yaml.save")}
-          </Button>
-        </View>
-      </View>
+      ) : null}
     </View>
   );
+}
+
+function OmpDirectoryBrandTrigger({
+  summary,
+  expanded,
+  onToggle,
+}: {
+  summary: OmpProviderSummary;
+  expanded: boolean;
+  onToggle: (brandId: string) => void;
+}) {
+  const { theme } = useUnistyles();
+  const brandId = summary.brandId;
+  const toggle = useCallback(() => onToggle(brandId), [brandId, onToggle]);
+  const Chevron = expanded ? ChevronUp : ChevronRight;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={expanded ? EXPANDED_STATE : COLLAPSED_STATE}
+      onPress={toggle}
+      style={connectionStyles.directoryTrigger}
+      testID={`omp-directory-brand-${brandId}`}
+    >
+      <View style={connectionStyles.directoryIdentity}>
+        <OmpProviderBrand summary={summary} caption={summary.product} />
+      </View>
+      <Chevron size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+    </Pressable>
+  );
+}
+
+function gatewayEntryStyle({ hovered, pressed }: PressableStateCallbackType) {
+  return [connectionStyles.gateway, (hovered || pressed) && connectionStyles.gatewayActive];
 }
 
 function OmpManagementPanel({
@@ -1661,10 +1936,16 @@ function OmpManagementPanel({
   );
   const [management, setManagement] = useState<OmpProviderManagement | null>(cachedManagement);
   const [configYaml, setConfigYaml] = useState(cachedManagement?.configYaml ?? "");
-  const [activeTab, setActiveTab] = useState<OmpManagementTab>("sign-in");
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [showAllProviders, setShowAllProviders] = useState(false);
+  const [selectedBrandId, setSelectedBrandId] = useState<string | null>(null);
   const [providerSearchQuery, setProviderSearchQuery] = useState("");
-  const [signedInProvidersExpanded, setSignedInProvidersExpanded] = useState(false);
-  const [notSignedInProvidersExpanded, setNotSignedInProvidersExpanded] = useState(false);
+  const [signedInProvidersExpanded, setSignedInProvidersExpanded] = useState(true);
+  const [compactColumns, setCompactColumns] = useState(true);
+  const [apiKeyProvider, setApiKeyProvider] = useState<OmpProviderSummary | null>(null);
+  const apiKeySupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.ompProviderApiKey === true,
+  );
   const [editingProvider, setEditingProvider] = useState<{
     id: string;
     draft: OmpProviderDraft;
@@ -1695,6 +1976,13 @@ function OmpManagementPanel({
   loginFlowRef.current = loginFlow;
   visibleRef.current = visible;
 
+  const closeDirectory = useCallback(() => {
+    setDirectoryOpen(false);
+    setShowAllProviders(false);
+    setSelectedBrandId(null);
+    setProviderSearchQuery("");
+  }, []);
+
   const showManagement = useCallback((result: OmpProviderManagement) => {
     setManagement(result);
     setConfigYaml(result.configYaml);
@@ -1710,8 +1998,10 @@ function OmpManagementPanel({
       setLoginInput("");
       setLoginProviderId(null);
       setError(null);
+      closeDirectory();
+      onSaved();
     });
-  }, [client, queryClient, serverId]);
+  }, [client, closeDirectory, onSaved, queryClient, serverId]);
   useEffect(() => {
     if (!visible) return;
     return queryClient.getQueryCache().subscribe((event) => {
@@ -1820,11 +2110,13 @@ function OmpManagementPanel({
     if (visible) return;
     if (loginFlow) void cancelLoginFlow(loginFlow);
     setManagement(null);
-    setActiveTab("sign-in");
+    setDirectoryOpen(false);
+    setShowAllProviders(false);
+    setSelectedBrandId(null);
+    setApiKeyProvider(null);
     setProviderSearchQuery("");
     setAddProviderOpen(false);
-    setSignedInProvidersExpanded(false);
-    setNotSignedInProvidersExpanded(false);
+    setSignedInProvidersExpanded(true);
     setContextProviderId(null);
     setEditingProvider(null);
     setError(null);
@@ -1872,7 +2164,13 @@ function OmpManagementPanel({
       setError(null);
       try {
         const flow = await client.startOmpProviderLogin(providerId);
-        if (completedLoginFlowsRef.current.has(flow.flowId)) return;
+        if (completedLoginFlowsRef.current.has(flow.flowId)) {
+          if (visibleRef.current) {
+            closeDirectory();
+            onSaved();
+          }
+          return;
+        }
         const nextFlow: OmpProviderLoginFlowState = {
           flowId: flow.flowId,
           providerId: flow.providerId,
@@ -1902,7 +2200,7 @@ function OmpManagementPanel({
         setLoginProviderId(null);
       }
     },
-    [cancelLoginFlow, client, loginFlow, t],
+    [cancelLoginFlow, client, closeDirectory, loginFlow, onSaved, t],
   );
   const finishLogin = useCallback(async () => {
     if (!client || !loginFlow) return;
@@ -1913,12 +2211,13 @@ function OmpManagementPanel({
       loginFlowRef.current = null;
       setLoginFlow(null);
       setLoginInput("");
+      closeDirectory();
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : String(loginError));
     } finally {
       setLoginProviderId(null);
     }
-  }, [applyManagement, client, loginFlow, loginInput]);
+  }, [applyManagement, client, closeDirectory, loginFlow, loginInput]);
   const logout = useCallback(
     async (providerId: string, credentialId?: number) => {
       if (!client) return;
@@ -1995,96 +2294,30 @@ function OmpManagementPanel({
     }
   }, [accountNoteDraft, accountNotes, editingAccountId, saveAccountNotes]);
 
-  const signInProviders = useMemo<OmpProviderSummary[]>(() => {
-    if (!management) return [];
-    // These two OMP login methods share the openai-codex credential store.
-    const codexLogin = management.loginProviders.find((provider) => provider.id === "openai-codex");
-    const codexDeviceLogin = management.loginProviders.find(
-      (provider) => provider.id === "openai-codex-device",
-    );
-    return management.loginProviders
-      .filter((login) => login.id !== "openai-codex-device" || !codexLogin)
-      .map((login) => {
-        const deviceCodeLogin = login.id === "openai-codex" ? codexDeviceLogin : undefined;
-        const provider = management.providerModels.find((candidate) => candidate.id === login.id);
-        return {
-          id: login.id,
-          modelCount: provider?.modelCount ?? 0,
-          models: provider?.models,
-          login:
-            deviceCodeLogin?.authenticated && !login.authenticated
-              ? { ...login, authenticated: true }
-              : login,
-          deviceCodeLogin,
-        };
-      })
-      .sort((left, right) =>
-        (left.login?.name ?? left.id).localeCompare(right.login?.name ?? right.id),
-      );
-  }, [management]);
-  const signedInProviders = useMemo(
-    () => signInProviders.filter((provider) => provider.login?.authenticated),
-    [signInProviders],
-  );
-  const availableSignInProviders = useMemo(
-    () =>
-      signInProviders.filter(
-        (provider) =>
-          (provider.login?.available || provider.deviceCodeLogin?.available) &&
-          !provider.login?.authenticated,
-      ),
-    [signInProviders],
+  const { connected, available, featured } = useMemo(
+    () => buildOmpProviderDirectory(management),
+    [management],
   );
   const providerSearch = providerSearchQuery.trim();
-  const displayedNotSignedInProviders = useMemo(
-    () =>
-      providerSearch
-        ? rankModels(availableSignInProviders, providerSearch, (provider) => [
-            provider.login?.name ?? "",
-            provider.id,
-            provider.deviceCodeLogin?.name ?? "",
-            provider.deviceCodeLogin?.id ?? "",
-          ])
-        : availableSignInProviders,
-    [availableSignInProviders, providerSearch],
+  const searchResults = useMemo(
+    () => providerSearch ? searchOmpProviderDirectory([...available, ...connected], providerSearch) : null,
+    [available, connected, providerSearch],
   );
-  const contextProvider = useMemo(
-    () => signInProviders.find((provider) => provider.id === contextProviderId) ?? null,
-    [contextProviderId, signInProviders],
-  );
-  const customProviders = useMemo<OmpProviderSummary[]>(() => {
-    if (!management) return [];
-    const loginProviderIds = new Set(management.loginProviders.map((provider) => provider.id));
-    return management.providerModels
-      .filter((provider) => isCustomOmpProvider(provider, loginProviderIds))
-      .map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        modelCount: provider.modelCount,
-      }))
-      .sort((left, right) => (left.name ?? left.id).localeCompare(right.name ?? right.id));
-  }, [management]);
-  const tabOptions = useMemo(
-    () => [
-      {
-        value: "sign-in" as const,
-        label: t("settings.providers.omp.tabs.signIn"),
-        testID: "omp-provider-tab-sign-in",
-      },
-      {
-        value: "custom" as const,
-        label: t("settings.providers.omp.tabs.custom"),
-        testID: "omp-provider-tab-custom",
-      },
-    ],
-    [t],
-  );
+  const displayedDirectory = searchResults?.map(({ provider }) => provider) ??
+    (showAllProviders ? available : featured);
+  const contextProvider = connected.find((provider) => provider.id === contextProviderId);
+  const handleDirectoryLayout = useCallback((event: LayoutChangeEvent) => {
+    setCompactColumns(event.nativeEvent.layout.width < 600);
+  }, []);
+  const closeApiKeyForm = useCallback(() => setApiKeyProvider(null), []);
+  const saveBuiltinApiKey = useCallback(async (providerId: string, apiKey: string) => {
+    if (!client) throw new Error("Host unavailable");
+    applyManagement(await client.setOmpProviderApiKey(providerId, apiKey));
+    setApiKeyProvider(null);
+    closeDirectory();
+  }, [applyManagement, client, closeDirectory]);
   const toggleSignedInProviders = useCallback(
     () => setSignedInProvidersExpanded((expanded) => !expanded),
-    [],
-  );
-  const toggleNotSignedInProviders = useCallback(
-    () => setNotSignedInProvidersExpanded((expanded) => !expanded),
     [],
   );
   const handleRefreshPress = useCallback(() => void load(true), [load]);
@@ -2093,12 +2326,38 @@ function OmpManagementPanel({
   const handleOpenAuthorizationPress = useCallback(() => {
     if (loginFlow) void openExternalUrl(loginFlow.launchUrl ?? loginFlow.url);
   }, [loginFlow]);
+  const handleCancelLoginPress = useCallback(() => {
+    if (loginFlow) void cancelLoginFlow(loginFlow);
+  }, [cancelLoginFlow, loginFlow]);
+  const openDirectory = useCallback(() => setDirectoryOpen(true), []);
+  const showConnections = useCallback(() => {
+    setSignedInProvidersExpanded(true);
+    closeDirectory();
+  }, [closeDirectory]);
+  const toggleBrand = useCallback((brandId: string) => {
+    setSelectedBrandId((selected) => (selected === brandId ? null : brandId));
+  }, []);
+  const handleProviderSearch = useCallback((value: string) => {
+    setProviderSearchQuery(value);
+    setSelectedBrandId(null);
+  }, []);
+  const toggleShowAllProviders = useCallback(() => {
+    setShowAllProviders((showAll) => !showAll);
+    setSelectedBrandId(null);
+  }, []);
+  const apiKeyProviderName = apiKeyProvider?.name ?? "";
+  const apiKeyFormHeader = useMemo<SheetHeader>(
+    () => ({
+      title: t("settings.providers.omp.connections.apiKeyTitle", { provider: apiKeyProviderName }),
+    }),
+    [apiKeyProviderName, t],
+  );
   const providerFormHeader = useMemo<SheetHeader>(
     () => ({
       title: t(
         editingProvider
           ? "settings.providers.omp.custom.editTitle"
-          : "settings.providers.omp.custom.title",
+          : "settings.providers.omp.connections.gateway",
         editingProvider ? { provider: editingProvider.draft.name } : undefined,
       ),
     }),
@@ -2145,8 +2404,9 @@ function OmpManagementPanel({
       applyManagement(result);
       setAddProviderOpen(false);
       setEditingProvider(null);
+      closeDirectory();
     },
-    [applyManagement],
+    [applyManagement, closeDirectory],
   );
   const removeProvider = useCallback(
     async (providerId: string) => {
@@ -2154,7 +2414,7 @@ function OmpManagementPanel({
       const confirmed = await confirmDialog({
         title: t("settings.providers.omp.custom.removeConfirmTitle", {
           provider:
-            customProviders.find((provider) => provider.id === providerId)?.name ?? providerId,
+            connected.find((provider) => provider.id === providerId)?.name ?? providerId,
         }),
         message: t("settings.providers.omp.custom.removeConfirmMessage"),
         confirmLabel: t("settings.providers.omp.custom.removeProvider"),
@@ -2172,32 +2432,34 @@ function OmpManagementPanel({
         setRemovingProviderId(null);
       }
     },
-    [applyManagement, client, customProviders, removingProviderId, t],
+    [applyManagement, client, connected, removingProviderId, t],
   );
   const handleRemoveProvider = useCallback(
     (providerId: string) => void removeProvider(providerId),
     [removeProvider],
   );
 
-  function renderSignedInProviders(): ReactElement | null {
-    if (signedInProviders.length === 0) {
-      return (
-        <SurfaceCard>
-          <Text style={sheetStyles.emptyCardText}>
-            {t("settings.providers.omp.signInDirectory.noSignedIn")}
-          </Text>
-        </SurfaceCard>
-      );
-    }
-    if (!signedInProvidersExpanded) {
-      return null;
-    }
+  function renderConnections(): ReactElement {
     return (
-      <View style={settingsStyles.card}>
-        {signedInProviders.map((summary) => (
+      <View style={connectionStyles.section}>
+        <CollapsibleSectionHeader
+          title={t("settings.providers.omp.connections.mine")}
+          count={connected.length}
+          expanded={signedInProvidersExpanded}
+          onPress={toggleSignedInProviders}
+          testID="omp-signed-in-providers-toggle"
+        />
+        {signedInProvidersExpanded ? (
+          <View style={connectionStyles.stack}>
+        {connected.map((summary) => (
           <OmpProviderSummaryRow
             key={summary.id}
             summary={summary}
+            serverId={serverId}
+            removingProviderId={removingProviderId}
+            onEdit={summary.custom ? handleOpenEditProvider : undefined}
+            onRemove={summary.custom ? handleRemoveProvider : undefined}
+            onApiKey={apiKeySupported && summary.login?.supportsApiKey ? setApiKeyProvider : undefined}
             loggingInProviderId={loginProviderId}
             loginFlowActive={loginFlow !== null}
             loggingOutProviderId={logoutProviderId}
@@ -2219,48 +2481,128 @@ function OmpManagementPanel({
             onReorderAccounts={reorderAccounts}
           />
         ))}
+          </View>
+        ) : null}
       </View>
     );
   }
 
-  function renderAvailableProviders(): ReactElement | null {
-    if (!notSignedInProvidersExpanded) {
-      return null;
+  function renderProviderGrid(providers: OmpProviderSummary[]): ReactElement {
+    const brands = new Map<string, OmpProviderSummary[]>();
+    for (const summary of providers) {
+      const entries = brands.get(summary.brandId);
+      if (entries) entries.push(summary);
+      else brands.set(summary.brandId, [summary]);
     }
+    const cards = [...brands.values()];
+    const rows = compactColumns ? cards.map((card) => [card]) : cards.reduce<OmpProviderSummary[][][]>(
+      (result, card, index) => {
+        if (index % 2 === 0) result.push([card]);
+        else result[result.length - 1]?.push(card);
+        return result;
+      }, []);
+    const matchingModelsByProvider = new Map(
+      searchResults?.map(({ provider, modelNames }) => [provider.id, modelNames] as const),
+    );
     return (
-      <View style={sheetStyles.providerDirectorySearch}>
-        <AdaptiveTextInput
-          initialValue={providerSearchQuery}
-          resetKey={`${serverId}:${visible}`}
-          onChangeText={setProviderSearchQuery}
-          placeholder={t("settings.providers.omp.signInDirectory.searchPlaceholder")}
-          accessibilityLabel={t("settings.providers.omp.signInDirectory.searchPlaceholder")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          testID="omp-provider-search"
-          style={sheetStyles.formInput}
-        />
-        {displayedNotSignedInProviders.length > 0 ? (
-          <View style={settingsStyles.card}>
-            {displayedNotSignedInProviders.map((summary) => (
-              <OmpProviderSummaryRow
-                key={summary.id}
-                summary={summary}
-                loggingInProviderId={loginProviderId}
-                loginFlowActive={loginFlow !== null}
-                loggingOutProviderId={logoutProviderId}
-                loggingOutCredentialId={logoutCredentialId}
-                onLogin={startLogin}
-              />
-            ))}
+      <View style={connectionStyles.stack}>
+        {rows.map((row) => (
+          <View key={row[0]?.[0]?.brandId} style={connectionStyles.directoryRow}>
+            {row.map((entries) => {
+              const first = entries[0]!;
+              return (
+                <View key={first.brandId} style={connectionStyles.directoryCard}>
+                  <OmpDirectoryBrandTrigger
+                    summary={first}
+                    expanded={selectedBrandId === first.brandId}
+                    onToggle={toggleBrand}
+                  />
+                  {selectedBrandId === first.brandId ? entries.map((summary) => {
+                    const isConnected = connected.includes(summary);
+                    const matchingModels = matchingModelsByProvider.get(summary.id);
+                    const showName = entries.length > 1 || summary.name !== summary.brand;
+                    return (
+                      <View key={summary.id} style={connectionStyles.directoryEntry}>
+                        {showName ? <Text style={sheetStyles.modelTitle}>{summary.name}</Text> : null}
+                        {matchingModels?.length ? (
+                          <Text style={sheetStyles.mutedText}>{matchingModels.join(" · ")}</Text>
+                        ) : null}
+                        {isConnected ? (
+                          <Button variant="secondary" size="sm" onPress={showConnections}>
+                            {t("settings.providers.omp.connections.viewConnections")}
+                          </Button>
+                        ) : (
+                          <OmpProviderSummaryActions
+                            summary={summary}
+                            login={summary.login}
+                            loginAction={summary.login ? resolveOmpLoginAction(summary.login) : null}
+                            loggingInProviderId={loginProviderId}
+                            loggingOutProviderId={logoutProviderId}
+                            loggingOutAll={false}
+                            loginFlowActive={loginFlow !== null}
+                            onLogin={startLogin}
+                            onApiKey={apiKeySupported && summary.login?.supportsApiKey ? setApiKeyProvider : undefined}
+                          />
+                        )}
+                        {!isConnected && !apiKeySupported && summary.login?.supportsApiKey &&
+                        !canStartOmpBrowserLogin(summary.login) &&
+                        !canStartOmpBrowserLogin(summary.deviceCodeLogin) ? (
+                          <Text style={sheetStyles.mutedText}>{t("settings.providers.omp.connections.updateForApiKey")}</Text>
+                        ) : null}
+                      </View>
+                    );
+                  }) : null}
+                </View>
+              );
+            })}
+            {!compactColumns && row.length === 1 ? <View style={connectionStyles.directorySpacer} /> : null}
           </View>
+        ))}
+      </View>
+    );
+  }
+
+  function renderDirectory(): ReactElement {
+    return (
+      <View style={connectionStyles.section}>
+        <View style={connectionStyles.searchBar}>
+          <Search color={theme.colors.foregroundMuted} size={theme.iconSize.md} />
+          <AdaptiveTextInput
+            initialValue={providerSearchQuery}
+            resetKey={`${serverId}:${directoryOpen}`}
+            onChangeText={handleProviderSearch}
+            placeholder={t("settings.providers.omp.connections.search")}
+            accessibilityLabel={t("settings.providers.omp.connections.search")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="omp-provider-search"
+            style={connectionStyles.searchInput}
+          />
+        </View>
+        {!providerSearch && !showAllProviders && featured.length > 0 ? (
+          <Text style={connectionStyles.sectionTitle}>{t("settings.providers.omp.connections.featured")}</Text>
+        ) : null}
+        {displayedDirectory.length > 0 ? (
+          renderProviderGrid(displayedDirectory)
         ) : (
           <SurfaceCard>
             <Text style={sheetStyles.emptyCardText}>
-              {t("settings.providers.omp.signInDirectory.noMatches")}
+              {t(providerSearch ? "settings.providers.omp.connections.noMatches" : "settings.providers.omp.connections.noMoreProviders")}
             </Text>
           </SurfaceCard>
         )}
+        {!providerSearch && available.some((summary) => !featured.includes(summary)) ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            style={connectionStyles.browseButton}
+            leftIcon={showAllProviders ? ChevronUp : ChevronDown}
+            onPress={toggleShowAllProviders}
+            testID="omp-show-all-providers"
+          >
+            {t(showAllProviders ? "settings.providers.omp.connections.showFeatured" : "settings.providers.omp.connections.browse")}
+          </Button>
+        ) : null}
       </View>
     );
   }
@@ -2269,17 +2611,12 @@ function OmpManagementPanel({
     if (!loginFlow) {
       return null;
     }
-    const codexProvider = signInProviders.find(
-      (provider) =>
-        provider.id === "openai-codex" &&
-        (provider.login?.id === loginFlow.providerId ||
-          provider.deviceCodeLogin?.id === loginFlow.providerId),
-    );
+    const loginProvider = management?.loginProviders.find((provider) => provider.id === loginFlow.providerId);
     return (
       <View style={sheetStyles.section}>
         <SectionHeader
           title={t("settings.providers.omp.login.completeTitle", {
-            provider: codexProvider?.login?.name ?? loginFlow.providerId,
+            provider: loginProvider?.name ?? loginFlow.providerId,
           })}
         />
         <SurfaceCard>
@@ -2318,66 +2655,57 @@ function OmpManagementPanel({
                 ? t("settings.providers.omp.login.completing")
                 : t("settings.providers.omp.login.complete")}
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={handleCancelLoginPress}
+              disabled={Boolean(loginProviderId)}
+              testID="omp-cancel-provider-login"
+            >
+              {t("common.cancel")}
+            </Button>
           </View>
         </SurfaceCard>
       </View>
     );
   }
 
-  function renderManagementTabs(): ReactElement | null {
-    if (!management) {
-      return null;
-    }
+  function renderGateway(): ReactElement {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        testID="omp-add-custom-provider"
+        onPress={handleOpenAddProvider}
+        style={gatewayEntryStyle}
+      >
+        <View style={connectionStyles.gatewayMark}>
+          <Building2 size={theme.iconSize.lg} color={theme.colors.accent} />
+        </View>
+        <View style={connectionStyles.brandText}>
+          <Text style={connectionStyles.brandName}>{t("settings.providers.omp.connections.gateway")}</Text>
+          <Text style={sheetStyles.mutedText}>{t("settings.providers.omp.connections.gatewayHint")}</Text>
+        </View>
+        <ChevronRight size={theme.iconSize.md} color={theme.colors.accent} />
+      </Pressable>
+    );
+  }
+
+  function renderHome(): ReactElement | null {
+    if (!management) return null;
+    const showDirectory = directoryOpen || connected.length === 0;
     return (
       <>
-        <SegmentedControl
-          options={tabOptions}
-          value={activeTab}
-          onValueChange={setActiveTab}
-          size="sm"
-          testID="omp-provider-tabs"
-          style={sheetStyles.managementTabs}
-        />
-        {activeTab === "sign-in" ? (
-          <View style={sheetStyles.tabContent}>
-            <View style={sheetStyles.providerDirectorySection}>
-              <CollapsibleSectionHeader
-                title={t("settings.providers.omp.signInDirectory.signedInTitle")}
-                count={signedInProviders.length}
-                expanded={signedInProvidersExpanded}
-                disabled={signedInProviders.length === 0}
-                onPress={toggleSignedInProviders}
-                testID="omp-signed-in-providers-toggle"
-              />
-              {renderSignedInProviders()}
-            </View>
-            <View style={sheetStyles.providerDirectorySection}>
-              <CollapsibleSectionHeader
-                title={t("settings.providers.omp.signInDirectory.notSignedInTitle")}
-                count={availableSignInProviders.length}
-                expanded={notSignedInProvidersExpanded}
-                disabled={availableSignInProviders.length === 0}
-                onPress={toggleNotSignedInProviders}
-                testID="omp-not-signed-in-providers-toggle"
-              />
-              {renderAvailableProviders()}
-            </View>
-            {renderLoginFlow()}
-          </View>
-        ) : (
-          <OmpCustomProvidersTab
-            providers={customProviders}
+        {showDirectory ? renderDirectory() : renderConnections()}
+        {showDirectory ? renderGateway() : null}
+        {!directoryOpen ? (
+          <OmpAdvancedYaml
             management={management}
             configYaml={configYaml}
             saving={saving}
-            removingProviderId={removingProviderId}
-            onOpenAddProvider={handleOpenAddProvider}
-            onEditProvider={handleOpenEditProvider}
-            onRemoveProvider={handleRemoveProvider}
             onConfigYamlChange={setConfigYaml}
             onSave={handleSavePress}
           />
-        )}
+        ) : null}
       </>
     );
   }
@@ -2415,6 +2743,67 @@ function OmpManagementPanel({
     );
   }
 
+  function renderPanelHeader(): ReactElement {
+    let title: string;
+    let hint: string;
+    if (directoryOpen) {
+      title = t("settings.providers.omp.connections.directory");
+      hint = t("settings.providers.omp.connections.directoryHint");
+    } else if (management && connected.length === 0) {
+      title = t("settings.providers.omp.connections.firstTitle");
+      hint = t("settings.providers.omp.connections.firstHint");
+    } else {
+      title = t("settings.providers.omp.connections.title");
+      hint = t("settings.providers.omp.connections.hint");
+    }
+    return (
+      <>
+        {directoryOpen ? (
+          <View style={connectionStyles.back}>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={ArrowLeft}
+              onPress={closeDirectory}
+              testID="omp-provider-directory-back"
+            >
+              {t("settings.providers.omp.connections.back")}
+            </Button>
+          </View>
+        ) : null}
+        <View style={connectionStyles.header}>
+          <View style={connectionStyles.heading}>
+            <Text accessibilityRole="header" style={connectionStyles.title}>{title}</Text>
+            <Text style={sheetStyles.mutedText}>{hint}</Text>
+          </View>
+          <View style={connectionStyles.headerActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={loading ? undefined : RotateCw}
+              onPress={handleRefreshPress}
+              disabled={loading}
+              testID="omp-refresh-providers"
+            >
+              {loading ? t("settings.providers.omp.refreshing") : t("settings.providers.omp.refresh")}
+            </Button>
+            {!directoryOpen && connected.length > 0 ? (
+              <Button
+                variant="default"
+                size="sm"
+                leftIcon={Plus}
+                onPress={openDirectory}
+                testID="omp-browse-providers"
+              >
+                {t("settings.providers.omp.connections.add")}
+              </Button>
+            ) : null}
+          </View>
+        </View>
+      </>
+    );
+  }
+
   function renderPanel(): ReactElement {
     if (!supported) {
       return (
@@ -2432,26 +2821,34 @@ function OmpManagementPanel({
       );
     }
     return (
-      <>
-        <View style={sheetStyles.managementHeader}>
-          <SectionHeader title={t("settings.providers.omp.managementTitle")} />
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={loading ? undefined : RotateCw}
-            onPress={handleRefreshPress}
-            disabled={loading}
-          >
-            {loading ? t("settings.providers.omp.refreshing") : t("settings.providers.omp.refresh")}
-          </Button>
-        </View>
+      <View style={connectionStyles.home} onLayout={handleDirectoryLayout}>
+        {renderPanelHeader()}
         {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
         {management?.runtimeError ? (
           <SurfaceCard>
             <Text style={sheetStyles.errorText}>{management.runtimeError}</Text>
           </SurfaceCard>
         ) : null}
-        {renderManagementTabs()}
+        {renderLoginFlow()}
+        {renderHome()}
+        <AdaptiveModalSheet
+          header={apiKeyFormHeader}
+          visible={apiKeySupported && apiKeyProvider !== null}
+          onClose={closeApiKeyForm}
+          testID="omp-builtin-api-key-sheet"
+          snapPoints={ADD_PROVIDER_SNAP_POINTS}
+          dismissOnBackdropPress={false}
+        >
+          {apiKeySupported && apiKeyProvider ? (
+            <OmpBuiltinApiKeyForm
+              key={apiKeyProvider.id}
+              providerId={apiKeyProvider.id}
+              providerName={apiKeyProvider.name}
+              onSave={saveBuiltinApiKey}
+              onCancel={closeApiKeyForm}
+            />
+          ) : null}
+        </AdaptiveModalSheet>
         <AdaptiveModalSheet
           header={providerFormHeader}
           visible={addProviderOpen || editingProvider !== null}
@@ -2465,7 +2862,7 @@ function OmpManagementPanel({
         </AdaptiveModalSheet>
         <AdaptiveModalSheet
           header={contextWindowFormHeader}
-          visible={contextProvider !== null}
+          visible={contextProvider !== undefined}
           onClose={handleCloseContextWindow}
           testID="omp-model-context-window-sheet"
           snapPoints={ADD_PROVIDER_SNAP_POINTS}
@@ -2473,7 +2870,7 @@ function OmpManagementPanel({
         >
           {renderContextWindowForm()}
         </AdaptiveModalSheet>
-      </>
+      </View>
     );
   }
 
@@ -3067,26 +3464,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
   section: {
     marginBottom: theme.spacing[4],
   },
-  managementHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
-    marginBottom: theme.spacing[3],
-  },
-  managementTabs: {
-    width: "100%",
-  },
-  tabContent: {
-    gap: theme.spacing[4],
-    marginTop: theme.spacing[3],
-  },
-  providerDirectorySection: {
-    gap: theme.spacing[2],
-  },
-  providerDirectorySearch: {
-    gap: theme.spacing[2],
-  },
   collapsibleSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -3099,12 +3476,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  customProviderHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
   },
   addProviderModalContent: {
     gap: theme.spacing[3],
@@ -3139,30 +3510,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
   modelRowFiller: {
     flex: 1,
   },
-  providerSummaryBlock: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  providerSummaryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-  },
-  providerSummaryRowWithMethods: {
-    flexDirection: "column",
-    alignItems: "stretch",
-  },
-  providerSummaryActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
-  },
   accountList: {
     paddingBottom: theme.spacing[2],
   },
@@ -3182,6 +3529,10 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
+  },
+  accountIdentity: {
+    flex: 1,
+    gap: theme.spacing[1],
   },
   accountTitle: {
     color: theme.colors.foreground,
@@ -3204,10 +3555,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexWrap: "wrap",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
-  },
-  providerSummaryText: {
-    flex: 1,
-    gap: theme.spacing[1],
   },
   yamlInput: {
     minHeight: 260,

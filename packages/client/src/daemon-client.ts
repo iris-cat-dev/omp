@@ -132,6 +132,7 @@ import type {
   OmpProviderLoginStartResponseMessage,
   OmpProviderLoginFinishResponseMessage,
   OmpProviderLoginCancelResponseMessage,
+  OmpProviderApiKeySetResponseMessage,
   OmpProviderLogoutResponseMessage,
   OmpInstallStatusResponseMessage,
   OmpInstallResponseMessage,
@@ -5848,6 +5849,22 @@ export class DaemonClient {
       message: { type: "omp.install.request", action: "cancel" },
       responseType: "omp.install.response",
       timeout: 90_000,
+    });
+  }
+
+  async setOmpProviderApiKey(
+    providerId: string,
+    apiKey: string,
+    options?: { requestId?: string },
+  ): Promise<OmpProviderApiKeySetResponseMessage["payload"]> {
+    if (this.lastServerInfoMessage?.features?.ompProviderApiKey !== true) {
+      throw new Error("This host does not support saving OMP provider API keys.");
+    }
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "omp.provider.api_key.set.request", providerId, apiKey },
+      responseType: "omp.provider.api_key.set.response",
+      timeout: 180_000,
     });
   }
 

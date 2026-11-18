@@ -1,5 +1,6 @@
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
 import { wallpaperLibrary } from "./wallpaper-library";
@@ -2302,6 +2303,7 @@ export const en = {
   },
   settings: {
     memory: ompMemorySettings.en,
+    modelConnectionChat: modelConnectionChat.en,
     title: "Settings",
     loading: "Loading settings...",
     groups: {
@@ -3173,7 +3175,7 @@ export const en = {
     },
     providers: {
       omp: ompProviderSettings.en,
-      title: "Providers",
+      title: "Model connections",
       addProvider: "Add provider",
       providerDetails: "{{name}} provider details",
       enableProvider: "Enable {{name}}",

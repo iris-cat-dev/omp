@@ -376,6 +376,7 @@ function bindOmpClientMethods(inner: AgentClient): Partial<AgentClient> {
     removeOmpProvider: inner.removeOmpProvider?.bind(inner),
     getOmpInstallationStatus: inner.getOmpInstallationStatus?.bind(inner),
     installOmp: inner.installOmp?.bind(inner),
+    setOmpProviderApiKey: inner.setOmpProviderApiKey?.bind(inner),
     startOmpProviderLogin: inner.startOmpProviderLogin?.bind(inner),
     finishOmpProviderLogin: inner.finishOmpProviderLogin?.bind(inner),
     cancelOmpProviderLogin: inner.cancelOmpProviderLogin?.bind(inner),

@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/app",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -35,7 +35,7 @@
     "@mattermost/react-native-paste-input": "2.0.1",
     "@omp-desktop/client": "*",
     "@omp-desktop/highlight": "*",
-    "@omp-desktop/plugin": "0.7.1",
+    "@omp-desktop/plugin": "0.7.2",
     "@omp-desktop/protocol": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "^0.3.2",

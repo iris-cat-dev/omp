@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
@@ -2118,6 +2119,7 @@ export const ru: TranslationResources = {
   settings: {
     memory: ompMemorySettings.ru,
     title: "Настройки",
+    modelConnectionChat: modelConnectionChat.ru,
     loading: "Загрузка настроек...",
     groups: {
       app: "Приложение",
@@ -2800,7 +2802,7 @@ export const ru: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings.ru,
-      title: "Провайдеры",
+      title: "Подключения моделей",
       addProvider: "Добавить провайдера",
       providerDetails: "Сведения о провайдере {{name}}",
       enableProvider: "Включить {{name}}",

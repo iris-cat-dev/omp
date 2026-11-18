@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createProviderEnv } from "../../provider-launch-config.js";
+import { assertChildWithPipes } from "../jsonl-rpc-process.js";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import {
@@ -22,6 +23,11 @@ import {
   type OmpSdkInstallation,
 } from "./sdk-installation.js";
 import { resolveOmpSdkHostCommand } from "./sdk-host-command.js";
+import {
+  OMP_PROVIDER_API_KEY_IPC,
+  type OmpProviderApiKeyOperation,
+  type OmpProviderApiKeyResult,
+} from "./provider-api-key-extension.js";
 import {
   OMP_SDK_ROOT_ENV,
   OMP_SDK_LAUNCH_ENV,
@@ -120,6 +126,10 @@ export class OmpSdkRuntime implements OmpRuntime {
       this.options.localModelBridge,
     );
     const extensions = input.sandbox ? [] : [resolveOmpServiceTierExtensionPath()];
+    const credentialManagement = input.providerApiKeyManagement && !input.sandbox;
+    if (credentialManagement) {
+      extensions.push(resolveOmpRuntimeHelperPath("provider-api-key-extension", import.meta.url));
+    }
     if (!input.sandbox && launch.protocolMode === "rpc-ui") extensions.push(resolveOmpBackgroundJobsExtensionPath());
     const imageLaunch = (!input.sandbox || input.sandbox.imageGeneration) && input.getImageGenerationConfig
       ? await prepareOmpImageSettingsLaunch(command, input.cwd, {
@@ -161,6 +171,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       input.signal?.throwIfAborted();
       input.onActivity?.("prepareMs", performance.now() - preparationStartedAt);
       const startStartedAt = performance.now();
+      let credentialWorker: ChildProcess | undefined;
       const session = await startOmpRpcSession({
         launch,
         enableAskDialog: !input.sandbox,
@@ -170,12 +181,15 @@ export class OmpSdkRuntime implements OmpRuntime {
         // Keep it in the host environment so SDK worker subprocesses inherit it.
         spawnProcess: (hostLaunch) => {
           const [executable, ...args] = hostLaunch.argv;
-          return spawn(executable, args, {
+          const child = spawn(executable, args, {
             cwd: hostLaunch.cwd,
             env: hostLaunch.env,
-            stdio: "pipe",
+            stdio: credentialManagement ? ["pipe", "pipe", "pipe", "ipc"] : "pipe",
             windowsHide: true,
           });
+          assertChildWithPipes(child);
+          if (credentialManagement) credentialWorker = child;
+          return child;
         },
         logger: this.options.logger,
         signal: input.signal,
@@ -188,6 +202,10 @@ export class OmpSdkRuntime implements OmpRuntime {
         serviceTierToken,
         cleanup,
       });
+      if (credentialWorker) {
+        const worker = credentialWorker;
+        session.manageProviderApiKeys = (operation) => requestProviderApiKeyOperation(worker, operation);
+      }
       if (input.sandbox) {
         try {
           input.signal?.throwIfAborted();
@@ -285,4 +303,34 @@ export class OmpSdkRuntime implements OmpRuntime {
     };
     return denied;
   }
+}
+
+function requestProviderApiKeyOperation(
+  child: ChildProcess,
+  operation: OmpProviderApiKeyOperation,
+): Promise<OmpProviderApiKeyResult> {
+  if (!child.connected) return Promise.reject(new Error("OMP SDK credential control is unavailable"));
+  const id = randomUUID();
+  const { promise, resolve, reject } = Promise.withResolvers<OmpProviderApiKeyResult>();
+  const onMessage = (message: { type?: string; id?: string; result?: OmpProviderApiKeyResult }) => {
+    if (message?.type !== OMP_PROVIDER_API_KEY_IPC || message.id !== id || !message.result) return;
+    cleanup();
+    resolve(message.result);
+  };
+  const onDisconnect = () => {
+    cleanup();
+    reject(new Error("OMP SDK credential control is unavailable"));
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    child.off("message", onMessage);
+    child.off("disconnect", onDisconnect);
+  };
+  const timer = setTimeout(onDisconnect, operation.operation === "list" ? 5_000 : 90_000);
+  child.on("message", onMessage);
+  child.on("disconnect", onDisconnect);
+  child.send({ type: OMP_PROVIDER_API_KEY_IPC, id, ...operation }, (error) => {
+    if (error) onDisconnect();
+  });
+  return promise;
 }

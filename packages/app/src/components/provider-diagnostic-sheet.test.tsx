@@ -89,6 +89,7 @@ vi.mock("@/contexts/toast-context", () => ({ useToast: () => ({ showToast: vi.fn
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: vi.fn(async () => false) }));
 
 // These editors and platform overlays are not part of account reordering.
+vi.mock("@/screens/settings/model-connection-chat", () => ({ ModelConnectionChat: () => null }));
 vi.mock("@/components/adaptive-modal-sheet", () => ({
   AdaptiveModalSheet: ({ visible, children }: { visible: boolean; children: ReactNode }) =>
     visible ? <section>{children}</section> : null,
@@ -204,7 +205,7 @@ async function renderPanel(client: ManagementClient) {
       <QuotaConsumer />
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByTestId("omp-signed-in-providers-toggle"));
+  fireEvent.click(await screen.findByTestId("omp-manage-provider-openai-codex"));
   await screen.findByTestId("omp-provider-account-move-up-2");
   await waitFor(() => {
     expect(screen.getByTestId("quota-account-order").textContent).toBe("1,2");
@@ -233,7 +234,7 @@ describe("OMP provider management loading", () => {
         <OmpProviderConfigurationPanel serverId="server-1" />
       </QueryClientProvider>,
     );
-    await screen.findByTestId("omp-signed-in-providers-toggle");
+    await screen.findByTestId("omp-connected-provider-openai-codex");
     first.unmount();
 
     render(
@@ -241,7 +242,7 @@ describe("OMP provider management loading", () => {
         <OmpProviderConfigurationPanel serverId="server-1" />
       </QueryClientProvider>,
     );
-    await screen.findByTestId("omp-signed-in-providers-toggle");
+    await screen.findByTestId("omp-connected-provider-openai-codex");
 
     expect(getOmpProviderManagement).toHaveBeenCalledOnce();
     expect(runtime.refresh).not.toHaveBeenCalled();
@@ -297,7 +298,7 @@ describe("OMP provider management loading", () => {
         <OmpProviderConfigurationPanel serverId="server-1" />
       </QueryClientProvider>,
     );
-    fireEvent.click(await screen.findByTestId("omp-signed-in-providers-toggle"));
+    fireEvent.click(await screen.findByTestId("omp-manage-provider-openai-codex"));
     expect(screen.getByTestId("omp-provider-account-1")).toBeTruthy();
     expect(screen.getByText(/settings.providers.omp.provider.signedIn/)).toBeTruthy();
     expect(screen.queryByTestId("omp-provider-account-quota-1")).toBeNull();
@@ -321,7 +322,7 @@ describe("Codex sign-in methods", () => {
       available: true,
       authenticated: false,
     });
-    result.providerModels = [{ id: "openai-codex", modelCount: 8 }];
+    result.providerModels = authenticated ? [{ id: "openai-codex", modelCount: 8 }] : [];
     return result;
   }
 
@@ -352,7 +353,8 @@ describe("Codex sign-in methods", () => {
         <OmpProviderConfigurationPanel serverId="server-1" />
       </QueryClientProvider>,
     );
-    await screen.findByTestId("omp-not-signed-in-providers-toggle");
+    await screen.findByTestId(result.loginProviders.some((provider) => provider.authenticated)
+      ? "omp-connected-provider-openai-codex" : "omp-provider-search");
   }
 
   it.each([
@@ -360,37 +362,40 @@ describe("Codex sign-in methods", () => {
     ["openai-codex-device", "Enter the device code"],
   ])("shows one signed-out Codex provider and starts the %s flow", async (providerId, expected) => {
     await renderDirectory(codexManagement(false));
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-directory-brand-openai"));
 
     expect(screen.getAllByText("OpenAI Codex")).toHaveLength(1);
     expect(screen.queryByText("OpenAI Codex (Device Code)")).toBeNull();
     expect(screen.getByText("Anthropic")).toBeTruthy();
-    expect(screen.getByText("settings.providers.omp.provider.codexLoginHint")).toBeTruthy();
+    expect(screen.queryByTestId("omp-login-provider-openai-codex-device")).toBeNull();
+    if (providerId === "openai-codex-device") {
+      fireEvent.click(screen.getByTestId("omp-provider-device-fallback-openai-codex"));
+    }
     fireEvent.click(screen.getByTestId(`omp-login-provider-${providerId}`));
     expect(await screen.findByText(expected)).toBeTruthy();
   });
 
   it("keeps one shared account list and both add-account methods after sign-in", async () => {
     await renderDirectory(codexManagement(true));
-    fireEvent.click(screen.getByTestId("omp-signed-in-providers-toggle"));
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-manage-provider-openai-codex"));
 
-    expect(screen.getAllByText("OpenAI Codex")).toHaveLength(1);
+    expect(screen.getAllByTestId("omp-connected-provider-openai-codex")).toHaveLength(1);
     expect(screen.queryByText("OpenAI Codex (Device Code)")).toBeNull();
     expect(screen.getByTestId("omp-provider-account-1")).toBeTruthy();
     expect(screen.getByTestId("omp-provider-account-2")).toBeTruthy();
     expect(screen.getByText("settings.providers.omp.provider.codexBrowserAddAccount")).toBeTruthy();
-    expect(screen.getByText("settings.providers.omp.provider.codexDeviceAddAccount")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("omp-provider-device-fallback-openai-codex"));
     fireEvent.click(screen.getByTestId("omp-login-provider-openai-codex-device"));
     expect(await screen.findByText("Enter the device code")).toBeTruthy();
   });
 
   it("finds the grouped provider when searching for its device-code alias", async () => {
     await renderDirectory(codexManagement(false));
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
     fireEvent.change(screen.getByTestId("omp-provider-search"), {
       target: { value: "openai-codex-device" },
     });
+    fireEvent.click(screen.getByTestId("omp-directory-brand-openai"));
+    fireEvent.click(screen.getByTestId("omp-provider-device-fallback-openai-codex"));
 
     expect(screen.getByText("OpenAI Codex")).toBeTruthy();
     expect(screen.queryByText("Anthropic")).toBeNull();
@@ -401,7 +406,7 @@ describe("Codex sign-in methods", () => {
     const result = codexManagement(false);
     result.loginProviders[0]!.available = false;
     await renderDirectory(result);
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-directory-brand-openai"));
 
     expect(screen.getByText("OpenAI Codex")).toBeTruthy();
     expect(screen.queryByTestId("omp-login-provider-openai-codex")).toBeNull();
@@ -413,7 +418,7 @@ describe("Codex sign-in methods", () => {
     const result = codexManagement(false);
     result.loginProviders[1]!.available = false;
     await renderDirectory(result);
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-directory-brand-openai"));
 
     expect(screen.getByText("OpenAI Codex")).toBeTruthy();
     expect(screen.queryByTestId("omp-login-provider-openai-codex-device")).toBeNull();
@@ -425,22 +430,22 @@ describe("Codex sign-in methods", () => {
     const result = codexManagement(true);
     result.loginProviders[0]!.authenticated = false;
     await renderDirectory(result);
-    fireEvent.click(screen.getByTestId("omp-signed-in-providers-toggle"));
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-manage-provider-openai-codex"));
 
-    expect(screen.getAllByText("OpenAI Codex")).toHaveLength(1);
+    expect(screen.getAllByTestId("omp-connected-provider-openai-codex")).toHaveLength(1);
     expect(screen.getByTestId("omp-provider-account-1")).toBeTruthy();
     expect(
       screen.getByText("settings.providers.omp.provider.signedIn", { exact: false }),
     ).toBeTruthy();
-    expect(screen.getByText("settings.providers.omp.provider.codexDeviceAddAccount")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("omp-provider-device-fallback-openai-codex"));
+    expect(screen.getByTestId("omp-login-provider-openai-codex-device")).toBeTruthy();
   });
 
   it("retains a standalone device-code provider on runtimes without the browser provider", async () => {
     const result = codexManagement(false);
     result.loginProviders.shift();
     await renderDirectory(result);
-    fireEvent.click(screen.getByTestId("omp-not-signed-in-providers-toggle"));
+    fireEvent.click(screen.getByTestId("omp-directory-brand-openai"));
 
     expect(screen.getByText("OpenAI Codex (Device Code)")).toBeTruthy();
     fireEvent.click(screen.getByTestId("omp-login-provider-openai-codex-device"));

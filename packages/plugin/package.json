@@ -1,6 +1,6 @@
 {
   "name": "@omp-desktop/plugin",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "OMP Desktop unified plugin SDK",
   "files": ["dist", "src", "!src/**/*.test.*", "!dist/**/*.map"],
   "type": "module",
@@ -47,8 +47,8 @@
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@omp-desktop/client": "0.7.1",
-    "@omp-desktop/protocol": "0.7.1",
+    "@omp-desktop/client": "0.7.2",
+    "@omp-desktop/protocol": "0.7.2",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -57,8 +57,8 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@omp-desktop/client": "0.7.1",
-    "@omp-desktop/protocol": "0.7.1",
+    "@omp-desktop/client": "0.7.2",
+    "@omp-desktop/protocol": "0.7.2",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

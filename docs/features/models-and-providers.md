@@ -15,7 +15,13 @@ Configure host-scoped providers, select models and reasoning settings, and manag
 
 ## Getting started and host scope
 
-A configured OMP model provider is required to run conversations, but not to open provider settings or start sign-in. **Configure models** on the home screen opens **Host Settings → Model providers** for the local host when available, otherwise the first configured host. With no configured host it starts the add-host flow.
+To connect your first model, choose **Configure models** on the home screen. It opens **Host Settings → Model connections** for the local host when available, otherwise the first configured host. With no configured host, it starts the add-host flow.
+
+**Quick connect** shows OpenAI, Anthropic, DeepSeek, Cursor, Kimi, and GLM when available on the host. For another provider, search by brand or model (for example, **Gemini** for Google), or browse the full directory. If you have a gateway URL, open **Other gateways**.
+
+Use the connection method shown for your host: browser sign-in opens the provider's authorization page, while **Use API key** stores the key with OMP's credentials for that built-in provider.
+
+On **Model connections**, select an available model on a connected provider’s card. If your last workspace was on this host, its project is preselected when available. The only project on a host is also preselected; with several projects and no match, choose one. **Start chat** opens a new draft with your chosen model. If the host has no projects, add one to open the draft. Existing conversations and drafts stay as they are, and no message is sent until you send one.
 
 Fresh configurations can list built-in sign-in providers without API keys or custom providers. If OMP exits with `No models available` or `No default model selected`, Desktop retries RPC startup with an internal keyless bootstrap model while preserving existing provider settings and YAML comments. That hidden entry is excluded from provider settings, the YAML editor, and selectable catalogs; it cannot run conversations.
 
@@ -23,7 +29,7 @@ Fresh configurations can list built-in sign-in providers without API keys or cus
 
 Providers, credentials, and model catalogs are shared by all projects and conversations on a host through its active OMP configuration/profile. New conversations and project switches reuse that catalog instead of loading an empty project-specific list. The project working directory determines execution location, not provider scope. Different hosts have separate catalogs.
 
-On touch/compact interfaces, **Settings → Providers** for the selected host manages models, sign-in accounts, and connection state. App-level **Settings → Chat behavior** holds conversation defaults; host projects and providers remain host-scoped. Relay and pairing controls are under host connections/Connections, not provider settings; see [Remote hosts](../remote-hosts.md).
+On touch/compact interfaces, **Settings → Model connections** for the selected host manages models, sign-in accounts, and connection state. App-level **Settings → Chat behavior** holds conversation defaults; host projects and providers remain host-scoped. Relay and pairing controls are under host connections/Connections, not model settings; see [Remote hosts](../remote-hosts.md).
 
 ### Official account numbers
 
@@ -37,7 +43,7 @@ The sidebar, account choices, usage cards, and ChatGPT image-generation account 
 
 ## Custom provider names
 
-**Add custom provider** asks for a display name rather than a technical provider ID. Names support Chinese and other languages, spaces, and punctuation. Desktop generates a stable internal ID automatically; **Edit** shows it as read-only information and lets you change the name at any time.
+**Other gateways** asks for the API endpoint and key. The provider name defaults to the hostname. You can rename it without changing its stable internal ID or recreating the connection. Names support Chinese and other languages, spaces, and punctuation.
 
 Settings, model-picker provider groups, and model search use the display name. Renaming refreshes the catalog without changing provider/model IDs, selected models, conversation references, or credentials. Different providers may share a display name; their internal IDs remain distinct.
 
@@ -47,7 +53,7 @@ Model catalogs prefer an explicit `models.yml` display name, then the registered
 
 **Fetch model list** tries `/v2/models` first, then `/v1/models` after any failed request, HTTP error, invalid or empty response, or body-decoding failure (including broken gzip). Unversioned API roots retain `/models` as the last fallback. Valid gzip responses remain supported, and successful v2 discovery retains its richer model metadata.
 
-If every endpoint fails, discovery returns no models without surfacing a fetch error or clearing the editor's existing model draft; models can still be entered manually. Each endpoint has a 15-second timeout, and the client allows 60 seconds for the complete fallback chain.
+If discovery finds no models, the form offers manual entry and keeps the current model draft. Use the model ID and API format from the gateway's documentation. Context and output limits are under advanced model settings. Each discovery endpoint has a 15-second timeout, and the client allows 60 seconds for the complete fallback chain.
 
 ## Catalog refresh and sign-in
 

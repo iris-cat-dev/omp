@@ -13,6 +13,7 @@ import {
   type AgentFeature,
   type AgentProvider,
   type AgentSessionConfig,
+  type OmpProviderManagement,
   type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
@@ -1097,6 +1098,38 @@ export class ProviderCatalogSession {
       });
     }
   }
+  async handleOmpProviderApiKeySetRequest(
+    msg: Extract<SessionInboundMessage, { type: "omp.provider.api_key.set.request" }>,
+  ): Promise<void> {
+    let management: OmpProviderManagement;
+    try {
+      management = await this.providerSnapshotManager.setOmpProviderApiKey(msg.providerId, msg.apiKey);
+    } catch {
+      // This is a secret-bearing request. Never log or forward lower-layer errors.
+      this.logger.warn("Could not save an OMP provider API key");
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: "Could not save the OMP provider API key",
+          code: "omp_provider_api_key_set_failed",
+        },
+      });
+      return;
+    }
+    this.providerUsageService.invalidateCache?.();
+    try {
+      await this.providerSnapshotManager.refreshSettingsSnapshot({ providers: ["omp"] });
+    } catch {
+      this.logger.warn("Could not refresh the OMP settings catalog after saving an API key");
+    }
+    this.host.emit({
+      type: "omp.provider.api_key.set.response",
+      payload: { ...management, requestId: msg.requestId },
+    });
+  }
+
   async handleOmpProviderLogoutRequest(
     msg: Extract<SessionInboundMessage, { type: "omp.provider.logout.request" }>,
   ): Promise<void> {

@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
@@ -2070,6 +2071,7 @@ export const ar: TranslationResources = {
   },
   settings: {
     memory: ompMemorySettings.ar,
+    modelConnectionChat: modelConnectionChat.ar,
     title: "إعدادات",
     loading: "جارٍ تحميل الإعدادات...",
     groups: {
@@ -2738,7 +2740,7 @@ export const ar: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings.ar,
-      title: "مقدمي الخدمات",
+      title: "اتصالات النماذج",
       addProvider: "إضافة مزود",
       providerDetails: "تفاصيل مزود{{name}}",
       enableProvider: "تمكين{{name}}",

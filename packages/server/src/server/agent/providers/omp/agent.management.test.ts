@@ -147,13 +147,20 @@ describe("OMP provider management", () => {
         },
       ],
       loginProviders: [
-        { id: "anthropic", name: "Anthropic", available: true, authenticated: true },
-        { id: "openai", name: "OpenAI", available: true, authenticated: false },
+        { id: "anthropic", name: "Anthropic", available: true, authenticated: true, supportsBrowserLogin: true },
+        { id: "openai", name: "OpenAI", available: true, authenticated: false, supportsBrowserLogin: false },
       ],
     });
     await expect(readFile(path.join(agentDir, "models.yml"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  test("does not start Desktop OAuth for a terminal-only SDK login", async () => {
+    const { client } = await createClient();
+    await expect(client.startOmpProviderLogin("deepseek")).rejects.toThrow(
+      "Browser login is unavailable for this provider",
+    );
   });
 
   test("does not rewrite models.yml when OMP RPC starts successfully", async () => {
@@ -177,7 +184,7 @@ providers:
 
     const management = await client.getOmpProviderManagement();
     expect(management.loginProviders).toEqual([
-      { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: false, supportsBrowserLogin: true },
     ]);
     expect(await readFile(configPath, "utf8")).toBe(`# Keep this comment
 providers:
@@ -224,7 +231,7 @@ providers:
     expect(management.configYaml).toContain("mintcat");
     expect(management.configYaml).not.toContain("omp-desktop-bootstrap");
     expect(management.loginProviders).toEqual([
-      { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: false, supportsBrowserLogin: true },
     ]);
     const onDisk = await readFile(configPath, "utf8");
     expect(onDisk).toContain("# Keep this comment");
@@ -248,7 +255,7 @@ providers:
     expect(management.runtimeError).toBeUndefined();
     expect(management.providerModels).toEqual([]);
     expect(management.loginProviders).toEqual([
-      { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+      { id: "anthropic", name: "Anthropic", available: true, authenticated: false, supportsBrowserLogin: true },
     ]);
     expect(management.configYaml).not.toContain("omp-desktop-bootstrap");
     expect(management.configYaml).toContain("# Provider notes");

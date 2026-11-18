@@ -32,7 +32,7 @@ to keep this Desktop connected.
 
 ## Use models configured on this Desktop
 
-Each connected remote host can independently use models configured on **this computer** or on **the remote host**, whether connected through SSH provisioning, manual pairing, or direct TCP. Choose the source in **Host Settings → Model source** or **Host Settings → Providers → Model source**. The choice persists across reconnections and Desktop restarts. Configure or sign in to local models on the local host; while local models are selected, the remote Providers page links to those settings.
+Each connected remote host can independently use models configured on **this computer** or on **the remote host**, whether connected through SSH provisioning, manual pairing, or direct TCP. Choose the source in **Host Settings → Model source** or **Host Settings → Model connections → Model source**. The choice persists across reconnections and Desktop restarts. When a remote host uses local models, its **Model connections** page links to the local host's settings for configuration and sign-in.
 
 New SSH-managed hosts use local models by default. Existing SSH choices are migrated without overriding a choice already saved in the host registry; older SSH profiles with no choice keep the local default. Manually paired and TCP hosts with no saved choice continue using remote models and do not take over another Desktop's attached source.
 

@@ -233,7 +233,6 @@ export function HostProxyPage({ serverId }: { serverId: string }) {
   );
 }
 export function HostProvidersPage({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
   const host = useHostProfile(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
 
@@ -244,9 +243,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
     <View>
       <HostModelSourceSection serverId={serverId} />
       {!shouldUseDesktopDaemon() || isLocalDaemon || host.modelSource !== "local" ? (
-        <SettingsSection title={t("settings.providers.title")}>
-          <OmpProviderConfigurationPanel serverId={serverId} />
-        </SettingsSection>
+        <OmpProviderConfigurationPanel key={serverId} serverId={serverId} />
       ) : null}
     </View>
   );

@@ -335,6 +335,7 @@ function setPageStatus(
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const { t } = useTranslation();
   const tabHost = useActiveWorkspaceSelection();
+  const modelChatHostId = request.onProjectAdded ? request.preferredHostId : undefined;
   const hosts = useHosts();
   const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const connectionStatuses = useHostRuntimeConnectionStatuses(hostIds);
@@ -353,6 +354,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const availableHosts = useMemo<AddProjectHost[]>(
     () =>
       hosts.flatMap((host) => {
+        if (modelChatHostId && host.serverId !== modelChatHostId) return [];
         if (connectionStatuses.get(host.serverId) !== "online") return [];
         const canAddProject =
           projectAddByHost.get(host.serverId) === true &&
@@ -375,6 +377,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       githubCloneByHost,
       githubSearchByHost,
       hosts,
+      modelChatHostId,
       projectAddByHost,
       stableProjectIdentityByHost,
     ],
@@ -505,15 +508,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const openNewWorkspaceForProject = useCallback(
     async (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
-      await openProjectWorkspaceDraft({
-        serverId,
-        projectId: project.projectId,
-        projectRootPath: project.projectRootPath,
-        tabHost,
-      });
+      if (request.onProjectAdded) {
+        await request.onProjectAdded(project);
+      } else {
+        await openProjectWorkspaceDraft({
+          serverId,
+          projectId: project.projectId,
+          projectRootPath: project.projectRootPath,
+          tabHost,
+        });
+      }
       onClose();
     },
-    [onClose, tabHost],
+    [onClose, request.onProjectAdded, tabHost],
   );
 
   const openAddedProject = useCallback(

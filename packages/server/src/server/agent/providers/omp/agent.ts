@@ -5,6 +5,7 @@ import type {
 } from "@omp-desktop/protocol/background-processes";
 import type { RuntimeResource } from "@omp-desktop/protocol/runtime-resources";
 import type { AgentPromptContext } from "@omp-desktop/protocol/prompt-context";
+import { isKnownOmpBrowserLoginProvider } from "@omp-desktop/protocol/omp-provider-auth";
 import { OmpBackgroundDaemons } from "./background-daemons.js";
 import { createRequire } from "node:module";
 import { existsSync, promises as fs } from "node:fs";
@@ -6948,8 +6949,18 @@ export class OmpAgentClient implements AgentClient {
     });
   }
 
-  // eslint-disable-next-line complexity
   async getOmpProviderManagement(): Promise<OmpProviderManagement> {
+    return await this.readOmpProviderManagement();
+  }
+
+  async setOmpProviderApiKey(providerId: string, apiKey: string): Promise<OmpProviderManagement> {
+    return await this.readOmpProviderManagement({ providerId, apiKey });
+  }
+
+  // eslint-disable-next-line complexity
+  private async readOmpProviderManagement(
+    apiKeyUpdate?: { providerId: string; apiKey: string },
+  ): Promise<OmpProviderManagement> {
     const configPath = this.resolveModelsConfigPath();
     let configYaml = await fs
       .readFile(configPath, "utf8")
@@ -7002,16 +7013,34 @@ export class OmpAgentClient implements AgentClient {
     let accountOrder: OmpProviderAccountOrder = {};
     let loginProviders: OmpProviderManagement["loginProviders"] = [];
     let runtimeError: string | undefined;
+    let apiKeySaved = false;
     let runtimeSession: OmpRuntimeSession | undefined;
     try {
       const launchMode = this.resolveLaunchMode(undefined);
-      runtimeSession = await this.startOmpRuntimeSession({
-        cwd: homedir(),
-        protocolMode: "rpc-ui",
-        ...(this.runtime instanceof OmpSdkRuntime ? { noSession: true } : {}),
-        modeId: launchMode.modeId,
-        extraArgs: launchMode.extraArgs,
-      });
+      const sdk = this.runtime instanceof OmpSdkRuntime;
+      runtimeSession = await this.startOmpRuntimeSession(
+        {
+          cwd: homedir(),
+          protocolMode: "rpc-ui",
+          ...(sdk ? { noSession: true, providerApiKeyManagement: true } : {}),
+          modeId: launchMode.modeId,
+          extraArgs: launchMode.extraArgs,
+        },
+        apiKeyUpdate === undefined,
+      );
+      const apiKeyProviders = apiKeyUpdate
+        ? await runtimeSession.manageProviderApiKeys?.({ operation: "save", ...apiKeyUpdate })
+        : await runtimeSession.manageProviderApiKeys?.({ operation: "list" }).catch(() => undefined);
+      if (apiKeyUpdate) {
+        if (!apiKeyProviders?.ok) throw new Error("OMP API key management is unavailable");
+        apiKeySaved = true;
+        if (apiKeyProviders.refreshFailed) {
+          runtimeError = "API key saved, but OMP could not refresh all catalog data";
+        }
+      }
+      const keyProviders = new Map(
+        apiKeyProviders?.ok ? apiKeyProviders.providers.map((provider) => [provider.id, provider]) : [],
+      );
       configYaml = await fs
         .readFile(configPath, "utf8")
         .catch((error: NodeJS.ErrnoException) =>
@@ -7117,8 +7146,27 @@ export class OmpAgentClient implements AgentClient {
         const current = this.codexQuotaState.completeRead(codexRead, quota);
         if (current) quotaByCredentialId.set(account.credentialId, current);
       }
+      const authProviders: OmpProviderManagement["loginProviders"] = providers.map(
+        ({ id, name, available, authenticated }) => {
+          const keyProvider = keyProviders.get(id);
+          const supportsBrowserLogin = isKnownOmpBrowserLoginProvider(id);
+          if (!keyProvider) return { id, name, available, authenticated, supportsBrowserLogin };
+          keyProviders.delete(id);
+          return {
+            id,
+            name,
+            available,
+            supportsBrowserLogin,
+            authenticated: authenticated || keyProvider.authenticated,
+            supportsApiKey: true,
+          };
+        },
+      );
+      for (const provider of keyProviders.values()) {
+        authProviders.push({ ...provider, available: false, supportsBrowserLogin: false, supportsApiKey: true });
+      }
       // eslint-disable-next-line oxc/no-map-spread
-      loginProviders = providers.map((provider) => {
+      loginProviders = authProviders.map((provider) => {
         const accounts = sortStoredOmpOAuthAccounts(
           storedAccountsByProvider.get(provider.id) ?? [],
           accountOrder[provider.id] ?? [],
@@ -7139,8 +7187,14 @@ export class OmpAgentClient implements AgentClient {
         };
       });
     } catch (error) {
-      runtimeError = toDiagnosticErrorMessage(error);
-      this.logger.debug({ err: error }, "OMP provider management lookup failed");
+      if (apiKeyUpdate) {
+        // Upstream errors may contain authentication material, even after persistence.
+        if (!apiKeySaved) throw new Error("Could not save the OMP provider API key");
+        runtimeError = "API key saved, but OMP could not refresh the provider catalog";
+      } else {
+        runtimeError = toDiagnosticErrorMessage(error);
+        this.logger.debug({ err: error }, "OMP provider management lookup failed");
+      }
     } finally {
       await runtimeSession?.close().catch(() => undefined);
     }
@@ -7519,6 +7573,9 @@ export class OmpAgentClient implements AgentClient {
     providerId: string,
     onCompleted?: (flowId: string) => Promise<void>,
   ): Promise<OmpProviderLoginStart> {
+    if (!isKnownOmpBrowserLoginProvider(providerId)) {
+      throw new Error("Browser login is unavailable for this provider. Use API key settings or sign in from OMP in the host terminal.");
+    }
     const runtimeSession = await this.startOmpRuntimeSession({
       cwd: homedir(),
       protocolMode: "rpc-ui",

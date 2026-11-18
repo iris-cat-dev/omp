@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
@@ -2086,6 +2087,7 @@ export const ko: TranslationResources = {
   },
   settings: {
     memory: ompMemorySettings.ko,
+    modelConnectionChat: modelConnectionChat.ko,
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {
@@ -2759,7 +2761,7 @@ export const ko: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings.ko,
-      title: "프로바이더",
+      title: "모델 연결",
       addProvider: "프로바이더 추가",
       providerDetails: "{{name}} 프로바이더 세부 정보",
       enableProvider: "{{name}} 활성화",

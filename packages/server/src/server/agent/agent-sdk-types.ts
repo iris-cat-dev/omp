@@ -834,7 +834,9 @@ export interface OmpProviderManagement {
     id: string;
     name: string;
     available: boolean;
+    supportsBrowserLogin?: boolean;
     authenticated: boolean;
+    supportsApiKey?: boolean;
     accounts?: Array<{
       credentialId: number;
       accountNumber?: number;
@@ -949,6 +951,7 @@ export interface AgentClient {
   }): Promise<OmpInstallationStatus>;
   installOmp?(options?: { defer?: boolean }): Promise<OmpInstallationStatus>;
   cancelOmpInstall?(): Promise<OmpInstallationStatus>;
+  setOmpProviderApiKey?(providerId: string, apiKey: string): Promise<OmpProviderManagement>;
   startOmpProviderLogin?(
     providerId: string,
     onCompleted?: (flowId: string) => Promise<void>,

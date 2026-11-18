@@ -2172,6 +2172,13 @@ export const OmpInstallRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const OmpProviderApiKeySetRequestMessageSchema = z.object({
+  type: z.literal("omp.provider.api_key.set.request"),
+  providerId: z.string().min(1).max(128),
+  apiKey: z.string().trim().min(1).max(8192),
+  requestId: z.string(),
+});
+
 export const OmpProviderLoginStartRequestMessageSchema = z.object({
   type: z.literal("omp.provider.login.start.request"),
   providerId: z.string().min(1),
@@ -3943,6 +3950,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   OmpProviderModelDiscoveryRequestMessageSchema,
   OmpInstallStatusRequestMessageSchema,
   OmpInstallRequestMessageSchema,
+  OmpProviderApiKeySetRequestMessageSchema,
   OmpProviderLoginStartRequestMessageSchema,
   OmpProviderLoginFinishRequestMessageSchema,
   OmpProviderLoginCancelRequestMessageSchema,
@@ -4177,6 +4185,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         // COMPAT(ompProviderManagement): added in v0.1.0, remove gate after 2027-03-13.
         ompProviderManagement: z.boolean().optional(),
+        ompProviderApiKey: z.boolean().optional(),
         ompCodexResetCredits: z.boolean().optional(),
         // COMPAT(ompCodexResetSettings): added 2026-11-01, remove gate after 2027-05-01.
         ompCodexResetSettings: z.boolean().optional(),
@@ -6993,7 +7002,10 @@ export const OmpProviderManagementSchema = z.object({
       id: z.string(),
       name: z.string(),
       available: z.boolean(),
+      // `available` includes terminal-only login; it does not imply browser support.
+      supportsBrowserLogin: z.boolean().optional(),
       authenticated: z.boolean(),
+      supportsApiKey: z.boolean().optional(),
       accounts: z
         .array(
           z.object({
@@ -7211,6 +7223,11 @@ export const OmpInstallStatusResponseMessageSchema = z.object({
 export const OmpInstallResponseMessageSchema = z.object({
   type: z.literal("omp.install.response"),
   payload: OmpInstallationStatusSchema.extend({ requestId: z.string() }),
+});
+
+export const OmpProviderApiKeySetResponseMessageSchema = z.object({
+  type: z.literal("omp.provider.api_key.set.response"),
+  payload: OmpProviderManagementSchema.extend({ requestId: z.string() }),
 });
 
 export const OmpProviderLoginStartResponseMessageSchema = z.object({
@@ -8106,6 +8123,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   OmpProviderLoginFinishResponseMessageSchema,
   OmpProviderLoginCompletedMessageSchema,
   OmpProviderLoginCancelResponseMessageSchema,
+  OmpProviderApiKeySetResponseMessageSchema,
   OmpProviderLogoutResponseMessageSchema,
   OmpPluginListResponseMessageSchema,
   OmpPluginInstallResponseMessageSchema,
@@ -8394,6 +8412,9 @@ export type OmpProviderLoginFinishResponseMessage = z.infer<
 >;
 export type OmpProviderLoginCompletedMessage = z.infer<
   typeof OmpProviderLoginCompletedMessageSchema
+>;
+export type OmpProviderApiKeySetResponseMessage = z.infer<
+  typeof OmpProviderApiKeySetResponseMessageSchema
 >;
 export type OmpProviderLogoutResponseMessage = z.infer<
   typeof OmpProviderLogoutResponseMessageSchema

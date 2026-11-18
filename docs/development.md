@@ -129,6 +129,12 @@ Each top-level agent runs in a separate Node process with the existing RPC sessi
 
 Node RPC startup initializes the configured theme without a terminal theme watcher before constructing the session. `ask` uses theme-provided control labels even with a remote prompt UI; bypassing this initialization fails before a question reaches Desktop. Rebuild the SDK and restart existing session hosts to apply changes; running hosts retain their loaded code.
 
+Settings can save built-in API keys on SDK hosts. Clients require both `features.ompProviderApiKey` and the selected provider's `supportsApiKey` before calling `setOmpProviderApiKey`. The SDK writes to its active profile or configured auth broker; re-entering the same key deduplicates it, while a different key adds a credential without replacing existing keys or OAuth accounts. Restricted broker account pools do not offer the settings write. The save refreshes model discovery; it does not verify key validity.
+
+The SDK's login `available` flag also covers terminal-only prompts. Use `supportsBrowserLogin` to decide which entries can launch Desktop OAuth; for older hosts, use the verified roster in `@omp-desktop/protocol/omp-provider-auth`. For other available login methods without a settings key form, sign in with OMP on the target host's terminal. The Desktop OAuth input accepts authorization codes and redirect URLs.
+
+After updating the pinned SDK model catalog, run `node packages/app/scripts/project-omp-provider-catalog.mjs` from the repository root. Include the regenerated `omp-provider-model-index.json` with the SDK update. The connection directory searches those public model IDs and names before sign-in; the chat picker uses the selected host's live catalog.
+
 **Cursor upstream ports**
 
 The source SDK includes these selectively ported `can1357/oh-my-pi` changes, retaining Node transport, proxy policies, and runtime adapters:

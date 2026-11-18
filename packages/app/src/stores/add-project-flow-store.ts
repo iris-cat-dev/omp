@@ -1,13 +1,19 @@
+import type { WorkspaceProjectDescriptorPayload } from "@omp-desktop/protocol/messages";
 import { create } from "zustand";
 
 export interface AddProjectFlowRequest {
   id: number;
   preferredHostId?: string;
+  onProjectAdded?: (project: WorkspaceProjectDescriptorPayload) => Promise<void>;
 }
 
 interface AddProjectFlowStoreState {
   request: AddProjectFlowRequest | null;
   open: (preferredHostId?: string) => void;
+  openForModelChat: (
+    serverId: string,
+    onProjectAdded: NonNullable<AddProjectFlowRequest["onProjectAdded"]>,
+  ) => void;
   close: () => void;
 }
 
@@ -22,6 +28,9 @@ export const useAddProjectFlowStore = create<AddProjectFlowStoreState>((set) => 
         ...(preferredHostId ? { preferredHostId } : {}),
       },
     });
+  },
+  openForModelChat: (preferredHostId, onProjectAdded) => {
+    set({ request: { id: nextRequestId++, preferredHostId, onProjectAdded } });
   },
   close: () => set({ request: null }),
 }));

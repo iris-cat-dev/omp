@@ -136,7 +136,7 @@ Zhipu percentages mean **used quota**. Missing percentages stay unknown, not unu
 
 ## Claude official accounts
 
-OMP's built-in `anthropic` sign-ins have individual entries under **Host Settings → Model providers → Signed-in providers** and host **Usage**. **Claude usage** in the mobile/desktop composer opens the sheet even before context-token data exists. Reopening it or choosing **Refresh** requests fresh server usage.
+Under **Host Settings → Model connections**, open **Manage** on the Anthropic connection to see its individual sign-in accounts. The host **Usage** page also lists them. **Claude usage** in the mobile/desktop composer opens the sheet even before context-token data exists. Reopening it or choosing **Refresh** requests fresh server usage.
 
 When a session identifies its selected credential, usage is isolated to that account. Otherwise the sheet explains the missing session account and lists signed-in accounts with their own labels/quotas. It never guesses the active account or merges percentages; account names, notes, and order are unchanged.
 
@@ -177,7 +177,7 @@ Claude accounts do not show Codex reset actions or subscription-expiry controls.
 
 ### Quota and credits
 
-**Host Settings → Model providers → Signed-in providers** shows each Codex account's five-hour and weekly windows. Windows are identified by reported duration; missing durations retain legacy plan/window mapping. A five-hour window appears only if usage or reset time is reported, including for Pro.
+Open the account's usage details to see its five-hour and weekly windows. In **Host Settings → Model connections**, use **Manage** on the Codex connection to find its accounts. Windows are identified by reported duration; missing durations retain legacy plan/window mapping. A five-hour window appears only if usage or reset time is reported, including for Pro.
 
 Percentages mean **remaining quota**; unknown is not 100% remaining. Context tooltips list labeled accounts instead of guessing from provider namespace. Settings/sidebar show live compact countdowns such as `3d21h` and `2h12min`; deadlines trigger server refresh and an awaiting-refresh state, never assumed recovery.
 

@@ -169,7 +169,6 @@ describe("translation resources", () => {
     expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
     expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
-    expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
 
   it("preserves reviewed Korean status labels", () => {
@@ -265,7 +264,6 @@ describe("translation resources", () => {
     expect(en.settings.host.connections.title).toBe("Connections");
     expect(en.settings.host.daemon.restart.title).toBe("Restart daemon");
     expect(en.settings.host.orchestration.enableTools.title).toBe("Enable OMP Desktop tools");
-    expect(en.settings.providers.title).toBe("Providers");
     expect(en.settings.providers.models.addModel).toBe("Add model");
     expect(en.settings.providers.diagnostic.title).toBe("Diagnostic");
     expect(en.settings.project.scripts.actions.add).toBe("Add script");

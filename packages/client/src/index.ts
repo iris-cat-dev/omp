@@ -20,6 +20,7 @@ import type {
   OmpProviderLoginFinishResponseMessage,
   OmpProviderLoginCancelResponseMessage,
   OmpProviderLoginStartResponseMessage,
+  OmpProviderApiKeySetResponseMessage,
   OmpInstallationStatus,
   OmpProviderManagementGetResponseMessage,
   OmpCodexResetSettingsGetResponseMessage,
@@ -517,6 +518,11 @@ export interface OmpProviderManagementActions {
     strategy?: "immediate" | "stop-agents" | "defer";
   }): Promise<OmpInstallationStatus>;
   cancelInstall(options?: { requestId?: string }): Promise<OmpInstallationStatus>;
+  setProviderApiKey(
+    providerId: string,
+    apiKey: string,
+    options?: { requestId?: string },
+  ): Promise<OmpProviderApiKeySetResponseMessage["payload"]>;
   startProviderLogin(
     providerId: string,
     options?: { requestId?: string },
@@ -712,6 +718,8 @@ export function createOmpApi(daemonClient: DaemonClient): OmpApi {
       getInstallationStatus: (options) => daemonClient.getOmpInstallationStatus(options),
       install: (options) => daemonClient.installOmp(options),
       cancelInstall: (options) => daemonClient.cancelOmpInstall(options),
+      setProviderApiKey: (providerId, apiKey, options) =>
+        daemonClient.setOmpProviderApiKey(providerId, apiKey, options),
       startProviderLogin: (providerId, options) =>
         daemonClient.startOmpProviderLogin(providerId, options),
       finishProviderLogin: (flowId, input, options) =>

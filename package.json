@@ -1,6 +1,6 @@
 {
   "name": "omp-desktop",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "Desktop client for local Oh My Pi coding agents",
   "keywords": [
@@ -80,7 +80,7 @@
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js"
   },
   "devDependencies": {
-    "@omp-desktop/plugin": "0.7.1",
+    "@omp-desktop/plugin": "0.7.2",
     "@babel/parser": "^7.28.5",
     "esbuild": "0.28.2",
     "@types/ws": "^8.5.14",

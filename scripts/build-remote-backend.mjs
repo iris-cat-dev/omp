@@ -187,7 +187,7 @@ try {
   }
   const deploymentPackage = {
     name: "omp-desktop-remote-backend",
-    version: "0.7.1",
+    version: "0.7.2",
     private: true,
     dependencies,
   };

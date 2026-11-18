@@ -679,6 +679,18 @@ export class ProviderSnapshotManager {
     return await client.cancelOmpInstall();
   }
 
+  async setOmpProviderApiKey(providerId: string, apiKey: string): Promise<OmpProviderManagement> {
+    const definition = this.providerRegistry.omp;
+    if (!definition) throw new Error("OMP provider is not configured");
+    const client = this.ensureClient("omp", definition);
+    if (!client.setOmpProviderApiKey) throw new Error("OMP API key management is unavailable");
+    try {
+      return await client.setOmpProviderApiKey(providerId, apiKey);
+    } finally {
+      this.ompProviderManagementRead = null;
+    }
+  }
+
   async startOmpProviderLogin(providerId: string) {
     const definition = this.providerRegistry.omp;
     if (!definition) throw new Error("OMP provider is not configured");

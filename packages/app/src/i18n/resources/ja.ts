@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
@@ -2093,6 +2094,7 @@ export const ja: TranslationResources = {
   },
   settings: {
     memory: ompMemorySettings.ja,
+    modelConnectionChat: modelConnectionChat.ja,
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
@@ -2769,7 +2771,7 @@ export const ja: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings.ja,
-      title: "プロバイダー",
+      title: "モデル接続",
       addProvider: "プロバイダーを追加",
       providerDetails: "{{name}}プロバイダーの詳細",
       enableProvider: "{{name}}を有効にする",

@@ -93,7 +93,7 @@ export function supportsJsonlRpcProtocolV2(message: Record<string, unknown>): bo
   );
 }
 
-function assertChildWithPipes(
+export function assertChildWithPipes(
   child: ChildProcess,
 ): asserts child is ChildProcessWithoutNullStreams {
   if (!child.stdin || !child.stdout || !child.stderr) {

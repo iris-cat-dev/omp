@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
+import { modelConnectionChat } from "./model-connection-chat";
 import { providerUsage } from "./provider-usage";
 import { backgroundProcesses } from "./background-processes";
 import { wallpaperLibrary } from "./wallpaper-library";
@@ -2260,6 +2261,7 @@ export const zhCN: TranslationResources = {
   },
   settings: {
     memory: ompMemorySettings["zh-CN"],
+    modelConnectionChat: modelConnectionChat["zh-CN"],
     title: "设置",
     loading: "正在加载设置...",
     groups: {
@@ -3058,7 +3060,7 @@ export const zhCN: TranslationResources = {
     },
     providers: {
       omp: ompProviderSettings["zh-CN"],
-      title: "模型服务商",
+      title: "模型连接",
       addProvider: "添加模型服务商",
       providerDetails: "{{name}} 服务商详情",
       enableProvider: "启用 {{name}}",
@@ -3085,8 +3087,8 @@ export const zhCN: TranslationResources = {
         notInstalled: "未安装",
       },
       models: {
-        one: "1 个 Model",
-        many: "{{count}} 个 Model",
+        one: "1 个模型",
+        many: "{{count}} 个模型",
         addModel: "添加 Model",
         addCustomTitle: "添加自定义 Model",
         modelId: "Model ID",
