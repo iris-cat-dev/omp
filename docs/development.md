@@ -311,6 +311,12 @@ dynamic state with no retained snapshot is explicitly unavailable.
 behind the sequence cursor without resetting ordinary `after` windows. Old
 same-sequence pages cannot overwrite newer revisions.
 
+New OMP drafts read native slash commands and project skills through a temporary
+`noSession` metadata probe when no matching retained command snapshot exists.
+Command reads do not depend on model capability certification. They share the
+capability probe's serialized launch and retirement lifecycle, disable memory
+and learning jobs, and never create a managed conversation or send a prompt.
+
 Desktop's background owner stays `desktop:<agentId>` across rewind, independent
 of native transcript IDs. Idle unload eligibility begins at five minutes with a
 30-second recheck. Safe unload is inventory → persistence drain → inventory →

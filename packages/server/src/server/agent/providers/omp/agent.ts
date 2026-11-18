@@ -6498,7 +6498,41 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
+  async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+    const pending = this.featureProbeQueue.then(async () => {
+      if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
+      await this.retireFeatureProbes();
+      return this.probeDraftMetadata(config, async (session, signal) => {
+        const commands = await session.getCommands();
+        signal.throwIfAborted();
+        return mapOmpRuntimeSlashCommands(commands);
+      });
+    });
+    this.featureProbeQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  }
+
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    const state = await this.readDraftFeatureState(config);
+    const accounts = this.readOAuthAccounts();
+    // Automatic account display is optional evidence, not a prerequisite for
+    // speed capability. In particular do not poll a no-session sticky record.
+    return createOmpFeatures(config, accounts, {
+      supported: typeof state.fastModeEnabled === "boolean",
+      eligible:
+        state.ultrafastSupported === true || isOmpFastModeEligibleModel(state.model, config.model),
+      selection:
+        normalizeOmpFastMode(config.featureValues?.[OMP_FAST_MODE_FEATURE_ID]) ??
+        readOmpFastMode(state),
+      ultrafastSupported: state.ultrafastSupported === true,
+      nativeTier: state.fastModeTier,
+    });
+  }
+
+  private async readDraftFeatureState(config: AgentSessionConfig): Promise<OmpSessionState> {
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const startedAt = performance.now();
     const modelProvider = parseModelReference(config.model ?? null)?.provider;
@@ -6567,7 +6601,7 @@ export class OmpAgentClient implements AgentClient {
             throw new Error("OMP capability context changed during detection; retry");
           }
           let authenticatedContext = initialContext;
-          const evidence = await this.probeFeatureState(config, async (phase, model) => {
+          const authenticate = async (phase: "ready" | "state", model?: OmpModel | null) => {
             const readyContext = await fingerprint(model);
             if (phase === "state") {
               if (readyContext.key !== authenticatedContext.key) {
@@ -6593,6 +6627,11 @@ export class OmpAgentClient implements AgentClient {
             }
             authenticatedContext = readyContext;
             return false;
+          };
+          const evidence = await this.probeDraftMetadata(config, async (session, signal) => {
+            await authenticate("ready");
+            signal.throwIfAborted();
+            return this.readFeatureProbeState(session, config, authenticate, signal);
           });
           // Certify the response against the model declarations observed after
           // startup, before getState, including the entire retirement interval.
@@ -6635,36 +6674,21 @@ export class OmpAgentClient implements AgentClient {
       }
     }
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
-    const accountStartedAt = performance.now();
-    const accounts = this.readOAuthAccounts();
-    // Automatic account display is optional evidence, not a prerequisite for
-    // speed capability. In particular do not poll a no-session sticky record.
-    const features = createOmpFeatures(config, accounts, {
-      supported: typeof state.fastModeEnabled === "boolean",
-      eligible:
-        state.ultrafastSupported === true || isOmpFastModeEligibleModel(state.model, config.model),
-      selection:
-        normalizeOmpFastMode(config.featureValues?.[OMP_FAST_MODE_FEATURE_ID]) ??
-        readOmpFastMode(state),
-      ultrafastSupported: state.ultrafastSupported === true,
-      nativeTier: state.fastModeTier,
-    });
     this.logger.info(
       {
         source,
         contextMs,
-        accountMs: performance.now() - accountStartedAt,
         totalMs: performance.now() - startedAt,
       },
       "OMP draft feature metadata ready",
     );
-    return features;
+    return state;
   }
 
-  private async probeFeatureState(
+  private async probeDraftMetadata<T>(
     config: AgentSessionConfig,
-    authenticate: (phase: "ready" | "state", model?: OmpModel | null) => Promise<boolean>,
-  ): Promise<OmpSessionState> {
+    read: (session: OmpRuntimeSession, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     if (this.featureMetadataStopped) throw new Error("OMP provider is shutting down");
     const startedAt = performance.now();
     const controller = new AbortController();
@@ -6726,19 +6750,13 @@ export class OmpAgentClient implements AgentClient {
       this.featureProbeRetirements.set(session, directory);
       timings.launchMs = performance.now() - launchStartedAt;
       controller.signal.throwIfAborted();
-      await authenticate("ready");
-      controller.signal.throwIfAborted();
       const stateStartedAt = performance.now();
       phase = "state";
       phaseStartedAt = stateStartedAt;
-      const state = await this.readFeatureProbeState(
-        session,
-        config,
-        authenticate,
-        controller.signal,
-      );
+      const metadata = await read(session, controller.signal);
       timings.stateMs = performance.now() - stateStartedAt;
-      return state;
+      controller.signal.throwIfAborted();
+      return metadata;
     } catch (error) {
       timings[`${phase}Ms`] = performance.now() - phaseStartedAt;
       this.logger.info(

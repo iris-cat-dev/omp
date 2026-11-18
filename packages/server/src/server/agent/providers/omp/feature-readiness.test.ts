@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OmpAgentClient } from "./agent.js";
+import { AgentManager } from "../../agent-manager.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import type { AgentFeature, AgentSessionConfig } from "../../agent-sdk-types.js";
 import type { OmpStartSessionInput } from "./runtime.js";
@@ -110,6 +111,112 @@ async function expectRetiredProbes(runtime: FakeOmp, sessions = [runtime.latestS
 }
 
 describe("draft native feature readiness", () => {
+  it("lists commands for a fresh draft without creating a managed conversation", async () => {
+    const { client, runtime, config } = setup();
+    runtime.queueCommands([
+      {
+        name: "review",
+        description: "Review project changes",
+        source: "extension",
+        input: { hint: "[files]" },
+      },
+      { name: "skill:project-guide", description: "Project guide", source: "skill" },
+    ]);
+    const manager = new AgentManager({
+      clients: { omp: client },
+      logger: pino({ level: "silent" }),
+    });
+    const commands = await manager.listDraftCommands(config);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        {
+          name: "compact",
+          description: "Manually compact the session context",
+          argumentHint: "[instructions]",
+          kind: "command",
+        },
+        {
+          name: "review",
+          description: "Review project changes",
+          argumentHint: "[files]",
+          kind: "command",
+        },
+        {
+          name: "skill:project-guide",
+          description: "Project guide",
+          argumentHint: "",
+          kind: "skill",
+        },
+      ]),
+    );
+    expect(manager.listAgents({ includeInternal: true })).toEqual([]);
+    expect(runtime.recordedLaunches).toHaveLength(1);
+    expect(runtime.recordedLaunches[0]!.noSession).toBe(true);
+    await expectRetiredProbes(runtime);
+  });
+
+  it("does not reuse another project's skill menu", async () => {
+    const { client, runtime, config } = setup();
+    const otherDirectory = join(directory, "other-project");
+    await mkdir(otherDirectory);
+    runtime.queueCommands([{ name: "skill:first-project", source: "skill" }]);
+    runtime.queueCommands([{ name: "skill:other-project", source: "skill" }]);
+    const first = await client.listCommands(config);
+    const second = await client.listCommands({ ...config, cwd: otherDirectory });
+    expect(
+      first.filter((command) => command.kind === "skill").map((command) => command.name),
+    ).toEqual(["skill:first-project"]);
+    expect(
+      second.filter((command) => command.kind === "skill").map((command) => command.name),
+    ).toEqual(["skill:other-project"]);
+    await expectRetiredProbes(runtime);
+  });
+
+  it("retires a failed command read and does not cache an incomplete menu", async () => {
+    let failCommands = true;
+    class FailingCommandsRuntime extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput) {
+        const session = await super.startSession(input);
+        const getCommands = session.getCommands.bind(session);
+        session.getCommands = async () => {
+          if (failCommands) throw new Error("native command read failed");
+          return getCommands();
+        };
+        return session;
+      }
+    }
+    const { client, runtime, config } = setup(new FailingCommandsRuntime());
+    await expect(client.listCommands(config)).rejects.toThrow("native command read failed");
+    await expectRetiredProbes(runtime);
+    expect(speed(await client.listFeatures(config))).toMatchObject({ value: "ultrafast" });
+    failCommands = false;
+    runtime.queueCommands([{ name: "skill:recovered-project", source: "skill" }]);
+    const commands = await client.listCommands(config);
+    expect(commands.find((command) => command.name === "skill:recovered-project")).toMatchObject({
+      kind: "skill",
+    });
+    await expectRetiredProbes(runtime);
+  });
+
+  it("lists commands independently of native model capability state", async () => {
+    class UnavailableStateRuntime extends FakeOmp {
+      override async startSession(input: OmpStartSessionInput) {
+        const session = await super.startSession(input);
+        session.getState = async () => {
+          throw new Error("native capability state unavailable");
+        };
+        return session;
+      }
+    }
+    const { client, runtime, config } = setup(new UnavailableStateRuntime());
+    runtime.queueCommands([{ name: "skill:project-guide", source: "skill" }]);
+    const commands = await client.listCommands(config);
+    expect(commands.find((command) => command.name === "skill:project-guide")).toMatchObject({
+      kind: "skill",
+    });
+    await expectRetiredProbes(runtime);
+  });
+
   it("coalesces concurrent consumers, retires the process and reuses definitions, not selected values", async () => {
     const { client, runtime, config } = setup();
     const [first, second] = await Promise.all([

@@ -4580,6 +4580,7 @@ export class Session {
           ...(draftConfig.thinkingOptionId
             ? { thinkingOptionId: draftConfig.thinkingOptionId }
             : {}),
+          ...(draftConfig.featureValues ? { featureValues: draftConfig.featureValues } : {}),
         };
 
         const commands = await this.agentManager.listDraftCommands(sessionConfig);
