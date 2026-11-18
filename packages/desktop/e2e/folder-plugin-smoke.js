@@ -280,7 +280,11 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
         return String(error);
       }
     });
-    assert.notEqual(legacyActivationError, null, "A direct legacy activation request must fail explicitly");
+    assert.notEqual(
+      legacyActivationError,
+      null,
+      "A direct legacy activation request must fail explicitly",
+    );
     for (const record of legacyRecords)
       assert.equal(
         fs.existsSync(
@@ -345,6 +349,17 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
         () => !!document.querySelector('[data-testid="plugins-folder-picker-enter-path"]'),
       ),
     );
+    await page.evaluate(() => {
+      const targets = document.querySelectorAll(
+        '[data-testid="plugins-installer"] [aria-selected]',
+      );
+      const desktop = Array.from(targets).find((target) =>
+        /^(This Desktop|本机 Desktop)$/.test(target.textContent?.trim() ?? ""),
+      );
+      if (targets.length && !desktop)
+        throw new Error("Local Desktop install target is unavailable");
+      desktop?.click();
+    });
     await click(page, '[data-testid="plugins-folder-picker-enter-path"]');
     await waitFor("folder path input", () =>
       page.evaluate(() => !!document.querySelector('[data-testid="plugins-folder-picker-path"]')),
