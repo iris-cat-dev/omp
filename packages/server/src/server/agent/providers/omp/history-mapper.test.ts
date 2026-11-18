@@ -1121,6 +1121,273 @@ describe("OMP history mapper", () => {
     }
   });
 
+  test("replays partial attachment loss without changing journal identities or cached page counts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-missing-image-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const blobDir = join(dir, "blobs");
+    const screenshot = {
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aShoAAAAASUVORK5CYII=",
+      mimeType: "image/png",
+    };
+    const inlineImage = {
+      data: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+      mimeType: "image/gif",
+    };
+    const screenshotBytes = Buffer.from(screenshot.data, "base64");
+    const missingBytes = Buffer.from(inlineImage.data, "base64");
+    const healthyHash = createHash("sha256").update(screenshotBytes).digest("hex");
+    const missingHash = createHash("sha256").update(missingBytes).digest("hex");
+    const journalContent = [
+      { type: "session", id: "root", parentId: null },
+      {
+        type: "message",
+        id: "user-mixed",
+        parentId: "root",
+        message: {
+          role: "user",
+          clientMessageId: "client-mixed",
+          content: [
+            { type: "text", text: "Before the screenshots" },
+            { type: "image", ...screenshot, data: `blob:sha256:${healthyHash}` },
+            { type: "text", text: "Between the screenshots" },
+            { type: "image", ...inlineImage, data: `blob:sha256:${missingHash}` },
+            { type: "text", text: "After the screenshots" },
+            { type: "image", ...inlineImage },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "user-image-only",
+        parentId: "user-mixed",
+        message: {
+          role: "user",
+          clientMessageId: "client-image-only",
+          content: [{ type: "image", ...inlineImage, data: `blob:sha256:${missingHash}` }],
+        },
+      },
+      {
+        type: "message",
+        id: "user-after",
+        parentId: "user-image-only",
+        message: { role: "user", content: "Continue", clientMessageId: "client-after" },
+      },
+      {
+        type: "message",
+        id: "assistant-after",
+        parentId: "user-after",
+        message: {
+          role: "assistant",
+          responseId: "response-after",
+          content: [{ type: "text", text: "Conversation continues" }],
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const client = new OmpAgentClient({
+      logger: pino({ level: "silent" }),
+      runtimeSettings: ompHistoryRuntimeSettings,
+    });
+    const pageInput = {
+      sessionFile,
+      blobDir,
+      provider: "omp" as const,
+      epoch: "attachment-loss",
+      timestamp: "2026-10-01T00:00:00Z",
+      options: { direction: "tail" as const, limit: 0 },
+    };
+    try {
+      mkdirSync(blobDir);
+      writeFileSync(join(blobDir, healthyHash), screenshotBytes);
+      writeFileSync(join(blobDir, missingHash), missingBytes);
+      writeFileSync(sessionFile, journalContent);
+      const before = await client.readHistoryPage(pageInput);
+      expect(before.rows.map((row) => row.item)).toMatchObject([
+        { type: "user_message", images: [screenshot, inlineImage, inlineImage] },
+        { type: "user_message", images: [inlineImage] },
+        { type: "user_message", text: "Continue" },
+        { type: "assistant_message", text: "Conversation continues" },
+      ]);
+      const catalogEntriesParsed = getOmpColdHistoryStats(sessionFile)!.catalogEntriesParsed;
+      rmSync(join(blobDir, missingHash));
+
+      const page = await client.readHistoryPage(pageInput);
+      expect(page.epoch).toBe(before.epoch);
+      expect(page.window).toEqual(before.window);
+      expect(page.rows.map((row) => row.seq)).toEqual(before.rows.map((row) => row.seq));
+      expect(getOmpColdHistoryStats(sessionFile)!.catalogEntriesParsed).toBe(catalogEntriesParsed);
+      const events: AgentStreamEvent[] = [];
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        blobDir,
+        provider: "omp",
+        runtimeSettings: ompHistoryRuntimeSettings,
+      })) {
+        events.push(event);
+      }
+      const items = events.flatMap((event) =>
+        event.type === "timeline" ? [event.item] : [],
+      );
+      expect(page.rows.map((row) => row.item)).toEqual(items);
+      expect(items).toEqual([
+        {
+          type: "user_message",
+          text: expect.stringMatching(/image.*unavailable/i),
+          images: [screenshot, inlineImage],
+          messageId: "user-mixed",
+          clientMessageId: "client-mixed",
+        },
+        {
+          type: "user_message",
+          text: expect.stringMatching(/image.*unavailable/i),
+          messageId: "user-image-only",
+          clientMessageId: "client-image-only",
+        },
+        {
+          type: "user_message",
+          text: "Continue",
+          messageId: "user-after",
+          clientMessageId: "client-after",
+        },
+        {
+          type: "assistant_message",
+          text: "Conversation continues",
+          messageId: "response-after",
+        },
+      ]);
+      expect(items[0]).toMatchObject({
+        text: expect.stringMatching(
+          /Before the screenshots[\s\S]*Between the screenshots[\s\S]*image.*unavailable[\s\S]*After the screenshots/i,
+        ),
+      });
+      expect(readFileSync(sessionFile, "utf8")).toBe(journalContent);
+      expect(readFileSync(join(blobDir, healthyHash))).toEqual(screenshotBytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays image-only records from a cold journal when the blob directory is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-missing-blob-dir-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const blobDir = join(dir, "missing-blobs");
+    const blobRef = `blob:sha256:${"0".repeat(64)}`;
+    const journalContent = [
+      { type: "session", id: "root", parentId: null },
+      {
+        type: "message",
+        id: "user-image-only",
+        parentId: "root",
+        message: {
+          role: "user",
+          clientMessageId: "client-image-only",
+          content: [{ type: "image", data: blobRef, mimeType: "image/png" }],
+        },
+      },
+      {
+        type: "message",
+        id: "assistant-after",
+        parentId: "user-image-only",
+        message: {
+          role: "assistant",
+          responseId: "response-after",
+          content: [{ type: "text", text: "Still replayed" }],
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const client = new OmpAgentClient({
+      logger: pino({ level: "silent" }),
+      runtimeSettings: ompHistoryRuntimeSettings,
+    });
+    try {
+      writeFileSync(sessionFile, journalContent);
+      const page = await client.readHistoryPage({
+        sessionFile,
+        blobDir,
+        provider: "omp",
+        epoch: "missing-directory",
+        timestamp: "2026-10-01T00:00:00Z",
+        options: { direction: "tail", limit: 0 },
+      });
+      const events: AgentStreamEvent[] = [];
+      for await (const event of streamOmpHistory({
+        sessionFile,
+        blobDir,
+        provider: "omp",
+        runtimeSettings: ompHistoryRuntimeSettings,
+      })) {
+        events.push(event);
+      }
+      const items = events.flatMap((event) => event.type === "timeline" ? [event.item] : []);
+      expect(page.rows.map((row) => row.item)).toEqual(items);
+      expect(items).toEqual([
+        {
+          type: "user_message",
+          text: expect.stringMatching(/image.*unavailable/i),
+          messageId: "user-image-only",
+          clientMessageId: "client-image-only",
+        },
+        { type: "assistant_message", text: "Still replayed", messageId: "response-after" },
+      ]);
+      expect(page.window).toEqual({ minSeq: 1, maxSeq: 2, nextSeq: 3 });
+      expect(readFileSync(sessionFile, "utf8")).toBe(journalContent);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["stream", "page"] as const)(
+    "rejects unexpected image blob I/O errors during %s replay",
+    async (mode) => {
+      const dir = mkdtempSync(join(tmpdir(), "omp-blob-directory-error-"));
+      const sessionFile = join(dir, "session.jsonl");
+      const blobDir = join(dir, "blobs");
+      const hash = "0".repeat(64);
+      const journalContent = [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "user-image-only",
+          parentId: "root",
+          message: {
+            role: "user",
+            content: [{ type: "image", data: `blob:sha256:${hash}`, mimeType: "image/png" }],
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n");
+      const client = new OmpAgentClient({
+        logger: pino({ level: "silent" }),
+        runtimeSettings: ompHistoryRuntimeSettings,
+      });
+      try {
+        mkdirSync(join(blobDir, hash), { recursive: true });
+        writeFileSync(sessionFile, journalContent);
+        const replay = mode === "page"
+          ? client.readHistoryPage({
+              sessionFile,
+              blobDir,
+              provider: "omp",
+              epoch: "unexpected-io",
+              timestamp: "2026-10-01T00:00:00Z",
+              options: { direction: "tail", limit: 0 },
+            })
+          : (async () => {
+              for await (const event of streamOmpHistory({
+                sessionFile,
+                blobDir,
+                provider: "omp",
+                runtimeSettings: ompHistoryRuntimeSettings,
+              })) {
+                throw new Error(`Unexpected ${event.type} event before the blob read failed`);
+              }
+            })();
+        await expect(replay).rejects.toMatchObject({ code: "EISDIR" });
+        expect(readFileSync(sessionFile, "utf8")).toBe(journalContent);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("maps only the active JSONL chain while hiding internal control records", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-history-"));
     const sessionFile = join(dir, "session.jsonl");

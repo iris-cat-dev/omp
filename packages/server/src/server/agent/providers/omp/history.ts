@@ -561,12 +561,23 @@ function observeNativeHistoryUsage(
 
 async function resolveMessageImageBlobs(message: OmpAgentMessage, blobDir?: string, onBlobRead?: (bytes: number) => void): Promise<void> {
   if (message.role !== "user" || !Array.isArray(message.content)) return;
-  for (const block of message.content) {
+  for (let index = 0; index < message.content.length; index++) {
+    const block = message.content[index]!;
     if (block.type !== "image") continue;
     const match = /^blob:sha256:([a-f0-9]{64})$/.exec(block.data);
     if (!match) continue;
     blobDir ??= join(dirname(resolveOmpDiagnosticPaths().agentDb), "blobs");
-    const bytes = await readFile(join(blobDir, match[1]!));
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(join(blobDir, match[1]!));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      message.content[index] = {
+        type: "text",
+        text: "[Image unavailable: the historical attachment file is missing.]",
+      };
+      continue;
+    }
     onBlobRead?.(bytes.length);
     block.data = bytes.toString("base64");
   }

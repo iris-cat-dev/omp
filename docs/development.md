@@ -259,6 +259,15 @@ prerequisite, with no scanner fallback or host startup. Tests may select their
 independent built stage through `OMP_DESKTOP_TEST_SDK_ROOT`; production environment
 sanitization remains unchanged.
 
+Missing historical image blobs do not block history loading or the next prompt.
+Desktop replay and cold pages replace only the missing attachment with an
+unavailable-image notice, retaining image-only messages, native/client IDs,
+surrounding text and healthy images. The SDK applies the same recovery to the
+provider-request view, including native image URLs, generated images and computer
+screenshots. Persisted references stay in the journal so a later load can restore
+returned files. Only missing-file errors recover; other blob read failures still
+surface.
+
 The daemon retains at most an estimated 32 MiB of reloadable **closed-session**
 timeline bodies. Closing/recovering a session checks the native journal header
 and selected cold reader before admitting that history to the budget; oldest
