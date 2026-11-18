@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
+      windows_artifact: ${{ steps.targets.outputs.windows_artifact }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +57,7 @@ jobs:
               include.push({ os: 'macos-15', target: 'darwin-arm64', artifact: `OMP-Desktop-${desktop.version}-arm64` });
             }
             core.setOutput('matrix', JSON.stringify({ include }));
+            core.setOutput('windows_artifact', include[0].artifact);
 
   sdk:
     name: Build reusable SDK (win32-x64)
@@ -177,9 +179,60 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  windows-acceptance:
+    name: Qualify packaged Windows application
+    needs: [prepare, build]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+      # No workspace dependencies or SDK build: qualify only the complete ZIP
+      # produced by the macOS packaging job, with its embedded native Windows SDK.
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.windows_artifact }}
+          path: windows-release-assets
+      - name: Extract the complete release ZIP
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem -LiteralPath windows-release-assets -File -Filter *.zip)
+          if ($archives.Count -ne 1) { throw "Expected exactly one complete Windows release ZIP" }
+          $app = Join-Path $env:RUNNER_TEMP "omp-windows-release"
+          Expand-Archive -LiteralPath $archives[0].FullName -DestinationPath $app
+          if (-not (Test-Path -LiteralPath (Join-Path $app "OMP Desktop.exe") -PathType Leaf)) {
+            throw "The release ZIP does not contain the packaged application at its root"
+          }
+          "OMP_WINDOWS_SMOKE_APP=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Exercise the actual Windows app, SDK, native windows and folder plugin
+        shell: pwsh
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/omp-windows-acceptance-evidence
+        run: |
+          if (-not [Environment]::UserInteractive) {
+            throw "Native acceptance requires an unlocked interactive Windows desktop; a service/session-0 runner cannot qualify this package"
+          }
+          # The official entry uses isolated temporary profiles and the real
+          # mini-electron app/renderer/preload/daemon/SDK. Native focus, screen
+          # capture, resize, continuous restore/Snap and plugin failures are fatal.
+          node packages/desktop/e2e/packaged-app-smoke.js --app "$env:OMP_WINDOWS_SMOKE_APP"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Windows application smoke failed: $LASTEXITCODE" }
+      - name: Retain native acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMP-Windows-Acceptance
+          path: ${{ runner.temp }}/omp-windows-acceptance-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, windows-acceptance]
     runs-on: ubuntu-latest
     permissions:
       contents: write

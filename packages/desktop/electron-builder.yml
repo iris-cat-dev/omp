@@ -14,7 +14,7 @@ afterSign: ./scripts/after-sign.js
 publish:
   provider: github
   owner: iris-cat-dev
-  repo: omp-desktop
+  repo: omp
 directories:
   output: release/unbundled
 files:

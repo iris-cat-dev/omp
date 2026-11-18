@@ -23,7 +23,7 @@ export interface AppUpdateInstallResult {
 const UPDATE_REPOSITORY = {
   provider: "github",
   owner: "iris-cat-dev",
-  repo: "omp-desktop",
+  repo: "omp",
 } as const;
 
 let configured = false;

@@ -1638,6 +1638,14 @@ async function smokeWindowsPackagedApp({
     assert.equal(report.asyncContext.asyncContextPropagation, 1);
     report.checks.push("packaged EXE AsyncLocalStorage isolation across await, realms and Workers");
     configureIsolatedDaemonHome(daemonHome, listen);
+    // Hosted Windows images can expose only a 1024x768 desktop. Start with a
+    // controlled normal-window preference that fits it; do not alter the display,
+    // bypass native capture guards, or resize between a gesture and observation.
+    report.windowFixture = {
+      version: 1,
+      state: { x: 16, y: 16, width: 960, height: 640, isMaximized: false },
+    };
+    writeJson(path.join(userData, "window-state.json"), report.windowFixture);
     const legacyRecords = legacyProfile ? seedLegacyPluginProfile(userData, daemonHome) : [];
     const fixture = seedStatsFixture(env.HOME);
     report.statsFixture = {
