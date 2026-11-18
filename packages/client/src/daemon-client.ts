@@ -1905,9 +1905,12 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId },
     );
 
-    const onAbort = () => cancel(params.signal?.reason instanceof Error
-      ? params.signal.reason
-      : new DOMException("Agent wait aborted", "AbortError"));
+    const onAbort = () =>
+      cancel(
+        params.signal?.reason instanceof Error
+          ? params.signal.reason
+          : new DOMException("Agent wait aborted", "AbortError"),
+      );
     params.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       try {
@@ -2239,7 +2242,8 @@ export class DaemonClient {
     const requestId = this.createRequestId();
     let active = true;
     const unsubscribe = this.on("agent.events.update", (message) => {
-      if (active && message.payload.subscriptionId === subscriptionId) handler(message.payload.update);
+      if (active && message.payload.subscriptionId === subscriptionId)
+        handler(message.payload.update);
     });
     const release = () => {
       if (!active) return;
@@ -2250,7 +2254,11 @@ export class DaemonClient {
     try {
       await this.sendCorrelatedRequest({
         requestId,
-        message: SessionInboundMessageSchema.parse({ type: "agent.events.subscribe.request", requestId, subscriptionId }),
+        message: SessionInboundMessageSchema.parse({
+          type: "agent.events.subscribe.request",
+          requestId,
+          subscriptionId,
+        }),
         responseType: "agent.events.subscribe.response",
         options: { skipQueue: true },
       });
@@ -3696,19 +3704,25 @@ export class DaemonClient {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedRequest({
       requestId,
-      message: SessionInboundMessageSchema.parse({ type: "agent.configuration.request", requestId, agentId }),
+      message: SessionInboundMessageSchema.parse({
+        type: "agent.configuration.request",
+        requestId,
+        agentId,
+      }),
       responseType: "agent.configuration.response",
     });
     return payload.config;
   }
 
-  async resolveProviderCreateConfig(
-    config: ResolveProviderCreateConfigRequest["config"],
-  ) {
+  async resolveProviderCreateConfig(config: ResolveProviderCreateConfigRequest["config"]) {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedRequest({
       requestId,
-      message: SessionInboundMessageSchema.parse({ type: "provider.resolve_create_config.request", requestId, config }),
+      message: SessionInboundMessageSchema.parse({
+        type: "provider.resolve_create_config.request",
+        requestId,
+        config,
+      }),
       responseType: "provider.resolve_create_config.response",
     });
     return payload.config;
@@ -3722,13 +3736,18 @@ export class DaemonClient {
     const { signal, timeoutMs = 60000, ...sendOptions } = options;
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
-      type: "run_agent_request", requestId, agentId, text,
+      type: "run_agent_request",
+      requestId,
+      agentId,
+      text,
       ...sendOptions,
       messageId: sendOptions.messageId ?? crypto.randomUUID(),
       timeoutMs,
     });
     const payload = await this.sendCorrelatedRequest({
-      requestId, message, responseType: "run_agent_response",
+      requestId,
+      message,
+      responseType: "run_agent_response",
       timeout: timeoutMs > 0 ? timeoutMs + 5000 : 0,
       signal,
       options: { skipQueue: true },
@@ -5891,12 +5910,14 @@ export class DaemonClient {
   async listProviderUsage(options?: {
     requestId?: string;
     providerId?: string;
+    forceRefresh?: boolean;
   }): Promise<ProviderUsageListPayload> {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "provider.usage.list.request",
         ...(options?.providerId ? { providerId: options.providerId } : {}),
+        ...(options?.forceRefresh ? { forceRefresh: true } : {}),
       },
     });
   }

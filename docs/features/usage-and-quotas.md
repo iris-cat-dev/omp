@@ -7,6 +7,7 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 - [Native OMP statistics](#native-omp-statistics)
 - [Local OMP performance monitor](#local-omp-performance-monitor)
 - [Custom provider balances](#custom-provider-balances)
+- [Cursor accounts](#cursor-accounts)
 - [Zhipu Coding Plan](#zhipu-coding-plan)
 - [Claude official accounts](#claude-official-accounts)
 - [Codex accounts](#codex-accounts)
@@ -106,7 +107,7 @@ Settings exposes the original source enable/folder/reset controls; explicitly in
 
 Expand the sidebar's provider details to see balances from custom `/v1/usage` providers, including Sub2API services such as MintCat. The first request shows a loading message immediately. Background refreshes keep the existing balance visible with a **Refreshing** message; request failures also remain visible.
 
-Balance queries share a five-minute frontend cache per host and provider, including across new conversations. Refreshing is on demand, not periodic polling; opening a new conversation within the cache period reuses the existing result.
+Balance queries share a five-minute frontend cache per host and provider, including across new conversations. Refreshing is on demand, not periodic polling; opening a new conversation within the cache period reuses the existing result, while explicit **Refresh** bypasses both client and server five-minute caches and OMP login/logout or daemon configuration updates invalidate cached quota results.
 
 The official `https://api.openai.com` API does not provide a stable public balance
 query using an ordinary model-call API key. Desktop skips `/v1/usage` for that
@@ -118,6 +119,12 @@ Costs APIs require separate Admin credentials; consumed cost is not remaining
 balance. Do not put an Admin key in the model-key field. Third-party providers
 that implement the existing `/v1/usage` contract still return balances normally,
 and genuine request failures remain distinct and credential-redacted.
+
+## Cursor accounts
+
+Cursor quota lookups discover credentials read-only from `CURSOR_ACCESS_TOKEN`/`CURSOR_TOKEN`, OMP's `agent.db` (`provider = 'cursor'`, trying non-expired tokens first and labeling multi-account entries individually), readable desktop `state.vscdb` tokens, and `~/.config/cursor/auth.json`. Encrypted Electron `safeStorage` payloads prefixed with `cursor-safe-` are ignored without triggering Keychain prompts or sending invalid Bearer requests, and read-only quota checks never rotate refresh tokens or write to `agent.db`.
+
+When a Cursor JWT provides a user subject, Desktop queries `https://cursor.com/api/usage-summary` first (supplemented by `GetPlanInfo` for unified weekly plans), falling back through `GetCurrentPeriodUsage`, `GetTeams`/`GetTeamSpend` (with `GetMe` email resolution), and `/auth/usage` when needed. When no usable token is available, the sidebar shows empty-state guidance instead of a generic load error.
 
 ## Zhipu Coding Plan
 

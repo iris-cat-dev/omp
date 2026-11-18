@@ -33,6 +33,10 @@ describe("provider usage localization", () => {
 
     expect(formatProviderUsageLabel("balance", "Balance", t)).toBe("余额");
     expect(formatProviderUsageLabel("team_spend", "Monthly usage", t)).toBe("月度用量");
+    expect(formatProviderUsageLabel("cursor_models", "Cursor Models", t)).toBe("Cursor 模型");
+    expect(formatProviderUsageLabel("other_models", "Other Models", t)).toBe("其他模型");
+    expect(formatProviderUsageLabel("prepaid_credit", "Prepaid credit", t)).toBe("预付额度");
+    expect(formatProviderUsageLabel("on_demand", "On-demand usage", t)).toBe("按量计费");
     expect(formatProviderUsageLabel("vendor-window", "Vendor window", t)).toBe("Vendor window");
   });
 

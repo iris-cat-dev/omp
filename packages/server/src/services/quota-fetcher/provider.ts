@@ -13,9 +13,5 @@ export interface ProviderUsageFetcherFactoryOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
   fetchForProvider?: (provider: string) => ProviderApiFetch;
-}
-
-export interface ProviderUsageFetcherManifestEntry {
-  readonly providerId: string;
-  create(options: ProviderUsageFetcherFactoryOptions): ProviderUsageFetcher;
+  env?: NodeJS.ProcessEnv;
 }

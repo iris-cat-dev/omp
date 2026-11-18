@@ -646,6 +646,16 @@ export class PaseoWebSocketServer {
       serviceProxyPublicBaseUrl,
       resolveScriptHealth,
     });
+    this.providerUsageService = new ProviderUsageService({
+      logger: this.logger,
+      getEnv: () => ({ ...process.env, ...this.daemonConfigStore.get().providers.omp?.env }),
+      fetchForProvider: (provider) =>
+        createProxyFetch({
+          getProxyPolicy: () => this.daemonConfigStore.get().providers.omp?.proxyPolicy,
+          provider,
+        }),
+    });
+
     if (!providerSnapshotManager) {
       throw new Error("providerSnapshotManager is required");
     }
@@ -656,6 +666,7 @@ export class PaseoWebSocketServer {
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
     });
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
+      this.providerUsageService.invalidateCache();
       this.broadcastDaemonConfigChanged(config);
     });
     this.unsubscribeDaemonConfigChange = () => {
@@ -674,15 +685,6 @@ export class PaseoWebSocketServer {
       void this.broadcastAgentAttention(params).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to broadcast agent attention");
       });
-    });
-
-    this.providerUsageService = new ProviderUsageService({
-      logger: this.logger,
-      fetchForProvider: (provider) =>
-        createProxyFetch({
-          getProxyPolicy: () => this.daemonConfigStore.get().providers.omp?.proxyPolicy,
-          provider,
-        }),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

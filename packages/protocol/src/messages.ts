@@ -2355,6 +2355,7 @@ export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
   providerId: z.string().min(1).optional(),
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({

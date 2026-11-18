@@ -594,6 +594,41 @@ describe("ProviderCatalogSession", () => {
     expect(err?.payload.requestId).toBe("u1");
   });
 
+  it("forwards forceRefresh and invalidates usage cache on logout", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [],
+    }));
+    const invalidateCache = vi.fn();
+    const { subsystem } = makeSubsystem({
+      snapshot: {
+        logoutOmpProvider: async () => ({
+          configPath: "/tmp/models.yml",
+          configYaml: "",
+          providerModels: [],
+          loginProviders: [],
+        }),
+        refreshSettingsSnapshot: async () => undefined,
+      },
+      usage: { listUsage, invalidateCache },
+    });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u-refresh",
+      providerId: "cursor",
+      forceRefresh: true,
+    });
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: true });
+
+    await subsystem.handleOmpProviderLogoutRequest({
+      type: "omp.provider.logout.request",
+      requestId: "logout-1",
+      providerId: "cursor",
+    });
+    expect(invalidateCache).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {

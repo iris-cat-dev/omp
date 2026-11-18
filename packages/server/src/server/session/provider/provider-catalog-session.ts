@@ -176,7 +176,10 @@ export class ProviderCatalogSession {
     };
     this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
     const unsubscribeLoginCompleted = this.providerSnapshotManager.onOmpProviderLoginCompleted(
-      (payload) => this.host.emit({ type: "omp.provider.login.completed", payload }),
+      (payload) => {
+        this.providerUsageService.invalidateCache?.();
+        this.host.emit({ type: "omp.provider.login.completed", payload });
+      },
     );
     this.unsubscribeSnapshotEvents = () => {
       this.providerSnapshotManager.off("change", handleProviderSnapshotChange);
@@ -234,9 +237,9 @@ export class ProviderCatalogSession {
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
 
-    const entry = this.providerSnapshotManager.getSnapshot().find(
-      (candidate) => candidate.provider === msg.provider,
-    );
+    const entry = this.providerSnapshotManager
+      .getSnapshot()
+      .find((candidate) => candidate.provider === msg.provider);
 
     if (!entry) {
       this.host.emit({
@@ -290,9 +293,9 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "list_provider_modes_request" }>,
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
-    const entry = this.providerSnapshotManager.getSnapshot().find(
-      (candidate) => candidate.provider === msg.provider,
-    );
+    const entry = this.providerSnapshotManager
+      .getSnapshot()
+      .find((candidate) => candidate.provider === msg.provider);
 
     if (!entry) {
       this.host.emit({
@@ -341,7 +344,6 @@ export class ProviderCatalogSession {
       },
     });
   }
-
 
   private buildDraftAgentSessionConfig(draftConfig: {
     provider: AgentProvider;
@@ -1053,6 +1055,7 @@ export class ProviderCatalogSession {
         msg.flowId,
         msg.input,
       );
+      this.providerUsageService.invalidateCache?.();
       this.host.emit({
         type: "omp.provider.login.finish.response",
         payload: { ...management, requestId: msg.requestId },
@@ -1102,6 +1105,7 @@ export class ProviderCatalogSession {
         msg.providerId,
         msg.credentialId,
       );
+      this.providerUsageService.invalidateCache?.();
       await this.providerSnapshotManager.refreshSettingsSnapshot({ providers: ["omp"] });
       this.host.emit({
         type: "omp.provider.logout.response",
@@ -1153,7 +1157,7 @@ export class ProviderCatalogSession {
   ): Promise<void> {
     try {
       let usage: ProviderUsageListResult | undefined;
-      if (msg.providerId && msg.providerId !== "cursor") {
+      if (msg.providerId && msg.providerId !== "cursor" && !msg.providerId.startsWith("cursor:")) {
         const management = await this.providerSnapshotManager.getOmpProviderManagement();
         const customProvider =
           configuredZhipuProviders(management.configYaml).find(
@@ -1167,7 +1171,9 @@ export class ProviderCatalogSession {
           };
         }
       }
-      usage ??= await this.providerUsageService.listUsage();
+      usage ??= await this.providerUsageService.listUsage(
+        msg.forceRefresh ? { forceRefresh: true } : undefined,
+      );
       if (!msg.providerId) {
         try {
           const management = await this.providerSnapshotManager.getOmpProviderManagement();

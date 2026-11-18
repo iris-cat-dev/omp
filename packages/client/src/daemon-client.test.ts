@@ -6665,6 +6665,7 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   const usagePromise = client.listProviderUsage({
     requestId: "usage-1",
     providerId: "mintcat",
+    forceRefresh: true,
   });
 
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
@@ -6673,6 +6674,7 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
       type: "provider.usage.list.request",
       requestId: "usage-1",
       providerId: "mintcat",
+      forceRefresh: true,
     },
   });
 

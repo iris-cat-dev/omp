@@ -11,6 +11,7 @@ export interface ProviderUsageServiceOptions {
   fetchers?: ProviderUsageFetcher[];
   fetch?: ProviderApiFetch;
   fetchForProvider?: (provider: string) => ProviderApiFetch;
+  getEnv?: () => NodeJS.ProcessEnv;
   cacheTtlMs?: number;
   now?: () => number;
 }
@@ -27,18 +28,27 @@ export class ProviderUsageService {
   private readonly fetchers: ProviderUsageFetcher[] | undefined;
   private readonly fetchApi: ProviderApiFetch | undefined;
   private readonly fetchForProvider?: (provider: string) => ProviderApiFetch;
+  private readonly getEnv?: () => NodeJS.ProcessEnv;
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private generation = 0;
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
     this.fetchers = options.fetchers;
     this.fetchApi = options.fetch;
     this.fetchForProvider = options.fetchForProvider;
+    this.getEnv = options.getEnv;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
+  }
+
+  invalidateCache(): void {
+    this.generation += 1;
+    this.cached = null;
+    this.inFlight = null;
   }
 
   async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
@@ -51,11 +61,15 @@ export class ProviderUsageService {
       return this.cached.result;
     }
 
-    if (this.inFlight) {
+    if (!options?.forceRefresh && this.inFlight) {
       return this.inFlight;
     }
 
-    const request = this.fetchFreshUsage(nowMs);
+    if (options?.forceRefresh) {
+      this.generation += 1;
+    }
+    const generation = this.generation;
+    const request = this.fetchFreshUsage(nowMs, generation);
     this.inFlight = request;
     try {
       return await request;
@@ -96,7 +110,10 @@ export class ProviderUsageService {
     }
   }
 
-  private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
+  private async fetchFreshUsage(
+    nowMs: number,
+    generation: number,
+  ): Promise<ProviderUsageListResult> {
     // Discover login credentials on each refresh, not just at daemon startup.
     const fetchers =
       this.fetchers ??
@@ -104,6 +121,7 @@ export class ProviderUsageService {
         logger: this.logger,
         fetch: this.fetchApi,
         fetchForProvider: this.fetchForProvider,
+        env: this.getEnv?.(),
       });
     const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
@@ -123,7 +141,9 @@ export class ProviderUsageService {
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    if (this.generation === generation) {
+      this.cached = { fetchedAtMs: nowMs, result };
+    }
     return result;
   }
 }

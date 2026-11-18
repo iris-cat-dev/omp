@@ -212,12 +212,14 @@ describe("provider usage list message contract", () => {
       type: "provider.usage.list.request",
       requestId: "usage-1",
       providerId: "mintcat",
+      forceRefresh: true,
     });
 
     expect(parsed).toEqual({
       type: "provider.usage.list.request",
       requestId: "usage-1",
       providerId: "mintcat",
+      forceRefresh: true,
     });
   });
 

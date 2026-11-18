@@ -94,4 +94,14 @@ describe("resolveLoginProviderUsages", () => {
     expect(selectProviderUsages(claudeAccounts, "anthropic:8")).toEqual([claudeAccounts[1]]);
     expect(resolveLoginProviderUsages(readyView(claudeAccounts), "anthropic")).toEqual([]);
   });
+
+  test("selects multi-account cursor usage entries by prefix", () => {
+    const first = cursorUsage({ providerId: "cursor:10", displayName: "Cursor · a@example.com" });
+    const second = cursorUsage({ providerId: "cursor:11", displayName: "Cursor · b@example.com" });
+    expect(selectProviderUsages([first, second], "cursor")).toEqual([first, second]);
+    expect(resolveLoginProviderUsages(readyView([first, second]), "cursor")).toEqual([
+      first,
+      second,
+    ]);
+  });
 });

@@ -51,6 +51,7 @@ import {
   ompProviderManagementQueryKey,
   refreshOmpAccountQuotaManagement,
 } from "@/hooks/use-omp-account-quota";
+import { PROVIDER_USAGE_QUERY_PREFIX } from "@/provider-usage/use-provider-usage";
 import { useOmpProviderAccountNotes } from "@/hooks/use-omp-provider-account-notes";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -1701,6 +1702,7 @@ function OmpManagementPanel({
   useEffect(() => {
     if (!client) return;
     return client.on("omp.provider.login.completed", ({ payload }) => {
+      void queryClient.invalidateQueries({ queryKey: [PROVIDER_USAGE_QUERY_PREFIX, serverId] });
       if (loginStartPendingRef.current) completedLoginFlowsRef.current.add(payload.flowId);
       if (loginFlowRef.current?.flowId !== payload.flowId) return;
       loginFlowRef.current = null;
@@ -1709,7 +1711,7 @@ function OmpManagementPanel({
       setLoginProviderId(null);
       setError(null);
     });
-  }, [client]);
+  }, [client, queryClient, serverId]);
   useEffect(() => {
     if (!visible) return;
     return queryClient.getQueryCache().subscribe((event) => {
@@ -1732,9 +1734,10 @@ function OmpManagementPanel({
   const applyManagement = useCallback(
     (result: OmpProviderManagement) => {
       storeManagement(result);
+      void queryClient.invalidateQueries({ queryKey: [PROVIDER_USAGE_QUERY_PREFIX, serverId] });
       onSaved();
     },
-    [onSaved, storeManagement],
+    [onSaved, queryClient, serverId, storeManagement],
   );
   const load = useCallback(
     async (force = false) => {

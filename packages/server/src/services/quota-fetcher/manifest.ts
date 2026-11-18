@@ -1,26 +1,15 @@
-import { CursorQuotaProvider } from "./providers/cursor.js";
+import { createStoredCursorQuotaProviders } from "./providers/cursor.js";
 import { createStoredZhipuQuotaProviders } from "./providers/zhipu.js";
-import type {
-  ProviderUsageFetcher,
-  ProviderUsageFetcherFactoryOptions,
-  ProviderUsageFetcherManifestEntry,
-} from "./provider.js";
-
-export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry[] = [
-  {
-    providerId: "cursor",
-    create: (options) => new CursorQuotaProvider(options),
-  },
-];
+import type { ProviderUsageFetcher, ProviderUsageFetcherFactoryOptions } from "./provider.js";
 
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
   return [
-    ...PROVIDER_USAGE_FETCHERS.map((entry) => entry.create({
+    ...createStoredCursorQuotaProviders({
       ...options,
-      fetch: options.fetchForProvider?.(entry.providerId) ?? options.fetch,
-    })),
+      fetch: options.fetchForProvider?.("cursor") ?? options.fetch,
+    }),
     ...createStoredZhipuQuotaProviders(options),
   ];
 }

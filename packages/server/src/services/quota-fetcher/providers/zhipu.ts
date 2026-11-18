@@ -40,7 +40,8 @@ interface ZhipuCredentialDatabase {
 export function createStoredZhipuQuotaProviders(
   options: ProviderUsageFetcherFactoryOptions & { agentDbPath?: string },
 ): ProviderUsageFetcher[] {
-  const agentDbPath = options.agentDbPath ?? resolveOmpDiagnosticPaths(process.env).agentDb;
+  const agentDbPath =
+    options.agentDbPath ?? resolveOmpDiagnosticPaths(options.env ?? process.env).agentDb;
   if (!existsSync(agentDbPath)) return [];
   try {
     const { DatabaseSync } = moduleRequire("node:sqlite") as {

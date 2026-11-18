@@ -649,7 +649,12 @@ function SidebarProviderUsageDetails({
   if (usage.unsupportedReason) return <ProviderUsageUnsupportedNotice usage={usage} />;
   if (usage.status !== "available") {
     return (
-      <Text style={styles.sidebarQuotaLoading}>{usage.error ?? t("providerUsage.errorTitle")}</Text>
+      <Text style={styles.sidebarQuotaLoading}>
+        {usage.error ??
+          (usage.status === "unavailable"
+            ? t("providerUsage.empty")
+            : t("providerUsage.errorTitle"))}
+      </Text>
     );
   }
 

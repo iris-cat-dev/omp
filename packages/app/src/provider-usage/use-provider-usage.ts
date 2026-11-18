@@ -5,10 +5,11 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useSessionStore } from "@/stores/session-store";
 import type { ProviderUsageView } from "./types";
 
+export const PROVIDER_USAGE_QUERY_PREFIX = "providerUsage";
 export const PROVIDER_USAGE_STALE_TIME_MS = 5 * 60 * 1000;
 
 export function providerUsageQueryKey(serverId: string | null | undefined, providerId?: string) {
-  return ["providerUsage", serverId ?? "", providerId ?? ""] as const;
+  return [PROVIDER_USAGE_QUERY_PREFIX, serverId ?? "", providerId ?? ""] as const;
 }
 
 interface UseProviderUsageOptions {
@@ -38,18 +39,26 @@ export function useProviderUsage(
   const canFetch = Boolean(serverId && client && isConnected && supportsProviderUsage);
   const enabled = Boolean((options.enabled ?? true) && canFetch);
 
-  const queryFn = useCallback(async () => {
-    if (!client) {
-      throw new Error(t("providerUsage.clientUnavailable"));
-    }
-    return client.listProviderUsage(
-      options.providerId ? { providerId: options.providerId } : undefined,
-    );
-  }, [client, options.providerId, t]);
+  const fetchUsage = useCallback(
+    async (forceRefresh = false) => {
+      if (!client) {
+        throw new Error(t("providerUsage.clientUnavailable"));
+      }
+      return client.listProviderUsage(
+        options.providerId || forceRefresh
+          ? {
+              ...(options.providerId ? { providerId: options.providerId } : {}),
+              ...(forceRefresh ? { forceRefresh: true } : {}),
+            }
+          : undefined,
+      );
+    },
+    [client, options.providerId, t],
+  );
 
   const query = useQuery({
     queryKey,
-    queryFn,
+    queryFn: () => fetchUsage(false),
     enabled,
     staleTime: PROVIDER_USAGE_STALE_TIME_MS,
     refetchOnMount: true,
@@ -59,13 +68,13 @@ export function useProviderUsage(
 
   const refresh = useCallback(async () => {
     if (!canFetch) return;
-    await queryClient.invalidateQueries({ queryKey });
+    await queryClient.cancelQueries({ queryKey, exact: true });
     await queryClient.fetchQuery({
       queryKey,
-      queryFn,
+      queryFn: () => fetchUsage(true),
       staleTime: PROVIDER_USAGE_STALE_TIME_MS,
     });
-  }, [canFetch, queryClient, queryFn, queryKey]);
+  }, [canFetch, fetchUsage, queryClient, queryKey]);
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {

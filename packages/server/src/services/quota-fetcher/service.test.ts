@@ -117,10 +117,13 @@ describe("ProviderUsageService", () => {
     now += 30_000;
     const cached = await service.listUsage();
     const refreshed = await service.listUsage({ forceRefresh: true });
+    service.invalidateCache();
+    const invalidated = await service.listUsage();
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(cached).toBe(first);
     expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
+    expect(invalidated.providers[0]?.windows[0]?.usedPct).toBe(3);
   });
 
   it("deduplicates concurrent cache misses", async () => {
@@ -158,6 +161,65 @@ describe("ProviderUsageService", () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult).toBe(secondResult);
     expect(calls).toBe(1);
+  });
+
+  it("prevents invalidated or superseded in-flight reads from poisoning the cache", async () => {
+    const resolvers: Array<(usage: ProviderUsage) => void> = [];
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      cacheTtlMs: 60_000,
+      fetchers: [
+        {
+          providerId: "cursor",
+          displayName: "Cursor",
+          fetchUsage: () =>
+            new Promise<ProviderUsage>((resolve) => {
+              resolvers.push(resolve);
+            }),
+        },
+      ],
+    });
+
+    const staleFlight = service.listUsage();
+    service.invalidateCache();
+    const freshFlight = service.listUsage();
+    expect(resolvers).toHaveLength(2);
+
+    resolvers[1]!({
+      providerId: "cursor",
+      displayName: "Cursor",
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [{ id: "cursor_models", label: "Cursor Models", usedPct: 20 }],
+    });
+    const freshResult = await freshFlight;
+
+    resolvers[0]!({
+      providerId: "cursor",
+      displayName: "Cursor",
+      status: "unavailable",
+      planLabel: null,
+      windows: [],
+    });
+    await staleFlight;
+
+    const cached = await service.listUsage();
+    expect(cached).toBe(freshResult);
+    expect(cached.providers[0]?.status).toBe("available");
+
+    const forcedFlight = service.listUsage({ forceRefresh: true });
+    expect(resolvers).toHaveLength(3);
+    resolvers[2]!({
+      providerId: "cursor",
+      displayName: "Cursor",
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [{ id: "cursor_models", label: "Cursor Models", usedPct: 35 }],
+    });
+    const forcedResult = await forcedFlight;
+    expect(forcedResult.providers[0]?.windows[0]?.usedPct).toBe(35);
+    expect(await service.listUsage()).toBe(forcedResult);
   });
 
   it("isolates one provider error without dropping other providers", async () => {

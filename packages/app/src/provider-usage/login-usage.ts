@@ -9,7 +9,10 @@ export function selectProviderUsages(
   if (!providerId) return [];
   const target = providerId.toLowerCase();
   const hasAccounts =
-    target === CODEX_LOGIN_PROVIDER_ID || target === "anthropic" || target === "zhipu-coding-plan";
+    target === CODEX_LOGIN_PROVIDER_ID ||
+    target === "anthropic" ||
+    target === "zhipu-coding-plan" ||
+    target === "cursor";
   return providers.filter((usage) => {
     const id = usage.providerId.toLowerCase();
     return id === target || (hasAccounts && id.startsWith(`${target}:`));

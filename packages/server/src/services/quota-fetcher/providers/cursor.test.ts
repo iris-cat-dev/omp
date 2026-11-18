@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CursorQuotaProvider } from "./cursor.js";
+import { CursorQuotaProvider, createStoredCursorQuotaProviders } from "./cursor.js";
 
 const homes: string[] = [];
 
@@ -58,8 +58,8 @@ describe("CursorQuotaProvider team spend", () => {
         return jsonResponse({ teams: [{ id: 10 }, { id: 20 }] });
       }
       if (url.endsWith("/GetTeamSpend")) {
-        const body = JSON.parse(String(init?.body)) as { teamId: number };
-        if (body.teamId === 10) {
+        const body: unknown = JSON.parse(String(init?.body));
+        if (typeof body === "object" && body !== null && "teamId" in body && body.teamId === 10) {
           return jsonResponse({
             teamMemberSpend: [
               {
@@ -208,7 +208,7 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_state_jwt" });
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      authorization = new Headers(init?.headers).get("Authorization");
       return jsonResponse({
         planUsage: {
           totalSpend: "1500",
@@ -237,7 +237,7 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     });
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      authorization = new Headers(init?.headers).get("Authorization");
       return jsonResponse({
         planUsage: { totalSpend: "0", remaining: "100", limit: "100" },
         billingCycleStart: null,
@@ -255,7 +255,7 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     writeCursorAuthJson(homeDir, "cursor_cli_jwt");
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      authorization = new Headers(init?.headers).get("Authorization");
       return jsonResponse({
         planUsage: {
           totalSpend: "1500",
@@ -283,7 +283,7 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     writeCursorAuthJson(homeDir, "cursor_cli_jwt");
     let authorization: string | null = null;
     fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      authorization = new Headers(init?.headers).get("Authorization");
       return jsonResponse({
         planUsage: { totalSpend: "0", remaining: "100", limit: "100" },
         billingCycleStart: null,
@@ -301,7 +301,14 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     const dir = join(homeDir, ".config", "Cursor", "User", "globalStorage");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "state.vscdb"), "not a sqlite database");
-    const logger = createLogger();
+    const debug = vi.fn();
+    const logger = {
+      debug,
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      child: () => logger,
+    } as unknown as Logger;
     const unavailableProvider = new CursorQuotaProvider({
       logger,
       fetch: (() => {
@@ -314,12 +321,417 @@ describe("CursorQuotaProvider credentials and billing dates", () => {
     const usage = await unavailableProvider.fetchUsage();
 
     expect(usage.status).toBe("unavailable");
-    expect((logger as unknown as { debug: ReturnType<typeof vi.fn> }).debug).toHaveBeenCalledWith(
+    expect(debug).toHaveBeenCalledWith(
       expect.objectContaining({ path: expect.stringContaining("state.vscdb") }),
       expect.stringContaining("Failed to read Cursor token"),
     );
   });
+
+  it("ignores encrypted cursor-safe tokens in state.vscdb and never sends them over HTTP", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor-safe-encrypted-blob" });
+    const fetchSpy = vi.fn(() => {
+      throw new Error("encrypted safeStorage blobs must not be sent as Bearer tokens");
+    }) as unknown as typeof fetch;
+
+    const usage = await new CursorQuotaProvider({
+      logger: createLogger(),
+      fetch: fetchSpy,
+      homeDir,
+      platform: "linux",
+    }).fetchUsage();
+
+    expect(usage.status).toBe("unavailable");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("reads OMP agent.db Cursor OAuth credentials and queries usage-summary even when state.vscdb is encrypted", async () => {
+    const token = createJwt({
+      sub: "auth0|user_01TEST",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor-safe-encrypted-blob" });
+    writeOmpAgentDb(homeDir, [
+      {
+        id: 10,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: token, refresh: "ref_1", email: "omp@example.com" }),
+        disabled_cause: null,
+      },
+    ]);
+    let receivedCookie = "";
+    fetchApi = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://cursor.com/api/usage-summary") {
+        receivedCookie = new Headers(init?.headers).get("Cookie") ?? "";
+        return jsonResponse({
+          billingCycleStart: "2026-11-01T00:00:00.000Z",
+          billingCycleEnd: "2026-12-01T00:00:00.000Z",
+          membershipType: "enterprise",
+          limitType: "team",
+          isUnlimited: false,
+          individualUsage: {
+            overall: { enabled: true, used: 3975, limit: 100000, remaining: 96025 },
+          },
+        });
+      }
+      throw new Error(`Unexpected Cursor endpoint: ${url}`);
+    }) as typeof fetch;
+
+    const usage = await credentialProvider().fetchUsage();
+
+    expect(receivedCookie).toBe(
+      `WorkosCursorSessionToken=${encodeURIComponent(`user_01TEST::${token}`)}`,
+    );
+    expect(usage).toMatchObject({
+      providerId: "cursor",
+      status: "available",
+      planLabel: "Enterprise",
+      balances: [
+        {
+          id: "team_spend",
+          label: "Monthly usage",
+          used: 39.75,
+          remaining: 960.25,
+          limit: 1000,
+          unit: "usd",
+          resetsAt: "2026-12-01T00:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+    });
+  });
+
+  it("parses Pro+ split rails and on-demand spend from usage-summary", async () => {
+    const token = createJwt({ sub: "github|1245379", exp: Math.floor(Date.now() / 1000) + 3600 });
+    writeOmpAgentDb(homeDir, [
+      {
+        id: 1,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: token }),
+        disabled_cause: null,
+      },
+    ]);
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cursor.com/api/usage-summary",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-09-08T08:00:31.000Z",
+              membershipType: "pro_plus",
+              individualUsage: {
+                plan: {
+                  enabled: true,
+                  used: 1504,
+                  limit: 7000,
+                  remaining: 5496,
+                  autoPercentUsed: 1.85,
+                  apiPercentUsed: 10,
+                },
+                onDemand: {
+                  enabled: true,
+                  used: 500,
+                  limit: 2000,
+                  remaining: 1500,
+                },
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const usage = await credentialProvider().fetchUsage();
+
+    expect(usage).toMatchObject({
+      status: "available",
+      planLabel: "Pro+",
+      windows: [
+        {
+          id: "cursor_models",
+          label: "Cursor Models",
+          usedPct: 1.85,
+          remainingPct: 98.15,
+          resetsAt: "2026-09-08T08:00:31.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [
+        {
+          id: "other_models",
+          label: "Other Models",
+          used: 7,
+          remaining: 63,
+          limit: 70,
+          unit: "usd",
+          resetsAt: "2026-09-08T08:00:31.000Z",
+          tone: "ok",
+        },
+        {
+          id: "on_demand",
+          label: "On-demand usage",
+          used: 5,
+          remaining: 15,
+          limit: 20,
+          unit: "usd",
+          resetsAt: "2026-09-08T08:00:31.000Z",
+          tone: "ok",
+        },
+      ],
+    });
+  });
+
+  it("parses unified subscription weekly pool via GetPlanInfo and prepaid credit", async () => {
+    const token = createJwt({ sub: "auth0|user_uni", exp: Math.floor(Date.now() / 1000) + 3600 });
+    writeOmpAgentDb(homeDir, [
+      {
+        id: 2,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: token }),
+        disabled_cause: null,
+      },
+    ]);
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cursor.com/api/usage-summary",
+          () =>
+            jsonResponse({
+              membershipType: "unified_pro",
+              individualUsage: {
+                plan: { enabled: true, used: 1200, limit: 5000, totalPercentUsed: 24 },
+                onDemand: { enabled: false, used: 0, limit: 0 },
+              },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () =>
+            jsonResponse({
+              planInfo: {
+                planName: "X Subscription",
+                includedUsageResetsAt: "1790812800000",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const usage = await credentialProvider().fetchUsage();
+
+    expect(usage).toMatchObject({
+      status: "available",
+      planLabel: "X Subscription",
+      balances: [
+        {
+          id: "cursor_models",
+          label: "Cursor Models",
+          used: 12,
+          remaining: 38,
+          limit: 50,
+          unit: "usd",
+          resetsAt: "2026-10-01T00:00:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "prepaid_credit",
+          label: "Prepaid credit",
+          used: 0,
+          remaining: 0,
+          limit: 0,
+          unit: "usd",
+          resetsAt: null,
+          tone: "danger",
+        },
+      ],
+    });
+  });
+
+  it("falls back to the next candidate on 401 and resolves GetMe email for team spend when usage-summary fails", async () => {
+    const expiredJwt = createJwt({
+      sub: "auth0|expired",
+      exp: Math.floor(Date.now() / 1000) - 600,
+    });
+    const freshJwt = createJwt({
+      sub: "auth0|fresh",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+    writeOmpAgentDb(homeDir, [
+      {
+        id: 1,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: expiredJwt }),
+        disabled_cause: null,
+      },
+      {
+        id: 2,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: freshJwt }),
+        disabled_cause: null,
+      },
+    ]);
+    fetchApi = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      const auth = headers.get("Authorization") ?? "";
+      const cookie = headers.get("Cookie") ?? "";
+      if (url === "https://cursor.com/api/usage-summary") {
+        if (cookie.includes("fresh")) return jsonResponse({}, 403);
+        return jsonResponse({}, 401);
+      }
+      if (url.endsWith("/GetCurrentPeriodUsage")) {
+        if (auth === `Bearer ${expiredJwt}`) return jsonResponse({}, 401);
+        return jsonResponse({});
+      }
+      if (url.endsWith("/GetMe")) {
+        return jsonResponse({ email: "Me@Example.com" });
+      }
+      if (url.endsWith("/GetTeams")) {
+        return jsonResponse({ teams: [{ id: 99 }] });
+      }
+      if (url.endsWith("/GetTeamSpend")) {
+        return jsonResponse({
+          teamMemberSpend: [
+            { email: "me@example.com", overallSpendCents: 2500, effectivePerUserLimitDollars: 500 },
+          ],
+          nextCycleStart: "1790812800000",
+        });
+      }
+      throw new Error(`Unexpected Cursor endpoint: ${url}`);
+    }) as typeof fetch;
+
+    const usage = await credentialProvider().fetchUsage();
+
+    expect(usage).toMatchObject({
+      status: "available",
+      balances: [
+        {
+          id: "team_spend",
+          used: 25,
+          remaining: 475,
+          limit: 500,
+          unit: "usd",
+        },
+      ],
+    });
+  });
+
+  it("creates separate fetchers when multiple Cursor accounts are stored in OMP agent.db", () => {
+    writeOmpAgentDb(homeDir, [
+      {
+        id: 10,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: "tok-a", email: "a@example.com" }),
+        disabled_cause: null,
+      },
+      {
+        id: 11,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: "tok-b", email: "b@example.com" }),
+        disabled_cause: null,
+      },
+      {
+        id: 12,
+        provider: "cursor",
+        credential_type: "oauth",
+        data: JSON.stringify({ access: "tok-c", email: "c@example.com" }),
+        disabled_cause: "deleted by user",
+      },
+    ]);
+
+    const fetchers = createStoredCursorQuotaProviders({
+      logger: createLogger(),
+      homeDir,
+      platform: "linux",
+      env: {},
+    });
+
+    expect(fetchers.map((fetcher) => [fetcher.providerId, fetcher.displayName])).toEqual([
+      ["cursor:10", "Cursor · a@example.com"],
+      ["cursor:11", "Cursor · b@example.com"],
+    ]);
+  });
+
+  it("falls back to CURSOR_TOKEN when CURSOR_ACCESS_TOKEN is empty and ignores zero/whitespace resets", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "";
+    process.env["CURSOR_TOKEN"] = "cursor_fallback_env_token";
+    let authorization: string | null = null;
+    fetchApi = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      authorization = new Headers(init?.headers).get("Authorization");
+      return jsonResponse({
+        planUsage: { totalSpend: 100, remaining: 900, limit: 1000 },
+        billingCycleEnd: "   ",
+      });
+    }) as typeof fetch;
+
+    const usage = await credentialProvider().fetchUsage();
+
+    expect(authorization).toBe("Bearer cursor_fallback_env_token");
+    expect(usage.balances?.[0]).toMatchObject({ id: "plan_usage", resetsAt: null });
+
+    fetchApi = vi.fn(async () =>
+      jsonResponse({
+        planUsage: { totalSpend: 100, remaining: 900, limit: 1000 },
+        billingCycleEnd: 0,
+      }),
+    ) as typeof fetch;
+
+    const zeroUsage = await credentialProvider().fetchUsage();
+    expect(zeroUsage.balances?.[0]).toMatchObject({ id: "plan_usage", resetsAt: null });
+  });
 });
+
+function createJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${body}.sig`;
+}
+
+function writeOmpAgentDb(
+  homeDir: string,
+  rows: Array<{
+    id: number;
+    provider: string;
+    credential_type: string;
+    data: string;
+    disabled_cause: string | null;
+    identity_key?: string | null;
+  }>,
+): void {
+  const directory = join(homeDir, ".omp", "agent");
+  mkdirSync(directory, { recursive: true });
+  const database = new DatabaseSync(join(directory, "agent.db"));
+  database.exec(`
+    CREATE TABLE auth_credentials (
+      id INTEGER PRIMARY KEY,
+      provider TEXT NOT NULL,
+      credential_type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      disabled_cause TEXT DEFAULT NULL,
+      identity_key TEXT DEFAULT NULL
+    )
+  `);
+  const insert = database.prepare(
+    "INSERT INTO auth_credentials (id, provider, credential_type, data, disabled_cause, identity_key) VALUES (?, ?, ?, ?, ?, ?)",
+  );
+  for (const row of rows) {
+    insert.run(
+      row.id,
+      row.provider,
+      row.credential_type,
+      row.data,
+      row.disabled_cause,
+      row.identity_key ?? null,
+    );
+  }
+  database.close();
+}
 
 function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8Array>): void {
   const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
