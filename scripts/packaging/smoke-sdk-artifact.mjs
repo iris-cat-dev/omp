@@ -24,9 +24,11 @@ async function smoke(staged, temporary) {
     "snapcompact",
     "audio",
     "localAssistance",
+    "syntaxHighlighting",
   ]) {
     assert.equal(capabilities[capability], false, `Desktop core capability ${capability}`);
   }
+  assert.throws(() => native.highlightCode("const value = 1;", "javascript", {}), /syntaxHighlighting|unavailable/);
   const work = path.join(temporary, "work");
   await mkdir(work);
   const session = {
@@ -80,7 +82,19 @@ async function smoke(staged, temporary) {
   );
   const png = await new Image(svg).resize(2, 3).png().bytes();
   assert.deepEqual(await new Image(png).metadata(), { width: 2, height: 3, format: "png" });
-  assert.ok(load("koffi").version);
+  const ffi = load("koffi");
+  const system = ffi.load(
+    staged.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" :
+      staged.platform === "win32" ? "kernel32.dll" : "libc.so.6",
+  );
+  try {
+    const getPid = staged.platform === "win32"
+      ? system.func("uint32_t __stdcall GetCurrentProcessId(void)")
+      : system.func("int getpid(void)");
+    assert.equal(getPid(), process.pid);
+  } finally {
+    system.unload();
+  }
   const worker = fork(
     path.join(staged.directory, "dist/node/host.mjs"),
     ["__omp_worker_stats_activity"],

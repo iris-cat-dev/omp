@@ -471,7 +471,7 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
         });
       else {
         if (!client || !connected) throw new Error(t("plugins.hostOffline"));
-        const approved = await client.approvePlugin(
+        await client.approvePlugin(
           plugin.entry.id,
           {
             trusted: true,
@@ -484,7 +484,7 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
             generation: plugin.entry.generation,
           },
         );
-        if (approved.clientBundle) await approvePluginClientTrust(plugin.hostId, approved);
+        await approvePluginClientTrust(plugin.hostId, plugin.entry);
       }
       await refresh(plugin);
     });
@@ -660,8 +660,12 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
           installationId.trim() || undefined,
           { enabled: false, approval },
         );
-        const entry = (await client.getPluginCatalog()).find(({ id }) => id === result.id);
-        if (entry?.clientBundle) await approvePluginClientTrust(hostId, entry);
+        await approvePluginClientTrust(hostId, {
+          id: result.id,
+          packageId: inspection.id,
+          source: { type: "directory", path: result.path },
+          declaredCapabilities: approval.capabilities,
+        });
         await reloadDaemonPluginCatalog(hostId);
       }
       if (isCurrent()) {
@@ -699,16 +703,24 @@ export function PluginsPage({ serverId }: { serverId?: string }) {
           !isCurrent()
         )
           return;
-        await client.installDirectoryPlugin(plugin.entry.source.path, plugin.entry.id, {
-          enabled: false,
-          approval: {
-            trusted: true,
-            version: inspection.version,
-            capabilities: inspection.capabilities,
+        const restored = await client.installDirectoryPlugin(
+          plugin.entry.source.path,
+          plugin.entry.id,
+          {
+            enabled: false,
+            approval: {
+              trusted: true,
+              version: inspection.version,
+              capabilities: inspection.capabilities,
+            },
           },
+        );
+        await approvePluginClientTrust(plugin.hostId, {
+          id: restored.id,
+          packageId: inspection.id,
+          source: { type: "directory", path: restored.path },
+          declaredCapabilities: inspection.capabilities,
         });
-        const restored = (await client.getPluginCatalog()).find(({ id }) => id === plugin.entry.id);
-        if (restored?.clientBundle) await approvePluginClientTrust(plugin.hostId, restored);
         await refresh(plugin);
       }
       if (isCurrent()) {

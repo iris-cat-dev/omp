@@ -276,11 +276,13 @@ async function validatePackage(sdk, manifest) {
     installed.ompNodeSdk?.profile !== manifest.profile ||
     modules.version !== 1 ||
     modules.buildTarget !== manifest.buildTarget ||
+    modules.profile !== manifest.profile ||
     !modules.modules ||
     Array.isArray(modules.modules) ||
     !Object.keys(modules.modules).length ||
     runtime.version !== 1 ||
     runtime.buildTarget !== manifest.buildTarget ||
+    runtime.profile !== manifest.profile ||
     !runtime.packages?.[packageName]
   )
     throw new Error("SDK archive package, module registry, or runtime metadata is incompatible.");

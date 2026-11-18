@@ -1,8 +1,9 @@
 import { serialize } from "node:v8";
+import ts from "typescript";
 
 // zod-aot's lean mode shares issue/regex helpers, not schema validation bodies.
-// Compose its IR emitters instead: only repeated, non-mutating containers become
-// functions. Mutating/fallback/default branches retain the upstream output logic.
+// Share output-preserving bodies, including refinements; only effect-free
+// subtrees may gain fast guards. Mutating/fallback branches remain inline.
 export function compileSharedSchemas(
   schemas,
   { extractSchema, generateFast, generateSlow, context },
@@ -28,7 +29,7 @@ export function compileSharedSchemas(
     ]);
     // New upstream IR kinds must be reviewed before they can enter a shared
     // subtree. In particular, hasMutation alone misses recursiveRef writes.
-    const pureTypes = new Set([
+    const outputPreservingTypes = new Set([
       ...shareableContainers,
       "set",
       "map",
@@ -88,16 +89,19 @@ export function compileSharedSchemas(
     };
     // recursiveRef writes output even though upstream hasMutation returns false.
     // Keep it (and every enclosing subtree) inline; it also depends on fnName.
-    // Refinements can have side effects, so never run an extra fast guard on them.
-    const pure = (node) =>
-      pureTypes.has(node.type) &&
+    const outputPreserving = (node) =>
+      outputPreservingTypes.has(node.type) &&
       !context.hasMutation(node) &&
+      children(node).every(outputPreserving);
+    // Refinements can have side effects. Sharing their slow body must not add
+    // another fast evaluation before the original validation.
+    const pure = (node) =>
       !(node.checks ?? []).some((check) => check.kind === "refine_effect") &&
       children(node).every(pure);
     const keys = new WeakMap();
     const occurrences = new Map();
     const count = (node) => {
-      if (shareableContainers.has(node.type) && pure(node)) {
+      if (shareableContainers.has(node.type) && outputPreserving(node)) {
         // V8's build-time serialization preserves field order, undefined and
         // non-finite numbers. Unlike JSON keys, it cannot conflate IR values.
         const bytes = serialize(node);
@@ -117,6 +121,36 @@ export function compileSharedSchemas(
     };
     const fastHelpers = new Map();
     const slowHelpers = new Map();
+    const pathArguments = new Map();
+    const splitPath = (path) => {
+      if (pathArguments.has(path)) return pathArguments.get(path);
+      const source = ts.createSourceFile(
+        "path.js",
+        path,
+        ts.ScriptTarget.ESNext,
+        false,
+        ts.ScriptKind.JS,
+      );
+      const collect = (expression) => {
+        if (ts.isArrayLiteralExpression(expression)) {
+          return expression.elements.map((element) => element.getText(source));
+        }
+        if (
+          ts.isCallExpression(expression) &&
+          ts.isPropertyAccessExpression(expression.expression) &&
+          expression.expression.name.text === "concat"
+        ) {
+          return [
+            ...collect(expression.expression.expression),
+            ...expression.arguments.map((argument) => argument.getText(source)),
+          ];
+        }
+        throw new Error(`Unsupported zod-aot issue path: ${path}`);
+      };
+      const argumentsList = collect(source.statements[0].expression);
+      pathArguments.set(path, argumentsList);
+      return argumentsList;
+    };
     const fastGen = (input) => ({
       input,
       ctx,
@@ -160,22 +194,26 @@ export function compileSharedSchemas(
     });
     const slow = (node, input, output, path, issues) => {
       const key = sharedKey(node);
-      // Non-mutating emitters never write output. Requiring identical input and
+      // Output-preserving emitters never write output. Requiring identical input and
       // output also preserves intersection/pipe reads of the existing output.
       if (!key || input !== output) {
         return generateSlow(node, slowGen(input, output, path, issues));
       }
-      if (!slowHelpers.has(key)) {
+      const guard = pure(node) ? fast(node, input) : null;
+      // Guarded bodies run only on errors, so one path-array helper can serve
+      // every depth. Unguarded/refined bodies receive scalar path segments to
+      // avoid allocating paths on success or delaying locale/error processing.
+      const argumentsList = guard === null ? splitPath(path) : [path];
+      const helperKey = `${key}:${guard === null ? argumentsList.length : "guarded"}`;
+      if (!slowHelpers.has(helperKey)) {
         const name = context.emitTemp(ctx, "shared_slow");
-        const body = generateSlow(node, slowGen("_v", "_v", "_p", "_e"));
-        ctx.preamble.push(`function ${name}(_v,_p,_e){${body}}`);
-        slowHelpers.set(key, name);
+        const parameters = guard === null ? argumentsList.map((_, index) => `_p${index}`) : ["_p"];
+        const helperPath = guard === null ? `[${parameters.join(",")}]` : "_p";
+        const body = generateSlow(node, slowGen("_v", "_v", helperPath, "_e"));
+        ctx.preamble.push(`function ${name}(${["_v", "_e", ...parameters].join(",")}){${body}}`);
+        slowHelpers.set(helperKey, name);
       }
-      const call = `${slowHelpers.get(key)}(${input},${path},${issues});`;
-      const guard = fast(node, input);
-      // Do not allocate a nested path array on successful validation. The
-      // upstream fast emitters are allocation-free and only examine pure data;
-      // detailed slow validation still records every issue on a failed guard.
+      const call = `${slowHelpers.get(helperKey)}(${[input, issues, ...argumentsList].join(",")});`;
       return guard === null ? `${call}\n` : `if(!(${guard})){${call}}\n`;
     };
     // Preserve the upstream allocation-free fast success path and __fin error

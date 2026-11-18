@@ -59,6 +59,12 @@ Specific plugins are built separately: for example, `node scripts/build-desktop-
 
 Trusted plugin clients share the renderer's React, client, SDK and Lucide modules. Selective Lucide imports still resolve directly to licensed icon modules. Namespace imports intentionally retain the full public module, including canonical names, aliases, `icons`, `Icon` and `createLucideIcon`; replacing the namespace with the canonical-icon table breaks external client bundles.
 
+Daemon plugin client approvals on a device are keyed by host ID, installation ID, package ID and source directory, not package version or client-bundle digest. Reinstallation, version updates and rebuilt client code reuse that source's explicitly approved capabilities. A different identity/source or capability outside its approved set still needs device approval; daemon trust remains a separate gate. Revocation removes every source approval for the installation.
+
+`client-trust.ts` migrates version-bound v1 records to source-bound v2 records, merging only capabilities previously approved for the same source. Browser Web Locks serialize loading, migration and writes across windows; storage events invalidate affected client activations. Native AsyncStorage operations retain a single-runtime queue. Reads use current persisted state, and failed writes remain retryable. A durable v2 record stays authoritative if obsolete-key cleanup fails.
+
+Installation and restoration save the returned installation identity with the inspected package ID and user-confirmed capabilities. Direct approval saves the identity and capabilities shown in the confirmation, rather than a replacement package returned after the RPC. Later catalog changes cannot expand device approval.
+
 Node consumers import release-operation and activation-scope APIs from `@omp-desktop/plugin/server`. The public `/host` entry also includes renderer React bindings; its historical exports remain available to renderer hosts.
 
 ## Runtime and protocol notes
@@ -387,13 +393,17 @@ The Desktop target builds `dist/node-desktop/` and installs it canonically at `d
 
 The Desktop native addon omits PDF text extraction, Jujutsu (Git remains),
 Snapcompact image-based context compression, recording/playback, local word
-prediction, spelling, and Apple Foundation Models, in addition to SmolLM,
-native WebRTC/Opus, and WASM grammars. Both `core` and `full` enforce this native
-boundary. Saved settings cannot activate omitted engines; explicit requests
-fail before native construction. Existing Snapcompact archives, ordinary images,
-browser PDF screenshots/printing, and caller-owned SDP signaling remain usable.
+prediction, spelling, Apple Foundation Models, and syntect TUI syntax highlighting,
+in addition to SmolLM, native WebRTC/Opus, and WASM grammars. Both `core` and `full`
+enforce this native boundary. Desktop code blocks, previews, and editors retain
+their independent Lezer highlighter; native AST/edit syntax checking remains.
+Saved settings cannot activate omitted engines; explicit requests fail before
+native construction. Existing Snapcompact archives, ordinary images, browser PDF
+screenshots/printing, and caller-owned SDP signaling remain usable.
 
-Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper runtimes, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. The installed package records its profile; launch-time environment changes cannot restore excluded capabilities.
+Core preserves remote/API models, file/Bash/JS eval tools, browser support, RPC, saved sessions, and cancellation. It excludes local embedding, offline speech, and tiny helper implementations from the JavaScript build graph, disables their automatic prefetching, and rejects explicit offline requests. `full` includes the profile's optional dependencies; Desktop-target native capabilities remain limited by that target. Compiled metadata and the installed package must record the same profile; launch-time environment changes cannot restore excluded capabilities.
+
+Node SDK builds exclude the Bun-only plugin loading/rewrite graph while retaining ESM/CJS host aliases, shared module identity, reload behavior, and adjacent resources. Bun CLI loading remains unchanged. Staged Koffi contains its JavaScript entries, target addon, and licenses, without source, documentation, types, or build configuration.
 
 SDK native dependencies must match the build host's OS and architecture. Windows x64 applications require Windows x64 builds; macOS arm64 applications require macOS arm64 builds. macOS core packaging resolves both the App resources root and addon to their real paths, rejects addons outside that root, and breaks packager hardlinks before stripping the release copy and signing; source addons remain unchanged.
 
@@ -589,7 +599,9 @@ node packages/desktop/e2e/packaged-app-smoke.js --app "$PWD/packages/desktop/rel
 
 macOS runtime builds omit Blink Inspector/CDP. The smoke uses a disposable Node preload to drive real `BrowserWindow` APIs; the signed executable, production main entry and application resources remain unchanged. It isolates HOME, userData, credentials/configuration and daemon ports, waits for visible React content, and retains a native PNG and JSON report under the printed evidence directory. Set `PASEO_DESKTOP_SMOKE_ARTIFACT_DIR` outside the application to choose that directory.
 
-Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Add plugin → From folder, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
+Cold-start checks wait for worker readiness before requiring `running` and `reachable`. The smoke checks macOS Dock visibility and second-instance daemon preservation, loads the Node SDK from an App copy outside the checkout, and verifies concurrent RPC sessions and the CLI/terminal path. It installs an external folder through Settings → Plugins → Add plugin → From folder, confirms trust, verifies initial disabled state, enables it, observes the real worker and client RPC, then disables it. The after-sign run uses a legacy profile to prove historical preinstalled records remain saved, hidden and unexecuted, including rejection of direct activation requests; fresh-profile checks cover an empty initial registry. Neither profile requires packaged plugin implementations or pet resources.
+
+The JSON report records the direct legacy activation refusal in `plugins.legacyActivationError`.
 
 #### Native window-close interactions
 

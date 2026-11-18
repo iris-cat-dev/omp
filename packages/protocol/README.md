@@ -11,6 +11,30 @@ Schemas, exports, wire helpers, and types may change or disappear in any release
 without advance notice. Use it outside Paseo at your own risk until the package
 is explicitly documented as stable.
 
+## Generated outbound validation
+
+Regenerate and compile the outbound validator through the protocol build; do not
+edit `src/generated/validation/ws-outbound.aot.ts` directly:
+
+```bash
+npm run build --workspace=@omp-desktop/protocol
+npm exec --workspace=@omp-desktop/protocol -- vitest run tests/validation/ws-outbound.test.ts
+```
+
+`scripts/compile-shared-validation.mjs` shares repeated output-preserving schema
+bodies, including containers with `.refine()` checks. Only effect-free bodies
+receive an additional fast guard. Refinements retain upstream invocation counts
+and ordering, including its existing fast-then-slow evaluations. Unguarded
+helpers pass error-path segments as scalars, materializing path arrays only when
+emitting issues; guarded helpers reuse one body across path depths. Nested union
+and record-key errors reach locale callbacks with their complete original paths.
+
+Defaults, transforms, fallback validation and recursive output writes remain
+inline. Generator changes must preserve normalized data and complete issues
+against upstream inline compilation, as well as refinement side effects. Measure
+size and runtime performance with real messages rather than permanent byte or
+timing assertions.
+
 ## Chunked daemon messages
 
 WebSocket protocol version 1 clients advertise `chunked_json_messages` in hello.

@@ -191,13 +191,17 @@ export async function buildOmpSdk({
     const files =
       metadata?.version === 1 &&
       metadata.buildTarget === buildTarget &&
+      metadata.profile === profile &&
       Array.isArray(metadata.files)
         ? metadata.files.filter(
             (file) =>
               typeof file === "string" && path.isAbsolute(file) && externalToSource(sdkRepo, file),
           )
         : [];
-    return key({ available: metadata?.version === 1, files: await fingerprintPaths(files) });
+    return key({
+      available: metadata?.version === 1 && metadata.buildTarget === buildTarget && metadata.profile === profile,
+      files: await fingerprintPaths(files),
+    });
   }
   async function dependencyKey() {
     const dependencies = await readCache(dependenciesFile);
@@ -273,6 +277,7 @@ export async function buildOmpSdk({
         bun: tools.bun,
         node: process.version,
         buildTarget,
+        profile,
         buildEnvironment,
         dotenvKey,
       });
@@ -284,6 +289,7 @@ export async function buildOmpSdk({
         `--cwd=${sdkRoot}`,
         "run",
         buildTarget === "desktop" ? "gen:bundle:desktop" : "gen:bundle:node",
+        `--profile=${profile}`,
       ]);
       await cacheOutput(bundleState, await getBundleKey(), bundleOutputs);
     }

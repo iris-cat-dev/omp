@@ -266,17 +266,21 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
   assert.equal(initial.backgroundProvider, null);
   if (checkDaemonPlugins)
     assert.deepEqual(await checkDaemonPlugins(), [], "New daemon registry must start empty");
+  let legacyActivationError = null;
   if (legacyRecords.length) {
-    await assert.rejects(
-      page.evaluate(() =>
-        window.paseoDesktop.plugins.patch({
+    legacyActivationError = await page.evaluate(async () => {
+      try {
+        await window.paseoDesktop.plugins.patch({
           installationId: "desktop-pet",
           expectedRevision: 0,
           patch: { enabled: true },
-        }),
-      ),
-      "A direct legacy activation request must fail explicitly",
-    );
+        });
+        return null;
+      } catch (error) {
+        return String(error);
+      }
+    });
+    assert.notEqual(legacyActivationError, null, "A direct legacy activation request must fail explicitly");
     for (const record of legacyRecords)
       assert.equal(
         fs.existsSync(
@@ -495,6 +499,7 @@ async function smokeFolderPlugin({ page, appPath, env, legacyRecords = [], check
     });
     return {
       profile: legacyRecords.length ? "legacy" : "fresh",
+      legacyActivationError,
       installed: FIXTURE_ID,
       source: directory,
       worker: result,

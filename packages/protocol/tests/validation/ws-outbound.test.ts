@@ -189,6 +189,101 @@ const SourceSchema = z.discriminatedUnion("type", [
     }
   });
 
+  it.each([false, true])(
+    "preserves refinement calls and input side effects with defaults=%s",
+    async (withDefault) => {
+      const source = `${sharedSchemaSource}
+const Checked = Shared.extend({ visits: z.array(z.string()) }).refine((value) => {
+  value.visits.push(value.id);
+  return value.id.startsWith("ok");
+}, { message: "not ok" });
+const SourceSchema = z.object({
+  left: Checked,
+  right: Checked,
+  ${withDefault ? "enabled: z.boolean().default(true)," : ""}
+});
+`;
+      const [shared, inline] = await Promise.all([
+        compileSchema(source),
+        compileSchema(source, "inline"),
+      ]);
+      const fixture = (valid: boolean) => {
+        const visits: string[] = [];
+        const item = { visits, values: [1], coordinates: [0, 1], state: "running" };
+        return {
+          left: { ...item, id: valid ? "ok-left" : "bad-left" },
+          right: { ...item, id: "ok-right" },
+        };
+      };
+      for (const valid of [true, false]) {
+        const input = fixture(valid);
+        const original = fixture(valid);
+        const result = shared.safeParse(input);
+        expect(result).toEqual(inline.safeParse(original));
+        expect(result.success).toBe(valid);
+        const expected = valid
+          ? withDefault
+            ? ["ok-left", "ok-right", "ok-left", "ok-right"]
+            : ["ok-left", "ok-right"]
+          : ["bad-left", "bad-left", "ok-right"];
+        expect(input.left.visits).toEqual(expected);
+        expect(input.left.visits).toEqual(original.left.visits);
+        expect(input.right.visits).toBe(input.left.visits);
+        if (!valid) {
+          expect(result).toMatchObject({
+            error: { issues: [{ code: "custom", path: ["left"] }] },
+          });
+        }
+      }
+    },
+  );
+
+  it("preserves nested record-key and union issues through refined shared bodies", async () => {
+    const source = `${sharedSchemaSource}
+const Checked = Shared.refine((value) => value.id === "ok", { message: "not ok" });
+const Records = z.record(z.string().min(2), z.union([Checked, z.boolean()]));
+const SourceSchema = z.object({ left: Records, right: Records, enabled: z.boolean().default(true) });
+`;
+    const [shared, inline] = await Promise.all([
+      compileSchema(source),
+      compileSchema(source, "inline"),
+    ]);
+    const item = { id: "ok", values: [1], coordinates: [0, 1], state: "running" };
+    const input = {
+      left: { x: item, good: { ...item, id: "bad" } },
+      right: { good: { ...item, values: [false] } },
+    };
+    const result = shared.safeParse(input);
+    expect(result).toEqual(inline.safeParse(input));
+    expect(result).toMatchObject({
+      error: {
+        issues: [
+          {
+            code: "invalid_key",
+            path: ["left", "x"],
+            issues: [{ code: "too_small", path: ["left", "x"] }],
+          },
+          {
+            code: "invalid_union",
+            path: ["left", "good"],
+            errors: [
+              [{ code: "custom", path: ["left", "good"] }],
+              [{ code: "invalid_type", path: ["left", "good"] }],
+            ],
+          },
+          {
+            code: "invalid_union",
+            path: ["right", "good"],
+            errors: [
+              [{ code: "invalid_type", path: ["right", "good", "values", 0] }],
+              [{ code: "invalid_type", path: ["right", "good"] }],
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("applies defaults inside discriminated-union branches", async () => {
     const schema = await compileSchema(`
 const SourceSchema = z.discriminatedUnion("type", [
