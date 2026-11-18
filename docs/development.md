@@ -123,7 +123,7 @@ For a custom SDK source, `OMP_DESKTOP_SDK_SOURCE` must be an absolute package ro
 
 Workspace content search loads `@oh-my-pi/pi-natives.searchFiles` from the selected SDK. Custom SDK packages must provide this structured API; older packages report a capability error. When changing native public APIs, run `bun run build:bindings` in `omp-sdk/packages/natives` before rebuilding the Desktop SDK, so generated JS/TypeScript exports match the addon.
 
-SSH bootstrap exercises `searchFiles` in the downloaded SDK before stopping the old daemon or switching `current`. The pinned public SDK assets must include this API; the existing `sdk-v18.14.0-desktop-core.1` assets do not. Publish a compatible SDK and update `sdk/node-release.json` before deploying the new remote backend.
+SSH bootstrap exercises `searchFiles` in the downloaded SDK before stopping the old daemon or switching `current`. The pinned `sdk-v18.14.0-desktop-core.3` release provides this API; its final tarball smoke verifies occurrence counts and UTF-16 highlight ranges on every supported platform. Older remote SDK releases are not compatible with this deployment check.
 
 Each top-level agent runs in a separate Node process with the existing RPC session adapter, streaming events, approval UI, host-tool bridge, and persistence format. SDK errors never trigger a CLI fallback. Packaged Desktop uses its embedded Node runtime and preserves `ELECTRON_RUN_AS_NODE=1` in SDK hosts and worker subprocesses; no external Node, Bun, or OMP executable is required. Remote bundles install Node 24.14.0.
 
@@ -140,7 +140,7 @@ The source SDK includes these selectively ported `can1357/oh-my-pi` changes, ret
 - Gemini 4 Carbon dated pricing: `0de8205510f1` ([#18734](https://github.com/can1357/oh-my-pi/pull/18734)).
 - Shell execution trace: `488cafa0e0d0`, with the required shell engine from `44711a78c1be` and trace/encoding fixes pinned through `1bdbf6d242d9`. This selective port replaces Brush while retaining Node SDK, Desktop/core feature trimming, PTY/external-shell routes, artifact capture, and the fork's owned Stop and Git guard contracts. It does not import upstream CLI updater, TUI line movement, or TTY writer optimizations.
 
-Rebuild the SDK and restart its session hosts to use these changes. The package version remains `18.14.0`; the fixed public SDK release in `sdk/node-release.json` is unchanged and does not acquire these source changes until a matching SDK is published.
+The bundled SDK and pinned remote release `sdk-v18.14.0-desktop-core.3` include these ports. The SDK package version remains `18.14.0`; the release tag identifies the updated bytes. Rebuild Desktop's remote-backend payload after changing the pin, then use the normal host update flow and recreate loaded SDK sessions to apply it. Publishing an SDK or Desktop release does not restart existing hosts.
 
 Codex and Antigravity model catalogs track the stored OAuth account set. Adding,
 disabling, or removing accounts invalidates that discovery fingerprint, including
@@ -184,7 +184,7 @@ and renderer and restart loaded hosts to apply this change.
 
 Node RPC hosts persist the native session header before reporting startup ready, including new idle sessions. `noSession` keeps its existing in-memory contract. Local extension commands that finish without a model turn use `append_session_annotation` for their original submission and complete attachment snapshots. Desktop waits for the SDK's durable acknowledgment before completing the submission; cold history restores the same journal entry rather than a synthetic model message. RPC shutdown stops resource watching, disposes the owned session, and closes presence.
 
-Remote distribution must ship an SDK with the same `append_session_annotation` RPC contract. The currently configured `sdk-v18.14.0-desktop-core.1` release returns `Unknown command: append_session_annotation`; rebuilding Desktop's remote-backend bundles does not update that published SDK. Publish the matching SDK first, then update `omp-sdk/sdk/node-release.json` to its real release and verify a downloaded runtime through startup, durable acknowledgment, and cold resume.
+Remote distribution pins `sdk-v18.14.0-desktop-core.3` with the same `append_session_annotation` RPC contract. Its installed-tarball smoke starts a real Node RPC host without provider credentials, reads the journal before annotation, checks persistence at acknowledgment, and verifies the same entry after cold resume without creating model messages. Rebuilding only Desktop's remote backend does not replace the pinned SDK bytes.
 
 SDK sessions enable `set_ask_dialog` before startup completes. One RPC `extension_ui_request` with `method: "ask"` carries the entire question group. Desktop renders the existing question tabs and returns an ordered `answers` array of `{ id, selectedOptions, customInput? }`, preserving original option labels and separate custom input. IDs keep repeated headers distinct; comma-containing labels remain individual selections. Invalid or incomplete answers leave the permission pending, and closing the form cancels the group. Legacy external CLI startup retains its existing select/editor path. Rebuild the Desktop backend and renderer, then recreate existing sessions to load this bridge change.
 
