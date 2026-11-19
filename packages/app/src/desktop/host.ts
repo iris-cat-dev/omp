@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
+import type { PluginClientTrustInstallation, PluginClientTrustRequest } from "@omp-desktop/protocol/plugin-client-trust";
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
 
@@ -290,6 +291,10 @@ export interface DesktopHostBridge {
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
   plugins?: DesktopPluginsBridge;
+  pluginClientTrust?: {
+    access(request: PluginClientTrustRequest): Promise<boolean | null>;
+    onChanged(handler: (installation: PluginClientTrustInstallation) => void): () => void;
+  };
   screenshot?: { capture: () => Promise<VisualFeedbackImage | null> };
   events?: DesktopEventsBridge;
   remoteSsh?: DesktopRemoteSshBridge;

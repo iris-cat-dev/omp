@@ -2,26 +2,34 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { z } from "zod";
 import { Platform } from "react-native";
 import type { DesktopPluginCatalogEntry } from "@omp-desktop/protocol/desktop-plugins";
+import {
+  applyPluginClientTrust,
+  PluginClientTrustDocumentSchema as schema,
+  PluginClientTrustIdentitySchema,
+  type PluginClientTrustDocument,
+  type PluginClientTrustInstallation,
+  type PluginClientTrustOperation,
+} from "@omp-desktop/protocol/plugin-client-trust";
+import { getDesktopHost } from "@/desktop/host";
 import { readValidatedJson } from "@/storage/validated-storage";
 
 const STORAGE_KEY = "desktop-plugin-client-trust-v2";
 const LEGACY_STORAGE_KEY = "desktop-plugin-client-trust-v1";
-const schema = z.record(z.string(), z.object({ capabilities: z.array(z.string()) }).strict());
 const legacySchema = z.record(
   z.string(),
   z.object({ bundleDigest: z.string(), capabilities: z.array(z.string()) }).strict(),
 );
 const legacyIdentitySchema = z.tuple([z.string(), z.string(), z.string(), z.string(), z.string()]);
-const sourceIdentitySchema = z.tuple([z.string(), z.string(), z.string(), z.string()]);
-type TrustSource = Pick<DesktopPluginCatalogEntry, "id" | "packageId" | "source">;
+type TrustSource = Pick<DesktopPluginCatalogEntry, "id" | "packageId" | "source" | "declaredCapabilities">;
 let operations: Promise<void> = Promise.resolve();
-const listeners = new Set<(installation: { hostId: string; installationId: string }) => void>();
+const listeners = new Set<(installation: PluginClientTrustInstallation) => void>();
+let unsubscribeDesktop: (() => void) | undefined;
 
-function identity(hostId: string, plugin: TrustSource) {
-  return JSON.stringify([hostId, plugin.id, plugin.packageId, plugin.source.path]);
+function notify(installation: PluginClientTrustInstallation) {
+  for (const listener of listeners) listener(installation);
 }
-function migrateLegacyTrust(legacy: z.infer<typeof legacySchema>): z.infer<typeof schema> {
-  const migrated: z.infer<typeof schema> = {};
+function migrateLegacyTrust(legacy: z.infer<typeof legacySchema>): PluginClientTrustDocument {
+  const migrated: PluginClientTrustDocument = {};
   for (const [key, approval] of Object.entries(legacy)) {
     const [hostId, installationId, packageId, sourcePath] = legacyIdentitySchema.parse(
       JSON.parse(key),
@@ -37,8 +45,7 @@ function migrateLegacyTrust(legacy: z.infer<typeof legacySchema>): z.infer<typeo
 }
 function withTrustStore<T>(operation: () => Promise<T>): Promise<T> {
   const pending = operations.then(() => {
-    // Web storage is shared by windows; native AsyncStorage uses one JS runtime.
-    // The previous WebCrypto digest already required a secure browser origin.
+    // Unlike desktop IPC, browser storage needs a lock shared across tabs.
     if (Platform.OS === "web") {
       if (!navigator.locks) throw new Error("Secure browser storage locking is unavailable");
       return navigator.locks.request(STORAGE_KEY, operation);
@@ -51,13 +58,21 @@ function withTrustStore<T>(operation: () => Promise<T>): Promise<T> {
   );
   return pending;
 }
-async function load() {
-  // Always read inside the lock: another renderer may have revoked an approval.
-  const saved = await readValidatedJson(AsyncStorage, STORAGE_KEY, schema, { invalid: "throw" });
-  if (saved !== null) return saved;
-  const legacy = await readValidatedJson(AsyncStorage, LEGACY_STORAGE_KEY, legacySchema, {
+function readCurrentTrust() {
+  return readValidatedJson(AsyncStorage, STORAGE_KEY, schema, { invalid: "throw" });
+}
+
+function readLegacyTrust() {
+  return readValidatedJson(AsyncStorage, LEGACY_STORAGE_KEY, legacySchema, {
     invalid: "throw",
   });
+}
+
+async function load() {
+  // Always read inside the lock: another renderer may have revoked an approval.
+  const saved = await readCurrentTrust();
+  if (saved !== null) return saved;
+  const legacy = await readLegacyTrust();
   const next = migrateLegacyTrust(legacy ?? {});
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   if (legacy !== null) {
@@ -70,49 +85,53 @@ async function load() {
   }
   return next;
 }
-export async function hasPluginClientTrust(
-  hostId: string,
-  plugin: DesktopPluginCatalogEntry,
-): Promise<boolean> {
-  if (!plugin.clientBundle) return false;
+async function accessTrust(operation: PluginClientTrustOperation): Promise<boolean> {
+  const desktop = getDesktopHost()?.pluginClientTrust;
+  if (desktop) {
+    const stored = await desktop.access({ operation });
+    if (stored !== null) return stored;
+    const initial = await readCurrentTrust() ?? migrateLegacyTrust(await readLegacyTrust() ?? {});
+    const initialized = await desktop.access({ operation, initial });
+    if (initialized === null) throw new Error("Plugin client trust initialization failed");
+    return initialized;
+  }
+
   return withTrustStore(async () => {
-    const saved = (await load())[identity(hostId, plugin)];
-    return (
-      !!saved &&
-      plugin.declaredCapabilities.every((capability) => saved.capabilities.includes(capability))
-    );
-  });
-}
-export async function approvePluginClientTrust(
-  hostId: string,
-  plugin: TrustSource & Pick<DesktopPluginCatalogEntry, "declaredCapabilities">,
-): Promise<void> {
-  await withTrustStore(async () => {
-    const next = await load();
-    const approval = (next[identity(hostId, plugin)] ??= { capabilities: [] });
-    for (const capability of plugin.declaredCapabilities) {
-      if (!approval.capabilities.includes(capability)) approval.capabilities.push(capability);
+    const document = await load();
+    const result = applyPluginClientTrust(document, operation);
+    if (operation.action !== "check") {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(document));
+      notify({ hostId: operation.hostId, installationId: operation.installationId });
     }
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    for (const listener of listeners) listener({ hostId, installationId: plugin.id });
+    return result;
   });
 }
-export async function revokePluginClientTrust(
-  hostId: string,
-  installationId: string,
-): Promise<void> {
-  const prefix = `${JSON.stringify([hostId, installationId]).slice(0, -1)},`;
-  await withTrustStore(async () => {
-    const next = Object.fromEntries(
-      Object.entries(await load()).filter(([key]) => !key.startsWith(prefix)),
-    );
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    for (const listener of listeners) listener({ hostId, installationId });
-  });
+
+function describeSource(hostId: string, plugin: TrustSource) {
+  return {
+    hostId,
+    installationId: plugin.id,
+    packageId: plugin.packageId,
+    sourcePath: plugin.source.path,
+    capabilities: plugin.declaredCapabilities,
+  };
 }
+
+export async function hasPluginClientTrust(hostId: string, plugin: DesktopPluginCatalogEntry): Promise<boolean> {
+  return !!plugin.clientBundle && accessTrust({ action: "check", ...describeSource(hostId, plugin) });
+}
+
+export async function approvePluginClientTrust(hostId: string, plugin: TrustSource): Promise<void> {
+  await accessTrust({ action: "approve", ...describeSource(hostId, plugin) });
+}
+
+export async function revokePluginClientTrust(hostId: string, installationId: string): Promise<void> {
+  await accessTrust({ action: "revoke", hostId, installationId });
+}
+
 function notifySource(key: string) {
-  const [hostId, installationId] = sourceIdentitySchema.parse(JSON.parse(key));
-  for (const listener of listeners) listener({ hostId, installationId });
+  const [hostId, installationId] = PluginClientTrustIdentitySchema.parse(JSON.parse(key));
+  notify({ hostId, installationId });
 }
 function onStorageChange(event: StorageEvent) {
   if (event.key !== STORAGE_KEY || event.storageArea !== window.localStorage) return;
@@ -131,15 +150,21 @@ function onStorageChange(event: StorageEvent) {
     if (!Object.hasOwn(before, key)) notifySource(key);
   }
 }
-export function subscribePluginClientTrust(
-  listener: (installation: { hostId: string; installationId: string }) => void,
-) {
+export function subscribePluginClientTrust(listener: (installation: PluginClientTrustInstallation) => void) {
   listeners.add(listener);
-  if (Platform.OS === "web" && listeners.size === 1)
-    window.addEventListener("storage", onStorageChange);
+  if (listeners.size === 1) {
+    const desktop = getDesktopHost()?.pluginClientTrust;
+    if (desktop) unsubscribeDesktop = desktop.onChanged(notify);
+    else if (Platform.OS === "web") window.addEventListener("storage", onStorageChange);
+  }
   return () => {
     listeners.delete(listener);
-    if (Platform.OS === "web" && listeners.size === 0)
+    if (listeners.size !== 0) return;
+    if (unsubscribeDesktop) {
+      unsubscribeDesktop();
+      unsubscribeDesktop = undefined;
+    } else if (Platform.OS === "web") {
       window.removeEventListener("storage", onStorageChange);
+    }
   };
 }

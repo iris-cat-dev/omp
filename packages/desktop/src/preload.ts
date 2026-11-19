@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { LocalPluginPatch, LocalPluginSnapshot, LocalPluginDirectoryInstall, LocalPluginDirectoryInspection, LocalPluginLogEntry } from "@omp-desktop/protocol/desktop-local-plugins";
 import type { VisualFeedbackImage } from "@omp-desktop/protocol/visual-feedback";
+import type { PluginClientTrustInstallation, PluginClientTrustRequest } from "@omp-desktop/protocol/plugin-client-trust";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
 // NOT emit any runtime module load other than "electron" — a require() of a local or
@@ -55,6 +56,16 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     releaseClientScope: async (input: { installationId: string; generation: number; clientActivationId: string }) => {
       const { documentEpoch } = await bindPluginDocument();
       await ipcRenderer.invoke("omp:plugins:releaseClientScope", { ...input, documentEpoch });
+    },
+  },
+  pluginClientTrust: {
+    access: (request: PluginClientTrustRequest) =>
+      ipcRenderer.invoke("omp:plugin-client-trust", request) as Promise<boolean | null>,
+    onChanged: (handler: (installation: PluginClientTrustInstallation) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, installation: PluginClientTrustInstallation) =>
+        handler(installation);
+      ipcRenderer.on("omp:plugin-client-trust-changed", listener);
+      return () => ipcRenderer.removeListener("omp:plugin-client-trust-changed", listener);
     },
   },
   screenshot:
