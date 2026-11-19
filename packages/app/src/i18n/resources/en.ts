@@ -526,6 +526,14 @@ export const en = {
     },
   },
   sessions: {
+    byTime: "By time",
+    byProject: "By project",
+    recent: "Recent conversations",
+    results: "Search results",
+    emptyHost: "No conversations on this host",
+    emptyReachable: "No results from the available hosts",
+    loadFailed: "Couldn’t load history",
+    offlineHint: "History will appear when {{host}} reconnects.",
     title: "History",
     empty: "No sessions yet",
     noMatches: "No sessions match",
@@ -662,6 +670,9 @@ export const en = {
     },
   },
   importSession: {
+    searchPlaceholder: "Search titles, previews or projects",
+    noMatches: "No matching sessions",
+    filterProvider: "Filter by provider",
     title: "Import session",
     filters: {
       all: "All",
@@ -2313,6 +2324,9 @@ export const en = {
     hostPicker: {
       switchHost: "Switch host",
       local: "Local",
+      filterByHost: "Filter by host",
+      filterAccessibility: "Filter by host: {{host}}",
+      openSettings: "Open settings for {{host}}",
     },
     backToWorkspace: "Back",
     addHost: "Add host",

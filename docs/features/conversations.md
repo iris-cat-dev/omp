@@ -145,6 +145,10 @@ Automatic idle retirement and `agent unload` never cancel or force work. Ordinar
 
 ## Conversation organization and history
 
+Open **History** and choose **By time** to see the latest activity across projects, or **By project** to browse projects by name. Conversations within each project stay newest first. Search ranks matches across the selected hosts; clearing the search restores your chosen view. Open a title to return to the conversation. A host that could not supply history is named separately so you can still browse the others.
+
+For cleanup, choose **Select**, pick the conversations, then **Archive** or **Delete**. Both actions ask for confirmation. **Select all** applies to the loaded results.
+
 Sidebar rows always use the conversation title and last-activity time (for example `2h` or `2d`); missing timestamps leave the space blank. The former **Title**, **Diff stats**, and **Last activity** display choices are removed without resetting other settings.
 
 Automatically generated conversation/workspace titles use the interface language resolved when the creation request is sent, including **System** language selection. This requirement overrides the language of the prompt, attachments, and project `metadataGeneration.title.instructions`; technical identifiers such as file paths, commands, package names, and PR/issue numbers keep their original form. Git branch naming is unchanged. Changing the interface language does not rewrite existing titles or user-set names.
@@ -165,7 +169,7 @@ A completion received while you are already viewing the conversation stays visib
 
 ### Import complete provider history
 
-**Import session** in the Desktop home or sidebar lists discoverable history across projects for enabled providers, newest first. Workspace and draft import actions keep the current working-directory scope. The provider filter changes the displayed provider, not the time range; scroll to reach older sessions and use **Refresh** to rescan.
+**Import session** in the home screen or sidebar shows available sessions across projects, newest first. From a workspace or draft, it shows only that working directory. Search titles, prompt previews, project paths, or provider names. Combine keywords to narrow the list, then select a session to import it. Filtering searches the displayed catalog without rescanning transcripts; **Refresh** rescans the providers.
 
 The list has no 15-session or recent-candidate cutoff. OMP scans its configured session directory recursively, including nested subagent transcripts. Active sessions already imported into Desktop and internal metadata-generation sessions are excluded; archived Desktop sessions remain eligible for reimport. Listing reads source transcripts without changing them.
 

@@ -1,5 +1,6 @@
 import type { FetchRecentProviderSessionEntry } from "@omp-desktop/client/internal/daemon-client";
 import type { AgentProvider } from "@omp-desktop/protocol/agent-types";
+import { getDirectoryName } from "@/attachments/directory";
 import { i18n } from "@/i18n/i18next";
 
 export const ALL_FILTER_VALUE = "__all__";
@@ -96,23 +97,139 @@ export function collectErroredProviderLabels(
   return labels;
 }
 
-export function getSessionTitle(entry: FetchRecentProviderSessionEntry): string {
-  const title = entry.title?.trim();
-  if (title) {
-    return title;
-  }
-  const firstPromptPreview = entry.firstPromptPreview?.trim();
-  if (firstPromptPreview) {
-    return firstPromptPreview;
-  }
-  return i18n.t("importSession.preview.untitledSession");
+type DisplayFields = Partial<Record<"title" | "name" | "description", string>>;
+
+function looksStructured(text: string): boolean {
+  if (text.startsWith("{")) return true;
+  // Keep human-authored headings such as "[123] Fix startup".
+  return (
+    /^\[\s*(?:$|[[\]{"\d-]|true\b|false\b|null\b)/.test(text) && !/^\[[^\][{"]+\]\s+\S/.test(text)
+  );
 }
 
-export function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
+function displayFields(source: string | null): DisplayFields {
+  const text = source?.trim();
+  if (!text) return {};
+  if (!looksStructured(text)) return { title: text.replace(/\s+/g, " ") };
+
+  // The host can slice a JSON prompt at 60/80 characters for the title and
+  // 160 for the preview, without an ellipsis or closing quote. Read string
+  // tokens rather than matching field-like text inside an escaped string.
+  const objects: DisplayFields[] = [];
+  const stack: DisplayFields[] = [];
+  let previousKey: keyof DisplayFields | null = null;
+  let previousEnd = 0;
+  for (const match of text.matchAll(/[{}]|"((?:[^"\\]|\\.)*)("|\\?$)/gs)) {
+    if (match[0] === "{") {
+      const object: DisplayFields = {};
+      stack.push(object);
+      objects.push(object);
+      continue;
+    }
+    if (match[0] === "}") {
+      stack.pop();
+      continue;
+    }
+    const fields = stack.at(-1);
+    const [, raw, ending] = match;
+    const closed = ending === '"';
+    if (
+      fields &&
+      previousKey &&
+      !fields[previousKey] &&
+      (closed || previousKey === "description") &&
+      /^\s*:\s*$/.test(text.slice(previousEnd, match.index))
+    ) {
+      try {
+        const decoded = (JSON.parse(`"${raw}"`) as string).trim().replace(/\s+/g, " ");
+        if (decoded && !looksStructured(decoded)) {
+          fields[previousKey] = closed ? decoded : `${decoded}…`;
+        }
+      } catch (error) {
+        // A descriptor can end inside a Unicode escape. Ignore that value.
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
+    previousKey = raw === "title" || raw === "name" || raw === "description" ? raw : null;
+    previousEnd = match.index + match[0].length;
+  }
+  // Keep the description with the object it describes, not an earlier sibling.
   return (
-    entry.lastPromptPreview?.trim() ||
-    entry.firstPromptPreview?.trim() ||
-    i18n.t("importSession.preview.noPrompt")
+    objects.find((object) => object.title) ??
+    objects.find((object) => object.name) ??
+    objects.find((object) => object.description) ??
+    {}
+  );
+}
+
+export interface PreparedImportSession {
+  entry: FetchRecentProviderSessionEntry;
+  title: string;
+  preview: string | null;
+  project: string | null;
+  searchText: string;
+}
+
+export function prepareImportSession(
+  entry: FetchRecentProviderSessionEntry,
+  providerLabel: string,
+): PreparedImportSession {
+  const heading = displayFields(entry.title);
+  const first =
+    entry.firstPromptPreview === entry.title ? heading : displayFields(entry.firstPromptPreview);
+  const last =
+    entry.lastPromptPreview === entry.firstPromptPreview
+      ? first
+      : displayFields(entry.lastPromptPreview);
+  const title =
+    heading.title ??
+    first.title ??
+    heading.name ??
+    first.name ??
+    last.title ??
+    last.name ??
+    first.description ??
+    last.description ??
+    heading.description ??
+    i18n.t("importSession.preview.untitledSession");
+  const titleKey = title.toLowerCase();
+  const preview =
+    [
+      last.description,
+      last.title,
+      last.name,
+      first.description,
+      heading.description,
+      first.title,
+      first.name,
+    ].find((value) => value && value.toLowerCase() !== titleKey) ?? null;
+  const project = getDirectoryName(entry.cwd) || null;
+  const searchable = new Set([
+    entry.title,
+    entry.firstPromptPreview,
+    entry.lastPromptPreview,
+    entry.cwd,
+    entry.providerId,
+    entry.providerLabel,
+    providerLabel,
+    title,
+    preview,
+    project,
+  ]);
+  const searchText = [...searchable].join("\n").toLowerCase();
+  return { entry, title, preview, project, searchText };
+}
+
+export function filterImportSessions(
+  rows: readonly PreparedImportSession[],
+  selectedProvider: string,
+  query: string,
+): PreparedImportSession[] {
+  const terms = query.toLowerCase().match(/\S+/g) ?? [];
+  return rows.filter(
+    (row) =>
+      (selectedProvider === ALL_FILTER_VALUE || row.entry.providerId === selectedProvider) &&
+      terms.every((term) => row.searchText.includes(term)),
   );
 }
 

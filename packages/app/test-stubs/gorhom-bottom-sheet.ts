@@ -8,6 +8,7 @@ export default Stub;
 export const BottomSheetModal = Stub;
 export const BottomSheetModalProvider = PassThrough;
 export const BottomSheetBackdrop = Stub;
+export { FlatList as BottomSheetFlatList } from "react-native";
 export const BottomSheetScrollView = PassThrough;
 export const BottomSheetView = PassThrough;
 export const BottomSheetTextInput = Stub;

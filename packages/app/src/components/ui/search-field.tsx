@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
 import { Search, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -47,6 +47,10 @@ export function SearchField({
 }: SearchFieldProps): ReactElement {
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<EditingTextInputHandle>(null);
+  // EditingTextInput owns the native buffer; clearing a query outside the field must clear it too.
+  useEffect(() => {
+    if (value === "" && inputRef.current?.getText()) inputRef.current.replaceText("");
+  }, [value]);
   const handleFocus = useCallback(() => setIsFocused(true), []);
   const handleBlur = useCallback(() => setIsFocused(false), []);
   const handleClear = useCallback(() => {

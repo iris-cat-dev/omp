@@ -25,6 +25,7 @@ export interface AgentHistoryResult {
   isInitialLoad: boolean;
   isRevalidating: boolean;
   isError: boolean;
+  hasReachableHosts: boolean;
   hasMore: boolean;
   isLoadingMore: boolean;
   /** False when any target host predates search; the screen hides the field. */
@@ -454,6 +455,7 @@ export function useAgentHistory(options: {
     isInitialLoad,
     isRevalidating,
     isError,
+    hasReachableHosts: targetHosts.length > 0,
     // Under a query the daemon returns the best matches and no cursor, so the
     // list is complete as far as it goes and "Load more" would be a lie.
     hasMore: search ? false : hasNextPage,

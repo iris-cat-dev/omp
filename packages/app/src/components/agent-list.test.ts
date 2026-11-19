@@ -66,6 +66,24 @@ describe("project-grouped agent list", () => {
     ]);
   });
 
+  it("orders project names naturally without reordering conversations inside each project", () => {
+    const items = buildProjectGroupedAgentListItems(
+      [
+        agent({ id: "newest", projectKey: "ten", projectName: "Project 10" }),
+        agent({ id: "middle", projectKey: "two", projectName: "Project 2" }),
+        agent({ id: "oldest", projectKey: "ten", projectName: "Project 10" }),
+      ],
+      new Intl.Collator("en", { numeric: true }),
+    );
+    expect(items.map((item) => (item.type === "header" ? item.label : item.agent.id))).toEqual([
+      "Project 2",
+      "middle",
+      "Project 10",
+      "newest",
+      "oldest",
+    ]);
+  });
+
   it("keeps distinct projects separate when their display names match", () => {
     expect(
       itemLabels([

@@ -519,6 +519,14 @@ export const zhCN: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "按时间",
+    byProject: "按项目",
+    recent: "最近对话",
+    results: "搜索结果",
+    emptyHost: "这台主机还没有对话",
+    emptyReachable: "可用主机中没有找到对话",
+    loadFailed: "暂时无法加载历史",
+    offlineHint: "{{host}} 恢复连接后，会自动显示历史记录。",
     title: "历史",
     empty: "还没有会话",
     noMatches: "没有匹配的会话",
@@ -654,6 +662,9 @@ export const zhCN: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "搜索标题、摘要或项目",
+    noMatches: "没有匹配的会话",
+    filterProvider: "按服务商筛选",
     title: "导入会话",
     filters: {
       all: "全部",
@@ -2271,6 +2282,9 @@ export const zhCN: TranslationResources = {
     hostPicker: {
       switchHost: "切换主机",
       local: "本机",
+      filterByHost: "按主机筛选",
+      filterAccessibility: "按主机筛选：{{host}}",
+      openSettings: "打开 {{host}} 的设置",
     },
     backToWorkspace: "返回",
     addHost: "添加主机",

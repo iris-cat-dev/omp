@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   ADD_HOST_OPTION_ID,
   ALL_HOSTS_OPTION_ID,
@@ -16,4 +17,12 @@ it.each([
   [ADD_HOST_OPTION_ID, { includeAddHost: true }, "Add host"],
 ])("resolves %s", (value, config, expected) => {
   expect(getHostPickerLabel(hosts, value, config)).toBe(expected);
+});
+
+it("translates the all-hosts option but preserves a host with the same display name", () => {
+  const namedHosts = [{ serverId: "host-b", label: "All hosts" }];
+  const t = i18n.getFixedT("zh-CN");
+  const config = { includeAllHost: true };
+  expect(getHostPickerLabel(namedHosts, ALL_HOSTS_OPTION_ID, config, t)).toBe("所有主机");
+  expect(getHostPickerLabel(namedHosts, "host-b", config, t)).toBe("All hosts");
 });

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { FetchRecentProviderSessionEntry } from "@omp-desktop/client/internal/daemon-client";
+import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
   collectErroredProviderLabels,
   computeEmptyState,
-  getPromptPreview,
-  getSessionTitle,
+  filterImportSessions,
+  prepareImportSession,
   resolveProvidersToFetch,
   requiresImportSessionsHostUpgrade,
   type SessionsQueryResult,
@@ -191,41 +192,110 @@ describe("collectErroredProviderLabels", () => {
   });
 });
 
-describe("getSessionTitle", () => {
-  it("prefers the trimmed title", () => {
-    expect(getSessionTitle(entry({ title: "  Importable  " }))).toBe("Importable");
+describe("prepareImportSession", () => {
+  it("keeps the original import target and pairs a real title with the latest prompt", () => {
+    const original = entry({
+      providerHandleId: "/private/session-files/thread-7.jsonl",
+      title: " [123] Save ",
+      firstPromptPreview: '{"title":"Earlier issue","description":"File an issue"}',
+      lastPromptPreview: "  Fix the\nsave button  ",
+    });
+    const row = prepareImportSession(original, "Claude Code");
+    expect(row.entry).toBe(original);
+    expect(row).toMatchObject({ title: "[123] Save", preview: "Fix the save button" });
   });
 
-  it("falls back to the trimmed first prompt preview when title is empty", () => {
-    expect(getSessionTitle(entry({ title: "   ", firstPromptPreview: "  Hello  " }))).toBe("Hello");
-  });
-
-  it("falls back to Untitled session when both title and first prompt are blank", () => {
-    expect(getSessionTitle(entry({ title: null, firstPromptPreview: "   " }))).toBe(
-      "Untitled session",
+  it("uses the first prompt as the title without repeating it as a preview", () => {
+    const row = prepareImportSession(
+      entry({
+        title: " ",
+        firstPromptPreview: "  Hello\nworld ",
+        lastPromptPreview: "Hello world",
+      }),
+      "Claude Code",
     );
+    expect(row).toMatchObject({ title: "Hello world", preview: null });
+  });
+
+  it("extracts a nested title and description even when the host cut both descriptors", () => {
+    const source = JSON.stringify({
+      rift: { name: "西玄域", description: "Earlier sibling, not the scene description" },
+      scene: { title: "万剑无声", description: "山间的风吹动了树梢。".repeat(12) },
+    });
+    const firstPromptPreview = source.slice(0, 160);
+    const row = prepareImportSession(
+      entry({
+        title: source.slice(0, 60),
+        firstPromptPreview,
+        lastPromptPreview: firstPromptPreview,
+      }),
+      "Claude Code",
+    );
+    expect(row.title).toBe("万剑无声");
+    expect(row.preview).toBe(`${firstPromptPreview.split('"description":"').at(-1)}…`);
+  });
+
+  it("decodes complete string fields without mistaking quoted examples for real fields", () => {
+    const firstPromptPreview = JSON.stringify({
+      example: '{"title":"Example only"}',
+      topic: { name: 'Release "Alpha"', description: "Freeze\non Friday" },
+    });
+    const row = prepareImportSession(entry({ firstPromptPreview }), "Claude Code");
+    expect(row).toMatchObject({ title: 'Release "Alpha"', preview: "Freeze on Friday" });
+  });
+
+  it.each([
+    '{"title":"unclosed',
+    '{"opaque":"raw machine data"}',
+    '{"opaque":"anything","title": ["not a title"]}',
+    '[{"description":"\\u0',
+  ])("does not turn an opaque or unfinished field into a title: %s", (title) => {
+    expect(prepareImportSession(entry({ title }), "Claude Code")).toMatchObject({
+      title: i18n.t("importSession.preview.untitledSession"),
+      preview: null,
+    });
+  });
+
+  it.each<[string, string | null]>([
+    ["/home/me/project/", "project"],
+    ["C:\\source\\project\\", "project"],
+    ["\\\\server\\share\\project", "project"],
+    ["/", "/"],
+    ["", null],
+  ])("uses the directory name as context for %s", (cwd, project) => {
+    expect(prepareImportSession(entry({ cwd }), "Claude Code").project).toBe(project);
   });
 });
 
-describe("getPromptPreview", () => {
-  it("prefers the trimmed last prompt preview", () => {
-    expect(
-      getPromptPreview(
-        entry({ lastPromptPreview: "  later  ", firstPromptPreview: "  earlier  " }),
-      ),
-    ).toBe("later");
+describe("filterImportSessions", () => {
+  const primary = prepareImportSession(
+    entry({
+      providerId: "custom-id",
+      providerLabel: "Host label",
+      title: '{"title":"Readable \\u4e66","ticket":"T-317"}',
+      firstPromptPreview: "Early decisions",
+      lastPromptPreview: "Revisit later",
+      cwd: "/work/one/project",
+    }),
+    "Snapshot label",
+  );
+  const other = prepareImportSession(
+    entry({ providerId: "codex", cwd: "/work/two/project" }),
+    "Codex",
+  );
+  const rows = [primary, other];
+
+  it("ANDs case-insensitive terms across the raw descriptor, decoded text and both labels", () => {
+    const query = "  t-317\tEARLY   later\n书 /One/ CUSTOM-id  snapshot HOST  ";
+    expect(filterImportSessions(rows, ALL_FILTER_VALUE, query)).toEqual([primary]);
+    expect(filterImportSessions(rows, ALL_FILTER_VALUE, `${query} missing`)).toEqual([]);
   });
 
-  it("falls back to the first prompt preview when last is blank", () => {
-    expect(
-      getPromptPreview(entry({ lastPromptPreview: "   ", firstPromptPreview: "  earlier  " })),
-    ).toBe("earlier");
-  });
-
-  it("falls back to a placeholder when both prompts are blank", () => {
-    expect(getPromptPreview(entry({ lastPromptPreview: null, firstPromptPreview: null }))).toBe(
-      "No prompt preview",
-    );
+  it("intersects the provider filter with the query without changing row order", () => {
+    expect(filterImportSessions(rows, ALL_FILTER_VALUE, "  ")).toEqual(rows);
+    expect(filterImportSessions(rows, ALL_FILTER_VALUE, "project")).toEqual(rows);
+    expect(filterImportSessions(rows, "codex", "project")).toEqual([other]);
+    expect(filterImportSessions(rows, "codex", "/one/project")).toEqual([]);
   });
 });
 
@@ -270,7 +340,7 @@ describe("computeEmptyState", () => {
     const result = computeEmptyState(baseInputs);
     expect(result).toEqual({
       showEmptyState: true,
-      emptyStateTitle: "No recent sessions to import.",
+      emptyStateTitle: i18n.t("importSession.empty.noRecent"),
     });
   });
 
@@ -279,7 +349,7 @@ describe("computeEmptyState", () => {
       ...baseInputs,
       totalAlreadyImportedCount: 4,
     });
-    expect(result.emptyStateTitle).toBe("All recent sessions are already imported.");
+    expect(result.emptyStateTitle).toBe(i18n.t("importSession.empty.alreadyImported"));
   });
 
   it("shows a provider-scoped message when a filter hides aggregated entries", () => {
@@ -289,7 +359,9 @@ describe("computeEmptyState", () => {
       aggregatedCount: 3,
       providerLabelById: new Map([["claude", "Claude Code"]]),
     });
-    expect(result.emptyStateTitle).toBe("No Claude Code sessions found.");
+    expect(result.emptyStateTitle).toBe(
+      i18n.t("importSession.empty.noProviderSessions", { provider: "Claude Code" }),
+    );
   });
 
   it("falls back to the provider id when the filtered provider lacks a label", () => {
@@ -298,6 +370,8 @@ describe("computeEmptyState", () => {
       selectedProvider: "z-ai",
       aggregatedCount: 1,
     });
-    expect(result.emptyStateTitle).toBe("No z-ai sessions found.");
+    expect(result.emptyStateTitle).toBe(
+      i18n.t("importSession.empty.noProviderSessions", { provider: "z-ai" }),
+    );
   });
 });

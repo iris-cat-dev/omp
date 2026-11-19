@@ -11,6 +11,7 @@ import type {
 import type { ProviderSnapshotEntry } from "@omp-desktop/protocol/agent-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { i18n } from "@/i18n/i18next";
 
 const { theme } = vi.hoisted(() => ({
   theme: {
@@ -60,6 +61,10 @@ vi.mock("@/constants/layout", () => ({
   useIsCompactFormFactor: () => false,
 }));
 
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: () => true,
+}));
+
 vi.mock("@/components/provider-icons", () => ({
   getProviderIcon: () => () => null,
 }));
@@ -72,9 +77,12 @@ vi.mock("lucide-react-native", () => {
   };
   return {
     ChevronDown: icon("ChevronDown"),
+    Folder: icon("Folder"),
     Inbox: icon("Inbox"),
     Layers: icon("Layers"),
     RotateCw: icon("RotateCw"),
+    Search: icon("Search"),
+    X: icon("X"),
   };
 });
 
@@ -169,6 +177,7 @@ interface RenderOptions {
   onImportedAgent?: (agentId: string) => void;
   onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void;
   cwd?: string | null;
+  workspaceId?: string;
   snapshot?: {
     entries?: ProviderSnapshotEntry[];
     supportsSnapshot?: boolean;
@@ -200,6 +209,7 @@ function renderSheet(
         client={client}
         serverId="server-1"
         cwd={cwd}
+        workspaceId={options?.workspaceId}
         onClose={options?.onClose ?? vi.fn()}
         onImportedAgent={options?.onImportedAgent ?? vi.fn()}
         onImported={options?.onImported}
@@ -280,6 +290,10 @@ function createSnapshotEntry(
   };
 }
 
+function searchSessions(query: string) {
+  fireEvent.change(screen.getByTestId("import-session-search-input"), { target: { value: query } });
+}
+
 describe("ImportSessionSheet", () => {
   afterEach(() => {
     cleanup();
@@ -358,6 +372,9 @@ describe("ImportSessionSheet", () => {
     );
 
     await screen.findByText("All recent sessions are already imported.");
+    searchSessions("missing");
+    screen.getByText("All recent sessions are already imported.");
+    expect(screen.queryByText(i18n.t("importSession.noMatches"))).toBeNull();
     expect(screen.queryByText("No recent sessions to import.")).toBeNull();
   });
 
@@ -378,10 +395,11 @@ describe("ImportSessionSheet", () => {
     );
 
     await screen.findByText("Could not load recent sessions.");
+    searchSessions("missing");
+    expect(screen.queryByTestId("import-session-empty-state")).toBeNull();
   });
 
   it("renders descriptor-owned session titles and previews", async () => {
-    vi.setSystemTime(new Date("2026-04-30T12:00:00.000Z"));
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -407,7 +425,6 @@ describe("ImportSessionSheet", () => {
     );
 
     await screen.findByText("Implement the importer sheet");
-    screen.getByText("2h ago");
     screen.getByText("Make the rows readable and provider opaque");
   });
 
@@ -454,6 +471,8 @@ describe("ImportSessionSheet", () => {
 
     await screen.findByText("Cached importable session");
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
+    searchSessions("missing");
+    expect(screen.queryByText("Cached importable session")).toBeNull();
 
     rerender(<TestSheet visible={false} />);
     fetchRecentProviderSessions.mockClear();
@@ -468,12 +487,14 @@ describe("ImportSessionSheet", () => {
       ],
     });
     rerender(<TestSheet visible />);
+    expect(screen.queryByTestId("import-session-search-clear")).toBeNull();
 
     await screen.findByText("Cached importable session");
     await screen.findByText("Revalidated importable session");
   });
 
-  it("imports a selected session by provider handle and reports the imported agent", async () => {
+  it("imports a search result once using its original handle, directory and target workspace", async () => {
+    const prompt = JSON.stringify({ title: "借影入城", description: "沿河寻找渡船" });
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -481,10 +502,17 @@ describe("ImportSessionSheet", () => {
           providerId: "claude",
           providerLabel: "Claude Code",
           cwd: "/repo/paseo-realpath",
+          title: prompt,
+          firstPromptPreview: prompt,
+          lastPromptPreview: prompt,
         }),
       ],
     }));
-    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+    const importGate = Promise.withResolvers<void>();
+    const importAgent = vi.fn(async () => {
+      await importGate.promise;
+      return createImportedAgentSnapshot("agent-imported");
+    });
     const onClose = vi.fn();
     const onImportedAgent = vi.fn();
 
@@ -496,20 +524,30 @@ describe("ImportSessionSheet", () => {
       {
         onClose,
         onImportedAgent,
+        workspaceId: "target-workspace",
         snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
       },
     );
 
-    fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
+    await screen.findByText("借影入城");
+    searchSessions("渡船");
+    screen.getByText("沿河寻找渡船");
+    const row = screen.getByTestId("import-session-session-claude-provider-thread-1");
+    fireEvent.click(row);
+    await screen.findByText(i18n.t("importSession.row.importing"));
+    fireEvent.click(row);
+    expect(importAgent).toHaveBeenCalledTimes(1);
+    importGate.resolve();
 
     await waitFor(() => {
       expect(importAgent).toHaveBeenCalledWith({
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo-realpath",
+        workspaceId: "target-workspace",
       });
     });
-    expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
+    await waitFor(() => expect(onImportedAgent).toHaveBeenCalledWith("agent-imported"));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -630,7 +668,7 @@ describe("ImportSessionSheet", () => {
     await screen.findByText("Could not load sessions for Claude Code.");
   });
 
-  it("filters the merged list when a provider badge is selected and restores it on All", async () => {
+  it("combines the query with the provider locally and clears each filter independently", async () => {
     const fetchRecentProviderSessions = vi.fn(
       async (options: { providers?: string[] } | undefined) => {
         const provider = options?.providers?.[0] ?? "claude";
@@ -666,6 +704,18 @@ describe("ImportSessionSheet", () => {
 
     await screen.findByText("Session claude");
     await screen.findByText("Session codex");
+    searchSessions("CODEX");
+    screen.getByText("Session codex");
+    expect(screen.queryByText("Session claude")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("import-session-filter-trigger"));
+    fireEvent.click(screen.getByTestId("import-session-filter-claude"));
+    screen.getByText(i18n.t("importSession.noMatches"));
+    expect(screen.queryByText("Session codex")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("import-session-search-clear"));
+    screen.getByText("Session claude");
+    expect(screen.queryByText("Session codex")).toBeNull();
 
     fireEvent.click(screen.getByTestId("import-session-filter-trigger"));
     fireEvent.click(screen.getByTestId("import-session-filter-codex"));
@@ -678,9 +728,10 @@ describe("ImportSessionSheet", () => {
 
     screen.getByText("Session claude");
     screen.getByText("Session codex");
+    expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(2);
   });
 
-  it("does not render filter badges when only one importable provider is enabled", async () => {
+  it("keeps search available with one provider and omits the redundant picker", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-codex",
       entries: [createProviderSessionEntry({ providerId: "codex", providerLabel: "Codex" })],
@@ -703,11 +754,9 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await waitFor(() => {
-      expect(fetchRecentProviderSessions).toHaveBeenCalled();
-    });
-    expect(screen.queryByTestId("import-session-filters")).toBeNull();
-    expect(screen.queryByTestId("import-session-filter-all")).toBeNull();
+    await screen.findByText("Import me");
+    screen.getByTestId("import-session-search-input");
+    expect(screen.queryByTestId("import-session-filter-trigger")).toBeNull();
   });
 
   it("shows a no-importable-providers message when snapshot has no enabled providers", async () => {
@@ -736,7 +785,7 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
   });
 
-  it("omits cwd from fetch and renders the session cwd on each row when cwd is unset", async () => {
+  it("shows only the project name across projects and still searches the full cwd", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -761,7 +810,15 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await screen.findByText("/home/me/work/other-project");
+    await screen.findByText("other-project");
+    expect(screen.queryByText("/home/me/work/other-project")).toBeNull();
+    searchSessions("/HOME/ME");
+    screen.getByText("Cross-project session");
+    expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
+    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+      providers: ["claude"],
+      limit: null,
+    });
   });
 
   it("uses the session's cwd when importing in cwd-less mode and fires onImported", async () => {

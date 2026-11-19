@@ -405,6 +405,14 @@ export const ar: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "حسب الوقت",
+    byProject: "حسب المشروع",
+    recent: "المحادثات الأخيرة",
+    results: "نتائج البحث",
+    emptyHost: "لا توجد محادثات على هذا المضيف",
+    emptyReachable: "لا توجد نتائج على المضيفين المتاحين",
+    loadFailed: "تعذّر تحميل السجل",
+    offlineHint: "سيظهر السجل عند استعادة الاتصال بـ {{host}}.",
     title: "السجل",
     empty: "لا توجد جلسات بعد",
     noMatches: "لا توجد جلسات مطابقة",
@@ -541,6 +549,9 @@ export const ar: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "ابحث في العناوين أو المعاينات أو المشاريع",
+    noMatches: "لا توجد جلسات مطابقة",
+    filterProvider: "تصفية حسب المزوّد",
     title: "جلسة الاستيراد",
     filters: {
       all: "الجميع",
@@ -2081,6 +2092,9 @@ export const ar: TranslationResources = {
     hostPicker: {
       switchHost: "تبديل المضيف",
       local: "محلي",
+      filterByHost: "تصفية حسب المضيف",
+      filterAccessibility: "تصفية حسب المضيف: {{host}}",
+      openSettings: "فتح إعدادات {{host}}",
     },
     backToWorkspace: "خلف",
     addHost: "أضف مضيفًا",

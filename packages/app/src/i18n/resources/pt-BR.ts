@@ -408,6 +408,14 @@ export const ptBR: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "Por data",
+    byProject: "Por projeto",
+    recent: "Conversas recentes",
+    results: "Resultados da busca",
+    emptyHost: "Nenhuma conversa neste host",
+    emptyReachable: "Nenhum resultado nos hosts disponíveis",
+    loadFailed: "Não foi possível carregar o histórico",
+    offlineHint: "O histórico aparecerá quando a conexão com {{host}} for restabelecida.",
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",
     noMatches: "Nenhuma sessão corresponde",
@@ -545,6 +553,9 @@ export const ptBR: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "Buscar títulos, resumos ou projetos",
+    noMatches: "Nenhuma sessão encontrada",
+    filterProvider: "Filtrar por provedor",
     title: "Importar sessão",
     filters: {
       all: "Tudo",
@@ -2126,6 +2137,9 @@ export const ptBR: TranslationResources = {
     hostPicker: {
       switchHost: "Trocar host",
       local: "Local",
+      filterByHost: "Filtrar por host",
+      filterAccessibility: "Filtrar por host: {{host}}",
+      openSettings: "Abrir as configurações de {{host}}",
     },
     backToWorkspace: "Voltar",
     addHost: "Adicionar host",

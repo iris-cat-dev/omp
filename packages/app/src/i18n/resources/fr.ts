@@ -409,6 +409,14 @@ export const fr: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "Par date",
+    byProject: "Par projet",
+    recent: "Conversations récentes",
+    results: "Résultats de recherche",
+    emptyHost: "Aucune conversation sur cet hôte",
+    emptyReachable: "Aucun résultat sur les hôtes disponibles",
+    loadFailed: "Impossible de charger l’historique",
+    offlineHint: "L’historique s’affichera après la reconnexion de {{host}}.",
     title: "Historique",
     empty: "Aucune séance pour l'instant",
     noMatches: "Aucune séance correspondante",
@@ -546,6 +554,9 @@ export const fr: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "Rechercher un titre, un aperçu ou un projet",
+    noMatches: "Aucune session correspondante",
+    filterProvider: "Filtrer par fournisseur",
     title: "Session d'importation",
     filters: {
       all: "Tous",
@@ -2134,6 +2145,9 @@ export const fr: TranslationResources = {
     hostPicker: {
       switchHost: "Changer d'hôte",
       local: "Locale",
+      filterByHost: "Filtrer par hôte",
+      filterAccessibility: "Filtrer par hôte : {{host}}",
+      openSettings: "Ouvrir les paramètres de {{host}}",
     },
     backToWorkspace: "Dos",
     addHost: "Ajouter un hôte",

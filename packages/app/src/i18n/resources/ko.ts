@@ -407,6 +407,14 @@ export const ko: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "시간순",
+    byProject: "프로젝트별",
+    recent: "최근 대화",
+    results: "검색 결과",
+    emptyHost: "이 호스트에 대화가 없습니다",
+    emptyReachable: "사용 가능한 호스트에서 대화를 찾지 못했습니다",
+    loadFailed: "기록을 불러올 수 없습니다",
+    offlineHint: "{{host}} 연결이 복구되면 기록이 표시됩니다.",
     title: "기록",
     empty: "아직 세션이 없습니다",
     noMatches: "일치하는 세션이 없습니다",
@@ -544,6 +552,9 @@ export const ko: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "제목, 미리보기 또는 프로젝트 검색",
+    noMatches: "일치하는 세션이 없습니다",
+    filterProvider: "제공업체별 필터",
     title: "세션 가져오기",
     filters: {
       all: "전체",
@@ -2097,6 +2108,9 @@ export const ko: TranslationResources = {
     hostPicker: {
       switchHost: "호스트 전환",
       local: "로컬",
+      filterByHost: "호스트별 필터링",
+      filterAccessibility: "호스트별 필터링: {{host}}",
+      openSettings: "{{host}} 설정 열기",
     },
     backToWorkspace: "뒤로",
     addHost: "호스트 추가",

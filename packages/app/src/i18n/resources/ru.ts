@@ -418,6 +418,14 @@ export const ru: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "По времени",
+    byProject: "По проекту",
+    recent: "Недавние диалоги",
+    results: "Результаты поиска",
+    emptyHost: "На этом хосте нет диалогов",
+    emptyReachable: "На доступных хостах ничего не найдено",
+    loadFailed: "Не удалось загрузить историю",
+    offlineHint: "История появится после восстановления связи с {{host}}.",
     title: "История",
     empty: "Сессий пока нет",
     noMatches: "Подходящих сессий не найдено",
@@ -555,6 +563,9 @@ export const ru: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "Поиск по названию, описанию или проекту",
+    noMatches: "Подходящих сессий нет",
+    filterProvider: "Фильтр по провайдеру",
     title: "Импортировать сессию",
     filters: {
       all: "Все",
@@ -2128,6 +2139,9 @@ export const ru: TranslationResources = {
     hostPicker: {
       switchHost: "Сменить хост",
       local: "Локальный",
+      filterByHost: "Фильтр по хосту",
+      filterAccessibility: "Фильтр по хосту: {{host}}",
+      openSettings: "Открыть настройки {{host}}",
     },
     backToWorkspace: "Назад",
     addHost: "Добавить хост",

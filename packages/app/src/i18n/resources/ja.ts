@@ -409,6 +409,14 @@ export const ja: TranslationResources = {
     },
   },
   sessions: {
+    byTime: "時間順",
+    byProject: "プロジェクト別",
+    recent: "最近の会話",
+    results: "検索結果",
+    emptyHost: "このホストにはまだ会話がありません",
+    emptyReachable: "利用可能なホストに該当する会話はありません",
+    loadFailed: "履歴を読み込めません",
+    offlineHint: "{{host}} が再接続されると履歴が表示されます。",
     title: "履歴",
     empty: "セッションがまだありません",
     noMatches: "一致するセッションはありません",
@@ -546,6 +554,9 @@ export const ja: TranslationResources = {
     },
   },
   importSession: {
+    searchPlaceholder: "タイトル・要約・プロジェクトを検索",
+    noMatches: "一致するセッションはありません",
+    filterProvider: "プロバイダーで絞り込み",
     title: "セッションをインポート",
     filters: {
       all: "すべて",
@@ -2104,6 +2115,9 @@ export const ja: TranslationResources = {
     hostPicker: {
       switchHost: "ホストを切り替え",
       local: "ローカル",
+      filterByHost: "ホストで絞り込む",
+      filterAccessibility: "ホストで絞り込む：{{host}}",
+      openSettings: "{{host}} の設定を開く",
     },
     backToWorkspace: "戻る",
     addHost: "ホストを追加",
