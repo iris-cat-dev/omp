@@ -98,6 +98,12 @@ describe("Codex catalog protocol", () => {
       }),
     ).rejects.toBeInstanceOf(Error);
   });
+
+  test("returns the same wrapper when applied more than once", () => {
+    const base: typeof fetch = async () => Response.json({ models: [nativeEntry] });
+    const once = createCodexCatalogFetch(base);
+    expect(createCodexCatalogFetch(once)).toBe(once);
+  });
 });
 
 describe("Codex cache migration", () => {
@@ -147,6 +153,38 @@ describe("Codex cache migration", () => {
         id: 1,
         data: '{"access":"synthetic"}',
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  test("invalidates poisoned Codex caches written under the prior v1 migration", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec(`
+        CREATE TABLE omp_desktop_catalog_migrations (id TEXT PRIMARY KEY);
+        CREATE TABLE model_cache (provider_id TEXT PRIMARY KEY, authoritative INTEGER, models TEXT);
+        CREATE TABLE model_cache_refresh (provider_id TEXT PRIMARY KEY, authoritative INTEGER);
+        INSERT INTO omp_desktop_catalog_migrations VALUES ('codex-discovery-protocol-v1');
+        INSERT INTO model_cache VALUES
+          ('openai-codex:0.169.1', 1, '[{"id":"research"},{"id":"gpt-6.2-astra-wm"}]'),
+          ('anthropic', 1, '["claude"]');
+        INSERT INTO model_cache_refresh VALUES ('openai-codex:0.169.1', 1), ('anthropic', 1);
+      `);
+      migrateCodexCatalogCache(database);
+      expect(
+        database
+          .prepare("SELECT * FROM model_cache WHERE provider_id = ?")
+          .get("openai-codex:0.169.1"),
+      ).toBeUndefined();
+      expect(
+        database
+          .prepare("SELECT * FROM model_cache_refresh WHERE provider_id = ?")
+          .get("openai-codex:0.169.1"),
+      ).toBeUndefined();
+      expect(
+        database.prepare("SELECT * FROM model_cache WHERE provider_id = ?").get("anthropic"),
+      ).toEqual({ provider_id: "anthropic", authoritative: 1, models: '["claude"]' });
     } finally {
       database.close();
     }

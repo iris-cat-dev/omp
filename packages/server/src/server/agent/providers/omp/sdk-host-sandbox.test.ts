@@ -8,12 +8,14 @@ vi.mock("node:module", () => ({ createRequire: () => mocks.load }));
 vi.mock("./sdk-installation.js", () => ({ resolveOmpSdkInstallation: async () => ({ root: "/sdk", version: "old", rpcEntry: "/sdk/rpc.mjs" }) }));
 vi.mock("./cli-runtime.js", () => ({ resolveOmpCodexCatalogPreloadPath: () => "/trusted-preload" }));
 const originalArgv = process.argv;
+const originalFetch = globalThis.fetch;
 beforeEach(() => {
   process.argv = originalArgv.slice(0, 2);
+  globalThis.fetch = originalFetch;
   mocks.load.mockReset(); mocks.start.mockReset();
   mocks.start.mockRejectedValue(new Error("Reached SDK startup"));
 });
-afterEach(() => { process.argv = originalArgv; vi.unstubAllEnvs(); });
+afterEach(() => { process.argv = originalArgv; globalThis.fetch = originalFetch; vi.unstubAllEnvs(); });
 function configure(sandbox: boolean | AgentSandbox, version?: number) {
   vi.stubEnv(OMP_SDK_LAUNCH_ENV, JSON.stringify({ cwd: process.cwd(), ...(sandbox ? { sandbox: sandbox === true ? { root: `${process.cwd()}/qq-files` } : sandbox } : {}) }));
   mocks.load.mockImplementation((entry: string) => entry === "/trusted-preload" ? undefined : { startNodeRpcHost: mocks.start, NODE_RPC_SANDBOX_VERSION: version });
@@ -45,5 +47,24 @@ describe("mandatory SDK sandbox capability handshake", () => {
     configure(false);
     await expect(runOmpSdkHost()).rejects.toThrow("Reached SDK startup");
     expect(mocks.start).toHaveBeenCalledOnce();
+  });
+  it("re-wraps globalThis.fetch after SDK bootstrap replaces it with its Node proxy fetch", async () => {
+    vi.stubEnv(OMP_SDK_LAUNCH_ENV, JSON.stringify({ cwd: process.cwd() }));
+    let underlyingCalls = 0;
+    const sdkReplacedFetch: typeof fetch = async () => {
+      underlyingCalls += 1;
+      return Response.json({ models: [{ slug: "research" }] });
+    };
+    mocks.load.mockImplementation((entry: string) => {
+      if (entry === "/trusted-preload") return undefined;
+      globalThis.fetch = sdkReplacedFetch;
+      return { startNodeRpcHost: mocks.start };
+    });
+
+    await expect(runOmpSdkHost()).rejects.toThrow("Reached SDK startup");
+    await expect(
+      globalThis.fetch("https://chatgpt.com/backend-api/models?client_version=0.169.1"),
+    ).rejects.toThrow("The generic ChatGPT model catalog is not a Codex discovery endpoint");
+    expect(underlyingCalls).toBe(0);
   });
 });

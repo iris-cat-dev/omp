@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-const CODEX_CACHE_MIGRATION = "codex-discovery-protocol-v1";
+const CODEX_CACHE_MIGRATION = "codex-discovery-protocol-v2";
+const GUARDED_FETCHES = new WeakSet<typeof fetch>();
 const CodexModelEntrySchema = z
   .object({
     slug: z.string().trim().min(1).optional(),
@@ -56,6 +57,7 @@ function classifyCodexCatalogRequest(
 
 /** Installed before OMP captures fetch; native discovery keeps its own failure/fallback handling. */
 export function createCodexCatalogFetch(fetchFn: typeof fetch): typeof fetch {
+  if (GUARDED_FETCHES.has(fetchFn)) return fetchFn;
   const guarded: typeof fetch = async (input, init) => {
     const kind = classifyCodexCatalogRequest(input, init);
     if (kind === "other") return fetchFn(input, init);
@@ -75,6 +77,7 @@ export function createCodexCatalogFetch(fetchFn: typeof fetch): typeof fetch {
   };
   // Bun fetch exposes preconnect; keep native fetch properties available to OMP's proxy wrapper.
   Object.defineProperties(guarded, Object.getOwnPropertyDescriptors(fetchFn));
+  GUARDED_FETCHES.add(guarded);
   return guarded;
 }
 

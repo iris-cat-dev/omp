@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { resolveOmpCodexCatalogPreloadPath } from "./cli-runtime.js";
+import { createCodexCatalogFetch } from "./codex-catalog-policy.js";
 import { resolveOmpSdkInstallation } from "./sdk-installation.js";
 import {
   OMP_SDK_LAUNCH_ENV,
@@ -70,6 +71,9 @@ export async function runOmpSdkHost(): Promise<void> {
   const load = createRequire(import.meta.url);
   load(resolveOmpCodexCatalogPreloadPath());
   const sdk = hostModule.parse(load(installation.rpcEntry));
+  // SDK initialization installs its undici proxy fetch onto globalThis.fetch on Node,
+  // replacing the preload wrapper. Re-wrap so the Codex catalog guard stays outermost.
+  globalThis.fetch = createCodexCatalogFetch(globalThis.fetch);
   if (launch.sandbox) {
     const requiredVersion = launch.sandbox.imageGeneration ? 3 : launch.sandbox.javascript || launch.sandbox.network ? 2 : 1;
     const version = sdk.NODE_RPC_SANDBOX_VERSION;
