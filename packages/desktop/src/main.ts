@@ -102,6 +102,7 @@ import {
   markMainWindowLoading,
 } from "./window/main-windows.js";
 import { getLocalPluginRuntime, setupLocalPlugins, handleLocalPluginResource, releaseLocalPluginDocument } from "./plugins/local-runtime-electron.js";
+import { registerPluginClientTrustIpc } from "./plugins/client-trust-ipc.js";
 import {
   getPluginNativeTrayItems,
   onPluginNativeTrayItemsChanged,
@@ -826,6 +827,7 @@ async function bootstrap(): Promise<void> {
   registerEditorTargetHandlers();
   registerRemoteSshHandlers();
   registerScreenshotHandler();
+  registerPluginClientTrustIpc(getInitialWindowUrl());
   try {
     await setupLocalPlugins({
       startupBarrier: bootstrapComplete,
