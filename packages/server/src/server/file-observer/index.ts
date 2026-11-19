@@ -14,6 +14,7 @@ export interface FileChange {
 
 export interface FileObserverOptions {
   ignore?: string[];
+  recursive?: false;
 }
 
 export type FileObserverCallback = (error: Error | null, events: FileChange[]) => void;
@@ -94,6 +95,10 @@ class FileObserverService implements FileObserver {
   ): Promise<FileObserverSubscription> {
     if (this.state.status === "closed") throw new Error("File observer is closed");
     const state = this.state;
+    const createBackend: CreateObservationBackend =
+      options.recursive === false
+        ? (host) => createLinuxBackend(host, this.paths, false)
+        : this.createBackend;
     let observation!: ManagedObservation;
     observation = createManagedObservation({
       root: resolve(directory),
@@ -101,7 +106,7 @@ class FileObserverService implements FileObserver {
       options,
       paths: this.paths,
       metrics: state.metrics,
-      createBackend: this.createBackend,
+      createBackend,
       onClosed: () => state.observations.delete(observation),
     });
     await observation.start();

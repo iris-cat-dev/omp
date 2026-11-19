@@ -171,29 +171,34 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   const requestDirectoryListing = useCallback(
     async (
       path: string,
-      options?: { recordHistory?: boolean; setCurrentPath?: boolean },
+      options?: { recordHistory?: boolean; setCurrentPath?: boolean; background?: boolean },
     ): Promise<ExplorerDirectory | null> => {
       if (!workspaceStateKey) {
         return null;
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
+      const background = options?.background === true;
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
       const shouldRecordHistory = options?.recordHistory ?? shouldSetCurrentPath;
-      const requestScope = updateExplorerState((state) => ({
-        ...state,
-        isLoading: true,
-        lastError: null,
-        pendingRequest: { path: normalizedPath, mode: "list" },
-        ...(shouldSetCurrentPath
-          ? {
-              currentPath: normalizedPath,
-              history: shouldRecordHistory
-                ? pushHistory(state.history, normalizedPath)
-                : state.history,
-              lastVisitedPath: normalizedPath,
-            }
-          : {}),
-      }));
+      const requestScope = updateExplorerState((state) =>
+        background
+          ? state
+          : {
+              ...state,
+              isLoading: true,
+              lastError: null,
+              pendingRequest: { path: normalizedPath, mode: "list" },
+              ...(shouldSetCurrentPath
+                ? {
+                    currentPath: normalizedPath,
+                    history: shouldRecordHistory
+                      ? pushHistory(state.history, normalizedPath)
+                      : state.history,
+                    lastVisitedPath: normalizedPath,
+                  }
+                : {}),
+            },
+      );
       if (!requestScope) {
         return null;
       }
@@ -252,6 +257,16 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         return directory;
       } catch (error) {
         if (requests.get(requestTarget) !== requestToken) {
+          return null;
+        }
+        if (background) {
+          updateExplorerState(
+            (state) =>
+              state.pendingRequest?.mode === "list" && state.pendingRequest.path === normalizedPath
+                ? { ...state, isLoading: false, pendingRequest: null }
+                : state,
+            requestScope,
+          );
           return null;
         }
         updateExplorerState((state) => {

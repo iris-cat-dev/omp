@@ -87,6 +87,7 @@ import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stor
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath, parentExplorerPath } from "@/utils/explorer-paths";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
+import { useExplorerDirectoryWatch } from "@/file-explorer/use-directory-watch";
 import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
@@ -889,6 +890,13 @@ function useExplorerRenderData(
     [directories, expandedPaths, showHiddenFiles, sortOption],
   );
   const visibleEntryPaths = useMemo(() => treeRows.map((row) => row.entry.path), [treeRows]);
+  const watchedPaths = useMemo(() => {
+    const paths = new Set(["."]);
+    for (const { entry } of treeRows) {
+      if (entry.kind === "directory" && expandedPaths.has(entry.path)) paths.add(entry.path);
+    }
+    return paths;
+  }, [treeRows, expandedPaths]);
   const selectedDragEntries = useMemo(() => {
     if (selectedEntryPaths.size === 0) return [];
     const entries: ExplorerEntryDragItem[] = [];
@@ -927,6 +935,7 @@ function useExplorerRenderData(
   return {
     ...fields,
     visibleEntryPaths,
+    watchedPaths,
     selectedDragEntries,
     listRows,
     errorRecoveryPath: getErrorRecoveryPath(state),
@@ -1067,6 +1076,16 @@ export function FileExplorerPane({
   moveEntriesRef.current = moveEntries;
   const selectedEntryPathRef = useRef(selectedEntryPath);
   selectedEntryPathRef.current = selectedEntryPath;
+
+  useExplorerDirectoryWatch({
+    serverId,
+    workspaceStateKey,
+    cwd: normalizedWorkspaceRoot,
+    active: isActive && hasWorkspaceScope,
+    editing: pendingEdit !== null,
+    paths: renderData.watchedPaths,
+    listDirectory: requestDirectoryListing,
+  });
 
   const isDirectoryLoading = useCallback(
     (path: string) => isPendingListForPath({ isExplorerLoading, pendingRequest, path }),

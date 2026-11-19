@@ -1171,6 +1171,7 @@ export class Session {
 
   clearAgentTimelineSubscription(source: object): void {
     this.localModelSession.disconnect(source);
+    this.workspaceFilesSession.clearDirectorySubscriptions(source);
     this.clientCapabilitiesBySource.delete(source);
     this.providerSubagentSubscriptionsBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
@@ -2774,6 +2775,11 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
+      case "fs.directory.subscribe.request":
+        return this.workspaceFilesSession.handleDirectorySubscribeRequest(msg, source);
+      case "fs.directory.unsubscribe":
+        this.workspaceFilesSession.handleDirectoryUnsubscribe(msg, source);
+        return undefined;
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":

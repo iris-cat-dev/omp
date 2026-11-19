@@ -16,8 +16,9 @@ interface DirectorySnapshot {
 export function createLinuxBackend(
   host: ObservationHost,
   paths: ObserverPaths,
+  recursive = true,
 ): ObservationBackend {
-  return new LinuxBackend(host, paths);
+  return new LinuxBackend(host, paths, recursive);
 }
 
 class LinuxBackend implements ObservationBackend {
@@ -33,14 +34,16 @@ class LinuxBackend implements ObservationBackend {
   constructor(
     private readonly host: ObservationHost,
     private readonly paths: ObserverPaths,
+    private readonly recursive: boolean,
   ) {}
 
   async start(): Promise<void> {
     this.watchDirectory(this.host.root);
-    await this.enqueue([this.host.root]);
+    if (this.recursive) await this.enqueue([this.host.root]);
   }
 
   async updateIgnore(): Promise<void> {
+    if (!this.recursive) return;
     for (const [directory, watcher] of this.watchers) {
       if (directory !== this.host.root && this.host.isIgnored(directory)) {
         watcher.close();
@@ -93,6 +96,10 @@ class LinuxBackend implements ObservationBackend {
     const watcher = watch(directory, (eventType, filename) => {
       if (!this.host.isActive()) return;
       const path = filename ? resolve(directory, filename.toString()) : directory;
+      if (!this.recursive) {
+        if (!this.host.isIgnored(path)) this.host.queueEvent("update", directory);
+        return;
+      }
       if (!this.host.isIgnored(path)) {
         if (eventType === "change") this.host.queueEvent("update", path);
         else this.classify(path);

@@ -141,6 +141,10 @@ interface EntryPayloadParams {
   name: string;
 }
 
+export async function resolveExplorerDirectoryPath(params: ListDirectoryParams): Promise<string> {
+  return (await resolveScopedPath(params)).resolvedPath;
+}
+
 export async function listDirectoryEntries({
   root,
   relativePath = ".",

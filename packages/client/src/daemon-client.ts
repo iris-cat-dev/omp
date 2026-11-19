@@ -5109,6 +5109,55 @@ export class DaemonClient {
     }
   }
 
+  watchDirectory(input: { cwd: string; path: string }, onInvalidate: () => void): () => void {
+    let subscriptionId: string | null = null;
+    const stopUpdates = this.on("fs.directory.update", ({ payload }) => {
+      if (payload.subscriptionId !== subscriptionId) return;
+      if (payload.error !== null) {
+        this.logger.warn({ ...input, error: payload.error }, "Directory watch stopped");
+      }
+      onInvalidate();
+    });
+    const stopConnection = this.subscribeConnectionStatus(({ status }) => {
+      if (status !== "connected") {
+        subscriptionId = null;
+        return;
+      }
+      if (this.lastServerInfoMessage?.features?.fsDirectoryWatch !== true || subscriptionId) return;
+      const id = this.createRequestId();
+      subscriptionId = id;
+      void this.sendCorrelatedSessionRequest({
+        message: { type: "fs.directory.subscribe.request", ...input, subscriptionId: id },
+        responseType: "fs.directory.subscribe.response",
+      })
+        .then(({ error }) => {
+          if (subscriptionId !== id) return;
+          if (error !== null) {
+            this.logger.warn({ ...input, error }, "Directory watch unavailable");
+            return;
+          }
+          // Read once after the watch is armed to cover changes during setup or reconnect.
+          onInvalidate();
+        })
+        .catch((err: unknown) => {
+          if (subscriptionId === id) this.logger.warn({ ...input, err }, "Directory watch failed");
+        });
+    });
+    return () => {
+      stopConnection();
+      stopUpdates();
+      const id = subscriptionId;
+      subscriptionId = null;
+      if (id && this.isConnected) {
+        try {
+          this.sendSessionMessage({ type: "fs.directory.unsubscribe", subscriptionId: id });
+        } catch (err) {
+          this.logger.warn({ ...input, err }, "Failed to release directory watch");
+        }
+      }
+    };
+  }
+
   async writeFile(input: {
     cwd: string;
     path: string;

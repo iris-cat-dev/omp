@@ -1910,6 +1910,7 @@ export class PaseoWebSocketServer {
         projectCustomIcon: true,
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: true,
+        fsDirectoryWatch: true,
         // COMPAT(fsEntryMove): added in v0.3.2, remove gate after 2027-03-10.
         fsEntryMove: true,
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.

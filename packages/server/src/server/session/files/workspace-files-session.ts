@@ -6,6 +6,8 @@ import {
   type FileTransferFrame,
 } from "@omp-desktop/protocol/binary-frames/index";
 import type {
+  DirectorySubscribeRequest,
+  DirectoryUnsubscribe,
   FileDownloadTokenRequest,
   FileEntryCreateRequest,
   FileEntryDeleteRequest,
@@ -30,11 +32,13 @@ import {
   listDirectoryEntries,
   moveExplorerEntry,
   readExplorerFile,
+  resolveExplorerDirectoryPath,
   renameExplorerEntry,
   streamExplorerFile,
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
+import { createFileObserver as createDirectoryObserver } from "../../file-observer/index.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
 
 /**
@@ -71,6 +75,11 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSubscriptions = new Map<string, () => void>();
+  private readonly directoryObserver = createDirectoryObserver();
+  private readonly directorySubscriptions = new Map<
+    object | undefined,
+    Map<string, { unsubscribe?: () => Promise<void> }>
+  >();
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
@@ -124,6 +133,80 @@ export class WorkspaceFilesSession {
     this.host.emit({
       type: "fs.file.unsubscribe.response",
       payload: { subscriptionId: request.subscriptionId, requestId: request.requestId },
+    });
+  }
+
+  async handleDirectorySubscribeRequest(
+    request: DirectorySubscribeRequest,
+    source?: object,
+  ): Promise<void> {
+    if (!this.directorySubscriptions.has(source))
+      this.directorySubscriptions.set(source, new Map());
+    const subscriptions = this.directorySubscriptions.get(source)!;
+    const { subscriptionId, requestId } = request;
+    this.closeDirectoryWatch(subscriptions.get(subscriptionId)?.unsubscribe);
+    const watch: { unsubscribe?: () => Promise<void> } = {};
+    subscriptions.set(subscriptionId, watch);
+    const isCurrent = () => subscriptions.get(subscriptionId) === watch;
+    let error: string | null = null;
+    try {
+      const directory = await resolveExplorerDirectoryPath({
+        root: request.cwd,
+        relativePath: request.path,
+      });
+      if (!isCurrent()) return;
+      const subscription = await this.directoryObserver.subscribe(
+        directory,
+        (failure) => {
+          if (!isCurrent()) return;
+          this.host.emit(
+            {
+              type: "fs.directory.update",
+              payload: { subscriptionId, error: failure ? failure.message : null },
+            },
+            source,
+          );
+        },
+        { recursive: false },
+      );
+      if (!isCurrent()) {
+        await subscription.unsubscribe();
+        return;
+      }
+      watch.unsubscribe = subscription.unsubscribe;
+    } catch (cause) {
+      if (!isCurrent()) return;
+      error = getErrorMessage(cause);
+      this.handleDirectoryUnsubscribe({ type: "fs.directory.unsubscribe", subscriptionId }, source);
+    }
+    this.host.emit(
+      {
+        type: "fs.directory.subscribe.response",
+        payload: { subscriptionId, requestId, error },
+      },
+      source,
+    );
+  }
+
+  handleDirectoryUnsubscribe(request: DirectoryUnsubscribe, source?: object): void {
+    const subscriptions = this.directorySubscriptions.get(source);
+    if (!subscriptions) return;
+    this.closeDirectoryWatch(subscriptions.get(request.subscriptionId)?.unsubscribe);
+    subscriptions.delete(request.subscriptionId);
+    if (subscriptions.size === 0) this.directorySubscriptions.delete(source);
+  }
+
+  clearDirectorySubscriptions(source?: object): void {
+    const subscriptions = this.directorySubscriptions.get(source);
+    if (!subscriptions) return;
+    this.directorySubscriptions.delete(source);
+    for (const watch of subscriptions.values()) this.closeDirectoryWatch(watch.unsubscribe);
+    subscriptions.clear();
+  }
+
+  private closeDirectoryWatch(unsubscribe?: () => Promise<void>): void {
+    void unsubscribe?.().catch((err: unknown) => {
+      this.logger.warn({ err }, "Failed to close directory watch");
     });
   }
 
@@ -237,6 +320,9 @@ export class WorkspaceFilesSession {
   dispose(): void {
     for (const unsubscribe of this.fileSubscriptions.values()) unsubscribe();
     this.fileSubscriptions.clear();
+    for (const source of this.directorySubscriptions.keys())
+      this.clearDirectorySubscriptions(source);
+    this.closeDirectoryWatch(() => this.directoryObserver.close());
   }
 
   async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {

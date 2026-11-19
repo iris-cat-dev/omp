@@ -3449,6 +3449,19 @@ export const FileUnsubscribeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const DirectorySubscribeRequestSchema = z.object({
+  type: z.literal("fs.directory.subscribe.request"),
+  cwd: z.string().trim().min(1),
+  path: z.string().min(1),
+  subscriptionId: z.string(),
+  requestId: z.string(),
+});
+
+export const DirectoryUnsubscribeSchema = z.object({
+  type: z.literal("fs.directory.unsubscribe"),
+  subscriptionId: z.string(),
+});
+
 export const FileWriteRequestSchema = z.object({
   type: z.literal("fs.file.write.request"),
   cwd: z.string(),
@@ -4058,6 +4071,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
+  DirectorySubscribeRequestSchema,
+  DirectoryUnsubscribeSchema,
   FileWriteRequestSchema,
   FileEntryCreateRequestSchema,
   FileEntryRenameRequestSchema,
@@ -4326,6 +4341,7 @@ export const ServerInfoStatusPayloadSchema = z
         projectCustomIcon: z.boolean().optional(),
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: z.boolean().optional(),
+        fsDirectoryWatch: z.boolean().optional(),
         // COMPAT(fsEntryMove): added in v0.3.2, remove gate after 2027-03-10.
         fsEntryMove: z.boolean().optional(),
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
@@ -6631,6 +6647,23 @@ export const FileUnsubscribeResponseSchema = z.object({
   }),
 });
 
+export const DirectorySubscribeResponseSchema = z.object({
+  type: z.literal("fs.directory.subscribe.response"),
+  payload: z.object({
+    subscriptionId: z.string(),
+    requestId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const DirectoryUpdateSchema = z.object({
+  type: z.literal("fs.directory.update"),
+  payload: z.object({
+    subscriptionId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const FileWriteResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("written"),
@@ -8082,6 +8115,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileExplorerResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
+  DirectorySubscribeResponseSchema,
+  DirectoryUpdateSchema,
   FileWriteResponseSchema,
   FileEntryCreateResponseSchema,
   FileEntryRenameResponseSchema,
@@ -8728,6 +8763,8 @@ export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;
 export type FileUnsubscribeRequest = z.infer<typeof FileUnsubscribeRequestSchema>;
 export type FileUnsubscribeResponse = z.infer<typeof FileUnsubscribeResponseSchema>;
+export type DirectorySubscribeRequest = z.infer<typeof DirectorySubscribeRequestSchema>;
+export type DirectoryUnsubscribe = z.infer<typeof DirectoryUnsubscribeSchema>;
 export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
 export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
 export type FileEntryCreateRequest = z.infer<typeof FileEntryCreateRequestSchema>;
