@@ -25,6 +25,7 @@
 | [Web and relay deployment](deployment.md)                               | Web exports, Cloudflare Pages, self-hosted relay configuration, and network boundaries                                                |
 | [Agent and harness benchmarks](agent-harness-benchmarks.md)             | Benchmark selection, OMP integration, controlled comparisons, and the next evaluation run                                             |
 | [Unified Desktop plugin system design](desktop-plugin-system-design.md) | Proposed unified manager, historical/native plugin compatibility, and pet/wallpaper/speed/QQ extraction; not current runtime behavior |
+| [Upstream sync and migration](upstream/README.md)                       | Upstream `can1357/oh-my-pi` analyses, selectively ported commits, and preserved fork contracts                                        |
 
 Commands in these guides run from the repository root unless a section says otherwise.
 Keep detailed feature and operational notes in the relevant guide; the root README is the project entry point.

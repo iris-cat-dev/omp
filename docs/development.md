@@ -135,18 +135,11 @@ The SDK's login `available` flag also covers terminal-only prompts. Use `support
 
 After updating the pinned SDK model catalog, run `node packages/app/scripts/project-omp-provider-catalog.mjs` from the repository root. Include the regenerated `omp-provider-model-index.json` with the SDK update. The connection directory searches those public model IDs and names before sign-in; the chat picker uses the selected host's live catalog.
 
-**Cursor upstream ports**
+**Upstream SDK ports**
 
-The source SDK includes these selectively ported `can1357/oh-my-pi` changes, retaining Node transport, proxy policies, and runtime adapters:
+Selectively ported `can1357/oh-my-pi` changes (Cursor catalog/runtime fixes, the Bash 5.3 shell engine and execution trace, and the `18.22.2` catalog sync) are tracked in [docs/upstream/ports.md](upstream/ports.md), with analyses and preserved fork contracts under [docs/upstream/](upstream/README.md).
 
-- Model discovery and cache v6: `b4e0bf241166` ([#18248](https://github.com/can1357/oh-my-pi/pull/18248)); hidden/Cmd-K-only model filtering: `51adeafb7f24`.
-- Hook-added context and server-history replay: `d47018947a77` ([#19156](https://github.com/can1357/oh-my-pi/pull/19156)).
-- TLS reset and RunSSE fallback: `8215aa30af09`, `b202a2f096c5`, `a295dae85344` ([#17985](https://github.com/can1357/oh-my-pi/pull/17985)); ClientHello fixture correction: `526f30567435`.
-- Native/MCP tool ordering: `0a1390308492` ([#18434](https://github.com/can1357/oh-my-pi/pull/18434)), `8b8611eb8e20`, `b1fba1dc937b` ([#18502](https://github.com/can1357/oh-my-pi/pull/18502)); shared concurrency resolution: `ad77cd087769`.
-- Gemini 4 Carbon dated pricing: `0de8205510f1` ([#18734](https://github.com/can1357/oh-my-pi/pull/18734)).
-- Shell execution trace: `488cafa0e0d0`, with the required shell engine from `44711a78c1be` and trace/encoding fixes pinned through `1bdbf6d242d9`. This selective port replaces Brush while retaining Node SDK, Desktop/core feature trimming, PTY/external-shell routes, artifact capture, and the fork's owned Stop and Git guard contracts. It does not import upstream CLI updater, TUI line movement, or TTY writer optimizations.
-
-The bundled SDK and pinned remote release `sdk-v18.14.0-desktop-core.3` include these ports. The SDK package version remains `18.14.0`; the release tag identifies the updated bytes. Rebuild Desktop's remote-backend payload after changing the pin, then use the normal host update flow and recreate loaded SDK sessions to apply it. Publishing an SDK or Desktop release does not restart existing hosts.
+The bundled SDK and pinned remote release `sdk-v18.14.0-desktop-core.3` include the Cursor and shell ports. The SDK package version remains `18.14.0`; the release tag identifies the updated bytes. Rebuild Desktop's remote-backend payload after changing the pin, then use the normal host update flow and recreate loaded SDK sessions to apply it. Publishing an SDK or Desktop release does not restart existing hosts.
 
 Codex and Antigravity model catalogs track the stored OAuth account set. Adding,
 disabling, or removing accounts invalidates that discovery fingerprint, including
