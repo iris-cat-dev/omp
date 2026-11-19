@@ -1318,6 +1318,10 @@ export const es: TranslationResources = {
       description: "Cambia o borra los filtros de la barra lateral para ver espacios de trabajo.",
       clear: "Borrar filtros",
     },
+    status: {
+      markAllAsRead: "Marcar todo como leído",
+      markAllAsReadFailed: "No se pudieron marcar todas las conversaciones como leídas",
+    },
     pinned: {
       title: "Anclados",
     },

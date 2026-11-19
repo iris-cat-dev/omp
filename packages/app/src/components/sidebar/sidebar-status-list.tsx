@@ -27,6 +27,12 @@ import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buttonControlHeight } from "@/components/ui/control-geometry";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -205,6 +211,32 @@ function StatusGroupList({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  // A completed conversation stays in Ready to review until its notification is read.
+  const unreadCompletions = groups.find((group) => group.leading.bucket === "attention")?.rows;
+  const { t } = useTranslation();
+  const toast = useToast();
+  const markAllAsRead = useMutation({
+    mutationFn: async (rows: readonly SidebarWorkspaceEntry[]) => {
+      const workspaceIdsByHost = new Map<string, string[]>();
+      for (const { serverId, workspaceId } of rows) {
+        const workspaceIds = workspaceIdsByHost.get(serverId);
+        if (workspaceIds) workspaceIds.push(workspaceId);
+        else workspaceIdsByHost.set(serverId, [workspaceId]);
+      }
+      const results = await Promise.allSettled(
+        [...workspaceIdsByHost].map(async ([serverId, workspaceIds]) => {
+          const client = getHostRuntimeStore().getClient(serverId);
+          if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+          await client.clearWorkspaceAttention(workspaceIds);
+        }),
+      );
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
+    },
+    onError: (error) =>
+      toast.error(`${t("sidebar.status.markAllAsReadFailed")}: ${error.message}`),
+  });
+
   return (
     <>
       {groups.map((group) => (
@@ -212,6 +244,16 @@ function StatusGroupList({
           key={group.key}
           group={group}
           collapsed={collapsedWorkspaceGroupKeys.has(group.key)}
+          markAllAsRead={
+            group.leading.bucket === "done"
+              ? {
+                  disabled: markAllAsRead.isPending || !unreadCompletions?.length,
+                  select: () => {
+                    if (unreadCompletions?.length) markAllAsRead.mutate(unreadCompletions);
+                  },
+                }
+              : undefined
+          }
           projectIconByProjectViewKey={projectIconByProjectViewKey}
           shortcutIndex={shortcutIndex}
           showShortcutBadges={showShortcutBadges}
@@ -225,9 +267,12 @@ function StatusGroupList({
   );
 }
 
+type MarkAllAsReadAction = { disabled: boolean; select: () => void };
+
 function StatusGroupRows({
   group,
   collapsed,
+  markAllAsRead,
   projectIconByProjectViewKey,
   shortcutIndex,
   showShortcutBadges,
@@ -238,6 +283,7 @@ function StatusGroupRows({
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
+  markAllAsRead?: MarkAllAsReadAction;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
@@ -255,7 +301,7 @@ function StatusGroupRows({
 
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
-      <StatusGroupHeader group={group} collapsed={collapsed} />
+      <StatusGroupHeader group={group} collapsed={collapsed} markAllAsRead={markAllAsRead} />
       {!collapsed ? (
         <View
           style={styles.statusWorkspaceListContainer}
@@ -316,10 +362,13 @@ function buildStatusRowProjectPresentation({
 function StatusGroupHeader({
   group,
   collapsed,
+  markAllAsRead,
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
+  markAllAsRead?: MarkAllAsReadAction;
 }) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
@@ -337,33 +386,53 @@ function StatusGroupHeader({
     ],
     [isHovered],
   );
-  const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const triggerProps = {
+    accessibilityLabel: `${group.label} group`,
+    "aria-expanded": !collapsed,
+    style: rowStyle,
+    onPress: handlePress,
+    testID: `sidebar-status-group-${group.key}`,
+  };
+  const content = (
+    <View style={styles.statusGroupRowLeft}>
+      <View style={styles.statusGroupLeadingVisualSlot}>
+        <StatusGroupLeadingVisual
+          leading={group.leading}
+          collapsed={collapsed}
+          showChevron={isHovered}
+        />
+      </View>
+      <View style={styles.statusGroupTitleGroup}>
+        <Text style={styles.statusGroupTitle} numberOfLines={1}>
+          {group.label}
+        </Text>
+      </View>
+    </View>
+  );
 
   return (
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
-      <Pressable
-        accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={`${group.label} group`}
-        accessibilityState={accessibilityState}
-        style={rowStyle}
-        onPress={handlePress}
-        testID={`sidebar-status-group-${group.key}`}
-      >
-        <View style={styles.statusGroupRowLeft}>
-          <View style={styles.statusGroupLeadingVisualSlot}>
-            <StatusGroupLeadingVisual
-              leading={group.leading}
-              collapsed={collapsed}
-              showChevron={isHovered}
-            />
-          </View>
-          <View style={styles.statusGroupTitleGroup}>
-            <Text style={styles.statusGroupTitle} numberOfLines={1}>
-              {group.label}
-            </Text>
-          </View>
-        </View>
-      </Pressable>
+      {markAllAsRead ? (
+        <ContextMenu>
+          <ContextMenuTrigger {...triggerProps} accessibilityRole="button">
+            {content}
+          </ContextMenuTrigger>
+          <ContextMenuContent align="start" width={220}>
+            <ContextMenuItem
+              disabled={markAllAsRead.disabled}
+              leading={<ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />}
+              onSelect={markAllAsRead.select}
+              testID="sidebar-status-mark-all-as-read"
+            >
+              {t("sidebar.status.markAllAsRead")}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        <Pressable {...triggerProps} accessibilityRole={platformIsWeb ? undefined : "button"}>
+          {content}
+        </Pressable>
+      )}
     </View>
   );
 }

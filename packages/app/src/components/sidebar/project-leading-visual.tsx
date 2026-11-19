@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
+import { CircleAlert, Folder, FolderOpen } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
 import type { Theme } from "@/styles/theme";
@@ -12,10 +13,7 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
-import {
-  STATUS_INDICATOR_ALERT_SIZE,
-  STATUS_INDICATOR_FILLED_DOT_SIZE,
-} from "@/utils/status-indicator-geometry";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 import { StatusRing } from "@/components/status-ring";
 import { getStatusRingOffset } from "@/components/status-ring/geometry";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -29,6 +27,8 @@ const LEADING_SLOT_HEIGHT = PROJECT_ICON_SIZE;
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedFolder = withUnistyles(Folder);
+const ThemedFolderOpen = withUnistyles(FolderOpen);
 
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -38,39 +38,20 @@ const needsInputColorMapping = (theme: Theme) => ({
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
-/**
- * Leading slot of a sidebar project row: chevron on hover, archive spinner while removing,
- * otherwise the project icon carrying the project's aggregate workspace status.
- */
+/** The folder shows the project's expansion state even while the row is hovered. */
 export function ProjectLeadingVisual({
-  displayName,
-  iconDataUri,
   statusBucket,
-  projectViewKey,
   backdrop,
-  chevron = null,
-  showChevron = false,
+  collapsed,
   isArchiving = false,
 }: {
-  displayName: string;
-  iconDataUri: string | null;
   /** Aggregate status of the project's workspaces; null when it shouldn't be surfaced. */
   statusBucket: SidebarStateBucket | null;
-  projectViewKey: string;
   /** The row's current background, so the status badge can knock out of it. */
   backdrop: SidebarSurfaceBackdrop;
-  chevron?: "expand" | "collapse" | null;
-  showChevron?: boolean;
+  collapsed: boolean;
   isArchiving?: boolean;
 }) {
-  if (showChevron && chevron !== null) {
-    return (
-      <View style={styles.projectLeadingVisualSlot}>
-        <ProjectInlineChevron chevron={chevron} />
-      </View>
-    );
-  }
-
   if (isArchiving) {
     return (
       <View style={styles.projectLeadingVisualSlot} testID="project-status-indicator-archiving">
@@ -79,22 +60,15 @@ export function ProjectLeadingVisual({
     );
   }
 
+  const FolderIcon = collapsed ? ThemedFolder : ThemedFolderOpen;
   return (
-    <ProjectStatusIndicator
-      iconDataUri={iconDataUri}
-      displayName={displayName}
-      projectViewKey={projectViewKey}
-      statusBucket={statusBucket}
-      backdrop={backdrop}
-    />
+    <ProjectStatusFrame statusBucket={statusBucket} backdrop={backdrop}>
+      <FolderIcon size={PROJECT_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
+    </ProjectStatusFrame>
   );
 }
 
-// The project icon (the lettered box) is what marks a row as a *project* rather than a
-// workspace, so it always stays and status annotates it instead of replacing it. Every
-// surfaced bucket lands in the identical corner badge — an amber alert glyph for needs_input,
-// a colored disc for the rest, nothing for done — so the badge reads as one fixed shell and
-// only its contents change.
+/** Status-grouped conversation rows identify their project with its own icon. */
 export function ProjectStatusIndicator({
   iconDataUri,
   displayName,
@@ -116,6 +90,37 @@ export function ProjectStatusIndicator({
   const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
     .charAt(0)
     .toUpperCase();
+  return (
+    <ProjectStatusFrame
+      statusBucket={statusBucket}
+      backdrop={backdrop}
+      loading={loading}
+      testID={testID}
+    >
+      <ProjectIconView
+        iconDataUri={iconDataUri}
+        initial={placeholderInitial}
+        projectViewKey={projectViewKey}
+        size={PROJECT_ICON_SIZE}
+        textStyle={styles.projectIconFallbackText}
+      />
+    </ProjectStatusFrame>
+  );
+}
+
+function ProjectStatusFrame({
+  children,
+  statusBucket,
+  backdrop,
+  loading = false,
+  testID,
+}: {
+  children: ReactNode;
+  statusBucket: SidebarStateBucket | null;
+  backdrop: SidebarSurfaceBackdrop;
+  loading?: boolean;
+  testID?: string;
+}) {
   // A row that's still starting up and a row that's working are both "busy", and at this size
   // there's no room to draw the difference — so `loading` just resolves to the running bucket
   // and they share one badge.
@@ -133,11 +138,7 @@ export function ProjectStatusIndicator({
       }
     >
       <View style={styles.projectIconBox}>
-        <ProjectIcon
-          iconDataUri={iconDataUri}
-          placeholderInitial={placeholderInitial}
-          projectViewKey={projectViewKey}
-        />
+        {children}
         {badgeContent === null || badgeBucket === null ? null : (
           <ProjectStatusBadge
             content={badgeContent}
@@ -207,36 +208,6 @@ function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
   return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
 }
 
-function ProjectIcon({
-  iconDataUri,
-  placeholderInitial,
-  projectViewKey,
-}: {
-  iconDataUri: string | null;
-  placeholderInitial: string;
-  projectViewKey: string;
-}) {
-  return (
-    <ProjectIconView
-      iconDataUri={iconDataUri}
-      initial={placeholderInitial}
-      projectViewKey={projectViewKey}
-      size={PROJECT_ICON_SIZE}
-      textStyle={styles.projectIconFallbackText}
-    />
-  );
-}
-
-function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | null }) {
-  if (chevron === null) {
-    return null;
-  }
-  if (chevron === "collapse") {
-    return <ChevronDown size={14} color="#9ca3af" />;
-  }
-  return <ChevronRight size={14} color="#9ca3af" />;
-}
-
 function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
   if (bucket === "failed") return styles.statusDotFailed;
   if (bucket === "running") return styles.statusDotRunning;
@@ -275,7 +246,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 10,
     },
     // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
-    // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
+    // (half in, half out) so the project icon stays readable. The shell is a knockout:
     // it is filled with the colour of the row behind it, which is what makes the ring around the
     // dot read as a gap in the icon rather than as a white halo drawn on top of it.
     statusBadge: {

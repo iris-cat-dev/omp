@@ -263,28 +263,17 @@ describe("buildSidebarProjection", () => {
     ]);
   });
 
-  // The rule that outlived the bug it was written for: a project icon is fetched per project, so
-  // whatever a mode groups by, the rows it produces can only reference projects already covered.
-  for (const groupMode of ["project", "status"] as const) {
-    it(`covers every row ${groupMode} grouping renders with a project icon target`, () => {
-      const projection = buildSidebarProjection(twoProjectInput(groupMode));
-      const covered = new Set(projection.projectIconTargets.map((target) => target.projectViewKey));
-
-      // Every leading visual the sidebar can paint from this projection: grouped rows, project
-      // headers and the rows under them.
-      const renderedProjectViewKeys = new Set<string>();
-      for (const group of projection.workspaceGroups) {
-        for (const entry of group.rows) renderedProjectViewKeys.add(entry.projectViewKey);
-      }
-      for (const project of projection.projects) {
-        renderedProjectViewKeys.add(project.viewKey);
-        for (const entry of project.workspaces) renderedProjectViewKeys.add(entry.projectViewKey);
-      }
-
-      expect([...renderedProjectViewKeys].sort()).toEqual(["other-project", "project"]);
-      expect([...renderedProjectViewKeys].filter((viewKey) => !covered.has(viewKey))).toEqual([]);
-    });
-  }
+  it("covers status rows with project icon targets even though project headers use folders", () => {
+    const projection = buildSidebarProjection(twoProjectInput("status"));
+    const renderedProjectViewKeys = new Set(
+      projection.workspaceGroups.flatMap((group) => group.rows.map((row) => row.projectViewKey)),
+    );
+    expect(renderedProjectViewKeys).toEqual(new Set(["other-project", "project"]));
+    expect(new Set(projection.projectIconTargets.map((target) => target.projectViewKey))).toEqual(
+      renderedProjectViewKeys,
+    );
+    expect(buildSidebarProjection(twoProjectInput("project")).projectIconTargets).toEqual([]);
+  });
 
   it("keeps pinned chats at the top of their project and shortcut order", () => {
     const projection = buildSidebarProjection(projectionInput());

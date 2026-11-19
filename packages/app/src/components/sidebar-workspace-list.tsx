@@ -271,9 +271,8 @@ interface SidebarWorkspaceListProps {
 interface ProjectHeaderRowProps {
   project: SidebarProjectEntry;
   displayName: string;
-  iconDataUri: string | null;
   statusBucket: SidebarStateBucket | null;
-  chevron: "expand" | "collapse" | null;
+  collapsed: boolean;
   onPress: (event: GestureResponderEvent) => void;
   workspaceTarget: SidebarProjectHostTarget | null;
   onBeginWorkspaceSetup: () => void;
@@ -1073,9 +1072,8 @@ function SidebarAgentDraftRow({
 function ProjectHeaderRow({
   project,
   displayName,
-  iconDataUri,
   statusBucket,
-  chevron,
+  collapsed,
   onPress,
   workspaceTarget,
   onBeginWorkspaceSetup,
@@ -1157,13 +1155,9 @@ function ProjectHeaderRow({
   const rowChildren = (
     <View style={styles.projectRowLeft}>
       <ProjectLeadingVisual
-        displayName={displayName}
-        iconDataUri={iconDataUri}
         statusBucket={statusBucket}
-        projectViewKey={project.viewKey}
         backdrop={getSidebarRowBackdrop({ isDragging, isPressed, isHovered })}
-        chevron={chevron}
-        showChevron={isHovered && chevron !== null}
+        collapsed={collapsed}
         isArchiving={isArchiving}
       />
       <View style={styles.projectTitleGroup}>
@@ -1211,6 +1205,7 @@ function ProjectHeaderRow({
         <ContextMenuTrigger
           enabledOnMobile={false}
           accessibilityRole="button"
+          aria-expanded={!collapsed}
           style={styles.projectRowPressTarget}
           highlightStyle={styles.projectRowPressed}
           onPressIn={handleProjectPressIn}
@@ -1224,6 +1219,7 @@ function ProjectHeaderRow({
       ) : (
         <PressHighlight
           accessibilityRole="button"
+          aria-expanded={!collapsed}
           style={styles.projectRowPressTarget}
           highlightStyle={styles.projectRowPressed}
           onPressIn={handleProjectPressIn}
@@ -1899,7 +1895,6 @@ function ProjectBlock({
   workspaceEntriesByKey,
   collapsed,
   displayName,
-  iconDataUri,
   selectionEnabled,
   showShortcutBadges,
   shortcutIndexByWorkspaceKey,
@@ -1926,7 +1921,6 @@ function ProjectBlock({
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsed: boolean;
   displayName: string;
-  iconDataUri: string | null;
   selectionEnabled: boolean;
   showShortcutBadges: boolean;
   shortcutIndexByWorkspaceKey: Map<string, number>;
@@ -1948,10 +1942,7 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
-  const rowModel = useMemo(
-    () => buildSidebarProjectRowModel({ project, collapsed }),
-    [collapsed, project],
-  );
+  const rowModel = useMemo(() => buildSidebarProjectRowModel({ project }), [project]);
   const visibleAgentDrafts = collapsed ? EMPTY_AGENT_DRAFTS : agentDrafts;
   const workspaceRows = useMemo(() => {
     const draftWorkspaceKeys = new Set(
@@ -2244,9 +2235,8 @@ function ProjectBlock({
       <ProjectHeaderRow
         project={project}
         displayName={displayName}
-        iconDataUri={iconDataUri}
         statusBucket={aggregateStatusBucket}
-        chevron={rowModel.chevron}
+        collapsed={collapsed}
         onPress={handleProjectPress}
         workspaceTarget={
           rowModel.trailingAction.kind === "new_agent" ? rowModel.trailingAction.target : null
@@ -2277,7 +2267,6 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.agentDrafts === next.agentDrafts &&
     previous.collapsed === next.collapsed &&
     previous.displayName === next.displayName &&
-    previous.iconDataUri === next.iconDataUri &&
     previous.selectionEnabled === next.selectionEnabled &&
     previous.showShortcutBadges === next.showShortcutBadges &&
     previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
@@ -2365,9 +2354,6 @@ export function SidebarWorkspaceList({
   const hasActiveLabelFilter = useSidebarViewStore((state) =>
     hasActiveSidebarLabelFilter(state.labelFilter),
   );
-  // One fetch, one map, every mode — project mode paints icons on its headers and status mode
-  // paints them on each row, all keyed by `projectViewKey`. The targets come from the projection
-  // that produced the rows, so the question "what is on screen" is answered once.
   const projectIconByProjectViewKey = useProjectIcons({ projects: projectIconTargets });
 
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
@@ -2399,7 +2385,6 @@ export function SidebarWorkspaceList({
       <ProjectModeList
         projects={projects}
         workspaceEntriesByKey={workspaceEntriesByKey}
-        projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
         onToggleProjectCollapsed={onToggleProjectCollapsed}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
@@ -2469,7 +2454,6 @@ function SidebarGroupedModeList({
 function ProjectModeList({
   projects,
   workspaceEntriesByKey,
-  projectIconByProjectViewKey,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
   shortcutIndexByWorkspaceKey,
@@ -2498,7 +2482,6 @@ function ProjectModeList({
   sidebarFilterEmpty: boolean;
   /** Reordering is disabled while a label filter hides part of the persisted pinned order. */
   pinnedWorkspaceReorderEnabled: boolean;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
@@ -2648,7 +2631,6 @@ function ProjectModeList({
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
-          iconDataUri={projectIconByProjectViewKey.get(item.viewKey) ?? null}
           selectionEnabled={selectionEnabled}
           showShortcutBadges={showShortcutBadges}
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
@@ -2689,7 +2671,6 @@ function ProjectModeList({
       onToggleProjectCollapsed,
       parentGestureRef,
       dragGestureHostPresented,
-      projectIconByProjectViewKey,
       selectionEnabled,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,

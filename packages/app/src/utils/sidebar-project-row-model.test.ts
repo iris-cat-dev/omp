@@ -71,12 +71,10 @@ describe("buildSidebarProjectRowModel", () => {
         projectKind: "directory",
         workspaces: [workspace({ workspaceId: "ws-non-git", workspaceKind: "checkout" })],
       }),
-      collapsed: false,
     });
 
     expect(result).toEqual({
       kind: "project_section",
-      chevron: "collapse",
       trailingAction: {
         kind: "new_agent",
         target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },
@@ -91,7 +89,6 @@ describe("buildSidebarProjectRowModel", () => {
           { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" },
         ],
       }),
-      collapsed: false,
     });
 
     expect(result.trailingAction).toEqual({
@@ -158,15 +155,13 @@ describe("buildSidebarProjectRowModel", () => {
     expect(resolveSidebarProjectLocalPath(groupedProject, "missing")).toBe("");
   });
 
-  it("renders an empty project as an expandable section", () => {
+  it("keeps the Agent entry for an empty project", () => {
     const result = buildSidebarProjectRowModel({
       project: project({ projectKind: "git", workspaces: [] }),
-      collapsed: false,
     });
 
     expect(result).toEqual({
       kind: "project_section",
-      chevron: "collapse",
       trailingAction: {
         kind: "new_agent",
         target: { serverId: "srv", projectId: "project-srv", iconWorkingDir: "/repo" },

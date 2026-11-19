@@ -167,6 +167,8 @@ Selecting a conversation, including its already active sidebar row or tab, marks
 
 A completion received while you are already viewing the conversation stays visible until you explicitly select it again, focus the composer, send another prompt, or leave the conversation. Permission requests still require a response, and marking attention as read does not change a failed task's lifecycle state. The workspace indicator can remain when another conversation or terminal has finished work to review; **Mark as read** acknowledges all clearable conversation notifications in that workspace.
 
+When grouped by status, right-click **Done** and choose **Mark all as read** to move conversations from **Ready to review** to **Done** within the current sidebar filters. Failed conversations and permission requests are unaffected.
+
 ### Import complete provider history
 
 **Import session** in the home screen or sidebar shows available sessions across projects, newest first. From a workspace or draft, it shows only that working directory. Search titles, prompt previews, project paths, or provider names. Combine keywords to narrow the list, then select a session to import it. Filtering searches the displayed catalog without rescanning transcripts; **Refresh** rescans the providers.

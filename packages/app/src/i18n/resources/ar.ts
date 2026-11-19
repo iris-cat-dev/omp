@@ -1280,6 +1280,10 @@ export const ar: TranslationResources = {
       description: "غيّر عوامل تصفية الشريط الجانبي أو امسحها لعرض مساحات العمل.",
       clear: "مسح عوامل التصفية",
     },
+    status: {
+      markAllAsRead: "وضع علامة مقروء على الكل",
+      markAllAsReadFailed: "تعذّر وضع علامة مقروء على جميع المحادثات",
+    },
     pinned: {
       title: "المثبتة",
     },

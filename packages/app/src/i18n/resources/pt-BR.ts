@@ -1313,6 +1313,10 @@ export const ptBR: TranslationResources = {
       description: "Altere ou limpe os filtros da barra lateral para ver espaços de trabalho.",
       clear: "Limpar filtros",
     },
+    status: {
+      markAllAsRead: "Marcar tudo como lido",
+      markAllAsReadFailed: "Não foi possível marcar todas as conversas como lidas",
+    },
     pinned: {
       title: "Fixados",
     },

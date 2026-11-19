@@ -1413,6 +1413,10 @@ export const en = {
       description: "Change or clear the sidebar filters to see workspaces.",
       clear: "Clear filters",
     },
+    status: {
+      markAllAsRead: "Mark all as read",
+      markAllAsReadFailed: "Couldn't mark all conversations as read",
+    },
     pinned: {
       title: "Pinned",
     },

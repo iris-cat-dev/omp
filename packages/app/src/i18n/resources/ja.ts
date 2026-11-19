@@ -1295,6 +1295,10 @@ export const ja: TranslationResources = {
         "ワークスペースを表示するにはサイドバーのフィルターを変更またはクリアしてください。",
       clear: "フィルターをクリア",
     },
+    status: {
+      markAllAsRead: "すべて既読にする",
+      markAllAsReadFailed: "すべての会話を既読にできませんでした",
+    },
     pinned: {
       title: "固定済み",
     },

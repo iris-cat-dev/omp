@@ -1317,6 +1317,10 @@ export const fr: TranslationResources = {
         "Modifiez ou effacez les filtres de la barre latérale pour afficher les espaces de travail.",
       clear: "Effacer les filtres",
     },
+    status: {
+      markAllAsRead: "Tout marquer comme lu",
+      markAllAsReadFailed: "Impossible de marquer toutes les conversations comme lues",
+    },
     pinned: {
       title: "Épinglés",
     },

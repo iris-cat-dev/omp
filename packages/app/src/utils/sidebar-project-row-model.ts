@@ -15,7 +15,6 @@ export type SidebarProjectTrailingAction =
 
 export interface SidebarProjectSectionRowModel {
   kind: "project_section";
-  chevron: "expand" | "collapse";
   trailingAction: SidebarProjectTrailingAction;
 }
 
@@ -79,12 +78,10 @@ export function resolveSidebarProjectLocalPath(
 // workspace is only necessary when that checkout has not yet been provisioned.
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
-  collapsed: boolean;
 }): SidebarProjectRowModel {
   const target = resolveSidebarProjectIconTarget(input.project);
   return {
     kind: "project_section",
-    chevron: input.collapsed ? "expand" : "collapse",
     trailingAction: target ? { kind: "new_agent", target } : { kind: "none" },
   };
 }

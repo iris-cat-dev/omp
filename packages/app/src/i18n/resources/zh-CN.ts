@@ -1386,6 +1386,10 @@ export const zhCN: TranslationResources = {
       description: "更改或清除侧边栏筛选以查看工作区。",
       clear: "清除筛选",
     },
+    status: {
+      markAllAsRead: "全部标记已读",
+      markAllAsReadFailed: "无法将所有对话标记为已读",
+    },
     pinned: {
       title: "已置顶",
     },

@@ -15,7 +15,7 @@ Manage project layouts and conversation ownership, work with files and terminals
 
 ## Project focus and panel ownership
 
-On macOS, **Cmd-click a project in the workspace sidebar** to focus it. Ordinary click still expands/collapses it; focus does not change collapse state. The sidebar remains global, while center tabs, right panel, bottom terminal panel, selections, and split sizes are saved per project and host.
+Click a project in the workspace sidebar to expand or collapse its conversation list. The folder icon shows the current state. On macOS, **Cmd-click** focuses the project without changing its expansion state. The sidebar remains global, while center tabs, right panel, bottom terminal panel, selections, and split sizes are saved per project and host.
 
 Switching projects restores panels without closing conversations, terminating terminals, or archiving workspaces. Unsent drafts and unsaved editors survive. Files and terminals retain their owning checkout even when two worktrees have identical relative paths. Empty projects can be focused without creating workspaces; **New conversation** creates the first draft.
 

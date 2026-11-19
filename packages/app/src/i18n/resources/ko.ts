@@ -1290,6 +1290,10 @@ export const ko: TranslationResources = {
       description: "워크스페이스를 보려면 사이드바 필터를 변경하거나 지우세요.",
       clear: "필터 지우기",
     },
+    status: {
+      markAllAsRead: "모두 읽음으로 표시",
+      markAllAsReadFailed: "모든 대화를 읽음으로 표시하지 못했습니다",
+    },
     pinned: {
       title: "고정됨",
     },
