@@ -49,7 +49,7 @@ To annotate a screenshot or revise text before sending it back to AI, choose **+
 
 In SDK-backed conversations, an invalid, unsupported, undecodable, or over-limit image input ends the failed turn once instead of repeatedly resending it. The warning explains that images from the rejected request's history were removed while text and tool results were kept. Continue in the same conversation, or upload valid images within the provider's format, size, and count limits.
 
-The cleanup is persisted. Previously stuck conversations also recover on their next message after reopening. Images attached after the failed turn and later uploads remain usable. Enhanced workflow stops automatic continuation for these image-input validation errors; authentication, quota, and service failures keep their existing handling.
+The cleanup is persisted. Previously stuck conversations also recover on their next message after reopening. Images attached after the failed turn and later uploads remain usable.
 
 ### Copy and save
 

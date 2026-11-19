@@ -298,7 +298,7 @@ export const ja: TranslationResources = {
         chat: "チャット",
         chatDescription: "コードを編集したりコマンドを実行したりせず、対話とファイル読み取りのみ行います。",
         enhanced: "強化",
-        enhancedDescription: "モデルへのリクエストでエラーが発生した後、自動的に続行します。",
+        enhancedDescription: "一時的に失敗したモデルリクエストを現在のターン内で再試行します。",
         plan: "計画",
         planDescription: "変更を加える前にタスクの計画を立てます。",
         goal: "目標",

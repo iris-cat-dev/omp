@@ -401,7 +401,7 @@ export const zhCN: TranslationResources = {
         chat: "对话",
         chatDescription: "仅对话和读取文件，不修改代码或执行命令。",
         enhanced: "增强",
-        enhancedDescription: "模型请求出错后自动继续。",
+        enhancedDescription: "模型请求遇到临时故障时，在当前回合内自动重试。",
         plan: "计划",
         planDescription: "在进行更改前先规划任务。",
         goal: "目标",

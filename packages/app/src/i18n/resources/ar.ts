@@ -297,7 +297,7 @@ export const ar: TranslationResources = {
         chat: "دردشة",
         chatDescription: "تحدث واقرأ الملفات دون تعديل الشيفرة أو تنفيذ الأوامر.",
         enhanced: "معزز",
-        enhancedDescription: "تابع تلقائيًا بعد حدوث أخطاء في الطلبات المرسلة إلى النموذج.",
+        enhancedDescription: "أعد محاولة طلبات النموذج التي تفشل مؤقتًا ضمن الجولة الحالية.",
         plan: "تخطيط",
         planDescription: "خطّط للمهمة قبل إجراء التغييرات.",
         goal: "هدف",

@@ -407,7 +407,7 @@ export const en = {
         chat: "Chat",
         chatDescription: "Chat and read files without editing code or running commands.",
         enhanced: "Enhanced",
-        enhancedDescription: "Automatically continue after model-request errors.",
+        enhancedDescription: "Retry temporary model-request failures in the current turn.",
         plan: "Plan",
         planDescription: "Plan the task before making changes.",
         goal: "Goal",

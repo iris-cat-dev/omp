@@ -465,7 +465,7 @@ export const OmpAutoRetryStartEventSchema = z
     type: z.literal("auto_retry_start"),
     attempt: z.number().int().nonnegative(),
     maxAttempts: z.number().int().positive(),
-    delayMs: z.number().int().nonnegative(),
+    delayMs: z.number().nonnegative(),
     errorMessage: z.string(),
     errorId: z.number().int().optional(),
   })

@@ -300,7 +300,7 @@ export const fr: TranslationResources = {
         chatDescription:
           "Discutez et lisez des fichiers sans modifier le code ni exécuter de commandes.",
         enhanced: "Amélioré",
-        enhancedDescription: "Continuez automatiquement après des erreurs de requête au modèle.",
+        enhancedDescription: "Relancez les requêtes qui échouent temporairement pendant le tour en cours.",
         plan: "Plan",
         planDescription: "Planifiez la tâche avant d’apporter des modifications.",
         goal: "Objectif",

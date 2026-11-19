@@ -2018,7 +2018,7 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
-  describe("enhanced model error continuation", () => {
+  describe("OMP model request recovery", () => {
     const sessions = new Set<OmpHarness>();
 
     beforeEach(() => {
@@ -2034,383 +2034,141 @@ describe("OMP agent client and session", () => {
       }
     });
 
-    async function startFailedTurn(
-      message: Extract<OmpAgentMessage, { role: "assistant" }>,
-      workflowMode: "standard" | "enhanced" | "plan" | "goal" = "enhanced",
-    ): Promise<OmpHarness> {
+    async function startEnhancedTurn(): Promise<OmpHarness> {
       const omp = new OmpHarness();
       sessions.add(omp);
-      await omp.start({
-        featureValues: { workflow_mode: workflowMode, workflow_locale: "zh-CN" },
-      });
+      await omp.start({ featureValues: { workflow_mode: "enhanced", workflow_locale: "zh-CN" } });
       await omp.requireStartTurn("finish the task");
-      const runtime = omp.runtime();
-      runtime.beginTurn();
-      runtime.acceptPrompt("finish the task", "user-1");
-      runtime.finishTurn(message);
-      await waitForImmediate();
+      omp.runtime().beginTurn();
+      omp.runtime().acceptPrompt("finish the task", "user-1");
       return omp;
     }
 
-    test("finishes a disconnected local source instead of continuing enhanced mode forever", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        provider: "desktop-local",
-        model: "fixture/model",
-        content: [],
-        stopReason: "error",
-        errorStatus: 410,
-        errorMessage: "Local model source unavailable. Reconnect OMP Desktop.",
+    const streamError = {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: "Provider stream stalled while waiting for the next event",
+    } satisfies OmpAgentMessage;
+
+    function startNativeRetry(omp: OmpHarness) {
+      const runtime = omp.runtime();
+      runtime.emit({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 500,
+        errorMessage: streamError.errorMessage,
       });
+      runtime.emit({ type: "agent_end", messages: [streamError], isTerminal: false });
+    }
+
+    test("keeps the turn active during native retry and completes without adding a user message", async () => {
+      const omp = await startEnhancedTurn();
+      const runtime = omp.runtime();
+      startNativeRetry(omp);
+      await waitForImmediate();
+      expect(omp.failedTurnCount()).toBe(0);
+      expect(omp.completedTurnCount()).toBe(0);
+      expect(omp.runningToolCallIds()).toContain("omp-auto-retry:1");
+
+      runtime.beginTurn();
+      runtime.streamAssistantText("recovered", "recovery");
+      runtime.emit({ type: "auto_retry_end", attempt: 1, success: true });
+      runtime.finishTurn({
+        role: "assistant",
+        content: [{ type: "text", text: "recovered" }],
+        stopReason: "stop",
+      });
+      await waitForImmediate();
+
+      expect(omp.completedTurnCount()).toBe(1);
+      expect(omp.failedTurnCount()).toBe(0);
+      expect(omp.runningToolCallIds()).toEqual([]);
+      expect(runtime.followUpRequests).toEqual([]);
+      expect(
+        omp.timeline().flatMap((item) => (item.type === "user_message" ? [item.text] : [])),
+      ).toEqual(["finish the task"]);
+    });
+
+    test("reports a native retry budget exhaustion exactly once without starting another request", async () => {
+      const omp = await startEnhancedTurn();
+      const runtime = omp.runtime();
+      startNativeRetry(omp);
+      runtime.emit({
+        type: "auto_retry_end",
+        attempt: 1,
+        success: false,
+        finalError: streamError.errorMessage,
+      });
+      runtime.finishTurn(streamError);
       await vi.advanceTimersByTimeAsync(10_000);
+
       expect(omp.failedTurnCount()).toBe(1);
       expect(omp.completedTurnCount()).toBe(0);
-      expect(omp.runtime().followUpRequests).toEqual([]);
+      expect(omp.runningToolCallIds()).toEqual([]);
+      expect(runtime.followUpRequests).toEqual([]);
+      expect(omp.streamEvents()).toContainEqual(
+        expect.objectContaining({
+          type: "turn_failed",
+          error: expect.stringContaining(streamError.errorMessage),
+        }),
+      );
     });
 
     test.each([
-      [
-        "the reported unsupported image request",
-        400,
-        "400 invalid_request_error: uploaded unsupported image at input[510].image[0]",
-      ],
-      [
-        "an HTTP status embedded in the provider error",
-        undefined,
-        "HTTP 400 invalid_request_error: input[510].image[0]: unsupported image",
-      ],
-      [
-        "an embedded JSON validation status",
-        undefined,
-        '{"status_code":422,"message":"Invalid image data"}',
-      ],
-      ["invalid image data", 422, "Invalid image data in the request"],
-      ["a rejected image input", 400, "Image input rejected: invalid image format"],
-      ["an unsupported format without a status", undefined, "Unsupported image format"],
-      ["an image decoding failure", 400, "Unable to decode image"],
-      ["corrupted image input", 400, "Corrupted image data"],
-      ["a postposed image decoding failure", 400, "Image data cannot be decoded"],
-      ["an oversized image", 413, "Image size exceeds the maximum allowed size"],
-      ["too many image inputs", 400, "Too many images in the request"],
+      ["invalid image", { errorStatus: 400, errorMessage: "Image data cannot be decoded" }],
+      ["authentication failure", { errorStatus: 401 }],
+      ["disconnected local source", { provider: "desktop-local", errorStatus: 410 }],
+      ["failure without diagnostics", {}],
     ] as const)(
-      "finishes %s and accepts the next user turn without continuation",
-      async (_label, errorStatus, errorMessage) => {
-        const omp = await startFailedTurn({
+      "settles a terminal %s and accepts the next prompt",
+      async (_label, diagnostics) => {
+        const omp = await startEnhancedTurn();
+        const runtime = omp.runtime();
+        runtime.finishTurnWithEmptyAgentEnd({
           role: "assistant",
           content: [],
           stopReason: "error",
-          ...(errorStatus === undefined ? {} : { errorStatus }),
-          errorMessage,
+          ...diagnostics,
         });
+        await vi.advanceTimersByTimeAsync(10_000);
 
         expect(omp.failedTurnCount()).toBe(1);
         expect(omp.completedTurnCount()).toBe(0);
+        expect(runtime.followUpRequests).toEqual([]);
         expect(omp.streamEvents()).toContainEqual(
           expect.objectContaining({
             type: "turn_failed",
-            error: expect.stringContaining(errorMessage),
+            error: expect.stringContaining("stopReason=error"),
           }),
         );
-        await vi.advanceTimersByTimeAsync(20_000);
-        expect(omp.runtime().followUpRequests).toEqual([]);
-        expect(omp.failedTurnCount()).toBe(1);
-
-        await expect(omp.requireStartTurn("continue without the image")).resolves.toEqual(
-          expect.any(String),
-        );
-        const runtime = omp.runtime();
-        runtime.beginTurn();
-        runtime.acceptPrompt("continue without the image", "user-2");
-        runtime.streamAssistantText("recovered", "recovery");
-        runtime.finishTurn({
-          role: "assistant",
-          content: [{ type: "text", text: "recovered" }],
-          stopReason: "stop",
-        });
-        await waitForImmediate();
-        await vi.advanceTimersByTimeAsync(10_000);
-        expect(omp.runtime().followUpRequests).toEqual([]);
-        expect(omp.failedTurnCount()).toBe(1);
+        await omp.runPrompt("try a different request", "done");
         expect(omp.completedTurnCount()).toBe(1);
-        const userMessages: string[] = [];
-        for (const item of omp.timeline()) {
-          if (item.type === "user_message") userMessages.push(item.text);
-        }
-        expect(userMessages).toEqual(["finish the task", "continue without the image"]);
-        expect(omp.timeline()).toContainEqual({
-          type: "assistant_message",
-          text: "recovered",
-          messageId: "recovery",
-        });
       },
     );
 
-    test.each([400, 401, 403, 429, 499, 500, 503, 599])(
-      "keeps HTTP %i active until a continuation recovers after five seconds",
-      async (errorStatus) => {
-        const omp = await startFailedTurn({
-          role: "assistant",
-          content: [],
-          stopReason: "error",
-          errorStatus,
-        });
-        const runtime = omp.runtime();
-
-        await vi.advanceTimersByTimeAsync(4_999);
-        expect(runtime.followUpRequests).toEqual([]);
-        expect(omp.failedTurnCount()).toBe(0);
-        expect(omp.completedTurnCount()).toBe(0);
-        await vi.advanceTimersByTimeAsync(1);
-        expect(workflowDisplayRequests(runtime.followUpRequests)).toEqual([
-          { message: "继续", imageCount: 0 },
-        ]);
-
-        runtime.beginTurn();
-        runtime.acceptPrompt("继续", "user-2");
-        runtime.streamAssistantText("recovered", "recovery");
-        runtime.finishTurn({
-          role: "assistant",
-          content: [{ type: "text", text: "recovered" }],
-          stopReason: "stop",
-        });
-        await waitForImmediate();
-        expect(omp.failedTurnCount()).toBe(0);
-        expect(omp.completedTurnCount()).toBe(1);
-        expect(omp.timeline()).toContainEqual({
-          type: "assistant_message",
-          text: "recovered",
-          messageId: "recovery",
-        });
-      },
-    );
-
-    test.each([
-      [
-        "a stream error without HTTP status",
-        undefined,
-        "Error Code server_error: We're sorry, the param is invalid. Please try with a valid param.",
-      ],
-      [
-        "an exhausted OMP retry budget",
-        undefined,
-        "Retry budget exhausted after 10 retries: Error Code server_error: invalid param",
-      ],
-      ["an image service outage", 503, "Image input rejected: service unavailable"],
-      ["an image rate limit", 429, "Image input rejected: rate limit exceeded"],
-      ["an embedded image service outage", undefined, "HTTP 503: Image input rejected"],
-      ["an image generation rejection", 400, "Image generation rejected"],
-      ["a non-image input rejection", 400, "invalid_request_error: unsupported text input"],
-      [
-        "a status-code image outage",
-        undefined,
-        "Request failed with status code 503: Image input rejected",
-      ],
-      ["an error-prefixed image outage", undefined, "Error: 503 unsupported image input"],
-      ["an error-code image outage", undefined, "Error Code: 503 unsupported image input"],
-      [
-        "a non-image invalid parameter mentioning an image",
-        400,
-        "invalid text parameter with image attachment",
-      ],
-      ["an image model mismatch", 400, "Unsupported image model"],
-      ["an image-incapable model", 400, "Model does not support images: invalid image input"],
-      ["an unsupported image endpoint", 400, "Image input is unsupported by this endpoint"],
-      [
-        "an image service rejection without a status",
-        undefined,
-        "Invalid image input: service unavailable",
-      ],
-      [
-        "an internal image service error without a status",
-        undefined,
-        "Invalid image input: internal error",
-      ],
-      ["a rejected image without validation evidence", undefined, "Image input rejected"],
-      [
-        "an image authentication failure without a status",
-        undefined,
-        "Invalid image input: authentication failed",
-      ],
-      ["an image quota failure without a status", undefined, "Invalid image input: quota exceeded"],
-      ["a text payload budget rejection", 413, "Request payload too large"],
-      ["a non-HTTP status", 600, "upstream failure"],
-      ["a missing error message", undefined, undefined],
-    ])("continues after %s", async (_label, errorStatus, errorMessage) => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        ...(errorStatus === undefined ? {} : { errorStatus }),
-        ...(errorMessage === undefined ? {} : { errorMessage }),
-      });
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
-        { message: "继续", imageCount: 0 },
-      ]);
-      expect(omp.failedTurnCount()).toBe(0);
-      expect(omp.completedTurnCount()).toBe(0);
-    });
-
-    test("continues repeated HTTP errors once per five-second wait without completing the turn", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 401,
-      });
+    test("stops native retry without restarting the canceled turn", async () => {
+      const omp = await startEnhancedTurn();
       const runtime = omp.runtime();
-
-      for (const [index, errorStatus] of [401, 503, 400].entries()) {
-        if (index > 0) {
-          runtime.beginTurn();
-          runtime.acceptPrompt("继续", `user-${index + 1}`);
-          runtime.finishTurn({ role: "assistant", content: [], stopReason: "error", errorStatus });
-        }
-        await vi.advanceTimersByTimeAsync(4_999);
-        runtime.emit({ type: "agent_end", messages: runtime.messages });
-        expect(runtime.followUpRequests).toHaveLength(index);
-        await vi.advanceTimersByTimeAsync(1);
-        expect(runtime.followUpRequests).toHaveLength(index + 1);
-        expect(omp.failedTurnCount()).toBe(0);
-        expect(omp.completedTurnCount()).toBe(0);
-      }
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(runtime.followUpRequests).toHaveLength(3);
-    });
-
-    test.each(["standard", "plan", "goal"] as const)(
-      "leaves HTTP failures terminal in %s workflow",
-      async (workflowMode) => {
-        const omp = await startFailedTurn(
-          {
-            role: "assistant",
-            content: [],
-            stopReason: "error",
-            errorStatus: 503,
-            errorMessage: "503 Service Unavailable",
-          },
-          workflowMode,
-        );
-
-        await vi.advanceTimersByTimeAsync(5_000);
-        expect(omp.runtime().followUpRequests).toEqual([]);
-        expect(omp.failedTurnCount()).toBe(1);
-      },
-    );
-
-    test("does not resume an aborted HTTP response", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "aborted",
-        errorStatus: 500,
-        errorMessage: "500 Internal Server Error",
-      });
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([]);
-      expect(omp.canceledTurnCount()).toBe(1);
-    });
-
-    test("cancels a pending continuation before a new user turn starts", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 429,
-      });
-      await vi.advanceTimersByTimeAsync(4_999);
+      startNativeRetry(omp);
+      runtime.onAbort = () => {
+        runtime.emit({
+          type: "auto_retry_end",
+          attempt: 1,
+          success: false,
+          finalError: "Retry cancelled",
+        });
+        runtime.finishTurn({ role: "assistant", content: [], stopReason: "aborted" });
+      };
       await omp.interrupt();
-      await omp.requireStartTurn("new task");
-      const runtime = omp.runtime();
-      runtime.beginTurn();
+      await vi.advanceTimersByTimeAsync(10_000);
 
-      await vi.advanceTimersByTimeAsync(5_001);
-      expect(runtime.followUpRequests).toEqual([]);
       expect(omp.canceledTurnCount()).toBe(1);
+      expect(omp.completedTurnCount()).toBe(0);
       expect(omp.failedTurnCount()).toBe(0);
-      runtime.finishTurn({ role: "assistant", content: [], stopReason: "stop" });
-      await waitForImmediate();
-      expect(omp.completedTurnCount()).toBe(1);
-    });
-
-    test("retains automatic continuation when the provider rejects a stop request", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 503,
-      });
-      omp.runtime().abortError = new Error("abort failed");
-      await expect(omp.interrupt()).rejects.toThrow("abort failed");
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(workflowDisplayRequests(omp.runtime().followUpRequests)).toEqual([
-        { message: "继续", imageCount: 0 },
-      ]);
-      expect(omp.failedTurnCount()).toBe(0);
-      expect(omp.canceledTurnCount()).toBe(0);
-    });
-
-    test("drops a delayed continuation when another provider turn recovers first", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 503,
-      });
-      omp.runtime().beginTurn();
-      omp.runtime().finishTurn({ role: "assistant", content: [], stopReason: "stop" });
-      await waitForImmediate();
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([]);
-      expect(omp.completedTurnCount()).toBe(1);
-      expect(omp.failedTurnCount()).toBe(0);
-    });
-
-    test("stops retrying when enhanced workflow is disabled", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 503,
-        errorMessage: "503 Service Unavailable",
-      });
-      await omp.setFeature("workflow_mode", "standard");
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([]);
-      expect(omp.failedTurnCount()).toBe(1);
-    });
-
-    test("drops a pending continuation after the provider exits", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 503,
-      });
-      omp.runtime().emit({ type: "process_exit", error: "provider exited" });
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([]);
-      expect(omp.failedTurnCount()).toBe(1);
-    });
-
-    test("drops a pending continuation when the session closes", async () => {
-      const omp = await startFailedTurn({
-        role: "assistant",
-        content: [],
-        stopReason: "error",
-        errorStatus: 503,
-      });
-      await omp.close();
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(omp.runtime().followUpRequests).toEqual([]);
-      expect(omp.isClosed()).toBe(true);
+      expect(omp.runningToolCallIds()).toEqual([]);
+      expect(runtime.followUpRequests).toEqual([]);
     });
   });
 
@@ -3511,9 +3269,8 @@ describe("OMP agent client and session", () => {
     });
 
     test.each(["before", "after"] as const)(
-      "keeps model-error continuation ownership with a %s-ack failed result",
+      "keeps native recovery active with a %s-ack failed result",
       async (timing) => {
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
         const omp = new OmpHarness();
         try {
           await omp.start({ featureValues: { workflow_mode: "enhanced" } });
@@ -3526,11 +3283,12 @@ describe("OMP agent client and session", () => {
           if (timing === "after") await runtime.releaseHeldPrompt();
           runtime.beginTurn();
           runtime.acceptPrompt("finish the task", "model-user");
-          runtime.finishTurn({
-            role: "assistant",
-            content: [],
-            stopReason: "error",
-            errorMessage: diagnostic,
+          runtime.emit({
+            type: "agent_end",
+            isTerminal: false,
+            messages: [
+              { role: "assistant", content: [], stopReason: "error", errorMessage: diagnostic },
+            ],
           });
           const failedResult = OmpRuntimeEventSchema.parse({
             type: "prompt_result",
@@ -3542,10 +3300,8 @@ describe("OMP agent client and session", () => {
           runtime.emit(failedResult);
           if (timing === "before") await runtime.releaseHeldPrompt();
           expect(terminalEvents(omp)).toEqual([]);
-          await vi.advanceTimersByTimeAsync(5_000);
-          expect(runtime.followUpRequests).toHaveLength(1);
           runtime.beginTurn();
-          // A late result for the original prompt cannot terminate the continuation's active run.
+          // A late result for the original prompt cannot terminate native recovery.
           runtime.emit(failedResult);
           runtime.emit(
             OmpRuntimeEventSchema.parse({
@@ -3563,12 +3319,12 @@ describe("OMP agent client and session", () => {
             stopReason: "stop",
           });
           await expect(completion).resolves.toMatchObject({ finalText: "recovered" });
+          expect(runtime.followUpRequests).toEqual([]);
           expect(terminalEvents(omp)).toEqual([
             expect.objectContaining({ type: "turn_completed" }),
           ]);
         } finally {
           await omp.close();
-          vi.useRealTimers();
         }
       },
     );

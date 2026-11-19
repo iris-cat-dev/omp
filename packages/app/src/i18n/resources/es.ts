@@ -298,7 +298,7 @@ export const es: TranslationResources = {
         chat: "Chat",
         chatDescription: "Chatea y lee archivos sin editar código ni ejecutar comandos.",
         enhanced: "Mejorado",
-        enhancedDescription: "Continúa automáticamente tras errores en las solicitudes al modelo.",
+        enhancedDescription: "Reintenta las solicitudes al modelo que fallan temporalmente en el turno actual.",
         plan: "Plan",
         planDescription: "Planifica la tarea antes de realizar cambios.",
         goal: "Objetivo",

@@ -360,7 +360,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function formatDelay(delayMs: number): string {
   if (delayMs < 1000) {
-    return `${delayMs}ms`;
+    return `${Math.round(delayMs)}ms`;
   }
   if (delayMs % 1000 === 0) {
     return `${delayMs / 1000}s`;

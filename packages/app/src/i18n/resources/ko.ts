@@ -298,7 +298,7 @@ export const ko: TranslationResources = {
         chat: "대화",
         chatDescription: "코드를 수정하거나 명령을 실행하지 않고 대화하며 파일을 읽습니다.",
         enhanced: "향상",
-        enhancedDescription: "모델 요청 오류가 발생한 후 자동으로 계속 진행합니다.",
+        enhancedDescription: "일시적으로 실패한 모델 요청을 현재 턴에서 다시 시도합니다.",
         plan: "계획",
         planDescription: "변경하기 전에 작업 계획을 세웁니다.",
         goal: "목표",

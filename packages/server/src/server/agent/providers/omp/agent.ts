@@ -29,10 +29,7 @@ import type {
 } from "@omp-desktop/protocol/messages";
 import type { OmpStatsRange, OmpStatsResult } from "@omp-desktop/protocol/omp-stats";
 import { refreshAndReadOmpStats } from "./stats.js";
-import {
-  LOCAL_MODEL_PROVIDER,
-  LOCAL_MODEL_UNAVAILABLE_STATUS,
-} from "@omp-desktop/protocol/local-models";
+import { LOCAL_MODEL_PROVIDER } from "@omp-desktop/protocol/local-models";
 import type { LocalModelBridge } from "../../../local-model-bridge.js";
 import { startOmpLocalModelGateway, type OmpLocalModelGateway } from "./local-model-gateway.js";
 import { type Document, isMap, parseDocument } from "yaml";
@@ -676,7 +673,6 @@ export interface OmpAutomaticCredentialScheduler {
 // v0.2.0-beta.1; remove after January 20, 2027 once the minimum OMP version
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
-const OMP_MODEL_ERROR_CONTINUATION_DELAY_MS = 5_000;
 
 const OMP_SESSION_CREDENTIAL_READ_DELAYS_MS = [0, 20, 40, 80, 160] as const;
 const OMP_AUTOMATIC_CREDENTIAL_RETRY_DELAYS_MS = [20, 40, 80, 160, 320, 640, 1_000] as const;
@@ -1274,19 +1270,6 @@ function assertOmpResumeSandboxCompatibility(
   }
 }
 
-function readOmpImageInputErrorStatus(error: string): number | undefined {
-  const embeddedStatus =
-    /\bHTTP(?:\/\d(?:\.\d)?)?(?:\s+status(?:\s+code)?)?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
-    /^\s*(?:Error\s*:?\s*)?(\d{3})\b/iu.exec(error)?.[1] ??
-    /\berror\s+code\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1] ??
-    /["']?status(?:Code|_code|\s+code)?["']?\s*[:=]?\s*(\d{3})\b/iu.exec(error)?.[1];
-  return embeddedStatus ? Number(embeddedStatus) : undefined;
-}
-
-function isOmpImageInputValidationStatus(status: number | undefined): boolean {
-  return status === undefined || status === 400 || status === 413 || status === 422;
-}
-
 function buildResumeConfig(
   metadata: OmpPersistenceMetadata,
   overrides: Partial<AgentSessionConfig> | undefined,
@@ -1429,70 +1412,6 @@ const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z\d+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?
 const PROXY_AUTHORIZATION_PATTERN =
   /\b(Proxy-Authorization\s*[:=]\s*)(?:Basic|Bearer)\s+[^\s,;)]+/giu;
 
-// Mirror the SDK's media-budget evidence locally for external CLI runtimes.
-const OMP_IMAGE_BUDGET_EVIDENCE_PATTERN =
-  /\btoo many (?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\s*(?:count|limit)\b|\blimit of \d+\s*(?:images?|frames?|pixels?)\b|\bmaximum(?: of \d+)? (?:images?|frames?|pixels?)\b|\b(?:number|count) of (?:images?|frames?|pixels?)\b|\bat most \d+\s*(?:images?|frames?|pixels?)\b|\b(?:images?|frames?|pixels?)\b[^\n.;]{0,20}\bexceeds?\b[^\n.;]{0,20}\bmaximum\b|\b(?:images?|frames?) (?:is |are )?too (?:large|big)\b|\b(?:images?|frames?) (?:size|dimensions?|resolution)\b[^\n.;]{0,80}\b(?:exceeds?|maximum|limit|too large|too big|must not exceed|must be (?:less|smaller) than)\b/iu;
-
-function isOmpImageInputValidationError(
-  message: Extract<OmpAgentMessage, { role: "assistant" }>,
-): boolean {
-  const error = message.errorMessage ?? "";
-  const status = message.errorStatus ?? readOmpImageInputErrorStatus(error);
-  if (!isOmpImageInputValidationStatus(status)) return false;
-  if (
-    /\b(?:unauthorized|forbidden|authentication|auth[_ ]?unavailable|no auth available|(?:invalid|no)[_ ]?api[_ ]?key)\b/iu.test(
-      error,
-    ) ||
-    /\b(?:quota|usage[_ -]?limit|insufficient[_ -]?balance|billing|credits?|spending[_ -]?limit)\b/iu.test(
-      error,
-    ) ||
-    /\b(?:service[_ -]?unavailable|server[_ -]?error|internal[_ -]?error|overloaded|temporar(?:y|ily)[_ -]?unavailable|rate[_ -]?limit|too many requests)\b/iu.test(
-      error,
-    )
-  ) {
-    return false;
-  }
-  if (/\b(?:image[_ -]?generation|generat(?:e|ed|ing)\s+(?:an?\s+)?image)\b/iu.test(error)) {
-    return false;
-  }
-  if (
-    /\b(?:invalid|unsupported)\s+image\s+model\b/iu.test(error) ||
-    /\b(?:model|endpoint)\b[^\n.;]{0,80}\b(?:does not support|doesn't support|cannot accept|can't accept)\b[^\n.;]{0,40}\b(?:images?|vision)\b/iu.test(
-      error,
-    ) ||
-    /\b(?:unsupported\s+image(?:[_ -]input)?|image[_ -]input\s+(?:is\s+)?(?:unsupported|not supported))\b[^\n.;]{0,60}\b(?:model|endpoint)\b/iu.test(
-      error,
-    )
-  ) {
-    return false;
-  }
-  const isImageBudgetRejection =
-    OMP_IMAGE_BUDGET_EVIDENCE_PATTERN.test(error) &&
-    /\b(?:too many|too large|too big|exceeds?|maximum|limit|at most|must not exceed|must be (?:less|smaller) than)\b/iu.test(
-      error,
-    );
-  return (
-    isImageBudgetRejection ||
-    /\b(?:uploaded|provided|input)\b[^\n.]{0,100}\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image\b/iu.test(
-      error,
-    ) ||
-    /\b(?:invalid|unsupported|corrupt(?:ed)?)\s+image(?:[_ -](?:input|data|format|encoding))?\b/iu.test(
-      error,
-    ) ||
-    /\bimage[_ -](?:input|data|format|encoding)\b[^\n.]{0,80}\b(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
-      error,
-    ) ||
-    /\bimage(?:[_ -](?:input|data|format|encoding))?\s+(?:is\s+)?(?:invalid|unsupported|corrupt(?:ed)?)\b/iu.test(
-      error,
-    ) ||
-    /\bimage[_ -]format\s+(?:is\s+)?not\s+supported\b/iu.test(error) ||
-    /\b(?:cannot|could not|unable to|failed to)\s+(?:decode|parse)\s+(?:the\s+)?image\b/iu.test(
-      error,
-    ) ||
-    /\bimage\b[^\n.]{0,80}\b(?:cannot|could not|failed to)\s+be\s+decoded\b/iu.test(error)
-  );
-}
-
 function formatOmpErrorMessage(message: Extract<OmpAgentMessage, { role: "assistant" }>): string {
   const rawError = message.errorMessage?.trim() ?? "";
   const reportedStatus = message.errorStatus;
@@ -1538,7 +1457,11 @@ function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
     Number.isInteger(reportedStatus) &&
     reportedStatus >= 400 &&
     reportedStatus < 600;
-  if (!latestAssistant.errorMessage?.trim() && !hasHttpErrorStatus) {
+  if (
+    latestAssistant.stopReason !== "error" &&
+    !latestAssistant.errorMessage?.trim() &&
+    !hasHttpErrorStatus
+  ) {
     return null;
   }
   return formatOmpErrorMessage(latestAssistant);
@@ -2042,11 +1965,6 @@ export class OmpAgentSession implements AgentSession {
   private activePromptAwaitingAck = false;
   private readonly pendingPromptResults = new Map<string, OmpPromptResult>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
-  private pendingModelErrorContinuation: {
-    timer: NodeJS.Timeout;
-    turnId: string;
-    messages: OmpAgentMessage[];
-  } | null = null;
   private suppressAutonomousEventsAfterInterrupt = false;
   private activeInterrupt: { turnId: string | null; reason: AgentInterruptReason } | null = null;
   private lastKnownThinkingOptionId: string | null;
@@ -2494,7 +2412,6 @@ export class OmpAgentSession implements AgentSession {
   private failActivePrompt(turnId: string, error: unknown, status?: "error" | "aborted"): void {
     if (this.activeTurnId !== turnId || this.activeInterrupt?.turnId === turnId) return;
     this.terminalizeActiveWork();
-    this.cancelModelErrorContinuation();
     this.usagePoller.stopTurn();
     this.finishNativeUsage(turnId);
     this.stopAutomaticCredentialResolution();
@@ -3419,7 +3336,6 @@ export class OmpAgentSession implements AgentSession {
       // No foreground prompt has been dispatched. Settle the accepted identity now;
       // discovery may still resolve, but cannot register or dispatch this canceled turn.
       this.pendingTurnAdmission = null;
-      this.cancelModelErrorContinuation();
       this.suppressAutonomousEventsAfterInterrupt = true;
       admission.controller.abort();
       this.emit({
@@ -3431,8 +3347,6 @@ export class OmpAgentSession implements AgentSession {
       if (reason !== "user") return;
     }
     const turnId = this.activeTurnId;
-    const pendingContinuation = this.pendingModelErrorContinuation;
-    this.cancelModelErrorContinuation();
     const interrupt = { turnId, reason };
     this.activeInterrupt = interrupt;
     this.stopAutomaticCredentialResolution();
@@ -3450,12 +3364,6 @@ export class OmpAgentSession implements AgentSession {
     } catch (error) {
       if (this.activeInterrupt === interrupt) {
         this.activeInterrupt = null;
-      }
-      if (pendingContinuation) {
-        this.scheduleModelErrorContinuation(
-          pendingContinuation.turnId,
-          pendingContinuation.messages,
-        );
       }
       throw error;
     }
@@ -3596,7 +3504,6 @@ export class OmpAgentSession implements AgentSession {
     this.closed = true;
     this.pendingTurnAdmission?.controller.abort();
     this.pendingTurnAdmission = null;
-    this.cancelModelErrorContinuation();
     this.stopAutomaticCredentialResolution();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
@@ -3669,7 +3576,6 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private terminalizeActiveWork(): void {
-    this.cancelModelErrorContinuation();
     this.terminalizeActiveRuntimeToolCalls();
     for (const [toolCallId, toolCall] of this.activeToolCalls) {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
@@ -4820,7 +4726,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private applyPromptResult(turnId: string, result: OmpPromptResult): void {
-    // Model events own terminalization and enhanced-error continuation once a run starts.
+    // Session events own terminalization, including native recovery, once a run starts.
     if (this.activeTurnId !== turnId || this.activeTurnStarted) return;
     this.activePromptAgentInvoked = result.agentInvoked ?? null;
     if (result.status === "error") {
@@ -4977,7 +4883,6 @@ export class OmpAgentSession implements AgentSession {
     switch (event.type) {
       case "agent_start":
         this.activeTurnGeneration += 1;
-        this.cancelModelErrorContinuation();
         this.activeTurnStarted = true;
         this.credentialMessage = null;
         this.streamedClaudeCompletionKey = null;
@@ -4990,7 +4895,6 @@ export class OmpAgentSession implements AgentSession {
         return;
       case "turn_start":
         this.activeTurnGeneration += 1;
-        this.cancelModelErrorContinuation();
         this.activeTurnStarted = true;
         this.credentialMessage = null;
         this.clearNoTurnBuffers();
@@ -5099,32 +5003,18 @@ export class OmpAgentSession implements AgentSession {
         this.streamedClaudeCompletionMessage = null;
         const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
         if (
-          selectedWorkflowMode === "enhanced" &&
-          terminalAssistant &&
-          terminalAssistant.stopReason === "error" &&
-          !(
-            terminalAssistant.provider === LOCAL_MODEL_PROVIDER &&
-            terminalAssistant.errorStatus === LOCAL_MODEL_UNAVAILABLE_STATUS
-          ) &&
-          !isOmpImageInputValidationError(terminalAssistant) &&
-          this.scheduleModelErrorContinuation(turnId, terminalMessages)
-        ) {
-          return;
-        }
-        if (
           (selectedWorkflowMode === "standard" || selectedWorkflowMode === "enhanced") &&
           !this.activeInterrupt &&
           terminalAssistant?.stopReason === "length" &&
           !terminalAssistant.errorMessage?.trim()
         ) {
-          this.cancelModelErrorContinuation();
           this.continueActiveTurn();
           return;
         }
-        this.cancelModelErrorContinuation();
         // A state request is processed after OMP's RPC loop becomes promptable,
         // so do not advertise Paseo idle until it reports that transition. A later
         // provider start for the same Desktop turn invalidates this completion.
+        // SDK recovery has already run by the time it emits a terminal error.
         void this.completeTurnAfterProviderIdle(
           turnId,
           terminalMessages,
@@ -5154,37 +5044,6 @@ export class OmpAgentSession implements AgentSession {
         ? (configuredLocale as OmpWorkflowLocale)
         : "en";
     this.runtimeSession.followUp(this.withToolIntentLocale(OMP_CONTINUATION_BY_LOCALE[locale]));
-  }
-
-  private scheduleModelErrorContinuation(
-    turnId: string | undefined,
-    messages: OmpAgentMessage[],
-  ): boolean {
-    if (!turnId || this.closed || this.activeTurnId !== turnId || this.activeInterrupt)
-      return false;
-    if (this.pendingModelErrorContinuation) return true;
-    const timer = setTimeout(() => {
-      if (this.pendingModelErrorContinuation?.timer !== timer) return;
-      this.pendingModelErrorContinuation = null;
-      if (this.closed || this.activeTurnId !== turnId || this.activeInterrupt) return;
-      if (normalizeOmpWorkflowSelection(this.features[0]?.value) !== "enhanced") {
-        void this.completeTurnAfterProviderIdle(turnId, messages);
-        return;
-      }
-      try {
-        this.continueActiveTurn();
-      } catch (error) {
-        this.handleProcessExit(toDiagnosticErrorMessage(error));
-      }
-    }, OMP_MODEL_ERROR_CONTINUATION_DELAY_MS);
-    this.pendingModelErrorContinuation = { timer, turnId, messages };
-    return true;
-  }
-
-  private cancelModelErrorContinuation(): void {
-    if (!this.pendingModelErrorContinuation) return;
-    clearTimeout(this.pendingModelErrorContinuation.timer);
-    this.pendingModelErrorContinuation = null;
   }
 
   private handleToolExecutionEnd(
@@ -5819,7 +5678,6 @@ export class OmpAgentSession implements AgentSession {
     );
     this.terminalizeActiveRuntimeToolCalls();
     this.stopAutomaticCredentialResolution();
-    this.cancelModelErrorContinuation();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;

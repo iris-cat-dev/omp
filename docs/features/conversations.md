@@ -69,9 +69,9 @@ Desktop instructs OMP to write tool-call intent labels, including the live worki
 
 **Standard**, **Chat**, **Enhanced**, **Plan**, and **Goal** have hover descriptions localized in all nine supported interface languages. **Chat** (`对话` in Chinese) restricts active OMP tools to read-only file inspection (`read`, `glob`, `grep`), suppresses plugin prompt injections, and restores the full toolset when switching back to another workflow. **Enhanced** uses the same Sparkles icon in the workflow menu and current-mode control, whether in the toolbar or compact settings sheet.
 
-Both Standard and Enhanced continue responses that hit the model's output-length limit. Enhanced additionally waits **five seconds** after a terminal model-request error, then sends a localized **Continue** message (`继续` in Chinese). Every terminal error is eligible, including HTTP 4xx/5xx, provider-stream errors without a status (such as `Error Code server_error: … the param is invalid`), and failures after OMP exhausts its own retries. Repeated errors repeat the wait without an attempt limit or increasing backoff. Aborted responses are not resumed.
+Standard and Enhanced use OMP's native retry policy for temporary model-request failures. Retry status appears in the current turn, and no new user message is sent. If OMP cannot recover or reaches its retry limit, the turn ends with an error. **Stop** cancels retries in progress.
 
-The conversation remains active until continuation succeeds or is stopped. **Stop**, closing the session, or leaving Enhanced cancels pending continuations. OMP's internal retries are unchanged: the five-second wait begins after its terminal error, not after each internal attempt.
+Both modes still continue responses that hit the model's output-length limit so the model can finish the existing answer.
 
 ### Approval changes during a session
 

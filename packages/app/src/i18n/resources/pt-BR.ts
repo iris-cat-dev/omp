@@ -297,7 +297,7 @@ export const ptBR: TranslationResources = {
         chat: "Chat",
         chatDescription: "Converse e leia arquivos sem editar código ou executar comandos.",
         enhanced: "Aprimorado",
-        enhancedDescription: "Continue automaticamente após erros nas solicitações ao modelo.",
+        enhancedDescription: "Repita as solicitações ao modelo que falharem temporariamente no turno atual.",
         plan: "Plano",
         planDescription: "Planeje a tarefa antes de fazer alterações.",
         goal: "Objetivo",
