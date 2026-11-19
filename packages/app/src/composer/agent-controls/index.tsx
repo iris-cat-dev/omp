@@ -1308,6 +1308,10 @@ const WORKFLOW_OPTION_TRANSLATIONS = {
     label: "agentControls.features.workflow.standard",
     description: "agentControls.features.workflow.standardDescription",
   },
+  chat: {
+    label: "agentControls.features.workflow.chat",
+    description: "agentControls.features.workflow.chatDescription",
+  },
   enhanced: {
     label: "agentControls.features.workflow.enhanced",
     description: "agentControls.features.workflow.enhancedDescription",
@@ -1321,6 +1325,17 @@ const WORKFLOW_OPTION_TRANSLATIONS = {
     description: "agentControls.features.workflow.goalDescription",
   },
 } as const;
+
+function getWorkflowOptionIconColor(
+  featureId: string,
+  optionId: unknown,
+  colors: { accent: string; green: string; fallback: string | undefined },
+): string | undefined {
+  if (featureId !== "workflow_mode") return colors.fallback;
+  if (optionId === "plan") return colors.accent;
+  if (optionId === "chat") return colors.green;
+  return colors.fallback;
+}
 
 function getWorkflowOptionTranslations(optionId: string) {
   return Object.hasOwn(WORKFLOW_OPTION_TRANSLATIONS, optionId)
@@ -1457,13 +1472,23 @@ function DesktopFeatureItem({
         featureId={feature.id}
         featureIcon={feature.icon}
         iconColor={
-          feature.id === "workflow_mode" && args.selected && args.option.id === "plan"
-            ? theme.colors.accent
-            : theme.colors.foreground
+          (args.selected
+            ? getWorkflowOptionIconColor(feature.id, args.option.id, {
+                accent: theme.colors.accent,
+                green: theme.colors.palette.green[400],
+                fallback: theme.colors.foreground,
+              })
+            : theme.colors.foreground) ?? theme.colors.foreground
         }
       />
     ),
-    [feature.icon, feature.id, theme.colors.accent, theme.colors.foreground],
+    [
+      feature.icon,
+      feature.id,
+      theme.colors.accent,
+      theme.colors.foreground,
+      theme.colors.palette.green,
+    ],
   );
 
   if (feature.type === "toggle") {
@@ -1519,11 +1544,11 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
-              iconColor={
-                feature.id === "workflow_mode" && feature.value === "plan"
-                  ? theme.colors.accent
-                  : undefined
-              }
+              iconColor={getWorkflowOptionIconColor(feature.id, feature.value, {
+                accent: theme.colors.accent,
+                green: theme.colors.palette.green[400],
+                fallback: undefined,
+              })}
               surface="toolbar"
               label={featureLabel}
               value={toolbarValueLabel}
@@ -1620,13 +1645,23 @@ function SheetFeatureItem({
         featureId={feature.id}
         featureIcon={feature.icon}
         iconColor={
-          feature.id === "workflow_mode" && args.selected && args.option.id === "plan"
-            ? theme.colors.accent
-            : theme.colors.foreground
+          (args.selected
+            ? getWorkflowOptionIconColor(feature.id, args.option.id, {
+                accent: theme.colors.accent,
+                green: theme.colors.palette.green[400],
+                fallback: theme.colors.foreground,
+              })
+            : theme.colors.foreground) ?? theme.colors.foreground
         }
       />
     ),
-    [feature.icon, feature.id, theme.colors.accent, theme.colors.foreground],
+    [
+      feature.icon,
+      feature.id,
+      theme.colors.accent,
+      theme.colors.foreground,
+      theme.colors.palette.green,
+    ],
   );
 
   if (feature.type === "toggle") {
@@ -1677,11 +1712,11 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
-          iconColor={
-            feature.id === "workflow_mode" && feature.value === "plan"
-              ? theme.colors.accent
-              : undefined
-          }
+          iconColor={getWorkflowOptionIconColor(feature.id, feature.value, {
+            accent: theme.colors.accent,
+            green: theme.colors.palette.green[400],
+            fallback: undefined,
+          })}
           surface="sheet"
           label={featureLabel}
           value={selectedOptionLabel}

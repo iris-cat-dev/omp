@@ -294,6 +294,8 @@ export const ar: TranslationResources = {
         title: "سير العمل",
         standard: "قياسي",
         standardDescription: "نفّذ المهام مباشرةً باستخدام سير العمل الافتراضي.",
+        chat: "دردشة",
+        chatDescription: "تحدث واقرأ الملفات دون تعديل الشيفرة أو تنفيذ الأوامر.",
         enhanced: "معزز",
         enhancedDescription: "تابع تلقائيًا بعد حدوث أخطاء في الطلبات المرسلة إلى النموذج.",
         plan: "تخطيط",

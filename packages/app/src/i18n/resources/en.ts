@@ -404,6 +404,8 @@ export const en = {
         title: "Workflow",
         standard: "Standard",
         standardDescription: "Run tasks directly using the default workflow.",
+        chat: "Chat",
+        chatDescription: "Chat and read files without editing code or running commands.",
         enhanced: "Enhanced",
         enhancedDescription: "Automatically continue after model-request errors.",
         plan: "Plan",

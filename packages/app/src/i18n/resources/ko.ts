@@ -295,6 +295,8 @@ export const ko: TranslationResources = {
         title: "워크플로",
         standard: "표준",
         standardDescription: "기본 워크플로로 작업을 바로 실행합니다.",
+        chat: "대화",
+        chatDescription: "코드를 수정하거나 명령을 실행하지 않고 대화하며 파일을 읽습니다.",
         enhanced: "향상",
         enhancedDescription: "모델 요청 오류가 발생한 후 자동으로 계속 진행합니다.",
         plan: "계획",

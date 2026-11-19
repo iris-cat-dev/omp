@@ -65,7 +65,7 @@ describe("ChatPro native command admission", () => {
     },
   );
 
-  test.each(["standard", "enhanced", "plan", "goal"])(
+  test.each(["standard", "chat", "enhanced", "plan", "goal"])(
     "bypasses %s workflow and submits only a structured native command",
     async (workflow) => {
       const omp = createHarness();

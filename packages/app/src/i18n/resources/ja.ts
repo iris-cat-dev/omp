@@ -295,6 +295,8 @@ export const ja: TranslationResources = {
         title: "ワークフロー",
         standard: "標準",
         standardDescription: "デフォルトのワークフローでタスクを直接実行します。",
+        chat: "チャット",
+        chatDescription: "コードを編集したりコマンドを実行したりせず、対話とファイル読み取りのみ行います。",
         enhanced: "強化",
         enhancedDescription: "モデルへのリクエストでエラーが発生した後、自動的に続行します。",
         plan: "計画",

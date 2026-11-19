@@ -296,6 +296,9 @@ export const fr: TranslationResources = {
         title: "Flux de travail",
         standard: "Standard",
         standardDescription: "Exécutez les tâches directement avec le flux de travail par défaut.",
+        chat: "Discussion",
+        chatDescription:
+          "Discutez et lisez des fichiers sans modifier le code ni exécuter de commandes.",
         enhanced: "Amélioré",
         enhancedDescription: "Continuez automatiquement après des erreurs de requête au modèle.",
         plan: "Plan",

@@ -398,6 +398,8 @@ export const zhCN: TranslationResources = {
         title: "工作流",
         standard: "标准",
         standardDescription: "使用默认工作流直接执行任务。",
+        chat: "对话",
+        chatDescription: "仅对话和读取文件，不修改代码或执行命令。",
         enhanced: "增强",
         enhancedDescription: "模型请求出错后自动继续。",
         plan: "计划",

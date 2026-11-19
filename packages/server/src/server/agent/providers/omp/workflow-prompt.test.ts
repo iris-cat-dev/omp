@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { buildOmpToolIntentPrompt, getOmpWorkflowDisplayText } from "./workflow-prompt.js";
+import {
+  buildOmpChatExitTurnPrompt,
+  buildOmpChatTurnPrompt,
+  buildOmpToolIntentPrompt,
+  getOmpWorkflowDisplayText,
+} from "./workflow-prompt.js";
 
 describe("skill tool intent locale", () => {
   test.each([
@@ -49,4 +54,15 @@ describe("skill tool intent locale", () => {
       expect(buildOmpToolIntentPrompt(prompt, "zh-CN")).toBe(prompt);
     },
   );
+
+  test("strips chat mode enter and exit directives from display text", () => {
+    const prompt = "解释一下这个模块的架构";
+    const chatPrompt = buildOmpToolIntentPrompt(buildOmpChatTurnPrompt(prompt), "zh-CN");
+    const exitPrompt = buildOmpToolIntentPrompt(buildOmpChatExitTurnPrompt(prompt), "zh-CN");
+
+    expect(chatPrompt).toContain("Chat mode active for this turn.");
+    expect(exitPrompt).toContain("Chat mode is inactive for this turn.");
+    expect(getOmpWorkflowDisplayText(chatPrompt)).toBe(prompt);
+    expect(getOmpWorkflowDisplayText(exitPrompt)).toBe(prompt);
+  });
 });

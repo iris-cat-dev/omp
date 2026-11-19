@@ -1442,6 +1442,98 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().followUpRequests).toEqual([]);
   });
 
+  test("restricts active tools to read/glob/grep in chat workflow and restores them on exit", async () => {
+    const omp = new OmpHarness();
+    await omp.start({
+      modeId: "full",
+      featureValues: { workflow_mode: "chat" },
+    });
+
+    expect(omp.runtime().activeToolSetRequests).toEqual([["read", "glob", "grep"]]);
+    expect(omp.features()).toEqual([
+      expect.objectContaining({ id: "workflow_mode", value: "chat" }),
+    ]);
+
+    await omp.runPrompt("explain architecture", "summary");
+    expect(omp.recordedPrompts()[0]?.message).toContain("Chat mode active for this turn.");
+    expect(omp.recordedPrompts()[0]?.message).toContain("explain architecture");
+    expect(
+      omp
+        .timeline()
+        .filter((item) => item.type === "user_message")
+        .map((item) => item.text),
+    ).toEqual(["explain architecture"]);
+
+    await omp.setFeature("workflow_mode", "standard");
+    expect(omp.runtime().activeToolSetRequests).toEqual([["read", "glob", "grep"], null]);
+
+    await omp.runPrompt("now apply the edit", "done");
+    expect(omp.recordedPrompts()[1]?.message).toContain("Chat mode is inactive for this turn.");
+    expect(omp.recordedPrompts()[1]?.message).toContain("now apply the edit");
+  });
+
+  test("drops goal mode when switching to chat and restores tools when switching from chat to plan", async () => {
+    const omp = new OmpHarness();
+    await omp.start({
+      modeId: "ask",
+      featureValues: { workflow_mode: "goal" },
+    });
+    await omp.runPrompt("finish feature", "working");
+
+    await omp.setFeature("workflow_mode", "chat");
+    expect(omp.runtime().activeToolSetRequests).toEqual([["read", "glob", "grep"]]);
+
+    const runtime = omp.runtime();
+    const start = omp.requireStartTurn("just answer a question");
+    await start;
+    if (omp.recordedPrompts().length < 3) {
+      await runtime.nextPrompt();
+    }
+    runtime.beginTurn();
+    runtime.acceptPrompt("just answer a question", "user-2");
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "answer" }],
+      responseId: "omp-assistant-2",
+    });
+    await vi.waitFor(() => {
+      expect(omp.completedTurnCount()).toBe(2);
+    });
+
+    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
+      "/goal finish feature",
+      "/goal drop",
+      expect.stringContaining("Chat mode active for this turn."),
+    ]);
+
+    await omp.setFeature("workflow_mode", "plan");
+    expect(omp.runtime().activeToolSetRequests).toEqual([["read", "glob", "grep"], null]);
+  });
+
+  test("does not persist chat workflow when runtime rejects setActiveTools", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "ask" });
+    omp.runtime().setActiveToolsError = new Error("Unsupported command: set_active_tools");
+
+    await expect(omp.setFeature("workflow_mode", "chat")).rejects.toThrow(
+      "Unsupported command: set_active_tools",
+    );
+    expect(omp.features()).toEqual([
+      expect.objectContaining({ id: "workflow_mode", value: "standard" }),
+    ]);
+  });
+
+  test("suppresses desktop plugin prompts while chat workflow is active", async () => {
+    const omp = new OmpHarness();
+    await omp.start({
+      modeId: "full",
+      featureValues: { workflow_mode: "chat" },
+    });
+
+    omp.runtime().emit({ type: "desktop_plugin_prompt_request", id: "plugin-req-1" });
+    expect(omp.runtime().pluginPromptResults).toEqual([{ id: "plugin-req-1", contributions: [] }]);
+  });
+
   test("steers a running turn without aborting it", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -4053,6 +4145,7 @@ describe("OMP agent client and session", () => {
         type: "select",
         options: [
           { id: "standard", label: "Standard" },
+          { id: "chat", label: "Chat" },
           { id: "enhanced", label: "Enhanced" },
           { id: "plan", label: "Plan" },
           { id: "goal", label: "Goal" },

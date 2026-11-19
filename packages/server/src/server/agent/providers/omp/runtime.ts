@@ -145,6 +145,7 @@ export interface OmpRuntimeSession {
   getCommands(): Promise<OmpRpcSlashCommand[]>;
   setSubagentSubscription(level: OmpSubagentSubscriptionLevel): Promise<void>;
   setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]>;
+  setActiveTools?(tools: readonly string[] | null): Promise<string[]>;
   sendHostToolResult(result: OmpRpcHostToolResult): void;
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;
   sendPluginPromptResult?(id:string,contributions:PluginAgentPromptSelection[],error?:string):void;

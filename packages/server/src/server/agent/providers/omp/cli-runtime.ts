@@ -59,6 +59,7 @@ import {
   OmpBranchResultSchema,
   OmpCommandsResultSchema,
   OmpFastModeResultSchema,
+  OmpActiveToolsResultSchema,
   OmpHostToolsResultSchema,
   OmpLoginProvidersResultSchema,
   OmpMessagesResultSchema,
@@ -1137,6 +1138,16 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]> {
     const data = OmpHostToolsResultSchema.parse(
       await this.request({ type: "set_host_tools", tools }),
+    );
+    return data.toolNames ?? [];
+  }
+
+  async setActiveTools(tools: readonly string[] | null): Promise<string[]> {
+    const data = OmpActiveToolsResultSchema.parse(
+      await this.request({
+        type: "set_active_tools",
+        tools: tools === null ? null : [...tools],
+      }),
     );
     return data.toolNames ?? [];
   }

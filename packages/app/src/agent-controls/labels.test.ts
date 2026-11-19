@@ -58,6 +58,12 @@ describe("localized agent control labels", () => {
       ).toBe("标准");
       expect(
         formatAgentFeatureOptionLabel("workflow_mode", {
+          id: "chat",
+          label: "Chat",
+        }),
+      ).toBe("对话");
+      expect(
+        formatAgentFeatureOptionLabel("workflow_mode", {
           id: "enhanced",
           label: "Enhanced",
         }),

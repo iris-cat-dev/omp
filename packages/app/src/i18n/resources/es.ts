@@ -295,6 +295,8 @@ export const es: TranslationResources = {
         title: "Flujo de trabajo",
         standard: "Estándar",
         standardDescription: "Ejecuta tareas directamente con el flujo de trabajo predeterminado.",
+        chat: "Chat",
+        chatDescription: "Chatea y lee archivos sin editar código ni ejecutar comandos.",
         enhanced: "Mejorado",
         enhancedDescription: "Continúa automáticamente tras errores en las solicitudes al modelo.",
         plan: "Plan",

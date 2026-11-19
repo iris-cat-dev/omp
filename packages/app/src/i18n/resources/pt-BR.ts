@@ -294,6 +294,8 @@ export const ptBR: TranslationResources = {
         title: "Fluxo de trabalho",
         standard: "Padrão",
         standardDescription: "Execute tarefas diretamente com o fluxo de trabalho padrão.",
+        chat: "Chat",
+        chatDescription: "Converse e leia arquivos sem editar código ou executar comandos.",
         enhanced: "Aprimorado",
         enhancedDescription: "Continue automaticamente após erros nas solicitações ao modelo.",
         plan: "Plano",

@@ -125,6 +125,8 @@ import {
 } from "./chatpro.js";
 import { getUserMessageImages, getUserMessageText } from "./message-history.js";
 import {
+  buildOmpChatExitTurnPrompt,
+  buildOmpChatTurnPrompt,
   buildOmpPlanTurnPrompt,
   buildOmpStandardTurnPrompt,
   buildOmpToolIntentPrompt,
@@ -806,8 +808,9 @@ const OMP_OAUTH_ACCOUNT_AUTOMATIC_VALUE = "automatic";
 const OMP_FAST_MODE_FEATURE_ID = "fast_mode";
 const OMP_PLAN_APPROVAL_REQUEST_ID = "omp-plan-approval";
 const OMP_PLAN_APPROVAL_REQUEST_NAME = "OmpPlanApproval";
+export const OMP_CHAT_TOOL_NAMES = ["read", "glob", "grep"] as const;
 type OmpWorkflowMode = "plan" | "goal";
-type OmpWorkflowSelection = "standard" | "enhanced" | OmpWorkflowMode;
+type OmpWorkflowSelection = "standard" | "chat" | "enhanced" | OmpWorkflowMode;
 const OMP_CONTINUATION_BY_LOCALE = {
   ar: "تابع",
   en: "Continue",
@@ -822,7 +825,9 @@ const OMP_CONTINUATION_BY_LOCALE = {
 type OmpWorkflowLocale = keyof typeof OMP_CONTINUATION_BY_LOCALE;
 
 function normalizeOmpWorkflowSelection(value: unknown): OmpWorkflowSelection {
-  return value === "enhanced" || value === "plan" || value === "goal" ? value : "standard";
+  return value === "chat" || value === "enhanced" || value === "plan" || value === "goal"
+    ? value
+    : "standard";
 }
 
 function isOmpNativeWorkflowMode(value: OmpWorkflowSelection): value is OmpWorkflowMode {
@@ -930,6 +935,7 @@ function createOmpFeatures(
       value: normalizeOmpWorkflowSelection(config.featureValues?.[OMP_WORKFLOW_FEATURE_ID]),
       options: [
         { id: "standard", label: "Standard" },
+        { id: "chat", label: "Chat" },
         { id: "enhanced", label: "Enhanced" },
         { id: "plan", label: "Plan" },
         { id: "goal", label: "Goal" },
@@ -2095,6 +2101,9 @@ export class OmpAgentSession implements AgentSession {
   private lastSubmittedPromptClientMessageId: string | null = null;
   private readonly pendingSteeredUserMessages: OmpSteeredUserMessage[] = [];
   private planContextResetPending: boolean;
+  private chatToolsActive = false;
+  private chatTurnActive: boolean;
+  private chatContextResetPending = false;
   private readonly backgroundDaemons?: OmpBackgroundDaemons;
   private readonly backgroundOwnerId: string;
   private readonly legacyBackgroundOwnerIds: readonly string[];
@@ -2159,7 +2168,10 @@ export class OmpAgentSession implements AgentSession {
     this.workflowModePending =
       this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
     this.planContextResetPending =
-      options.live === false && !isOmpNativeWorkflowMode(configuredWorkflowMode);
+      options.live === false &&
+      configuredWorkflowMode !== "chat" &&
+      !isOmpNativeWorkflowMode(configuredWorkflowMode);
+    this.chatTurnActive = options.live === false && configuredWorkflowMode === "chat";
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
     this.resumedSession = options.live === false;
@@ -2418,33 +2430,9 @@ export class OmpAgentSession implements AgentSession {
       sandbox: this.config.sandbox,
     });
     const displayPromptText = payload.text;
-    if (nativeCommand !== undefined) payload.text = nativeCommand;
-    const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
-    const workflowMode =
-      selectedWorkflowMode === "plan" ? selectedWorkflowMode : this.workflowModePending;
-    if (nativeCommand === undefined) {
-      if (workflowMode === "standard" || workflowMode === "enhanced") {
-        await this.disableActiveWorkflowMode(signal);
-        if (signal.aborted) return { turnId };
-        this.workflowModePending = null;
-      } else if (workflowMode) {
-        if (this.activeWorkflowMode && this.activeWorkflowMode !== workflowMode) {
-          await this.disableActiveWorkflowMode(signal);
-          if (signal.aborted) return { turnId };
-        }
-        payload.text =
-          workflowMode === "plan"
-            ? buildOmpPlanTurnPrompt(payload.text)
-            : `/${workflowMode} ${payload.text}`;
-        this.activeWorkflowMode = workflowMode;
-        this.workflowModePending = null;
-      }
-      if (!isOmpNativeWorkflowMode(selectedWorkflowMode) && this.planContextResetPending) {
-        payload.text = buildOmpStandardTurnPrompt(payload.text);
-        this.planContextResetPending = false;
-      }
-      payload.text = this.withToolIntentLocale(payload.text);
-    }
+    const preparedText = await this.prepareWorkflowTurnPrompt(payload.text, nativeCommand, signal);
+    if (preparedText === null) return { turnId };
+    payload.text = preparedText;
     this.live = true;
     this.activeTurnId = turnId;
     this.activeTurnGeneration += 1;
@@ -2890,12 +2878,21 @@ export class OmpAgentSession implements AgentSession {
     if (featureId !== OMP_WORKFLOW_FEATURE_ID) {
       throw new Error(`Unsupported OMP feature '${featureId}'`);
     }
-    if (value !== "standard" && value !== "enhanced" && value !== "plan" && value !== "goal") {
+    if (
+      value !== "standard" &&
+      value !== "chat" &&
+      value !== "enhanced" &&
+      value !== "plan" &&
+      value !== "goal"
+    ) {
       throw new Error(`Invalid OMP workflow '${String(value)}'`);
     }
     const feature = this.features[0];
     if (feature?.type !== "select") {
       throw new Error("OMP workflow feature is unavailable");
+    }
+    if (!this.activeTurnId && !this.pendingTurnAdmission) {
+      await this.syncChatToolRestriction(value === "chat");
     }
     feature.value = value;
     this.config.featureValues = {
@@ -2906,6 +2903,111 @@ export class OmpAgentSession implements AgentSession {
     if (value !== "plan") {
       this.dismissPendingPlanApproval();
     }
+    if (value !== "chat" && this.chatTurnActive && !isOmpNativeWorkflowMode(value)) {
+      this.chatTurnActive = false;
+      this.chatContextResetPending = true;
+    }
+  }
+
+  private async prepareWorkflowTurnPrompt(
+    promptText: string,
+    nativeCommand: string | undefined,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    if (nativeCommand !== undefined) {
+      if (this.chatToolsActive) {
+        await this.syncChatToolRestriction(false);
+        if (signal.aborted) return null;
+      }
+      this.chatTurnActive = false;
+      return nativeCommand;
+    }
+    const selectedWorkflowMode = normalizeOmpWorkflowSelection(this.features[0]?.value);
+    if (selectedWorkflowMode === "chat") {
+      return await this.prepareChatTurnPrompt(promptText, signal);
+    }
+    if (this.chatToolsActive) {
+      await this.syncChatToolRestriction(false);
+      if (signal.aborted) return null;
+    }
+    if (this.chatTurnActive) {
+      this.chatTurnActive = false;
+      if (!isOmpNativeWorkflowMode(selectedWorkflowMode)) {
+        this.chatContextResetPending = true;
+      }
+    }
+    const nextText = await this.prepareNonChatWorkflowTurnPrompt(
+      promptText,
+      selectedWorkflowMode,
+      signal,
+    );
+    if (nextText === null) return null;
+    return this.withToolIntentLocale(nextText);
+  }
+
+  private async prepareChatTurnPrompt(
+    promptText: string,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    if (this.activeWorkflowMode) {
+      await this.disableActiveWorkflowMode(signal);
+      if (signal.aborted) return null;
+    }
+    await this.syncChatToolRestriction(true);
+    if (signal.aborted) return null;
+    this.workflowModePending = null;
+    this.planContextResetPending = false;
+    this.chatContextResetPending = false;
+    this.chatTurnActive = true;
+    return this.withToolIntentLocale(buildOmpChatTurnPrompt(promptText));
+  }
+
+  private async prepareNonChatWorkflowTurnPrompt(
+    promptText: string,
+    selectedWorkflowMode: Exclude<OmpWorkflowSelection, "chat">,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    let text = promptText;
+    const workflowMode =
+      selectedWorkflowMode === "plan" ? selectedWorkflowMode : this.workflowModePending;
+    if (workflowMode === "standard" || workflowMode === "enhanced") {
+      await this.disableActiveWorkflowMode(signal);
+      if (signal.aborted) return null;
+      this.workflowModePending = null;
+    } else if (workflowMode && workflowMode !== "chat") {
+      if (this.activeWorkflowMode && this.activeWorkflowMode !== workflowMode) {
+        await this.disableActiveWorkflowMode(signal);
+        if (signal.aborted) return null;
+      }
+      text =
+        workflowMode === "plan" ? buildOmpPlanTurnPrompt(text) : `/${workflowMode} ${text}`;
+      this.activeWorkflowMode = workflowMode;
+      this.workflowModePending = null;
+    }
+    if (!isOmpNativeWorkflowMode(selectedWorkflowMode)) {
+      if (this.planContextResetPending) {
+        text = buildOmpStandardTurnPrompt(text);
+        this.planContextResetPending = false;
+      }
+      if (this.chatContextResetPending) {
+        text = buildOmpChatExitTurnPrompt(text);
+        this.chatContextResetPending = false;
+      }
+    }
+    return text;
+  }
+
+  private async syncChatToolRestriction(enabled: boolean): Promise<void> {
+    if (this.config.sandbox || this.chatToolsActive === enabled) return;
+    if (!this.runtimeSession.setActiveTools) {
+      if (!enabled) {
+        this.chatToolsActive = false;
+        return;
+      }
+      throw new Error("OMP Chat workflow requires an OMP runtime with set_active_tools support");
+    }
+    await this.runtimeSession.setActiveTools(enabled ? OMP_CHAT_TOOL_NAMES : null);
+    this.chatToolsActive = enabled;
   }
 
   private async setFastModeFeature(value: unknown): Promise<void> {
@@ -3094,6 +3196,12 @@ export class OmpAgentSession implements AgentSession {
       await this.setTitle(explicitTitle);
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
+    if (
+      this.purpose !== "history" &&
+      normalizeOmpWorkflowSelection(this.features[0]?.value) === "chat"
+    ) {
+      await this.syncChatToolRestriction(true);
+    }
     // Capture dynamic metadata while activation is already explicit. Cold UI reads
     // subsequently use this durable snapshot without starting another runtime.
     await this.listCommands().catch((error) => {
@@ -4262,7 +4370,10 @@ export class OmpAgentSession implements AgentSession {
     );
     const wasPlanMode = this.activeWorkflowMode === "plan";
     const nextSelection =
-      mode ?? (previousSelection === "enhanced" ? previousSelection : "standard");
+      mode ??
+      (previousSelection === "enhanced" || previousSelection === "chat"
+        ? previousSelection
+        : "standard");
     this.activeWorkflowMode = mode;
     if (wasPlanMode && mode !== "plan") {
       this.planContextResetPending = true;
@@ -4301,25 +4412,36 @@ export class OmpAgentSession implements AgentSession {
     return false;
   }
 
+  private handleDesktopPluginPromptRequest(requestId: string): void {
+    if (this.config.sandbox) {
+      this.runtimeSession.sendPluginPromptResult?.(requestId, [], "Sandbox plugin prompts denied");
+      return;
+    }
+    if (
+      this.chatToolsActive ||
+      normalizeOmpWorkflowSelection(this.features[0]?.value) === "chat"
+    ) {
+      this.runtimeSession.sendPluginPromptResult?.(requestId, []);
+      return;
+    }
+    void (this.paseoTools?.pluginPrompt?.() ?? Promise.resolve([])).then(
+      (contributions) => this.runtimeSession.sendPluginPromptResult?.(requestId, contributions),
+      (error) =>
+        this.runtimeSession.sendPluginPromptResult?.(
+          requestId,
+          [],
+          error instanceof Error ? error.message : String(error),
+        ),
+    );
+  }
+
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (event.type === "session_info_update") {
       this.updateSessionTitle(event.sessionId, event.title, event.titleSource);
       return true;
     }
     if (event.type === "desktop_plugin_prompt_request") {
-      if (this.config.sandbox) {
-        this.runtimeSession.sendPluginPromptResult?.(event.id, [], "Sandbox plugin prompts denied");
-        return true;
-      }
-      void (this.paseoTools?.pluginPrompt?.() ?? Promise.resolve([])).then(
-        (contributions) => this.runtimeSession.sendPluginPromptResult?.(event.id, contributions),
-        (error) =>
-          this.runtimeSession.sendPluginPromptResult?.(
-            event.id,
-            [],
-            error instanceof Error ? error.message : String(error),
-          ),
-      );
+      this.handleDesktopPluginPromptRequest(event.id);
       return true;
     }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;

@@ -228,6 +228,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
   emitCompactEnd = true;
   getStateError: Error | null = null;
   setApprovalModeError: Error | null = null;
+  setActiveToolsError: Error | null = null;
+  readonly activeToolSetRequests: Array<readonly string[] | null> = [];
+  readonly pluginPromptResults: Array<{ id: string; contributions: unknown[]; error?: string }> =
+    [];
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: OmpBranchMessage[] = [];
@@ -561,6 +565,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return tools.map((tool) => tool.name);
   }
 
+  async setActiveTools(tools: readonly string[] | null): Promise<string[]> {
+    if (this.setActiveToolsError) throw this.setActiveToolsError;
+    this.activeToolSetRequests.push(tools === null ? null : [...tools]);
+    return tools === null ? [] : [...tools];
+  }
+
   async branch(entryId: string): Promise<{ text: string }> {
     this.branchRequests.push(entryId);
     if (this.branchResponse.cancelled === true) {
@@ -604,6 +614,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void {
     this.hostToolUpdates.push(update);
+  }
+
+  sendPluginPromptResult(id: string, contributions: unknown[], error?: string): void {
+    this.pluginPromptResults.push({ id, contributions, ...(error !== undefined ? { error } : {}) });
   }
 
   nextHostToolResult(): Promise<OmpRpcHostToolResult> {

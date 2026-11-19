@@ -4,6 +4,7 @@ import {
   Bot,
   Brain,
   ListTodo,
+  MessageSquare,
   Settings2,
   Shield,
   ShieldAlert,
@@ -94,6 +95,8 @@ export function getAgentFeatureOptionIcon(
     return getAgentFeatureIcon(icon);
   }
   switch (optionId) {
+    case "chat":
+      return MessageSquare;
     case "enhanced":
       return Sparkles;
     case "plan":

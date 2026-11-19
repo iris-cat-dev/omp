@@ -848,6 +848,11 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("set_host_tools"),
     tools: z.array(OmpRpcHostToolDefinitionSchema),
   }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("set_active_tools"),
+    tools: z.array(z.string()).nullable(),
+  }),
   z.object({ ...OmpCommandBase, type: z.literal("branch"), entryId: z.string() }),
   z.object({
     ...OmpCommandBase,
@@ -893,6 +898,9 @@ export const OmpCommandsResultSchema = z
   .object({ commands: z.array(OmpRpcSlashCommandSchema).optional() })
   .passthrough();
 export const OmpHostToolsResultSchema = z
+  .object({ toolNames: z.array(z.string()).optional() })
+  .passthrough();
+export const OmpActiveToolsResultSchema = z
   .object({ toolNames: z.array(z.string()).optional() })
   .passthrough();
 export const OmpBranchResultSchema = z
