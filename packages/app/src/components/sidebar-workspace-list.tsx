@@ -110,6 +110,7 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { sidebarWorkspaceArchiveLabelKey } from "@/components/sidebar/sidebar-workspace-title";
 import { SidebarWorkspaceQuickActions } from "@/components/sidebar/sidebar-workspace-quick-actions";
 import { useSidebarWorkspaceFork } from "@/components/sidebar/use-sidebar-workspace-fork";
 import { useReferenceWorkspaceContent } from "@/components/sidebar/use-reference-workspace-content";
@@ -746,6 +747,7 @@ function WorkspaceRowRightGroup({
               workspaceKey={workspace.workspaceKey}
               onDelete={onDelete}
               onArchive={onArchive}
+              archiveLabel={archiveLabel}
               deleteStatus={deleteStatus}
               archiveStatus={archiveStatus}
               disabled={
@@ -1526,6 +1528,7 @@ function WorkspaceRowWithMenu({
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     onlyIfEmpty: workspace.isUnstarted,
+    hideEmptyWorktree: workspace.isUnstartedWorktree,
     ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
@@ -1685,13 +1688,13 @@ function WorkspaceRowWithMenu({
       isCreating={isCreating}
       dragHandleProps={dragHandleProps}
       menuController={null}
-      archiveLabel={t(workspace.isUnstarted ? "sidebar.workspace.actions.removeUnused" : "sidebar.workspace.actions.archive")}
+      archiveLabel={t(sidebarWorkspaceArchiveLabelKey(workspace))}
       archiveStatus={isArchiving ? "pending" : "idle"}
       archivePendingLabel={t("sidebar.workspace.actions.archiving")}
       onArchive={handleArchive}
       onFork={canFork ? handleFork : undefined}
       forkPending={isForking}
-      onDelete={workspace.isUnstarted ? undefined : handleDelete}
+      onDelete={workspace.isUnstarted || workspace.isUnstartedWorktree ? undefined : handleDelete}
       deleteStatus={isDeleting ? "pending" : "idle"}
       deletePendingLabel={t("sidebar.workspace.actions.deleting")}
       onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}

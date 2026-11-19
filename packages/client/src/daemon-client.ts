@@ -2651,9 +2651,15 @@ export class DaemonClient {
 
   async archiveWorkspace(
     workspaceId: string,
-    options?: { onlyIfEmpty?: boolean },
+    options?: { onlyIfEmpty?: boolean; hideEmptyWorktree?: boolean },
     requestId?: string,
   ): Promise<ArchiveWorkspacePayload> {
+    if (
+      options?.hideEmptyWorktree &&
+      this.lastServerInfoMessage?.features?.workspaceHideEmptyWorktree !== true
+    ) {
+      throw new Error("Update the host to hide an empty worktree without removing it from disk.");
+    }
     if (
       options?.onlyIfEmpty &&
       this.lastServerInfoMessage?.features?.workspaceArchiveIfEmpty !== true
@@ -2665,7 +2671,11 @@ export class DaemonClient {
       message: {
         type: "archive_workspace_request",
         workspaceId,
-        ...(options?.onlyIfEmpty !== undefined ? { onlyIfEmpty: options.onlyIfEmpty } : {}),
+        ...(options?.hideEmptyWorktree
+          ? { onlyIfEmpty: true, hideEmptyWorktree: true }
+          : options?.onlyIfEmpty !== undefined
+            ? { onlyIfEmpty: options.onlyIfEmpty }
+            : {}),
       },
       responseType: "archive_workspace_response",
     });

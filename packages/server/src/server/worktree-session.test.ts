@@ -1448,6 +1448,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       },
       repoRoot: "/tmp/repo",
       created: true,
+      projectCreated: false,
     }));
     const firstAgentContext = {
       prompt: "Create a worktree name from this prompt",

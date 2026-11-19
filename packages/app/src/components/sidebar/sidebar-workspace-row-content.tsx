@@ -191,7 +191,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             {!rename ? <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View> : null}
           </View>
           <WorkspaceMetaRow
-            currentBranch={workspace.isUnstarted ? workspace.currentBranch : null}
+            currentBranch={workspace.isUnstarted || workspace.isUnstartedWorktree ? workspace.currentBranch : null}
+            conversationNotStarted={workspace.isUnstartedWorktree}
             projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}

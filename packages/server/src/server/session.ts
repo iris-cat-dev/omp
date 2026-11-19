@@ -7293,7 +7293,7 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
 
-      if (request.onlyIfEmpty) {
+      if (request.onlyIfEmpty || request.hideEmptyWorktree) {
         const archivedWorkspace = await archiveUnusedWorkspace(
           {
             workspaceRegistry: this.workspaceRegistry,
@@ -7303,13 +7303,16 @@ export class Session {
               (workspaceContentMutations.get(this.workspaceRegistry)?.get(undefined) ?? 0) > 0 ||
               (workspaceContentMutations.get(this.workspaceRegistry)?.get(workspaceId) ?? 0) > 0 ||
               this.workspaceSetupRuntime.isRunning(workspaceId) ||
-              (this.scriptRuntimeStore?.listForWorkspace(workspaceId).length ?? 0) > 0,
+              (this.scriptRuntimeStore?.listForWorkspace(workspaceId).length ?? 0) > 0 ||
+              (request.hideEmptyWorktree === true &&
+                this.terminalManager?.hasWorkspaceTerminals?.(workspaceId) === true),
             killTerminalsForWorkspace: (workspaceId) =>
               this.terminalController.killTerminalsForWorkspace(workspaceId),
           },
           request.workspaceId,
+          request.hideEmptyWorktree ? "empty-worktree" : "unused-checkout",
         );
-        // The empty record and auxiliary terminals are retired; project files remain.
+        // Record-only: neither conditional mode removes the Git checkout.
         if (archivedWorkspace) {
           this.workspaceGitObserver.removeForWorkspaceId(request.workspaceId);
           await this.emitWorkspaceUpdatesForWorkspaceIds([request.workspaceId]);

@@ -8,6 +8,14 @@ export function resolveSidebarWorkspacePrimaryLabel(
   return workspace.isUnstarted ? unstartedLabel : workspace.name;
 }
 
+export function sidebarWorkspaceArchiveLabelKey(
+  workspace: Pick<SidebarWorkspaceEntry, "isUnstarted" | "isUnstartedWorktree">,
+) {
+  if (workspace.isUnstartedWorktree) return "sidebar.workspace.actions.hideFromSidebar";
+  if (workspace.isUnstarted) return "sidebar.workspace.actions.removeUnused";
+  return "sidebar.workspace.actions.archive";
+}
+
 export function resolveAgentTabPrimaryLabel(input: {
   agentTitle: string | null | undefined;
   isPrimaryAgent: boolean;
@@ -25,7 +33,7 @@ export function resolveAgentTabPrimaryLabel(input: {
 }
 
 export function resolveSidebarWorkspaceAccessibilityLabel(input: {
-  workspace: Pick<SidebarWorkspaceEntry, "name" | "statusBucket" | "isUnstarted">;
+  workspace: Pick<SidebarWorkspaceEntry, "name" | "statusBucket" | "isUnstarted" | "isUnstartedWorktree">;
   leadingProjectName?: string | null;
   hostBadgeLabel?: string | null;
   pullRequestLabel?: string | null;
@@ -35,6 +43,7 @@ export function resolveSidebarWorkspaceAccessibilityLabel(input: {
   return [
     input.leadingProjectName,
     resolveSidebarWorkspacePrimaryLabel(input.workspace, input.unstartedLabel ?? input.workspace.name),
+    input.workspace.isUnstartedWorktree ? input.unstartedLabel : null,
     input.hostBadgeLabel,
     input.pullRequestLabel,
     input.serviceLabel,

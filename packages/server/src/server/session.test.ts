@@ -5512,6 +5512,7 @@ describe("session paseo worktree creation handling", () => {
         displayName: "feature/new-worktree",
       },
       created: true,
+      projectCreated: false,
     });
 
     await asSessionInternals(session).createPaseoWorktree({

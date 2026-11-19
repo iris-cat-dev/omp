@@ -87,6 +87,7 @@ export interface ArchiveUnusedWorkspaceDependencies {
 export async function archiveUnusedWorkspace(
   dependencies: ArchiveUnusedWorkspaceDependencies,
   workspaceId: string,
+  mode: "unused-checkout" | "empty-worktree" = "unused-checkout",
 ): Promise<PersistedWorkspaceRecord | null> {
   if (!dependencies.workspaceRegistry.archiveIfUnused) {
     throw new Error("Workspace registry does not support safe conditional archive");
@@ -97,12 +98,14 @@ export async function archiveUnusedWorkspace(
     workspaceId,
     new Date().toISOString(),
     (workspace) =>
-      workspace.kind !== "worktree" &&
-      !workspace.mainRepoRoot &&
-      !workspace.isPaseoOwnedWorktree &&
-      !workspace.title &&
-      !workspace.pinnedAt &&
-      !workspace.labels?.length &&
+      (mode === "empty-worktree"
+        ? workspace.kind === "worktree"
+        : workspace.kind !== "worktree" &&
+          !workspace.mainRepoRoot &&
+          !workspace.isPaseoOwnedWorktree &&
+          !workspace.title &&
+          !workspace.pinnedAt &&
+          !workspace.labels?.length) &&
       !dependencies.agentStorage.hasWorkspaceHistory(workspaceId) &&
       !dependencies.agentManager.hasPendingAgentRegistrations(workspaceId) &&
       !dependencies.agentManager
@@ -110,7 +113,7 @@ export async function archiveUnusedWorkspace(
         .some((agent) => agent.workspaceId === workspaceId) &&
       !dependencies.hasWorkspaceActivity(workspaceId),
   );
-  if (archivedWorkspace) {
+  if (archivedWorkspace && mode === "unused-checkout") {
     await dependencies.killTerminalsForWorkspace(workspaceId);
   }
   return archivedWorkspace;

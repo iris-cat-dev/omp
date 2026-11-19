@@ -70,6 +70,7 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { sidebarWorkspaceArchiveLabelKey } from "@/components/sidebar/sidebar-workspace-title";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
@@ -556,6 +557,7 @@ function StatusWorkspaceRowWithMenu({
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     onlyIfEmpty: workspace.isUnstarted,
+    hideEmptyWorktree: workspace.isUnstartedWorktree,
     ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
@@ -675,11 +677,11 @@ function StatusWorkspaceRowWithMenu({
       isDeleting={isDeleting}
       isForking={isForking}
       canFork={canFork}
-      archiveLabel={t(workspace.isUnstarted ? "sidebar.workspace.actions.removeUnused" : "sidebar.workspace.actions.archive")}
+      archiveLabel={t(sidebarWorkspaceArchiveLabelKey(workspace))}
       archiveStatus={isArchiving ? "pending" : "idle"}
       archivePendingLabel={t("sidebar.workspace.actions.archiving")}
       onArchive={handleArchive}
-      onDelete={workspace.isUnstarted ? undefined : handleDelete}
+      onDelete={workspace.isUnstarted || workspace.isUnstartedWorktree ? undefined : handleDelete}
       deleteStatus={isDeleting ? "pending" : "idle"}
       deletePendingLabel={t("sidebar.workspace.actions.deleting")}
       onFork={handleFork}
@@ -1037,6 +1039,7 @@ function StatusWorkspaceActionSlot({
           workspaceKey={workspace.workspaceKey}
           onDelete={onDelete}
           onArchive={onArchive}
+          archiveLabel={archiveLabel}
           deleteStatus={deleteStatus}
           archiveStatus={archiveStatus}
           disabled={disabled || isForking}
