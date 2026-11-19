@@ -27,8 +27,14 @@ export function registerPluginClientTrustIpc(appUrl: string): void {
     if (result !== null && action !== "check") {
       const change: PluginClientTrustInstallation = { hostId, installationId };
       for (const { webContents } of getMainWindows()) {
-        if (isAppDocument(webContents.mainFrame.url)) {
-          webContents.send("omp:plugin-client-trust-changed", change);
+        try {
+          const target = webContents.mainFrame;
+          if (webContents.isDestroyed() || !target || target.detached || !isAppDocument(target.url)) {
+            continue;
+          }
+          target.send("omp:plugin-client-trust-changed", change);
+        } catch {
+          // A closed, unloaded, or failed renderer cannot block committed trust broadcasts.
         }
       }
     }
