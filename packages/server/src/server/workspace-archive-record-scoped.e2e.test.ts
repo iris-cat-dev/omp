@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -350,6 +350,48 @@ test("renaming a workspace updates every subscribed client", async () => {
     titles.stop();
     await observer.close();
   }
+});
+
+test("hiding an empty worktree preserves Git data and refuses active workspaces", async () => {
+  const repoDir = createGitRepo();
+  const result = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repoDir, worktreeSlug: "pr-prep", baseBranch: "main" },
+    title: "PR preparation",
+  });
+  const workspace = result.workspace;
+  if (!workspace?.workspaceDirectory) throw new Error(result.error ?? "Missing worktree");
+  const cwd = workspace.workspaceDirectory;
+  const localFile = path.join(cwd, "unsaved.txt");
+  writeFileSync(localFile, "local changes");
+  const gitOptions = { cwd: repoDir, encoding: "utf8" } as const;
+  const worktreesBefore = execFileSync("git", ["worktree", "list", "--porcelain"], gitOptions);
+  expect(worktreesBefore).toContain("branch refs/heads/pr-prep");
+
+  expect(await ctx.client.archiveWorkspace(workspace.id, { onlyIfEmpty: true })).toMatchObject({
+    skipped: true,
+    error: null,
+  });
+  expect(await ctx.client.archiveWorkspace(workspace.id, { hideEmptyWorktree: true })).toMatchObject({
+    skipped: false,
+    archivedAt: expect.any(String),
+    error: null,
+  });
+  expect(await activeWorkspaceIds()).not.toContain(workspace.id);
+  expect(readFileSync(localFile, "utf8")).toBe("local changes");
+  expect(execFileSync("git", ["worktree", "list", "--porcelain"], gitOptions)).toBe(worktreesBefore);
+
+  await ctx.client.restoreWorkspace(workspace.id);
+  const restored = (await ctx.client.fetchWorkspaces()).entries.find((entry) => entry.id === workspace.id);
+  expect(restored).toMatchObject({ title: "PR preparation", workspaceDirectory: cwd });
+  const terminal = await ctx.client.createTerminal(cwd, "PR terminal", undefined, { workspaceId: workspace.id });
+  if (!terminal.terminal) throw new Error("Missing worktree terminal");
+  expect(await ctx.client.archiveWorkspace(workspace.id, { hideEmptyWorktree: true })).toMatchObject({
+    skipped: true,
+    archivedAt: null,
+    error: null,
+  });
+  expect(await activeWorkspaceIds()).toContain(workspace.id);
+  expect(await terminalIdsForWorkspace(cwd, workspace.id)).toContain(terminal.terminal.id);
 });
 
 test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {

@@ -120,18 +120,23 @@ export interface ProjectMutation {
   project: PersistedProjectRecord | null;
 }
 
+interface ProjectAllocationInput {
+  rootPath: string;
+  kind: PersistedProjectKind;
+  displayName: string;
+  projectKey?: string;
+  timestamp: string;
+}
+
 export interface ProjectRegistry {
   initialize(): Promise<void>;
   existsOnDisk(): Promise<boolean>;
   list(): Promise<PersistedProjectRecord[]>;
   get(projectId: string): Promise<PersistedProjectRecord | null>;
-  getOrCreateActiveByRoot(input: {
-    rootPath: string;
-    kind: PersistedProjectKind;
-    displayName: string;
-    projectKey?: string;
-    timestamp: string;
-  }): Promise<PersistedProjectRecord>;
+  getOrCreateActiveByRoot(
+    input: ProjectAllocationInput,
+    onCreated?: () => void,
+  ): Promise<PersistedProjectRecord>;
   upsert(record: PersistedProjectRecord): Promise<void>;
   update(
     projectId: string,
@@ -444,13 +449,10 @@ export class FileBackedProjectRegistry
     this.projectIdFactory = options?.projectIdFactory ?? generateProjectId;
   }
 
-  async getOrCreateActiveByRoot(input: {
-    rootPath: string;
-    kind: PersistedProjectKind;
-    displayName: string;
-    projectKey?: string;
-    timestamp: string;
-  }): Promise<PersistedProjectRecord> {
+  async getOrCreateActiveByRoot(
+    input: ProjectAllocationInput,
+    onCreated?: () => void,
+  ): Promise<PersistedProjectRecord> {
     const previous = this.allocationQueue;
     let release!: () => void;
     this.allocationQueue = new Promise<void>((resolve) => (release = resolve));
@@ -491,6 +493,7 @@ export class FileBackedProjectRegistry
           updatedAt: input.timestamp,
         });
         await this.upsert(record);
+        onCreated?.();
         return record;
       }
     } finally {

@@ -3295,6 +3295,7 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   workspaceId: z.string(),
   requestId: z.string(),
   onlyIfEmpty: z.boolean().optional(),
+  hideEmptyWorktree: z.boolean().optional(),
 });
 
 export const DeleteWorkspaceRequestSchema = z.object({
@@ -4279,6 +4280,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // Older daemons ignore onlyIfEmpty and would archive unconditionally.
         workspaceArchiveIfEmpty: z.boolean().optional(),
+        workspaceHideEmptyWorktree: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.

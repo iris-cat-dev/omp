@@ -65,6 +65,8 @@ In the project list, an open draft for an untitled ordinary Git checkout or non-
 
 Untitled ordinary Git checkouts and non-Git directories with a hydrated empty conversation inventory show **Conversation not started**, keeping any branch visible. Their menu offers **Remove unused workspace**. Existing empty records are not automatically archived merely because their names match a branch such as `main`.
 
+A worktree with no conversation keeps its title and shows **Conversation not started** below it. Its row menu offers **Hide from sidebar**. This archives only the workspace record: the Git worktree, branch, and files stay on disk. The host rechecks for conversations and active workspace resources before hiding it. Closing an unsent draft never hides a worktree automatically.
+
 Close an unsent draft with its tab **Close** button or sidebar **Delete new workspace** action. Both discard only the selected draft's input, attachments, and queued submission. Other drafts remain, including untouched siblings sharing the same workspace; outstanding agent creation also prevents cleanup.
 
 Closing the last empty conversation tab returns to the project page. Supported hosts conditionally archive the unused workspace record without deleting project files or the project. Sidebar deletion completes in one action when cleanup succeeds, without a replacement draft restoring the workspace during navigation. Cleanup preserves history (including archived agents), live/pending resources, custom titles, pins, labels, and worktree ownership. Older hosts need updates; failed cleanup leaves the entry available for **Remove unused workspace** to retry.

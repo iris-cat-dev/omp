@@ -20,6 +20,7 @@ export interface ArchiveWorkspaceInput {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   onlyIfEmpty?: boolean;
+  hideEmptyWorktree?: boolean;
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
@@ -39,6 +40,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     workspaceKind,
     name,
     onlyIfEmpty = false,
+    hideEmptyWorktree = false,
     isDirty,
     aheadOfOrigin,
     diffStat,
@@ -51,7 +53,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
 
   const archiveWorkspaceRecord = useCallback(async () => {
     const client = getHostRuntimeStore().getClient(serverId);
-    if (onlyIfEmpty) {
+    if (onlyIfEmpty || hideEmptyWorktree) {
       onSetHiding?.(true);
       try {
         const archived = await archiveEmptyWorkspace({
@@ -59,9 +61,18 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
           workspace: { serverId, workspaceId },
           hasPendingTerminalCreate: false,
           preserveDrafts: true,
+          hideEmptyWorktree,
         });
-        if (archived) onArchiveStarted();
+        if (archived) {
+          onArchiveStarted();
+        } else if (hideEmptyWorktree) {
+          toast.error(t("sidebar.workspace.toasts.hideFailed"));
+        }
       } catch (error) {
+        if (hideEmptyWorktree) {
+          toast.error(error instanceof Error ? error.message : t("sidebar.workspace.toasts.hideFailed"));
+          return;
+        }
         toast.error(
           t("sidebar.workspace.toasts.emptyArchiveFailed", {
             reason: error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
@@ -95,11 +106,11 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     } finally {
       onSetHiding?.(false);
     }
-  }, [onArchiveStarted, onSetHiding, onlyIfEmpty, serverId, t, toast, workspaceId]);
+  }, [hideEmptyWorktree, onArchiveStarted, onSetHiding, onlyIfEmpty, serverId, t, toast, workspaceId]);
 
   const archive = useCallback(() => {
     void (async () => {
-      if (workspaceKind === "worktree") {
+      if (workspaceKind === "worktree" && !hideEmptyWorktree) {
         const confirmed = await confirmRiskyWorktreeArchive(
           {
             workspaceName: name,
@@ -119,6 +130,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     aheadOfOrigin,
     archiveWorkspaceRecord,
     diffStat,
+    hideEmptyWorktree,
     isDirty,
     name,
     warningLabels,

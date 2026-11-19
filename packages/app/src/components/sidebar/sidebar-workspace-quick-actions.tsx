@@ -83,6 +83,7 @@ export const SidebarWorkspaceQuickActions = memo(function SidebarWorkspaceQuickA
   workspaceKey,
   onDelete,
   onArchive,
+  archiveLabel,
   deleteStatus = "idle",
   archiveStatus = "idle",
   disabled = false,
@@ -91,6 +92,7 @@ export const SidebarWorkspaceQuickActions = memo(function SidebarWorkspaceQuickA
   workspaceKey: string;
   onDelete?: () => void;
   onArchive?: () => void;
+  archiveLabel?: string;
   deleteStatus?: ActionStatus;
   archiveStatus?: ActionStatus;
   disabled?: boolean;
@@ -104,17 +106,19 @@ export const SidebarWorkspaceQuickActions = memo(function SidebarWorkspaceQuickA
       style={styles.actions}
       {...(isWeb ? { onPointerDown: stopPropagation, onDoubleClick: stopPropagation } : {})}
     >
+      {onDelete ? (
+        <QuickAction
+          label={t("sidebar.workspace.actions.delete")}
+          testID={`sidebar-workspace-quick-delete-${workspaceKey}`}
+          onPress={onDelete}
+          disabled={busy}
+          pending={deleteStatus === "pending"}
+        >
+          <ThemedTrash2 size={14} uniProps={mutedColor} />
+        </QuickAction>
+      ) : null}
       <QuickAction
-        label={t("sidebar.workspace.actions.delete")}
-        testID={`sidebar-workspace-quick-delete-${workspaceKey}`}
-        onPress={onDelete}
-        disabled={busy || !onDelete}
-        pending={deleteStatus === "pending"}
-      >
-        <ThemedTrash2 size={14} uniProps={mutedColor} />
-      </QuickAction>
-      <QuickAction
-        label={t("sidebar.workspace.actions.archive")}
+        label={archiveLabel ?? t("sidebar.workspace.actions.archive")}
         testID={`sidebar-workspace-quick-archive-${workspaceKey}`}
         onPress={onArchive}
         disabled={busy || !onArchive}

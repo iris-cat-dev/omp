@@ -73,6 +73,7 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  */
 export function WorkspaceMetaRow({
   currentBranch,
+  conversationNotStarted = false,
   projectName,
   hostBadge,
   prHint,
@@ -80,12 +81,14 @@ export function WorkspaceMetaRow({
   labels = EMPTY_LABELS,
 }: {
   currentBranch: string | null;
+  conversationNotStarted?: boolean;
   projectName: string | null;
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   labels?: readonly WorkspaceLabelDefinition[];
 }) {
+  const { t } = useTranslation();
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
     currentBranch,
@@ -98,13 +101,18 @@ export function WorkspaceMetaRow({
     checksDisplay,
   });
 
-  if (items.length === 0) return null;
+  if (!conversationNotStarted && items.length === 0) return null;
 
   return (
     <View style={styles.row}>
+      {conversationNotStarted ? (
+        <Text style={styles.identityText} numberOfLines={1}>
+          {t("sidebar.workspace.status.unstarted")}
+        </Text>
+      ) : null}
       {items.map((item, index) => (
         <Fragment key={item.kind}>
-          {index > 0 ? <Text style={styles.separator}>·</Text> : null}
+          {index > 0 || conversationNotStarted ? <Text style={styles.separator}>·</Text> : null}
           <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
         </Fragment>
       ))}

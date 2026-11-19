@@ -29,6 +29,7 @@ import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
+import { sidebarWorkspaceArchiveLabelKey } from "@/components/sidebar/sidebar-workspace-title";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -101,6 +102,7 @@ export function SidebarWorkspaceRow({
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     onlyIfEmpty: workspace.isUnstarted,
+    hideEmptyWorktree: workspace.isUnstartedWorktree,
     ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
@@ -201,7 +203,7 @@ export function SidebarWorkspaceRow({
         drag={drag}
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
-        archiveLabel={t(workspace.isUnstarted ? "sidebar.workspace.actions.removeUnused" : "sidebar.workspace.actions.archive")}
+        archiveLabel={t(sidebarWorkspaceArchiveLabelKey(workspace))}
         archiveStatus={isArchiving ? "pending" : "idle"}
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
         onArchive={handleArchive}

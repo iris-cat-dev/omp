@@ -31,7 +31,7 @@ interface WorkspaceArchiveResult {
 interface WorkspaceArchiveClient {
   archiveWorkspace: (
     workspaceId: string,
-    options?: { onlyIfEmpty?: boolean },
+    options?: { onlyIfEmpty?: boolean; hideEmptyWorktree?: boolean },
   ) => Promise<WorkspaceArchiveResult>;
 }
 
@@ -164,6 +164,7 @@ export async function archiveEmptyWorkspace(input: {
   closedDraftId?: string;
   hasPendingTerminalCreate: boolean;
   preserveDrafts?: boolean;
+  hideEmptyWorktree?: boolean;
 }): Promise<boolean> {
   const { serverId, workspaceId } = input.workspace;
   if (hasProtectedWorkspaceContent(input)) return false;
@@ -171,6 +172,7 @@ export async function archiveEmptyWorkspace(input: {
     throw new Error(i18n.t("sidebar.workspace.toasts.hostDisconnected"));
   }
   if (
+    !input.hideEmptyWorktree &&
     useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.workspaceArchiveIfEmpty !==
     true
   ) {
@@ -181,7 +183,10 @@ export async function archiveEmptyWorkspace(input: {
   markWorkspaceArchivePending({ ...input.workspace, phase: "checking" });
   let payload: WorkspaceArchiveResult;
   try {
-    payload = await input.client.archiveWorkspace(workspaceId, { onlyIfEmpty: true });
+    payload = await input.client.archiveWorkspace(
+      workspaceId,
+      input.hideEmptyWorktree ? { hideEmptyWorktree: true } : { onlyIfEmpty: true },
+    );
   } catch (error) {
     clearWorkspaceArchivePending(input.workspace);
     throw error;

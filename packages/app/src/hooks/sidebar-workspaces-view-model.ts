@@ -62,6 +62,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archivingAt: string | null;
   hasOnlyArchivedAgents?: boolean;
   isUnstarted?: boolean;
+  isUnstartedWorktree?: boolean;
   hasAssociatedAgents?: boolean;
   hasOnlySubagents?: boolean;
   diffStat: { additions: number; deletions: number } | null;
@@ -182,6 +183,10 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const hasNoConversation =
+    !input.workspace.hasOnlyArchivedAgents &&
+    input.hasAssociatedAgents === false &&
+    effectiveStatus.status === "done";
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -211,10 +216,9 @@ export function createSidebarWorkspaceEntry(input: {
         input.workspace.workspaceKind === "directory") &&
       !input.workspace.title?.trim() &&
       !input.workspace.worktreeSlug &&
-      !input.workspace.hasOnlyArchivedAgents &&
-      input.hasAssociatedAgents === false &&
-      effectiveStatus.status === "done" &&
+      hasNoConversation &&
       input.workspace.scripts.length === 0,
+    isUnstartedWorktree: input.workspace.workspaceKind === "worktree" && hasNoConversation,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,

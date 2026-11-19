@@ -2012,7 +2012,10 @@ test("honors explicit getDaemonPairingOffer timeout below the session RPC defaul
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
 });
 
-test("never sends conditional workspace archive to an older daemon", async () => {
+test.each([
+  { features: undefined, options: { onlyIfEmpty: true } },
+  { features: { workspaceArchiveIfEmpty: true }, options: { hideEmptyWorktree: true } },
+])("never sends an unsupported conditional archive ($options)", async ({ features, options }) => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -2023,10 +2026,10 @@ test("never sends conditional workspace archive to an older daemon", async () =>
   });
   clients.push(client);
   const connected = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features });
   await connected;
 
-  await expect(client.archiveWorkspace("workspace", { onlyIfEmpty: true })).rejects.toThrow(
+  await expect(client.archiveWorkspace("workspace", options)).rejects.toThrow(
     "Update the host",
   );
   expect(mock.sent).toEqual([]);

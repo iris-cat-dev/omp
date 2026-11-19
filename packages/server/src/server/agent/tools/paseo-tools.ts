@@ -613,6 +613,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     throw new Error("workspaceId is required outside an agent-scoped session");
   }
 
+  async function requireCallerProjectId(): Promise<string> {
+    const workspaceId = resolveCallerAgent()?.workspaceId;
+    if (workspaceId && options.workspaceRegistry) {
+      const workspace = await options.workspaceRegistry.get(workspaceId);
+      if (workspace && !workspace.archivedAt) return workspace.projectId;
+    }
+    throw new Error(
+      "Cannot resolve the caller's active project. Specify projectId or separateProject: true.",
+    );
+  }
+
   const ProviderModelInputSchema = AgentProviderEnum.trim()
     .refine((value) => value.includes("/"), {
       message: "provider must be omp/model, for example omp/anthropic/claude-sonnet-4-6",
@@ -1124,7 +1135,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create workspace",
       description:
-        "Create a workspace using an existing local checkout or a new Paseo-managed worktree. " +
+        "Register a sidebar workspace using a local checkout or a new Paseo-managed Git worktree. " +
+        "Agent-created worktrees belong to the caller's project by default. Use projectId to " +
+        "choose another existing project, or separateProject: true to use a separate project " +
+        "rooted at the source repository. Outside an agent session, omitting both may create " +
+        "a project if the source checkout has no matching project. " +
         "It starts without a conversation: to run work in it, call create_agent with the returned " +
         "workspaceId. Built-in task subagents stay in your current workspace, so their work never " +
         "appears under the new one.",
@@ -1133,8 +1148,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         path: z
           .string()
           .optional()
-          .describe("Local directory or source checkout. Defaults to your current workspace."),
-        projectId: z.string().optional().describe("Existing project id to own the workspace."),
+          .describe(
+            "Local directory or Git source checkout. For a nested Git repository, set its path " +
+            "even when the worktree belongs to a parent project. With projectId and no path, " +
+            "worktree creation uses that project's root; otherwise the default is the caller's cwd.",
+          ),
+        projectId: z.string().trim().min(1).nullish().describe("Existing project id to own the workspace."),
+        separateProject: z.boolean().optional().describe(
+          "Worktree only. Use or create a project at the source repository root instead of " +
+          "inheriting the caller's project. Do not combine with projectId.",
+        ),
         title: z.string().trim().min(1).optional(),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
@@ -1167,12 +1190,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .optional()
           .describe("Forge for checkout-pr mode. Defaults to the source checkout."),
       },
-      outputSchema: { ...WorkspaceAutomationSummarySchema.shape, guidance: z.string() },
+      outputSchema: {
+        ...WorkspaceAutomationSummarySchema.shape,
+        projectCreated: z.boolean().optional(),
+        guidance: z.string(),
+      },
     },
     async ({
       isolation,
       path,
-      projectId,
+      projectId: requestedProjectId,
+      separateProject,
       title,
       mode,
       worktreeSlug,
@@ -1182,7 +1210,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       prNumber,
       forge,
     }) => {
+      const projectId = requestedProjectId ?? undefined;
       let workspace: PersistedWorkspaceRecord;
+      let projectCreated: boolean | undefined;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
         assertOptionsAbsent(
@@ -1194,6 +1224,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ["branch", branch],
             ["prNumber", prNumber],
             ["forge", forge],
+            ["separateProject", separateProject],
           ],
           "Worktree options require isolation worktree",
         );
@@ -1202,6 +1233,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         }
         workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
       } else {
+        if (separateProject && projectId) {
+          throw new Error("separateProject cannot be combined with projectId");
+        }
         let cwd =
           path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
         if (!cwd) {
@@ -1210,6 +1244,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           }
           cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
         }
+        const ownerProjectId = projectId ??
+          (callerAgentId && !separateProject ? await requireCallerProjectId() : undefined);
         const worktreeTarget = resolveWorkspaceWorktreeTarget({
           mode,
           worktreeSlug,
@@ -1227,7 +1263,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           },
           {
             cwd,
-            ...(projectId ? { projectId } : {}),
+            ...(ownerProjectId ? { projectId: ownerProjectId } : {}),
+            ...(separateProject ? { separateProject } : {}),
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
@@ -1237,13 +1274,18 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           throw result.cause;
         }
         workspace = result.createdWorktree.workspace;
+        projectCreated = result.createdWorktree.projectCreated;
       }
 
       return {
         content: [],
         structuredContent: ensureValidJson({
           ...toWorkspaceAutomationSummary(workspace),
+          ...(projectCreated !== undefined ? { projectCreated } : {}),
           guidance:
+            (projectCreated === undefined
+              ? ""
+              : `Registered under ${projectCreated ? "new" : "existing"} project "${workspace.projectId}". `) +
             `Workspace ${workspace.workspaceId} has no conversation yet. To run work in it, call ` +
             `create_agent with workspaceId "${workspace.workspaceId}"; that agent works in this ` +
             "workspace and appears as its conversation. Built-in task subagents stay in your " +

@@ -38,6 +38,7 @@ export interface ImportWorkspaceResult<T> {
 export interface CreateWorktreeWorkspaceInput {
   sourceCwd: string;
   projectId?: string;
+  separateProject?: boolean;
   repoRoot: string;
   cwd: string;
   worktreeRoot: string;
@@ -46,6 +47,11 @@ export interface CreateWorktreeWorkspaceInput {
   title: string | null;
   titleSource?: PersistedWorkspaceRecord["titleSource"];
   expectsInitialAgent?: boolean;
+}
+
+interface CreateWorktreeWorkspaceResult {
+  workspace: PersistedWorkspaceRecord;
+  projectCreated: boolean;
 }
 
 export interface WorkspaceProvisioningService {
@@ -61,9 +67,7 @@ export interface WorkspaceProvisioningService {
     projectId?: string,
     context?: { expectsInitialAgent?: boolean; titleSource?: PersistedWorkspaceRecord["titleSource"] },
   ): Promise<PersistedWorkspaceRecord>;
-  createWorkspaceForWorktree(
-    input: CreateWorktreeWorkspaceInput,
-  ): Promise<PersistedWorkspaceRecord>;
+  createWorkspaceForWorktree(input: CreateWorktreeWorkspaceInput): Promise<CreateWorktreeWorkspaceResult>;
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
@@ -235,14 +239,15 @@ export function createWorkspaceProvisioningService(deps: {
 
   async function createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
-  ): Promise<PersistedWorkspaceRecord> {
+  ): Promise<CreateWorktreeWorkspaceResult> {
     const sourceCwd = resolve(input.sourceCwd);
     const repoRoot = resolve(input.repoRoot);
     const cwd = resolve(input.cwd);
     const worktreeRoot = resolve(input.worktreeRoot);
-    const project = await resolveSourceProjectForWorktree({
+    const { project, projectCreated } = await resolveSourceProjectForWorktree({
       sourceCwd,
       projectId: input.projectId,
+      separateProject: input.separateProject,
       repoRoot,
     });
     const timestamp = new Date().toISOString();
@@ -265,48 +270,60 @@ export function createWorkspaceProvisioningService(deps: {
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
     });
-    return workspace;
+    return { workspace, projectCreated };
   }
 
   async function resolveSourceProjectForWorktree(input: {
     sourceCwd: string;
     projectId?: string;
+    separateProject?: boolean;
     repoRoot: string;
-  }): Promise<PersistedProjectRecord> {
+  }): Promise<{ project: PersistedProjectRecord; projectCreated: boolean }> {
     if (input.projectId) {
-      return refreshProjectKind(await requireActiveProject(input.projectId));
+      return {
+        project: await refreshProjectKind(await requireActiveProject(input.projectId)),
+        projectCreated: false,
+      };
     }
 
-    const workspaces = await workspaceRegistry.list();
-    const sourceWorkspace =
-      workspaces.find(
-        (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, input.sourceCwd),
-      ) ??
-      workspaces.find(
-        (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, input.repoRoot),
-      );
-    if (sourceWorkspace) {
-      const project = await projectRegistry.get(sourceWorkspace.projectId);
-      if (project) return refreshProjectKind(project);
-      // COMPAT(worktreeMissingSourceProject): added in v0.1.107, remove after 2027-01-15.
-      // Orphaned legacy workspace FKs fall through to exact-root allocation.
+    if (!input.separateProject) {
+      const workspaces = await workspaceRegistry.list();
+      const sourceWorkspace =
+        workspaces.find(
+          (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, input.sourceCwd),
+        ) ??
+        workspaces.find(
+          (workspace) => !workspace.archivedAt && areEquivalentPaths(workspace.cwd, input.repoRoot),
+        );
+      if (sourceWorkspace) {
+        const project = await projectRegistry.get(sourceWorkspace.projectId);
+        if (project) {
+          return { project: await refreshProjectKind(project), projectCreated: false };
+        }
+        // COMPAT(worktreeMissingSourceProject): added in v0.1.107, remove after 2027-01-15.
+        // Orphaned legacy workspace FKs fall through to exact-root allocation.
+      }
     }
 
     const checkout = await workspaceGitService.getCheckout(input.repoRoot);
-    const project = await projectRegistry.getOrCreateActiveByRoot({
-      rootPath: input.repoRoot,
-      kind: "git",
-      displayName: basename(input.repoRoot) || input.repoRoot,
-      projectKey: deriveProjectKey({
+    let projectCreated = false;
+    const project = await projectRegistry.getOrCreateActiveByRoot(
+      {
         rootPath: input.repoRoot,
-        remoteUrl: checkout.remoteUrl,
-        worktreeRoot: checkout.worktreeRoot,
-        mainRepoRoot: checkout.mainRepoRoot,
-        serverId,
-      }),
-      timestamp: new Date().toISOString(),
-    });
-    return refreshProjectKind(project);
+        kind: "git",
+        displayName: basename(input.repoRoot) || input.repoRoot,
+        projectKey: deriveProjectKey({
+          rootPath: input.repoRoot,
+          remoteUrl: checkout.remoteUrl,
+          worktreeRoot: checkout.worktreeRoot,
+          mainRepoRoot: checkout.mainRepoRoot,
+          serverId,
+        }),
+        timestamp: new Date().toISOString(),
+      },
+      () => { projectCreated = true; },
+    );
+    return { project: await refreshProjectKind(project), projectCreated };
   }
 
   async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {

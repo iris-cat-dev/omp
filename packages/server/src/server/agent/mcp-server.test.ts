@@ -26,9 +26,9 @@ import {
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  FileBackedProjectRegistry,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
-  type ProjectRegistry,
   type WorkspaceRegistry,
 } from "../workspace-registry.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
@@ -45,7 +45,6 @@ import { WorkspaceAutoName } from "../workspace-auto-name.js";
 import { createGitMutationService } from "../session/git-mutation/git-mutation-service.js";
 import type { GeneratedBranchName } from "../worktree-branch-name-generator.js";
 import type { ForgeService } from "../../services/forge-service.js";
-import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@omp-desktop/protocol/agent-labels";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
@@ -562,12 +561,12 @@ function createPaseoWorktreeForMcpTest(options: {
   paseoHome: string;
   broadcasts: string[];
   createdWorkspaceIds?: string[];
+  projectRegistry?: FileBackedProjectRegistry;
   workspaceRecords?: Map<string, PersistedWorkspaceRecord>;
   generateBranchName?: () => Promise<GeneratedBranchName | null>;
   setupContinuations?: Array<"workspace" | "agent" | undefined>;
   startedAgentSetupIds?: string[];
 }): CreatePaseoWorktreeWorkflowFn {
-  const projects = new Map<string, PersistedProjectRecord>();
   const workspaces = options.workspaceRecords ?? new Map<string, PersistedWorkspaceRecord>();
   const github = createGitHubServiceStub();
   const workspaceGitService = new WorkspaceGitServiceImpl({
@@ -575,39 +574,9 @@ function createPaseoWorktreeForMcpTest(options: {
     paseoHome: options.paseoHome,
     deps: { forgeOverrides: { github } },
   });
-  const projectRegistry: ProjectRegistry = {
-    initialize: async () => {},
-    existsOnDisk: async () => true,
-    list: async () => Array.from(projects.values()),
-    get: async (projectId) => projects.get(projectId) ?? null,
-    getOrCreateActiveByRoot: async (allocation) => {
-      const existing = Array.from(projects.values()).find(
-        (project) =>
-          areEquivalentPaths(project.rootPath, allocation.rootPath) && !project.archivedAt,
-      );
-      if (existing) return existing;
-      const project = createPersistedProjectRecord({
-        projectId: `prj_test_${projects.size + 1}`,
-        rootPath: allocation.rootPath,
-        kind: allocation.kind,
-        displayName: allocation.displayName,
-        createdAt: allocation.timestamp,
-        updatedAt: allocation.timestamp,
-      });
-      projects.set(project.projectId, project);
-      return project;
-    },
-    upsert: async (record) => {
-      projects.set(record.projectId, record);
-    },
-    archive: async (projectId, archivedAt) => {
-      const project = projects.get(projectId);
-      if (project) projects.set(projectId, { ...project, archivedAt });
-    },
-    remove: async (projectId) => {
-      projects.delete(projectId);
-    },
-  };
+  const projectRegistry =
+    options.projectRegistry ??
+    new FileBackedProjectRegistry(join(options.paseoHome, "projects.json"), createTestLogger());
   const workspaceRegistry: WorkspaceRegistry = {
     initialize: async () => {},
     existsOnDisk: async () => true,
@@ -1851,6 +1820,7 @@ describe("create_agent MCP tool", () => {
         },
         repoRoot: REPO_CWD,
         created: true,
+        projectCreated: false,
         ...(options?.setupContinuation?.kind === "agent"
           ? {
               setupContinuation: {
@@ -1919,13 +1889,23 @@ describe("create_agent MCP tool", () => {
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   });
 
-  it("creates a worktree-isolated workspace", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-create-worktree-"));
+  it.each([
+    { placement: "unscoped", projectCreated: true },
+    { placement: "caller", projectCreated: false },
+    { placement: "explicit", projectCreated: false },
+    { placement: "separate", projectCreated: true },
+  ])("creates a worktree workspace with $placement project placement", async ({
+    placement,
+    projectCreated,
+  }) => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const tempDir = realpathSync.native(await mkdtemp(join(tmpdir(), "paseo-mcp-create-worktree-")));
     const repoDir = join(tempDir, "repo");
     const paseoHome = join(tempDir, ".paseo");
     const broadcasts: string[] = [];
     const setupContinuations: Array<"workspace" | "agent" | undefined> = [];
+    const projectRegistry = new FileBackedProjectRegistry(join(paseoHome, "projects.json"), logger);
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
 
     try {
       execFileSync("git", ["init", repoDir], { stdio: "pipe" });
@@ -1942,6 +1922,35 @@ describe("create_agent MCP tool", () => {
       execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
       execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
       execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+      const scoped = placement !== "unscoped";
+      const parent = scoped
+        ? await projectRegistry.getOrCreateActiveByRoot({
+            rootPath: tempDir,
+            kind: "non_git",
+            displayName: "Parent project",
+            timestamp: new Date().toISOString(),
+          })
+        : null;
+      if (parent) {
+        const caller = createManagedAgent({
+          id: "caller",
+          cwd: tempDir,
+          workspaceId: "caller-workspace",
+        });
+        spies.agentManager.getAgent.mockReturnValue(caller);
+        workspaceRecords.set(
+          "caller-workspace",
+          createPersistedWorkspaceRecord({
+            workspaceId: "caller-workspace",
+            projectId: parent.projectId,
+            cwd: tempDir,
+            kind: "directory",
+            displayName: "Parent project",
+            createdAt: parent.createdAt,
+            updatedAt: parent.updatedAt,
+          }),
+        );
+      }
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
         listWorktrees: vi.fn(async () => []),
@@ -1955,9 +1964,18 @@ describe("create_agent MCP tool", () => {
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({
           paseoHome,
+          projectRegistry,
+          workspaceRecords,
           broadcasts,
           setupContinuations,
         }),
+        callerAgentId: scoped ? "caller" : undefined,
+        projectRegistry,
+        workspaceRegistry: {
+          get: async (id) => workspaceRecords.get(id) ?? null,
+          list: async () => [...workspaceRecords.values()],
+          upsert: async (record) => void workspaceRecords.set(record.workspaceId, record),
+        },
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
@@ -1965,9 +1983,12 @@ describe("create_agent MCP tool", () => {
         logger,
       });
       const tool = registeredTool(server, "create_workspace");
-      const response = await tool.handler({
+      const response = await invokeToolWithParsedInput(tool, {
         isolation: "worktree",
         path: repoDir,
+        projectId: placement === "explicit" ? parent?.projectId : null,
+        ...(placement === "separate" ? { separateProject: true } : {}),
+        title: "PR preparation workspace",
         worktreeSlug: "tool-worktree",
         branchName: "feature/tool-worktree",
         baseBranch: "main",
@@ -1976,6 +1997,22 @@ describe("create_agent MCP tool", () => {
       expect(response.structuredContent.isolation).toBe("worktree");
       expect(response.structuredContent.cwd).toContain("tool-worktree");
       expect(response.structuredContent.workspaceId).toBe(broadcasts[0]);
+      const expectedRoot = parent && placement !== "separate" ? tempDir : repoDir;
+      const projects = await projectRegistry.list();
+      expect(projects.map((project) => project.rootPath).sort()).toEqual(
+        (placement === "separate" ? [tempDir, repoDir] : [expectedRoot]).sort(),
+      );
+      const owner = projects.find((project) => project.rootPath === expectedRoot);
+      expect(response.structuredContent).toMatchObject({
+        projectId: owner?.projectId,
+        projectCreated,
+        guidance: expect.stringContaining(projectCreated ? "new project" : "existing project"),
+      });
+      expect(workspaceRecords.get(broadcasts[0]!)).toMatchObject({
+        projectId: owner?.projectId,
+        mainRepoRoot: repoDir,
+        title: "PR preparation workspace",
+      });
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(setupContinuations).toEqual([undefined]);
       expect(broadcasts).toHaveLength(1);
@@ -2013,6 +2050,7 @@ describe("create_agent MCP tool", () => {
         }),
         repoRoot: REPO_CWD,
         created: true,
+        projectCreated: false,
       };
     };
     const server = await createAgentMcpServer({
@@ -2069,6 +2107,7 @@ describe("create_agent MCP tool", () => {
       }),
       repoRoot: REPO_CWD,
       created: true,
+      projectCreated: false,
     }));
     const server = await createAgentMcpServer({
       agentManager,
