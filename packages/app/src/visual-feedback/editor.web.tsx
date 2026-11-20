@@ -210,11 +210,12 @@ function EditorSession({
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(() =>
-      setViewport({ width: element.clientWidth, height: element.clientHeight }),
-    );
-    observer.observe(element);
-    setViewport({ width: element.clientWidth, height: element.clientHeight });
+    // Fit against the fractional size before scrollbars, so overflow cannot change the scale.
+    const observer = new ResizeObserver(([entry]) => {
+      const { inlineSize: width, blockSize: height } = entry.borderBoxSize[0];
+      setViewport({ width, height });
+    });
+    observer.observe(element, { box: "border-box" });
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
