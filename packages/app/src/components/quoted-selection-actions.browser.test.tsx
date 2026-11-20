@@ -122,6 +122,101 @@ function menuElement(testId: string): HTMLElement {
   return node;
 }
 
+function createTouch(target: EventTarget, clientX: number, clientY: number): Touch {
+  return new Touch({
+    identifier: 1,
+    target,
+    clientX,
+    clientY,
+    pageX: clientX,
+    pageY: clientY,
+  });
+}
+
+async function performTouchTap(
+  target: HTMLElement,
+  options: {
+    collapseSelectionDuringTap?: boolean;
+    moveDeltaY?: number;
+    emitTrailingClick?: boolean;
+  } = {},
+) {
+  const rect = target.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const startTouch = createTouch(target, cx, cy);
+  const endY = cy + (options.moveDeltaY ?? 0);
+  const endTouch = createTouch(target, cx, endY);
+  let touchStartDefaultPrevented = false;
+
+  await act(async () => {
+    target.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX: cx,
+        clientY: cy,
+      }),
+    );
+    const touchStartEvent = new TouchEvent("touchstart", {
+      bubbles: true,
+      cancelable: true,
+      touches: [startTouch],
+      targetTouches: [startTouch],
+      changedTouches: [startTouch],
+    });
+    target.dispatchEvent(touchStartEvent);
+    touchStartDefaultPrevented = touchStartEvent.defaultPrevented;
+
+    if (options.collapseSelectionDuringTap) {
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    }
+
+    if (options.moveDeltaY) {
+      target.dispatchEvent(
+        new TouchEvent("touchmove", {
+          bubbles: true,
+          cancelable: true,
+          touches: [endTouch],
+          targetTouches: [endTouch],
+          changedTouches: [endTouch],
+        }),
+      );
+    }
+
+    target.dispatchEvent(
+      new TouchEvent("touchend", {
+        bubbles: true,
+        cancelable: true,
+        touches: [],
+        targetTouches: [],
+        changedTouches: [endTouch],
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX: cx,
+        clientY: endY,
+      }),
+    );
+
+    if (options.emitTrailingClick) {
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    }
+  });
+
+  return { touchStartDefaultPrevented };
+}
+
 describe("explicit transcript selection actions", () => {
   it("quotes a native text selection without hover or right click", async () => {
     const onQuote = await mountTranscript();
@@ -220,6 +315,89 @@ describe("explicit transcript selection actions", () => {
     expect(onQuote).not.toHaveBeenCalled();
   });
 
+  it("quotes selection on mobile touch tap even when selection collapses mid-tap", async () => {
+    const onQuote = await mountTranscript();
+    await selectText(getElement('[data-testid="transcript-text"]'));
+    const quote = getElement('[data-testid="quoted-selection-action-quote"]');
+
+    const { touchStartDefaultPrevented } = await performTouchTap(quote, {
+      collapseSelectionDuringTap: true,
+      emitTrailingClick: true,
+    });
+
+    expect(touchStartDefaultPrevented).toBe(true);
+    expect(onQuote).toHaveBeenCalledExactlyOnceWith("Selected transcript text");
+    expect(container?.querySelector('[data-testid="quoted-selection-actions"]')).toBeNull();
+  });
+
+  it("opens Quick Ask on mobile touch tap even when selection collapses mid-tap", async () => {
+    await mountTranscript();
+    await selectText(getElement('[data-testid="transcript-text"]'));
+    const ask = getElement('[data-testid="quoted-selection-action-ask"]');
+
+    await performTouchTap(ask, {
+      collapseSelectionDuringTap: true,
+      emitTrailingClick: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(menuElement("quick-ask-popover").textContent).toContain("Selected transcript text");
+    });
+  });
+
+  it("cancels a dragged touch press and resyncs collapsed selection", async () => {
+    const onQuote = await mountTranscript();
+    await selectText(getElement('[data-testid="transcript-text"]'));
+    const quote = getElement('[data-testid="quoted-selection-action-quote"]');
+
+    await performTouchTap(quote, {
+      collapseSelectionDuringTap: true,
+      moveDeltaY: 30,
+    });
+
+    expect(onQuote).not.toHaveBeenCalled();
+    expect(container?.querySelector('[data-testid="quoted-selection-actions"]')).toBeNull();
+  });
+
+  it("quotes selection on pointer-only touch tap when selection collapses mid-press", async () => {
+    const onQuote = await mountTranscript();
+    await selectText(getElement('[data-testid="transcript-text"]'));
+    const quote = getElement('[data-testid="quoted-selection-action-quote"]');
+    const rect = quote.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    await act(async () => {
+      quote.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 7,
+          pointerType: "touch",
+          isPrimary: true,
+          clientX: cx,
+          clientY: cy,
+        }),
+      );
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+      window.dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 7,
+          pointerType: "touch",
+          isPrimary: true,
+          clientX: cx,
+          clientY: cy,
+        }),
+      );
+    });
+
+    expect(onQuote).toHaveBeenCalledExactlyOnceWith("Selected transcript text");
+  });
+
+  // Keep last: getIsElectron() permanently caches `true` once window.paseoDesktop is observed.
   it("hides persistent Quote and Ask in Electron while retaining the right-click menu", async () => {
     window.paseoDesktop = { platform: "win32" };
     const onQuote = await mountTranscript();

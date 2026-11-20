@@ -464,7 +464,12 @@ describe("file explorer selection and menus", () => {
 
   it("offers checkbox selection and an explicit menu without a modifier or secondary click", async () => {
     fixture.setExpandedPathsForWorkspace.mockClear();
+    expect(container.querySelector('[data-testid="files-selection-toolbar"]')).toBeNull();
+    expect(
+      requireElement("files-pane-header").contains(requireElement("files-toggle-selection")),
+    ).toBe(true);
     await act(async () => userEvent.click(requireElement("files-toggle-selection")));
+    expect(container.querySelector('[data-testid="files-selection-toolbar"]')).not.toBeNull();
     await act(async () => {
       await userEvent.click(siblingAction("archive", "select"));
       await userEvent.click(siblingAction("source.ts", "select"));
@@ -480,6 +485,28 @@ describe("file explorer selection and menus", () => {
     expect(fixture.copyText).toHaveBeenCalledExactlyOnceWith(
       "/workspace/archive\n/workspace/src/source.ts",
     );
+    await act(async () => userEvent.click(requireElement("files-finish-selection")));
+    expect(container.querySelector('[data-testid="files-selection-toolbar"]')).toBeNull();
+  });
+
+  it("keeps touch-sized explorer rows compact without rendering the selection bar by default", async () => {
+    try {
+      await act(async () => {
+        window.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }),
+        );
+      });
+      expect(container.querySelector('[data-testid="files-selection-toolbar"]')).toBeNull();
+      const rowHeight = row("src").parentElement!.getBoundingClientRect().height;
+      expect(rowHeight).toBeGreaterThanOrEqual(36);
+      expect(rowHeight).toBeLessThanOrEqual(44);
+    } finally {
+      await act(async () => {
+        window.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
+        );
+      });
+    }
   });
 
   it("retargets an unselected row's menu without retaining the previous batch", async () => {

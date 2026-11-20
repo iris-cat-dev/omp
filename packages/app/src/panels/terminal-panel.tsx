@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Terminal } from "lucide-react-native";
@@ -11,9 +10,8 @@ import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
-import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -78,19 +76,7 @@ function useTerminalPanelDescriptor(
 function TerminalPanel() {
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
-  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
-    workspaceDirectory: w.workspaceDirectory,
-    isGitCheckout: w.projectKind === "git",
-  }));
-  const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
-  const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
-  const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
-  const handleOpenFileExplorer = useCallback(() => {
-    if (!workspaceDirectory) {
-      return;
-    }
-    openCompactFileExplorer({ serverId, cwd: workspaceDirectory, isGit: isGitCheckout });
-  }, [isGitCheckout, openCompactFileExplorer, serverId, workspaceDirectory]);
+  const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId) || null;
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
@@ -108,7 +94,6 @@ function TerminalPanel() {
       terminalId={target.terminalId}
       isWorkspaceFocused={isWorkspaceFocused}
       isPaneFocused={isPaneFocused}
-      onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
     />
   );

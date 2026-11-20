@@ -64,6 +64,7 @@ export function FileActionsMenuButton({
       ref={ref}
       onPress={handlePress}
       onPressIn={stopPropagation}
+      hitSlop={touchSized ? 4 : undefined}
       style={[buttonStyles.button, !touchSized && buttonStyles.compactButton]}
       {...{
         onMouseDown: (event: { preventDefault(): void; stopPropagation(): void }) => {
@@ -84,8 +85,8 @@ export function FileActionsMenuButton({
 
 const buttonStyles = StyleSheet.create((theme) => ({
   button: {
-    minWidth: 44,
-    minHeight: 44,
+    minWidth: 36,
+    minHeight: 36,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.base,

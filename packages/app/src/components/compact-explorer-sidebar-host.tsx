@@ -1,13 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
-import { View } from "react-native";
-import { GestureDetector } from "react-native-gesture-handler";
 import {
   useActiveWorkspaceSelection,
   useSidebarActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { CompactExplorerSidebar } from "@/components/compact-explorer-sidebar";
-import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { selectIsCompactFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -16,36 +13,10 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
-import { isWeb } from "@/constants/platform";
 import {
   resolveCompactExplorerSidebarHostModel,
   type CompactExplorerSidebarHostModel,
 } from "@/components/compact-explorer-sidebar-host-state";
-
-interface CompactExplorerOpenGestureSurfaceProps {
-  children: ReactNode;
-  enabled: boolean;
-  onOpenExplorer: () => void;
-}
-
-const COMPACT_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
-
-function CompactExplorerOpenGestureSurface({
-  children,
-  enabled,
-  onOpenExplorer,
-}: CompactExplorerOpenGestureSurfaceProps) {
-  const explorerOpenGesture = useOpenFileExplorerGesture({
-    enabled,
-    onOpen: onOpenExplorer,
-  });
-
-  return (
-    <GestureDetector gesture={explorerOpenGesture} touchAction={COMPACT_WEB_GESTURE_TOUCH_ACTION}>
-      <View style={styles.fill}>{children}</View>
-    </GestureDetector>
-  );
-}
 
 function useActiveCompactExplorerSidebarModel(
   enabled: boolean,
@@ -109,36 +80,24 @@ interface CompactExplorerSidebarHostProps {
 
 export function CompactExplorerSidebarHost({ children, enabled }: CompactExplorerSidebarHostProps) {
   const model = useActiveCompactExplorerSidebarModel(enabled);
-  const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openTab = useWorkspaceLayoutStore((state) => state.openTab);
+  const modelWorkspaceId = model?.workspaceId ?? null;
   const openWorkspaceTabInFocusedPane = useCallback(
     (workspaceKey: string, target: WorkspaceTabTarget) => {
-      if (!model) return null;
+      if (!modelWorkspaceId) return null;
       return openTab({
         workspaceKey,
         target:
           target.workspaceId || target.kind === "setup"
             ? target
-            : { ...target, workspaceId: model.workspaceId },
+            : { ...target, workspaceId: modelWorkspaceId },
         intent: "reveal",
       });
     },
-    [openTab, model?.workspaceId],
+    [modelWorkspaceId, openTab],
   );
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
-
-  const handleOpenExplorer = useCallback(() => {
-    if (!model?.workspaceRoot) {
-      return;
-    }
-    openCompactFileExplorer({
-      workspaceId: model.workspaceId,
-      serverId: model.serverId,
-      cwd: model.workspaceRoot,
-      isGit: model.isGit,
-    });
-  }, [model, openCompactFileExplorer]);
 
   const handleOpenFile = useCallback(
     (location: WorkspaceFileLocation) => {
@@ -175,12 +134,7 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
 
   return (
     <>
-      <CompactExplorerOpenGestureSurface
-        enabled={enabled && Boolean(model?.workspaceRoot)}
-        onOpenExplorer={handleOpenExplorer}
-      >
-        {children}
-      </CompactExplorerOpenGestureSurface>
+      {children}
       {enabled && model ? (
         <CompactExplorerSidebar
           serverId={model.serverId}
@@ -194,9 +148,3 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
     </>
   );
 }
-
-const styles = {
-  fill: {
-    flex: 1,
-  },
-} as const;

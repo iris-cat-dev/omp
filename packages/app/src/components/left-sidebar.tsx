@@ -115,7 +115,6 @@ import {
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { usePanelStore } from "@/stores/panel-store";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
-import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { useIsMobilePanelPresented } from "@/mobile-panels/provider";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
@@ -1632,7 +1631,6 @@ function MobileSidebar({
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const isSessionsActive = pathname.includes("/sessions");
-  const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
   const dragGestureHostPresented = useIsMobilePanelPresented("agent-list");
 
   const handleViewMore = useCallback(() => {
@@ -1654,11 +1652,7 @@ function MobileSidebar({
   );
 
   return (
-    <MobilePanelOverlay
-      panel="agent-list"
-      closeGesture={closeGesture}
-      panelStyle={mobileSidebarInsetStyle}
-    >
+    <MobilePanelOverlay panel="agent-list" panelStyle={mobileSidebarInsetStyle}>
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
         <View style={styles.sidebarHeaderGroup}>
@@ -1723,7 +1717,6 @@ function MobileSidebar({
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
             onWorkspacePress={handleWorkspacePress}
-            parentGestureRef={closeGestureRef}
             dragGestureHostPresented={dragGestureHostPresented}
             listHeaderComponent={workspacesSectionHeaderElement}
           />

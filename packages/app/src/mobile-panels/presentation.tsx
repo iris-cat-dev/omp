@@ -1,6 +1,5 @@
 import { useMemo, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { GestureDetector, type GestureType } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
@@ -12,17 +11,11 @@ type OverlayPanel = Exclude<MobilePanelView, "agent">;
 
 interface MobilePanelOverlayProps {
   children: ReactNode;
-  closeGesture: GestureType;
   panel: OverlayPanel;
   panelStyle?: ComponentProps<typeof Animated.View>["style"];
 }
 
-export function MobilePanelOverlay({
-  children,
-  closeGesture,
-  panel,
-  panelStyle,
-}: MobilePanelOverlayProps) {
+export function MobilePanelOverlay({ children, panel, panelStyle }: MobilePanelOverlayProps) {
   const { position, windowWidth } = useMobilePanelsRuntime();
   const target = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
@@ -69,33 +62,29 @@ export function MobilePanelOverlay({
   }
 
   return (
-    <GestureDetector gesture={closeGesture} touchAction="pan-y">
-      {/* Fabric needs an always-mounted native host to attach the close handler while the
-          retained panel content is hidden. nativeID keeps that host registered. */}
-      <View
-        collapsable={false}
-        nativeID={`${panel}-gesture-host`}
-        pointerEvents={overlayPointerEvents}
-        style={styles.overlay}
-      >
-        <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
-          <Pressable
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            onPress={showMobileAgent}
-            pointerEvents={isOpen ? "auto" : "none"}
-            style={StyleSheet.absoluteFillObject}
-            testID={`${panel}-backdrop`}
-          >
-            <Animated.View pointerEvents="none" style={backdropStyle} />
-          </Pressable>
+    <View
+      collapsable={false}
+      nativeID={`${panel}-gesture-host`}
+      pointerEvents={overlayPointerEvents}
+      style={styles.overlay}
+    >
+      <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
+        <Pressable
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          onPress={showMobileAgent}
+          pointerEvents={isOpen ? "auto" : "none"}
+          style={StyleSheet.absoluteFillObject}
+          testID={`${panel}-backdrop`}
+        >
+          <Animated.View pointerEvents="none" style={backdropStyle} />
+        </Pressable>
 
-          <Animated.View pointerEvents={isOpen ? "auto" : "none"} style={combinedPanelStyle}>
-            <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
-          </Animated.View>
-        </View>
+        <Animated.View pointerEvents={isOpen ? "auto" : "none"} style={combinedPanelStyle}>
+          <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
+        </Animated.View>
       </View>
-    </GestureDetector>
+    </View>
   );
 }
 
