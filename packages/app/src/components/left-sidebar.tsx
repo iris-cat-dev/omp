@@ -50,6 +50,10 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
+import {
+  TOUCH_LIST_ROW_ACTION_SIZE,
+  TOUCH_LIST_ROW_HEIGHT,
+} from "@/components/ui/control-geometry";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
@@ -1955,7 +1959,12 @@ function WorkspacesSectionHeader() {
   );
 
   return (
-    <View style={styles.workspacesSectionHeader}>
+    <View
+      style={[
+        styles.workspacesSectionHeader,
+        isTouchInteraction && styles.workspacesSectionHeaderTouch,
+      ]}
+    >
       <Text style={styles.workspacesSectionTitle}>{t("sidebar.sections.workspaces")}</Text>
       <View
         style={[
@@ -2055,6 +2064,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },
+  workspacesSectionHeaderTouch: {
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingTop: theme.spacing[0.5],
+    paddingBottom: theme.spacing[0.5],
+  },
   workspacesSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
@@ -2076,14 +2090,14 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   workspacesHeaderIconButtonTouch: {
-    width: 36,
-    height: 36,
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
   },
   workspacesHeaderIconButtonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
   reorderDoneButton: {
-    minHeight: 36,
+    minHeight: TOUCH_LIST_ROW_ACTION_SIZE,
     paddingHorizontal: theme.spacing[3],
     alignItems: "center",
     justifyContent: "center",
@@ -2104,7 +2118,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileCloseButtonRow: {
     position: "absolute",
-    top: theme.spacing[3],
+    top: theme.spacing[2] + (TOUCH_LIST_ROW_HEIGHT - TOUCH_LIST_ROW_ACTION_SIZE) / 2,
     left: 0,
     right: 0,
     zIndex: 2,
@@ -2115,8 +2129,8 @@ const styles = StyleSheet.create((theme) => ({
     // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
     // This optical inset puts their painted right edges on the same sidebar rail.
     marginRight: theme.spacing[2] + 1.5,
-    width: 32,
-    height: 32,
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.lg,

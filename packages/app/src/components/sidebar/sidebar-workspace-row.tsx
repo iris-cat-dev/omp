@@ -22,7 +22,7 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { SIDEBAR_LIST_INSET } from "@/constants/layout";
 import { useShowPersistentActions, useTouchInteraction } from "@/hooks/use-fine-pointer";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { buttonControlHeight, TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import {
   SidebarWorkspaceContextMenu,
@@ -632,8 +632,8 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   workspaceRowTouch: {
-    minHeight: 44,
-    paddingVertical: theme.spacing[1],
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[0.5],
   },
   workspaceRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

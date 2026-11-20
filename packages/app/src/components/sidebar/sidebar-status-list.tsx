@@ -27,7 +27,7 @@ import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { buttonControlHeight, TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -1344,8 +1344,8 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   statusGroupRowTouch: {
-    minHeight: 44,
-    paddingVertical: theme.spacing[1],
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[0.5],
   },
   statusGroupRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
@@ -1399,8 +1399,8 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   workspaceRowTouch: {
-    minHeight: 44,
-    paddingVertical: theme.spacing[1],
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[0.5],
     justifyContent: "center",
   },
   workspaceRowHovered: {

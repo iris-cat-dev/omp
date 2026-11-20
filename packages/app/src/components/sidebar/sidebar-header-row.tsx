@@ -9,6 +9,7 @@ import {
 } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
+import { TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -152,8 +153,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2] + SIDEBAR_LIST_INSET,
   },
   buttonTouch: {
-    minHeight: 44,
-    paddingVertical: theme.spacing[2],
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[1.5],
   },
   buttonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

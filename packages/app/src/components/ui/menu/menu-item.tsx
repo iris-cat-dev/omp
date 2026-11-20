@@ -16,6 +16,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
+import { TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTouchInteraction } from "@/hooks/use-fine-pointer";
@@ -44,8 +45,8 @@ const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[50
  * `lineHeight` to the platform and the content outgrows `minHeight`, which then does nothing and
  * the rows drift taller again. On compact, `minHeight` leads instead and the label centres in it.
  */
-const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
-const MENU_ITEM_TOUCH_HEIGHT = 44;
+const MENU_ITEM_HEIGHT = { xs: TOUCH_LIST_ROW_HEIGHT, md: 28 } as const;
+const MENU_ITEM_TOUCH_HEIGHT = TOUCH_LIST_ROW_HEIGHT;
 const MENU_ITEM_LINE_HEIGHT = 18;
 
 /**
@@ -467,7 +468,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemTouch: {
     minHeight: MENU_ITEM_TOUCH_HEIGHT,
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1.5],
     paddingHorizontal: theme.spacing[3],
   },
   // The same box as `item`, filled the way a hovered row is filled, so the field sits in the
@@ -486,7 +487,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   fieldTouch: {
     minHeight: MENU_ITEM_TOUCH_HEIGHT,
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1.5],
     paddingHorizontal: theme.spacing[3],
   },
   fieldFocused: {

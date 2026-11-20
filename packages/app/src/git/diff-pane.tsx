@@ -43,6 +43,11 @@ import {
   type DiffTreeRow,
 } from "@/git/diff-tree";
 import { DiffFolderRow } from "@/git/diff-folder-row";
+import {
+  WORKSPACE_TREE_ROW_HEIGHT,
+  WORKSPACE_TREE_ROW_HEIGHT_TOUCH,
+} from "@/components/tree-primitives";
+import { useShowPersistentActions } from "@/hooks/use-fine-pointer";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { CommitsSection } from "@/git/commits-section/commits-section";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -1033,7 +1038,6 @@ const EMPTY_FOLDER_PATHS: string[] = [];
 const EMPTY_COLLAPSED_FOLDERS = new Set<string>();
 // Keep the Changes pane as the only scroll owner. Nesting these rows in a
 // ScrollView eagerly mounted every path in large worktrees.
-const DIFF_TREE_ROW_HEIGHT = 24;
 const STAGING_SECTION_ROW_HEIGHT = 35;
 const DIFF_TREE_INITIAL_NUM_TO_RENDER = 20;
 const DIFF_TREE_MAX_TO_RENDER_PER_BATCH = 40;
@@ -1163,7 +1167,6 @@ function renderChangedFilesTreeRow({
         depth={item.depth}
         collapsed={collapsedFolders.has(item.dirPath)}
         isSelected={selectedPath === item.dirPath}
-        compact
         additions={item.additions}
         deletions={item.deletions}
         onToggle={onToggleFolder}
@@ -1194,7 +1197,6 @@ function renderChangedFilesTreeRow({
       workspaceFileDragScope={mode.workspaceFileDragScope}
       bodyVisible={false}
       showsBodyState={false}
-      compact
       isSelected={selectedPath === item.file.path}
       depth={item.depth}
       showDir={false}
@@ -1219,14 +1221,6 @@ function diffTreeRowKey(item: DiffTreeRow): string {
   return item.kind === "folder" ? `folder-${item.dirPath}` : `file-${item.file.path}`;
 }
 
-function getDiffTreeItemLayout(_data: ArrayLike<DiffTreeRow> | null | undefined, index: number) {
-  return {
-    length: DIFF_TREE_ROW_HEIGHT,
-    offset: DIFF_TREE_ROW_HEIGHT * index,
-    index,
-  };
-}
-
 function ChangedFilesTree({
   files,
   mode,
@@ -1246,6 +1240,8 @@ function ChangedFilesTree({
   discardAction?: ChangeDiscardAction;
   testID?: string;
 }) {
+  const touchSized = useShowPersistentActions();
+  const rowHeight = touchSized ? WORKSPACE_TREE_ROW_HEIGHT_TOUCH : WORKSPACE_TREE_ROW_HEIGHT;
   const model = useChangedFilesTreeModel(files, collapsedFolderPaths);
   const interactions = useChangedFilesTreeInteractions({
     allFolderPaths: model.allFolderPaths,
@@ -1253,6 +1249,14 @@ function ChangedFilesTree({
     onSelectFile,
     onCollapsedFolderPathsChange,
   });
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<DiffTreeRow> | null | undefined, index: number) => ({
+      length: rowHeight,
+      offset: rowHeight * index,
+      index,
+    }),
+    [rowHeight],
+  );
   const renderItem = useCallback(
     ({ item }: { item: DiffTreeRow }) =>
       renderChangedFilesTreeRow({
@@ -1288,7 +1292,7 @@ function ChangedFilesTree({
       data={model.items}
       renderItem={renderItem}
       keyExtractor={diffTreeRowKey}
-      getItemLayout={getDiffTreeItemLayout}
+      getItemLayout={getItemLayout}
       initialNumToRender={DIFF_TREE_INITIAL_NUM_TO_RENDER}
       maxToRenderPerBatch={DIFF_TREE_MAX_TO_RENDER_PER_BATCH}
       updateCellsBatchingPeriod={16}
@@ -1412,6 +1416,8 @@ function StagingChangesTree({
     next.push(UNSTAGED_SECTION_ROW, ...unstagedModel.items);
     return next;
   }, [stagedFiles.length, stagedModel.items, unstagedModel.items]);
+  const touchSized = useShowPersistentActions();
+  const rowHeight = touchSized ? WORKSPACE_TREE_ROW_HEIGHT_TOUCH : WORKSPACE_TREE_ROW_HEIGHT;
   const unstagedSectionIndex = (stagedFiles.length > 0 ? 1 : 0) + stagedModel.items.length;
   const getItemLayout = useCallback(
     (data: ArrayLike<StagingTreeRow> | null | undefined, index: number) => {
@@ -1419,15 +1425,12 @@ function StagingChangesTree({
       const unstagedSectionRowsBefore = index > unstagedSectionIndex ? 1 : 0;
       const sectionRowsBefore = stagedSectionRowsBefore + unstagedSectionRowsBefore;
       return {
-        length:
-          data?.[index]?.kind === "section" ? STAGING_SECTION_ROW_HEIGHT : DIFF_TREE_ROW_HEIGHT,
-        offset:
-          DIFF_TREE_ROW_HEIGHT * index +
-          (STAGING_SECTION_ROW_HEIGHT - DIFF_TREE_ROW_HEIGHT) * sectionRowsBefore,
+        length: data?.[index]?.kind === "section" ? STAGING_SECTION_ROW_HEIGHT : rowHeight,
+        offset: rowHeight * index + (STAGING_SECTION_ROW_HEIGHT - rowHeight) * sectionRowsBefore,
         index,
       };
     },
-    [stagedFiles.length, unstagedSectionIndex],
+    [rowHeight, stagedFiles.length, unstagedSectionIndex],
   );
   const renderItem = useCallback(
     ({ item, index }: { item: StagingTreeRow; index: number }) => {

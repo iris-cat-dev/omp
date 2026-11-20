@@ -6,6 +6,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SIDEBAR_LIST_INSET } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useTouchInteraction } from "@/hooks/use-fine-pointer";
+import { TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { sidebarWorkspaceRowStyles } from "@/components/sidebar/sidebar-workspace-row-content";
 import type { Theme } from "@/styles/theme";
 
@@ -102,7 +103,8 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   rowTouch: {
-    minHeight: 44,
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[1.5],
   },
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

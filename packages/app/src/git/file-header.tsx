@@ -18,6 +18,7 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useFileHeaderInteraction } from "@/git/file-header-interaction";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
+import { useShowPersistentActions } from "@/hooks/use-fine-pointer";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
@@ -26,7 +27,6 @@ export interface FileHeaderProps {
   bodyVisible: boolean;
   showsBodyState?: boolean;
   isSelected?: boolean;
-  compact?: boolean;
   depth?: number;
   showDir?: boolean;
   interactive?: boolean;
@@ -187,7 +187,6 @@ export const FileHeader = memo(function FileHeader({
   bodyVisible,
   showsBodyState = true,
   isSelected = false,
-  compact = false,
   depth = 0,
   showDir = true,
   interactive = true,
@@ -198,6 +197,7 @@ export const FileHeader = memo(function FileHeader({
   testID,
   ...actions
 }: FileHeaderProps) {
+  const touchSized = useShowPersistentActions();
   const hover = useFileHeaderHover(interactive);
   const dragSourceRef = useWorkspaceFileDragSource({
     enabled: interactive,
@@ -221,7 +221,7 @@ export const FileHeader = memo(function FileHeader({
     ({ pressed }: PressableStateCallbackType) => [
       styles.header,
       !showsBodyState && workspaceTreeRowStyles.row,
-      !showsBodyState && compact && styles.compactTreeRow,
+      !showsBodyState && touchSized && workspaceTreeRowStyles.rowTouch,
       showsBodyState && styles.documentHeader,
       depth > 0
         ? inlineUnistylesStyle({
@@ -235,7 +235,7 @@ export const FileHeader = memo(function FileHeader({
         isSelected,
       }),
     ],
-    [compact, depth, hover.isHovered, isSelected, showsBodyState],
+    [depth, hover.isHovered, isSelected, showsBodyState, touchSized],
   );
   const accessibilityState = useMemo(
     () => fileHeaderAccessibilityState({ showsBodyState, bodyVisible, isSelected }),
@@ -345,9 +345,6 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 2,
     elevation: 2,
     userSelect: "none",
-  },
-  compactTreeRow: {
-    paddingVertical: 2,
   },
   documentHeader: {
     height: 28,

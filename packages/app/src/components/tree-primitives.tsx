@@ -1,6 +1,7 @@
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
+import { CONTROL_HEIGHTS, TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { SPACING, type Theme } from "@/styles/theme";
 
 // Shared presentation primitives for the app's directory trees. Both the Files
@@ -9,7 +10,10 @@ import { SPACING, type Theme } from "@/styles/theme";
 // indentation, density, name emphasis, and chevron. Keep those here so the two trees can't
 // drift apart.
 export const TREE_INDENT_PER_LEVEL = 12;
-export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
+export const WORKSPACE_TREE_ROW_HEIGHT = CONTROL_HEIGHTS.tight;
+export const WORKSPACE_TREE_ROW_HEIGHT_TOUCH = TOUCH_LIST_ROW_HEIGHT;
+export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1];
+export const WORKSPACE_FILE_ROW_VERTICAL_PADDING_TOUCH = SPACING[0.5];
 export const WORKSPACE_TREE_ICON_SIZE = 16;
 export const WORKSPACE_TREE_LOADING_ICON_SIZE = 14;
 export const WORKSPACE_TREE_ICON_LABEL_GAP = SPACING[2];
@@ -45,11 +49,16 @@ export function TreeChevron({ expanded }: { expanded: boolean }) {
 
 export const workspaceTreeRowStyles = StyleSheet.create((theme: Theme) => ({
   row: {
+    minHeight: WORKSPACE_TREE_ROW_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
     paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
+  },
+  rowTouch: {
+    minHeight: WORKSPACE_TREE_ROW_HEIGHT_TOUCH,
+    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING_TOUCH,
   },
   active: {
     backgroundColor: theme.colors.surfaceSidebarHover,

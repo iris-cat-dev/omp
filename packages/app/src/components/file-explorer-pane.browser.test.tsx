@@ -15,6 +15,7 @@ import { EXPLORER_ENTRY_DRAG_MIME } from "@/file-explorer/entry-drag";
 import { WORKSPACE_FILE_DRAG_MIME } from "@/attachments/workspace-file-drag";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { RetainedPanelActivity } from "./retained-panel";
+import { WORKSPACE_TREE_ROW_HEIGHT_TOUCH } from "./tree-primitives";
 
 const fixture = vi.hoisted(() => ({
   directories: new Map<string, ExplorerDirectory>(),
@@ -22,7 +23,7 @@ const fixture = vi.hoisted(() => ({
     string,
     {
       fileExplorer: Map<string, AgentFileExplorerState>;
-      serverInfo: { features: { fsEntryMove: boolean } };
+      serverInfo: { features: { fsEntryMove: boolean; fsEntryOps?: boolean } };
     }
   >,
   expandedPathsByWorkspace: {} as Record<string, string[]>,
@@ -228,7 +229,7 @@ beforeEach(async () => {
   })!;
   fixture.sessions = {
     "server-1": {
-      serverInfo: { features: { fsEntryMove: true } },
+      serverInfo: { features: { fsEntryMove: true, fsEntryOps: true } },
       fileExplorer: new Map([
         [
           stateKey,
@@ -417,6 +418,7 @@ describe("file explorer selection and menus", () => {
     for (const name of ["alpha.txt", "beta.txt", "gamma.txt"]) {
       expect(row(name).getAttribute("aria-selected")).toBe("true");
     }
+    await act(async () => userEvent.hover(row("gamma.txt")));
     await act(async () => userEvent.click(siblingAction("gamma.txt", "more")));
     await act(async () =>
       userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
@@ -432,6 +434,7 @@ describe("file explorer selection and menus", () => {
     const stateKey = buildWorkspaceExplorerStateKey({ workspaceId: "workspace-1" })!;
     fixture.expandedPathsByWorkspace[stateKey] = ["."];
     await renderPane();
+    await act(async () => userEvent.hover(row("archive")));
     await act(async () => userEvent.click(siblingAction("archive", "more")));
     await act(async () =>
       userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
@@ -489,6 +492,39 @@ describe("file explorer selection and menus", () => {
     expect(container.querySelector('[data-testid="files-selection-toolbar"]')).toBeNull();
   });
 
+  it("reveals the more-actions button only on hover on desktop and keeps row height stable", async () => {
+    const more = siblingAction("root.txt", "more");
+    const rowContainer = row("root.txt").parentElement!;
+    const initialHeight = rowContainer.getBoundingClientRect().height;
+    expect(initialHeight).toBe(28);
+    expect(getComputedStyle(more).opacity).toBe("0");
+    expect(getComputedStyle(more).pointerEvents).toBe("none");
+
+    await act(async () => userEvent.hover(row("root.txt")));
+    expect(getComputedStyle(more).opacity).toBe("1");
+    expect(getComputedStyle(more).pointerEvents).toBe("auto");
+    expect(rowContainer.getBoundingClientRect().height).toBe(initialHeight);
+
+    await act(async () => userEvent.click(more));
+    await act(async () => {
+      rowContainer.dispatchEvent(
+        new PointerEvent("pointerleave", { bubbles: false, pointerType: "mouse" }),
+      );
+    });
+    expect(getComputedStyle(more).opacity).toBe("1");
+
+    await act(async () =>
+      userEvent.click(document.querySelector<HTMLElement>('[data-testid$="-copy-relative-path"]')!),
+    );
+    await act(async () => userEvent.hover(row("archive")));
+    expect(getComputedStyle(more).opacity).toBe("0");
+    expect(getComputedStyle(more).pointerEvents).toBe("none");
+
+    await act(async () => userEvent.click(requireElement("files-new-file")));
+    const draftRow = requireElement("file-explorer-name-input").parentElement!.parentElement!;
+    expect(draftRow.getBoundingClientRect().height).toBe(initialHeight);
+  });
+
   it("keeps touch-sized explorer rows compact without rendering the selection bar by default", async () => {
     try {
       await act(async () => {
@@ -498,8 +534,10 @@ describe("file explorer selection and menus", () => {
       });
       expect(container.querySelector('[data-testid="files-selection-toolbar"]')).toBeNull();
       const rowHeight = row("src").parentElement!.getBoundingClientRect().height;
-      expect(rowHeight).toBeGreaterThanOrEqual(36);
-      expect(rowHeight).toBeLessThanOrEqual(44);
+      expect(rowHeight).toBe(WORKSPACE_TREE_ROW_HEIGHT_TOUCH);
+      const more = siblingAction("root.txt", "more");
+      expect(getComputedStyle(more).opacity).toBe("1");
+      expect(getComputedStyle(more).pointerEvents).toBe("auto");
     } finally {
       await act(async () => {
         window.dispatchEvent(
@@ -513,8 +551,9 @@ describe("file explorer selection and menus", () => {
     await act(async () => {
       await userEvent.click(row("source.ts"), { modifiers: ["Meta"] });
       await userEvent.click(row("other.ts"), { modifiers: ["Meta"] });
-      await userEvent.click(siblingAction("root.txt", "more"));
     });
+    await act(async () => userEvent.hover(row("root.txt")));
+    await act(async () => userEvent.click(siblingAction("root.txt", "more")));
     expect(row("source.ts").getAttribute("aria-selected")).toBe("false");
     expect(row("other.ts").getAttribute("aria-selected")).toBe("false");
     expect(row("root.txt").getAttribute("aria-selected")).toBe("true");

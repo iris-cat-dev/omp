@@ -50,6 +50,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
@@ -755,8 +756,8 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -7,
   },
   triggerTouch: {
-    width: 36,
-    height: 36,
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
     padding: 0,
     marginLeft: 0,
     marginRight: 0,

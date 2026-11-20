@@ -16,6 +16,11 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuItem, MenuRoot, MenuSubTrigger, MenuSurface, MenuTrigger } from "@/components/ui/menu";
+import {
+  TOUCH_LIST_ROW_ACTION_SIZE,
+  TOUCH_LIST_ROW_HEIGHT,
+} from "@/components/ui/control-geometry";
+import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarWorkspaceRowContent } from "@/components/sidebar/sidebar-workspace-row-content";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -75,18 +80,21 @@ const mounted: { root: Root; container: HTMLDivElement }[] = [];
 const VIEWPORT_STYLE = { flexDirection: "row", width: 2048, height: 1024 } as const;
 const SIDEBAR_STYLE = { width: 308, height: 600, position: "relative" } as const;
 const TOUCH_ROW_STYLE = {
-  minHeight: 44,
-  paddingVertical: 4,
+  minHeight: TOUCH_LIST_ROW_HEIGHT,
+  paddingVertical: 2,
   paddingHorizontal: 12,
   justifyContent: "center",
 } as const;
 const KEBAB_STYLE = {
-  width: 36,
-  height: 36,
+  width: TOUCH_LIST_ROW_ACTION_SIZE,
+  height: TOUCH_LIST_ROW_ACTION_SIZE,
   alignItems: "center",
   justifyContent: "center",
 } as const;
-const ICON_TRIGGER_STYLE = { width: 36, height: 36 } as const;
+const ICON_TRIGGER_STYLE = {
+  width: TOUCH_LIST_ROW_ACTION_SIZE,
+  height: TOUCH_LIST_ROW_ACTION_SIZE,
+} as const;
 const NESTED_CONTROL_DATASET = { sidebarNestedControl: "true" };
 const NOOP = () => {};
 const WORKSPACE_KEBAB_ACCESSORY = (
@@ -203,7 +211,7 @@ function SwitchHarness({ workspace }: { workspace: SidebarWorkspaceEntry }) {
 }
 
 describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", () => {
-  it("activates 44px rows, outside-positioned resize grip, in-place menu drill-down, long-press context menu, and tooltip suppression on touchMode='on'", async () => {
+  it("activates unified compact touch rows, outside-positioned resize grip, in-place menu drill-down, long-press context menu, and tooltip suppression on touchMode='on'", async () => {
     useSidebarViewStore.setState({ touchMode: "on" });
     const workspace = makeWorkspace();
     let longPressActionPicked = false;
@@ -241,6 +249,14 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
               onPress={NOOP}
               testID="sidebar-header-row"
             />
+            <SidebarHeaderRow
+              label="新建对话"
+              icon={Home}
+              variant="compact"
+              onPress={NOOP}
+              testID="sidebar-cjk-header-row"
+            />
+            <SidebarGroupToggleRow expanded={false} onPress={NOOP} testID="sidebar-toggle-row" />
             <ContextMenu open={contextOpen} onOpenChange={setContextOpen}>
               <ContextMenuTrigger
                 enableTouchLongPress
@@ -301,9 +317,15 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
     // 1. Viewport is truly high-res iPad (2048x1024), NOT compact breakpoint.
     expect(window.innerWidth).toBe(2048);
 
-    // 2. Touch header row & workspace row meet >= 44px touch target height, and kebab does not overlap resize handle.
+    // 2. Touch header row & workspace row meet the unified compact touch row height, and kebab does not overlap resize handle.
     const headerRect = container
       .querySelector<HTMLElement>('[data-testid="sidebar-header-row"]')!
+      .getBoundingClientRect();
+    const cjkHeaderRect = container
+      .querySelector<HTMLElement>('[data-testid="sidebar-cjk-header-row"]')!
+      .getBoundingClientRect();
+    const toggleRowRect = container
+      .querySelector<HTMLElement>('[data-testid="sidebar-toggle-row"]')!
       .getBoundingClientRect();
     const rowRect = container
       .querySelector<HTMLElement>('[data-testid="workspace-row"]')!
@@ -321,14 +343,16 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
       .querySelector<HTMLElement>('[data-testid="sidebar-resize-handle"]')!
       .getBoundingClientRect();
 
-    expect(headerRect.height).toBeGreaterThanOrEqual(44);
-    expect(rowRect.height).toBeGreaterThanOrEqual(44);
-    expect(kebabRect.width).toBe(36);
-    expect(kebabRect.height).toBe(36);
+    expect(headerRect.height).toBe(TOUCH_LIST_ROW_HEIGHT);
+    expect(cjkHeaderRect.height).toBe(TOUCH_LIST_ROW_HEIGHT);
+    expect(toggleRowRect.height).toBe(TOUCH_LIST_ROW_HEIGHT);
+    expect(rowRect.height).toBe(TOUCH_LIST_ROW_HEIGHT);
+    expect(kebabRect.width).toBe(TOUCH_LIST_ROW_ACTION_SIZE);
+    expect(kebabRect.height).toBe(TOUCH_LIST_ROW_ACTION_SIZE);
     // Timestamp stays visible beside the kebab without overlapping it.
     expect(timestampRect.right).toBeLessThanOrEqual(kebabRect.left);
     // Web touch resize handle sits mostly outside the sidebar right edge (overlaps sidebar by <= 4px)
-    // and never overlaps the 36x36 kebab button inside the sidebar.
+    // and never overlaps the touch kebab button inside the sidebar.
     expect(sidebarRect.right - handleRect.left).toBeLessThanOrEqual(5);
     expect(handleRect.left).toBeGreaterThanOrEqual(kebabRect.right);
 
@@ -344,7 +368,7 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
     });
     expect(document.querySelector('[data-testid="search-tooltip-content"]')).toBeNull();
 
-    // 4. Anchored popover submenu drills in place with a back button and 44px menu items.
+    // 4. Anchored popover submenu drills in place with a back button and touch-sized menu items.
     const prefsTrigger = container.querySelector<HTMLElement>('[data-testid="prefs-trigger"]')!;
     act(() => {
       prefsTrigger.click();
@@ -353,7 +377,7 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
       .poll(() => document.querySelector('[data-testid="prefs-sub-touch"]'))
       .not.toBeNull();
     const subTrigger = document.querySelector<HTMLElement>('[data-testid="prefs-sub-touch"]')!;
-    expect(subTrigger.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(subTrigger.getBoundingClientRect().height).toBe(TOUCH_LIST_ROW_HEIGHT);
     act(() => {
       subTrigger.click();
     });
@@ -388,8 +412,8 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
       .poll(() => document.querySelector('[data-testid="context-rename"]'))
       .not.toBeNull();
     const renameItem = document.querySelector<HTMLElement>('[data-testid="context-rename"]')!;
-    expect(renameItem.offsetHeight).toBeGreaterThanOrEqual(44);
-    await expect.poll(() => renameItem.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(renameItem.offsetHeight).toBe(TOUCH_LIST_ROW_HEIGHT);
+    await expect.poll(() => renameItem.getBoundingClientRect().height).toBe(TOUCH_LIST_ROW_HEIGHT);
     act(() => {
       renameItem.click();
     });
@@ -404,8 +428,8 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
     const header = container.querySelector<HTMLElement>('[data-testid="compact-header-row"]')!;
     const getHandle = () => container.querySelector<HTMLElement>('[data-testid="resize-handle"]')!;
 
-    // Desktop mouse default at 2048x1024: compact row (< 44px) and hairline desktop handle (width 10).
-    expect(header.getBoundingClientRect().height).toBeLessThan(44);
+    // Desktop mouse default at 2048x1024: compact row (< TOUCH_LIST_ROW_HEIGHT) and hairline desktop handle (width 10).
+    expect(header.getBoundingClientRect().height).toBeLessThan(TOUCH_LIST_ROW_HEIGHT);
     expect(getHandle().getBoundingClientRect().width).toBe(10);
 
     // Runtime touch pointerdown switches the high-res viewport into touch mode automatically.
@@ -414,13 +438,13 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
         new PointerEvent("pointerdown", { pointerType: "touch", bubbles: true }),
       );
     });
-    await expect.poll(() => header.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => header.getBoundingClientRect().height).toBe(TOUCH_LIST_ROW_HEIGHT);
     expect(getHandle().getBoundingClientRect().width).toBe(24);
 
-    // Unselected vs selected touch workspace row keeps identical height (no layout jump when 36x36 kebab appears).
+    // Unselected vs selected touch workspace row keeps identical height (no layout jump when the touch kebab appears).
     const rowShell = container.querySelector<HTMLElement>('[data-testid="workspace-row-shell"]')!;
     const unselectedHeight = rowShell.getBoundingClientRect().height;
-    expect(unselectedHeight).toBeGreaterThanOrEqual(44);
+    expect(unselectedHeight).toBe(TOUCH_LIST_ROW_HEIGHT);
     expect(container.querySelector('[data-testid="selected-kebab"]')).toBeNull();
 
     act(() => {
@@ -437,7 +461,9 @@ describe("high-res iPad touch sidebar geometry and interactions (2048x1024)", ()
         new PointerEvent("pointerdown", { pointerType: "mouse", bubbles: true }),
       );
     });
-    await expect.poll(() => header.getBoundingClientRect().height).toBeLessThan(44);
+    await expect
+      .poll(() => header.getBoundingClientRect().height)
+      .toBeLessThan(TOUCH_LIST_ROW_HEIGHT);
     expect(getHandle().getBoundingClientRect().width).toBe(10);
   });
 });

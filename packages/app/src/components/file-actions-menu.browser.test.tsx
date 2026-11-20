@@ -5,8 +5,23 @@ import { userEvent } from "vitest/browser";
 import { afterEach, expect, it, vi } from "vitest";
 import { FileActionsMenuButton } from "./file-actions-menu";
 
-const menu = vi.hoisted(() => ({ setAnchorRect: vi.fn(), setOpen: vi.fn() }));
+const iconRender = vi.hoisted(() => ({ moreVerticalCount: 0, moreHorizontalCount: 0 }));
+const menu = vi.hoisted(() => ({ open: false, setAnchorRect: vi.fn(), setOpen: vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("lucide-react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react-native")>();
+  return {
+    ...actual,
+    MoreVertical: (props: Record<string, unknown>) => {
+      iconRender.moreVerticalCount += 1;
+      return React.createElement("span", { "data-icon": "MoreVertical", ...props });
+    },
+    MoreHorizontal: (props: Record<string, unknown>) => {
+      iconRender.moreHorizontalCount += 1;
+      return React.createElement("span", { "data-icon": "MoreHorizontal", ...props });
+    },
+  };
+});
 vi.mock("@/components/ui/context-menu", () => ({
   useContextMenu: () => menu,
   ContextMenuContent: () => null,
@@ -15,6 +30,9 @@ vi.mock("@/components/ui/context-menu", () => ({
 }));
 
 afterEach(() => {
+  iconRender.moreVerticalCount = 0;
+  iconRender.moreHorizontalCount = 0;
+  menu.open = false;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -40,6 +58,8 @@ it("opens the selected row's existing menu without pressing or dragging the row"
       ),
     );
     const button = container.querySelector<HTMLElement>('[data-testid="file-more"]')!;
+    expect(button.querySelector('[data-icon="MoreVertical"]')).not.toBeNull();
+    expect(iconRender.moreHorizontalCount).toBe(0);
     await userEvent.click(button);
     await expect.poll(() => menu.setOpen.mock.calls.length).toBe(1);
     expect(menu.setOpen).toHaveBeenCalledWith(true);
@@ -86,6 +106,31 @@ it("keeps an existing browser text selection when opening its visible actions", 
     expect(selection.toString()).toBe("Selected file lines");
   } finally {
     window.getSelection()?.removeAllRanges();
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
+it("hides the desktop trigger when visible is false unless the menu is open", async () => {
+  vi.stubGlobal("React", React);
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(<FileActionsMenuButton visible={false} testID="hidden-more" />),
+    );
+    const button = container.querySelector<HTMLElement>('[data-testid="hidden-more"]')!;
+    expect(getComputedStyle(button).opacity).toBe("0");
+    expect(getComputedStyle(button).pointerEvents).toBe("none");
+
+    menu.open = true;
+    await act(async () =>
+      root.render(<FileActionsMenuButton visible={false} testID="hidden-more" />),
+    );
+    expect(getComputedStyle(button).opacity).toBe("1");
+    expect(getComputedStyle(button).pointerEvents).toBe("auto");
+  } finally {
     await act(async () => root.unmount());
     container.remove();
   }

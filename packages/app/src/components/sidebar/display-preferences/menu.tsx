@@ -35,6 +35,7 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb } from "@/constants/platform";
 import { useTouchInteraction } from "@/hooks/use-fine-pointer";
@@ -736,8 +737,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   triggerTouch: {
-    width: 36,
-    height: 36,
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

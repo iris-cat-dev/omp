@@ -40,7 +40,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import {
+  buttonControlHeight,
+  TOUCH_LIST_ROW_ACTION_SIZE,
+  TOUCH_LIST_ROW_HEIGHT,
+} from "@/components/ui/control-geometry";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -3257,8 +3261,8 @@ const styles = StyleSheet.create((theme) => {
       userSelect: "none",
     },
     agentDraftRowTouch: {
-      minHeight: 44,
-      paddingVertical: theme.spacing[1],
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
     },
     agentDraftRowMain: {
       flex: 1,
@@ -3290,8 +3294,8 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
     },
     agentDraftDeleteSlotTouch: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
     },
     agentDraftDeleteButton: {
       width: 20,
@@ -3301,8 +3305,8 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: theme.borderRadius.md,
     },
     agentDraftDeleteButtonTouch: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
     },
     agentDraftDeleteHidden: {
       opacity: 0,
@@ -3321,8 +3325,8 @@ const styles = StyleSheet.create((theme) => {
       userSelect: "none",
     },
     projectRowTouch: {
-      minHeight: 44,
-      paddingVertical: theme.spacing[1],
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
     },
     projectRowPressTarget: {
       flex: 1,
@@ -3390,8 +3394,8 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
     },
     projectIconActionButtonTouch: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
     },
     projectIconActionButtonHovered: {
       backgroundColor: theme.colors.surfaceSidebarHover,
@@ -3421,8 +3425,8 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
     },
     projectKebabButtonTouch: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
     },
     projectKebabButtonHidden: {
       opacity: 0,
@@ -3438,8 +3442,8 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
     },
     projectTrailingControlSlotTouch: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
     },
     projectActionTooltipRow: {
       flexDirection: "row",
@@ -3470,19 +3474,19 @@ const styles = StyleSheet.create((theme) => {
       userSelect: "none",
     },
     workspaceRowTouch: {
-      minHeight: 44,
-      paddingVertical: theme.spacing[1],
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
     },
     touchDragHandleSlot: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,
     },
     touchDragHandle: {
-      width: 36,
-      height: 36,
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
       borderRadius: theme.borderRadius.md,
       alignItems: "center",
       justifyContent: "center",

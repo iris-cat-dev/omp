@@ -52,6 +52,7 @@ import {
   WORKSPACE_TREE_ICON_SIZE,
   WORKSPACE_TREE_LOADING_ICON_SIZE,
 } from "@/components/tree-primitives";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   PaneContentToolbar,
@@ -291,6 +292,7 @@ function EntryNameInputRow({
     <View
       style={[
         workspaceTreeRowStyles.row,
+        touchSized && workspaceTreeRowStyles.rowTouch,
         touchSized && styles.entryRowTouch,
         { paddingLeft: treeRowPaddingLeft(depth) },
       ]}
@@ -555,6 +557,59 @@ function TreeRowMenu({
   );
 }
 
+function useTreeRowRevealState(touchSized: boolean) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const handlePointerEnter = useCallback(
+    (event: unknown) => {
+      if (!touchSized && !contextMenuOpen && isMousePointerEvent(event)) {
+        setIsHovered(true);
+      }
+    },
+    [contextMenuOpen, touchSized],
+  );
+  const handlePointerLeave = useCallback((event: unknown) => {
+    if (isMousePointerEvent(event)) {
+      setIsHovered(false);
+    }
+  }, []);
+  const handleFocus = useCallback((event: { target?: unknown }) => {
+    if (isWeb) {
+      const target = event.target as HTMLElement | null;
+      if (target && typeof target.matches === "function" && !target.matches(":focus-visible")) {
+        return;
+      }
+    }
+    setIsFocused(true);
+  }, []);
+  const handleBlur = useCallback((event: { currentTarget: unknown; relatedTarget?: unknown }) => {
+    if (isWeb) {
+      const currentTarget = event.currentTarget as HTMLElement | null;
+      const nextTarget = (event.relatedTarget as Node | null) ?? document.activeElement;
+      if (currentTarget && nextTarget && currentTarget.contains(nextTarget)) {
+        return;
+      }
+    }
+    setIsFocused(false);
+  }, []);
+  const handleContextMenuOpenChange = useCallback((open: boolean) => {
+    setContextMenuOpen(open);
+    if (open) setIsHovered(false);
+  }, []);
+
+  return {
+    isHovered,
+    contextMenuOpen,
+    actionsVisible: touchSized || isHovered || isFocused || contextMenuOpen,
+    handlePointerEnter,
+    handlePointerLeave,
+    handleFocus,
+    handleBlur,
+    handleContextMenuOpenChange,
+  };
+}
+
 function TreeRowItem({
   serverId,
   workspaceId,
@@ -585,18 +640,8 @@ function TreeRowItem({
   testID,
 }: TreeRowItemProps) {
   const touchSized = useShowPersistentActions();
-  const [isHovered, setIsHovered] = useState(false);
+  const reveal = useTreeRowRevealState(touchSized);
   const [isPressed, setIsPressed] = useState(false);
-  const showNameHover = useCallback((event: unknown) => {
-    if (isMousePointerEvent(event)) {
-      setIsHovered(true);
-    }
-  }, []);
-  const hideNameHover = useCallback((event: unknown) => {
-    if (isMousePointerEvent(event)) {
-      setIsHovered(false);
-    }
-  }, []);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
   const isDirectory = entry.kind === "directory";
@@ -687,19 +732,23 @@ function TreeRowItem({
 
   const rowStyle = [
     workspaceTreeRowStyles.row,
+    touchSized && workspaceTreeRowStyles.rowTouch,
     touchSized && styles.entryRowTouch,
     { paddingLeft: treeRowPaddingLeft(depth) },
-    (isHovered || isPressed || isSelected) && workspaceTreeRowStyles.active,
+    (reveal.isHovered || isPressed || isSelected || reveal.contextMenuOpen) &&
+      workspaceTreeRowStyles.active,
     isDropTarget && styles.entryDropTarget,
   ];
 
   return (
-    <ContextMenu>
+    <ContextMenu open={reveal.contextMenuOpen} onOpenChange={reveal.handleContextMenuOpenChange}>
       <View
         style={rowStyle}
         onLayout={onLayout}
-        onPointerEnter={showNameHover}
-        onPointerLeave={hideNameHover}
+        onPointerEnter={reveal.handlePointerEnter}
+        onPointerLeave={reveal.handlePointerLeave}
+        onFocus={reveal.handleFocus}
+        onBlur={reveal.handleBlur}
         dataSet={isWeb && blocksRootDrop ? FILE_EXPLORER_ROOT_DROP_BLOCKED_DATA_SET : undefined}
       >
         <TreeRowSelectionCheckbox
@@ -735,7 +784,7 @@ function TreeRowItem({
               style={[
                 styles.entryName,
                 workspaceTreeRowStyles.name,
-                isHovered && workspaceTreeRowStyles.nameHovered,
+                (reveal.isHovered || reveal.contextMenuOpen) && workspaceTreeRowStyles.nameHovered,
               ]}
               numberOfLines={1}
               testID={testID ? `${testID}-name` : undefined}
@@ -748,6 +797,7 @@ function TreeRowItem({
         {!touchControls.onMoveToDirectory ? (
           <FileActionsMenuButton
             onSelect={handleSelect}
+            visible={reveal.actionsVisible}
             testID={testID ? `${testID}-more` : undefined}
           />
         ) : null}
@@ -2981,8 +3031,8 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
   },
   rowAction: {
-    minWidth: 36,
-    minHeight: 36,
+    minWidth: TOUCH_LIST_ROW_ACTION_SIZE,
+    minHeight: TOUCH_LIST_ROW_ACTION_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: theme.spacing[1],
@@ -2995,8 +3045,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 20,
   },
   entryRowTouch: {
-    minHeight: 40,
-    paddingVertical: 2,
     paddingRight: 10,
   },
   disabledAction: {
@@ -3163,6 +3211,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+    lineHeight: 20,
     paddingVertical: 0,
     paddingHorizontal: 0,
   },

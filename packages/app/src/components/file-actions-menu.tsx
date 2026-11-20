@@ -1,5 +1,10 @@
 import { Fragment, useCallback, useMemo, useRef, type ReactElement, type ReactNode } from "react";
-import { Pressable, View, type GestureResponderEvent } from "react-native";
+import {
+  Pressable,
+  View,
+  type GestureResponderEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Copy,
@@ -11,7 +16,7 @@ import {
   FolderOpen,
   FolderPlus,
   MessageSquarePlus,
-  MoreHorizontal,
+  MoreVertical,
   Pencil,
   Trash2,
   Undo2,
@@ -25,24 +30,38 @@ import {
   ContextMenuSeparator,
   useContextMenu,
 } from "@/components/ui/context-menu";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { measureElement } from "@/components/ui/menu/menu-anchor";
 import { useShowPersistentActions } from "@/hooks/use-fine-pointer";
 
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
-const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
+const ThemedMoreVertical = withUnistyles(MoreVertical);
+
+const menuButtonPointerBlockers = {
+  onMouseDown: (event: { preventDefault(): void; stopPropagation(): void }) => {
+    // Keep editor/browser selection intact and never begin the surrounding row's drag.
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  onPointerDown: (event: { stopPropagation(): void }) => event.stopPropagation(),
+};
 
 /** An explicit trigger for the same menu used by right-click, outside a row's drag handle. */
 export function FileActionsMenuButton({
   onSelect,
+  visible = true,
   testID,
 }: {
   onSelect?: () => void;
+  visible?: boolean;
   testID?: string;
 }): ReactElement {
   const { t } = useTranslation();
   const menu = useContextMenu();
   const touchSized = useShowPersistentActions();
+  const isVisible = touchSized || visible || Boolean(menu.open);
   const ref = useRef<View>(null);
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
@@ -59,41 +78,67 @@ export function FileActionsMenuButton({
   const stopPropagation = useCallback((event: GestureResponderEvent) => {
     event.stopPropagation();
   }, []);
+  const pressableStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      buttonStyles.button,
+      touchSized ? buttonStyles.touchButton : buttonStyles.desktopButton,
+      ((!touchSized && hovered) || pressed) && buttonStyles.buttonHovered,
+      !isVisible && buttonStyles.hidden,
+    ],
+    [isVisible, touchSized],
+  );
+  const renderIcon = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => (
+      <ThemedMoreVertical
+        size={touchSized ? 16 : 14}
+        uniProps={
+          (!touchSized && hovered) || pressed ? foregroundColorMapping : foregroundMutedColorMapping
+        }
+      />
+    ),
+    [touchSized],
+  );
   return (
     <Pressable
       ref={ref}
       onPress={handlePress}
       onPressIn={stopPropagation}
-      hitSlop={touchSized ? 4 : undefined}
-      style={[buttonStyles.button, !touchSized && buttonStyles.compactButton]}
-      {...{
-        onMouseDown: (event: { preventDefault(): void; stopPropagation(): void }) => {
-          // Keep editor/browser selection intact and never begin the surrounding row's drag.
-          event.preventDefault();
-          event.stopPropagation();
-        },
-        onPointerDown: (event: { stopPropagation(): void }) => event.stopPropagation(),
-      }}
+      hitSlop={4}
+      style={pressableStyle}
+      {...menuButtonPointerBlockers}
       accessibilityRole="button"
       accessibilityLabel={t("workspace.fileActions.moreActions")}
       testID={testID}
     >
-      <ThemedMoreHorizontal size={ICON_SIZE.md} uniProps={foregroundMutedColorMapping} />
+      {renderIcon}
     </Pressable>
   );
 }
 
 const buttonStyles = StyleSheet.create((theme) => ({
   button: {
-    minWidth: 36,
-    minHeight: 36,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: theme.borderRadius.base,
+    borderRadius: theme.borderRadius.md,
+    flexShrink: 0,
   },
-  compactButton: {
-    minWidth: 28,
-    minHeight: 20,
+  touchButton: {
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
+  },
+  desktopButton: {
+    width: 20,
+    height: 20,
+    // MoreVertical paints only around the center of its 14px SVG. Keep the 20px hit box,
+    // and pull the painted dots onto the trailing glyph rail like the left sidebar.
+    marginRight: -6,
+  },
+  buttonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  hidden: {
+    opacity: 0,
+    pointerEvents: "none",
   },
 }));
 interface FileAction {
