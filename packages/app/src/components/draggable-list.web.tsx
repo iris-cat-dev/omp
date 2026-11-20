@@ -33,6 +33,9 @@ const DRAG_ACTIVATION_CONFIG = {
   touchHoldDelayMs: 180,
   touchHoldTolerance: 8,
 };
+const IMMEDIATE_TOUCH_DRAG_CONSTRAINT = {
+  distance: 4,
+};
 
 function areRecordsEqual(
   left: Record<string, unknown> | undefined,
@@ -201,6 +204,7 @@ export function DraggableList<T>({
   scrollEnabled = true,
   extraData: _extraData,
   useDragHandle = false,
+  immediateTouchDrag = false,
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
@@ -219,7 +223,9 @@ export function DraggableList<T>({
       activationConstraint: activationConstraints.mouse,
     }),
     useSensor(TouchSensor, {
-      activationConstraint: activationConstraints.touch,
+      activationConstraint: immediateTouchDrag
+        ? IMMEDIATE_TOUCH_DRAG_CONSTRAINT
+        : activationConstraints.touch,
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,

@@ -60,7 +60,9 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
+  resolveRequestedSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
@@ -574,6 +576,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
+  const isTouchInteraction = useTouchInteraction();
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
   const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
@@ -621,7 +624,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isOpen: isDesktopAgentListOpen,
     canShare: canDesktopAppSidebarShare({
       contentMinimumWidth: appContentMinimumWidth,
-      requestedSidebarWidth: sidebarWidth,
+      requestedSidebarWidth: resolveRequestedSidebarWidth({ sidebarWidth, isTouchInteraction }),
       viewportWidth,
     }),
   });
@@ -1019,7 +1022,10 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
       <DesktopStartupReadySignal />
       <SidebarCalloutProvider>
         <DesktopUpdateProvider>
-          <ProvidersWrapper><PluginOverlays />{children}</ProvidersWrapper>
+          <ProvidersWrapper>
+            <PluginOverlays />
+            {children}
+          </ProvidersWrapper>
         </DesktopUpdateProvider>
       </SidebarCalloutProvider>
     </HostRuntimeBootstrapProvider>

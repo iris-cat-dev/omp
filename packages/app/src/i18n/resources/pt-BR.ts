@@ -297,7 +297,8 @@ export const ptBR: TranslationResources = {
         chat: "Chat",
         chatDescription: "Converse e leia arquivos sem editar código ou executar comandos.",
         enhanced: "Aprimorado",
-        enhancedDescription: "Repita as solicitações ao modelo que falharem temporariamente no turno atual.",
+        enhancedDescription:
+          "Repita as solicitações ao modelo que falharem temporariamente no turno atual.",
         plan: "Plano",
         planDescription: "Planeje a tarefa antes de fazer alterações.",
         goal: "Objetivo",
@@ -1306,6 +1307,17 @@ export const ptBR: TranslationResources = {
       projectFilter: {
         label: "Projeto",
         all: "Todos os projetos",
+      },
+      touchMode: {
+        label: "Modo de toque",
+        auto: "Automático",
+        on: "Ativado",
+        off: "Desativado",
+      },
+      reorder: {
+        label: "Reordenar",
+        done: "Concluir",
+        handle: "Arraste para reordenar",
       },
     },
     filterEmpty: {

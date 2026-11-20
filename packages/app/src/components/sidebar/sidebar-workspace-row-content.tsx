@@ -14,6 +14,8 @@ import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_LIST_INSET } from "@/constants/layout";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
+import { isMousePointerEvent } from "@/utils/device-input";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -55,20 +57,28 @@ export function SidebarWorkspaceRowFrame({
     contextMenuOpen: boolean;
     onContextMenuOpenChange: (open: boolean) => void;
     hoverHandlers: {
-      onPointerEnter: () => void;
-      onPointerLeave: () => void;
+      onPointerEnter: (event?: unknown) => void;
+      onPointerLeave: (event?: unknown) => void;
       onFocus: () => void;
       onBlur: () => void;
     };
   }) => ReactNode;
 }) {
+  const isTouchInteraction = useTouchInteraction();
   const [isHovered, setIsHovered] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const handlePointerEnter = useCallback(() => {
-    if (!contextMenuOpen) setIsHovered(true);
-  }, [contextMenuOpen]);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handlePointerEnter = useCallback(
+    (event?: unknown) => {
+      if (isTouchInteraction || !isMousePointerEvent(event)) return;
+      if (!contextMenuOpen) setIsHovered(true);
+    },
+    [contextMenuOpen, isTouchInteraction],
+  );
+  const handlePointerLeave = useCallback((event?: unknown) => {
+    if (!isMousePointerEvent(event)) return;
+    setIsHovered(false);
+  }, []);
   const handleFocus = useCallback(() => setIsFocused(true), []);
   const handleBlur = useCallback(() => setIsFocused(false), []);
   const handleContextMenuOpenChange = useCallback((open: boolean) => {
@@ -93,7 +103,8 @@ export function SidebarWorkspaceRowFrame({
       disabled={contextMenuOpen}
     >
       {children({
-        isHovered: (isHovered || isFocused) && !contextMenuOpen && !isDragging,
+        isHovered:
+          !isTouchInteraction && (isHovered || isFocused) && !contextMenuOpen && !isDragging,
         contextMenuOpen,
         onContextMenuOpenChange: handleContextMenuOpenChange,
         hoverHandlers,
@@ -117,6 +128,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
   rename,
+  trailingAccessory,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -136,6 +148,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
   rename?: SidebarWorkspaceRename;
+  /** Touch-sized trailing control rendered beside the content column so it never shifts row height or overlaps meta pills. */
+  trailingAccessory?: ReactNode;
   children?: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -154,52 +168,67 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
-        <View style={styles.workspaceContentColumn}>
-          <View style={styles.workspaceTitleRow}>
-            {workspace.pinnedAt != null ? (
-              <ThemedPin
-                size={12}
-                uniProps={foregroundMutedColorMapping}
-                accessibilityLabel="Pinned"
-              />
-            ) : null}
-            {rename ? (
-              <SidebarWorkspaceInlineRename workspaceKey={workspace.workspaceKey} rename={rename} />
-            ) : (
-              <Text style={workspaceTitleTextStyle} numberOfLines={1}>
-                {resolveSidebarWorkspacePrimaryLabel(workspace, t("sidebar.workspace.status.unstarted"))}
-              </Text>
-            )}
-            {!rename ? <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View> : null}
+        <View style={styles.workspaceRowBody}>
+          {leadingProjectName ? (
+            <ProjectStatusIndicator
+              iconDataUri={leadingProjectIconDataUri}
+              displayName={leadingProjectName}
+              projectViewKey={workspace.projectViewKey}
+              statusBucket={workspace.statusBucket}
+              backdrop={backdrop}
+              loading={isLoading}
+              testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+            />
+          ) : (
+            <WorkspaceStatusIndicator
+              bucket={workspace.statusBucket}
+              workspaceKind={workspace.workspaceKind}
+              loading={isLoading}
+              reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+            />
+          )}
+          <View style={styles.workspaceContentColumn}>
+            <View style={styles.workspaceTitleRow}>
+              {workspace.pinnedAt != null ? (
+                <ThemedPin
+                  size={12}
+                  uniProps={foregroundMutedColorMapping}
+                  accessibilityLabel="Pinned"
+                />
+              ) : null}
+              {rename ? (
+                <SidebarWorkspaceInlineRename
+                  workspaceKey={workspace.workspaceKey}
+                  rename={rename}
+                />
+              ) : (
+                <Text style={workspaceTitleTextStyle} numberOfLines={1}>
+                  {resolveSidebarWorkspacePrimaryLabel(
+                    workspace,
+                    t("sidebar.workspace.status.unstarted"),
+                  )}
+                </Text>
+              )}
+              {!rename ? <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View> : null}
+            </View>
+            <WorkspaceMetaRow
+              currentBranch={
+                workspace.isUnstarted || workspace.isUnstartedWorktree
+                  ? workspace.currentBranch
+                  : null
+              }
+              conversationNotStarted={workspace.isUnstartedWorktree}
+              projectName={leadingProjectName}
+              hostBadge={hostBadge ?? null}
+              prHint={workspace.prHint}
+              serviceSummary={serviceSummary}
+              labels={labels}
+            />
           </View>
-          <WorkspaceMetaRow
-            currentBranch={workspace.isUnstarted || workspace.isUnstartedWorktree ? workspace.currentBranch : null}
-            conversationNotStarted={workspace.isUnstartedWorktree}
-            projectName={leadingProjectName}
-            hostBadge={hostBadge ?? null}
-            prHint={workspace.prHint}
-            serviceSummary={serviceSummary}
-            labels={labels}
-          />
         </View>
+        {!rename && trailingAccessory ? (
+          <View style={styles.workspaceTrailingAccessory}>{trailingAccessory}</View>
+        ) : null}
       </View>
       {!rename && showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.shortcutBadgeOverlay} pointerEvents="none">
@@ -316,7 +345,7 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
   },
   rowRight: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: theme.spacing[2],
     flexShrink: 0,
   },
@@ -375,24 +404,27 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
 }
 
 /**
- * Activity timestamp and hover actions, shared by the project-mode and status-mode rows.
+ * Activity timestamp and row actions, shared by the project-mode and status-mode rows.
  *
- * The trailing content survives the kebab on hover and fades under the scrim instead of
- * blinking out. Touch has no hover, so its permanent kebab still hides the content outright
- * rather than scrimming an unhovered row whose background doesn't match the gradient.
+ * On desktop pointer devices, hover overlays the kebab with a backdrop scrim while keeping the
+ * timestamp behind it. Under touch interaction, unselected rows show only the timestamp, the
+ * selected row reveals the kebab beside the row without hiding the timestamp, and any row opens
+ * the full context menu on long press.
  */
 export function resolveTrailingActionVisibility({
   workspace,
   hasArchiveAction,
+  selected = false,
   isHovered,
-  isTouchPlatform,
+  isTouchInteraction,
   showPersistentActions = false,
   showShortcut,
 }: {
   workspace: SidebarWorkspaceEntry;
   hasArchiveAction: boolean;
+  selected?: boolean;
   isHovered: boolean;
-  isTouchPlatform: boolean;
+  isTouchInteraction: boolean;
   showPersistentActions?: boolean;
   showShortcut: boolean;
 }): {
@@ -403,20 +435,30 @@ export function resolveTrailingActionVisibility({
   reserveSlotWidth: boolean;
 } {
   const hasTrailing = workspace.statusEnteredAt !== null;
-  const persistent = isTouchPlatform || showPersistentActions;
+  if (isTouchInteraction) {
+    const showKebab = Boolean(hasArchiveAction && selected && !showShortcut);
+    const showTrailing = hasTrailing && !showShortcut;
+    return {
+      showTrailing,
+      showKebab,
+      showScrim: false,
+      renderSlot: hasArchiveAction || hasTrailing,
+      reserveSlotWidth: false,
+    };
+  }
   const showKebab =
-    Boolean(hasArchiveAction && (isHovered || persistent)) && (!showShortcut || isHovered);
+    Boolean(hasArchiveAction && (isHovered || showPersistentActions)) &&
+    (!showShortcut || isHovered);
   const showTrailing = hasTrailing && !showShortcut && (isHovered || !showKebab);
   return {
     showTrailing,
     showKebab,
     // The scrim paints the row's own hover background, so it can only be drawn on a hovered
-    // row — over an unhovered one the gradient fades to the wrong color. That is also why
-    // touch, which shows the kebab without ever hovering, never gets one.
+    // row — over an unhovered one the gradient fades to the wrong color.
     showScrim: showKebab && isHovered,
     renderSlot: hasArchiveAction || hasTrailing,
     // Reserve space when the action stays visible, including hybrid and keyboard-only input.
-    reserveSlotWidth: hasTrailing || (hasArchiveAction && persistent),
+    reserveSlotWidth: hasTrailing || (hasArchiveAction && showPersistentActions),
   };
 }
 
@@ -480,93 +522,108 @@ export function SidebarWorkspaceTrailingActionOverlay({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  workspaceRowContent: {
-    position: "relative",
-  },
-  workspaceRowMain: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[2],
-    width: "100%",
-  },
-  workspaceContentColumn: {
-    flex: 1,
-    minWidth: 0,
-  },
-  workspaceTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  shortcutBadgeOverlay: {
-    position: "absolute",
-    top: 1,
-    right: 0,
-  },
-  workspaceStatusDot: {
-    position: "relative",
-    width: theme.iconSize.md,
-    height: 20,
-    borderRadius: theme.borderRadius.full,
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statusDotOverlay: {
-    position: "absolute",
-    right: 0,
-    bottom: 0,
-    width: STATUS_INDICATOR_DOT_SIZE,
-    height: STATUS_INDICATOR_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-  },
-  standaloneStatusDot: {
-    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
-  },
-  idleStatusDot: {
-    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.foregroundExtraMuted,
-    opacity: 0.3,
-  },
-  // The title owns the first line outright now that the host, change request and CI moved
-  // to the meta row, so it takes the full width the trailing slot leaves behind.
-  workspaceTitleText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 20,
-    opacity: 0.76,
-    flex: 1,
-    minWidth: 0,
-  },
-  workspaceTitleTextCreating: {
-    opacity: 0.92,
-  },
-  workspaceTitleTextHighlighted: {
-    opacity: 1,
-  },
-  statusDotNeedsInput: {
-    backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
-    borderColor: theme.colors.surface0,
-  },
-  statusDotFailed: {
-    backgroundColor: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
-    borderColor: theme.colors.surface0,
-  },
-  statusDotRunning: {
-    backgroundColor: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
-    borderColor: theme.colors.surface0,
-  },
-  statusDotAttention: {
-    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
-    borderColor: theme.colors.surface0,
-  },
-}));
+const styles = StyleSheet.create((theme) => {
+  const rowLineHeight = Math.round(theme.fontSize.base * 1.54);
+  return {
+    workspaceRowContent: {
+      position: "relative",
+    },
+    workspaceRowMain: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      width: "100%",
+    },
+    workspaceRowBody: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: theme.spacing[2],
+      flex: 1,
+      minWidth: 0,
+    },
+    workspaceTrailingAccessory: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexShrink: 0,
+    },
+    workspaceContentColumn: {
+      flex: 1,
+      minWidth: 0,
+    },
+    workspaceTitleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing[2],
+    },
+    shortcutBadgeOverlay: {
+      position: "absolute",
+      top: 1,
+      right: 0,
+    },
+    workspaceStatusDot: {
+      position: "relative",
+      width: theme.iconSize.md,
+      height: rowLineHeight,
+      borderRadius: theme.borderRadius.full,
+      flexShrink: 0,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    statusDotOverlay: {
+      position: "absolute",
+      right: 0,
+      bottom: 0,
+      width: STATUS_INDICATOR_DOT_SIZE,
+      height: STATUS_INDICATOR_DOT_SIZE,
+      borderRadius: theme.borderRadius.full,
+      borderWidth: 1,
+    },
+    standaloneStatusDot: {
+      width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      borderRadius: theme.borderRadius.full,
+      backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
+    },
+    idleStatusDot: {
+      width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      borderRadius: theme.borderRadius.full,
+      backgroundColor: theme.colors.foregroundExtraMuted,
+      opacity: 0.3,
+    },
+    // The title owns the first line outright now that the host, change request and CI moved
+    // to the meta row, so it takes the full width the trailing slot leaves behind.
+    workspaceTitleText: {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+      fontWeight: theme.fontWeight.normal,
+      lineHeight: rowLineHeight,
+      opacity: 0.76,
+      flex: 1,
+      minWidth: 0,
+    },
+    workspaceTitleTextCreating: {
+      opacity: 0.92,
+    },
+    workspaceTitleTextHighlighted: {
+      opacity: 1,
+    },
+    statusDotNeedsInput: {
+      backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+      borderColor: theme.colors.surface0,
+    },
+    statusDotFailed: {
+      backgroundColor: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
+      borderColor: theme.colors.surface0,
+    },
+    statusDotRunning: {
+      backgroundColor: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
+      borderColor: theme.colors.surface0,
+    },
+    statusDotAttention: {
+      backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
+      borderColor: theme.colors.surface0,
+    },
+  };
+});

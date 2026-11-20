@@ -15,7 +15,12 @@ interface StaticFloatingSurfaceProps {
 
 vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock("@/hooks/use-fine-pointer", () => ({ useShowPersistentActions: () => true }));
+vi.mock("@/hooks/use-fine-pointer", () => ({
+  useShowPersistentActions: () => true,
+  useTouchInteraction: () => false,
+  useSupportsHover: () => true,
+  useHasFinePointer: () => true,
+}));
 // Vitest hoists this platform-module mock before static imports; dynamically
 // load its rendering dependencies only inside the mock factory.
 // Keep the real menu overlay and focus, replacing only the animated frame.

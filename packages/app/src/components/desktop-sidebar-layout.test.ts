@@ -4,7 +4,10 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveRequestedSidebarWidth,
+  TOUCH_DEFAULT_SIDEBAR_WIDTH,
 } from "@/components/desktop-sidebar-layout";
+import { DEFAULT_SIDEBAR_WIDTH } from "@/stores/panel-store";
 
 describe("desktop sidebar layout", () => {
   it("keeps a retained sidebar hidden while app chrome is suppressed", () => {
@@ -52,5 +55,32 @@ describe("desktop sidebar layout", () => {
         viewportWidth: 751,
       }),
     ).toBe(true);
+  });
+
+  it("widens the default sidebar for touch interaction while respecting explicit user widths", () => {
+    expect(
+      resolveRequestedSidebarWidth({
+        sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+        isTouchInteraction: false,
+      }),
+    ).toBe(DEFAULT_SIDEBAR_WIDTH);
+    expect(
+      resolveRequestedSidebarWidth({
+        sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+        isTouchInteraction: true,
+      }),
+    ).toBe(TOUCH_DEFAULT_SIDEBAR_WIDTH);
+    expect(
+      resolveRequestedSidebarWidth({
+        sidebarWidth: 360,
+        isTouchInteraction: true,
+      }),
+    ).toBe(360);
+    expect(
+      resolveRequestedSidebarWidth({
+        sidebarWidth: 240,
+        isTouchInteraction: true,
+      }),
+    ).toBe(240);
   });
 });

@@ -1301,6 +1301,17 @@ export const ru: TranslationResources = {
         label: "Проект",
         all: "Все проекты",
       },
+      touchMode: {
+        label: "Сенсорный режим",
+        auto: "Авто",
+        on: "Вкл.",
+        off: "Выкл.",
+      },
+      reorder: {
+        label: "Порядок",
+        done: "Готово",
+        handle: "Перетащите для изменения порядка",
+      },
     },
     filterEmpty: {
       title: "Нет подходящих рабочих пространств",

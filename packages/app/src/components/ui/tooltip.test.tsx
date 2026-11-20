@@ -1,9 +1,10 @@
-import React from "react";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { resetRuntimePointerModalityForTests } from "@/hooks/use-fine-pointer";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 vi.mock("@/constants/platform", () => ({
@@ -60,7 +61,9 @@ let root: Root | null = null;
 let container: HTMLElement | null = null;
 
 beforeEach(() => {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>");
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost/",
+  });
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", dom.window);
@@ -82,6 +85,8 @@ afterEach(() => {
   }
   root = null;
   container = null;
+  useSidebarViewStore.setState({ touchMode: "auto" });
+  resetRuntimePointerModalityForTests();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -231,5 +236,30 @@ describe("TooltipTrigger", () => {
     );
     expect(document.activeElement).toBe(trigger);
     expect(document.querySelector('[data-testid="action"]')).toBeNull();
+  });
+
+  it("stays disabled on hover and press when touch interaction is active and enabledOnMobile is false", async () => {
+    useSidebarViewStore.setState({ touchMode: "on" });
+    const onOpenChange = vi.fn();
+    await act(async () => {
+      root?.render(
+        <Tooltip enabledOnDesktop enabledOnMobile={false} onOpenChange={onOpenChange}>
+          <TooltipTrigger testID="trigger">
+            <Text>Search</Text>
+          </TooltipTrigger>
+          <TooltipContent testID="content">
+            <Text>Open search</Text>
+          </TooltipContent>
+        </Tooltip>,
+      );
+    });
+
+    const trigger = container!.querySelector('[data-testid="trigger"]')!;
+    act(() => {
+      trigger.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+      trigger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="content"]')).toBeNull();
   });
 });

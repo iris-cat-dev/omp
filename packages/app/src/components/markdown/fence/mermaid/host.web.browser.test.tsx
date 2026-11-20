@@ -8,6 +8,9 @@ import { parseMermaidRuntimeMessage } from "./runtime/messages";
 const pointerMode = vi.hoisted(() => ({ persistentActions: false }));
 vi.mock("@/hooks/use-fine-pointer", () => ({
   useShowPersistentActions: () => pointerMode.persistentActions,
+  useTouchInteraction: () => false,
+  useSupportsHover: () => true,
+  useHasFinePointer: () => true,
 }));
 
 vi.mock("expo-clipboard", () => ({}));

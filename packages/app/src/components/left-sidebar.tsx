@@ -40,7 +40,11 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import {
+  resolveDesktopSidebarWidth,
+  resolveRequestedSidebarWidth,
+} from "@/components/desktop-sidebar-layout";
+import { useHasFinePointer, useTouchInteraction } from "@/hooks/use-fine-pointer";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -430,12 +434,18 @@ function FooterIconButton({
   theme: SidebarTheme;
   buttonRef?: RefObject<View | null>;
 }) {
+  const isTouchInteraction = useTouchInteraction();
+  const buttonStyle = useMemo(
+    () => [styles.footerIconButton, isTouchInteraction && styles.footerIconButtonTouch],
+    [isTouchInteraction],
+  );
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={styles.footerIconButton}
+          hitSlop={isTouchInteraction ? 4 : undefined}
+          style={buttonStyle}
           testID={testID}
           nativeID={testID}
           collapsable={false}
@@ -445,10 +455,14 @@ function FooterIconButton({
           accessibilityState={resolveFooterButtonAccessibilityState(expanded)}
           onPress={onPress}
         >
-          {({ hovered }) => (
+          {({ hovered, pressed }) => (
             <Icon
               size={iconSize ?? theme.iconSize.md}
-              color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+              color={
+                (!isTouchInteraction && hovered) || pressed
+                  ? theme.colors.foreground
+                  : theme.colors.foregroundMuted
+              }
             />
           )}
         </Pressable>
@@ -1357,20 +1371,24 @@ function SidebarProviderAccountPanelContent({
   );
   const accountAccessibilityState = useMemo(() => ({ disabled: accountLocked }), [accountLocked]);
 
+  const isTouchInteraction = useTouchInteraction();
   const providerTriggerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       detailsExpanded ? styles.sidebarProviderTrigger : styles.sidebarProviderTriggerCompact,
-      (hovered || pressed || providerOpen) && styles.sidebarProviderTriggerActive,
+      !detailsExpanded && isTouchInteraction && styles.sidebarProviderTriggerCompactTouch,
+      ((!isTouchInteraction && hovered) || pressed || providerOpen) &&
+        styles.sidebarProviderTriggerActive,
     ],
-    [detailsExpanded, providerOpen],
+    [detailsExpanded, isTouchInteraction, providerOpen],
   );
   const accountTriggerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.sidebarAccountTrigger,
       accountLocked && styles.sidebarAccountTriggerLocked,
-      (hovered || pressed || accountOpen) && styles.sidebarProviderTriggerActive,
+      ((!isTouchInteraction && hovered) || pressed || accountOpen) &&
+        styles.sidebarProviderTriggerActive,
     ],
-    [accountLocked, accountOpen],
+    [accountLocked, accountOpen, isTouchInteraction],
   );
   const handleProviderSelect = useCallback(
     (providerId: string) => {
@@ -1756,12 +1774,14 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const pathname = usePathname();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  const isTouchInteraction = useTouchInteraction();
+  const finePointer = useHasFinePointer();
   const isSessionsActive = pathname.includes("/sessions");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: viewportWidth } = useWindowDimensions();
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
-    requestedWidth: sidebarWidth,
+    requestedWidth: resolveRequestedSidebarWidth({ sidebarWidth, isTouchInteraction }),
     viewportWidth,
   });
 
@@ -1778,7 +1798,7 @@ function DesktopSidebar({
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
-        .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
+        .hitSlop({ left: finePointer ? 8 : 0, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
         })
@@ -1806,6 +1826,7 @@ function DesktopSidebar({
           scheduleOnRN(hideResizeGrip);
         }),
     [
+      finePointer,
       hideResizeGrip,
       resizeWidth,
       setSidebarWidth,
@@ -1917,13 +1938,25 @@ function DesktopSidebar({
 function WorkspacesSectionHeader() {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const isTouchInteraction = useTouchInteraction();
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
+  const setReorderMode = useSidebarViewStore((state) => state.setReorderMode);
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
   const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
+  const handleDoneReorder = useCallback(() => setReorderMode(false), [setReorderMode]);
   const searchButtonStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.workspacesHeaderIconButton,
-      (hovered || pressed) && styles.workspacesHeaderIconButtonHovered,
+      isTouchInteraction && styles.workspacesHeaderIconButtonTouch,
+      ((!isTouchInteraction && hovered) || pressed) && styles.workspacesHeaderIconButtonHovered,
+    ],
+    [isTouchInteraction],
+  );
+  const reorderDoneButtonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.reorderDoneButton,
+      pressed && styles.reorderDoneButtonPressed,
     ],
     [],
   );
@@ -1931,30 +1964,51 @@ function WorkspacesSectionHeader() {
   return (
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>{t("sidebar.sections.workspaces")}</Text>
-      <View style={styles.workspacesSectionActions}>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open command center"
-              testID="sidebar-command-center-search"
-              style={searchButtonStyle}
-              onPress={handleSearchPress}
-            >
-              {({ hovered, pressed }) => (
-                <Search
-                  size={14}
-                  color={
-                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                  }
-                />
-              )}
-            </Pressable>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
-          </TooltipContent>
-        </Tooltip>
+      <View
+        style={[
+          styles.workspacesSectionActions,
+          isTouchInteraction && styles.workspacesSectionActionsTouch,
+        ]}
+      >
+        {isTouchInteraction && reorderMode ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("sidebar.display.reorder.done")}
+            testID="sidebar-reorder-done"
+            hitSlop={4}
+            style={reorderDoneButtonStyle}
+            onPress={handleDoneReorder}
+          >
+            <Text style={styles.reorderDoneButtonText}>{t("sidebar.display.reorder.done")}</Text>
+          </Pressable>
+        ) : (
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open command center"
+                testID="sidebar-command-center-search"
+                hitSlop={isTouchInteraction ? 4 : undefined}
+                style={searchButtonStyle}
+                onPress={handleSearchPress}
+              >
+                {({ hovered, pressed }) => (
+                  <Search
+                    size={isTouchInteraction ? 16 : 14}
+                    color={
+                      (!isTouchInteraction && hovered) || pressed
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                    }
+                  />
+                )}
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <IconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
+            </TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
@@ -2018,6 +2072,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  workspacesSectionActionsTouch: {
+    gap: theme.spacing[2],
+  },
   workspacesHeaderIconButton: {
     width: 28,
     height: 28,
@@ -2025,8 +2082,28 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
   },
+  workspacesHeaderIconButtonTouch: {
+    width: 36,
+    height: 36,
+  },
   workspacesHeaderIconButtonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  reorderDoneButton: {
+    minHeight: 36,
+    paddingHorizontal: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surfaceSidebarSelected,
+  },
+  reorderDoneButtonPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  reorderDoneButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   sidebarContent: {
     flex: 1,
@@ -2117,6 +2194,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
+  },
+  sidebarProviderTriggerCompactTouch: {
+    minHeight: 36,
   },
   sidebarProviderTriggerActive: {
     backgroundColor: theme.colors.surfaceSidebarSelected,
@@ -2240,6 +2320,11 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+  },
+  footerIconButtonTouch: {
+    width: 36,
+    height: 36,
   },
   tooltipRow: {
     flexDirection: "row",

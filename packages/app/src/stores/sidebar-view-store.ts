@@ -4,12 +4,13 @@ import { persist, type StateStorage } from "zustand/middleware";
 import { z } from "zod";
 import { workspaceLabelKey } from "@omp-desktop/protocol/workspace-labels";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import type { TouchInteractionPreference } from "@/utils/device-input";
 
 export type SidebarGroupMode = "project" | "status";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 8;
+const SIDEBAR_VIEW_STORE_VERSION = 9;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -51,7 +52,14 @@ interface SidebarViewStoreState {
   /** Project view keys hidden from the sidebar until explicitly restored. */
   hiddenProjectViewKeys: string[];
   labelFilter: SidebarLabelFilter;
+  /** Local per-device override for touch-sized sidebar/menu interaction density. */
+  touchMode: TouchInteractionPreference;
+  /** Transient touch reorder mode exposing explicit drag handles instead of whole-row drag. */
+  reorderMode: boolean;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  setTouchMode: (mode: TouchInteractionPreference) => void;
+  setReorderMode: (enabled: boolean) => void;
+  toggleReorderMode: () => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   hideProject: (viewKey: string) => void;
@@ -68,9 +76,11 @@ interface SidebarViewPersistedState {
   hostFilters: string[];
   hiddenProjectViewKeys: string[];
   labelFilter: SidebarLabelFilter;
+  touchMode: TouchInteractionPreference;
 }
 
 const PersistedSidebarGroupModeSchema = z.enum(["project", "status", "label"]);
+const TouchModeSchema = z.enum(["auto", "on", "off"]);
 const SidebarLabelFilterSchema = z.object({
   labels: z.array(z.string()),
 });
@@ -83,6 +93,7 @@ const SidebarViewPersistedStateSchema = z.strictObject({
   hiddenProjectViewKeys: z.array(z.string()).optional(),
   groupModeByServerId: z.record(z.string(), PersistedSidebarGroupModeSchema).optional(),
   labelFilter: SidebarLabelFilterSchema.optional(),
+  touchMode: TouchModeSchema.optional(),
 });
 
 type SidebarViewStorageState = z.infer<typeof SidebarViewPersistedStateSchema>;
@@ -119,6 +130,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: emptyLabelFilter(),
+      touchMode: "auto",
     };
   }
   const state = result.data;
@@ -130,6 +142,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: emptyLabelFilter(),
+      touchMode: "auto",
     };
   }
 
@@ -140,6 +153,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
     labelFilter: state.labelFilter
       ? normalizeSidebarLabelFilter(state.labelFilter)
       : emptyLabelFilter(),
+    touchMode: state.touchMode ?? "auto",
   };
 }
 
@@ -175,7 +189,20 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: emptyLabelFilter(),
-      setGroupMode: (mode) => set({ groupMode: mode }),
+      touchMode: "auto",
+      reorderMode: false,
+      setGroupMode: (mode) =>
+        set((state) => ({
+          groupMode: mode,
+          reorderMode: mode === "project" ? state.reorderMode : false,
+        })),
+      setTouchMode: (mode) =>
+        set((state) => ({
+          touchMode: mode,
+          reorderMode: mode === "off" ? false : state.reorderMode,
+        })),
+      setReorderMode: (enabled) => set({ reorderMode: enabled }),
+      toggleReorderMode: () => set((state) => ({ reorderMode: !state.reorderMode })),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -233,6 +260,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         hostFilters: state.hostFilters,
         hiddenProjectViewKeys: state.hiddenProjectViewKeys,
         labelFilter: state.labelFilter,
+        touchMode: state.touchMode,
       }),
       migrate: migrateSidebarViewState,
     },

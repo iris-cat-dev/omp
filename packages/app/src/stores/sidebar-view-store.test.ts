@@ -44,6 +44,8 @@ describe("sidebar view store", () => {
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: { labels: [] },
+      touchMode: "auto",
+      reorderMode: false,
     });
   });
 
@@ -96,6 +98,7 @@ describe("sidebar view store", () => {
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: { labels: [] },
+      touchMode: "auto",
     });
   });
 
@@ -110,6 +113,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a"],
       hiddenProjectViewKeys: [],
       labelFilter: { labels: [] },
+      touchMode: "auto",
     });
   });
 
@@ -124,6 +128,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a", "host-b"],
       hiddenProjectViewKeys: [],
       labelFilter: { labels: [] },
+      touchMode: "auto",
     });
   });
 
@@ -220,6 +225,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a"],
       hiddenProjectViewKeys: ["project-b"],
       labelFilter: { labels: ["urgent"] },
+      touchMode: "auto",
     });
   });
 
@@ -229,7 +235,28 @@ describe("sidebar view store", () => {
       hostFilters: [],
       hiddenProjectViewKeys: [],
       labelFilter: { labels: [] },
+      touchMode: "auto",
     });
+  });
+
+  it("persists touchMode preference and resets transient reorderMode when leaving project/touch modes", () => {
+    expect(migrateSidebarViewState({ touchMode: "on" }).touchMode).toBe("on");
+    expect(migrateSidebarViewState({ touchMode: "invalid" }).touchMode).toBe("auto");
+
+    const store = useSidebarViewStore.getState();
+    store.setTouchMode("on");
+    store.setReorderMode(true);
+    expect(useSidebarViewStore.getState()).toMatchObject({ touchMode: "on", reorderMode: true });
+
+    store.setGroupMode("status");
+    expect(useSidebarViewStore.getState().reorderMode).toBe(false);
+
+    store.setGroupMode("project");
+    store.toggleReorderMode();
+    expect(useSidebarViewStore.getState().reorderMode).toBe(true);
+
+    store.setTouchMode("off");
+    expect(useSidebarViewStore.getState()).toMatchObject({ touchMode: "off", reorderMode: false });
   });
 
   it("falls back to the legacy storage key when the new key is empty", async () => {

@@ -26,9 +26,10 @@ import {
 } from "react-native";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
+import { useSupportsHover, useTouchInteraction } from "@/hooks/use-fine-pointer";
+import { isTouchLikePointerEvent } from "@/utils/device-input";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import { measureElement } from "@/components/ui/menu/menu-anchor";
 
@@ -85,13 +86,6 @@ if (isWeb && typeof window !== "undefined") {
 
 function shouldOpenOnFocus(): boolean {
   return !isWeb || lastInputWasKeyboard;
-}
-
-function isTouchPointerEvent(event: unknown): boolean {
-  if (!event || typeof event !== "object") return false;
-  const nativeEvent = Reflect.get(event, "nativeEvent");
-  const pointerEvent = nativeEvent && typeof nativeEvent === "object" ? nativeEvent : event;
-  return Reflect.get(pointerEvent, "pointerType") === "touch";
 }
 
 function isCallable(fn: unknown): fn is (...args: unknown[]) => void {
@@ -312,8 +306,10 @@ export function Tooltip({
     };
   }, [interactive, isOpen, setOpen]);
 
-  const isCompact = useIsCompactFormFactor();
-  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
+  const isTouchInteraction = useTouchInteraction();
+  const supportsHover = useSupportsHover();
+  const useTouchBehavior = isTouchInteraction || !supportsHover;
+  const enabled = useTouchBehavior ? enabledOnMobile : enabledOnDesktop;
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -325,14 +321,14 @@ export function Tooltip({
       cancelClose,
       scheduleClose,
       enabled,
-      openOnPress: openOnPress ?? isCompact,
+      openOnPress: openOnPress ?? useTouchBehavior,
       delayDuration,
     }),
     [
       isOpen,
       setOpen,
       enabled,
-      isCompact,
+      useTouchBehavior,
       openOnPress,
       delayDuration,
       interactive,
@@ -397,19 +393,19 @@ export function TooltipTrigger({
   const handleHoverIn = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverIn)) onHoverIn(e);
-      if (ctx.openOnPress && isTouchPointerEvent(e)) return;
+      if (isTouchLikePointerEvent(e)) return;
       scheduleOpen();
     },
-    [onHoverIn, scheduleOpen, ctx.openOnPress],
+    [onHoverIn, scheduleOpen],
   );
 
   const handleHoverOut = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverOut)) onHoverOut(e);
-      if (ctx.openOnPress && isTouchPointerEvent(e)) return;
+      if (isTouchLikePointerEvent(e)) return;
       close();
     },
-    [onHoverOut, close, ctx.openOnPress],
+    [onHoverOut, close],
   );
 
   const handleFocus = useCallback(

@@ -1407,6 +1407,17 @@ export const en = {
         label: "Project",
         all: "All projects",
       },
+      touchMode: {
+        label: "Touch mode",
+        auto: "Auto",
+        on: "On",
+        off: "Off",
+      },
+      reorder: {
+        label: "Reorder",
+        done: "Done",
+        handle: "Drag to reorder",
+      },
     },
     filterEmpty: {
       title: "No workspaces match",

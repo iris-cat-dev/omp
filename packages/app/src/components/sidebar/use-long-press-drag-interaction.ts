@@ -8,8 +8,9 @@ import type { useContextMenu } from "@/components/ui/context-menu";
 export function useLongPressDragInteraction(input: {
   drag: () => void;
   menuController: ReturnType<typeof useContextMenu> | null;
+  enabled?: boolean;
 }) {
-  const { drag, menuController } = input;
+  const { drag, menuController, enabled = true } = input;
   const didLongPressRef = useRef(false);
   const dragArmedRef = useRef(false);
   const dragActivatedRef = useRef(false);
@@ -60,7 +61,7 @@ export function useLongPressDragInteraction(input: {
 
   const armTimers = useCallback(() => {
     clearTimers();
-    if (platformIsWeb) {
+    if (platformIsWeb || !enabled) {
       return;
     }
 
@@ -113,7 +114,7 @@ export function useLongPressDragInteraction(input: {
       void Haptics.selectionAsync().catch(() => {});
       openContextMenuAtStartPoint();
     }, CONTEXT_MENU_DELAY_MS);
-  }, [clearTimers, drag, menuController, openContextMenuAtStartPoint]);
+  }, [clearTimers, drag, enabled, menuController, openContextMenuAtStartPoint]);
 
   const handleDragIntent = useCallback(
     (_details: { dx: number; dy: number; distance: number }) => {

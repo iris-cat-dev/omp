@@ -296,7 +296,8 @@ export const ja: TranslationResources = {
         standard: "標準",
         standardDescription: "デフォルトのワークフローでタスクを直接実行します。",
         chat: "チャット",
-        chatDescription: "コードを編集したりコマンドを実行したりせず、対話とファイル読み取りのみ行います。",
+        chatDescription:
+          "コードを編集したりコマンドを実行したりせず、対話とファイル読み取りのみ行います。",
         enhanced: "強化",
         enhancedDescription: "一時的に失敗したモデルリクエストを現在のターン内で再試行します。",
         plan: "計画",
@@ -1287,6 +1288,17 @@ export const ja: TranslationResources = {
       projectFilter: {
         label: "プロジェクト",
         all: "すべてのプロジェクト",
+      },
+      touchMode: {
+        label: "タッチモード",
+        auto: "自動",
+        on: "オン",
+        off: "オフ",
+      },
+      reorder: {
+        label: "並び替え",
+        done: "完了",
+        handle: "ドラッグして並び替え",
       },
     },
     filterEmpty: {

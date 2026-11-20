@@ -41,12 +41,22 @@ export interface SidebarResizeHandleGeometry {
 
 export function resolveSidebarResizeHandleGeometry(
   finePointer: boolean,
+  options?: { isWeb?: boolean },
 ): SidebarResizeHandleGeometry {
   if (finePointer) {
     return {
       edgeOffset: -POINTER_HANDLE_WIDTH / 2,
       width: POINTER_HANDLE_WIDTH,
       height: null,
+    };
+  }
+  if (options?.isWeb) {
+    // Web hit-testing does not clip to the sidebar's bounds, so keeping most of the
+    // touch grip outside the border prevents it from swallowing trailing row buttons.
+    return {
+      edgeOffset: -(TOUCH_HANDLE_WIDTH - 4),
+      width: TOUCH_HANDLE_WIDTH,
+      height: TOUCH_HANDLE_HEIGHT,
     };
   }
   return {
