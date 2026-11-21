@@ -97,6 +97,8 @@ Annotations use the submitted original image's pixel coordinates, with a top-lef
 
 On macOS Desktop, **Take screenshot** uses the system's interactive region selector and temporarily hides the requesting window. Screen-recording permission is required. On Windows Desktop, it temporarily hides the requesting window and opens a frozen, full-desktop region selector. Drag in either direction to select an area, then press **Enter** or **Capture selection**; drag again to replace the selection. **Entire desktop** captures all displays, including their full physical resolution under Windows display scaling. **Esc**, right-click, or **Cancel** returns to the editor without replacing its current image or annotations. The selector shows the selected area's pixel dimensions, and its controls and shading are excluded from the captured image. Web uses the browser's screen/window/tab picker and stops sharing after capturing one frame. Unsupported or denied capture reports an error; importing or pasting a screenshot remains independent. Capture and editing are local; submitted feedback and images are sent to the selected agent and its configured AI service.
 
+If the Windows selector fails to open, press **Win+Shift+S** and paste the screenshot into the editor. The built-in Windows helper uses the capture's own temporary directory for PowerShell compiler files and reports startup errors in UTF-8.
+
 This is an original implementation inspired by [EditHere's feedback workflow](https://github.com/Inginnng/EditHere), not an installation or copy of its noncommercial source.
 
 ## Plugin management and native commands
