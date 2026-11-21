@@ -1284,6 +1284,17 @@ export const ko: TranslationResources = {
         label: "프로젝트",
         all: "모든 프로젝트",
       },
+      touchMode: {
+        label: "터치 모드",
+        auto: "자동",
+        on: "켜짐",
+        off: "꺼짐",
+      },
+      reorder: {
+        label: "순서 변경",
+        done: "완료",
+        handle: "드래그하여 순서 변경",
+      },
     },
     filterEmpty: {
       title: "일치하는 워크스페이스가 없습니다",

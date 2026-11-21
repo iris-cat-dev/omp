@@ -24,6 +24,7 @@ export interface ControlInteractionStyleMap {
 
 const TIGHT_CONTROL_HEIGHT = 28;
 const COMPACT_CONTROL_HEIGHT = 32;
+const TOUCH_LIST_ROW_MIN_HEIGHT = 36;
 const FIELD_CONTROL_HEIGHT = 44;
 const SEGMENTED_TIGHT_INSET = 2;
 const SEGMENTED_COMPACT_INSET = 2;
@@ -46,6 +47,14 @@ export const CONTROL_HEIGHTS = {
   compact: COMPACT_CONTROL_HEIGHT,
   field: FIELD_CONTROL_HEIGHT,
 };
+
+/**
+ * Unified compact touch row & inline action geometry shared across sidebar lists,
+ * workspace explorer/diff trees, and touch menus so mobile lists share one pitch
+ * without layout jumps when inline actions appear.
+ */
+export const TOUCH_LIST_ROW_HEIGHT = TOUCH_LIST_ROW_MIN_HEIGHT;
+export const TOUCH_LIST_ROW_ACTION_SIZE = CONTROL_HEIGHTS.compact;
 
 export const buttonControlHeight: Record<ButtonControlSize, number> = {
   xs: CONTROL_HEIGHTS.tight,

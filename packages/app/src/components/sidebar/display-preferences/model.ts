@@ -5,12 +5,17 @@ import {
   type SidebarGroupMode,
   type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
+import type { TouchInteractionPreference } from "@/utils/device-input";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
 export interface SidebarDisplayPreferences {
   grouping: SidebarGroupMode;
   setGrouping: (mode: SidebarGroupMode) => void;
+  touchMode: TouchInteractionPreference;
+  setTouchMode: (mode: TouchInteractionPreference) => void;
+  reorderMode: boolean;
+  toggleReorderMode: () => void;
   rowItems: SidebarRowItems;
   toggleRowItem: (item: SidebarRowItem) => void;
   checksDisplay: SidebarChecksDisplay;
@@ -37,6 +42,10 @@ export interface SidebarDisplayPreferences {
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const grouping = useSidebarViewStore((state) => state.groupMode);
   const setGrouping = useSidebarViewStore((state) => state.setGroupMode);
+  const touchMode = useSidebarViewStore((state) => state.touchMode);
+  const setTouchMode = useSidebarViewStore((state) => state.setTouchMode);
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
+  const toggleReorderMode = useSidebarViewStore((state) => state.toggleReorderMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
@@ -72,6 +81,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     () => ({
       grouping,
       setGrouping,
+      touchMode,
+      setTouchMode,
+      reorderMode,
+      toggleReorderMode,
       rowItems: sidebarRowItems,
       toggleRowItem,
       checksDisplay: sidebarChecksDisplay,
@@ -89,6 +102,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [
       grouping,
       setGrouping,
+      touchMode,
+      setTouchMode,
+      reorderMode,
+      toggleReorderMode,
       sidebarRowItems,
       toggleRowItem,
       sidebarChecksDisplay,

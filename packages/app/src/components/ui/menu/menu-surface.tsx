@@ -21,7 +21,8 @@ import {
   type ContextBridge,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { SPACING, type Theme } from "@/styles/theme";
-import { setCssColorAlpha } from "@/appearance/color"
+import { setCssColorAlpha } from "@/appearance/color";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import { useMenuContext, MenuContextProvider } from "./menu-context";
 import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
@@ -204,11 +205,13 @@ function MenuPopoverSurface({
   keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
   const menu = useMenuContext("MenuSurface");
+  const isTouchInteraction = useTouchInteraction();
   const { value: surfaceValue, getAnchor } = useSubAnchors();
 
   const handleClose = useCallback(() => menu.setOpen(false), [menu]);
 
-  // Every open page in the path gets its own flyout, so a submenu of a submenu simply stacks.
+  // Every open page in the path gets its own flyout on pointer devices. Under touch
+  // interaction, popovers drill in place with a back header rather than hovering flyouts.
   const openPages = useMemo(
     () =>
       menu.path
@@ -219,14 +222,20 @@ function MenuPopoverSurface({
         .filter((entry): entry is { page: MenuPageDefinition; depth: number } => entry !== null),
     [menu.path, pages],
   );
+  const currentTouchPageId = isTouchInteraction ? currentPageId(menu.path) : null;
+  const currentTouchPage = currentTouchPageId
+    ? (pages.find((page) => page.id === currentTouchPageId) ?? null)
+    : null;
+  const currentTouchDepth = menu.path.length;
 
   // `hoverIntent: false` takes a page off the pointer entirely — it is not opened by resting on
   // its trigger, and while it is open nothing on this surface closes on a pointer leaving it.
   const hoverValue = useMemo<MenuSurfaceContextValue>(() => {
-    const locked = openPages.some(({ page }) => page.hoverIntent === false);
+    const locked = isTouchInteraction || openPages.some(({ page }) => page.hoverIntent === false);
     return {
       ...surfaceValue,
       hoverOpen: (sub, pointerType) => {
+        if (isTouchInteraction) return;
         if (pages.find((page) => page.id === sub.id)?.hoverIntent === false) return;
         surfaceValue.hoverOpen(sub, pointerType);
       },
@@ -235,7 +244,7 @@ function MenuPopoverSurface({
         surfaceValue.hoverClose(depth, pointerType);
       },
     };
-  }, [openPages, pages, surfaceValue]);
+  }, [isTouchInteraction, openPages, pages, surfaceValue]);
 
   return (
     <MenuSurfaceContext.Provider value={hoverValue}>
@@ -256,23 +265,37 @@ function MenuPopoverSurface({
             fullWidth={fullWidth}
             horizontalPadding={horizontalPadding}
             scrollable={scrollable}
+            revision={isTouchInteraction ? (currentTouchPage?.id ?? "root") : undefined}
             testID={testID}
             keyboardFocusScope={keyboardFocusScope}
           >
-            <MenuPage depth={0}>{children}</MenuPage>
+            {currentTouchPage ? (
+              <>
+                <MenuSheetHeader
+                  title={currentTouchPage.title}
+                  onBack={menu.goBack}
+                  variant="popover"
+                />
+                <MenuPage depth={currentTouchDepth}>{currentTouchPage.content}</MenuPage>
+              </>
+            ) : (
+              <MenuPage depth={0}>{children}</MenuPage>
+            )}
           </AnchoredSurface>
-          {openPages.map(({ page, depth }) => (
-            <MenuFlyout
-              key={page.id}
-              page={page}
-              depth={depth}
-              anchorRef={getAnchor(page.id)}
-              minWidth={minWidth}
-              maxHeight={maxHeight}
-              scrollable={scrollable}
-              testID={testID ? `${testID}-${page.id}` : undefined}
-            />
-          ))}
+          {!isTouchInteraction
+            ? openPages.map(({ page, depth }) => (
+                <MenuFlyout
+                  key={page.id}
+                  page={page}
+                  depth={depth}
+                  anchorRef={getAnchor(page.id)}
+                  minWidth={minWidth}
+                  maxHeight={maxHeight}
+                  scrollable={scrollable}
+                  testID={testID ? `${testID}-${page.id}` : undefined}
+                />
+              ))
+            : null}
         </>
       </MenuOverlay>
     </MenuSurfaceContext.Provider>
@@ -442,20 +465,31 @@ function MenuSheetSurface({
 function MenuSheetHeader({
   title,
   onBack,
+  variant = "sheet",
 }: {
   title: string;
   onBack: (() => void) | null;
+  variant?: "sheet" | "popover";
 }): ReactElement {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
+  const headerStyle = useMemo(
+    () => [styles.sheetHeader, variant === "popover" ? styles.popoverHeader : null],
+    [variant],
+  );
+  const backButtonStyle = useMemo(
+    () => [styles.sheetBackButton, isTouchInteraction ? styles.sheetBackButtonTouch : null],
+    [isTouchInteraction],
+  );
   return (
-    <View style={styles.sheetHeader}>
+    <View style={headerStyle}>
       {onBack ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t("common.back")}
           hitSlop={8}
           onPress={onBack}
-          style={styles.sheetBackButton}
+          style={backButtonStyle}
           testID="menu-sheet-back"
         >
           <ThemedChevronLeft size={18} uniProps={mutedIconMapping} />
@@ -477,11 +511,23 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[3],
   },
+  popoverHeader: {
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[1.5],
+    paddingBottom: theme.spacing[1.5],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderAccent,
+  },
   sheetBackButton: {
     width: 24,
     height: 24,
     alignItems: "center",
     justifyContent: "center",
+  },
+  sheetBackButtonTouch: {
+    width: 36,
+    height: 36,
+    borderRadius: theme.borderRadius.md,
   },
   sheetTitle: {
     fontSize: theme.fontSize.base,

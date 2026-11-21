@@ -19,6 +19,9 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Hand,
+  MonitorSmartphone,
+  MousePointer,
   Server,
   Settings2,
   Tag,
@@ -32,8 +35,10 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb } from "@/constants/platform";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import { ProjectIconView } from "@/components/project-icon-view";
@@ -47,6 +52,7 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
+import type { TouchInteractionPreference } from "@/utils/device-input";
 import {
   workspaceLabelKey,
   type WorkspaceLabelColor,
@@ -130,6 +136,20 @@ const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
   none: "sidebar.display.checks.none",
 };
 
+const TOUCH_MODES: readonly TouchInteractionPreference[] = ["auto", "on", "off"];
+
+const TOUCH_MODE_ICONS: Record<TouchInteractionPreference, OptionIcon> = {
+  auto: withUnistyles(MonitorSmartphone),
+  on: withUnistyles(Hand),
+  off: withUnistyles(MousePointer),
+};
+
+const TOUCH_MODE_LABEL_KEYS: Record<TouchInteractionPreference, string> = {
+  auto: "sidebar.display.touchMode.auto",
+  on: "sidebar.display.touchMode.on",
+  off: "sidebar.display.touchMode.off",
+};
+
 /**
  * What the sidebar shows and how it is arranged.
  *
@@ -139,6 +159,7 @@ const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
  */
 export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
   const preferences = useSidebarDisplayPreferences();
   const hosts = useHosts();
   const { allProjects } = useSidebarModel();
@@ -148,11 +169,12 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const closeManager = useCallback(() => setManagerOpen(false), []);
 
   const triggerStyle = useCallback(
-    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
-      hovered && styles.triggerHovered,
+      isTouchInteraction && styles.triggerTouch,
+      ((!isTouchInteraction && hovered) || pressed) && styles.triggerHovered,
     ],
-    [],
+    [isTouchInteraction],
   );
 
   const showHostFilter = hosts.length > 1;
@@ -198,6 +220,20 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           />
         ),
       },
+      {
+        id: "touchMode",
+        title: t("sidebar.display.touchMode.label"),
+        content: (
+          <OptionList
+            values={TOUCH_MODES}
+            icons={TOUCH_MODE_ICONS}
+            labelKeys={TOUCH_MODE_LABEL_KEYS}
+            selectedValue={preferences.touchMode}
+            onSelect={preferences.setTouchMode}
+            testIDPrefix="sidebar-touch-mode"
+          />
+        ),
+      },
     ];
 
     if (showHostFilter) {
@@ -240,12 +276,13 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
     <>
       <MenuRoot compactMode="sheet">
         <MenuTrigger
+          hitSlop={isTouchInteraction ? 4 : undefined}
           style={triggerStyle}
           accessibilityRole={isWeb ? undefined : "button"}
           accessibilityLabel={t("sidebar.display.trigger")}
           testID="sidebar-display-preferences-menu"
         >
-          <ThemedSettings2 size={14} uniProps={mutedIconMapping} />
+          <ThemedSettings2 size={isTouchInteraction ? 16 : 14} uniProps={mutedIconMapping} />
         </MenuTrigger>
         <MenuSurface
           align="end"
@@ -304,6 +341,24 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
                 {t("workspaceLabels.title")}
               </MenuSubTrigger>
             </>
+          ) : null}
+          <MenuSeparator />
+          <MenuSubTrigger
+            id="touchMode"
+            value={t(TOUCH_MODE_LABEL_KEYS[preferences.touchMode])}
+            indicator={preferences.touchMode !== "auto"}
+            testID="sidebar-display-touch-mode"
+          >
+            {t("sidebar.display.touchMode.label")}
+          </MenuSubTrigger>
+          {isTouchInteraction && preferences.grouping === "project" ? (
+            <MenuItem
+              selected={preferences.reorderMode}
+              onSelect={preferences.toggleReorderMode}
+              testID="sidebar-display-reorder"
+            >
+              {t("sidebar.display.reorder.label")}
+            </MenuItem>
           ) : null}
         </MenuSurface>
       </MenuRoot>
@@ -680,6 +735,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
+  },
+  triggerTouch: {
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

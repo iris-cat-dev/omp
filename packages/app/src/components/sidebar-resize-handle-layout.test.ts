@@ -12,6 +12,15 @@ describe("resolveSidebarResizeHandleGeometry", () => {
     expect(geometry.height ?? 0).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
   });
 
+  it("places the web touch grip mostly outside the border so trailing sidebar buttons stay clickable", () => {
+    const geometry = resolveSidebarResizeHandleGeometry(false, { isWeb: true });
+
+    expect(geometry.edgeOffset).toBeLessThan(0);
+    expect(geometry.width + geometry.edgeOffset).toBeLessThanOrEqual(4);
+    expect(geometry.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+    expect(geometry.height ?? 0).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+  });
+
   it("straddles the border for a fine pointer", () => {
     const geometry = resolveSidebarResizeHandleGeometry(true);
 

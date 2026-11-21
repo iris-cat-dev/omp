@@ -15,7 +15,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { AppState, Text, useWindowDimensions, View } from "react-native";
-import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -60,9 +60,10 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
+  resolveRequestedSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import { isNative, isWeb } from "@/constants/platform";
-import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -96,7 +97,6 @@ import { PluginBackground } from "@/plugins/background";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { I18nProvider } from "@/i18n/provider";
 import {
@@ -510,7 +510,6 @@ function QueryProvider({ children }: { children: ReactNode }) {
 
 const rowStyle = { flex: 1, flexDirection: "row" } as const;
 const flexStyle = { flex: 1 } as const;
-const MOBILE_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
 
 interface AppContainerProps {
   children: ReactNode;
@@ -574,6 +573,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
+  const isTouchInteraction = useTouchInteraction();
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
   const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
@@ -621,7 +621,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isOpen: isDesktopAgentListOpen,
     canShare: canDesktopAppSidebarShare({
       contentMinimumWidth: appContentMinimumWidth,
-      requestedSidebarWidth: sidebarWidth,
+      requestedSidebarWidth: resolveRequestedSidebarWidth({ sidebarWidth, isTouchInteraction }),
       viewportWidth,
     }),
   });
@@ -676,15 +676,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     </View>
   );
 
-  const content = isCompactLayout ? (
-    <MobileGestureWrapper chromeEnabled={chromeEnabled}>{surface}</MobileGestureWrapper>
-  ) : (
-    surface
-  );
-
   return (
     <DesktopWindowTitlebarActionsProvider>
-      <CommandCenterProvider>{content}</CommandCenterProvider>
+      <CommandCenterProvider>{surface}</CommandCenterProvider>
     </DesktopWindowTitlebarActionsProvider>
   );
 }
@@ -765,24 +759,6 @@ function SidebarChrome({
       {mounted ? <LeftSidebar active={active} /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
-  );
-}
-
-function MobileGestureWrapper({
-  children,
-  chromeEnabled,
-}: {
-  children: ReactNode;
-  chromeEnabled: boolean;
-}) {
-  const openGesture = useOpenAgentListGesture(chromeEnabled);
-
-  return (
-    <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
-      <View collapsable={false} style={layoutStyles.surfaceFill}>
-        {children}
-      </View>
-    </GestureDetector>
   );
 }
 
@@ -998,15 +974,13 @@ function WorkspaceRouteNavigationBridge() {
 function AppShell() {
   return (
     <MobilePanelsProvider>
-      <HorizontalScrollProvider>
-        <OpenProjectListener />
-        <PairingLinkListener />
-        <AgentNavigationListener />
-        <AppWithSidebar>
-          <WorkspaceRouteNavigationBridge />
-          <RootStack />
-        </AppWithSidebar>
-      </HorizontalScrollProvider>
+      <OpenProjectListener />
+      <PairingLinkListener />
+      <AgentNavigationListener />
+      <AppWithSidebar>
+        <WorkspaceRouteNavigationBridge />
+        <RootStack />
+      </AppWithSidebar>
     </MobilePanelsProvider>
   );
 }
@@ -1019,7 +993,10 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
       <DesktopStartupReadySignal />
       <SidebarCalloutProvider>
         <DesktopUpdateProvider>
-          <ProvidersWrapper><PluginOverlays />{children}</ProvidersWrapper>
+          <ProvidersWrapper>
+            <PluginOverlays />
+            {children}
+          </ProvidersWrapper>
         </DesktopUpdateProvider>
       </SidebarCalloutProvider>
     </HostRuntimeBootstrapProvider>

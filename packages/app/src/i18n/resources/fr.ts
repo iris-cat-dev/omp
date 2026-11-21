@@ -300,7 +300,8 @@ export const fr: TranslationResources = {
         chatDescription:
           "Discutez et lisez des fichiers sans modifier le code ni exécuter de commandes.",
         enhanced: "Amélioré",
-        enhancedDescription: "Relancez les requêtes qui échouent temporairement pendant le tour en cours.",
+        enhancedDescription:
+          "Relancez les requêtes qui échouent temporairement pendant le tour en cours.",
         plan: "Plan",
         planDescription: "Planifiez la tâche avant d’apporter des modifications.",
         goal: "Objectif",
@@ -1309,6 +1310,17 @@ export const fr: TranslationResources = {
       projectFilter: {
         label: "Projet",
         all: "Tous les projets",
+      },
+      touchMode: {
+        label: "Mode tactile",
+        auto: "Automatique",
+        on: "Activé",
+        off: "Désactivé",
+      },
+      reorder: {
+        label: "Réorganiser",
+        done: "Terminé",
+        handle: "Glisser pour réorganiser",
       },
     },
     filterEmpty: {

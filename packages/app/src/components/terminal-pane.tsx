@@ -55,7 +55,6 @@ import {
 } from "@/terminal/runtime/terminal-stream-controller";
 import { resolveTerminalRestoreOptions } from "@/terminal/runtime/terminal-restore-options";
 import { usePanelStore } from "@/stores/panel-store";
-import { useBlockMobilePanelOpenGestures } from "@/mobile-panels/provider";
 import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import type { TerminalEmulatorHandle } from "./terminal-emulator";
@@ -97,7 +96,6 @@ interface TerminalPaneProps {
   terminalId: string;
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
-  onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
 }
 
@@ -218,7 +216,6 @@ export function TerminalPane({
   terminalId,
   isWorkspaceFocused,
   isPaneFocused,
-  onOpenFileExplorer,
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -233,8 +230,6 @@ export function TerminalPane({
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobilePanel.target);
-  const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
-  const swipeGesturesEnabled = isMobile;
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
     enabled: isMobile,
@@ -278,7 +273,6 @@ export function TerminalPane({
   const [isKeyboardToggleVisible, setIsKeyboardToggleVisible] = useState(false);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
-  useBlockMobilePanelOpenGestures(isMobile && isWorkspaceFocused && isPaneFocused && hasSelection);
   const emulatorRef = useRef<TerminalEmulatorHandle>(null);
   const terminalIdRef = useRef<string>(terminalId);
   const terminalPresentedRef = useRef(isTerminalPresented);
@@ -976,18 +970,6 @@ export function TerminalPane({
     () => [styles.container, keyboardPaddingStyle],
     [keyboardPaddingStyle],
   );
-
-  const handleSwipeRight = useCallback(() => {
-    if (!swipeGesturesEnabled) return;
-    emulatorRef.current?.blur();
-    showMobileAgentList();
-  }, [swipeGesturesEnabled, showMobileAgentList]);
-
-  const handleSwipeLeft = useCallback(() => {
-    if (!swipeGesturesEnabled) return;
-    emulatorRef.current?.blur();
-    onOpenFileExplorer();
-  }, [swipeGesturesEnabled, onOpenFileExplorer]);
   const showPasteAction = shouldShowTerminalPasteAction({ isNative });
   const showFloatingCopyAction = shouldShowTerminalFloatingCopyAction({
     hasSelection,
@@ -1071,11 +1053,8 @@ export function TerminalPane({
               fontSize={settings.codeFontSize}
               keyboardInset={keyboardInset}
               isKeyboardVisible={isKeyboardVisible}
-              swipeGesturesEnabled={swipeGesturesEnabled}
               initialSnapshot={initialSnapshot}
               onRendererReadyChange={handleRendererReadyChange}
-              onSwipeRight={handleSwipeRight}
-              onSwipeLeft={handleSwipeLeft}
               onInput={handleTerminalData}
               onFocus={handleTerminalFocus}
               onResize={handleTerminalResize}

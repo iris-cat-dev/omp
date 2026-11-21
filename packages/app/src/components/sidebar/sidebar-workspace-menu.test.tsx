@@ -26,6 +26,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: { create: () => ({}) },
   withUnistyles: (component: unknown) => component,
+  useUnistyles: () => ({ theme: { colors: { foregroundMuted: "#888" } } }),
 }));
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: React.PropsWithChildren) => children,

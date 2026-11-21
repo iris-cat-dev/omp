@@ -9,6 +9,7 @@ import {
   type ComponentProps,
   type KeyboardEvent,
   type PropsWithChildren,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +29,7 @@ import {
   Trash2,
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import { useToast } from "@/contexts/toast-context";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { pickWorkspacePrimaryAgentId } from "@/subagents/policies";
@@ -48,6 +50,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { TOUCH_LIST_ROW_ACTION_SIZE } from "@/components/ui/control-geometry";
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
@@ -100,15 +103,7 @@ const conversationsLeadingIcon = (
   <ThemedMessageSquareQuote size={14} uniProps={foregroundMutedColorMapping} />
 );
 const EMPTY_ROOT_AGENTS: readonly NonNullable<SidebarWorkspaceEntry["rootAgents"]>[number][] = [];
-
-function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
-  return (
-    <ThemedMoreVertical
-      size={14}
-      uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-    />
-  );
-}
+const NESTED_CONTROL_DATASET = { sidebarNestedControl: "true" } as const;
 
 function stopRowActionPropagation(event: { stopPropagation: () => void }) {
   event.stopPropagation();
@@ -170,6 +165,128 @@ function WorkspaceMenuItem({
   return <DropdownMenuItem {...props}>{children}</DropdownMenuItem>;
 }
 
+async function fetchWorkspacePrimaryAgentId(
+  serverId: string,
+  workspaceId: string,
+  disconnectedMessage: string,
+): Promise<string | null> {
+  const client = getHostRuntimeStore().getClient(serverId);
+  if (!client) throw new Error(disconnectedMessage);
+  const entries: FetchAgentHistoryEntry[] = [];
+  let cursor: string | null = null;
+  do {
+    const history = await client.fetchAgentHistory({
+      filter: { includeArchived: true, workspaceIds: [workspaceId] },
+      sort: [{ key: "created_at", direction: "asc" }],
+      page: { limit: 200, ...(cursor ? { cursor } : {}) },
+    });
+    entries.push(...history.entries);
+    cursor = history.pageInfo.hasMore ? history.pageInfo.nextCursor : null;
+  } while (cursor);
+  return pickWorkspacePrimaryAgentId(
+    entries.map(({ agent }) => ({
+      id: agent.id,
+      workspaceId: agent.workspaceId,
+      parentAgentId: getParentAgentIdFromLabels(agent.labels),
+      createdAt: agent.createdAt,
+      archivedAt: agent.archivedAt,
+    })),
+    workspaceId,
+  );
+}
+
+function SidebarWorkspaceMenuTailItems({
+  surface,
+  workspaceKey,
+  serverId,
+  workspaceId,
+  rootAgentCount,
+  labelLeading,
+  archiveTrailing,
+  onArchive,
+  archiveLabel,
+  archiveStatus,
+  archivePendingLabel,
+  onDelete,
+  deleteStatus,
+  deletePendingLabel,
+}: Pick<
+  SidebarWorkspaceMenuItemsProps,
+  | "workspaceKey"
+  | "serverId"
+  | "workspaceId"
+  | "onArchive"
+  | "archiveLabel"
+  | "archiveStatus"
+  | "archivePendingLabel"
+  | "onDelete"
+  | "deleteStatus"
+  | "deletePendingLabel"
+> & {
+  surface: MenuSurface;
+  rootAgentCount: number;
+  labelLeading: ReactElement | null;
+  archiveTrailing: ReactElement | null;
+}): ReactNode {
+  const { t } = useTranslation();
+  const hasWorkspaceTarget = Boolean(serverId && workspaceId);
+  return (
+    <>
+      {rootAgentCount > 1 ? (
+        <DropdownMenuSubTrigger
+          id={WORKSPACE_CONVERSATIONS_PAGE_ID}
+          leading={conversationsLeadingIcon}
+          testID={`sidebar-workspace-menu-conversations-${workspaceKey}`}
+        >
+          {t("sidebar.workspace.actions.conversations", { count: rootAgentCount })}
+        </DropdownMenuSubTrigger>
+      ) : null}
+      {hasWorkspaceTarget ? (
+        <>
+          <DropdownMenuSubTrigger
+            id={WORKSPACE_LABEL_PAGE_ID}
+            leading={labelLeading}
+            testID={`sidebar-workspace-menu-labels-${workspaceKey}`}
+          >
+            {t("workspaceLabels.title")}
+          </DropdownMenuSubTrigger>
+          <PluginMenuItems
+            position="workspace"
+            hostId={serverId}
+            workspaceId={workspaceId}
+            surface={surface === "context" ? "context" : "dropdown"}
+          />
+        </>
+      ) : null}
+      {onArchive ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
+          leading={archiveLeadingIcon}
+          trailing={archiveTrailing}
+          status={archiveStatus}
+          pendingLabel={archivePendingLabel}
+          onSelect={onArchive}
+        >
+          {archiveLabel ?? t("sidebar.workspace.actions.archive")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {onDelete ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-delete-${workspaceKey}`}
+          leading={deleteLeadingIcon}
+          status={deleteStatus}
+          pendingLabel={deletePendingLabel}
+          onSelect={onDelete}
+        >
+          {t("sidebar.workspace.actions.delete")}
+        </WorkspaceMenuItem>
+      ) : null}
+    </>
+  );
+}
+
 function SidebarWorkspaceMenuItems({
   surface,
   workspaceKey,
@@ -201,28 +318,10 @@ function SidebarWorkspaceMenuItems({
   const copyAgentId = useCallback(async () => {
     if (!serverId || !workspaceId) return;
     try {
-      const client = getHostRuntimeStore().getClient(serverId);
-      if (!client) throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
-      const entries: FetchAgentHistoryEntry[] = [];
-      let cursor: string | null = null;
-      do {
-        const history = await client.fetchAgentHistory({
-          filter: { includeArchived: true, workspaceIds: [workspaceId] },
-          sort: [{ key: "created_at", direction: "asc" }],
-          page: { limit: 200, ...(cursor ? { cursor } : {}) },
-        });
-        entries.push(...history.entries);
-        cursor = history.pageInfo.hasMore ? history.pageInfo.nextCursor : null;
-      } while (cursor);
-      const agentId = pickWorkspacePrimaryAgentId(
-        entries.map(({ agent }) => ({
-          id: agent.id,
-          workspaceId: agent.workspaceId,
-          parentAgentId: getParentAgentIdFromLabels(agent.labels),
-          createdAt: agent.createdAt,
-          archivedAt: agent.archivedAt,
-        })),
+      const agentId = await fetchWorkspacePrimaryAgentId(
+        serverId,
         workspaceId,
+        t("sidebar.workspace.toasts.hostDisconnected"),
       );
       if (!agentId) throw new Error(t("workspace.tabs.toasts.copyFailed"));
       await Clipboard.setStringAsync(agentId);
@@ -329,50 +428,22 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
-      {rootAgentCount > 1 ? (
-        <DropdownMenuSubTrigger
-          id={WORKSPACE_CONVERSATIONS_PAGE_ID}
-          leading={conversationsLeadingIcon}
-          testID={`sidebar-workspace-menu-conversations-${workspaceKey}`}
-        >
-          {t("sidebar.workspace.actions.conversations", { count: rootAgentCount })}
-        </DropdownMenuSubTrigger>
-      ) : null}
-      {serverId && workspaceId ? (
-        <DropdownMenuSubTrigger
-          id={WORKSPACE_LABEL_PAGE_ID}
-          leading={labelLeading}
-          testID={`sidebar-workspace-menu-labels-${workspaceKey}`}
-        >
-          {t("workspaceLabels.title")}
-        </DropdownMenuSubTrigger>
-      ) : null}
-      {serverId && workspaceId ? <PluginMenuItems position="workspace" hostId={serverId} workspaceId={workspaceId} surface={surface === "context" ? "context" : "dropdown"} /> : null}
-      {onArchive ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
-          leading={archiveLeadingIcon}
-          trailing={archiveTrailing}
-          status={archiveStatus}
-          pendingLabel={archivePendingLabel}
-          onSelect={onArchive}
-        >
-          {archiveLabel ?? t("sidebar.workspace.actions.archive")}
-        </WorkspaceMenuItem>
-      ) : null}
-      {onDelete ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-delete-${workspaceKey}`}
-          leading={deleteLeadingIcon}
-          status={deleteStatus}
-          pendingLabel={deletePendingLabel}
-          onSelect={onDelete}
-        >
-          {t("sidebar.workspace.actions.delete")}
-        </WorkspaceMenuItem>
-      ) : null}
+      <SidebarWorkspaceMenuTailItems
+        surface={surface}
+        workspaceKey={workspaceKey}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        rootAgentCount={rootAgentCount}
+        labelLeading={labelLeading}
+        archiveTrailing={archiveTrailing}
+        onArchive={onArchive}
+        archiveLabel={archiveLabel}
+        archiveStatus={archiveStatus}
+        archivePendingLabel={archivePendingLabel}
+        onDelete={onDelete}
+        deleteStatus={deleteStatus}
+        deletePendingLabel={deletePendingLabel}
+      />
     </>
   );
 }
@@ -406,6 +477,7 @@ export function SidebarWorkspaceMenu({
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
   const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
     () =>
       serverId && workspaceId ? { serverId, workspaceId, labels: workspaceLabels ?? [] } : null,
@@ -421,18 +493,42 @@ export function SidebarWorkspaceMenu({
     () => [...conversationPages, ...labelPages],
     [conversationPages, labelPages],
   );
+  const resolvedTriggerStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.trigger,
+      isTouchInteraction && styles.triggerTouch,
+      ((!isTouchInteraction && hovered) || pressed) && styles.triggerHovered,
+    ],
+    [isTouchInteraction],
+  );
+  const renderIcon = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => (
+      <ThemedMoreVertical
+        size={isTouchInteraction ? 16 : 14}
+        uniProps={
+          (!isTouchInteraction && hovered) || pressed
+            ? foregroundColorMapping
+            : foregroundMutedColorMapping
+        }
+      />
+    ),
+    [isTouchInteraction],
+  );
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
-        hitSlop={8}
-        style={triggerStyle}
+        hitSlop={isTouchInteraction ? 4 : 8}
+        style={resolvedTriggerStyle}
         accessibilityRole="button"
+        dataSet={isWeb ? NESTED_CONTROL_DATASET : undefined}
         onPressIn={stopRowActionPropagation}
-        {...(isWeb ? { onPointerDown: stopRowActionPropagation } : {})}
+        {...(isWeb
+          ? { onPointerDown: stopRowActionPropagation, onTouchStart: stopRowActionPropagation }
+          : {})}
         accessibilityLabel={t("sidebar.workspace.actions.menu")}
         testID={`sidebar-workspace-kebab-${workspaceKey}`}
       >
-        {renderTriggerIcon}
+        {renderIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
@@ -507,6 +603,7 @@ export function SidebarWorkspaceContextMenu({
   openInFileManagerPath,
   accessibilityLabel,
   highlightStyle,
+  enableTouchLongPress = false,
   ...triggerProps
 }: PropsWithChildren<
   SidebarWorkspaceMenuItemsProps &
@@ -518,9 +615,11 @@ export function SidebarWorkspaceContextMenu({
       hostBadgeLabel?: string | null;
       serviceSummary?: WorkspaceServiceSummary | null;
       highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
+      enableTouchLongPress?: boolean;
     }
 >) {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
   const pullRequestLabel = workspace.prHint
     ? t("workspace.git.pr.accessibility.pullRequest", {
         number: workspace.prHint.number,
@@ -559,7 +658,15 @@ export function SidebarWorkspaceContextMenu({
   const renameTriggerRef = useRef<View | null>(null);
   useEffect(() => {
     const node = renameTriggerRef.current;
-    if (!isWeb || !(node instanceof HTMLElement) || !onRename || triggerProps.disabled) return;
+    if (
+      !isWeb ||
+      isTouchInteraction ||
+      !(node instanceof HTMLElement) ||
+      !onRename ||
+      triggerProps.disabled
+    ) {
+      return;
+    }
     const handleDoubleClick = (event: MouseEvent) => {
       if (contextMenuOpen || !(event.target instanceof Element)) return;
       if (
@@ -576,7 +683,7 @@ export function SidebarWorkspaceContextMenu({
     };
     node.addEventListener("dblclick", handleDoubleClick);
     return () => node.removeEventListener("dblclick", handleDoubleClick);
-  }, [contextMenuOpen, onRename, triggerProps.disabled]);
+  }, [contextMenuOpen, isTouchInteraction, onRename, triggerProps.disabled]);
   const handleWebKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) {
       return;
@@ -594,7 +701,8 @@ export function SidebarWorkspaceContextMenu({
         accessibilityRole={isWeb ? "none" : triggerProps.accessibilityRole}
         {...(isWeb ? { role: "group", onKeyDown: handleWebKeyDown } : {})}
         triggerRef={renameTriggerRef}
-        enabledOnMobile={false}
+        enabledOnMobile={enableTouchLongPress}
+        enableTouchLongPress={enableTouchLongPress}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
         highlightStyle={highlightStyle}
       >
@@ -638,10 +746,6 @@ export function SidebarWorkspaceContextMenu({
   );
 }
 
-function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.trigger, hovered && styles.triggerHovered];
-}
-
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     padding: 2,
@@ -650,6 +754,16 @@ const styles = StyleSheet.create((theme) => ({
     // MoreVertical paints only around the center of its SVG. Keep the padded hit box, but
     // pull the painted dots through that unused view-box space onto the trailing-content rail.
     marginRight: -7,
+  },
+  triggerTouch: {
+    width: TOUCH_LIST_ROW_ACTION_SIZE,
+    height: TOUCH_LIST_ROW_ACTION_SIZE,
+    padding: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,

@@ -7,6 +7,9 @@ import { HighlightedCodeBlock } from "./highlighted-code-block";
 const state = vi.hoisted(() => ({ persistentActions: true, copy: vi.fn() }));
 vi.mock("@/hooks/use-fine-pointer", () => ({
   useShowPersistentActions: () => state.persistentActions,
+  useTouchInteraction: () => false,
+  useSupportsHover: () => true,
+  useHasFinePointer: () => true,
 }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: state.copy }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));

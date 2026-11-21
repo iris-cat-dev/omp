@@ -10,7 +10,6 @@ import {
   selectIsCompactFileExplorerOpen,
   type ExplorerTab,
 } from "@/stores/panel-store";
-import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import {
   HEADER_INNER_HEIGHT,
@@ -86,7 +85,6 @@ export function CompactExplorerSidebar({
     mode: "padding",
     enabled: usePanelKeyboardPadding,
   });
-  const { gesture: closeGesture } = useCloseFileExplorerGesture();
 
   const handleClose = useCallback(
     (reason: string) => {
@@ -121,11 +119,7 @@ export function CompactExplorerSidebar({
 
   return (
     <RetainedPanelActivity active={isOpen}>
-      <MobilePanelOverlay
-        panel="file-explorer"
-        closeGesture={closeGesture}
-        panelStyle={mobileSidebarStyle}
-      >
+      <MobilePanelOverlay panel="file-explorer" panelStyle={mobileSidebarStyle}>
         <ExplorerSidebarContent
           activeTab={explorerTab}
           onTabPress={handleTabPress}

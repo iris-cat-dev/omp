@@ -13,6 +13,7 @@ import { type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
+import { useShowPersistentActions } from "@/hooks/use-fine-pointer";
 import { isWeb } from "@/constants/platform";
 
 interface DiffFolderRowProps {
@@ -22,7 +23,6 @@ interface DiffFolderRowProps {
   depth: number;
   collapsed: boolean;
   isSelected: boolean;
-  compact?: boolean;
   additions: number;
   deletions: number;
   onToggle: (dirPath: string) => void;
@@ -41,11 +41,11 @@ interface DiffFolderRowProps {
 function folderRowPressableStyle(
   { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
   isSelected: boolean,
-  compact: boolean,
+  touchSized: boolean,
 ) {
   return [
     workspaceTreeRowStyles.row,
-    compact && styles.compactRow,
+    touchSized && workspaceTreeRowStyles.rowTouch,
     (Boolean(hovered) || pressed || isSelected) && workspaceTreeRowStyles.active,
   ];
 }
@@ -56,7 +56,6 @@ export function DiffFolderRow({
   depth,
   collapsed,
   isSelected,
-  compact = false,
   additions,
   deletions,
   onToggle,
@@ -72,6 +71,7 @@ export function DiffFolderRow({
   trailingAction,
   testID,
 }: DiffFolderRowProps) {
+  const touchSized = useShowPersistentActions();
   const handleSelect = useCallback(() => {
     onSelect(dirPath);
   }, [dirPath, onSelect]);
@@ -90,8 +90,8 @@ export function DiffFolderRow({
 
   const pressableStyle = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) =>
-      folderRowPressableStyle(state, isSelected, compact),
-    [compact, isSelected],
+      folderRowPressableStyle(state, isSelected, touchSized),
+    [isSelected, touchSized],
   );
 
   const handleLayout = useCallback(
@@ -199,9 +199,6 @@ export function DiffFolderRow({
 const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     overflow: "hidden",
-  },
-  compactRow: {
-    paddingVertical: 2,
   },
   left: {
     flexDirection: "row",

@@ -8,7 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Dimensions, Text, View } from "react-native";
+import { Dimensions, Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -28,8 +28,6 @@ import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
-import { Pressable } from "react-native";
-import type { GestureResponderEvent } from "react-native";
 import { Portal } from "@gorhom/portal";
 import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -38,9 +36,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSupportsHover } from "@/hooks/use-fine-pointer";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
+import { isTouchLikePointerEvent } from "@/utils/device-input";
 import { useHosts } from "@/runtime/host-runtime";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
@@ -106,9 +105,9 @@ export function WorkspaceHoverCard({
   disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
-  const isCompact = useIsCompactFormFactor();
+  const supportsHover = useSupportsHover();
 
-  if (!isWeb || isCompact) {
+  if (!isWeb || !supportsHover) {
     return children;
   }
 
@@ -152,18 +151,26 @@ function WorkspaceHoverCardDesktop({
     }, HOVER_GRACE_MS);
   }, []);
 
-  const handleTriggerEnter = useCallback(() => {
-    triggerHoveredRef.current = true;
-    clearGraceTimer();
-    if (!isDragging && !disabled) {
-      setOpen(true);
-    }
-  }, [clearGraceTimer, disabled, isDragging]);
+  const handleTriggerEnter = useCallback(
+    (event?: unknown) => {
+      if (isTouchLikePointerEvent(event)) return;
+      triggerHoveredRef.current = true;
+      clearGraceTimer();
+      if (!isDragging && !disabled) {
+        setOpen(true);
+      }
+    },
+    [clearGraceTimer, disabled, isDragging],
+  );
 
-  const handleTriggerLeave = useCallback(() => {
-    triggerHoveredRef.current = false;
-    scheduleClose();
-  }, [scheduleClose]);
+  const handleTriggerLeave = useCallback(
+    (event?: unknown) => {
+      if (isTouchLikePointerEvent(event)) return;
+      triggerHoveredRef.current = false;
+      scheduleClose();
+    },
+    [scheduleClose],
+  );
 
   // While open, the safe zone covers trigger + content + the bridge between
   // them. Close only fires when the pointer leaves the safe zone; re-entering
@@ -292,7 +299,10 @@ function WorkspaceHoverCardContent({
         >
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle} testID="hover-card-workspace-name">
-              {resolveSidebarWorkspacePrimaryLabel(workspace, t("sidebar.workspace.status.unstarted"))}
+              {resolveSidebarWorkspacePrimaryLabel(
+                workspace,
+                t("sidebar.workspace.status.unstarted"),
+              )}
             </Text>
           </View>
           {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}

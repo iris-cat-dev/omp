@@ -298,7 +298,8 @@ export const es: TranslationResources = {
         chat: "Chat",
         chatDescription: "Chatea y lee archivos sin editar código ni ejecutar comandos.",
         enhanced: "Mejorado",
-        enhancedDescription: "Reintenta las solicitudes al modelo que fallan temporalmente en el turno actual.",
+        enhancedDescription:
+          "Reintenta las solicitudes al modelo que fallan temporalmente en el turno actual.",
         plan: "Plan",
         planDescription: "Planifica la tarea antes de realizar cambios.",
         goal: "Objetivo",
@@ -1311,6 +1312,17 @@ export const es: TranslationResources = {
       projectFilter: {
         label: "Proyecto",
         all: "Todos los proyectos",
+      },
+      touchMode: {
+        label: "Modo táctil",
+        auto: "Automático",
+        on: "Activado",
+        off: "Desactivado",
+      },
+      reorder: {
+        label: "Reordenar",
+        done: "Listo",
+        handle: "Arrastra para reordenar",
       },
     },
     filterEmpty: {

@@ -40,7 +40,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import {
+  buttonControlHeight,
+  TOUCH_LIST_ROW_ACTION_SIZE,
+  TOUCH_LIST_ROW_HEIGHT,
+} from "@/components/ui/control-geometry";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -48,6 +52,7 @@ import {
   EyeOff,
   ExternalLink,
   GitPullRequest,
+  GripVertical,
   Settings,
   MoreVertical,
   Plus,
@@ -62,8 +67,10 @@ import {
   type ToggleSidebarWorkspacePin,
 } from "@/hooks/use-sidebar-workspace-pin";
 import { useHostFeatureMap } from "@/runtime/host-features";
-import { SIDEBAR_LIST_INSET, useIsCompactFormFactor } from "@/constants/layout";
-import { useShowPersistentActions } from "@/hooks/use-fine-pointer";
+import { SIDEBAR_LIST_INSET } from "@/constants/layout";
+import { useShowPersistentActions, useTouchInteraction } from "@/hooks/use-fine-pointer";
+import { isMousePointerEvent } from "@/utils/device-input";
+import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { useProjectIcons } from "@/projects/icons";
 import {
   buildHostProjectRoute,
@@ -184,7 +191,12 @@ const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedEyeOff = withUnistyles(EyeOff);
+const ThemedGripVertical = withUnistyles(GripVertical);
 const EMPTY_AGENT_DRAFTS: readonly SidebarAgentDraft[] = [];
+const NESTED_CONTROL_DATASET = { sidebarNestedControl: "true" } as const;
+const WEB_DRAG_HANDLE_STYLE: ViewStyle | null = platformIsWeb
+  ? ({ touchAction: "none", cursor: "grab" } as unknown as ViewStyle)
+  : null;
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -393,30 +405,81 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   );
 }
 
-function projectKebabStyle({
-  hovered = false,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.projectKebabButton, hovered && styles.projectKebabButtonHovered];
-}
-
 function getProjectWorkspaceRowStyle({
   isDragging,
   isPressed,
   selected,
   isHovered,
+  isTouchInteraction,
 }: {
   isDragging: boolean;
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
+  isTouchInteraction: boolean;
 }) {
   return [
     styles.workspaceRow,
-    isHovered && styles.workspaceRowHovered,
+    isTouchInteraction && styles.workspaceRowTouch,
+    !isTouchInteraction && isHovered && styles.workspaceRowHovered,
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
     isPressed && styles.workspaceRowPressed,
   ];
+}
+
+function SidebarTouchDragHandle({
+  drag,
+  dragHandleProps,
+  testID,
+}: {
+  drag: () => void;
+  dragHandleProps?: DraggableListDragHandleProps;
+  testID: string;
+}) {
+  const { t } = useTranslation();
+  const {
+    role: _dragRole,
+    tabIndex: _dragTabIndex,
+    "aria-roledescription": _dragRoleDescription,
+    ...dragAttributes
+  } = dragHandleProps?.attributes ?? {};
+  const handleStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.touchDragHandle,
+      WEB_DRAG_HANDLE_STYLE,
+      pressed && styles.touchDragHandlePressed,
+    ],
+    [],
+  );
+  const handlePressIn = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      if (!platformIsWeb) drag();
+    },
+    [drag],
+  );
+  return (
+    <View
+      {...dragAttributes}
+      {...dragHandleProps?.listeners}
+      ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+      dataSet={platformIsWeb ? NESTED_CONTROL_DATASET : undefined}
+      style={styles.touchDragHandleSlot}
+    >
+      <Pressable
+        hitSlop={4}
+        accessibilityRole="button"
+        accessibilityLabel={t("sidebar.display.reorder.handle")}
+        onPress={stopRowActionPropagation}
+        onPressIn={handlePressIn}
+        style={handleStyle}
+        testID={testID}
+      >
+        <ThemedGripVertical size={16} uniProps={foregroundMutedColorMapping} />
+      </Pressable>
+    </View>
+  );
 }
 
 function noop() {}
@@ -452,7 +515,6 @@ function ProjectRowTrailingActions({
   settingsTarget,
   projectPath,
   isHovered,
-  isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
   onRemoveProject,
@@ -464,18 +526,22 @@ function ProjectRowTrailingActions({
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
   isHovered: boolean;
-  isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
+  const isTouchInteraction = useTouchInteraction();
   const showPersistentActions = useShowPersistentActions();
-  const actionsVisible =
-    isHovered || showPersistentActions || platformIsNative || isMobileBreakpoint;
+  const actionsVisible = isTouchInteraction || isHovered || showPersistentActions;
   const kebab = useOpenKebabMenuVisibility(actionsVisible);
   return (
-    <View style={styles.projectTrailingActions}>
+    <View
+      style={[
+        styles.projectTrailingActions,
+        isTouchInteraction && styles.projectTrailingActionsTouch,
+      ]}
+    >
       {workspaceTarget ? (
         <NewWorkspaceButton
           displayName={displayName}
@@ -509,15 +575,6 @@ const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedC
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const hideLeadingIcon = <ThemedEyeOff size={14} uniProps={foregroundMutedColorMapping} />;
 
-function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
-  return (
-    <ThemedMoreVertical
-      size={14}
-      uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-    />
-  );
-}
-
 function ProjectKebabMenu({
   projectViewKey,
   settingsTarget,
@@ -536,18 +593,43 @@ function ProjectKebabMenu({
   onOpenChange?: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
+  const triggerStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.projectKebabButton,
+      isTouchInteraction && styles.projectKebabButtonTouch,
+      ((!isTouchInteraction && hovered) || pressed) && styles.projectKebabButtonHovered,
+    ],
+    [isTouchInteraction],
+  );
+  const renderIcon = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => (
+      <ThemedMoreVertical
+        size={isTouchInteraction ? 16 : 14}
+        uniProps={
+          (!isTouchInteraction && hovered) || pressed
+            ? foregroundColorMapping
+            : foregroundMutedColorMapping
+        }
+      />
+    ),
+    [isTouchInteraction],
+  );
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
-        hitSlop={8}
-        style={projectKebabStyle}
+        hitSlop={isTouchInteraction ? 4 : 8}
+        style={triggerStyle}
         accessibilityRole="button"
+        dataSet={platformIsWeb ? NESTED_CONTROL_DATASET : undefined}
         onPressIn={stopRowActionPropagation}
-        {...(platformIsWeb ? { onPointerDown: stopRowActionPropagation } : {})}
+        {...(platformIsWeb
+          ? { onPointerDown: stopRowActionPropagation, onTouchStart: stopRowActionPropagation }
+          : {})}
         accessibilityLabel={t("sidebar.project.actions.menu")}
         testID={`sidebar-project-kebab-${projectViewKey}`}
       >
-        {renderKebabTriggerIcon}
+        {renderIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220} sheetTitle={t("sidebar.project.actions.menu")}>
         <ProjectMenuItems
@@ -659,7 +741,7 @@ function WorkspaceRowRightGroup({
   workspace,
   backdrop,
   isHovered,
-  isTouchPlatform,
+  selected,
   isCreating,
   showShortcutBadge,
   shortcutNumber,
@@ -685,7 +767,7 @@ function WorkspaceRowRightGroup({
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
   isHovered: boolean;
-  isTouchPlatform: boolean;
+  selected: boolean;
   isCreating: boolean;
   showShortcutBadge: boolean;
   shortcutNumber: number | null;
@@ -721,8 +803,9 @@ function WorkspaceRowRightGroup({
   } = resolveTrailingActionVisibility({
     workspace,
     hasArchiveAction: Boolean(onArchive),
+    selected,
     isHovered,
-    isTouchPlatform,
+    isTouchInteraction: false,
     showPersistentActions,
     showShortcut,
   });
@@ -755,7 +838,7 @@ function WorkspaceRowRightGroup({
                 archiveStatus === "pending" ||
                 forkPending
               }
-              visible={isHovered && !isTouchPlatform}
+              visible={isHovered}
             />
             {onArchive ? (
               <SidebarWorkspaceMenu
@@ -809,15 +892,19 @@ function NewWorkspaceButton({
   showShortcutHint?: boolean;
 }) {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
   const newWorkspaceKeys = useShortcutKeys("new-workspace");
 
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.projectIconActionButton,
+      isTouchInteraction && styles.projectIconActionButtonTouch,
       !visible && styles.projectIconActionButtonHidden,
-      (Boolean(hovered) || pressed) && !loading && styles.projectIconActionButtonHovered,
+      ((!isTouchInteraction && Boolean(hovered)) || pressed) &&
+        !loading &&
+        styles.projectIconActionButtonHovered,
     ],
-    [visible, loading],
+    [isTouchInteraction, visible, loading],
   );
 
   const handlePress = useCallback(
@@ -829,14 +916,24 @@ function NewWorkspaceButton({
   );
 
   return (
-    <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
+    <View
+      style={[
+        styles.projectTrailingControlSlot,
+        isTouchInteraction && styles.projectTrailingControlSlotTouch,
+      ]}
+      pointerEvents={visible ? "auto" : "none"}
+    >
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
+            hitSlop={isTouchInteraction ? 4 : undefined}
             style={pressableStyle}
             onPress={handlePress}
             onPressIn={stopRowActionPropagation}
-            {...(platformIsWeb ? { onPointerDown: stopRowActionPropagation } : {})}
+            dataSet={platformIsWeb ? NESTED_CONTROL_DATASET : undefined}
+            {...(platformIsWeb
+              ? { onPointerDown: stopRowActionPropagation, onTouchStart: stopRowActionPropagation }
+              : {})}
             disabled={loading}
             accessibilityRole="button"
             accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
@@ -849,9 +946,11 @@ function NewWorkspaceButton({
                 <ThemedLoadingSpinner size={14} uniProps={foregroundMutedColorMapping} />
               ) : (
                 <ThemedPlus
-                  size={15}
+                  size={isTouchInteraction ? 16 : 15}
                   uniProps={
-                    hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping
+                    (!isTouchInteraction && hovered) || pressed
+                      ? foregroundColorMapping
+                      : foregroundMutedColorMapping
                   }
                 />
               )
@@ -873,6 +972,131 @@ function NewWorkspaceButton({
   );
 }
 
+function deleteSidebarAgentDraftTab({
+  serverId,
+  workspaceId,
+  tabHostWorkspaceId,
+  draftId,
+  tabId,
+  routeActive,
+  onArchiveFailed,
+}: {
+  serverId: string;
+  workspaceId: string;
+  tabHostWorkspaceId: string;
+  draftId: string;
+  tabId: string;
+  routeActive: boolean;
+  onArchiveFailed: (error: unknown) => void;
+}): void {
+  const layoutStore = useWorkspaceLayoutStore.getState();
+  const hostKey = resolveProjectLayoutKey({ serverId, workspaceId });
+  if (!hostKey) return;
+  const tab = layoutStore.getWorkspaceTabs(hostKey).find((entry) => entry.tabId === tabId);
+  if (
+    tab?.target.kind !== "draft" ||
+    tab.target.draftId !== draftId ||
+    (tab.target.workspaceId?.trim() || tabHostWorkspaceId) !== workspaceId
+  ) {
+    return;
+  }
+
+  const result = closeWorkspaceDraftTab({ serverId, workspaceKey: hostKey, tabId });
+  if (!result) return;
+
+  const remainingLayouts = useWorkspaceLayoutStore.getState().layoutByWorkspace;
+  const hasRemainingTabsForWorkspace = Object.entries(remainingLayouts).some(
+    ([key, layout]) =>
+      key.startsWith(`${serverId}:project:`) &&
+      collectAllTabs(layout.root).some(
+        (entry) =>
+          entry.target.workspaceId?.trim() === workspaceId &&
+          !isWorkspaceSidePanelToolTarget(entry.target),
+      ),
+  );
+
+  // Companion tools do not keep a deleted draft alive; content tabs still do.
+  // The server re-verifies emptiness before retiring the workspace record.
+  if (!hasRemainingTabsForWorkspace) {
+    if (result !== "workspace-empty") {
+      redirectIfArchivingActiveWorkspace({
+        serverId,
+        workspaceId,
+        activeWorkspaceSelection: routeActive
+          ? { serverId, workspaceId: tabHostWorkspaceId }
+          : null,
+      });
+    }
+    void archiveEmptyWorkspace({
+      client: getHostRuntimeStore().getClient(serverId),
+      workspace: { serverId, workspaceId },
+      closedDraftId: draftId,
+      hasPendingTerminalCreate: false,
+      preserveDrafts: true,
+    }).catch(onArchiveFailed);
+  }
+  if (result === "workspace-empty" && routeActive) {
+    const projectId = useSessionStore
+      .getState()
+      .sessions[serverId]?.workspaces.get(workspaceId)?.projectId;
+    if (projectId) router.replace(buildHostProjectRoute(serverId, projectId));
+  }
+}
+
+function SidebarAgentDraftDeleteAction({
+  draftId,
+  deleteLabel,
+  visible,
+  isTouchInteraction,
+  onPress,
+}: {
+  draftId: string;
+  deleteLabel: string;
+  visible: boolean;
+  isTouchInteraction: boolean;
+  onPress: (event: GestureResponderEvent) => void;
+}) {
+  return (
+    <View
+      style={[styles.agentDraftDeleteSlot, isTouchInteraction && styles.agentDraftDeleteSlotTouch]}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <Pressable
+            hitSlop={isTouchInteraction ? 4 : undefined}
+            accessibilityRole="button"
+            accessibilityLabel={deleteLabel}
+            onPress={onPress}
+            onPressIn={stopRowActionPropagation}
+            dataSet={platformIsWeb ? NESTED_CONTROL_DATASET : undefined}
+            {...(platformIsWeb
+              ? {
+                  onPointerDown: stopRowActionPropagation,
+                  onTouchStart: stopRowActionPropagation,
+                }
+              : {})}
+            style={[
+              styles.agentDraftDeleteButton,
+              isTouchInteraction && styles.agentDraftDeleteButtonTouch,
+              !visible && styles.agentDraftDeleteHidden,
+            ]}
+            testID={`sidebar-agent-draft-delete-${draftId}`}
+          >
+            <ThemedTrash2
+              size={isTouchInteraction ? 16 : 15}
+              uniProps={foregroundMutedColorMapping}
+            />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.projectActionTooltipText}>{deleteLabel}</Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
+  );
+}
+
 function SidebarAgentDraftRow({
   serverId,
   workspaceId,
@@ -884,6 +1108,7 @@ function SidebarAgentDraftRow({
 }: SidebarAgentDraft & { onWorkspacePress?: () => void }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const isTouchInteraction = useTouchInteraction();
   const activeRouteWorkspaceSelection = useActiveWorkspaceSelection();
   const routeActive =
     activeRouteWorkspaceSelection?.serverId === serverId &&
@@ -902,70 +1127,22 @@ function SidebarAgentDraftRow({
     });
   }, [draftId, onWorkspacePress, serverId, tabHostWorkspaceId, workspaceId]);
   const handleDelete = useCallback(() => {
-    const layoutStore = useWorkspaceLayoutStore.getState();
-    const hostKey = resolveProjectLayoutKey({ serverId, workspaceId });
-    if (!hostKey) return;
-    const tab = layoutStore.getWorkspaceTabs(hostKey).find((entry) => entry.tabId === tabId);
-    if (
-      tab?.target.kind !== "draft" ||
-      tab.target.draftId !== draftId ||
-      (tab.target.workspaceId?.trim() || tabHostWorkspaceId) !== workspaceId
-    ) {
-      return;
-    }
-
-    const result = closeWorkspaceDraftTab({ serverId, workspaceKey: hostKey, tabId });
-    if (!result) return;
-
-    const remainingLayouts = useWorkspaceLayoutStore.getState().layoutByWorkspace;
-    const hasRemainingTabsForWorkspace = Object.entries(remainingLayouts).some(
-      ([key, layout]) =>
-        key.startsWith(`${serverId}:project:`) &&
-        collectAllTabs(layout.root).some(
-          (entry) =>
-            entry.target.workspaceId?.trim() === workspaceId &&
-            !isWorkspaceSidePanelToolTarget(entry.target),
-        ),
-    );
-    // Keep in-flight create attempts: the server request can complete after the tab is closed,
-    // and archiveEmptyWorkspace uses them to protect workspaces from premature archival.
-    const archiveIfUnused = (candidateId: string) => {
-      if (result !== "workspace-empty") {
-        redirectIfArchivingActiveWorkspace({
-          serverId,
-          workspaceId: candidateId,
-          activeWorkspaceSelection: routeActive
-            ? { serverId, workspaceId: tabHostWorkspaceId }
-            : null,
-        });
-      }
-      void archiveEmptyWorkspace({
-        client: getHostRuntimeStore().getClient(serverId),
-        workspace: { serverId, workspaceId: candidateId },
-        closedDraftId: draftId,
-        hasPendingTerminalCreate: false,
-        preserveDrafts: true,
-      }).catch((error: unknown) => {
+    deleteSidebarAgentDraftTab({
+      serverId,
+      workspaceId,
+      tabHostWorkspaceId,
+      draftId,
+      tabId,
+      routeActive,
+      onArchiveFailed: (error) => {
         toast.error(
           t("sidebar.workspace.toasts.emptyArchiveFailed", {
             reason:
               error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
           }),
         );
-      });
-    };
-
-    // Companion tools do not keep a deleted draft alive; content tabs still do.
-    // The server re-verifies emptiness before retiring the workspace record.
-    if (!hasRemainingTabsForWorkspace) {
-      archiveIfUnused(workspaceId);
-    }
-    if (result === "workspace-empty" && routeActive) {
-      const projectId = useSessionStore
-        .getState()
-        .sessions[serverId]?.workspaces.get(workspaceId)?.projectId;
-      if (projectId) router.replace(buildHostProjectRoute(serverId, projectId));
-    }
+      },
+    });
   }, [draftId, routeActive, serverId, t, tabHostWorkspaceId, tabId, toast, workspaceId]);
   const handleDeletePress = useCallback(
     (event: GestureResponderEvent) => {
@@ -980,8 +1157,9 @@ function SidebarAgentDraftRow({
   }, []);
   const rowStyle = [
     styles.agentDraftRow,
+    isTouchInteraction && styles.agentDraftRowTouch,
     selected && styles.sidebarRowSelected,
-    isHovered && !isPressed && styles.workspaceRowHovered,
+    !isTouchInteraction && isHovered && !isPressed && styles.workspaceRowHovered,
     isPressed && styles.workspaceRowPressed,
   ];
   const handleRowBlur = useCallback((event: { currentTarget: unknown }) => {
@@ -989,8 +1167,17 @@ function SidebarAgentDraftRow({
       return;
     setIsFocused(false);
   }, []);
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handlePointerEnter = useCallback(
+    (event?: unknown) => {
+      if (isTouchInteraction || !isMousePointerEvent(event)) return;
+      setIsHovered(true);
+    },
+    [isTouchInteraction],
+  );
+  const handlePointerLeave = useCallback((event?: unknown) => {
+    if (!isMousePointerEvent(event)) return;
+    setIsHovered(false);
+  }, []);
   const handleRowFocus = useCallback(() => setIsFocused(true), []);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
@@ -1007,7 +1194,8 @@ function SidebarAgentDraftRow({
         onBlur={handleRowBlur}
       >
         <ContextMenuTrigger
-          enabledOnMobile={false}
+          enabledOnMobile={isTouchInteraction}
+          enableTouchLongPress={isTouchInteraction}
           accessibilityRole="button"
           accessibilityLabel={t("newWorkspace.title")}
           accessibilityState={accessibilityState}
@@ -1024,37 +1212,13 @@ function SidebarAgentDraftRow({
             {t("newWorkspace.title")}
           </Text>
         </ContextMenuTrigger>
-        <View
-          style={styles.agentDraftDeleteSlot}
-          pointerEvents={
-            showPersistentActions || isFocused || isHovered || contextMenuOpen ? "auto" : "none"
-          }
-        >
-          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-            <TooltipTrigger asChild>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={deleteLabel}
-                onPress={handleDeletePress}
-                onPressIn={stopRowActionPropagation}
-                style={[
-                  styles.agentDraftDeleteButton,
-                  !showPersistentActions &&
-                    !isFocused &&
-                    !isHovered &&
-                    !contextMenuOpen &&
-                    styles.agentDraftDeleteHidden,
-                ]}
-                testID={`sidebar-agent-draft-delete-${draftId}`}
-              >
-                <ThemedTrash2 size={15} uniProps={foregroundMutedColorMapping} />
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center" offset={8}>
-              <Text style={styles.projectActionTooltipText}>{deleteLabel}</Text>
-            </TooltipContent>
-          </Tooltip>
-        </View>
+        <SidebarAgentDraftDeleteAction
+          draftId={draftId}
+          deleteLabel={deleteLabel}
+          visible={showPersistentActions || isFocused || isHovered || contextMenuOpen}
+          isTouchInteraction={isTouchInteraction}
+          onPress={handleDeletePress}
+        />
       </View>
       <ContextMenuContent align="start" width={220}>
         <ContextMenuItem
@@ -1066,6 +1230,228 @@ function SidebarAgentDraftRow({
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+function ProjectHeaderTrailingContent({
+  projectViewKey,
+  displayName,
+  workspaceTarget,
+  settingsTarget,
+  projectPath,
+  isProjectActive,
+  shortcutNumber,
+  showShortcutBadge,
+  drag,
+  dragHandleProps,
+  isTouchInteraction,
+  reorderMode,
+  effectiveHovered,
+  isFocused,
+  onBeginWorkspaceSetup,
+  onRemoveProject,
+  removeProjectStatus,
+}: {
+  projectViewKey: string;
+  displayName: string;
+  workspaceTarget: SidebarProjectHostTarget | null;
+  settingsTarget: SidebarProjectHostTarget | null;
+  projectPath: string;
+  isProjectActive: boolean;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  drag: () => void;
+  dragHandleProps?: DraggableListDragHandleProps;
+  isTouchInteraction: boolean;
+  reorderMode: boolean;
+  effectiveHovered: boolean;
+  isFocused: boolean;
+  onBeginWorkspaceSetup: () => void;
+  onRemoveProject?: () => void;
+  removeProjectStatus: "idle" | "pending";
+}) {
+  if (isTouchInteraction && reorderMode) {
+    return (
+      <SidebarTouchDragHandle
+        drag={drag}
+        dragHandleProps={dragHandleProps}
+        testID={`sidebar-project-drag-handle-${projectViewKey}`}
+      />
+    );
+  }
+  return (
+    <>
+      <ProjectRowTrailingActions
+        projectViewKey={projectViewKey}
+        displayName={displayName}
+        workspaceTarget={workspaceTarget}
+        settingsTarget={settingsTarget}
+        projectPath={projectPath}
+        isHovered={effectiveHovered || (!isTouchInteraction && isFocused)}
+        isProjectActive={isProjectActive}
+        onBeginWorkspaceSetup={onBeginWorkspaceSetup}
+        onRemoveProject={onRemoveProject}
+        removeProjectStatus={removeProjectStatus}
+      />
+      {!isTouchInteraction && showShortcutBadge && shortcutNumber !== null ? (
+        <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
+          <SidebarWorkspaceShortcutBadge number={shortcutNumber} />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+function ProjectHeaderRowBody({
+  project,
+  displayName,
+  statusBucket,
+  collapsed,
+  workspaceTarget,
+  settingsTarget,
+  projectPath,
+  isProjectActive,
+  shortcutNumber,
+  showShortcutBadge,
+  drag,
+  isDragging,
+  isArchiving,
+  isTouchInteraction,
+  reorderMode,
+  effectiveHovered,
+  isFocused,
+  isPressed,
+  hasContextMenu,
+  rowDragEnabled,
+  dragHandleProps,
+  onBeginWorkspaceSetup,
+  onRemoveProject,
+  removeProjectStatus,
+  onPressIn,
+  onTouchMove,
+  onPressOut,
+  onPress,
+  onPointerEnter,
+  onPointerLeave,
+  onFocus,
+  onBlur,
+}: {
+  project: SidebarProjectEntry;
+  displayName: string;
+  statusBucket: SidebarStateBucket | null;
+  collapsed: boolean;
+  workspaceTarget: SidebarProjectHostTarget | null;
+  settingsTarget: SidebarProjectHostTarget | null;
+  projectPath: string;
+  isProjectActive: boolean;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  drag: () => void;
+  isDragging: boolean;
+  isArchiving: boolean;
+  isTouchInteraction: boolean;
+  reorderMode: boolean;
+  effectiveHovered: boolean;
+  isFocused: boolean;
+  isPressed: boolean;
+  hasContextMenu: boolean;
+  rowDragEnabled: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+  onBeginWorkspaceSetup: () => void;
+  onRemoveProject?: () => void;
+  removeProjectStatus: "idle" | "pending";
+  onPressIn: (event: GestureResponderEvent) => void;
+  onTouchMove?: (event: GestureResponderEvent) => void;
+  onPressOut: () => void;
+  onPress: (event: GestureResponderEvent) => void;
+  onPointerEnter: (event?: unknown) => void;
+  onPointerLeave: (event?: unknown) => void;
+  onFocus: () => void;
+  onBlur: (event: { currentTarget: unknown }) => void;
+}) {
+  const {
+    role: _dragRole,
+    tabIndex: _dragTabIndex,
+    "aria-roledescription": _dragRoleDescription,
+    ...dragAttributes
+  } = dragHandleProps?.attributes ?? {};
+  const projectRowStyle = [
+    styles.projectRow,
+    isTouchInteraction && styles.projectRowTouch,
+    isDragging && styles.projectRowDragging,
+    effectiveHovered && styles.projectRowHovered,
+    isPressed && styles.projectRowPressed,
+  ];
+  const rowChildren = (
+    <View style={styles.projectRowLeft}>
+      <ProjectLeadingVisual
+        statusBucket={statusBucket}
+        backdrop={getSidebarRowBackdrop({ isDragging, isPressed, isHovered: effectiveHovered })}
+        collapsed={collapsed}
+        isArchiving={isArchiving}
+      />
+      <View style={styles.projectTitleGroup}>
+        <Text style={styles.projectTitle} numberOfLines={1}>
+          {displayName}
+        </Text>
+      </View>
+    </View>
+  );
+  const triggerProps = {
+    accessibilityRole: "button" as const,
+    "aria-expanded": !collapsed,
+    style: styles.projectRowPressTarget,
+    highlightStyle: styles.projectRowPressed,
+    onPressIn,
+    onTouchMove,
+    onPressOut,
+    onPress,
+    testID: `sidebar-project-row-${project.viewKey}`,
+  };
+  return (
+    <View
+      {...(rowDragEnabled ? dragAttributes : undefined)}
+      {...(rowDragEnabled ? dragHandleProps?.listeners : undefined)}
+      ref={
+        rowDragEnabled ? (dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>) : undefined
+      }
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      style={projectRowStyle}
+      onFocus={onFocus}
+      onBlur={onBlur}
+    >
+      {hasContextMenu ? (
+        <ContextMenuTrigger
+          {...triggerProps}
+          enabledOnMobile={isTouchInteraction && !reorderMode}
+          enableTouchLongPress={isTouchInteraction && !reorderMode}
+        >
+          {rowChildren}
+        </ContextMenuTrigger>
+      ) : (
+        <PressHighlight {...triggerProps}>{rowChildren}</PressHighlight>
+      )}
+      <ProjectHeaderTrailingContent
+        projectViewKey={project.viewKey}
+        displayName={displayName}
+        workspaceTarget={workspaceTarget}
+        settingsTarget={settingsTarget}
+        projectPath={projectPath}
+        isProjectActive={isProjectActive}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        drag={drag}
+        dragHandleProps={dragHandleProps}
+        isTouchInteraction={isTouchInteraction}
+        reorderMode={reorderMode}
+        effectiveHovered={effectiveHovered}
+        isFocused={isFocused}
+        onBeginWorkspaceSetup={onBeginWorkspaceSetup}
+        onRemoveProject={onRemoveProject}
+        removeProjectStatus={removeProjectStatus}
+      />
+    </View>
   );
 }
 
@@ -1092,7 +1478,9 @@ function ProjectHeaderRow({
   const [isPressed, setIsPressed] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const isMobileBreakpoint = useIsCompactFormFactor();
+  const isTouchInteraction = useTouchInteraction();
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
+  const rowDragEnabled = !isTouchInteraction;
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
@@ -1100,13 +1488,8 @@ function ProjectHeaderRow({
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
+    enabled: rowDragEnabled,
   });
-  const {
-    role: _dragRole,
-    tabIndex: _dragTabIndex,
-    "aria-roledescription": _dragRoleDescription,
-    ...dragAttributes
-  } = dragHandleProps?.attributes ?? {};
 
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
@@ -1119,10 +1502,17 @@ function ProjectHeaderRow({
     [interaction.didLongPressRef, onPress],
   );
 
-  const handlePointerEnter = useCallback(() => {
-    if (!contextMenuOpen) setIsHovered(true);
-  }, [contextMenuOpen]);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handlePointerEnter = useCallback(
+    (event?: unknown) => {
+      if (isTouchInteraction || !isMousePointerEvent(event)) return;
+      if (!contextMenuOpen) setIsHovered(true);
+    },
+    [contextMenuOpen, isTouchInteraction],
+  );
+  const handlePointerLeave = useCallback((event?: unknown) => {
+    if (!isMousePointerEvent(event)) return;
+    setIsHovered(false);
+  }, []);
   const handleContextMenuOpenChange = useCallback((open: boolean) => {
     setContextMenuOpen(open);
     if (open) setIsHovered(false);
@@ -1138,13 +1528,6 @@ function ProjectHeaderRow({
     setIsPressed(false);
     interaction.handlePressOut();
   }, [interaction]);
-
-  const projectRowStyle = [
-    styles.projectRow,
-    isDragging && styles.projectRowDragging,
-    isHovered && styles.projectRowHovered,
-    isPressed && styles.projectRowPressed,
-  ];
   const handleRowBlur = useCallback((event: { currentTarget: unknown }) => {
     if (platformIsWeb && (event.currentTarget as HTMLElement).contains(document.activeElement))
       return;
@@ -1152,87 +1535,41 @@ function ProjectHeaderRow({
   }, []);
   const handleRowFocus = useCallback(() => setIsFocused(true), []);
 
-  const rowChildren = (
-    <View style={styles.projectRowLeft}>
-      <ProjectLeadingVisual
-        statusBucket={statusBucket}
-        backdrop={getSidebarRowBackdrop({ isDragging, isPressed, isHovered })}
-        collapsed={collapsed}
-        isArchiving={isArchiving}
-      />
-      <View style={styles.projectTitleGroup}>
-        <Text style={styles.projectTitle} numberOfLines={1}>
-          {displayName}
-        </Text>
-      </View>
-    </View>
-  );
-  const trailingActions = (
-    <>
-      <ProjectRowTrailingActions
-        projectViewKey={project.viewKey}
-        displayName={displayName}
-        workspaceTarget={workspaceTarget}
-        settingsTarget={settingsTarget}
-        projectPath={projectPath}
-        isHovered={isHovered || isFocused}
-        isMobileBreakpoint={isMobileBreakpoint}
-        isProjectActive={isProjectActive}
-        onBeginWorkspaceSetup={onBeginWorkspaceSetup}
-        onRemoveProject={onRemoveProject}
-        removeProjectStatus={removeProjectStatus}
-      />
-      {showShortcutBadge && shortcutNumber !== null ? (
-        <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
-          <SidebarWorkspaceShortcutBadge number={shortcutNumber} />
-        </View>
-      ) : null}
-    </>
-  );
-
   const row = (
-    <View
-      {...dragAttributes}
-      {...dragHandleProps?.listeners}
-      ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+    <ProjectHeaderRowBody
+      project={project}
+      displayName={displayName}
+      statusBucket={statusBucket}
+      collapsed={collapsed}
+      workspaceTarget={workspaceTarget}
+      settingsTarget={settingsTarget}
+      projectPath={projectPath}
+      isProjectActive={isProjectActive}
+      shortcutNumber={shortcutNumber}
+      showShortcutBadge={showShortcutBadge}
+      drag={drag}
+      isDragging={isDragging}
+      isArchiving={isArchiving}
+      isTouchInteraction={isTouchInteraction}
+      reorderMode={reorderMode}
+      effectiveHovered={!isTouchInteraction && isHovered}
+      isFocused={isFocused}
+      isPressed={isPressed}
+      hasContextMenu={Boolean(onRemoveProject)}
+      rowDragEnabled={rowDragEnabled}
+      dragHandleProps={dragHandleProps}
+      onBeginWorkspaceSetup={onBeginWorkspaceSetup}
+      onRemoveProject={onRemoveProject}
+      removeProjectStatus={removeProjectStatus}
+      onPressIn={handleProjectPressIn}
+      onTouchMove={rowDragEnabled ? interaction.handleTouchMove : undefined}
+      onPressOut={handleProjectPressOut}
+      onPress={handlePress}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
-      style={projectRowStyle}
       onFocus={handleRowFocus}
       onBlur={handleRowBlur}
-    >
-      {onRemoveProject ? (
-        <ContextMenuTrigger
-          enabledOnMobile={false}
-          accessibilityRole="button"
-          aria-expanded={!collapsed}
-          style={styles.projectRowPressTarget}
-          highlightStyle={styles.projectRowPressed}
-          onPressIn={handleProjectPressIn}
-          onTouchMove={interaction.handleTouchMove}
-          onPressOut={handleProjectPressOut}
-          onPress={handlePress}
-          testID={`sidebar-project-row-${project.viewKey}`}
-        >
-          {rowChildren}
-        </ContextMenuTrigger>
-      ) : (
-        <PressHighlight
-          accessibilityRole="button"
-          aria-expanded={!collapsed}
-          style={styles.projectRowPressTarget}
-          highlightStyle={styles.projectRowPressed}
-          onPressIn={handleProjectPressIn}
-          onTouchMove={interaction.handleTouchMove}
-          onPressOut={handleProjectPressOut}
-          onPress={handlePress}
-          testID={`sidebar-project-row-${project.viewKey}`}
-        >
-          {rowChildren}
-        </PressHighlight>
-      )}
-      {trailingActions}
-    </View>
+    />
   );
 
   if (!onRemoveProject) return row;
@@ -1294,15 +1631,19 @@ function WorkspaceRowInner({
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
-  const isCompact = useIsCompactFormFactor();
+  const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
   const [isPressed, setIsPressed] = useState(false);
-  const isTouchPlatform = platformIsNative || isCompact;
+  const rowDragEnabled = !isTouchInteraction;
+  const canDragInReorderMode = platformIsWeb ? Boolean(dragHandleProps) : drag !== noop;
   const handleDrag = useCallback(() => {
     if (!rename) drag();
   }, [drag, rename]);
   const interaction = useLongPressDragInteraction({
     drag: handleDrag,
     menuController,
+    enabled: rowDragEnabled,
   });
   const {
     role: _dragRole,
@@ -1310,6 +1651,20 @@ function WorkspaceRowInner({
     "aria-roledescription": _dragRoleDescription,
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
+
+  const showShortcut = showShortcutBadge && shortcutNumber !== null;
+  const touchTrailingVisibility = resolveTrailingActionVisibility({
+    workspace,
+    hasArchiveAction: Boolean(onArchive),
+    selected,
+    isHovered: false,
+    isTouchInteraction: true,
+    showShortcut,
+  });
+  const touchKebab = useOpenKebabMenuVisibility(
+    isTouchInteraction && !reorderMode && touchTrailingVisibility.showKebab,
+  );
+  const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
 
   const handlePress = useCallback(() => {
     if (interaction.didLongPressRef.current) {
@@ -1333,29 +1688,111 @@ function WorkspaceRowInner({
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
+  const touchTrailingAccessory = useMemo(() => {
+    if (!isTouchInteraction) return null;
+    if (reorderMode) {
+      if (!canDragInReorderMode) return null;
+      return (
+        <SidebarTouchDragHandle
+          drag={handleDrag}
+          dragHandleProps={dragHandleProps}
+          testID={`sidebar-workspace-drag-handle-${workspace.workspaceKey}`}
+        />
+      );
+    }
+    if (!touchKebab.showKebab || !onArchive) return null;
+    return (
+      <SidebarWorkspaceMenu
+        {...touchKebab.menuProps}
+        workspaceKey={workspace.workspaceKey}
+        serverId={workspace.serverId}
+        workspaceId={workspace.workspaceId}
+        workspaceLabels={workspace.labels}
+        rootAgents={workspace.rootAgents}
+        onCopyPath={onCopyPath}
+        onCopyBranchName={onCopyBranchName}
+        onReferenceContent={onReferenceContent}
+        referenceContentStatus={referenceContentStatus}
+        onFork={onFork}
+        forkPending={forkPending}
+        onRename={onRename}
+        onMarkAsRead={onMarkAsRead}
+        onArchive={onArchive}
+        onDelete={onDelete}
+        deleteStatus={deleteStatus}
+        deletePendingLabel={deletePendingLabel}
+        archiveLabel={archiveLabel}
+        archiveStatus={archiveStatus}
+        archivePendingLabel={archivePendingLabel}
+        archiveShortcutKeys={archiveShortcutKeys}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+        openInFileManagerPath={workspacePath}
+      />
+    );
+  }, [
+    archiveLabel,
+    archivePendingLabel,
+    archiveShortcutKeys,
+    archiveStatus,
+    canDragInReorderMode,
+    deletePendingLabel,
+    deleteStatus,
+    dragHandleProps,
+    forkPending,
+    handleDrag,
+    isPinned,
+    isTouchInteraction,
+    onArchive,
+    onCopyBranchName,
+    onCopyPath,
+    onDelete,
+    onFork,
+    onMarkAsRead,
+    onReferenceContent,
+    onRename,
+    onTogglePin,
+    referenceContentStatus,
+    reorderMode,
+    touchKebab.menuProps,
+    touchKebab.showKebab,
+    workspace.labels,
+    workspace.rootAgents,
+    workspace.serverId,
+    workspace.workspaceId,
+    workspace.workspaceKey,
+    workspacePath,
+  ]);
+
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
       {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
-        const isDesktop = !isTouchPlatform;
+        const isDesktop = !isTouchInteraction;
         const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
         const workspaceRowStyle = getProjectWorkspaceRowStyle({
           isDragging,
           isPressed,
           selected,
           isHovered,
+          isTouchInteraction,
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
           <View
-            {...dragAttributes}
-            {...(!rename ? dragHandleProps?.listeners : undefined)}
-            ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+            {...(rowDragEnabled ? dragAttributes : undefined)}
+            {...(rowDragEnabled && !rename ? dragHandleProps?.listeners : undefined)}
+            ref={
+              rowDragEnabled
+                ? (dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>)
+                : undefined
+            }
             style={styles.workspaceRowContainer}
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
               onContextMenuOpenChange={onContextMenuOpenChange}
+              enableTouchLongPress={isTouchInteraction && !reorderMode}
               workspace={workspace}
               leadingProjectName={leadingProjectName}
               hostBadgeLabel={hostBadge?.label}
@@ -1386,7 +1823,7 @@ function WorkspaceRowInner({
               style={workspaceRowStyle}
               highlightStyle={styles.workspaceRowPressed}
               onPressIn={handleWorkspacePressIn}
-              onTouchMove={interaction.handleTouchMove}
+              onTouchMove={rowDragEnabled ? interaction.handleTouchMove : undefined}
               onPressOut={handleWorkspacePressOut}
               onPress={handlePress}
               testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
@@ -1406,34 +1843,48 @@ function WorkspaceRowInner({
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
                 rename={rename}
+                trailingAccessory={touchTrailingAccessory}
               >
-                <WorkspaceRowRightGroup
-                  workspace={workspace}
-                  backdrop={backdrop}
-                  isHovered={isHovered}
-                  isTouchPlatform={isTouchPlatform}
-                  isCreating={isCreating}
-                  showShortcutBadge={showShortcutBadge}
-                  shortcutNumber={shortcutNumber}
-                  archiveLabel={archiveLabel}
-                  archiveStatus={archiveStatus}
-                  archivePendingLabel={archivePendingLabel}
-                  archiveShortcutKeys={archiveShortcutKeys}
-                  onArchive={onArchive}
-                  onDelete={onDelete}
-                  onFork={onFork}
-                  forkPending={forkPending}
-                  deleteStatus={deleteStatus}
-                  deletePendingLabel={deletePendingLabel}
-                  onCopyBranchName={onCopyBranchName}
-                  onCopyPath={onCopyPath}
-                  onReferenceContent={onReferenceContent}
-                  referenceContentStatus={referenceContentStatus}
-                  onRename={onRename}
-                  onMarkAsRead={onMarkAsRead}
-                  isPinned={isPinned}
-                  onTogglePin={onTogglePin}
-                />
+                {isTouchInteraction ? (
+                  <>
+                    {isCreating ? (
+                      <Text style={styles.workspaceCreatingText}>
+                        {t("sidebar.workspace.status.creating")}
+                      </Text>
+                    ) : null}
+                    {touchTrailingVisibility.showTrailing ? (
+                      <SidebarWorkspaceTrailingContent workspace={workspace} />
+                    ) : null}
+                  </>
+                ) : (
+                  <WorkspaceRowRightGroup
+                    workspace={workspace}
+                    backdrop={backdrop}
+                    isHovered={isHovered}
+                    selected={selected}
+                    isCreating={isCreating}
+                    showShortcutBadge={showShortcutBadge}
+                    shortcutNumber={shortcutNumber}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                    onArchive={onArchive}
+                    onDelete={onDelete}
+                    onFork={onFork}
+                    forkPending={forkPending}
+                    deleteStatus={deleteStatus}
+                    deletePendingLabel={deletePendingLabel}
+                    onCopyBranchName={onCopyBranchName}
+                    onCopyPath={onCopyPath}
+                    onReferenceContent={onReferenceContent}
+                    referenceContentStatus={referenceContentStatus}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    isPinned={isPinned}
+                    onTogglePin={onTogglePin}
+                  />
+                )}
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
           </View>
@@ -1480,6 +1931,7 @@ function WorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const isTouchInteraction = useTouchInteraction();
   const activeRouteWorkspaceSelection = useActiveWorkspaceSelection();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -1629,7 +2081,7 @@ function WorkspaceRowWithMenu({
   );
   const rename = useMemo<SidebarWorkspaceRename | undefined>(
     () =>
-      isRenaming
+      isRenaming && !isTouchInteraction
         ? {
             initialValue: workspace.title ?? workspace.name,
             placeholder: workspace.name,
@@ -1637,7 +2089,14 @@ function WorkspaceRowWithMenu({
             onCancel: handleCloseRename,
           }
         : undefined,
-    [handleCloseRename, handleSubmitRename, isRenaming, workspace.name, workspace.title],
+    [
+      handleCloseRename,
+      handleSubmitRename,
+      isRenaming,
+      isTouchInteraction,
+      workspace.name,
+      workspace.title,
+    ],
   );
 
   const isPinned = workspace.pinnedAt != null;
@@ -1669,42 +2128,56 @@ function WorkspaceRowWithMenu({
   });
 
   return (
-    <WorkspaceRowInner
-      workspace={workspace}
-      hostBadge={hostBadge}
-      leadingProjectName={leadingProjectName}
-      leadingProjectIconDataUri={leadingProjectIconDataUri}
-      selected={selected}
-      shortcutNumber={shortcutNumber}
-      showShortcutBadge={showShortcutBadge}
-      onPress={onPress}
-      drag={drag}
-      isDragging={isDragging}
-      isArchiving={isArchiving}
-      isCreating={isCreating}
-      dragHandleProps={dragHandleProps}
-      menuController={null}
-      archiveLabel={t(sidebarWorkspaceArchiveLabelKey(workspace))}
-      archiveStatus={isArchiving ? "pending" : "idle"}
-      archivePendingLabel={t("sidebar.workspace.actions.archiving")}
-      onArchive={handleArchive}
-      onFork={canFork ? handleFork : undefined}
-      forkPending={isForking}
-      onDelete={workspace.isUnstarted || workspace.isUnstartedWorktree ? undefined : handleDelete}
-      deleteStatus={isDeleting ? "pending" : "idle"}
-      deletePendingLabel={t("sidebar.workspace.actions.deleting")}
-      onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
-      onCopyPath={handleCopyPath}
-      onReferenceContent={canReferenceContent ? referenceContent : undefined}
-      referenceContentStatus={isReferencingContent ? "pending" : "idle"}
-      onRename={handleOpenRename}
-      rename={rename}
-      onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
-      archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-      isPinned={isPinned}
-      onTogglePin={onTogglePin}
-      reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
-    />
+    <>
+      <WorkspaceRowInner
+        workspace={workspace}
+        hostBadge={hostBadge}
+        leadingProjectName={leadingProjectName}
+        leadingProjectIconDataUri={leadingProjectIconDataUri}
+        selected={selected}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        onPress={onPress}
+        drag={drag}
+        isDragging={isDragging}
+        isArchiving={isArchiving}
+        isCreating={isCreating}
+        dragHandleProps={dragHandleProps}
+        menuController={null}
+        archiveLabel={t(sidebarWorkspaceArchiveLabelKey(workspace))}
+        archiveStatus={isArchiving ? "pending" : "idle"}
+        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+        onArchive={handleArchive}
+        onFork={canFork ? handleFork : undefined}
+        forkPending={isForking}
+        onDelete={workspace.isUnstarted || workspace.isUnstartedWorktree ? undefined : handleDelete}
+        deleteStatus={isDeleting ? "pending" : "idle"}
+        deletePendingLabel={t("sidebar.workspace.actions.deleting")}
+        onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
+        onCopyPath={handleCopyPath}
+        onReferenceContent={canReferenceContent ? referenceContent : undefined}
+        referenceContentStatus={isReferencingContent ? "pending" : "idle"}
+        onRename={handleOpenRename}
+        rename={rename}
+        onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+        archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+        reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+      />
+      {isTouchInteraction ? (
+        <AdaptiveRenameModal
+          visible={isRenaming}
+          title={t("sidebar.workspace.rename.title")}
+          initialValue={workspace.title ?? workspace.name}
+          placeholder={workspace.name}
+          submitLabel={t("sidebar.workspace.rename.submit")}
+          onClose={handleCloseRename}
+          onSubmit={handleSubmitRename}
+          testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1942,6 +2415,9 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const isTouchInteraction = useTouchInteraction();
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
+  const immediateTouchDrag = isTouchInteraction && reorderMode;
   const rowModel = useMemo(() => buildSidebarProjectRowModel({ project }), [project]);
   const visibleAgentDrafts = collapsed ? EMPTY_AGENT_DRAFTS : agentDrafts;
   const workspaceRows = useMemo(() => {
@@ -2191,6 +2667,7 @@ function ProjectBlock({
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
+            immediateTouchDrag={immediateTouchDrag}
             nestable={useNestable}
             simultaneousGestureRef={parentGestureRef}
             gestureHostPresented={dragGestureHostPresented}
@@ -2210,6 +2687,7 @@ function ProjectBlock({
           extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
           scrollEnabled={false}
           useDragHandle
+          immediateTouchDrag={immediateTouchDrag}
           nestable={useNestable}
           simultaneousGestureRef={parentGestureRef}
           gestureHostPresented={dragGestureHostPresented}
@@ -2488,6 +2966,9 @@ function ProjectModeList({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  const isTouchInteraction = useTouchInteraction();
+  const reorderMode = useSidebarViewStore((state) => state.reorderMode);
+  const immediateTouchDrag = isTouchInteraction && reorderMode;
   const toast = useToast();
   const showShortcutBadges = useShowShortcutBadges();
   const activeRouteWorkspaceSelection = useActiveWorkspaceSelection();
@@ -2695,6 +3176,7 @@ function ProjectModeList({
         extraData={`${activeWorkspaceSelectionKey(activeWorkspaceSelection)}:${activeProjectSelection?.serverId ?? ""}:${activeProjectSelection?.projectId ?? ""}`}
         scrollEnabled={false}
         useDragHandle
+        immediateTouchDrag={immediateTouchDrag}
         nestable={platformIsNative}
         simultaneousGestureRef={parentGestureRef}
         gestureHostPresented={dragGestureHostPresented}
@@ -2739,320 +3221,376 @@ function ProjectModeList({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  container: {
-    flex: 1,
-  },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: SIDEBAR_LIST_INSET,
-    // Optical inset aligns section glyphs with the schedules icon across the divider.
-    paddingTop: 2,
-    paddingBottom: theme.spacing[4],
-  },
-  projectListContainer: {
-    width: "100%",
-  },
-  // Three times the gap a row keeps from its neighbour, so the break between two groups reads as
-  // a break rather than as one more row of pitch. Kept equal to `statusGroupBlockExpanded` — the
-  // two groupings are the same list under a different heading and must not breathe differently.
-  //
-  // Padding on the block rather than margin, and only while it has children: the gap belongs to
-  // the rows underneath the header, so a collapsed project gives it back and a column of collapsed
-  // headers closes up to the pitch of a list instead of staying spaced for content that is gone.
-  projectBlockExpanded: {
-    paddingBottom: theme.spacing[2],
-  },
-  workspaceListContainer: {},
-  agentDraftRow: {
-    minHeight: buttonControlHeight.xs,
-    paddingVertical: theme.spacing[1],
-    marginHorizontal: -SIDEBAR_LIST_INSET,
-    paddingHorizontal: theme.spacing[2] + SIDEBAR_LIST_INSET,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    userSelect: "none",
-  },
-  agentDraftRowMain: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    minWidth: 0,
-  },
-  agentDraftStatusSlot: {
-    width: theme.iconSize.md,
-    alignItems: "center",
-  },
-  agentDraftStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.foregroundExtraMuted,
-  },
-  agentDraftText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: 20,
-    flexShrink: 1,
-  },
-  agentDraftDeleteSlot: {
-    width: 20,
-    height: 20,
-    marginLeft: "auto",
-    flexShrink: 0,
-  },
-  agentDraftDeleteButton: {
-    width: 20,
-    height: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-  },
-  agentDraftDeleteHidden: {
-    opacity: 0,
-  },
-  projectRow: {
-    position: "relative",
-    minHeight: 32,
-    paddingVertical: theme.spacing[1.5],
-    marginHorizontal: -SIDEBAR_LIST_INSET,
-    paddingHorizontal: theme.spacing[2] + SIDEBAR_LIST_INSET,
-    marginBottom: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    userSelect: "none",
-  },
-  projectRowPressTarget: {
-    flex: 1,
-    minWidth: 0,
-    alignSelf: "stretch",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-  projectRowHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  projectRowPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  projectRowDragging: {
-    backgroundColor: theme.colors.surface2,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    transform: [{ scale: 1.02 }],
-    zIndex: 3,
-    ...theme.shadow.md,
-  },
-  projectRowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flex: 1,
-    minWidth: 0,
-  },
-  projectTitleGroup: {
-    flex: 1,
-    minWidth: 0,
-    gap: 0,
-  },
-  projectTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    lineHeight: 20,
-    fontWeight: "400",
-    minWidth: 0,
-    flexShrink: 1,
-  },
-  projectActionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-    flexShrink: 0,
-  },
-  projectActionButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  projectActionButtonText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  projectIconActionButton: {
-    width: 20,
-    height: 20,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  projectIconActionButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  projectIconActionButtonHidden: {
-    opacity: 0,
-  },
-  projectTrailingActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-    flexShrink: 0,
-    // MoreVertical paints only around the center of its 14px SVG. Keep the 24px controls,
-    // but pull their painted edge through the unused view-box space onto the row rail.
-    marginRight: -6,
-  },
-  projectKebabButton: {
-    width: 20,
-    height: 20,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  projectKebabButtonHidden: {
-    opacity: 0,
-  },
-  projectKebabButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  projectTrailingControlSlot: {
-    width: 20,
-    height: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  projectActionTooltipRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  projectActionTooltipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  projectActionTooltipShortcut: {},
-  projectShortcutBadgeOverlay: {
-    position: "absolute",
-    top: theme.spacing[2] + 1,
-    right: theme.spacing[2] + SIDEBAR_LIST_INSET,
-  },
-  workspaceRow: {
-    minHeight: buttonControlHeight.xs,
-    marginBottom: 0,
-    marginHorizontal: -SIDEBAR_LIST_INSET,
-    paddingVertical: theme.spacing[1],
-    paddingLeft: theme.spacing[2] + SIDEBAR_LIST_INSET,
-    paddingRight: theme.spacing[2] + SIDEBAR_LIST_INSET,
-    flexDirection: "column",
-    alignItems: "stretch",
-    justifyContent: "center",
-    gap: theme.spacing[0.5],
-    userSelect: "none",
-  },
-  workspaceRowMain: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    width: "100%",
-  },
-  workspaceRowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flex: 1,
-    minWidth: 0,
-  },
-  workspaceRowRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flexShrink: 0,
-  },
-  workspaceRowHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  workspaceRowPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  workspaceRowDragging: {
-    backgroundColor: theme.colors.surface2,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    transform: [{ scale: 1.02 }],
-    zIndex: 3,
-    ...theme.shadow.md,
-  },
-  sidebarRowSelected: {
-    backgroundColor: theme.colors.surface2,
-  },
-  workspaceRowContainer: {
-    position: "relative",
-  },
-  workspaceStatusDot: {
-    position: "relative",
-    width: WORKSPACE_STATUS_DOT_WIDTH,
-    height: 16,
-    borderRadius: theme.borderRadius.full,
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  workspaceArchivingOverlay: {
-    ...RNStyleSheet.absoluteFillObject,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: `${theme.colors.surface0}cc`,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    zIndex: 1,
-  },
-  workspaceArchivingText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-  },
-  workspaceBranchText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: "400",
-    lineHeight: 20,
-    opacity: 0.76,
-    flex: 1,
-    minWidth: 0,
-  },
-  workspaceBranchTextCreating: {
-    opacity: 0.92,
-  },
-  workspaceBranchTextHovered: {
-    opacity: 1,
-  },
-  workspacePrBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
-  },
-  workspaceCreatingText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    flexShrink: 0,
-  },
-  kebabButton: {
-    padding: 2,
-    borderRadius: 4,
-    marginLeft: 2,
-  },
-  kebabButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-}));
+const styles = StyleSheet.create((theme) => {
+  const rowLineHeight = Math.round(theme.fontSize.base * 1.54);
+  return {
+    container: {
+      flex: 1,
+    },
+    list: {
+      flex: 1,
+    },
+    listContent: {
+      paddingHorizontal: SIDEBAR_LIST_INSET,
+      // Optical inset aligns section glyphs with the schedules icon across the divider.
+      paddingTop: 2,
+      paddingBottom: theme.spacing[4],
+    },
+    projectListContainer: {
+      width: "100%",
+    },
+    // Three times the gap a row keeps from its neighbour, so the break between two groups reads as
+    // a break rather than as one more row of pitch. Kept equal to `statusGroupBlockExpanded` — the
+    // two groupings are the same list under a different heading and must not breathe differently.
+    //
+    // Padding on the block rather than margin, and only while it has children: the gap belongs to
+    // the rows underneath the header, so a collapsed project gives it back and a column of collapsed
+    // headers closes up to the pitch of a list instead of staying spaced for content that is gone.
+    projectBlockExpanded: {
+      paddingBottom: theme.spacing[2],
+    },
+    workspaceListContainer: {},
+    agentDraftRow: {
+      minHeight: buttonControlHeight.xs,
+      paddingVertical: theme.spacing[1],
+      marginHorizontal: -SIDEBAR_LIST_INSET,
+      paddingHorizontal: theme.spacing[2] + SIDEBAR_LIST_INSET,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      userSelect: "none",
+    },
+    agentDraftRowTouch: {
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
+    },
+    agentDraftRowMain: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      minWidth: 0,
+    },
+    agentDraftStatusSlot: {
+      width: theme.iconSize.md,
+      alignItems: "center",
+    },
+    agentDraftStatusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: theme.borderRadius.full,
+      backgroundColor: theme.colors.foregroundExtraMuted,
+    },
+    agentDraftText: {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+      lineHeight: rowLineHeight,
+      flexShrink: 1,
+    },
+    agentDraftDeleteSlot: {
+      width: 20,
+      height: 20,
+      marginLeft: "auto",
+      flexShrink: 0,
+    },
+    agentDraftDeleteSlotTouch: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+    },
+    agentDraftDeleteButton: {
+      width: 20,
+      height: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: theme.borderRadius.md,
+    },
+    agentDraftDeleteButtonTouch: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+    },
+    agentDraftDeleteHidden: {
+      opacity: 0,
+    },
+    projectRow: {
+      position: "relative",
+      minHeight: 32,
+      paddingVertical: theme.spacing[1.5],
+      marginHorizontal: -SIDEBAR_LIST_INSET,
+      paddingHorizontal: theme.spacing[2] + SIDEBAR_LIST_INSET,
+      marginBottom: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing[2],
+      userSelect: "none",
+    },
+    projectRowTouch: {
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
+    },
+    projectRowPressTarget: {
+      flex: 1,
+      minWidth: 0,
+      alignSelf: "stretch",
+      alignItems: "center",
+      flexDirection: "row",
+    },
+    projectRowHovered: {
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    projectRowPressed: {
+      backgroundColor: theme.colors.surface2,
+    },
+    projectRowDragging: {
+      backgroundColor: theme.colors.surface2,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      transform: [{ scale: 1.02 }],
+      zIndex: 3,
+      ...theme.shadow.md,
+    },
+    projectRowLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      flex: 1,
+      minWidth: 0,
+    },
+    projectTitleGroup: {
+      flex: 1,
+      minWidth: 0,
+      gap: 0,
+    },
+    projectTitle: {
+      color: theme.colors.foregroundMuted,
+      fontSize: theme.fontSize.base,
+      lineHeight: rowLineHeight,
+      fontWeight: "400",
+      minWidth: 0,
+      flexShrink: 1,
+    },
+    projectActionButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[1],
+      paddingHorizontal: theme.spacing[2],
+      paddingVertical: theme.spacing[1],
+      borderRadius: theme.borderRadius.md,
+      flexShrink: 0,
+    },
+    projectActionButtonHovered: {
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    projectActionButtonText: {
+      color: theme.colors.foregroundMuted,
+      fontSize: theme.fontSize.sm,
+    },
+    projectIconActionButton: {
+      width: 20,
+      height: 20,
+      borderRadius: theme.borderRadius.md,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+    projectIconActionButtonTouch: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+    },
+    projectIconActionButtonHovered: {
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    projectIconActionButtonHidden: {
+      opacity: 0,
+    },
+    projectTrailingActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 2,
+      flexShrink: 0,
+      // MoreVertical paints only around the center of its 14px SVG. Keep the 24px controls,
+      // but pull their painted edge through the unused view-box space onto the row rail.
+      marginRight: -6,
+    },
+    projectTrailingActionsTouch: {
+      gap: theme.spacing[2],
+      marginRight: 0,
+    },
+    projectKebabButton: {
+      width: 20,
+      height: 20,
+      borderRadius: theme.borderRadius.md,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+    projectKebabButtonTouch: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+    },
+    projectKebabButtonHidden: {
+      opacity: 0,
+    },
+    projectKebabButtonHovered: {
+      backgroundColor: theme.colors.surface2,
+    },
+    projectTrailingControlSlot: {
+      width: 20,
+      height: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+    projectTrailingControlSlotTouch: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+    },
+    projectActionTooltipRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+    },
+    projectActionTooltipText: {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+    },
+    projectActionTooltipShortcut: {},
+    projectShortcutBadgeOverlay: {
+      position: "absolute",
+      top: theme.spacing[2] + 1,
+      right: theme.spacing[2] + SIDEBAR_LIST_INSET,
+    },
+    workspaceRow: {
+      minHeight: buttonControlHeight.xs,
+      marginBottom: 0,
+      marginHorizontal: -SIDEBAR_LIST_INSET,
+      paddingVertical: theme.spacing[1],
+      paddingLeft: theme.spacing[2] + SIDEBAR_LIST_INSET,
+      paddingRight: theme.spacing[2] + SIDEBAR_LIST_INSET,
+      flexDirection: "column",
+      alignItems: "stretch",
+      justifyContent: "center",
+      gap: theme.spacing[0.5],
+      userSelect: "none",
+    },
+    workspaceRowTouch: {
+      minHeight: TOUCH_LIST_ROW_HEIGHT,
+      paddingVertical: theme.spacing[0.5],
+    },
+    touchDragHandleSlot: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+    touchDragHandle: {
+      width: TOUCH_LIST_ROW_ACTION_SIZE,
+      height: TOUCH_LIST_ROW_ACTION_SIZE,
+      borderRadius: theme.borderRadius.md,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    touchDragHandlePressed: {
+      backgroundColor: theme.colors.surface2,
+    },
+    workspaceRowMain: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing[2],
+      width: "100%",
+    },
+    workspaceRowLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      flex: 1,
+      minWidth: 0,
+    },
+    workspaceRowRight: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      flexShrink: 0,
+    },
+    workspaceRowHovered: {
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    workspaceRowPressed: {
+      backgroundColor: theme.colors.surface2,
+    },
+    workspaceRowDragging: {
+      backgroundColor: theme.colors.surface2,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      transform: [{ scale: 1.02 }],
+      zIndex: 3,
+      ...theme.shadow.md,
+    },
+    sidebarRowSelected: {
+      backgroundColor: theme.colors.surface2,
+    },
+    workspaceRowContainer: {
+      position: "relative",
+    },
+    workspaceStatusDot: {
+      position: "relative",
+      width: WORKSPACE_STATUS_DOT_WIDTH,
+      height: 16,
+      borderRadius: theme.borderRadius.full,
+      flexShrink: 0,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    workspaceArchivingOverlay: {
+      ...RNStyleSheet.absoluteFillObject,
+      borderRadius: theme.borderRadius.lg,
+      backgroundColor: `${theme.colors.surface0}cc`,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: theme.spacing[2],
+      zIndex: 1,
+    },
+    workspaceArchivingText: {
+      color: theme.colors.foregroundMuted,
+      fontSize: theme.fontSize.sm,
+      fontWeight: "600",
+    },
+    workspaceBranchText: {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+      fontWeight: "400",
+      lineHeight: rowLineHeight,
+      opacity: 0.76,
+      flex: 1,
+      minWidth: 0,
+    },
+    workspaceBranchTextCreating: {
+      opacity: 0.92,
+    },
+    workspaceBranchTextHovered: {
+      opacity: 1,
+    },
+    workspacePrBadgeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
+    },
+    workspaceCreatingText: {
+      color: theme.colors.foregroundMuted,
+      fontSize: theme.fontSize.sm,
+      flexShrink: 0,
+    },
+    kebabButton: {
+      padding: 2,
+      borderRadius: 4,
+      marginLeft: 2,
+    },
+    kebabButtonHovered: {
+      backgroundColor: theme.colors.surface2,
+    },
+  };
+});

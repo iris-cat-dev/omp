@@ -1135,7 +1135,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create workspace",
       description:
-        "Register a sidebar workspace using a local checkout or a new Paseo-managed Git worktree. " +
+        "Register a persistent sidebar workspace using a local checkout or a new Paseo-managed Git worktree. " +
+        "Use this only when creating a user-facing workspace (typically to pair with create_agent), " +
+        "not for temporary/disposable Git operations such as cherry-picking, releasing, or building " +
+        "(use `git worktree add` in bash and remove it afterward instead). " +
         "Agent-created worktrees belong to the caller's project by default. Use projectId to " +
         "choose another existing project, or separateProject: true to use a separate project " +
         "rooted at the source repository. Outside an agent session, omitting both may create " +

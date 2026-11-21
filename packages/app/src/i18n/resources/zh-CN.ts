@@ -1380,6 +1380,17 @@ export const zhCN: TranslationResources = {
         label: "项目",
         all: "所有项目",
       },
+      touchMode: {
+        label: "触控模式",
+        auto: "自动",
+        on: "开启",
+        off: "关闭",
+      },
+      reorder: {
+        label: "整理排序",
+        done: "完成",
+        handle: "拖动排序",
+      },
     },
     filterEmpty: {
       title: "没有匹配的工作区",

@@ -5,6 +5,8 @@ import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SIDEBAR_LIST_INSET } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
+import { TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { sidebarWorkspaceRowStyles } from "@/components/sidebar/sidebar-workspace-row-content";
 import type { Theme } from "@/styles/theme";
 
@@ -39,17 +41,19 @@ export function SidebarGroupToggleRow({
   testID: string;
 }) {
   const { t } = useTranslation();
+  const isTouchInteraction = useTouchInteraction();
   const label = t(
     expanded ? "sidebar.workspace.actions.showLess" : "sidebar.workspace.actions.showMore",
   );
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
+      isTouchInteraction && styles.rowTouch,
       indented && sidebarWorkspaceRowStyles.rowIndented,
-      hovered && !pressed && styles.rowHovered,
+      !isTouchInteraction && hovered && !pressed && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [indented],
+    [indented, isTouchInteraction],
   );
 
   return (
@@ -97,6 +101,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     userSelect: "none",
+  },
+  rowTouch: {
+    minHeight: TOUCH_LIST_ROW_HEIGHT,
+    paddingVertical: theme.spacing[1.5],
   },
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

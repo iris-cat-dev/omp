@@ -16,10 +16,12 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
+import { TOUCH_LIST_ROW_HEIGHT } from "@/components/ui/control-geometry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTouchInteraction } from "@/hooks/use-fine-pointer";
 import type { Theme } from "@/styles/theme";
-import { setCssColorAlpha } from "@/appearance/color"
+import { setCssColorAlpha } from "@/appearance/color";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
 
 const ThemedCheck = withUnistyles(Check);
@@ -43,7 +45,8 @@ const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[50
  * `lineHeight` to the platform and the content outgrows `minHeight`, which then does nothing and
  * the rows drift taller again. On compact, `minHeight` leads instead and the label centres in it.
  */
-const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
+const MENU_ITEM_HEIGHT = { xs: TOUCH_LIST_ROW_HEIGHT, md: 28 } as const;
+const MENU_ITEM_TOUCH_HEIGHT = TOUCH_LIST_ROW_HEIGHT;
 const MENU_ITEM_LINE_HEIGHT = 18;
 
 /**
@@ -168,10 +171,18 @@ export function MenuTextField({
   onSubmitEditing?: () => void;
   testID?: string;
 }): ReactElement {
+  const isTouchInteraction = useTouchInteraction();
   const [focused, setFocused] = useState(false);
   const handleFocus = useCallback(() => setFocused(true), []);
   const handleBlur = useCallback(() => setFocused(false), []);
-  const fieldStyle = useMemo(() => [styles.field, focused ? styles.fieldFocused : null], [focused]);
+  const fieldStyle = useMemo(
+    () => [
+      styles.field,
+      isTouchInteraction ? styles.fieldTouch : null,
+      focused ? styles.fieldFocused : null,
+    ],
+    [focused, isTouchInteraction],
+  );
   return (
     <View style={fieldStyle}>
       <AdaptiveTextInput
@@ -275,6 +286,7 @@ export function MenuItem({
   tooltip,
 }: PropsWithChildren<MenuItemProps>): ReactElement {
   const { selectItem } = useMenuContext("MenuItem");
+  const isTouchInteraction = useTouchInteraction();
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
@@ -311,14 +323,15 @@ export function MenuItem({
       focused = false,
     }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
+      isTouchInteraction ? styles.itemTouch : null,
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
-      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
+      !isTouchInteraction && hovered && !pressed && !isDisabled ? styles.itemHovered : null,
       focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
-    [active, isDisabled, muted],
+    [active, isDisabled, isTouchInteraction, muted],
   );
 
   const itemTextStyle = useMemo(
@@ -453,6 +466,11 @@ const styles = StyleSheet.create((theme) => ({
     outlineWidth: 0,
     outlineColor: "transparent",
   },
+  itemTouch: {
+    minHeight: MENU_ITEM_TOUCH_HEIGHT,
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
+  },
   // The same box as `item`, filled the way a hovered row is filled, so the field sits in the
   // column of rows rather than beside it. Every number here is `item`'s: change one, change both.
   field: {
@@ -466,6 +484,11 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
     backgroundColor: setCssColorAlpha(theme.colors.surface2, 1),
+  },
+  fieldTouch: {
+    minHeight: MENU_ITEM_TOUCH_HEIGHT,
+    paddingVertical: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
   },
   fieldFocused: {
     borderColor: theme.colors.borderAccent,

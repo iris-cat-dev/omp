@@ -1274,6 +1274,17 @@ export const ar: TranslationResources = {
         label: "المشروع",
         all: "كل المشاريع",
       },
+      touchMode: {
+        label: "وضع اللمس",
+        auto: "تلقائي",
+        on: "مفعّل",
+        off: "متوقف",
+      },
+      reorder: {
+        label: "إعادة الترتيب",
+        done: "تم",
+        handle: "اسحب لإعادة الترتيب",
+      },
     },
     filterEmpty: {
       title: "لا توجد مساحات عمل مطابقة",

@@ -1,7 +1,20 @@
 import { SETTINGS_DESKTOP_SPLIT_MIN_WIDTH } from "@/constants/layout";
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from "@/stores/panel-store";
+import { DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from "@/stores/panel-store";
 
 const MIN_DESKTOP_CENTER_WIDTH = 400;
+
+/** Wider initial sidebar width under touch interaction so titles, timestamps, and touch buttons fit comfortably. */
+export const TOUCH_DEFAULT_SIDEBAR_WIDTH = 308;
+
+export function resolveRequestedSidebarWidth(input: {
+  sidebarWidth: number;
+  isTouchInteraction: boolean;
+}): number {
+  if (input.isTouchInteraction && input.sidebarWidth === DEFAULT_SIDEBAR_WIDTH) {
+    return TOUCH_DEFAULT_SIDEBAR_WIDTH;
+  }
+  return input.sidebarWidth;
+}
 
 export function resolveDesktopSidebarVisibility(input: {
   chromeEnabled: boolean;
