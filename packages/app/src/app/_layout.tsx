@@ -63,7 +63,7 @@ import {
   resolveRequestedSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 import { useTouchInteraction } from "@/hooks/use-fine-pointer";
-import { isNative, isWeb } from "@/constants/platform";
+import { isIPadWeb, isNative, isWeb } from "@/constants/platform";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -93,6 +93,7 @@ import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
+import { installWebVisualViewport } from "@/utils/web-visual-viewport";
 import { PluginBackground } from "@/plugins/background";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -1055,6 +1056,9 @@ function RootAppTree() {
 
 export default function RootLayout() {
   useEffect(() => installWebScrollbarStyles(), []);
+  useEffect(() => {
+    if (isIPadWeb()) return installWebVisualViewport();
+  }, []);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {

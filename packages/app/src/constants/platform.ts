@@ -45,6 +45,18 @@ export function getIsElectron(): boolean {
   return result;
 }
 
+/** iPad browsers also report MacIntel when requesting desktop sites. */
+export function isIPadWeb(): boolean {
+  if (!isWeb || typeof navigator === "undefined" || getIsElectron()) return false;
+  const { userAgent, platform, maxTouchPoints } = navigator;
+  if (/\b(?:iPhone|iPod|Android)\b/i.test(userAgent)) return false;
+  return (
+    platform === "iPad" ||
+    /\biPad\b/i.test(userAgent) ||
+    (platform === "MacIntel" && maxTouchPoints > 1)
+  );
+}
+
 /** Running inside the Electron desktop wrapper on macOS. */
 export function getIsElectronMac(): boolean {
   if (_isElectronMacCached === true) return true;

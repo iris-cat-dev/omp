@@ -17,6 +17,8 @@ Manage project layouts and conversation ownership, work with files and terminals
 
 Click a project in the workspace sidebar to expand or collapse its conversation list. The folder icon shows the current state. On macOS, **Cmd-click** focuses the project without changing its expansion state. The sidebar remains global, while center tabs, right panel, bottom terminal panel, selections, and split sizes are saved per project and host.
 
+In iPad browsers, an expanded folder's header stays at the top of the project list while you scroll through its conversations. Tap the header to collapse the folder without scrolling back.
+
 Switching projects restores panels without closing conversations, terminating terminals, or archiving workspaces. Unsent drafts and unsaved editors survive. Files and terminals retain their owning checkout even when two worktrees have identical relative paths. Empty projects can be focused without creating workspaces; **New conversation** creates the first draft.
 
 ### Importing folders with unavailable Git data

@@ -160,7 +160,11 @@ import {
   getCurrentProjectRemoveReadiness,
   removeProjectFromHosts,
 } from "@/projects/project-remove";
-import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
+import {
+  isWeb as platformIsWeb,
+  isNative as platformIsNative,
+  isIPadWeb,
+} from "@/constants/platform";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
@@ -197,6 +201,8 @@ const NESTED_CONTROL_DATASET = { sidebarNestedControl: "true" } as const;
 const WEB_DRAG_HANDLE_STYLE: ViewStyle | null = platformIsWeb
   ? ({ touchAction: "none", cursor: "grab" } as unknown as ViewStyle)
   : null;
+// Keep the header within its own project so the next group takes over as it scrolls in.
+const WEB_STICKY_PROJECT_HEADER = { position: "sticky", top: 0 } as unknown as ViewStyle;
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1375,9 +1381,12 @@ function ProjectHeaderRowBody({
     "aria-roledescription": _dragRoleDescription,
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
+  const sticky = isIPadWeb() && !collapsed && !reorderMode;
   const projectRowStyle = [
     styles.projectRow,
     isTouchInteraction && styles.projectRowTouch,
+    sticky && styles.projectRowSticky,
+    sticky && WEB_STICKY_PROJECT_HEADER,
     isDragging && styles.projectRowDragging,
     effectiveHovered && styles.projectRowHovered,
     isPressed && styles.projectRowPressed,
@@ -3327,6 +3336,10 @@ const styles = StyleSheet.create((theme) => {
     projectRowTouch: {
       minHeight: TOUCH_LIST_ROW_HEIGHT,
       paddingVertical: theme.spacing[0.5],
+    },
+    projectRowSticky: {
+      backgroundColor: theme.colors.surfaceSidebar,
+      zIndex: 2,
     },
     projectRowPressTarget: {
       flex: 1,

@@ -91,7 +91,7 @@ import {
 } from "@/command-center/agent-control-registration";
 import { useActiveAgentControlRegistration } from "@/command-center/provider";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { isNative } from "@/constants/platform";
+import { isIPadWeb, isNative } from "@/constants/platform";
 import {
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
@@ -496,7 +496,7 @@ function ControlledAgentControls({
   features,
   onSetFeature,
   featureMetadataStatus,
-  onDropdownClose,
+  onDropdownClose: restoreComposerFocus,
   onModelSelectorOpen,
   onRetryModelProvider,
   isRetryingModelProvider = false,
@@ -508,6 +508,8 @@ function ControlledAgentControls({
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
+  // Changing a setting on iPad should not reopen the software keyboard.
+  const onDropdownClose = isIPadWeb() ? undefined : restoreComposerFocus;
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
