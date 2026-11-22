@@ -271,4 +271,12 @@ describe("production draft Speed readiness", () => {
     act(() => draft.setFeatureValue("fast_mode", "on"));
     expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
   });
+
+  it("makes the visible billing warning the Speed control's accessible description", () => {
+    render(<Page model="openai-codex/gpt-6.2-sol" live />);
+    const warning = screen.getByTestId("model-settings-fast-mode-notice");
+    expect(screen.getByRole("button", { description: warning.textContent ?? "" })).toBe(
+      screen.getByTestId("model-settings-fast-mode"),
+    );
+  });
 });

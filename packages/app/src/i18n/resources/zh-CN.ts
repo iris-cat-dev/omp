@@ -386,10 +386,11 @@ export const zhCN: TranslationResources = {
         standard: "标准",
         fast: "快速 (Fast)",
         ultrafast: "极速 (Ultrafast)",
-        ultrafastNotice: "订阅：8 倍套餐内用量 / 6 倍购买额度；API 费用及权限以服务商为准。",
+        ultrafastNotice:
+          "ChatGPT 套餐内额度与额外购买点数的倍率因模型和日期而异。API 独立计费；不保证账号权限或实际速度。",
         standardDescription: "使用常规速度和标准额度消耗速率。",
         ultrafastDescription:
-          "订阅接入的套餐内额度消耗速率为标准模式的 8 倍，购买额度为 6 倍。API 的费用与可用性取决于服务商、模型和项目权限。显示此选项不代表已验证账号权限，实际速度因情况而异。",
+          "Ultrafast 仅限 ChatGPT 登录，倍率相对同一模型的标准模式：\nGPT-6.2 Astra / Sol：套餐内额度 6 倍；额外购买点数截至 2027-02-28（含当日）为 3 倍，2027-03-01 起为 6 倍（美国太平洋时间）。\nGPT-6 Astra / GPT-6.1 Sol：套餐内额度 8 倍；额外购买点数 6 倍。\nAPI 密钥使用独立的 API 计费。其他模型、第三方服务商或计费方式不明时，请核对其费率。显示此选项不代表已验证账号权限，实际速度因情况而异。",
         selectWithValue: "选择速度，当前：{{value}}",
         detecting: "正在检测可用速度…",
         unsupported: "不支持速度选择",

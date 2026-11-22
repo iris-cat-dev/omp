@@ -282,10 +282,10 @@ export const ptBR: TranslationResources = {
         fast: "Rápido (Fast)",
         ultrafast: "Ultrafast",
         ultrafastNotice:
-          "Assinatura: uso incluído 8× / créditos comprados 6×. Acesso e tarifas de API dependem do provedor.",
+          "As taxas de uso incluído e créditos comprados do ChatGPT variam por modelo e data. A API é cobrada separadamente; acesso e velocidade não são garantidos.",
         standardDescription: "Velocidade normal e taxas de consumo padrão.",
         ultrafastDescription:
-          "A assinatura consome o uso incluído a 8× e os créditos comprados a 6× a taxa padrão. A disponibilidade e as tarifas de API dependem do provedor, modelo e projeto. Esta opção não verifica o acesso da conta; a velocidade real pode variar.",
+          "Ultrafast somente com login pelo ChatGPT, em relação ao modo Padrão do mesmo modelo:\nGPT-6.2 Astra / Sol: uso incluído 6×; créditos comprados 3× até 2027-02-28, inclusive, e 6× a partir de 2027-03-01 (horário do Pacífico dos EUA).\nGPT-6 Astra / GPT-6.1 Sol: uso incluído 8×; créditos comprados 6×.\nAs chaves API usam uma cobrança de API independente. Para outros modelos, provedores ou formas de cobrança incertas, consulte suas tarifas. Esta opção não verifica o acesso da conta; a velocidade real pode variar.",
         selectWithValue: "Selecionar velocidade, atual: {{value}}",
         detecting: "Detectando velocidades compatíveis…",
         unsupported: "A seleção de velocidade não é compatível",

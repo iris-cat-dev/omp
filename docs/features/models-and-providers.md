@@ -127,7 +127,22 @@ Desktop changes the native OpenAI-family service tier through a private authenti
 
 Existing boolean Fast preferences remain readable. New selections retain their exact tier in conversation defaults and OMP-native profiles. A native Ultrafast session is not downgraded merely because an older preference says Fast is enabled. Unsupported models do not silently turn an Ultrafast preference into ordinary Fast; the saved preference remains available when returning to a capable model. Unrelated native tiers such as Flex are not relabeled as Standard.
 
-OpenAI currently documents Ultrafast for **GPT-6 Astra** and **GPT-6.1 Sol**, including **Pro $500** and eligible Enterprise/Edu access. It uses included subscription allowances at **8×** the Standard rate and purchased credits at **6×**. API-key billing is separate. The selector requests a tier, not guaranteed account access, capacity, or measured speed. Cost and availability warnings appear with the choices in all nine locales. See [OpenAI's Codex speed guide](https://developers.openai.com/codex/speed) and [Ultrafast API requirements](https://help.openai.com/en/articles/11647665-fast-mode-faq).
+OpenAI documents Ultrafast for **GPT-6.2 Astra**, **GPT-6.2 Sol**, **GPT-6 Astra**, and **GPT-6.1 Sol**. **Pro $500** supports both 6.2 models; **Pro $200** supports 6.2 Sol. Eligible Enterprise/Edu workspaces require model access and separate Ultrafast permission. These plan rules do not replace Desktop's native capability checks or verify the selected account's entitlement.
+
+With **ChatGPT sign-in**, Ultrafast consumes included plan usage and extra purchased credits separately, relative to **Standard on the same model**:
+
+| Model                       | Included plan usage | Purchased credits                                                     |
+| --------------------------- | ------------------- | --------------------------------------------------------------------- |
+| GPT-6.2 Astra / GPT-6.2 Sol | 6×                  | 3× through 2027-02-28 inclusive; 6× from 2027-03-01 (US Pacific time) |
+| GPT-6 Astra / GPT-6.1 Sol   | 8×                  | 6×                                                                    |
+
+The model settings panel, subagent settings, and composer tooltip state these model-specific rules and both promotion dates. The command center uses a concise warning that included usage and purchased credits depend on model and date. The web Speed trigger's accessible description references the visible warning; native interfaces retain the same accessibility hint.
+
+**API keys use separate API token billing**, including when used with Codex; ChatGPT multipliers do not apply. For unknown models, third-party providers, or unclear billing methods, check the provider's current rates. The selector requests a tier, not guaranteed account access, capacity, or measured speed. These warnings are localized in all nine locales.
+
+Ordinary **Fast** consumes 6.2 Astra/Sol included usage at **2×**, versus **2.5×** for GPT-6.1 Sol/Terra and GPT-6 Astra/Sol/Luna; purchased credits use **2×**. Desktop's Fast explanation stays qualitative rather than assigning one fixed multiplier to every provider.
+
+Sources: [OpenAI's model-specific speed pricing](https://learn.chatgpt.com/docs/pricing?codex-pricing-speed=ultrafast), [GPT-6.2 plan availability](https://learn.chatgpt.com/docs/whats-new/gpt-62-astra-sol), [Fast and Ultrafast requirements](https://learn.chatgpt.com/docs/agent-configuration/speed), and [Ultrafast API billing](https://developers.openai.com/api/docs/guides/ultrafast-mode).
 
 ### Claude Fast mode
 
