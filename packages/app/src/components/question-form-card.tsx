@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@omp-desktop/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
+import { useSessionStore } from "@/stores/session-store";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -16,17 +17,20 @@ import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
   buildQuestionFormStructuredAnswers,
+  EMPTY_QUESTION_FORM_DRAFT,
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
   resolveQuestionOptionLabel,
   shouldSubmitEmptyOnDismiss,
+  type QuestionFormDraft,
   type QuestionFormQuestion,
   type QuestionOption,
 } from "./question-form-card-core";
 
 interface QuestionFormCardProps {
+  serverId: string;
   permission: PendingPermission;
   onRespond: (response: AgentPermissionResponse) => void;
   isResponding: boolean;
@@ -374,7 +378,12 @@ function QuestionOtherInput({
   );
 }
 
-export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
+export function QuestionFormCard({
+  serverId,
+  permission,
+  onRespond,
+  isResponding,
+}: QuestionFormCardProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -384,54 +393,63 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   );
   const isGroupedAsk = permission.request.metadata?.extensionUiMethod === "ask";
 
-  const [selections, setSelections] = useState<Record<number, Set<number>>>({});
-  const [otherTexts, setOtherTexts] = useState<Record<number, string>>({});
+  const { key: permissionKey } = permission;
+  const { selections, otherTexts, activeQuestionIndex } = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.questionFormDrafts.get(permissionKey) ?? EMPTY_QUESTION_FORM_DRAFT,
+  );
+  const updateQuestionFormDraft = useSessionStore((state) => state.updateQuestionFormDraft);
+  const updateDraft = useCallback(
+    (update: (draft: QuestionFormDraft) => QuestionFormDraft) =>
+      updateQuestionFormDraft(serverId, permissionKey, update),
+    [permissionKey, serverId, updateQuestionFormDraft],
+  );
   const [respondingAction, setRespondingAction] = useState<"submit" | "dismiss" | null>(null);
-  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
 
   const toggleOption = useCallback(
     (qIndex: number, optIndex: number, multiSelect: boolean) => {
-      const current = selections[qIndex] ?? new Set<number>();
-      const next = new Set(current);
-      if (multiSelect) {
+      updateDraft((draft) => {
+        const next = new Set(draft.selections[qIndex]);
         if (next.has(optIndex)) {
           next.delete(optIndex);
         } else {
+          if (!multiSelect) next.clear();
           next.add(optIndex);
         }
-      } else if (next.has(optIndex)) {
-        next.clear();
-      } else {
-        next.clear();
-        next.add(optIndex);
-      }
 
-      setSelections((prev) => ({ ...prev, [qIndex]: next }));
-      setOtherTexts((prev) => {
-        if ((isGroupedAsk && multiSelect) || !prev[qIndex]) return prev;
-        const nextTexts = { ...prev };
-        delete nextTexts[qIndex];
-        return nextTexts;
+        let otherTexts = draft.otherTexts;
+        if (!(isGroupedAsk && multiSelect) && otherTexts[qIndex]) {
+          otherTexts = { ...otherTexts };
+          delete otherTexts[qIndex];
+        }
+
+        return {
+          selections: { ...draft.selections, [qIndex]: next },
+          otherTexts,
+          activeQuestionIndex:
+            !multiSelect && next.size > 0 && qIndex === draft.activeQuestionIndex && questions
+              ? Math.min(qIndex + 1, questions.length - 1)
+              : draft.activeQuestionIndex,
+        };
       });
-
-      if (!multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
-        setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
-      }
     },
-    [activeQuestionIndex, isGroupedAsk, questions, selections],
+    [isGroupedAsk, questions, updateDraft],
   );
 
   const setOtherText = useCallback(
     (qIndex: number, text: string) => {
-      setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-      if (text.length > 0 && !(isGroupedAsk && questions?.[qIndex].multiSelect)) {
-        setSelections((prev) => {
-          if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
-          return { ...prev, [qIndex]: new Set<number>() };
-        });
-      }
+      updateDraft((draft) => ({
+        ...draft,
+        otherTexts: { ...draft.otherTexts, [qIndex]: text },
+        selections:
+          text.length > 0 &&
+          !(isGroupedAsk && questions?.[qIndex].multiSelect) &&
+          draft.selections[qIndex]?.size
+            ? { ...draft.selections, [qIndex]: new Set<number>() }
+            : draft.selections,
+      }));
     },
-    [isGroupedAsk, questions],
+    [isGroupedAsk, questions, updateDraft],
   );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
@@ -488,9 +506,14 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     });
   }, [questions, isGroupedAsk, onRespond, otherTexts, permission.request.input, selections]);
 
-  const handleSelectQuestion = useCallback((index: number) => {
-    setActiveQuestionIndex(index);
-  }, []);
+  const handleSelectQuestion = useCallback(
+    (index: number) => {
+      updateDraft((draft) =>
+        draft.activeQuestionIndex === index ? draft : { ...draft, activeQuestionIndex: index },
+      );
+    },
+    [updateDraft],
+  );
 
   const navIsAnswered = useCallback(
     (qIndex: number) =>
@@ -501,11 +524,18 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   const handlePrimaryAction = useCallback(() => {
     if (!isLastQuestion) {
       if (!activeQuestionAnswered || isResponding) return;
-      setActiveQuestionIndex((index) => Math.min(index + 1, (questions?.length ?? 1) - 1));
+      handleSelectQuestion(resolvedActiveQuestionIndex + 1);
       return;
     }
     handleSubmit();
-  }, [activeQuestionAnswered, handleSubmit, isLastQuestion, isResponding, questions?.length]);
+  }, [
+    activeQuestionAnswered,
+    handleSelectQuestion,
+    handleSubmit,
+    isLastQuestion,
+    isResponding,
+    resolvedActiveQuestionIndex,
+  ]);
 
   const dismissButtonStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [

@@ -714,10 +714,24 @@ const OmpSubagentEventSchema = z
   })
   .passthrough();
 
+export const OmpPlanReviewSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  path: z.string().startsWith("local://"),
+  markdown: z.string().refine((value) => value.trim().length > 0),
+});
+
+export const OmpPlanStateSchema = z.object({
+  enabled: z.boolean(),
+  review: OmpPlanReviewSchema.optional(),
+  executionError: z.string().optional(),
+});
+
 export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   ...OmpAgentSessionEventSchema.options,
   OmpExtensionUiRequestSchema,
   z.object({ type: z.literal("desktop_plugin_prompt_request"), id: z.string() }),
+  z.object({ type: z.literal("plan_review"), review: OmpPlanReviewSchema }),
   z.object({
     type: z.literal("session_info_update"),
     sessionId: z.string(),
@@ -813,6 +827,14 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     ...OmpCommandBase,
     type: z.literal("set_approval_mode"),
     mode: OmpApprovalModeSchema,
+  }),
+  z.object({ ...OmpCommandBase, type: z.literal("get_plan_state") }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_plan_mode"), enabled: z.boolean() }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("resolve_plan_review"),
+    reviewId: z.string().min(1),
+    choice: z.enum(["approve", "refine"]),
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("set_ask_dialog"), enabled: z.boolean() }),
@@ -930,6 +952,8 @@ export type OmpAgentMessage = z.infer<typeof OmpAgentMessageSchema>;
 export type OmpModel = z.infer<typeof OmpModelSchema>;
 export type OmpModelThinking = z.infer<typeof OmpModelThinkingSchema>;
 export type OmpSessionState = z.infer<typeof OmpSessionStateSchema>;
+export type OmpPlanReview = z.infer<typeof OmpPlanReviewSchema>;
+export type OmpPlanState = z.infer<typeof OmpPlanStateSchema>;
 export type OmpFastModeResult = z.infer<typeof OmpFastModeResultSchema>;
 export type OmpAbortAndRestoreQueueResult = z.infer<typeof OmpAbortAndRestoreQueueResultSchema>;
 export type OmpSessionStats = z.infer<typeof OmpSessionStatsSchema>;

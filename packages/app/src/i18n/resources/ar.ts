@@ -338,13 +338,13 @@ export const ar: TranslationResources = {
     activityGroup: "التفكير واستدعاءات الأدوات",
     permission: {
       plan: "يخطط",
+      numberedPlan: "الخطة {{number}}",
       required: "الإذن مطلوب",
       deny: "ينكر",
       accept: "يقبل",
       implement: "الموافقة والتنفيذ",
       continuePlanning: "متابعة التخطيط",
       question: "كيف تريد المتابعة؟",
-      proposedPlan: "الخطة المقترحة",
     },
     turnMetadata: {
       tokens: "توكنز",

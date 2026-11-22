@@ -24,6 +24,7 @@ export const OmpSdkHostLaunchSchema = z
     disallowedTools: z.array(z.string()).optional(),
     configFiles: z.array(z.string()).optional(),
     desktopPluginPrompts: z.boolean().optional(),
+    desktopPlanMode: z.boolean().optional(),
   })
   .strict();
 

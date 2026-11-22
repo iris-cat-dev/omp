@@ -127,6 +127,27 @@ describe("estimateStreamItemHeight", () => {
     expect(estimateStreamItemHeight(thought("thought", 2))).toBe(40);
   });
 
+  it("estimates submitted Markdown as a card rather than a collapsed tool row", () => {
+    const plan: StreamItem = {
+      kind: "tool_call",
+      id: "plan-row",
+      timestamp: createTimestamp(1),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "omp",
+          callId: "review-1",
+          name: "submit_plan",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: "# Plan", path: "/plans/plan.md" },
+        },
+      },
+    };
+
+    expect(estimateStreamItemHeight(plan)).toBeGreaterThan(40);
+  });
+
   it("uses a larger estimate for user messages with image attachments", () => {
     const item: StreamItem = {
       kind: "user_message",

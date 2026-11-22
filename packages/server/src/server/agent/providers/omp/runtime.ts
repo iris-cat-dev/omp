@@ -14,6 +14,7 @@ import type {
   OmpFastModeSelection,
   OmpModel,
   OmpLoginProvider,
+  OmpPlanState,
   OmpPromptAck,
   OmpRpcHostToolDefinition,
   OmpRpcHostToolResult,
@@ -98,8 +99,15 @@ export interface OmpBranchMessage {
   clientMessageId?: string;
 }
 
+export interface OmpPlanControl {
+  getState(): Promise<OmpPlanState>;
+  setMode(enabled: boolean): Promise<OmpPlanState>;
+  resolve(reviewId: string, choice: "approve" | "refine"): Promise<OmpPlanState>;
+}
+
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
+  plan?: OmpPlanControl;
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,

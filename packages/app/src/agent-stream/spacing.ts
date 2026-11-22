@@ -1,6 +1,7 @@
 import type { StreamItem } from "@/types/stream";
 import { SPACING } from "@/styles/theme";
 import { isLaunchCompletionItem } from "./launch-completion";
+import { isNativePlanItem } from "./plan-permission-placement";
 
 export function isSameAssistantBlockGroup(params: {
   item: StreamItem | null | undefined;
@@ -34,8 +35,8 @@ export function getAssistantBlockSpacing(params: {
 }
 
 const isUserMessageItem = (item?: StreamItem | null) => item?.kind === "user_message";
-const isToolSequenceItem = (item?: StreamItem | null) =>
-  item?.kind === "tool_call" ||
+export const isToolSequenceItem = (item?: StreamItem | null) =>
+  (item?.kind === "tool_call" && !isNativePlanItem(item)) ||
   item?.kind === "thought" ||
   item?.kind === "todo_list" ||
   isLaunchCompletionItem(item);

@@ -349,13 +349,13 @@ export const ru: TranslationResources = {
     activityGroup: "Рассуждения и вызовы инструментов",
     permission: {
       plan: "План",
+      numberedPlan: "План {{number}}",
       required: "Требуется разрешение",
       deny: "Отклонить",
       accept: "Разрешить",
       implement: "Утвердить и реализовать",
       continuePlanning: "Продолжить планирование",
       question: "Как бы вы хотели продолжить?",
-      proposedPlan: "Предлагаемый план",
     },
     turnMetadata: {
       tokens: "токенов",

@@ -17,11 +17,7 @@ import { OmpCliRuntime } from "./cli-runtime.js";
 import { AgentManager } from "../../agent-manager.js";
 import { buildProviderRegistry } from "../../provider-registry.js";
 import { OmpAgentClient } from "./agent.js";
-import {
-  buildOmpPlanTurnPrompt,
-  buildOmpStandardTurnPrompt,
-  buildOmpToolIntentPrompt,
-} from "./workflow-prompt.js";
+import { buildOmpToolIntentPrompt } from "./workflow-prompt.js";
 
 async function collectHistory(
   messages: OmpAgentMessage[],
@@ -343,8 +339,8 @@ describe("OMP history mapper", () => {
     const originalDirective =
       "<system-directive>\nThe user's own instruction.\n</system-directive>\n\nkeep this";
     const prompts = [
-      buildOmpToolIntentPrompt(buildOmpPlanTurnPrompt("draft the migration"), "zh-CN"),
-      buildOmpStandardTurnPrompt(buildOmpToolIntentPrompt("implement the migration", "en")),
+      buildOmpToolIntentPrompt("draft the migration", "zh-CN"),
+      buildOmpToolIntentPrompt("implement the migration", "en"),
       buildOmpToolIntentPrompt("/plan inspect only", "zh-CN"),
       buildOmpToolIntentPrompt("/goal ship safely", "en"),
       buildOmpToolIntentPrompt("/skill:browser", "zh-CN"),
@@ -1261,6 +1257,53 @@ describe("OMP history mapper", () => {
       });
       expect(readFileSync(sessionFile, "utf8")).toBe(journalContent);
       expect(readFileSync(join(blobDir, healthyHash))).toEqual(screenshotBytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays submitted Markdown as a separate card through the cold history page", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-plan-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const review = {
+      id: "review",
+      title: "Migration",
+      path: "local://migration-plan.md",
+      markdown: "# Migration\n\n- Back up first\n",
+    };
+    const entries = [
+      { type: "session", id: "root", parentId: null },
+      {
+        type: "message",
+        id: "chat",
+        parentId: "root",
+        message: { role: "assistant", content: [{ type: "text", text: "Here is my approach." }] },
+      },
+      { type: "custom", customType: "desktop-plan-review", id: "proposal", parentId: "chat", data: review },
+      { type: "custom", customType: "desktop-plan-review-resolved", id: "decision", parentId: "proposal", data: { reviewId: review.id } },
+    ];
+    const client = new OmpAgentClient({
+      logger: pino({ level: "silent" }),
+      runtimeSettings: ompHistoryRuntimeSettings,
+    });
+    try {
+      writeFileSync(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n"));
+      const page = await client.readHistoryPage({
+        sessionFile,
+        provider: "omp",
+        epoch: "plan",
+        timestamp: "2026-10-01T00:00:00Z",
+        options: { direction: "tail", limit: 2 },
+      });
+      expect(page.rows.map((row) => row.item)).toMatchObject([
+        { type: "assistant_message", text: "Here is my approach." },
+        {
+          type: "tool_call",
+          callId: review.id,
+          status: "completed",
+          detail: { type: "plan", text: review.markdown, title: review.title, path: review.path },
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

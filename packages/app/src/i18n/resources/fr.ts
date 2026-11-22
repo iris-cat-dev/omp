@@ -342,13 +342,13 @@ export const fr: TranslationResources = {
     activityGroup: "Réflexion et appels d’outils",
     permission: {
       plan: "Plan",
+      numberedPlan: "Plan {{number}}",
       required: "Autorisation requise",
       deny: "Refuser",
       accept: "Accepter",
       implement: "Approuver et mettre en œuvre",
       continuePlanning: "Continuer la planification",
       question: "Comment souhaitez-vous procéder?",
-      proposedPlan: "Plan proposé",
     },
     turnMetadata: {
       tokens: "jetons",

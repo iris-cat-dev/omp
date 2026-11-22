@@ -18,6 +18,7 @@ import { resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { buildOmpModelId, readOmpAssistantModel } from "./subagent-model.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
 import { readLocalSubmission } from "./local-submission.js";
+import { mapOmpPlanReview, readOmpPlanReview } from "./plan-review.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -197,8 +198,9 @@ export function getOmpColdHistoryStats(sessionFile: string): OmpColdHistoryStats
 
 function coldHistoryEvents(entry: OmpSessionEntry, mapper: OmpHistoryMapper, provider: AgentProvider, nativeHeaderMs: number | null): AgentStreamEvent[] {
   const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-  const localSubmission = readLocalSubmission(entry);
-  if (localSubmission) return [{ type: "timeline", provider, item: localSubmission, ...(timestamp ? { timestamp } : {}) }];
+  const artifact = readOmpPlanReview(entry);
+  const supplementalItem = artifact ? mapOmpPlanReview(artifact) : readLocalSubmission(entry);
+  if (supplementalItem) return [{ type: "timeline", provider, item: supplementalItem, ...(timestamp ? { timestamp } : {}) }];
   if (entry.type === "compaction") return [{ type: "timeline", provider, item: { type: "compaction", status: "completed", ...(typeof entry.tokensBefore === "number" ? { preTokens: entry.tokensBefore } : {}) }, ...(timestamp ? { timestamp } : {}) }];
   const message = mapEntryMessage(entry);
   if (!message) return [];
@@ -479,9 +481,10 @@ async function* streamOmpHistoryEntries(
   });
   for (const entry of entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const localSubmission = readLocalSubmission(entry);
-    if (localSubmission) {
-      yield { type: "timeline", provider: input.provider, item: localSubmission, ...(timestamp ? { timestamp } : {}) };
+    const artifact = readOmpPlanReview(entry);
+    const supplementalItem = artifact ? mapOmpPlanReview(artifact) : readLocalSubmission(entry);
+    if (supplementalItem) {
+      yield { type: "timeline", provider: input.provider, item: supplementalItem, ...(timestamp ? { timestamp } : {}) };
       continue;
     }
     if (entry.type === "compaction") {

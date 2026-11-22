@@ -458,13 +458,13 @@ export const en = {
     activityGroup: "Thinking and tool calls",
     permission: {
       plan: "Plan",
+      numberedPlan: "Plan {{number}}",
       required: "Permission Required",
       deny: "Deny",
       accept: "Accept",
       implement: "Approve and implement",
       continuePlanning: "Continue planning",
       question: "How would you like to proceed?",
-      proposedPlan: "Proposed plan",
     },
     turnMetadata: {
       tokens: "tokens",

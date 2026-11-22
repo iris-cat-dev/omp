@@ -2,6 +2,7 @@ import type { StreamItem } from "@/types/stream";
 import { describeToolCall, hasInlineImagePreview } from "@/tool-calls/detail-level/grouping";
 import { continuesTurn } from "./turn-membership";
 import { isLaunchCompletionItem, type LaunchCompletionItem } from "./launch-completion";
+import { isNativePlanItem } from "./plan-permission-placement";
 
 export type AgentActivityItem =
   | Extract<StreamItem, { kind: "thought" | "tool_call" }>
@@ -29,7 +30,10 @@ export interface AgentActivityProjection {
 const EMPTY_GROUPS = new Map<string, AgentActivityGroup>();
 
 function isAgentActivityItem(item: StreamItem): item is AgentActivityItem {
-  if (item.kind === "tool_call" && hasInlineImagePreview(describeToolCall(item).detail)) {
+  if (
+    item.kind === "tool_call" &&
+    (isNativePlanItem(item) || hasInlineImagePreview(describeToolCall(item).detail))
+  ) {
     return false;
   }
   return item.kind === "thought" || item.kind === "tool_call" || isLaunchCompletionItem(item);

@@ -355,6 +355,8 @@ export type ToolCallDetail =
   | {
       type: "plan";
       text: string;
+      title?: string;
+      path?: string;
     }
   | {
       type: "unknown";

@@ -1,3 +1,4 @@
+// Decode only: these prefixes were persisted by the former Desktop Plan workflow.
 const OMP_PLAN_TURN_PREFIX = `<system-directive>
 Plan mode active for this turn. The working tree and system are read-only: NEVER create, edit, delete, or rename files, and NEVER run state-changing commands. You may inspect with read-only tools. Produce or refine the requested plan only.
 </system-directive>\n\n`;
@@ -58,14 +59,6 @@ export function buildOmpToolIntentPrompt(prompt: string, locale: unknown): strin
   if (command) return `${command[1]}${toolIntentDirective(locale)}${command[2]}`;
   if (/^\s*\//.test(prompt)) return prompt;
   return `${toolIntentDirective(locale)}${prompt}`;
-}
-
-export function buildOmpPlanTurnPrompt(prompt: string): string {
-  return `${OMP_PLAN_TURN_PREFIX}${prompt}`;
-}
-
-export function buildOmpStandardTurnPrompt(prompt: string): string {
-  return `${OMP_STANDARD_TURN_PREFIX}${prompt}`;
 }
 
 export function buildOmpChatTurnPrompt(prompt: string): string {

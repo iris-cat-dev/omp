@@ -340,13 +340,13 @@ export const es: TranslationResources = {
     activityGroup: "Razonamiento y llamadas a herramientas",
     permission: {
       plan: "Plan",
+      numberedPlan: "Plan {{number}}",
       required: "Permiso requerido",
       deny: "Denegar",
       accept: "Aceptar",
       implement: "Aprobar e implementar",
       continuePlanning: "Seguir planificando",
       question: "¿Cómo le gustaría proceder?",
-      proposedPlan: "Plan propuesto",
     },
     turnMetadata: {
       tokens: "tokens",

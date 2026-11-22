@@ -453,13 +453,13 @@ export const zhCN: TranslationResources = {
     activityGroup: "思考和工具调用",
     permission: {
       plan: "计划",
+      numberedPlan: "计划 {{number}}",
       required: "需要权限",
       deny: "拒绝",
       accept: "批准",
       implement: "批准并执行",
       continuePlanning: "继续规划",
       question: "你想如何继续？",
-      proposedPlan: "建议计划",
     },
     turnMetadata: {
       tokens: "词元",

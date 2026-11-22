@@ -53,6 +53,39 @@ describe("agent activity grouping", () => {
     expect(history.groupsByHostId.get("thought-1")?.items).toEqual(items);
   });
 
+  it("keeps a submitted plan standalone across the history and live-head boundary", () => {
+    const plan: ToolCallItem = {
+      kind: "tool_call",
+      id: "plan-row",
+      turnId: "turn-1",
+      timestamp,
+      payload: {
+        source: "agent",
+        data: {
+          provider: "omp",
+          callId: "review-1",
+          name: "submit_plan",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: "# Submitted plan", path: "/plans/plan.md" },
+        },
+      },
+    };
+    const leading = thought("thought-1");
+    const trailing = tool("tool-1");
+
+    const history = prepareAgentActivityHistory([leading, plan, trailing]);
+    expect(history.tail).toEqual([leading, plan, trailing]);
+    expect(history.groupsByHostId.size).toBe(0);
+
+    const projection = projectAgentActivity({
+      history: prepareAgentActivityHistory([leading]),
+      head: [plan, trailing],
+    });
+    expect(projection.head).toEqual([plan, trailing]);
+    expect(projection.groupsByHostId.size).toBe(0);
+  });
+
   it.each(["generate_image", "present_image"] as const)(
     "keeps completed %s image previews visible outside collapsed activity",
     (name) => {

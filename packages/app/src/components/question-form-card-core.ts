@@ -31,6 +31,18 @@ export interface QuestionOptionLabels {
 export type QuestionSelections = Record<number, ReadonlySet<number>>;
 export type QuestionOtherTexts = Record<number, string>;
 
+export interface QuestionFormDraft {
+  selections: QuestionSelections;
+  otherTexts: QuestionOtherTexts;
+  activeQuestionIndex: number;
+}
+
+export const EMPTY_QUESTION_FORM_DRAFT: QuestionFormDraft = {
+  selections: {},
+  otherTexts: {},
+  activeQuestionIndex: 0,
+};
+
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;

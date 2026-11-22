@@ -24,6 +24,10 @@ import {
   type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
+import {
+  EMPTY_QUESTION_FORM_DRAFT,
+  type QuestionFormDraft,
+} from "@/components/question-form-card-core";
 import type { QueuedComposerMessage } from "@/composer/actions";
 import type { AgentLifecycleStatus } from "@omp-desktop/protocol/agent-lifecycle";
 import type {
@@ -528,6 +532,7 @@ export interface SessionState {
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
+  questionFormDrafts: Map<string, QuestionFormDraft>;
 
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
@@ -719,6 +724,11 @@ interface SessionStoreActions {
       | Map<string, PendingPermission>
       | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>),
   ) => void;
+  updateQuestionFormDraft: (
+    serverId: string,
+    permissionKey: string,
+    update: (draft: QuestionFormDraft) => QuestionFormDraft,
+  ) => void;
 
   // File explorer
   setFileExplorer: (
@@ -790,6 +800,7 @@ function createInitialSessionState(
     projects: new Map(),
     restoringWorkspaces: new Map(),
     pendingPermissions: new Map(),
+    questionFormDrafts: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
   };
@@ -2128,12 +2139,35 @@ export const useSessionStore = create<SessionStore>()(
           if (session.pendingPermissions === nextPerms) {
             return prev;
           }
+          let questionFormDrafts = session.questionFormDrafts;
+          for (const key of session.questionFormDrafts.keys()) {
+            if (nextPerms.get(key)?.request.kind === "question") continue;
+            if (questionFormDrafts === session.questionFormDrafts) {
+              questionFormDrafts = new Map(questionFormDrafts);
+            }
+            questionFormDrafts.delete(key);
+          }
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, pendingPermissions: nextPerms },
+              [serverId]: { ...session, pendingPermissions: nextPerms, questionFormDrafts },
             },
+          };
+        });
+      },
+      updateQuestionFormDraft: (serverId, permissionKey, update) => {
+        set((state) => {
+          const session = state.sessions[serverId];
+          if (session?.pendingPermissions.get(permissionKey)?.request.kind !== "question") {
+            return state;
+          }
+          const current = session.questionFormDrafts.get(permissionKey) ?? EMPTY_QUESTION_FORM_DRAFT;
+          const draft = update(current);
+          if (draft === current) return state;
+          const questionFormDrafts = new Map(session.questionFormDrafts).set(permissionKey, draft);
+          return {
+            sessions: { ...state.sessions, [serverId]: { ...session, questionFormDrafts } },
           };
         });
       },

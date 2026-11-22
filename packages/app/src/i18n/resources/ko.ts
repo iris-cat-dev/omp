@@ -339,13 +339,13 @@ export const ko: TranslationResources = {
     activityGroup: "사고 및 도구 호출",
     permission: {
       plan: "계획",
+      numberedPlan: "계획 {{number}}",
       required: "권한 필요",
       deny: "거부",
       accept: "수락",
       implement: "승인 후 구현",
       continuePlanning: "계획 계속하기",
       question: "어떻게 진행할까요?",
-      proposedPlan: "제안된 계획",
     },
     turnMetadata: {
       tokens: "토큰",

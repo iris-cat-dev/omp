@@ -340,13 +340,13 @@ export const ja: TranslationResources = {
     activityGroup: "思考とツール呼び出し",
     permission: {
       plan: "プラン",
+      numberedPlan: "プラン {{number}}",
       required: "権限が必要です",
       deny: "拒否",
       accept: "承認",
       implement: "承認して実装",
       continuePlanning: "計画を続ける",
       question: "どのように続けますか？",
-      proposedPlan: "提案されたプラン",
     },
     turnMetadata: {
       tokens: "トークン",

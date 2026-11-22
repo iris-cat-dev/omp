@@ -1,6 +1,6 @@
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
-import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
+import { getAssistantBlockSpacing, getGapBetweenStreamItems, isToolSequenceItem } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
 import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 import { isLaunchCompletionItem } from "./launch-completion";
@@ -199,15 +199,6 @@ function resolveCompletedFooter(input: {
   });
 }
 
-function isToolSequenceItem(item: StreamItem | null): boolean {
-  return (
-    item?.kind === "tool_call" ||
-    item?.kind === "thought" ||
-    item?.kind === "todo_list" ||
-    isLaunchCompletionItem(item)
-  );
-}
-
 function getToolSequence(input: {
   item: StreamItem;
   aboveItem: StreamItem | null;
@@ -334,6 +325,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
       historyBoundaryIndex ?? "null",
       liveHeadBoundaryItem?.id ?? "null",
       liveHeadBoundaryItem?.kind ?? "null",
+      isToolSequenceItem(liveHeadBoundaryItem) ? "tool-sequence" : "standalone",
       liveHeadBoundaryItem?.turnId ?? "null",
       auxiliaryTurnFooter?.itemId ?? "null",
       hasAuxiliaryFooter ? "footer" : "no-footer",

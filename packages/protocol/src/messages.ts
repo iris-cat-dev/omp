@@ -826,6 +826,8 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
     z.object({
       type: z.literal("plan"),
       text: z.string(),
+      title: z.string().optional(),
+      path: z.string().optional(),
     }),
     z.object({
       type: z.literal("unknown"),

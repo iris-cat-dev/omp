@@ -3,6 +3,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PendingPermission } from "@/types/shared";
 import { QuestionFormCard } from "./question-form-card";
+
+vi.mock("@/assistant-image/timeline-assets", () => ({
+  persistTimelineImageAssets: vi.fn(),
+  retainTimelineImageAssets: vi.fn(),
+}));
 interface MountedCard {
   root: Root;
   container: HTMLDivElement;
@@ -40,7 +45,12 @@ function mountCard(question: string): HTMLDivElement {
 
   act(() =>
     root.render(
-      <QuestionFormCard permission={permission} onRespond={vi.fn()} isResponding={false} />,
+      <QuestionFormCard
+        serverId="question-card-layout"
+        permission={permission}
+        onRespond={vi.fn()}
+        isResponding={false}
+      />,
     ),
   );
   mountedCards.push({ root, container });

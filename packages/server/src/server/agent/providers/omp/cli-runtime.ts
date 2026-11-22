@@ -67,6 +67,7 @@ import {
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpNativeServiceTierSnapshotSchema,
+  OmpPlanStateSchema,
   OmpPromptAckSchema,
   OmpRpcCommandSchema,
   OmpRuntimeEventSchema,
@@ -373,6 +374,7 @@ export interface OmpRpcSessionOptions {
   commandsRpcName?: "get_available_commands";
   /** SDK hosts must enable grouped ask before exposing a usable session. */
   enableAskDialog?: boolean;
+  enableNativePlan?: boolean;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
   signal?: AbortSignal;
   onRetirementCreated?: (retirement: OmpRuntimeRetirement) => void;
@@ -438,6 +440,7 @@ export async function startOmpRpcSession(
       }
       options.signal?.throwIfAborted();
     }
+    if (options.enableNativePlan) await session.enableNativePlan();
     await session.refreshImageSettings();
     return session;
   } catch (error) {
@@ -546,6 +549,7 @@ function imageToolAllowedByArguments(argv: readonly string[]): boolean {
 
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
+  plan?: OmpRuntimeSession["plan"];
   activeBranchEntryId?: string;
   private backgroundJobsBridge: BackgroundJobsBridge = { status: "pending" };
   private backgroundJobsGeneration = -1;
@@ -787,6 +791,24 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       );
     }
     return z.object({ cancelled: z.boolean() }).parse(result).cancelled;
+  }
+
+  async enableNativePlan(): Promise<void> {
+    // Older SDK installations keep Standard/Chat usable without
+    // advertising a Plan workflow they cannot enforce.
+    try {
+      OmpPlanStateSchema.parse(await this.request({ type: "get_plan_state" }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "Unknown command: get_plan_state") return;
+      throw error;
+    }
+    this.plan = {
+      getState: async () => OmpPlanStateSchema.parse(await this.request({ type: "get_plan_state" })),
+      setMode: async (enabled) =>
+        OmpPlanStateSchema.parse(await this.request({ type: "set_plan_mode", enabled })),
+      resolve: async (reviewId, choice) =>
+        OmpPlanStateSchema.parse(await this.request({ type: "resolve_plan_review", reviewId, choice })),
+    };
   }
 
   async getState(): Promise<OmpSessionState> {

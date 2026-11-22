@@ -339,13 +339,13 @@ export const ptBR: TranslationResources = {
     activityGroup: "Raciocínio e chamadas de ferramentas",
     permission: {
       plan: "Plano",
+      numberedPlan: "Plano {{number}}",
       required: "Permissão necessária",
       deny: "Negar",
       accept: "Aceitar",
       implement: "Aprovar e implementar",
       continuePlanning: "Continuar planejando",
       question: "Como você quer prosseguir?",
-      proposedPlan: "Plano proposto",
     },
     turnMetadata: {
       tokens: "tokens",

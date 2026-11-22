@@ -121,11 +121,10 @@ import {
   readChatProCommand,
 } from "./chatpro.js";
 import { getUserMessageImages, getUserMessageText } from "./message-history.js";
+import { mapOmpPlanReview } from "./plan-review.js";
 import {
   buildOmpChatExitTurnPrompt,
   buildOmpChatTurnPrompt,
-  buildOmpPlanTurnPrompt,
-  buildOmpStandardTurnPrompt,
   buildOmpToolIntentPrompt,
   getOmpWorkflowDisplayText,
 } from "./workflow-prompt.js";
@@ -170,6 +169,7 @@ import type {
   OmpFastModeSelection,
   OmpImageContent,
   OmpModel,
+  OmpPlanReview,
   OmpPromptResult,
   OmpRuntimeEvent,
   OmpSessionState,
@@ -738,9 +738,7 @@ function initialOmpNativeWorkflowMode(
   selection: OmpWorkflowSelection,
   live: boolean | undefined,
 ): OmpWorkflowMode | null {
-  if (live !== false) return null;
-  if (isOmpNativeWorkflowMode(selection)) return selection;
-  return null;
+  return live === false && selection === "goal" ? "goal" : null;
 }
 
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -802,7 +800,6 @@ const OMP_WORKFLOW_LOCALE_FEATURE_ID = "workflow_locale";
 const OMP_OAUTH_ACCOUNT_FEATURE_ID = "oauth_account_credential";
 const OMP_OAUTH_ACCOUNT_AUTOMATIC_VALUE = "automatic";
 const OMP_FAST_MODE_FEATURE_ID = "fast_mode";
-const OMP_PLAN_APPROVAL_REQUEST_ID = "omp-plan-approval";
 const OMP_PLAN_APPROVAL_REQUEST_NAME = "OmpPlanApproval";
 export const OMP_CHAT_TOOL_NAMES = ["read", "glob", "grep"] as const;
 type OmpWorkflowMode = "plan" | "goal";
@@ -920,6 +917,7 @@ function createOmpFeatures(
   oauthAccounts: readonly StoredOmpOAuthAccount[] = [],
   fastMode?: OmpFastModeStatus,
   activeCredential?: OmpSessionState["activeCredential"],
+  nativePlanAvailable = true,
 ): AgentFeature[] {
   const features: AgentFeature[] = [
     {
@@ -928,12 +926,15 @@ function createOmpFeatures(
       label: "Workflow",
       description: "Choose a conversation workflow independently from tool approvals.",
       icon: "Target",
-      value: normalizeOmpWorkflowSelection(config.featureValues?.[OMP_WORKFLOW_FEATURE_ID]),
+      value:
+        !nativePlanAvailable && config.featureValues?.[OMP_WORKFLOW_FEATURE_ID] === "plan"
+          ? "standard"
+          : normalizeOmpWorkflowSelection(config.featureValues?.[OMP_WORKFLOW_FEATURE_ID]),
       options: [
         { id: "standard", label: "Standard" },
         { id: "chat", label: "Chat" },
         { id: "enhanced", label: "Enhanced" },
-        { id: "plan", label: "Plan" },
+        ...(nativePlanAvailable ? [{ id: "plan", label: "Plan" }] : []),
         { id: "goal", label: "Goal" },
       ],
     },
@@ -1165,6 +1166,7 @@ function parseModelReference(modelId: string | null): OmpModelReference | null {
 export function createOmpDraftFeatures(input: {
   model: OmpModel;
   capabilities: OmpServiceTierCapabilities;
+  nativePlanAvailable?: boolean;
 }): AgentFeature[] {
   const modelId = `${input.model.provider}/${input.model.id}`;
   const ultrafastSupported = input.capabilities.ultrafast && isOmpUltrafastModel(input.model);
@@ -1173,7 +1175,7 @@ export function createOmpDraftFeatures(input: {
     eligible: ultrafastSupported || isOmpFastModeEligibleModel(input.model, modelId),
     selection: "off",
     ultrafastSupported,
-  });
+  }, undefined, input.nativePlanAvailable);
 }
 
 function isOmpFastModeEligibleModel(
@@ -1382,30 +1384,6 @@ function ompAssistantText(message: Extract<OmpAgentMessage, { role: "assistant" 
     .join("\n\n")
     .trim();
   return text.length > 0 ? text : null;
-}
-interface OmpPlanDraft {
-  text: string;
-  messageId?: string;
-}
-
-function latestOmpPlan(
-  messages: readonly OmpAgentMessage[],
-  streamedPlan: OmpPlanDraft | null,
-): OmpPlanDraft | null {
-  const latestAssistant = messages.findLast((message) => message.role === "assistant");
-  const terminalText = latestAssistant?.content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n\n")
-    .trim();
-  const text = terminalText || streamedPlan?.text.trim();
-  if (!text) {
-    return null;
-  }
-  const messageId = latestAssistant?.responseId || streamedPlan?.messageId;
-  return {
-    text,
-    ...(messageId ? { messageId } : {}),
-  };
 }
 
 const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z\d+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu;
@@ -1946,8 +1924,8 @@ export class OmpAgentSession implements AgentSession {
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
-  private activePlanText = "";
-  private activePlanMessageId: string | null = null;
+  private deferredPlanReview: OmpPlanReview | undefined;
+  private resolvingPlanApproval = false;
   private activeTurnStarted = false;
   private activeTurnHasUserMessage = false;
   private hasConversationUserMessage = false;
@@ -2018,7 +1996,6 @@ export class OmpAgentSession implements AgentSession {
   private lastSubmittedPromptDisplayText: string | null = null;
   private lastSubmittedPromptClientMessageId: string | null = null;
   private readonly pendingSteeredUserMessages: OmpSteeredUserMessage[] = [];
-  private planContextResetPending: boolean;
   private chatToolsActive = false;
   private chatTurnActive: boolean;
   private chatContextResetPending = false;
@@ -2081,14 +2058,11 @@ export class OmpAgentSession implements AgentSession {
         nativeTier: options.initialState.fastModeTier,
       },
       options.initialState.activeCredential,
+      !!options.runtimeSession.plan && !options.config.sandbox,
     );
     this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options.live);
     this.workflowModePending =
       this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
-    this.planContextResetPending =
-      options.live === false &&
-      configuredWorkflowMode !== "chat" &&
-      !isOmpNativeWorkflowMode(configuredWorkflowMode);
     this.chatTurnActive = options.live === false && configuredWorkflowMode === "chat";
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
@@ -2167,6 +2141,7 @@ export class OmpAgentSession implements AgentSession {
         nativeTier: this.state.fastModeTier,
       },
       this.state.activeCredential,
+      !!this.runtimeSession.plan && !this.config.sandbox,
     );
     this.features.splice(0, this.features.length, ...nextFeatures);
   }
@@ -2301,7 +2276,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
-    if (this.activeTurnId || this.pendingTurnAdmission) {
+    if (this.activeTurnId || this.pendingTurnAdmission || this.resolvingPlanApproval) {
       throw new Error("An OMP turn is already active");
     }
     if (this.closed || this.runtimeUnloading || this.backgroundOwnershipTransition) {
@@ -2334,7 +2309,14 @@ export class OmpAgentSession implements AgentSession {
   ): Promise<StartTurnResult> {
     this.suppressAutonomousEventsAfterInterrupt = false;
     this.activeInterrupt = null;
-    this.dismissPendingPlanApproval();
+    const pendingPlan = this.pendingPlanApproval();
+    if (pendingPlan) {
+      await this.resolvePlanApproval(pendingPlan.id, {
+        behavior: "deny",
+        selectedActionId: "continue-planning",
+      });
+      if (signal.aborted) return { turnId };
+    }
 
     const clientMessageId = options?.clientMessageId;
     const origin = {
@@ -2368,8 +2350,6 @@ export class OmpAgentSession implements AgentSession {
     }
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
-    this.activePlanText = "";
-    this.activePlanMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
@@ -2808,6 +2788,22 @@ export class OmpAgentSession implements AgentSession {
     if (feature?.type !== "select") {
       throw new Error("OMP workflow feature is unavailable");
     }
+    if (value === "plan" || this.activeWorkflowMode === "plan") {
+      const plan = this.runtimeSession.plan;
+      if (!plan) throw new Error("OMP Plan requires an updated Desktop SDK backend");
+      if (value !== this.activeWorkflowMode) {
+        if (this.activeTurnId || this.pendingTurnAdmission || this.resolvingPlanApproval)
+          throw new Error("Wait for the current turn or review decision before changing Plan mode");
+        if (value === "plan") {
+          await this.syncChatToolRestriction(false);
+          if (this.activeWorkflowMode === "goal") await this.disableActiveWorkflowMode();
+          await plan.setMode(true);
+          this.activeWorkflowMode = "plan";
+        } else {
+          await this.disableActiveWorkflowMode();
+        }
+      }
+    }
     if (!this.activeTurnId && !this.pendingTurnAdmission) {
       await this.syncChatToolRestriction(value === "chat");
     }
@@ -2817,9 +2813,6 @@ export class OmpAgentSession implements AgentSession {
       [OMP_WORKFLOW_FEATURE_ID]: value,
     };
     this.workflowModePending = value === this.activeWorkflowMode ? null : value;
-    if (value !== "plan") {
-      this.dismissPendingPlanApproval();
-    }
     if (value !== "chat" && this.chatTurnActive && !isOmpNativeWorkflowMode(value)) {
       this.chatTurnActive = false;
       this.chatContextResetPending = true;
@@ -2873,7 +2866,6 @@ export class OmpAgentSession implements AgentSession {
     await this.syncChatToolRestriction(true);
     if (signal.aborted) return null;
     this.workflowModePending = null;
-    this.planContextResetPending = false;
     this.chatContextResetPending = false;
     this.chatTurnActive = true;
     return this.withToolIntentLocale(buildOmpChatTurnPrompt(promptText));
@@ -2885,8 +2877,7 @@ export class OmpAgentSession implements AgentSession {
     signal: AbortSignal,
   ): Promise<string | null> {
     let text = promptText;
-    const workflowMode =
-      selectedWorkflowMode === "plan" ? selectedWorkflowMode : this.workflowModePending;
+    const workflowMode = this.workflowModePending;
     if (workflowMode === "standard" || workflowMode === "enhanced") {
       await this.disableActiveWorkflowMode(signal);
       if (signal.aborted) return null;
@@ -2896,20 +2887,15 @@ export class OmpAgentSession implements AgentSession {
         await this.disableActiveWorkflowMode(signal);
         if (signal.aborted) return null;
       }
-      text =
-        workflowMode === "plan" ? buildOmpPlanTurnPrompt(text) : `/${workflowMode} ${text}`;
-      this.activeWorkflowMode = workflowMode;
+      if (workflowMode === "goal") {
+        text = `/goal ${text}`;
+        this.activeWorkflowMode = "goal";
+      }
       this.workflowModePending = null;
     }
-    if (!isOmpNativeWorkflowMode(selectedWorkflowMode)) {
-      if (this.planContextResetPending) {
-        text = buildOmpStandardTurnPrompt(text);
-        this.planContextResetPending = false;
-      }
-      if (this.chatContextResetPending) {
-        text = buildOmpChatExitTurnPrompt(text);
-        this.chatContextResetPending = false;
-      }
+    if (!isOmpNativeWorkflowMode(selectedWorkflowMode) && this.chatContextResetPending) {
+      text = buildOmpChatExitTurnPrompt(text);
+      this.chatContextResetPending = false;
     }
     return text;
   }
@@ -3113,6 +3099,17 @@ export class OmpAgentSession implements AgentSession {
       await this.setTitle(explicitTitle);
     await this.applyConfiguredFastMode();
     await this.pinInitialOAuthAccount();
+    if (this.purpose !== "history") {
+      const plan = this.runtimeSession.plan;
+      if (this.resumedSession) {
+        await this.restoreNativePlan(false);
+      } else if (this.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID] === "plan") {
+        if (!plan) throw new Error("OMP Plan requires an updated Desktop SDK backend");
+        await plan.setMode(true);
+        this.setActiveWorkflowMode("plan");
+        this.workflowModePending = null;
+      }
+    }
     if (
       this.purpose !== "history" &&
       normalizeOmpWorkflowSelection(this.features[0]?.value) === "chat"
@@ -3124,6 +3121,26 @@ export class OmpAgentSession implements AgentSession {
     await this.listCommands().catch((error) => {
       this.logger.debug({ err: error }, "Command snapshot unavailable after explicit activation");
     });
+  }
+
+  private async restoreNativePlan(publish: boolean): Promise<void> {
+    const state = await this.runtimeSession.plan?.getState();
+    if (state?.enabled || this.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID] === "plan")
+      this.setActiveWorkflowMode(state?.enabled ? "plan" : null, publish);
+    const pending = this.pendingPlanApproval();
+    if (pending && pending.id !== state?.review?.id) {
+      this.pendingExtensionUiRequests.delete(pending.id);
+      if (publish) {
+        this.emitPermissionResolution(pending.id, {
+          behavior: "deny",
+          message: "Plan is no longer pending on this branch",
+        });
+      }
+    }
+    if (state?.review && pending?.id !== state.review.id) {
+      // History supplies the artifact; restore only its matching approval state.
+      this.emitPlanApprovalRequest(state.review, publish ? "replay" : "initial");
+    }
   }
 
   async setGoalObjective(objective: string): Promise<void> {
@@ -3191,17 +3208,7 @@ export class OmpAgentSession implements AgentSession {
     }
 
     if (request.name === OMP_PLAN_APPROVAL_REQUEST_NAME) {
-      if (response.behavior === "allow") {
-        await this.disableActiveWorkflowMode();
-      }
-      this.pendingExtensionUiRequests.delete(requestId);
-      this.emitPermissionResolution(requestId, response);
-      return response.behavior === "allow"
-        ? {
-            followUpPrompt:
-              "The plan is approved. Exit planning and implement it now. Use tools and modify the working tree as required.",
-          }
-        : undefined;
+      return this.resolvePlanApproval(requestId, response);
     }
 
     this.respondToExtensionUiPermission(request, response);
@@ -3240,35 +3247,54 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
-  private dismissPendingPlanApproval(): void {
-    if (!this.pendingExtensionUiRequests.delete(OMP_PLAN_APPROVAL_REQUEST_ID)) {
-      return;
+  private pendingPlanApproval(): AgentPermissionRequest | undefined {
+    for (const request of this.pendingExtensionUiRequests.values()) {
+      if (request.name === OMP_PLAN_APPROVAL_REQUEST_NAME) return request;
     }
-    this.emitPermissionResolution(OMP_PLAN_APPROVAL_REQUEST_ID, {
-      behavior: "deny",
-      selectedActionId: "continue-planning",
-      message: "Superseded by a new planning request",
-    });
+    return undefined;
+  }
+
+  private async resolvePlanApproval(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<void> {
+    this.assertRuntimeWorkAllowed();
+    const plan = this.runtimeSession.plan;
+    if (!plan) throw new Error("OMP Plan requires the Desktop SDK backend");
+    const choice = response.behavior === "allow" ? "approve" : "refine";
+    if (this.resolvingPlanApproval) throw new Error("A Plan review decision is already in progress");
+    if (choice === "approve" && (this.activeTurnId || this.pendingTurnAdmission))
+      throw new Error("Wait for the current turn to finish before approving a plan");
+    this.resolvingPlanApproval = true;
+    try {
+      if (choice === "approve") this.suppressAutonomousEventsAfterInterrupt = false;
+      const state = await plan.resolve(requestId, choice);
+      if (!state.enabled) this.setActiveWorkflowMode(null, true);
+      this.pendingExtensionUiRequests.delete(requestId);
+      this.emitPermissionResolution(requestId, response);
+      if (state.executionError) {
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "error", message: state.executionError },
+        });
+      }
+    } finally {
+      this.resolvingPlanApproval = false;
+    }
   }
 
   private emitPlanApprovalRequest(
-    turnId: string | undefined,
-    messages: readonly OmpAgentMessage[],
-    streamedPlan: OmpPlanDraft | null,
+    plan: OmpPlanReview,
+    source: "live" | "replay" | "initial",
+    turnId?: string,
   ): void {
-    if (this.activeWorkflowMode !== "plan") {
-      return;
-    }
-    const plan = latestOmpPlan(messages, streamedPlan);
-    if (!plan) {
-      return;
-    }
     const request: AgentPermissionRequest = {
-      id: OMP_PLAN_APPROVAL_REQUEST_ID,
+      id: plan.id,
       provider: this.provider,
       name: OMP_PLAN_APPROVAL_REQUEST_NAME,
       kind: "plan",
-      input: { plan: plan.text },
+      input: { plan: plan.markdown },
       actions: [
         {
           id: "continue-planning",
@@ -3285,9 +3311,14 @@ export class OmpAgentSession implements AgentSession {
           intent: "implement",
         },
       ],
-      metadata: plan.messageId ? { planMessageId: plan.messageId } : {},
+      title: plan.title,
+      metadata: { planReviewId: plan.id },
     };
     this.pendingExtensionUiRequests.set(request.id, request);
+    if (source === "initial") return;
+    if (source === "live") {
+      this.emit({ type: "timeline", provider: this.provider, turnId, item: mapOmpPlanReview(plan) });
+    }
     this.emit({
       type: "permission_requested",
       provider: this.provider,
@@ -3485,6 +3516,7 @@ export class OmpAgentSession implements AgentSession {
       // The supervisor owner and its broker subscription never change. Only the
       // native transcript association moves, while retirement stays fenced.
       await this.runtimeSession.branch(target);
+      await this.restoreNativePlan(true);
       await this.refreshState();
       const currentTodo = mapOmpTodoState(this.state)[0];
       this.lastTodoItem = currentTodo?.type === "todo" ? currentTodo : null;
@@ -3786,8 +3818,6 @@ export class OmpAgentSession implements AgentSession {
     this.lastSubmittedPromptClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
-    this.activePlanText = "";
-    this.activePlanMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
@@ -3829,7 +3859,6 @@ export class OmpAgentSession implements AgentSession {
           type: "assistant_message",
           text: "",
           messageId,
-          ...(this.activeWorkflowMode === "plan" ? { presentation: "plan" as const } : {}),
           nativeUsage: this.nativeUsage.getUsage(turnId, nowMs, false),
         },
       });
@@ -4240,11 +4269,6 @@ export class OmpAgentSession implements AgentSession {
     if (!text) {
       return;
     }
-    if (/Plan mode (?:disabled|paused)/i.test(text)) {
-      this.setActiveWorkflowMode(null, true);
-    } else if (/Plan mode enabled/i.test(text)) {
-      this.setActiveWorkflowMode("plan", true);
-    }
     if (!this.activeTurnId) {
       return;
     }
@@ -4264,7 +4288,8 @@ export class OmpAgentSession implements AgentSession {
     const goalStatus = event.state?.goal?.status ?? event.goal?.status;
     const goalActive =
       event.state?.enabled === true && goalStatus !== "complete" && goalStatus !== "dropped";
-    this.setActiveWorkflowMode(goalActive ? "goal" : null, true);
+    if (goalActive || this.activeWorkflowMode === "goal")
+      this.setActiveWorkflowMode(goalActive ? "goal" : null, true);
   }
 
   private setActiveWorkflowMode(mode: OmpWorkflowMode | null, publishFeatureChange = false): void {
@@ -4274,16 +4299,12 @@ export class OmpAgentSession implements AgentSession {
         ? feature.value
         : this.config.featureValues?.[OMP_WORKFLOW_FEATURE_ID],
     );
-    const wasPlanMode = this.activeWorkflowMode === "plan";
     const nextSelection =
       mode ??
       (previousSelection === "enhanced" || previousSelection === "chat"
         ? previousSelection
         : "standard");
     this.activeWorkflowMode = mode;
-    if (wasPlanMode && mode !== "plan") {
-      this.planContextResetPending = true;
-    }
     if (feature?.type === "select") {
       feature.value = nextSelection;
     }
@@ -4300,6 +4321,13 @@ export class OmpAgentSession implements AgentSession {
     if (signal?.aborted || !this.activeWorkflowMode) return;
     if (this.activeWorkflowMode === "goal") {
       await this.runtimeSession.prompt("/goal drop");
+    } else {
+      await this.runtimeSession.plan!.setMode(false);
+      const pending = this.pendingPlanApproval();
+      if (pending) {
+        this.pendingExtensionUiRequests.delete(pending.id);
+        this.emitPermissionResolution(pending.id, { behavior: "deny", message: "Plan mode exited" });
+      }
     }
     if (signal?.aborted) return;
     this.setActiveWorkflowMode(null);
@@ -4348,6 +4376,11 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "desktop_plugin_prompt_request") {
       this.handleDesktopPluginPromptRequest(event.id);
+      return true;
+    }
+    if (event.type === "plan_review") {
+      if (this.activeTurnId) this.deferredPlanReview = event.review;
+      else this.emitPlanApprovalRequest(event.review, "live");
       return true;
     }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
@@ -5161,10 +5194,6 @@ export class OmpAgentSession implements AgentSession {
       // Omp-compatible runtimes may emit updates without a preceding message_start.
       this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
       const delta = event.assistantMessageEvent.delta ?? "";
-      if (this.activeWorkflowMode === "plan") {
-        this.activePlanText += delta;
-        this.activePlanMessageId ??= this.activeAssistantMessageId;
-      }
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -5173,7 +5202,6 @@ export class OmpAgentSession implements AgentSession {
           type: "assistant_message",
           text: delta,
           messageId: this.activeAssistantMessageId,
-          ...(this.activeWorkflowMode === "plan" ? { presentation: "plan" as const } : {}),
         },
       });
       return;
@@ -5196,9 +5224,6 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = event.message.responseId || null;
-      if (this.activeWorkflowMode === "plan" && event.message.responseId) {
-        this.activePlanMessageId = event.message.responseId;
-      }
     }
   }
 
@@ -5665,13 +5690,6 @@ export class OmpAgentSession implements AgentSession {
     const nativeTurnUsage = turnId
       ? this.nativeUsage.getUsage(turnId, Date.now(), false)
       : undefined;
-    const streamedPlanText = this.activePlanText.trim();
-    const streamedPlan: OmpPlanDraft | null = streamedPlanText
-      ? {
-          text: streamedPlanText,
-          ...(this.activePlanMessageId ? { messageId: this.activePlanMessageId } : {}),
-        }
-      : null;
     const latestAssistant = messages.findLast(
       (message): message is Extract<OmpAgentMessage, { role: "assistant" }> =>
         message.role === "assistant",
@@ -5682,8 +5700,8 @@ export class OmpAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
-    this.activePlanText = "";
-    this.activePlanMessageId = null;
+    const planReview = this.deferredPlanReview;
+    this.deferredPlanReview = undefined;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
@@ -5708,7 +5726,7 @@ export class OmpAgentSession implements AgentSession {
       });
       return;
     }
-    this.emitPlanApprovalRequest(turnId, messages, streamedPlan);
+    if (planReview) this.emitPlanApprovalRequest(planReview, "live", turnId);
     const finalUsage = this.usagePoller.completeTurn();
     this.emit({
       type: "turn_completed",
@@ -6463,6 +6481,7 @@ export class OmpAgentClient implements AgentClient {
           mapped.metadata.draftFeatures = createOmpDraftFeatures({
             model,
             capabilities: tierCapabilities,
+            nativePlanAvailable: !!catalogSession.plan,
           });
           return mapped;
         })
@@ -6510,7 +6529,7 @@ export class OmpAgentClient implements AgentClient {
         readOmpFastMode(state),
       ultrafastSupported: state.ultrafastSupported === true,
       nativeTier: state.fastModeTier,
-    });
+    }, undefined, this.runtime instanceof OmpSdkRuntime && !config.sandbox);
   }
 
   private async readDraftFeatureState(config: AgentSessionConfig): Promise<OmpSessionState> {

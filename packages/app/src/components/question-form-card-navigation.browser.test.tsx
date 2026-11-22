@@ -2,8 +2,14 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { commands, userEvent } from "vitest/browser";
 import { afterEach, expect, it, vi } from "vitest";
+import { useSessionStore } from "@/stores/session-store";
 import type { PendingPermission } from "@/types/shared";
 import { QuestionFormCard } from "./question-form-card";
+
+vi.mock("@/assistant-image/timeline-assets", () => ({
+  persistTimelineImageAssets: vi.fn(),
+  retainTimelineImageAssets: vi.fn(),
+}));
 
 declare module "vitest/browser" {
   interface BrowserCommands {
@@ -11,6 +17,7 @@ declare module "vitest/browser" {
   }
 }
 
+const SERVER_ID = "question-card-navigation";
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 const permission: PendingPermission = {
   key: "questions",
@@ -84,6 +91,7 @@ afterEach(async () => {
     await act(async () => item.root.unmount());
     item.container.remove();
   }
+  useSessionStore.getState().clearSession(SERVER_ID);
 });
 
 it("switches without selecting tab text and preserves the complete answer group", async () => {
@@ -92,9 +100,18 @@ it("switches without selecting tab text and preserves the complete answer group"
   document.body.appendChild(container);
   const root = createRoot(container);
   mounted.push({ root, container });
+  useSessionStore.getState().initializeSession(SERVER_ID, null);
+  useSessionStore
+    .getState()
+    .setPendingPermissions(SERVER_ID, new Map([[permission.key, permission]]));
   await act(async () => {
     root.render(
-      <QuestionFormCard permission={permission} onRespond={onRespond} isResponding={false} />,
+      <QuestionFormCard
+        serverId={SERVER_ID}
+        permission={permission}
+        onRespond={onRespond}
+        isResponding={false}
+      />,
     );
   });
 
@@ -136,26 +153,33 @@ it("switches without selecting tab text and preserves the complete answer group"
   });
 });
 
-it("keeps three RPC ask answers intact when revisiting and editing earlier questions", async () => {
+it("keeps all RPC ask answers when revisiting questions after the conversation panel remounts", async () => {
   const onRespond = vi.fn();
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   mounted.push({ root, container });
-  await act(async () => {
-    root.render(
-      <QuestionFormCard
-        permission={groupedPermission}
-        onRespond={onRespond}
-        isResponding={false}
-      />,
+  useSessionStore.getState().initializeSession(SERVER_ID, null);
+  useSessionStore
+    .getState()
+    .setPendingPermissions(SERVER_ID, new Map([[groupedPermission.key, groupedPermission]]));
+  const render = (pending: PendingPermission) =>
+    act(() =>
+      root.render(
+        <QuestionFormCard
+          serverId={SERVER_ID}
+          permission={pending}
+          onRespond={onRespond}
+          isResponding={false}
+        />,
+      ),
     );
-  });
+  await render(groupedPermission);
 
   const option = (label: string) => container.querySelector(`[aria-label="${label}"]`)!;
   const tab = (index: number) =>
     container.querySelector(`[data-testid="question-form-question-nav-${index}"]`)!;
-  const primary = container.querySelector('[data-testid="question-form-primary-action"]')!;
+  const primary = () => container.querySelector('[data-testid="question-form-primary-action"]')!;
   const custom = () =>
     container.querySelector('[data-testid="question-form-other-input"]') as HTMLInputElement;
 
@@ -164,10 +188,17 @@ it("keeps three RPC ask answers intact when revisiting and editing earlier quest
   await userEvent.click(option("Business (Recommended)"));
   await userEvent.click(option("Personal, unpaid"));
   await userEvent.fill(custom(), "Plus follow-up");
-  await userEvent.click(primary);
+  await userEvent.click(primary());
   await expect.poll(() => container.textContent).toContain("What happens to unpaid orders?");
   await userEvent.click(option("Keep pending"));
   expect(onRespond).not.toHaveBeenCalled();
+
+  // Switching workspaces or evicting an inactive conversation unmounts its view.
+  await act(async () => root.render(null));
+  const refreshed = structuredClone(groupedPermission);
+  useSessionStore.getState().setPendingPermissions(SERVER_ID, new Map([[refreshed.key, refreshed]]));
+  await render(refreshed);
+  expect(container.textContent).toContain("What happens to unpaid orders?");
 
   await userEvent.click(tab(2));
   expect(option("Business (Recommended)").getAttribute("aria-checked")).toBe("true");
@@ -180,7 +211,7 @@ it("keeps three RPC ask answers intact when revisiting and editing earlier quest
   expect(custom().value).toBe("Plus follow-up");
   await userEvent.click(tab(3));
   expect(option("Keep pending").getAttribute("aria-checked")).toBe("true");
-  await userEvent.click(primary);
+  await userEvent.click(primary());
   expect(onRespond.mock.calls).toEqual([
     [
       {
@@ -200,4 +231,13 @@ it("keeps three RPC ask answers intact when revisiting and editing earlier quest
       },
     ],
   ]);
+
+  await act(() => root.render(null));
+  useSessionStore.getState().setPendingPermissions(SERVER_ID, new Map());
+  useSessionStore.getState().setPendingPermissions(SERVER_ID, new Map([[refreshed.key, refreshed]]));
+  await render(refreshed);
+  expect(option("Reset deadline").getAttribute("aria-checked")).toBe("false");
+  await userEvent.click(tab(2));
+  expect(option("Business (Recommended)").getAttribute("aria-checked")).toBe("false");
+  expect(custom().value).toBe("");
 });
