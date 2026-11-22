@@ -26,6 +26,7 @@ import {
   createCompactMarkdownStyles,
   createDocumentMarkdownStyles,
   createMarkdownStyles,
+  createPlanMarkdownStyles,
 } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -60,7 +61,7 @@ interface MarkdownWithStableRendererProps {
 const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
 
-type MarkdownVariant = "conversation" | "compact" | "document";
+type MarkdownVariant = "conversation" | "compact" | "document" | "plan";
 
 const MARKDOWN_STYLE_MAPPINGS: Record<
   MarkdownVariant,
@@ -69,6 +70,7 @@ const MARKDOWN_STYLE_MAPPINGS: Record<
   conversation: (theme) => ({ style: createMarkdownStyles(theme) }),
   compact: (theme) => ({ style: createCompactMarkdownStyles(theme) }),
   document: (theme) => ({ style: createDocumentMarkdownStyles(theme) }),
+  plan: (theme) => ({ style: createPlanMarkdownStyles(theme) }),
 };
 
 const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true }).use(

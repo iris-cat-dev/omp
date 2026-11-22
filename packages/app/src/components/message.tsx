@@ -788,6 +788,7 @@ interface AssistantMessageProps {
   serverId?: string;
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
+  markdownVariant?: "conversation" | "plan";
   phase: MarkdownPhase;
 }
 
@@ -1472,6 +1473,7 @@ interface MemoizedMarkdownBlockProps {
   text: string;
   rules: RenderRules;
   parser: MarkdownIt;
+  variant: NonNullable<AssistantMessageProps["markdownVariant"]>;
   onLinkPress: (url: string) => boolean;
 }
 
@@ -1479,11 +1481,13 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
   rules,
   parser,
+  variant,
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
     <MarkdownRenderer
       text={text}
+      variant={variant}
       enableHtmlish={false}
       rules={rules}
       markdownit={parser}
@@ -1580,6 +1584,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   serverId,
   client,
   spacing = "default",
+  markdownVariant = "conversation",
   phase,
 }: AssistantMessageProps) {
   const markdownParser = useMemo(() => createAssistantMarkdownParser(typographer), [typographer]);
@@ -2081,6 +2086,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             text={block}
             rules={markdownRules}
             parser={markdownParser}
+            variant={markdownVariant}
             onLinkPress={handleMarkdownLinkPress}
           />
         </AssistantMessageBlockContainer>

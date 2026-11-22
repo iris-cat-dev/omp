@@ -75,6 +75,8 @@ Standard and Enhanced use OMP's native retry policy for temporary model-request 
 
 Both modes still continue responses that hit the model's output-length limit so the model can finish the existing answer.
 
+Plan cards use accent colors for section headings and numbered steps. Inline code, such as file paths and identifiers, uses a tinted monospace style. Fenced blocks use the configured syntax theme when their language is supported.
+
 ### Approval changes during a session
 
 Desktop offers **Always ask** and **Auto approval**. New conversations default to Auto approval (`yolo` in the SDK); an explicitly selected or saved Always ask preference is retained. The former Full access selection keeps its `full` ID and now displays as Auto approval. Retired Write approval preferences and stored conversations migrate to Always ask, without granting execution permission; imported native `write` settings also select Always ask.

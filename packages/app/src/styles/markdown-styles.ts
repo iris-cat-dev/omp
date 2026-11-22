@@ -362,6 +362,28 @@ export function createMarkdownStyles(theme: Theme) {
   };
 }
 
+export function createPlanMarkdownStyles(theme: Theme) {
+  const base = createMarkdownStyles(theme);
+  const sectionColor = base.link.color;
+
+  return {
+    ...base,
+    heading2: { ...base.heading2, color: sectionColor },
+    ordered_list_icon: {
+      ...base.ordered_list_icon,
+      color: sectionColor,
+      fontWeight: theme.fontWeight.semibold,
+    },
+    code_inline: {
+      ...base.code_inline,
+      backgroundColor: theme.colors.surface2,
+      color: theme.colors.palette.blue[theme.colorScheme === "dark" ? 300 : 800],
+      ...base.text,
+    },
+    blockquote: { ...base.blockquote, borderLeftColor: sectionColor },
+  };
+}
+
 /**
  * Creates a smaller variant of markdown styles for compact UI elements
  * like thought bubbles, tooltips, or side panels.

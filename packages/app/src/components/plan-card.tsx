@@ -4,7 +4,10 @@ import Markdown, { type ASTNode } from "react-native-markdown-display";
 import { ListTodo } from "lucide-react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
+import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { getMarkdownFenceLanguage } from "@/components/markdown/fence/language";
+import { MarkdownTextSpan } from "@/components/markdown-text";
+import { createPlanMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 
@@ -13,14 +16,20 @@ type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]
 function MarkdownInlineText({
   inheritedStyle,
   ruleStyle,
+  monoSurface,
   children,
 }: {
   inheritedStyle: StyleProp<TextStyle>;
   ruleStyle: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }) {
   const style = useMemo(() => [inheritedStyle, ruleStyle], [inheritedStyle, ruleStyle]);
-  return <Text style={style}>{children}</Text>;
+  return (
+    <MarkdownTextSpan style={style} monoSurface={monoSurface}>
+      {children}
+    </MarkdownTextSpan>
+  );
 }
 
 function MarkdownListItemContent({
@@ -85,13 +94,13 @@ function createPlanMarkdownRules() {
       styles: MarkdownRuleStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <MarkdownInlineText
+      <HighlightedCodeBlock
         key={node.key}
-        inheritedStyle={inheritedStyles}
-        ruleStyle={styles.code_block}
-      >
-        {node.content}
-      </MarkdownInlineText>
+        code={node.content}
+        language={null}
+        inheritedStyles={inheritedStyles}
+        textStyle={styles.code_block}
+      />
     ),
     fence: (
       node: ASTNode,
@@ -100,9 +109,13 @@ function createPlanMarkdownRules() {
       styles: MarkdownRuleStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <MarkdownInlineText key={node.key} inheritedStyle={inheritedStyles} ruleStyle={styles.fence}>
-        {node.content}
-      </MarkdownInlineText>
+      <HighlightedCodeBlock
+        key={node.key}
+        code={node.content}
+        language={getMarkdownFenceLanguage(node.sourceInfo)}
+        inheritedStyles={inheritedStyles}
+        textStyle={styles.fence}
+      />
     ),
     code_inline: (
       node: ASTNode,
@@ -115,6 +128,7 @@ function createPlanMarkdownRules() {
         key={node.key}
         inheritedStyle={inheritedStyles}
         ruleStyle={styles.code_inline}
+        monoSurface
       >
         {node.content}
       </MarkdownInlineText>
@@ -200,7 +214,7 @@ export function PlanCard({
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const markdownStyles = createMarkdownStyles(theme);
+  const markdownStyles = createPlanMarkdownStyles(theme);
   const markdownRules = createPlanMarkdownRules();
   const resolvedTitle = title ?? t("agentStream.permission.plan");
 

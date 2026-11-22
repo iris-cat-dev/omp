@@ -905,6 +905,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             serverId={resolvedServerId}
             client={client}
             spacing={isPlan ? "compactBoth" : layoutItem.assistantSpacing}
+            markdownVariant={isPlan ? "plan" : "conversation"}
             phase={layoutItem.phase}
           />
         );
