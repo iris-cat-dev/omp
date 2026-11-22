@@ -10,6 +10,7 @@ import { useToast } from "@/contexts/toast-context";
 import { VisualFeedbackEditor } from "./editor";
 import { captureScreenshot } from "./capture";
 import { useManualVisualFeedbackStore } from "./manual-store";
+import { VisualFeedbackSubmitError } from "./submit-diagnostics";
 
 type UpdateRequests = (serverId: string, requests: VisualFeedbackRequest[]) => void;
 
@@ -70,7 +71,13 @@ function RemoteEditor({
     [client, remove, request.id, serverId],
   );
   const submit = useCallback(
-    (submission: VisualFeedbackSubmission) => respond({ status: "submitted", submission }),
+    async (submission: VisualFeedbackSubmission) => {
+      try {
+        await respond({ status: "submitted", submission });
+      } catch (error) {
+        throw new VisualFeedbackSubmitError("reply-to-host", error);
+      }
+    },
     [respond],
   );
   const showError = toast.error;

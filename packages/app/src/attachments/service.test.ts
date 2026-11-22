@@ -136,7 +136,7 @@ describe("attachment service", () => {
         image: { data: "AAEC", mimeType: "image/png", width: 400, height: 300 },
         preview: { data: "AwQF", mimeType: "image/png", width: 400, height: 300 },
       }),
-    ).rejects.toBe(failure);
+    ).rejects.toMatchObject({ stage: "save-preview" });
     expect(deleted).toEqual([original.id]);
     expect(collectRetainedAttachmentIds()).not.toContain(original.id);
   });

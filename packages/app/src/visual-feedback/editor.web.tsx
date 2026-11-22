@@ -46,6 +46,7 @@ import {
   type Point,
 } from "./model";
 import { exportPreview, imageDataUrl, importImage, loadImage } from "./image.web";
+import { logVisualFeedbackSubmitFailure, VisualFeedbackSubmitError } from "./submit-diagnostics";
 import type { VisualFeedbackEditorProps } from "./types";
 export type { VisualFeedbackEditorProps } from "./types";
 
@@ -303,8 +304,11 @@ function EditorSession({
     setPending(true);
     setError(null);
     let submitted = false;
+    let stage: "export-preview" | "validate-submission" | "submit" = "export-preview";
+    let preview: VisualFeedbackImage | undefined;
     try {
-      const preview = image ? await exportPreview(image, annotations) : undefined;
+      preview = image ? await exportPreview(image, annotations) : undefined;
+      stage = "validate-submission";
       const submission = VisualFeedbackSubmissionSchema.parse({
         text,
         feedback,
@@ -312,14 +316,23 @@ function EditorSession({
         ...(image ? { image, preview } : {}),
       });
       if (!mounted.current) return;
+      stage = "submit";
       await onSubmit(submission);
       submitted = true;
     } catch (cause) {
+      logVisualFeedbackSubmitFailure({
+        stage,
+        cause,
+        annotationCount: annotations.length,
+        image,
+        preview,
+      });
+      const submitCause = cause instanceof VisualFeedbackSubmitError ? cause.cause : cause;
       if (mounted.current)
         setError(
-          cause instanceof Error &&
-            ["previewError", "imageLoadError", "invalidImage"].includes(cause.message)
-            ? cause.message
+          submitCause instanceof Error &&
+            ["previewError", "imageLoadError", "invalidImage"].includes(submitCause.message)
+            ? submitCause.message
             : "submitError",
         );
     } finally {
