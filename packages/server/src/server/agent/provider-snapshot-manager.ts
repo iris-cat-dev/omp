@@ -26,9 +26,11 @@ import {
 import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
-import type {
-  AgentProviderRuntimeSettingsMap,
-  ProviderOverride,
+import {
+  mergeRuntimeSettings,
+  toRuntimeSettings,
+  type AgentProviderRuntimeSettingsMap,
+  type ProviderOverride,
 } from "./provider-launch-config.js";
 import {
   buildProviderRegistry,
@@ -294,6 +296,10 @@ export class ProviderSnapshotManager {
 
   getProviderLabel(provider: AgentProvider): string {
     return this.providerRegistry[provider]?.label ?? provider;
+  }
+
+  getOmpRuntimeSettings() {
+    return mergeRuntimeSettings(this.runtimeSettings?.omp, toRuntimeSettings(this.providerOverrides?.omp));
   }
 
   getAgentManagerProviderState(): AgentManagerProviderState {

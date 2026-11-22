@@ -11,6 +11,11 @@ import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@omp-desktop/protocol/client-capabilities";
 import {
+  GeneratedImageSchema,
+  IMAGE_GENERATION_CAPABILITY,
+  IMAGE_GENERATION_TIMEOUT_MS,
+} from "@omp-desktop/protocol/image-generation";
+import {
   serializeAgentStreamEvent,
   ListCommandsResponseSchema,
   type AgentSnapshotPayload,
@@ -46,6 +51,10 @@ import {
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import { readPersistedAgentHistory } from "./agent/persisted-agent-history.js";
+import {
+  generateWorkflowImage,
+  WorkflowImageError,
+} from "./agent/providers/omp/generate-workflow-image.js";
 import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -712,6 +721,7 @@ export class Session {
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
   private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
+  private readonly imageRequests = new Map<string, { source?: object; controller: AbortController }>();
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
@@ -1170,6 +1180,11 @@ export class Session {
   }
 
   clearAgentTimelineSubscription(source: object): void {
+    for (const [requestId, request] of this.imageRequests) {
+      if (request.source !== source) continue;
+      this.imageRequests.delete(requestId);
+      request.controller.abort();
+    }
     this.localModelSession.disconnect(source);
     this.workspaceFilesSession.clearDirectorySubscriptions(source);
     this.clientCapabilitiesBySource.delete(source);
@@ -1986,7 +2001,9 @@ export class Session {
       this.sessionLogger.trace(
         {
           messageType: msg.type,
-          payloadBytes: JSON.stringify(msg).length,
+          ...(msg.type === "images.generate.request"
+            ? {}
+            : { payloadBytes: JSON.stringify(msg).length }),
         },
         "agent.session.inbound",
       );
@@ -2073,12 +2090,88 @@ export class Session {
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchProviderMessage(msg, source) ??
+      this.dispatchImageMessage(msg, source) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchImageMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    if (msg.type === "images.generate.request") return this.handleImageGeneration(msg, source);
+    if (msg.type === "images.generate.cancel") {
+      const request = this.imageRequests.get(msg.requestId);
+      if (request && request.source === source) request.controller.abort();
+      return Promise.resolve();
+    }
+    return undefined;
+  }
+
+  private async handleImageGeneration(
+    { requestId, input }: Extract<SessionInboundMessage, { type: "images.generate.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const responseType = "images.generate.response";
+    const reply = (payload: Extract<SessionOutboundMessage, { type: typeof responseType }>["payload"]) =>
+      this.emitForSource({ type: responseType, payload }, source);
+    if (this.isCleanedUp || this.imageRequests.has(requestId)) return;
+    if (this.serviceOrigin) {
+      try {
+        if (!this.servicePluginId || !this.authorizeServiceCapability) {
+          throw new Error("Image generation requires host-bound capability authorization");
+        }
+        this.authorizeServiceCapability(IMAGE_GENERATION_CAPABILITY);
+      } catch {
+        reply({ requestId, ok: false, error: `Plugin capability is not granted: ${IMAGE_GENERATION_CAPABILITY}` });
+        return;
+      }
+    }
+
+    const controller = new AbortController();
+    const request = { source, controller };
+    this.imageRequests.set(requestId, request);
+    const timeout = setTimeout(
+      () => controller.abort(new DOMException("Image generation timed out", "TimeoutError")),
+      IMAGE_GENERATION_TIMEOUT_MS,
+    );
+    let payload: Extract<SessionOutboundMessage, { type: typeof responseType }>["payload"];
+    try {
+      const config = this.daemonConfigStore.getImageGenerationRuntimeConfig();
+      if (!config?.enabled || !config.model.trim()) {
+        payload = {
+          requestId,
+          ok: false,
+          error: "Enable and configure image generation on this host first",
+        };
+      } else {
+        const output = await generateWorkflowImage(input, config, controller.signal, {
+          runtimeSettings: this.providerSnapshotManager.getOmpRuntimeSettings(),
+        });
+        controller.signal.throwIfAborted();
+        payload = { requestId, ok: true, image: GeneratedImageSchema.parse(output) };
+      }
+    } catch (error) {
+      const message = controller.signal.aborted
+        ? controller.signal.reason?.name === "TimeoutError"
+          ? "Image generation timed out"
+          : "Image generation was canceled"
+        : error instanceof WorkflowImageError
+          ? error.message
+          : "Image generation failed on this host";
+      payload = { requestId, ok: false, error: message };
+    } finally {
+      clearTimeout(timeout);
+    }
+    // A disconnected source's request must never be forwarded to a new socket.
+    if (this.imageRequests.get(requestId) === request) {
+      this.imageRequests.delete(requestId);
+      reply(payload);
+    }
   }
 
   private dispatchOrchestrationSkillsMessage(
@@ -3922,9 +4015,19 @@ export class Session {
     workspacePromptTitle: string | null;
   }): Promise<ResolvedSessionCreateAgentIntent> {
     const { request, createdWorktree } = input;
-    const callerAgent = request.callerAgentId
+    let callerAgent = request.callerAgentId
       ? this.agentManager.getAgent(request.callerAgentId)
       : null;
+    if (!callerAgent && request.callerAgentId && request.workspaceId) {
+      const stored = await this.agentStorage.get(request.callerAgentId);
+      if (stored && stored.workspaceId === request.workspaceId && !stored.archivedAt && !stored.internal) {
+        callerAgent = await ensureUnarchivedAgentLoaded(stored.id, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
+    }
     if (request.callerAgentId && !callerAgent) {
       throw new Error(`Caller agent ${request.callerAgentId} not found`);
     }
@@ -8917,6 +9020,8 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    for (const request of this.imageRequests.values()) request.controller.abort();
+    this.imageRequests.clear();
     this.providerSubagentSubscriptionsBySource.clear();
     await this.localModelSession.dispose();
     this.visualFeedbackSession.dispose();

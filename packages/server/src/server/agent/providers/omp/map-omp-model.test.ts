@@ -12,6 +12,12 @@ function baseModel(overrides: Partial<OmpModel> = {}): OmpModel {
   };
 }
 
+test("reports whether OMP will forward images to this model", () => {
+  expect(mapOmpModel(baseModel({ input: ["text", "image"] }), "omp").metadata?.supportsImages).toBe(true);
+  expect(mapOmpModel(baseModel({ input: ["text"] }), "omp").metadata?.supportsImages).toBe(false);
+  expect(mapOmpModel(baseModel(), "omp").metadata?.supportsImages).toBe(false);
+});
+
 describe("mapOmpModel thinking options", () => {
   test("limits thinking options to the model's reported efforts", () => {
     const model = baseModel({
@@ -140,7 +146,7 @@ describe("mapOmpModel thinking options", () => {
 
     expect(result.provider).toBe("omp");
     expect(result.id).toBe("pioneer/canada-quant/glm-5.2");
-    expect(result.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
+    expect(result.metadata).toMatchObject({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
   });
 
   test("uses a Unicode provider name only for display", () => {
@@ -157,7 +163,7 @@ describe("mapOmpModel thinking options", () => {
 
   test.each([undefined, "", "  "])("omits blank provider names from metadata for %s", (name) => {
     const model = mapOmpModel(baseModel(), "omp", name);
-    expect(model.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
+    expect(model.metadata).not.toHaveProperty("providerName");
   });
 
   test("maps a valid context window into the agent model definition", () => {

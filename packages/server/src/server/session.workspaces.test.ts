@@ -1211,7 +1211,7 @@ test.each([
   { title: null, expectedTitle: "Fix login bug" },
   { title: "Pinned conversation", expectedTitle: "Pinned conversation" },
 ])(
-  "create_agent_request seeds a provisional title without a model call and rejects a second root ($title)",
+  "create_agent_request rejects a second root and accepts a stored same-workspace caller ($title)",
   async ({ title, expectedTitle }) => {
     vi.useFakeTimers();
     const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
@@ -1375,6 +1375,45 @@ test.each([
       ).toMatchObject({
         status: "agent_create_failed",
         error: expect.stringContaining("create_workspace"),
+      });
+
+      const root = createdAgent!;
+      await agentManager.closeAgent(root.id);
+      await agentManager.flush();
+      expect(agentManager.getAgent(root.id)).toBeNull();
+      const request = {
+        type: "create_agent_request" as const,
+        callerAgentId: root.id,
+        config: { provider: "codex", cwd },
+        attachments: [],
+      };
+      await session.handleMessage({
+        ...request,
+        requestId: "req-cross-workspace-cold-child",
+        workspaceId: "ws-other",
+      });
+      await agentStorage.updateRecord(root.id, (record) => ({ ...record, archivedAt: new Date().toISOString() }));
+      await session.handleMessage({
+        ...request,
+        requestId: "req-archived-cold-child",
+        workspaceId: "ws-existing",
+      });
+      for (const requestId of ["req-cross-workspace-cold-child", "req-archived-cold-child"]) {
+        expect(filterByType(emitted, "status").find(({ payload }) => payload.requestId === requestId)?.payload)
+          .toMatchObject({ status: "agent_create_failed", error: `Caller agent ${root.id} not found` });
+      }
+      expect(agentManager.getAgent(root.id)).toBeNull();
+      await agentStorage.updateRecord(root.id, (record) => ({ ...record, archivedAt: null }));
+      await session.handleMessage({
+        ...request,
+        requestId: "req-create-cold-child",
+        workspaceId: "ws-existing",
+      });
+      expect(filterByType(emitted, "status").find(
+        ({ payload }) => payload.requestId === "req-create-cold-child",
+      )?.payload).toMatchObject({
+        status: "agent_created",
+        agent: { workspaceId: "ws-existing", labels: { "paseo.parent-agent-id": root.id } },
       });
     } finally {
       vi.useRealTimers();

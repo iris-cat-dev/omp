@@ -1,4 +1,9 @@
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
+import {
+  IMAGE_GENERATION_TIMEOUT_MS,
+  type GeneratedImage,
+  type ImageGenerationInput,
+} from "@omp-desktop/protocol/image-generation";
 import type {
   VisualFeedbackRequest,
   VisualFeedbackResponse,
@@ -3737,6 +3742,47 @@ export class DaemonClient {
       responseType: "provider.resolve_create_config.response",
     });
     return payload.config;
+  }
+
+  async generateImage(
+    input: ImageGenerationInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<GeneratedImage> {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    const transport = this.transport;
+    // A paid operation must not queue for a later connection.
+    if (!transport || this.connectionState.status !== "connected") {
+      throw new Error("Image generation requires a connected host");
+    }
+
+    const requestId = this.createRequestId();
+    const message = { type: "images.generate.request", requestId, input } as const;
+    let payload: CorrelatedResponsePayload<"images.generate.response">;
+    try {
+      payload = await this.sendCorrelatedRequest({
+        requestId,
+        message,
+        responseType: "images.generate.response",
+        timeout: IMAGE_GENERATION_TIMEOUT_MS + 5_000,
+        signal,
+        options: { skipQueue: true },
+      });
+    } catch (error) {
+      if (signal?.aborted && this.transport === transport && this.connectionState.status === "connected") {
+        try {
+          this.sendSessionMessage({ type: "images.generate.cancel", requestId });
+        } catch {
+          // A disconnected socket also cancels its host requests.
+        }
+      }
+      throw error;
+    }
+    signal?.throwIfAborted();
+    if (!payload.ok) {
+      throw new DaemonRpcError({ requestId, requestType: message.type, error: payload.error });
+    }
+    return payload.image;
   }
 
   async runAgent(

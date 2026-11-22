@@ -1,10 +1,12 @@
 import type { OmpApi } from "@omp-desktop/client";
+import { IMAGE_GENERATION_CAPABILITY } from "@omp-desktop/protocol/image-generation";
 import type { PluginInstallation } from "./runtime-contracts.js";
 import type { PluginActivationScope } from "./activation.js";
 export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,scope:PluginActivationScope,options:{mode:"manage"|"active";legacy?:boolean}):OmpApi {
  const proxies=new WeakMap<object,object>();
  const subscriptions=new WeakMap<object,()=>void|Promise<void>>();
  const capability=(path:readonly string[])=>{
+  if(path[0]==="images")return IMAGE_GENERATION_CAPABILITY;
   const method=path.at(-1);
   if(method==="configuration")return "agents.configuration";
   if(method==="respondToPermission")return "agents.permissions";
@@ -31,8 +33,13 @@ export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,sc
      const managementAuthoring=installation.owner==="desktop" && (next[0]==="providers" || (next.length===2 && next[0]==="host" && key==="info") || (next[0]==="workspaces" && next[1]==="create" && (next.length===2 || (next.length===4 && next[2]==="agents" && key==="create"))));
      if(options.mode!=="active" && !managementAuthoring)throw new Error("Agent operations are unavailable in management mode");
      const required=capability(next);
-     if(!options.legacy && (!installation.declaredCapabilities.includes(required)||!installation.grantedCapabilities.includes(required)))throw new Error(`Plugin capability is not granted: ${required}`);
+     if((!options.legacy || required===IMAGE_GENERATION_CAPABILITY) && (!installation.declaredCapabilities.includes(required)||!installation.grantedCapabilities.includes(required)))throw new Error(`Plugin capability is not granted: ${required}`);
      const guarded=args.map(argument=>typeof argument==="function"?(...values:unknown[])=>{if(scope.signal.aborted)return;scope.assertCurrent(installation.generation);return argument(...values);}:argument);
+     if(next[0]==="images" && key==="generate"){
+      const inputOptions=guarded[1] as {signal?:AbortSignal}|undefined;
+      const signal=inputOptions?.signal ? AbortSignal.any([scope.signal,inputOptions.signal]) : scope.signal;
+      guarded[1]={signal};
+     }
      const result=Reflect.apply(member,target,guarded);
      if(typeof result==="function")return scope.own(()=>result());
      if(result instanceof Promise)return result.then(async resolved=>{

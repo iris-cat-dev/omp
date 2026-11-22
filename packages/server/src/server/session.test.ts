@@ -25,6 +25,7 @@ import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { AgentManager, type AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { OmpAgentClient } from "./agent/providers/omp/agent.js";
+import * as workflowImages from "./agent/providers/omp/generate-workflow-image.js";
 import { ompHistoryRuntimeSettings } from "./agent/providers/omp/test-utils/history-sdk.js";
 import { FakeRewindSession } from "./agent/rewind/test-rewind-session.js";
 import type { AgentPersistenceHandle } from "./agent/agent-sdk-types.js";
@@ -418,6 +419,11 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./agent/providers/omp/generate-workflow-image.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof workflowImages>()),
+  generateWorkflowImage: vi.fn(),
+}));
+
 interface SessionForTestOptions {
   scopes?: readonly string[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
@@ -574,6 +580,92 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+describe("direct image generation", () => {
+  const request: Extract<SessionInboundMessage, { type: "images.generate.request" }> = {
+    type: "images.generate.request",
+    requestId: "00000000-0000-4000-8000-000000000001",
+    input: { prompt: "Draw an island", images: [] },
+  };
+  const config = {
+    enabled: true, provider: "openai", backend: "openai-api", model: "gpt-image-2",
+    apiKeyConfigured: true, apiKeySource: "config", apiKey: "private-test-key",
+  } as const;
+
+  test.each(["cancel", "disconnect"])("aborts only the originating socket's image request on %s", async (ending) => {
+    const image = { data: "aGVsbG8=", mimeType: "image/png" } as const;
+    const output = Promise.withResolvers<typeof image>();
+    const adapter = vi.mocked(workflowImages.generateWorkflowImage);
+    adapter.mockReturnValueOnce(output.promise);
+    const source = {};
+    const otherSocket = {};
+    const messages: SessionOutboundMessage[] = [];
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const session = createSessionForTest({
+      messages,
+      targetedMessages,
+      daemonConfigStore: asDaemonConfigStore({ getImageGenerationRuntimeConfig: () => config }),
+    });
+    try {
+      const run = session.handleMessage(request, source);
+      expect(adapter).toHaveBeenLastCalledWith(request.input, config, expect.any(AbortSignal), {
+        runtimeSettings: undefined,
+      });
+      const signal = adapter.mock.calls.at(-1)![2];
+      const cancel = { type: "images.generate.cancel", requestId: request.requestId } as const;
+      await session.handleMessage(cancel, otherSocket);
+      expect(signal.aborted).toBe(false);
+      if (ending === "cancel") {
+        await session.handleMessage(cancel, source);
+      } else {
+        session.clearAgentTimelineSubscription(source);
+      }
+      expect(signal.aborted).toBe(true);
+      output.resolve(image);
+      await run;
+      expect(targetedMessages).toEqual(ending === "cancel" ? [{
+        source,
+        message: {
+          type: "images.generate.response",
+          payload: { requestId: request.requestId, ok: false, error: "Image generation was canceled" },
+        },
+      }] : []);
+      expect(messages).toEqual([]);
+    } finally {
+      output.resolve(image);
+      await session.cleanup();
+    }
+  });
+
+  test("requires enabled host settings and redacts unexpected upstream failures", async () => {
+    let enabled = false;
+    const messages: SessionOutboundMessage[] = [];
+    const adapter = vi.mocked(workflowImages.generateWorkflowImage);
+    const session = createSessionForTest({
+      messages,
+      daemonConfigStore: asDaemonConfigStore({
+        getImageGenerationRuntimeConfig: () => ({ ...config, enabled }),
+      }),
+    });
+    try {
+      const initialCalls = adapter.mock.calls.length;
+      await session.handleMessage(request);
+      expect(adapter).toHaveBeenCalledTimes(initialCalls);
+      expect(messages.at(-1)).toMatchObject({ payload: {
+        ok: false, error: "Enable and configure image generation on this host first",
+      } });
+      enabled = true;
+      adapter.mockRejectedValueOnce(new Error(`Upstream included ${config.apiKey}`));
+      await session.handleMessage(request);
+      expect(messages.at(-1)).toMatchObject({ payload: {
+        ok: false, error: "Image generation failed on this host",
+      } });
+      expect(JSON.stringify(messages)).not.toContain(config.apiKey);
+    } finally {
+      await session.cleanup();
+    }
+  });
+});
 
 test("focus-entry attention and command reads keep fifteen persisted sessions unloaded", async () => {
   const root = mkdtempSync(join(tmpdir(), "session-passive-ui-"));

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { resolveOmpCodexCatalogPreloadPath } from "./cli-runtime.js";
 import { createCodexCatalogFetch } from "./codex-catalog-policy.js";
+import { runOmpWorkflowImageHost } from "./generate-workflow-image.js";
 import { resolveOmpSdkInstallation } from "./sdk-installation.js";
 import {
   OMP_SDK_LAUNCH_ENV,
@@ -35,6 +36,10 @@ const pluginHostModule = z.object({
 
 /** One child owns either an SDK agent session or a one-shot native management command. */
 export async function runOmpSdkHost(): Promise<void> {
+  if (process.argv[2] === "--workflow-image" && process.argv.length === 3) {
+    await runOmpWorkflowImageHost();
+    return;
+  }
   const installation = await resolveOmpSdkInstallation();
   if (process.argv[2] === "--version" && process.argv.length === 3) {
     process.stdout.write(`omp/${installation.version}\n`);

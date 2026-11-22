@@ -50,6 +50,8 @@ import type {
 import { DaemonClient } from "./daemon-client.js";
 import { createDesktopPluginActions, type DesktopPluginActions } from "./desktop-plugins.js";
 import type { AgentPermissionResponse } from "@omp-desktop/protocol/agent-types";
+import type { GeneratedImage, ImageGenerationInput } from "@omp-desktop/protocol/image-generation";
+export type { GeneratedImage, ImageGenerationInput } from "@omp-desktop/protocol/image-generation";
 export type { DesktopPluginActions, PluginCatalogSnapshot, PluginConfigurationSnapshot, PluginApproval, PluginExpectedInstallation } from "./desktop-plugins.js";
 import type {
   FetchAgentsEntry,
@@ -551,12 +553,18 @@ export interface OmpForgeAuthActions {
   ): Promise<ForgeAuthLogoutResponse["payload"]>;
 }
 
+export interface OmpImageActions {
+  /** Generates an image on this host. Aborting also cancels the host request. */
+  generate(input: ImageGenerationInput, options?: { signal?: AbortSignal }): Promise<GeneratedImage>;
+}
+
 export interface OmpApi {
   readonly hostId:string;
   readonly host: { info(): Promise<ServerInfoStatusPayload> };
   readonly plugins:DesktopPluginActions;
   readonly workspaces: OmpWorkspaceActions;
   readonly agents: OmpAgentActions;
+  readonly images: OmpImageActions;
   readonly providers: OmpProviderActions;
   readonly config: OmpConfigActions;
   readonly omp: OmpProviderManagementActions;
@@ -650,6 +658,9 @@ export function createOmpApi(daemonClient: DaemonClient): OmpApi {
         daemonClient.on("agent_update", (message) => {
           handler(message.payload);
         }),
+    },
+    images: {
+      generate: (input, options) => daemonClient.generateImage(input, options),
     },
     providers: {
       resolveCreateConfig: ({ provider: providerModel, model: requestedModel, ...config }) => {

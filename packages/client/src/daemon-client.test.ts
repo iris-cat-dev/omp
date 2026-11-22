@@ -6,6 +6,7 @@ import {
   type DaemonTransport,
   type Logger,
 } from "./daemon-client";
+import { createOmpApi } from "./index.js";
 import { CLIENT_CAPS } from "@omp-desktop/protocol/client-capabilities";
 import { compressJsonFrame } from "@omp-desktop/protocol/json-compression";
 import {
@@ -694,6 +695,52 @@ test("aborts unacknowledged provider leases immediately while disconnected", asy
         frame.includes("agent.provider_subagents.set_subscription.request"),
     ),
   ).toHaveLength(1);
+});
+
+test("cancels an image request on the host using its original request ID", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "images",
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connect = client.connect();
+  const images = createOmpApi(client).images;
+  const input = { prompt: "Draw an island", images: [] };
+  await expect(images.generate(input)).rejects.toThrow("requires a connected host");
+  mock.triggerOpen();
+  await connect;
+  expect(mock.sent).toEqual([]);
+
+  const controller = new AbortController();
+  const generation = images.generate(input, { signal: controller.signal });
+  const rejected = expect(generation).rejects.toMatchObject({ name: "AbortError" });
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({ type: "images.generate.request", requestId: expect.any(String), input });
+  controller.abort();
+  await rejected;
+  expect(parseSentFrame(mock.sent[1])).toEqual({
+    type: "images.generate.cancel",
+    requestId: request.requestId,
+  });
+  await expect(images.generate(input, { signal: controller.signal })).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  expect(mock.sent).toHaveLength(2);
+
+  const result = images.generate(input);
+  const next = parseSentFrame(mock.sent[2]);
+  const image = { data: "aGVsbG8=", mimeType: "image/png" };
+  mock.triggerMessage(wrapSessionMessage({
+    type: "images.generate.response",
+    payload: { requestId: request.requestId, ok: true, image: { ...image, data: "QQ==" } },
+  }));
+  mock.triggerMessage(wrapSessionMessage({
+    type: "images.generate.response",
+    payload: { requestId: next.requestId, ok: true, image },
+  }));
+  await expect(result).resolves.toEqual(image);
 });
 
 test("finishes provider subscription waits on dispose or disabled reconnect", async () => {

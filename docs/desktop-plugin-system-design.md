@@ -234,6 +234,7 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 - `agents.configuration` 独立授权 `agent.configuration()` 的完整 agent-owned 创建配置；冷读不恢复运行时，不返回 launch env 或全局模型凭据。只有 `agents.events` 的插件不能读取该配置。
 - `agents.events` 下的 `agents.watch()` 持有独立生命周期订阅及释放句柄，不替换普通 directory 订阅。仍存在但没有 project 的 Agent 发 `upsert`、`project:null`；实际删除才发 `remove`，归档保留 Agent 快照。
 - `agents.prompt` 下的 `agent.run()` 提交真实 provider turn 并观察完成／失败；`send()` 保留宿主 out-of-band 命令语义。foreground 创建带 prompt 时等待真实回合，取消调用方等待不取消底层 Agent。
+- `images.generate` 必须显式声明并批准，且只允许在 active 模式调用。`omp.images.generate({ prompt, images }, { signal })` 在所选主机启用并配置生图后直接生成或编辑图片，不创建 Agent。参考图合计最多 8 MiB，单图及结果最多 4 MiB，仅接受 PNG、JPEG、WebP。主机保管供应商凭据；中止调用、停用插件或断开连接均取消主机请求。
 - `agents.tools` 授权安装实例绑定的 Agent 工具注册；`files.scoped` 授权 `files.data-directory` 与 `files.resolve-path` 原生操作，返回所属安装目录及主机解析后的路径。
 - `events.changed` 必须显式声明并批准；插件完成持久化后调用该原生操作，发布现有插件变更通知，客户端订阅刷新业务状态，不引入轮询。
 

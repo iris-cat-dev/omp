@@ -54,6 +54,11 @@ import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import { OmpStatsGetRequestMessageSchema, OmpStatsGetResponseMessageSchema } from "./omp-stats.js";
 import {
+  ImageGenerateCancelSchema,
+  ImageGenerateRequestSchema,
+  ImageGenerateResponseSchema,
+} from "./image-generation.js";
+import {
   LocalModelCatalogSchema,
   LocalModelInferenceRequestSchema,
   LocalModelStreamFrameSchema,
@@ -3865,6 +3870,8 @@ export const VisualFeedbackRespondRequestSchema = z.object({
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   VisualFeedbackListRequestSchema,
+  ImageGenerateRequestSchema,
+  ImageGenerateCancelSchema,
   VisualFeedbackRespondRequestSchema,
   LocalModelSourceOpenSchema,
   LocalModelSourceCloseSchema,
@@ -7933,6 +7940,7 @@ export const VisualFeedbackRequestsSchema = z.object({
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   VisualFeedbackListResponseSchema,
+  ImageGenerateResponseSchema,
   VisualFeedbackRespondResponseSchema,
   VisualFeedbackRequestsSchema,
   LocalModelSourceOpenResponseSchema,

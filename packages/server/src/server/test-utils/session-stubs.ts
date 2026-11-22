@@ -223,6 +223,7 @@ export function createProviderSnapshotManagerStub(): {
     listRegisteredProviderIds,
     hasProvider,
     getProviderLabel,
+    getOmpRuntimeSettings: () => undefined,
     getAgentManagerProviderState,
     listProviders,
     getProvider,

@@ -152,6 +152,39 @@ it("does not expose agent configuration to an event-only plugin", () => {
   expect(() => controlled.agents.ref({} as OmpAgent).configuration()).toThrow("Plugin capability is not granted: agents.configuration");
 });
 
+it("requires declared and granted image generation access, including for legacy plugins", async () => {
+  const scope = createActivationScope(1);
+  const installation: PluginInstallation = {
+    id: "canvas", packageId: "canvas", owner: "desktop", version: "1.0.0", generation: 1,
+    enabled: true, declaredCapabilities: ["agents.events"], grantedCapabilities: ["agents.events"],
+  };
+  const generate = vi.fn<OmpApi["images"]["generate"]>().mockResolvedValue({
+    data: "aGVsbG8=", mimeType: "image/webp",
+  });
+  const api = { images: { generate } } as unknown as OmpApi;
+  const input = { prompt: "Draw an island", images: [] };
+  const eventOnly = createPluginOmpApi(api, installation, scope, { mode: "active", legacy: true });
+  expect(() => eventOnly.images.generate(input)).toThrow("Plugin capability is not granted: images.generate");
+  const declared = { ...installation, declaredCapabilities: ["agents.events", "images.generate"] };
+  const notGranted = createPluginOmpApi(api, declared, scope, { mode: "active" });
+  expect(() => notGranted.images.generate(input)).toThrow("Plugin capability is not granted: images.generate");
+  const approved = { ...declared, grantedCapabilities: declared.declaredCapabilities };
+  const manage = createPluginOmpApi(api, approved, scope, { mode: "manage" });
+  expect(() => manage.images.generate(input)).toThrow("unavailable in management mode");
+  expect(generate).not.toHaveBeenCalled();
+
+  const active = createPluginOmpApi(api, approved, scope, { mode: "active" });
+  const caller = new AbortController();
+  await expect(active.images.generate(input, { signal: caller.signal })).resolves.toEqual({
+    data: "aGVsbG8=", mimeType: "image/webp",
+  });
+  const signal = generate.mock.calls[0]?.[1]?.signal;
+  expect(signal?.aborted).toBe(false);
+  await scope.dispose();
+  expect(signal?.aborted).toBe(true);
+  expect(caller.signal.aborted).toBe(false);
+});
+
 it("keeps provider model data usable by React without proxying frozen element types", async () => {
   const scope = createActivationScope(1);
   const installation: PluginInstallation = {

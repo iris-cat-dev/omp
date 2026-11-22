@@ -53,6 +53,7 @@ export function mapOmpModel(
       provider: model.provider,
       ...(providerName ? { providerName } : {}),
       modelId: model.id,
+      supportsImages: model.input?.includes("image") === true,
       ...(model.serviceTiers ? { serviceTiers: model.serviceTiers } : {}),
     },
     ...(typeof model.contextWindow === "number" &&
