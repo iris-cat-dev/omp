@@ -4,12 +4,17 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { VisualFeedbackEditor } from "./editor.web";
+import { VisualFeedbackSubmitError } from "./submit-diagnostics";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("react-native-unistyles", () => ({
   withUnistyles: (component: unknown) => component,
   UnistylesRuntime: { getTheme: () => ({ colors: {} }) },
 }));
+
+const emptyRequest = { id: "feedback", agentId: "agent", title: "", instructions: "", text: "" };
+const ignoreSubmit = async () => {};
+const ignoreCancel = () => {};
 
 it("keeps a fitted image still at a fractional viewport size and scrolls when zoomed", async () => {
   await page.viewport(1440, 900);
@@ -28,9 +33,9 @@ it("keeps a fitted image still at a fractional viewport size and scrolls when zo
     flushSync(() => {
       root.render(
         <VisualFeedbackEditor
-          request={{ id: "feedback", agentId: "agent", title: "", instructions: "", text: "" }}
-          onSubmit={async () => {}}
-          onCancel={() => {}}
+          request={emptyRequest}
+          onSubmit={ignoreSubmit}
+          onCancel={ignoreCancel}
         />,
       );
     });
@@ -75,6 +80,75 @@ it("keeps a fitted image still at a fractional viewport size and scrolls when zo
     document.getElementById("overlay-root")?.remove();
     style.remove();
     container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("logs a redacted save failure and preserves feedback for an explicit retry", async () => {
+  vi.stubGlobal("React", React);
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  const onSubmit = vi
+    .fn<React.ComponentProps<typeof VisualFeedbackEditor>["onSubmit"]>()
+    .mockRejectedValueOnce(
+      new VisualFeedbackSubmitError("save-preview", new Error("ENOSPC: /private/screenshot.png")),
+    )
+    .mockResolvedValueOnce(undefined);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 48;
+    const image = {
+      data: canvas.toDataURL().split(",")[1]!,
+      mimeType: "image/png" as const,
+      width: 64,
+      height: 48,
+    };
+    const request = { ...emptyRequest, id: "private-request-id", image };
+    flushSync(() => {
+      root.render(
+        React.createElement(VisualFeedbackEditor, { request, onSubmit, onCancel: ignoreCancel }),
+      );
+    });
+    const feedback = page.getByRole("textbox", { name: "visualFeedback.feedback" });
+    await feedback.fill("private feedback text");
+    const submit = page.getByRole("button", { name: "visualFeedback.submit", exact: true });
+    await expect.element(submit).toBeEnabled();
+    await submit.click();
+    await expect.element(page.getByRole("alert")).toHaveTextContent("visualFeedback.submitError");
+    await expect.element(feedback).toHaveValue("private feedback text");
+
+    const prefix = "[visual-feedback] Submit failed ";
+    const logs = errorLog.mock.calls.flatMap(([line]) =>
+      typeof line === "string" && line.startsWith(prefix) ? [line.slice(prefix.length)] : [],
+    );
+    expect(logs).toHaveLength(1);
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      stage: "save-preview",
+      image: { width: 64, height: 48, mimeType: "image/png" },
+      error: { name: "Error", code: "ENOSPC" },
+    });
+    for (const privateValue of [
+      "/private/screenshot.png",
+      "private feedback text",
+      "private-request-id",
+      image.data,
+    ]) {
+      expect(logs[0]).not.toContain(privateValue);
+    }
+    await submit.click();
+    await expect.poll(() => onSubmit.mock.calls[1]?.[0].feedback).toBe("private feedback text");
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    expect(
+      errorLog.mock.calls.filter(([line]) => typeof line === "string" && line.startsWith(prefix)),
+    ).toHaveLength(1);
+  } finally {
+    root.unmount();
+    document.getElementById("overlay-root")?.remove();
+    container.remove();
+    errorLog.mockRestore();
     vi.unstubAllGlobals();
   }
 });

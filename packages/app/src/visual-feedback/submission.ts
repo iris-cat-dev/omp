@@ -3,6 +3,7 @@ import type { AttachmentMetadata, VisualFeedbackComposerAttachment } from "@/att
 import { deleteAttachments, persistAttachmentFromDataUrl } from "@/attachments/service";
 import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
 import { generateAttachmentId } from "@/attachments/utils";
+import { VisualFeedbackSubmitError } from "./submit-diagnostics";
 
 export async function prepareVisualFeedbackAttachment(
   submission: VisualFeedbackSubmission,
@@ -16,12 +17,14 @@ export async function prepareVisualFeedbackAttachment(
   };
   const persisted: AttachmentMetadata[] = [];
   const releases: Array<() => void> = [];
+  let stage: "save-original" | "save-preview" = "save-original";
   try {
     for (const [key, name, image] of [
       ["image", "original", submission.image],
       ["preview", "annotated", submission.preview],
     ] as const) {
       if (!image) continue;
+      stage = key === "image" ? "save-original" : "save-preview";
       const extension = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.split("/")[1];
       const metadata = await persistAttachmentFromDataUrl({
         dataUrl: `data:${image.mimeType};base64,${image.data}`,
@@ -36,7 +39,7 @@ export async function prepareVisualFeedbackAttachment(
     return attachment;
   } catch (error) {
     await deleteAttachments(persisted);
-    throw error;
+    throw new VisualFeedbackSubmitError(stage, error);
   } finally {
     for (const release of releases) release();
   }

@@ -67,6 +67,20 @@ Installation and restoration save the returned installation identity with the in
 
 Node consumers import release-operation and activation-scope APIs from `@omp-desktop/plugin/server`. The public `/host` entry also includes renderer React bindings; its historical exports remain available to renderer hosts.
 
+### QQ plugin still shows the old settings after a source update
+
+The `plugins/` submodule tracks QQ source code, not the generated `qqbot/dist/` directory. Updating the submodule leaves any existing build in place. The folder installation loads `dist/client.mjs` and `dist/service.cjs`, not `src/`, so updated source can still show the old settings. The displayed package version can also stay unchanged between source commits.
+
+From the Desktop checkout root, after installing workspace dependencies, build first and reload the existing daemon installation only if the build succeeds:
+
+```bash
+npm run build --workspace=@omp-desktop/plugin-qqbot && omp-desktop plugin reload qqbot
+```
+
+Use the actual installation ID if it differs from `qqbot`, and target the daemon that owns the installation (`--host` if needed). Alternatively, after the build succeeds, choose **Restart/reload** at the bottom of the plugin's **Configure** dialog. Reopen **Configuration** and look for the QQ settings tabs **模型与对话** and **账号与绑定**. The plugin can remain disabled; there is no need to reinstall it or clear its data.
+
+Keep `dist/` ignored. **Restart/reload** reloads the declared built entries; it does not run package build scripts or install dependencies. Keep any developer build-and-reload shortcut explicit and conditional on a successful build. For end-user releases, the recommended approach is to build in CI and distribute a versioned installable package containing `dist/`, not to build from source on the daemon.
+
 ## Runtime and protocol notes
 
 Main-process code keeps Electron-compatible `electron` imports; the stock `electron` package is retained only for TypeScript declarations. Project scripts do not download or substitute its runtime. Native runtime version selection and platform constraints are documented in [packaging](packaging.md#native-runtime-selection).

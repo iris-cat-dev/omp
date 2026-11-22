@@ -10,6 +10,11 @@ const runFile = promisify(execFile);
 const SELECTOR_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# PS 5.1's Add-Type writes compiler inputs and outputs to the .NET temp path.
+# Use the writable capture directory instead of the inherited system temp path.
+$env:TMP = $PSScriptRoot
+$env:TEMP = $PSScriptRoot
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'

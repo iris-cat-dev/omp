@@ -164,6 +164,7 @@ import {
 } from "@/attachments/workspace-file-drag";
 import { useManualVisualFeedbackStore } from "@/visual-feedback/manual-store";
 import { prepareVisualFeedbackAttachment } from "@/visual-feedback/submission";
+import { VisualFeedbackSubmitError } from "@/visual-feedback/submit-diagnostics";
 import {
   VisualFeedbackAttachmentPill,
   VisualFeedbackAttachmentPreview,
@@ -405,7 +406,16 @@ interface RenderComposerAttachmentPillArgs {
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
   const { attachment, index, disabled, onOpen, onRemove, labels } = args;
-  if (attachment.kind === "external_text") return <ExternalTextAttachmentPill key={attachment.id} attachment={attachment} index={index} disabled={disabled} onRemove={onRemove} />;
+  if (attachment.kind === "external_text")
+    return (
+      <ExternalTextAttachmentPill
+        key={attachment.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onRemove={onRemove}
+      />
+    );
   if (attachment.kind === "visual_feedback") {
     return (
       <VisualFeedbackAttachmentPill
@@ -2194,13 +2204,21 @@ function ComposerContentImpl({
       },
       onSubmit: async (submission) => {
         const attachment = await prepareVisualFeedbackAttachment(submission);
-        addFiles([attachment]);
-        focusInput();
+        try {
+          addFiles([attachment]);
+          focusInput();
+        } catch (error) {
+          throw new VisualFeedbackSubmitError("stage-draft", error);
+        }
       },
     });
   }, [addFiles, agentId, focusInput, serverId, t]);
 
-  const pluginAttachments = usePluginAttachmentPicker({ hostId: serverId, disabled: isComposerLocked || isProcessing || isSubmitLoading || !isConnected, onAttach: (attachment) => setSelectedAttachments([...attachments, attachment]) });
+  const pluginAttachments = usePluginAttachmentPicker({
+    hostId: serverId,
+    disabled: isComposerLocked || isProcessing || isSubmitLoading || !isConnected,
+    onAttach: (attachment) => setSelectedAttachments([...attachments, attachment]),
+  });
   const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
     const items: AttachmentMenuItem[] = [
       {
