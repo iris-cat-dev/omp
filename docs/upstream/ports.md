@@ -2,6 +2,20 @@
 
 本文件按时间倒序记录从 [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi) 选择性合入到 `iris-cat-dev/omp-sdk` 与 `omp-desktop` 的变更。迁移前须遵守 [必须保留的 fork 合同](README.md#必须保留的-fork-合同)。
 
+## 2026-11-22 — Codex / GPT-6.2 `instructions` Prompt Caching 与客户端版本动态解析
+
+- **上游提交**：
+  - [`dd75fddf6a`](https://github.com/can1357/oh-my-pi/commit/dd75fddf6a34f9bebf005db72ea9e00579af66ed)（Codex base instructions 迁至前置 `developer` 项 `model.base_instructions`）
+  - [`f54745ac23`](https://github.com/can1357/oh-my-pi/commit/f54745ac235b89ce2775616a7f44275bbdf7b300)（运行时从 npm `@openai/codex/latest` 解析 Codex 客户端版本）
+  - [`88fc862ac4`](https://github.com/can1357/oh-my-pi/commit/88fc862ac496ee9158e48ed0dbd4e99c782ff634)（Codex 客户端版本缓存迁至 XDG cache）
+  - [`acdfffa248d`](https://github.com/can1357/oh-my-pi/commit/acdfffa248d1cdb5e0a05173e44e441103a37daf) 的 `uncached-instructions` 切片（GPT-6.2+ 在所有 Responses 宿主含代理上将系统提示词作为前置 `developer` 项发送）
+- **SDK 提交**：`7fd52c879f`（`fix(ai,catalog,agent,utils): port GPT-6.2/Codex instructions caching and dynamic client version`；目录投影 `omp-provider-model-index.json` 零差异）
+- **Fork 适配与改进**：
+  - 在 `@oh-my-pi/pi-utils` 中补齐可移植 `runtime.randomUUIDv5`（Node.js `node:crypto` SHA-1 + Bun 代理），`codex-version.ts` 使用 `runtime.write` 与递归建目录，避免在 `packages/*/src/` 引入原始 `Bun.*` API。
+  - 将 `buildCompactionV2Request` 中的 `moveCodexInstructionsToInput` 限定于 Codex（`isCodexResponses`），防止向非 Codex OpenAI Responses / Azure / Bedrock Mantle 压缩请求泄漏 `internal_chat_message_metadata_passthrough`。
+  - `classes/openai.kdl` 采用 `revision ">=6.2 <10"` 兼顾未来 GPT-6.3+ 并排除 `gpt-52-codex` 等无分隔符 ID。
+- **未合入 / 保留边界**：保留 `CODEX_CLIENT_VERSION = "0.169.1"`、SDK 包版本 `18.14.0`、Node 传输/代理实现、Claude/Gemini 指纹，不合入 `acdfffa248d` 的 MCP daemon 重写及延后项（`0da37d35a1`、`6c57f9091e`、`ad383b54c7`）。详见 [Codex / GPT-6.2 Prompt Caching 移植与验证分析](2026-11-22-codex-gpt-6-2-instructions-caching.md)。
+
 ## 2026-11-18 — 上游 18.22.2 模型目录与兼容规则同步
 
 - **上游参考**：[`b96a1ed7a4`](https://github.com/can1357/oh-my-pi/commit/b96a1ed7a4)（`18.22.2`）

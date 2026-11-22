@@ -26,6 +26,7 @@ fork 与上游提交历史不相通，不能通过普通 `git merge-base` 判断
 
 | 文档                                                                 | 日期       | 范围与状态                                                                                                                         |
 | -------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| [Codex / GPT-6.2 `instructions` Prompt Caching 分析](2026-11-22-codex-gpt-6-2-instructions-caching.md) | 2026-11-22 | `dd75fddf6a`、`f54745ac23`、`88fc862ac4` 与 `acdfffa248d`（`uncached-instructions` 切片）的选择性移植、实测缓存与 Node 兼容性验证；已合入 `omp-sdk`（`7fd52c879f`），见 [ports.md](ports.md) |
 | [Antigravity 安全修复与 ACP 集成分析](2026-11-18-antigravity-acp.md) | 2026-11-18 | `v18.22.0` 后 `main` 的 `google-antigravity` fail-closed 与 `antigravity-cli` ACP 评估；尚未合入                                   |
 | [OMP 上游更新与 Desktop SDK 迁移分析](2026-11-08-oh-my-pi-18.18.md)  | 2026-11-08 | `18.14.0` → `18.18.0+` 全面评估（安全修复、子代理 worker、Shell 迁移）；其中 Shell 与部分 Cursor 项已落地，见 [ports.md](ports.md) |
 
