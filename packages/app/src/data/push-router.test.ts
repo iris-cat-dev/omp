@@ -6,6 +6,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { providerFeaturesQueryRoot } from "@/data/provider-features";
 import {
   checkoutDiffPushRoute,
   invalidateServerDataQueriesAfterReconnect,
@@ -24,12 +25,19 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
+type OmpLoginCompletedMessage = Extract<
+  SessionOutboundMessage,
+  { type: "omp.provider.login.completed" }
+>;
+type OmpInstallResponseMessage = Extract<SessionOutboundMessage, { type: "omp.install.response" }>;
 type RouterMessage =
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
   | StatusMessage
-  | TerminalsChangedMessage;
+  | TerminalsChangedMessage
+  | OmpLoginCompletedMessage
+  | OmpInstallResponseMessage;
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
 type RouterClient = Parameters<typeof mountServerDataPushRouter>[0]["client"];
@@ -66,6 +74,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscribe_checkout_diff_response: [],
     status: [],
     terminals_changed: [],
+    "omp.provider.login.completed": [],
+    "omp.install.response": [],
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
@@ -187,6 +197,72 @@ describe("server data push router", () => {
       generatedAt: "2026-01-01T00:00:00.000Z",
       requestId: "providers_snapshot_update",
     });
+  });
+
+  it("invalidates capabilities for changed provider configuration, not unrelated host settings", () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const serverId = "server-1";
+    const featureKey = [...providerFeaturesQueryRoot(serverId, "omp"), "/repo"];
+    const otherFeatureKey = [...providerFeaturesQueryRoot("server-2", "omp"), "/repo"];
+    queryClient.setQueryData(daemonConfigQueryKey(serverId), daemonConfig);
+    queryClient.setQueryData(featureKey, []);
+    queryClient.setQueryData(otherFeatureKey, []);
+    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    fake.emit({
+      type: "status",
+      payload: {
+        status: "daemon_config_changed",
+        config: { ...daemonConfig, autoArchiveAfterMerge: true },
+      },
+    });
+    expect(queryClient.getQueryState(featureKey)?.isInvalidated).toBe(false);
+    fake.emit({
+      type: "status",
+      payload: {
+        status: "daemon_config_changed",
+        config: {
+          ...daemonConfig,
+          providers: { omp: { ompBackend: "sdk", ompSdkPath: "/new-sdk" } },
+        },
+      },
+    });
+    expect(queryClient.getQueryState(featureKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherFeatureKey)?.isInvalidated).toBe(false);
+    unmount();
+    queryClient.clear();
+  });
+
+  it("reconfirms OMP after login or a completed upgrade, while canceled upgrades preserve the cache", () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const serverId = "server-1";
+    const ompKey = [...providerFeaturesQueryRoot(serverId, "omp"), "/repo"];
+    const codexKey = [...providerFeaturesQueryRoot(serverId, "codex"), "/repo"];
+    queryClient.setQueryData(ompKey, []);
+    queryClient.setQueryData(codexKey, []);
+    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const payload = {
+      requestId: "upgrade",
+      platform: "darwin",
+      arch: "arm64",
+      supported: true,
+      installed: true,
+      installPath: "/sdk",
+    };
+    fake.emit({ type: "omp.install.response", payload: { ...payload, updatePhase: "canceled" } });
+    expect(queryClient.getQueryState(ompKey)?.isInvalidated).toBe(false);
+    fake.emit({ type: "omp.install.response", payload: { ...payload, updatePhase: "complete" } });
+    expect(queryClient.getQueryState(ompKey)?.isInvalidated).toBe(true);
+    queryClient.setQueryData(ompKey, []);
+    fake.emit({
+      type: "omp.provider.login.completed",
+      payload: { flowId: "login", providerId: "openai-codex" },
+    });
+    expect(queryClient.getQueryState(ompKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(codexKey)?.isInvalidated).toBe(false);
+    unmount();
+    queryClient.clear();
   });
 
   it("subscribes active checkout diff queries and writes matching diff events", () => {
@@ -602,6 +678,8 @@ describe("server data push router", () => {
     const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
+    const featuresKey = [...providerFeaturesQueryRoot(serverId, "omp"), "/repo"];
+    const otherFeaturesKey = [...providerFeaturesQueryRoot(otherServerId, "omp"), "/repo"];
 
     queryClient.setQueryData(providerKey, {
       entries: [],
@@ -626,6 +704,8 @@ describe("server data push router", () => {
       generatedAt: "now",
       requestId: "other",
     });
+    queryClient.setQueryData(featuresKey, []);
+    queryClient.setQueryData(otherFeaturesKey, []);
 
     invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
 
@@ -635,5 +715,7 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(featuresKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherFeaturesKey)?.isInvalidated).toBe(false);
   });
 });

@@ -135,6 +135,8 @@ The SDK's login `available` flag also covers terminal-only prompts. Use `support
 
 After updating the pinned SDK model catalog, run `node packages/app/scripts/project-omp-provider-catalog.mjs` from the repository root. Include the regenerated `omp-provider-model-index.json` with the SDK update. The connection directory searches those public model IDs and names before sign-in; the chat picker uses the selected host's live catalog.
 
+Draft `providerFeatures` queries use the shared 30-minute freshness and one-hour retention constants in `data/provider-features.ts`. `ensureMetadata` checks only stale or failed entries when the model picker opens; focus never refetches them, and remounts reuse fresh confirmation. The query key includes the selected model's service tiers and feature/option IDs, not catalog update counts or display labels. Provider configuration status changes, completed OMP installation, OAuth login, explicit catalog refresh, and reconnect repair invalidate the relevant query roots. The backend's five-minute native-evidence cache and context checks remain unchanged. See [Thinking and Fast settings](features/models-and-providers.md#thinking-and-fast-settings) for cache scope and external CLI edit visibility.
+
 **Upstream SDK ports**
 
 Selectively ported `can1357/oh-my-pi` changes (Cursor catalog/runtime fixes, the Bash 5.3 shell engine and execution trace, and the `18.22.2` catalog sync) are tracked in [docs/upstream/ports.md](upstream/ports.md), with analyses and preserved fork contracts under [docs/upstream/](upstream/README.md).

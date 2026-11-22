@@ -2,11 +2,15 @@ import React, { act, createElement } from "react";
 import { View as NativeView } from "react-native";
 import type * as Reanimated from "react-native-reanimated";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, skipToken, useQuery } from "@tanstack/react-query";
 import { createInstance, type i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentFeature } from "@omp-desktop/protocol/agent-types";
+import type {
+  AgentFeature,
+  AgentModelDefinition,
+  ProviderSnapshotEntry,
+} from "@omp-desktop/protocol/agent-types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { mergeProviderPreferences } from "@/create-agent-preferences/preferences";
 import {
@@ -16,11 +20,23 @@ import {
 import { en } from "@/i18n/resources/en";
 import { ModelSettingsPanel } from "./model-settings-panel";
 import { partitionModelFeatures } from "./utils";
+import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { invalidateServerDataQueriesAfterReconnect } from "@/data/push-router";
 
 vi.mock("expo-clipboard", () => ({}));
-vi.mock("@/hooks/use-providers-snapshot", () => ({
-  useProvidersSnapshot: () => ({ entries: [] }),
-}));
+vi.mock("@/hooks/use-providers-snapshot", () => {
+  return {
+    useProvidersSnapshot: (serverId: string) => {
+      const snapshot = useQuery<{ entries: ProviderSnapshotEntry[] }>({
+        queryKey: providersSnapshotQueryKey(serverId),
+        enabled: false,
+        queryFn: skipToken,
+        staleTime: Infinity,
+      });
+      return { entries: snapshot.data?.entries ?? [] };
+    },
+  };
+});
 vi.mock("react-native-reanimated", async (importOriginal) => {
   const actual = await importOriginal<typeof Reanimated>();
   return {
@@ -103,6 +119,20 @@ let query: QueryClient;
 let i18n: I18n;
 let draft: DraftAgentFeaturesResult;
 
+function catalog(models: AgentModelDefinition[]) {
+  query.setQueryData(providersSnapshotQueryKey("isolated-host"), {
+    entries: [{ provider: "omp", status: "ready", enabled: true, models }],
+  });
+}
+function catalogModel(features: AgentFeature[] = [tierFeature]): AgentModelDefinition {
+  return {
+    provider: "omp",
+    id: "openai-codex/sol",
+    label: "Sol",
+    metadata: { draftFeatures: features },
+  };
+}
+
 function DraftConsumer({ model }: { model: string }) {
   draft = useDraftAgentFeatures({
     serverId: "isolated-host",
@@ -116,6 +146,7 @@ function DraftConsumer({ model }: { model: string }) {
   return (
     <>
       <output data-testid="saved-speed">{String(draft.featureValues?.fast_mode)}</output>
+      <button onClick={draft.ensureMetadata}>Open model settings</button>
       <ModelSettingsPanel
         thinkingOptions={[]}
         fastMode={partitionModelFeatures(draft.features).fastMode}
@@ -125,7 +156,7 @@ function DraftConsumer({ model }: { model: string }) {
     </>
   );
 }
-function Page({ model, live }: { model: string; live?: boolean }) {
+function Page({ model, live, draftKey }: { model: string; live?: boolean; draftKey?: string }) {
   return (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={query}>
@@ -136,7 +167,7 @@ function Page({ model, live }: { model: string; live?: boolean }) {
             featureMetadataStatus="ready"
           />
         ) : (
-          <DraftConsumer model={model} />
+          <DraftConsumer key={draftKey} model={model} />
         )}
       </QueryClientProvider>
     </I18nextProvider>
@@ -150,7 +181,17 @@ beforeEach(async () => {
   runtime.preferences = {
     providerPreferences: { omp: { featureValues: { fast_mode: "ultrafast" } } },
   };
-  query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  query = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnMount: false,
+        refetchOnReconnect: false,
+        refetchOnWindowFocus: false,
+      },
+    },
+  });
+  catalog([catalogModel()]);
   i18n = createInstance();
   await i18n.init({
     lng: "en",
@@ -162,6 +203,7 @@ afterEach(() => {
   cleanup();
   query.clear();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("production draft Speed readiness", () => {
@@ -214,21 +256,100 @@ describe("production draft Speed readiness", () => {
     expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
   });
 
-  it("reconfirms after a host catalog/configuration generation changes", async () => {
-    render(<Page model="openai-codex/sol" />);
+  it("keeps confirmed Speed interactive when reopening settings and creating another draft", async () => {
+    const view = render(<Page model="openai-codex/sol" draftKey="one" />);
     await waitFor(() => expect(runtime.requests).toHaveLength(1));
     act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
     await screen.findByTestId("model-settings-fast-mode");
-    act(() =>
-      query.setQueryData(["providersSnapshot", "isolated-host"], {
-        snapshotHash: "changed-host-config",
-      }),
-    );
+    fireEvent.click(screen.getByText("Open model settings"));
+    fireEvent.click(screen.getByText("Open model settings"));
+    view.rerender(<Page model="openai-codex/sol" draftKey="two" />);
+    expect(screen.getByTestId("model-settings-fast-mode").textContent).toContain("Ultrafast");
+    expect(screen.queryByTestId("model-settings-fast-mode-loading")).toBeNull();
+    expect(runtime.requests).toHaveLength(1);
+  });
+
+  it("reuses confirmation until the 30-minute boundary, then blocks Speed during the new check", async () => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const confirmedAt = now;
+    const view = render(<Page model="openai-codex/sol" draftKey="one" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(1));
+    act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
+    await screen.findByTestId("model-settings-fast-mode");
+    now = confirmedAt + 30 * 60_000 - 1;
+    view.rerender(<Page model="openai-codex/sol" draftKey="before-expiry" />);
+    expect(screen.getByTestId("model-settings-fast-mode")).toBeDefined();
+    expect(runtime.requests).toHaveLength(1);
+    now += 1;
+    view.rerender(<Page model="openai-codex/sol" draftKey="at-expiry" />);
     await waitFor(() => expect(runtime.requests).toHaveLength(2));
     expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
     act(() => runtime.requests[1]!.resolve({ features: [] }));
     await screen.findByTestId("model-settings-fast-mode-unsupported");
     expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
+  });
+
+  it("ignores unchanged capabilities and unrelated model updates", async () => {
+    render(<Page model="openai-codex/sol" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(1));
+    act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
+    await screen.findByTestId("model-settings-fast-mode");
+    act(() =>
+      catalog([
+        { ...catalogModel(), label: "Renamed Sol" },
+        { ...catalogModel([]), id: "openai-codex/another" },
+      ]),
+    );
+    fireEvent.click(screen.getByText("Open model settings"));
+    expect(screen.getByTestId("model-settings-fast-mode").textContent).toContain("Ultrafast");
+    expect(runtime.requests).toHaveLength(1);
+  });
+
+  it("reconfirms a changed selected-model capability before exposing Speed", async () => {
+    render(<Page model="openai-codex/sol" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(1));
+    act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
+    await screen.findByTestId("model-settings-fast-mode");
+    act(() => catalog([catalogModel([])]));
+    await waitFor(() => expect(runtime.requests).toHaveLength(2));
+    expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
+    act(() => runtime.requests[1]!.resolve({ features: [] }));
+    await screen.findByTestId("model-settings-fast-mode-unsupported");
+    expect(screen.getByTestId("saved-speed").textContent).toBe("ultrafast");
+  });
+
+  it("retries failed detection on the next settings visit instead of caching unsupported", async () => {
+    render(<Page model="openai-codex/sol" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(1));
+    act(() => runtime.requests[0]!.resolve({ features: [], error: "Unavailable" }));
+    await waitFor(() => expect(draft.metadataStatus).toBe("error"));
+    expect(screen.queryByTestId("model-settings-fast-mode-unsupported")).toBeNull();
+    fireEvent.click(screen.getByText("Open model settings"));
+    await waitFor(() => expect(runtime.requests).toHaveLength(2));
+    act(() => runtime.requests[1]!.resolve({ features: [tierFeature] }));
+    expect((await screen.findByTestId("model-settings-fast-mode")).textContent).toContain(
+      "Ultrafast",
+    );
+  });
+
+  it("reconfirms cached Speed after reconnecting to the host", async () => {
+    const view = render(<Page model="openai-codex/sol" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(1));
+    act(() => runtime.requests[0]!.resolve({ features: [tierFeature] }));
+    await screen.findByTestId("model-settings-fast-mode");
+    runtime.connected = false;
+    view.rerender(<Page model="openai-codex/sol" />);
+    expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
+    act(() =>
+      invalidateServerDataQueriesAfterReconnect({ queryClient: query, serverId: "isolated-host" }),
+    );
+    runtime.connected = true;
+    view.rerender(<Page model="openai-codex/sol" />);
+    await waitFor(() => expect(runtime.requests).toHaveLength(2));
+    expect(screen.queryByTestId("model-settings-fast-mode")).toBeNull();
+    act(() => runtime.requests[1]!.resolve({ features: [] }));
+    await screen.findByTestId("model-settings-fast-mode-unsupported");
   });
 
   it("does not accept late responses from the previous model or overwrite live session features", async () => {

@@ -188,7 +188,7 @@ export interface DraftAgentControlsProps {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   featureMetadataStatus?: "loading" | "error" | "ready";
-  onRetryFeatureMetadata?: () => void;
+  onEnsureFeatureMetadata?: () => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -2085,7 +2085,7 @@ export function DraftAgentControls({
   onSelectThinkingOption,
   features,
   featureMetadataStatus,
-  onRetryFeatureMetadata,
+  onEnsureFeatureMetadata,
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
@@ -2186,8 +2186,8 @@ export function DraftAgentControls({
   });
   const handleDraftModelSelectorOpen = useCallback(() => {
     onModelSelectorOpen?.();
-    onRetryFeatureMetadata?.();
-  }, [onModelSelectorOpen, onRetryFeatureMetadata]);
+    onEnsureFeatureMetadata?.();
+  }, [onModelSelectorOpen, onEnsureFeatureMetadata]);
   return (
     <ControlledAgentControls
       provider={selectedProvider ?? ""}

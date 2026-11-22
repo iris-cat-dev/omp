@@ -7,6 +7,7 @@ import { compactProviderSnapshot } from "@omp-desktop/protocol/provider-snapshot
 import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
+import { providerFeaturesQueryRoot } from "@/data/provider-features";
 import {
   fetchProvidersSnapshot,
   providersSnapshotQueryKey,
@@ -312,6 +313,24 @@ describe("refreshAndApplyProvidersSnapshot", () => {
     });
 
     expect(queryClient.getQueryState(commandsKey)?.isInvalidated).toBe(true);
+  });
+
+  it("rechecks explicitly refreshed provider capabilities without invalidating another provider or host", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
+    const ompKey = [...providerFeaturesQueryRoot(serverId, "omp"), "/repo"];
+    const codexKey = [...providerFeaturesQueryRoot(serverId, "codex"), "/repo"];
+    const otherHostKey = [...providerFeaturesQueryRoot("server-2", "omp"), "/repo"];
+    for (const key of [ompKey, codexKey, otherHostKey]) queryClient.setQueryData(key, []);
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      providers: ["omp"],
+      cache: createCache(),
+    });
+    expect(queryClient.getQueryState(ompKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(codexKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(otherHostKey)?.isInvalidated).toBe(false);
   });
 });
 
