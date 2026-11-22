@@ -330,6 +330,7 @@ interface SelectionContextTargetProps {
   pressingActionRef: RefObject<boolean>;
   syncSelectionRef: RefObject<(() => void) | null>;
   onSelection: (text: string | null, anchorRect: Rect | null, range: Range | null) => void;
+  onContextMenuSelection: (action: CapturedSelectionAction) => void;
   showSelectionActions: boolean;
   onActionPressStart: () => void;
   onActionPressCancel: () => void;
@@ -346,6 +347,7 @@ function SelectionContextTarget({
   pressingActionRef,
   syncSelectionRef,
   onSelection,
+  onContextMenuSelection,
   showSelectionActions,
   onActionPressStart,
   onActionPressCancel,
@@ -374,12 +376,11 @@ function SelectionContextTarget({
     );
     const range = text && selection?.rangeCount ? selection.getRangeAt(0) : null;
     const rect = range?.getBoundingClientRect();
-    onSelection(
-      text,
-      rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-      range?.cloneRange() ?? null,
-    );
-    return text;
+    const anchorRect = rect
+      ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      : null;
+    onSelection(text, anchorRect, range?.cloneRange() ?? null);
+    return text ? { text, anchorRect } : null;
   }, [contextMenu.open, onSelection, pressingActionRef, rootRef]);
 
   useEffect(() => {
@@ -407,9 +408,12 @@ function SelectionContextTarget({
   const handleContextMenu = useCallback(
     (event: WebContextMenuEvent) => {
       // Keep the browser's touch selection handles and native Copy menu intact.
-      if (event.nativeEvent.pointerType === "touch" || !updateSelection()) return;
+      if (event.nativeEvent.pointerType === "touch") return;
+      const action = updateSelection();
+      if (!action) return;
       event.preventDefault();
       event.stopPropagation();
+      onContextMenuSelection(action);
       contextMenu.setAnchorRect({
         x: event.nativeEvent.pageX,
         y: event.nativeEvent.pageY,
@@ -418,7 +422,7 @@ function SelectionContextTarget({
       });
       contextMenu.setOpen(true);
     },
-    [contextMenu, updateSelection],
+    [contextMenu, onContextMenuSelection, updateSelection],
   );
 
   return (
@@ -475,11 +479,13 @@ export function QuotedSelectionContextMenu({
   const syncSelectionRef = useRef<(() => void) | null>(null);
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [selectionAnchorRect, setSelectionAnchorRect] = useState<Rect | null>(null);
+  const [menuSelection, setMenuSelection] = useState<CapturedSelectionAction | null>(null);
   const [askText, setAskText] = useState<string | null>(null);
   const [askAnchorRect, setAskAnchorRect] = useState<Rect | null>(null);
   const handleOpenChange = useCallback((open: boolean) => {
     if (!open) {
       setSelectedText(null);
+      setMenuSelection(null);
     }
   }, []);
   const handleSelection = useCallback(
@@ -523,7 +529,8 @@ export function QuotedSelectionContextMenu({
     syncSelectionRef.current?.();
   }, []);
   const resolveActionSelection = useCallback((): CapturedSelectionAction | null => {
-    const captured = pendingActionRef.current;
+    // Menu callbacks retain the opening snapshot even though selectItem closes the menu first.
+    const captured = menuSelection ?? pendingActionRef.current;
     pressingActionRef.current = false;
     pendingActionRef.current = null;
     if (captured) {
@@ -533,21 +540,10 @@ export function QuotedSelectionContextMenu({
     if (live) {
       return live;
     }
-    if (!isWeb || !rootRef.current) return null;
-    const selection = window.getSelection();
-    // Browser focus can collapse a text range while a context-menu item is activated.
-    if (
-      selectedText &&
-      selectionRangeRef.current &&
-      !selection?.toString().trim() &&
-      document.activeElement?.closest('[data-testid="quoted-selection-context-menu"]')
-    ) {
-      return { text: selectedText, anchorRect: selectionAnchorRect };
-    }
     setSelectedText(null);
     selectionRangeRef.current = null;
     return null;
-  }, [readLiveSelection, selectedText, selectionAnchorRect]);
+  }, [menuSelection, readLiveSelection]);
   const handleQuote = useCallback(() => {
     const action = resolveActionSelection();
     if (!action) return;
@@ -596,6 +592,7 @@ export function QuotedSelectionContextMenu({
           pressingActionRef={pressingActionRef}
           syncSelectionRef={syncSelectionRef}
           onSelection={handleSelection}
+          onContextMenuSelection={setMenuSelection}
           showSelectionActions={
             isWeb && !getIsElectron() && showPersistentActions && Boolean(selectedText)
           }

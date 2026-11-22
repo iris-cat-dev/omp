@@ -19,6 +19,8 @@ Sending immediately clears the composer and adds one message to the conversation
 
 If validation or sending fails, the unacknowledged local row is removed and the error is shown. The submitted text and attachments return to an empty composer without overwriting newer input or another conversation's draft. A message already acknowledged by the host remains in the conversation.
 
+Select transcript text and choose **Quote content** from its right-click menu to append a quoted-content attachment without replacing the current draft. The menu uses the text captured when it opened, so focus changes or newer transcript output do not discard the quote. Touch/compact browsers also offer **Quote** and **Ask** selection actions.
+
 Uploaded-file attachments preserve their Unicode basename in the composer, message, and agent input. Disk storage names are sanitized separately; path prefixes and control characters are not accepted as display names.
 
 Enabled plugin attachment sources appear in the composer's **+** menu. Local Desktop sources remain available when changing hosts; daemon sources belong to the selected host. Choosing a resource captures its complete text and source metadata. Open the composer's attachment pill to read that snapshot. Sending submits the saved text, without searching or fetching the source again.

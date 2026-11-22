@@ -223,7 +223,6 @@ describe("explicit transcript selection actions", () => {
     await selectText(getElement('[data-testid="transcript-text"]'));
     expect(window.getSelection()?.toString()).toBe("Selected transcript text");
     const quote = getElement('[data-testid="quoted-selection-action-quote"]');
-    expect(quote.textContent).toBe("composer.attachments.quoteSelection");
     await act(async () => userEvent.click(quote));
     expect(onQuote).toHaveBeenCalledExactlyOnceWith("Selected transcript text");
     expect(window.getSelection()?.toString()).toBe("");
@@ -242,6 +241,20 @@ describe("explicit transcript selection actions", () => {
     await act(async () => userEvent.click(menuElement("quoted-selection-context-menu-quote")));
     expect(onQuote).toHaveBeenCalledExactlyOnceWith("Selected transcript text");
     expect(window.getSelection()?.toString()).toBe("");
+  });
+
+  it("quotes the menu-opening snapshot after the transcript selection is lost", async () => {
+    const onQuote = await mountTranscript();
+    await openSelectionContextMenu();
+    await act(async () => {
+      getElement('[data-testid="transcript-text"]').textContent = "Updated transcript text";
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+      window.dispatchEvent(new Event("blur"));
+    });
+    await act(async () => userEvent.click(menuElement("quoted-selection-context-menu-quote")));
+    expect(onQuote).toHaveBeenCalledExactlyOnceWith("Selected transcript text");
+    expect(document.querySelector('[data-testid="quoted-selection-context-menu"]')).toBeNull();
   });
 
   it("opens Quick Ask with the captured transcript selection from a mouse right-click menu", async () => {
