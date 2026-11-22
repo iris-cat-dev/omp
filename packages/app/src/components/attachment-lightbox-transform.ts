@@ -21,6 +21,7 @@ export interface LightboxTransform {
 export interface LightboxViewState {
   viewport: LightboxSize | null;
   natural: LightboxSize | null;
+  minFitScale: number;
   transform: LightboxTransform;
   /** Image offset when the current drag began; `null` while not dragging. */
   panOrigin: LightboxPoint | null;
@@ -53,6 +54,7 @@ const FIT_TRANSFORM: LightboxTransform = { scale: 1, x: 0, y: 0 };
 export const INITIAL_LIGHTBOX_VIEW: LightboxViewState = {
   viewport: null,
   natural: null,
+  minFitScale: 1,
   transform: FIT_TRANSFORM,
   panOrigin: null,
 };
@@ -87,11 +89,14 @@ function getActualSizeScale({ viewport, natural }: LightboxViewState): number | 
   return natural.width / getFittedImageSize(viewport, natural).width;
 }
 
-/** Fit and 100% are always reachable; beyond them the image zooms up to 8x its fitted size. */
-function getScaleBounds(actualSizeScale: number | null): { min: number; max: number } {
+/** Fit and 100% are always reachable; the viewer may also allow zooming below fit. */
+function getScaleBounds(
+  actualSizeScale: number | null,
+  minFitScale: number,
+): { min: number; max: number } {
   const actual = actualSizeScale ?? 1;
   return {
-    min: Math.min(1, actual),
+    min: Math.min(minFitScale, actual),
     max: Math.max(MAX_FIT_RELATIVE_SCALE, actual),
   };
 }
@@ -123,7 +128,7 @@ function zoomAround(
   requestedScale: number,
   focus: LightboxPoint,
 ): LightboxViewState {
-  const { min, max } = getScaleBounds(getActualSizeScale(state));
+  const { min, max } = getScaleBounds(getActualSizeScale(state), state.minFitScale);
   const current = state.transform;
   const scale = Math.min(max, Math.max(min, requestedScale));
   const ratio = scale / current.scale;
@@ -144,7 +149,7 @@ export function lightboxViewReducer(
 ): LightboxViewState {
   switch (action.type) {
     case "reset":
-      return { ...INITIAL_LIGHTBOX_VIEW, viewport: state.viewport };
+      return { ...INITIAL_LIGHTBOX_VIEW, viewport: state.viewport, minFitScale: state.minFitScale };
     case "layout": {
       const next = { ...state, viewport: action.viewport };
       return { ...next, transform: clampTransform(state.transform, next) };
@@ -189,7 +194,7 @@ export function lightboxViewReducer(
 export function getZoomState(state: LightboxViewState): LightboxZoomState {
   const { viewport, natural, transform } = state;
   const actualSizeScale = getActualSizeScale(state);
-  const { min, max } = getScaleBounds(actualSizeScale);
+  const { min, max } = getScaleBounds(actualSizeScale, state.minFitScale);
   const fitted = getFittedImageSize(viewport, natural);
   return {
     canZoomIn: transform.scale < max - SCALE_EPSILON,

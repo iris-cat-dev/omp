@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -21,6 +22,7 @@ export function FilePanelBar({
   cursor,
   vimMode,
   conflict,
+  children,
   showTreeToggle = true,
 }: {
   size: number;
@@ -31,6 +33,7 @@ export function FilePanelBar({
   cursor?: { line: number; column: number };
   vimMode?: string | null;
   conflict?: FileConflictAlertState;
+  children?: ReactNode;
   showTreeToggle?: boolean;
 }) {
   const { t } = useTranslation();
@@ -49,6 +52,7 @@ export function FilePanelBar({
           <View style={styles.metadata}>
             <Text
               style={styles.whisper}
+              numberOfLines={1}
               accessibilityLabel={t("panels.file.editor.fileSize", { size: formatFileSize(size) })}
             >
               {formatFileSize(size)}
@@ -111,6 +115,7 @@ export function FilePanelBar({
               options={previewModes}
             />
           ) : null}
+          {children}
           {showTreeToggle ? <FileTreeToggle /> : null}
         </View>
       </PaneContentToolbar>

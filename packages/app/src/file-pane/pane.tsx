@@ -9,7 +9,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
-import { Image as RNImage, ScrollView as RNScrollView, Text, View } from "react-native";
+import { ScrollView as RNScrollView, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -29,6 +29,7 @@ import { useFilePreview } from "./preview-lifecycle/hook";
 import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
+import { FileImagePreview } from "./image-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
@@ -52,7 +53,6 @@ interface FilePreviewBodyProps {
   isMobile: boolean;
   location: WorkspaceFileLocation;
   navigationRevision: number;
-  imagePreviewUri: string | null;
   workspaceRoot: string;
 }
 
@@ -137,7 +137,6 @@ function FilePreviewBody({
   isMobile: _isMobile,
   location,
   navigationRevision,
-  imagePreviewUri,
   workspaceRoot,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
@@ -150,11 +149,6 @@ function FilePreviewBody({
       : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
-
-  const imageSource = useMemo(
-    () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
-    [imagePreviewUri],
-  );
 
   if (isLoading && !preview) {
     return (
@@ -205,34 +199,6 @@ function FilePreviewBody({
         navigationRevision={navigationRevision}
         workspaceRoot={workspaceRoot}
       />
-    );
-  }
-
-  if (preview.kind === "image") {
-    if (!imagePreviewUri) {
-      return (
-        <View style={styles.centerState}>
-          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.previewScrollContainer}>
-        <RNScrollView
-          ref={previewScrollRef}
-          style={styles.previewContent}
-          contentContainerStyle={styles.previewImageScrollContent}
-          showsVerticalScrollIndicator
-        >
-          <RNImage
-            source={imageSource ?? undefined}
-            style={styles.previewImage}
-            resizeMode="contain"
-          />
-        </RNScrollView>
-      </View>
     );
   }
 
@@ -460,6 +426,19 @@ function FilePanePresentation({
     );
   }
 
+  if (preview?.kind === "image") {
+    return (
+      <View style={styles.container} testID="workspace-file-pane">
+        <FileImagePreview
+          key={imagePreviewUri ?? location.path}
+          uri={imagePreviewUri}
+          filename={filename}
+          size={preview.size}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container} testID="workspace-file-pane">
       {preview ? (
@@ -477,7 +456,6 @@ function FilePanePresentation({
         isMobile={isMobile}
         location={location}
         navigationRevision={navigationRevision}
-        imagePreviewUri={imagePreviewUri}
         workspaceRoot={workspaceRoot}
       />
     </View>
@@ -654,7 +632,6 @@ function EditableFilePane({
           isMobile={isMobile}
           location={location}
           navigationRevision={navigationRevision}
-          imagePreviewUri={null}
           workspaceRoot={workspaceRoot}
         />
       )}
@@ -725,15 +702,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   previewCodeScrollContent: {
     padding: theme.spacing[4],
-  },
-  previewImageScrollContent: {
-    flexGrow: 1,
-    padding: theme.spacing[4],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  previewImage: {
-    width: "100%",
-    height: 420,
   },
 }));

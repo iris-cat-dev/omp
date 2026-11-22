@@ -124,6 +124,8 @@ Ordinary local Desktop Files-tree HTML/HTM clicks use the selected external brow
 
 File tabs preview PNG, JPEG, GIF, WebP, SVG, and case-insensitive `.ico` as images rather than binary placeholders.
 
+Images open fitted to the available pane space, keeping their aspect ratio and all edges visible as the pane resizes. Scroll over a detail to zoom toward it, or use **− / +** in the file toolbar. Drag an enlarged image to pan. Click the zoom percentage for **Actual size (100%)**, or choose **Fit to window** to recenter the whole image.
+
 A file tab's **Reveal in Files** opens the right Files panel, expands parents, selects, and scrolls to the file, making hidden files visible if needed. It uses the owning workspace on local/remote hosts and cannot reveal files outside that workspace.
 
 While **Files** is open, changes from terminals, other editors, and agents appear automatically on hosts that support directory watching. This works in non-Git projects and includes newly created empty folders. The panel groups events and rereads only affected expanded directories (both parents for a move if both are expanded). Collapsed folders reread their contents when opened. Older hosts still support manual refresh.

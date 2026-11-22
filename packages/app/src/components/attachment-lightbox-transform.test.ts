@@ -60,6 +60,20 @@ describe("lightboxViewReducer", () => {
     expect(getZoomState(zoomedIn).canZoomIn).toBe(false);
   });
 
+  it("lets the file viewer zoom below fit without losing the fit reset", () => {
+    const fitted = [layout, loaded].reduce(lightboxViewReducer, {
+      ...INITIAL_LIGHTBOX_VIEW,
+      minFitScale: 0.25,
+    });
+    const smaller = lightboxViewReducer(fitted, { type: "zoomBy", factor: 0.1 });
+    expect(getZoomState(smaller)).toMatchObject({ percent: 10, canZoomOut: false });
+    expect(getZoomState(lightboxViewReducer(smaller, { type: "fit" }))).toMatchObject({
+      percent: 40,
+      isFit: true,
+      canZoomOut: true,
+    });
+  });
+
   it("lets images smaller than the window zoom down to 100% and back up to fit", () => {
     // A 400x200 icon fits at 800x400 (200%); 100% is a zoom-out from fit.
     const small = run(layout, { type: "loaded", natural: { width: 400, height: 200 } });
