@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginRuntime, type PluginOmpSessionHost } from "./runtime.js";
 import { inspectPluginPackage, compilePlugin, compilePackageEntries, type InspectedPluginPackage, type CompiledPluginBundles } from "@omp-desktop/plugin/compiler";
-import { PluginDataStore } from "./storage.js";
+import { PluginDataStore, type ApprovalIdentity } from "./storage.js";
 import type { PaseoToolDefinition } from "../agent/tools/types.js";
 import type { PluginAgentPromptSelection } from "@omp-desktop/plugin/server";
 import { SandboxFileLeases } from "./sandbox-file-leases.js";
@@ -30,6 +30,7 @@ export class PluginService {
  private readonly errors=new Map<string,string>();
  private readonly descriptions=new Map<string,InspectedPluginPackage>();
  private readonly bundles=new Map<string,CompiledPluginBundles>();
+ private readonly approvalIdentities = new Map<string, ApprovalIdentity>();
  private readonly listeners=new Set<(id:string)=>void>();
  private readonly operations=new Map<string,Promise<unknown>>();
  private readonly epochs=new Map<string,number>();
@@ -71,18 +72,48 @@ export class PluginService {
   }
  }
  private approved(id:string,info:InspectedPluginPackage){
-  const source=this.source(id);
-  if(source.trustRevoked===true)return false;
-  if(!source.approval)return info.format==="legacy" && this.inheritedTrust.has(id);
-  return source.approval.version===info.version && info.capabilities.every(cap=>source.approval!.capabilities.includes(cap));
+  const source = this.source(id);
+  const approval = source.approval;
+  const identity = this.approvalIdentities.get(id);
+  return source.trustRevoked !== true && !!approval && !!identity &&
+   identity.sourcePath === path.resolve(source.path) && identity.sourcePath === info.directory &&
+   identity.packageId === info.id && identity.format === info.format &&
+   info.capabilities.every(capability => approval.capabilities.includes(capability));
  }
- private grants(id:string){const source=this.source(id);return source.trustRevoked===true?[]:source.approval?.capabilities??[];}
+ private grants(id: string): string[] {
+  const info = this.descriptions.get(id);
+  return info && this.approved(id, info) ? info.capabilities : [];
+ }
+ private bindApproval(id: string, info: InspectedPluginPackage): void {
+  const identity = { packageId: info.id, sourcePath: info.directory, format: info.format };
+  this.data.bindApproval(id, identity);
+  this.approvalIdentities.set(id, identity);
+ }
  private async discover(id:string){
   try{
-   const info=await inspectPluginPackage(path.resolve(this.source(id).path));
+   const directory = path.resolve(this.source(id).path);
+   const info = await inspectPluginPackage(directory);
+   const source = this.source(id);
+   if (path.resolve(source.path) !== directory) throw new Error("Plugin source changed during discovery");
    if(info.metadata?.owner==="desktop")throw new Error("Install Desktop-owned packages in the local Desktop profile");
    this.descriptions.set(id,info);
-   if(info.format==="legacy"&&!this.source(id).approval&&this.inheritedTrust.has(id)&&this.source(id).trustRevoked!==true)this.patchSource(id,{...this.source(id),approval:{trusted:true,version:"legacy",capabilities:[]}});
+   const identity = this.data.approvalIdentity(id);
+   if (identity) this.approvalIdentities.set(id, identity);
+   else this.approvalIdentities.delete(id);
+   if (!identity && source.trustRevoked !== true) {
+    const approval = source.approval;
+    if (info.format === "legacy" && !approval && this.inheritedTrust.has(id)) {
+     this.bindApproval(id, info);
+     this.patchSource(id, {...source, approval:{trusted:true,version:"legacy",capabilities:[]}});
+    } else if (approval && info.capabilities.every(capability => approval.capabilities.includes(capability))) {
+     // Old approvals lack a package ID. The default installation ID identifies an
+     // upgraded package; for aliases, the old version must still be present to bind it.
+     const samePackage = info.format === "legacy"
+      ? approval.version === "legacy"
+      : approval.version !== "legacy" && (approval.version === info.version || id === info.id);
+     if (samePackage) this.bindApproval(id, info);
+    }
+   }
    if(this.approved(id,info)){
     const bundles=info.format==="legacy"?await compilePlugin(info.serviceEntry!):await compilePackageEntries(info);
     this.bundles.set(id,bundles);
@@ -96,8 +127,8 @@ export class PluginService {
   return Object.entries(this.configStore.get().plugins??{}).filter(([,source])=>source.bundled!==true).map(([id,source]):DesktopPluginCatalogEntry=>{
    const info=this.descriptions.get(id);const enabled=source.enabled!==false;const trusted=info?this.approved(id,info):false;
    const waitingReason=this.runtime.waitingReason?.(id);const error=this.errors.get(id);
-   const status=!enabled||!this.pluginsEnabled()?"disabled":error?"failed":waitingReason?"waiting":running.has(id)||trusted&&info?.format==="package"&&!info.serviceEntry?"running":this.starting.has(id)?"starting":trusted?"waiting":"disabled";
-   return {id,packageId:info?.id??id,owner:"daemon" as const,version:info?.version??"unknown",generation:this.runtime.generation?.(id)??this.epochs.get(id)??0,installed:source.installed!==false,bundled:source.bundled===true,enabled,effectiveEnabled:source.installed!==false&&enabled&&this.pluginsEnabled()&&trusted,source:{type:"directory" as const,path:source.path},format:info?.format??"legacy",metadata:info?.metadata??null,declaredCapabilities:info?.capabilities??[],grantedCapabilities:this.grants(id),trusted,status,error,waitingReason:waitingReason??(enabled&&this.pluginsEnabled()&&!trusted?"Execution trust or capability approval required":undefined),clientBundle:source.installed===false?undefined:this.bundles.get(id)?.clientBundle,revision:this.revision};
+   const status=!enabled||!this.pluginsEnabled()?"disabled":error?"failed":!trusted?"disabled":waitingReason?"waiting":running.has(id)||info?.format==="package"&&!info.serviceEntry?"running":this.starting.has(id)?"starting":"waiting";
+   return {id,packageId:info?.id??id,owner:"daemon" as const,version:info?.version??"unknown",generation:this.runtime.generation?.(id)??this.epochs.get(id)??0,installed:source.installed!==false,bundled:source.bundled===true,enabled,effectiveEnabled:source.installed!==false&&enabled&&this.pluginsEnabled()&&trusted,source:{type:"directory" as const,path:source.path},format:info?.format??"legacy",metadata:info?.metadata??null,declaredCapabilities:info?.capabilities??[],grantedCapabilities:this.grants(id),trusted,status,error,waitingReason:enabled&&this.pluginsEnabled()&&!trusted?"Execution trust or capability approval required":waitingReason,clientBundle:source.installed!==false&&trusted?this.bundles.get(id)?.clientBundle:undefined,revision:this.revision};
   }).sort((a,b)=>a.id.localeCompare(b.id));
  }
  listPlugins():PluginListItem[]{return this.catalog().map(item=>({...item,path:item.source.path}));}
@@ -112,6 +143,7 @@ export class PluginService {
   return this.enqueue(id,async()=>{
    const previous=this.configStore.get().plugins?.[id];
    if(previous&&previous.bundled!==true&&previous.installed!==false)throw new Error(`Plugin ID "${id}" is already configured; choose another ID with --id`);
+   this.bindApproval(id, info);
    this.configStore.patch({plugins:{...this.configStore.get().plugins,[id]:{source:"directory",path:directory,enabled:input.enabled??true,installed:true,approval}}});
    await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);
   });
@@ -120,7 +152,9 @@ export class PluginService {
   if(this.source(id).path!==expectedInstallation.sourcePath||(this.runtime.generation?.(id)??0)!==expectedInstallation.generation)throw new Error("Plugin installation changed during trust approval");
   const info=await inspectPluginPackage(path.resolve(this.source(id).path));
   if(this.source(id).path!==expectedInstallation.sourcePath||info.id!==expectedInstallation.packageId||(this.runtime.generation?.(id)??0)!==expectedInstallation.generation)throw new Error("Plugin installation changed during trust approval");
+  if(info.metadata?.owner==="desktop")throw new Error("Install Desktop-owned packages in the local Desktop profile");
   if(approval.version!==info.version||info.capabilities.some(cap=>!approval.capabilities.includes(cap))||approval.capabilities.some(cap=>!info.capabilities.includes(cap)))throw new Error("Approval does not match current package version/capabilities");
+  this.bindApproval(id, info);
   this.patchSource(id,{...this.source(id),approval,trustRevoked:false});this.revoke(id);await this.runtime.stopPluginById(id);await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.catalog().find(item=>item.id===id)!;
  });}
  async revokePluginTrust(id:string){this.patchSource(id,{...this.source(id),trustRevoked:true});this.revoke(id);this.bundles.delete(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.notify(id);return this.catalog().find(item=>item.id===id)!;});}
@@ -128,7 +162,7 @@ export class PluginService {
  async enablePlugin(id:string){if(this.source(id).installed===false)throw new Error("Plugin is not installed");this.patchSource(id,{...this.source(id),enabled:true});return this.enqueue(id,async()=>{if(this.runtime.catalog().some(plugin=>plugin.id===id)&&!this.managementWorkers.has(id)){this.notify(id);return this.item(id);}await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);});}
  async disablePlugin(id:string){this.patchSource(id,{...this.source(id),enabled:false});this.revoke(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.errors.delete(id);this.notify(id);return this.item(id);});}
  async reloadPlugin(id:string){this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);return this.enqueue(id,async()=>{await stopping;this.errors.delete(id);await this.discover(id);if(this.canRun(id))await this.activate(id);this.notify(id);return this.item(id);});}
- async removePlugin(id:string){this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);const plugins={...this.configStore.get().plugins};delete plugins[id];this.configStore.patch({plugins});await this.enqueue(id,async()=>{await stopping;this.runtime.clearLogs(id);this.errors.delete(id);this.descriptions.delete(id);this.bundles.delete(id);this.notify(id);});}
+ async removePlugin(id:string){this.source(id);this.revoke(id);const stopping=this.runtime.stopPluginById(id);const plugins={...this.configStore.get().plugins};delete plugins[id];this.configStore.patch({plugins});await this.enqueue(id,async()=>{await stopping;this.data.clearApprovalIdentity(id);this.approvalIdentities.delete(id);this.runtime.clearLogs(id);this.errors.delete(id);this.descriptions.delete(id);this.bundles.delete(id);this.notify(id);});}
  async invokePluginRpc(id:string,method:string,input:unknown,generation:number){
   this.source(id);
   if(method.startsWith("agent-tool.")||method.startsWith("agent-prompt."))throw new Error("Agent bridge methods require authenticated host caller context");

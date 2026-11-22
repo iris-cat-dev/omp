@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -228,4 +228,104 @@ export default function contribute(plugin) {
     await client.close().catch(() => undefined);
     await daemon.close();
   }
+}, 60_000);
+
+test("a folder plugin keeps host trust across upgrades of the same package ID", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "omp-plugin-upgrade-"));
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "omp-plugin-upgrade-home-"));
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  const staticDir = path.join(paseoHomeRoot, "static");
+  roots.push(pluginDirectory, paseoHomeRoot);
+  await mkdir(paseoHome, { recursive: true });
+  await mkdir(staticDir);
+  const manifest = (version: string, capabilities: string[], id = "qqbot") =>
+    writeFile(path.join(pluginDirectory, "package.json"), JSON.stringify({
+      version,
+      ompDesktop: { apiVersion: 1, id, owner: "daemon", entries: { service: "./service.mjs" }, capabilities },
+    }));
+  await writeFile(path.join(pluginDirectory, "service.mjs"), `
+import { defineRpc } from "@omp-desktop/plugin/server";
+import { z } from "zod";
+const version = defineRpc({ name: "version", input: z.object({}), output: z.string() });
+export default function setup(ctx) { ctx.handle(version, () => ctx.installation.version); }`);
+  const capabilities = ["agents.events"];
+  const plugins = {
+    qqbot: {
+      source: "directory" as const,
+      path: pluginDirectory,
+      enabled: true,
+      approval: { trusted: true as const, version: "0.7.2", capabilities },
+    },
+  };
+  const configPath = path.join(paseoHome, "config.json");
+  await writeFile(configPath, JSON.stringify({ version: 1, pluginsEnabled: true, plugins }));
+  await manifest("0.7.3", capabilities);
+
+  async function withDaemon(
+    sources: typeof plugins,
+    run: (client: DaemonClient) => Promise<void>,
+  ): Promise<void> {
+    const daemon = await createTestPaseoDaemon({
+      paseoHomeRoot, staticDir, cleanup: false, pluginsEnabled: true, plugins: sources,
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.4.0" });
+    try {
+      await client.connect();
+      await run(client);
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.close();
+    }
+  }
+
+  await withDaemon(plugins, async (client) => {
+    const entry = async () => (await client.getPluginCatalog())[0];
+    await expect.poll(entry).toMatchObject({
+      id: "qqbot", version: "0.7.3", trusted: true, status: "running",
+    });
+    await expect(client.invokePluginRpc("qqbot", "version", {}, (await entry())!.generation))
+      .resolves.toBe("0.7.3");
+
+    await manifest("0.7.4", []);
+    await expect(client.reloadPlugin("qqbot")).resolves.toMatchObject({
+      version: "0.7.4", trusted: true, status: "running", grantedCapabilities: [],
+    });
+
+    const expanded = [...capabilities, "agents.prompt"];
+    await manifest("0.7.5", expanded);
+    await expect(client.reloadPlugin("qqbot")).resolves.toMatchObject({
+      version: "0.7.5", trusted: false, effectiveEnabled: false, status: "disabled",
+    });
+    const blocked = (await entry())!;
+    const expected = { sourcePath: blocked.source.path, packageId: blocked.packageId, generation: blocked.generation };
+    await expect(client.invokePluginRpc("qqbot", "version", {}, blocked.generation))
+      .rejects.toThrow(/execution trust is required/i);
+    await expect(client.approvePlugin("qqbot", { trusted: true, version: "0.7.4", capabilities: expanded }, expected))
+      .rejects.toThrow(/current package version/);
+    await expect(client.approvePlugin("qqbot", { trusted: true, version: "0.7.5", capabilities: expanded }, expected))
+      .resolves.toMatchObject({ trusted: true, status: "running" });
+  });
+
+  const saved = JSON.parse(await readFile(configPath, "utf8")).plugins as typeof plugins;
+  const moved = path.join(paseoHomeRoot, "other-plugin-source");
+  await cp(pluginDirectory, moved, { recursive: true });
+  await withDaemon({ qqbot: { ...saved.qqbot, path: moved } }, async (client) => {
+    await expect.poll(async () => (await client.getPluginCatalog())[0]).toMatchObject({
+      id: "qqbot", packageId: "qqbot", version: "0.7.5", trusted: false, status: "disabled",
+    });
+  });
+
+  await manifest("0.7.5", saved.qqbot.approval.capabilities, "replacement");
+  await withDaemon(saved, async (client) => {
+    await expect.poll(async () => (await client.getPluginCatalog())[0]).toMatchObject({
+      id: "qqbot", packageId: "replacement", trusted: false, status: "disabled",
+    });
+    await manifest("0.7.6", capabilities);
+    await expect(client.reloadPlugin("qqbot")).resolves.toMatchObject({ trusted: true, status: "running" });
+    await client.revokePluginTrust("qqbot");
+    await manifest("0.7.7", capabilities);
+    await expect(client.reloadPlugin("qqbot")).resolves.toMatchObject({
+      enabled: true, version: "0.7.7", trusted: false, effectiveEnabled: false, status: "disabled",
+    });
+  });
 }, 60_000);

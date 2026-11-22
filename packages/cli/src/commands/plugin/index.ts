@@ -75,7 +75,7 @@ async function install(
   options: PluginOptions,
   _command: Command,
 ): Promise<SingleResult<PluginListItem>> {
-  if(options.trust!==true)throw new Error("Plugin code runs with your user privileges; pass --trust to approve this source/version and declared capabilities");
+  if(options.trust!==true)throw new Error("Plugin code runs with your user privileges; pass --trust to approve this plugin source and its declared capabilities");
   const data = await withPluginManagementClient(options.host, (client) =>
     client.installDirectoryPlugin(directory, options.id, {trusted:true,enabled:options.disabled!==true}),
   );
@@ -128,7 +128,7 @@ export function createPluginCommand(): Command {
       .description("Install a local plugin directory")
       .argument("<directory>", "Host filesystem directory")
       .option("--id <id>", "Runtime installation ID (defaults to manifest/package id)")
-      .requiredOption("--trust", "Trust executable code from this source/version and approve declared capabilities")
+      .requiredOption("--trust", "Trust this plugin source and approve its declared capabilities")
       .option("--disabled", "Install without activating this installation"),
   ).action(withOutput(install));
   for (const action of ["reload", "enable", "disable"] as const) {
@@ -147,7 +147,7 @@ export function createPluginCommand(): Command {
     const data=await withPluginManagementClient(options.host,client=>client.inspectDirectoryPlugin(directory));
     return {type:"single" as const,data,schema:{idField:"id" as const,columns:[{header:"PLUGIN",field:"id" as const},{header:"VERSION",field:"version" as const}]}};
   }));
-  addJsonAndDaemonHostOptions(plugin.command("approve").description("Approve the installed source/version and capabilities").argument("<id>").requiredOption("--trust","Approve executable plugin code")).action(withOutput(async(id:string,options:PluginOptions,_command:Command)=>{
+  addJsonAndDaemonHostOptions(plugin.command("approve").description("Approve the installed plugin source and its declared capabilities").argument("<id>").requiredOption("--trust","Approve executable plugin code")).action(withOutput(async(id:string,options:PluginOptions,_command:Command)=>{
     const data=await withPluginManagementClient(options.host,async client=>{const entry=(await client.getPluginCatalog()).find(entry=>entry.id===id);if(!entry)throw new Error(`Plugin is not configured: ${id}`);return client.approvePlugin(id,{trusted:true,version:entry.version,capabilities:entry.declaredCapabilities},{sourcePath:entry.source.path,packageId:entry.packageId,generation:entry.generation});});
     return {type:"single" as const,data:{...data,path:data.source.path},schema:pluginSchema};
   }));
