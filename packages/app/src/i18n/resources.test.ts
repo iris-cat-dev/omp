@@ -238,7 +238,8 @@ describe("translation resources", () => {
     expect(en.agentControls.features.title).toBe("Features");
     expect(en.agentControls.mode.title).toBe("Mode");
     expect(en.agentStream.permission.required).toBe("Permission Required");
-    expect(en.agentStream.permission.proposedPlan).toBe("Proposed plan");
+    expect(en.agentStream.permission.numberedPlan).toBe("Plan {{number}}");
+    expect(zhCN.agentStream.permission.numberedPlan).toBe("计划 {{number}}");
     expect(en.agentPanel.unavailable.selectedHost).toBe("Selected host");
     expect(en.agentPanel.states.notFound).toBe("Agent not found");
     expect(en.panels.draft.newAgent).toBe("New Agent");

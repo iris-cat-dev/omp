@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   AgentFeature,
@@ -22,7 +22,11 @@ import {
 import type { SupportedLocale } from "@/i18n/locales";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import { findModelByReference, getModelDraftFeatures } from "@/provider-selection/model-catalog";
-import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import {
+  PROVIDER_FEATURES_GC_TIME_MS,
+  PROVIDER_FEATURES_STALE_TIME_MS,
+  providerFeaturesQueryRoot,
+} from "@/data/provider-features";
 
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
@@ -34,7 +38,7 @@ export interface DraftAgentFeaturesResult {
   featureValues: Record<string, unknown> | undefined;
   isLoading: boolean;
   metadataStatus: "loading" | "error" | "ready";
-  retryMetadata: () => void;
+  ensureMetadata: () => void;
   setFeatureValue: (featureId: string, value: unknown) => void;
 }
 
@@ -57,25 +61,6 @@ export function useDraftAgentFeatures(input: {
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
-  const queryClient = useQueryClient();
-  const catalogKey = useMemo(() => providersSnapshotQueryKey(serverId ?? null), [serverId]);
-  const subscribeCatalog = useCallback(
-    (onChange: () => void) =>
-      queryClient.getQueryCache().subscribe((event) => {
-        if (event.query.queryKey[0] === catalogKey[0] && event.query.queryKey[1] === catalogKey[1])
-          onChange();
-      }),
-    [catalogKey, queryClient],
-  );
-  const readCatalogRevision = useCallback(
-    () => queryClient.getQueryState(catalogKey)?.dataUpdateCount ?? 0,
-    [catalogKey, queryClient],
-  );
-  const catalogRevision = useSyncExternalStore(
-    subscribeCatalog,
-    readCatalogRevision,
-    readCatalogRevision,
-  );
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
   const previousProviderRef = useRef<AgentProvider | null>(normalizedProvider);
@@ -115,25 +100,37 @@ export function useDraftAgentFeatures(input: {
         : null,
     [modelId, provider, providerEntries],
   );
+  const modelCapabilities = useMemo(
+    () =>
+      JSON.stringify([
+        selectedModel?.metadata?.provider,
+        selectedModel?.metadata?.modelId,
+        selectedModel?.metadata?.serviceTiers,
+        getModelDraftFeatures(selectedModel)?.map((feature) => [
+          feature.id,
+          feature.type,
+          ...(feature.type === "select" ? [feature.options.map((option) => option.id)] : []),
+        ]),
+      ]),
+    [selectedModel],
+  );
 
   const featuresQuery = useQuery({
     queryKey: [
-      "providerFeatures",
-      serverId ?? null,
-      normalizedProvider,
+      ...providerFeaturesQueryRoot(serverId ?? null, normalizedProvider ?? undefined),
       normalizedCwd || null,
       modeId ?? null,
       modelId ?? null,
       thinkingOptionId ?? null,
       account,
-      catalogRevision,
+      modelCapabilities,
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
-    // Reconfirm the server's runtime/profile/account/config fingerprint on each
-    // consumer mount. Only the backend can safely reuse native evidence.
-    staleTime: 0,
+    staleTime: PROVIDER_FEATURES_STALE_TIME_MS,
+    gcTime: PROVIDER_FEATURES_GC_TIME_MS,
+    refetchOnMount: true,
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -270,9 +267,23 @@ export function useDraftAgentFeatures(input: {
     ],
   );
   const refetchMetadata = featuresQuery.refetch;
-  const retryMetadata = useCallback(() => {
-    void refetchMetadata();
-  }, [refetchMetadata]);
+  const ensureMetadata = useCallback(() => {
+    if (
+      isConnected &&
+      draftConfig &&
+      !featuresQuery.isFetching &&
+      (featuresQuery.isStale || featuresQuery.isError)
+    ) {
+      void refetchMetadata();
+    }
+  }, [
+    draftConfig,
+    featuresQuery.isError,
+    featuresQuery.isFetching,
+    featuresQuery.isStale,
+    isConnected,
+    refetchMetadata,
+  ]);
   const metadataStatus = useMemo<DraftAgentFeaturesResult["metadataStatus"]>(() => {
     if (!isConnected) return "error";
     if (featuresQuery.isFetching || featuresQuery.isPending) return "loading";
@@ -285,7 +296,7 @@ export function useDraftAgentFeatures(input: {
     featureValues: effectiveFeatureValues,
     isLoading: featuresQuery.isLoading,
     metadataStatus,
-    retryMetadata,
+    ensureMetadata,
     setFeatureValue,
   };
 }

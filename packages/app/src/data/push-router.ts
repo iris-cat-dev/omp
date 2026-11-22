@@ -1,3 +1,4 @@
+import equal from "fast-deep-equal";
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
 import type {
   ListTerminalsResponse,
@@ -8,6 +9,7 @@ import type { ProviderSnapshotEntry } from "@omp-desktop/protocol/agent-types";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
+import { providerFeaturesQueryRoot } from "@/data/provider-features";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providerSnapshotCache, type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import {
@@ -34,7 +36,9 @@ type ServerDataEventType =
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
-  | "terminals_changed";
+  | "terminals_changed"
+  | "omp.provider.login.completed"
+  | "omp.install.response";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -110,6 +114,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
       void queryClient.invalidateQueries({
         queryKey: providersSnapshotQueryRoot(serverId),
       });
+    },
+  },
+  {
+    domain: "providerFeatures",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: providerFeaturesQueryRoot(serverId) });
     },
   },
   {
@@ -314,6 +324,18 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       message,
     });
   });
+  const unsubscribeOmpLogin = input.client.on("omp.provider.login.completed", () => {
+    void input.queryClient.invalidateQueries({
+      queryKey: providerFeaturesQueryRoot(input.serverId, "omp"),
+    });
+  });
+  const unsubscribeOmpInstall = input.client.on("omp.install.response", ({ payload }) => {
+    if (payload.updatePhase === "complete") {
+      void input.queryClient.invalidateQueries({
+        queryKey: providerFeaturesQueryRoot(input.serverId, "omp"),
+      });
+    }
+  });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
       activeCheckoutDiffSubscriptions,
@@ -360,6 +382,8 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeQueryCache();
     unsubscribeProviders();
     unsubscribeDaemonConfig();
+    unsubscribeOmpLogin();
+    unsubscribeOmpInstall();
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
@@ -461,10 +485,18 @@ function applyDaemonConfigStatus(input: {
   if (!isDaemonConfigChangedPayload(payload)) {
     return;
   }
+  const previous = input.queryClient.getQueryData<MutableDaemonConfig>(
+    daemonConfigQueryKey(input.serverId),
+  );
   input.queryClient.setQueryData<MutableDaemonConfig>(
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+  if (!previous || !equal(previous.providers, payload.config.providers)) {
+    void input.queryClient.invalidateQueries({
+      queryKey: providerFeaturesQueryRoot(input.serverId),
+    });
+  }
   void input.queryClient.invalidateQueries({
     queryKey: daemonPairingOfferQueryKey(input.serverId),
   });

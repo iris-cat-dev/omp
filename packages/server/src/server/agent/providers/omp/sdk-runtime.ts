@@ -175,6 +175,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       const session = await startOmpRpcSession({
         launch,
         enableAskDialog: !input.sandbox,
+        enableNativePlan: !input.sandbox && !input.noSession,
         // This is our Node host, not an external provider command. The shared
         // transport's default spawn strips ELECTRON_RUN_AS_NODE, which makes a
         // packaged Desktop executable re-enter its GUI/CLI dispatch instead.
@@ -282,6 +283,7 @@ export class OmpSdkRuntime implements OmpRuntime {
       protocolMode: launch.protocolMode,
       model: launch.model,
       desktopPluginPrompts: !input.sandbox,
+      desktopPlanMode: !input.sandbox && !input.noSession,
       thinkingOptionId: input.thinkingOptionId,
       session: input.session,
       noSession: input.noSession,

@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Platform, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Zap } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -295,6 +295,7 @@ function FastModeSelectSetting({
 }) {
   const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
+  const noticeId = useId();
   const [open, setOpen] = useState(false);
   const options = useMemo<ComboboxOption[]>(
     () =>
@@ -340,6 +341,7 @@ function FastModeSelectSetting({
               value: selectedLabel,
             })}
             accessibilityHint={notice}
+            aria-describedby={Platform.OS === "web" ? noticeId : undefined}
             testID="model-settings-fast-mode"
           />
         </TooltipTrigger>
@@ -347,7 +349,7 @@ function FastModeSelectSetting({
           <Text style={styles.tooltipText}>{`${title}: ${selectedLabel}. ${notice}`}</Text>
         </TooltipContent>
       </Tooltip>
-      <Text style={styles.speedNotice} testID="model-settings-fast-mode-notice">
+      <Text nativeID={noticeId} style={styles.speedNotice} testID="model-settings-fast-mode-notice">
         {notice}
       </Text>
       <Combobox

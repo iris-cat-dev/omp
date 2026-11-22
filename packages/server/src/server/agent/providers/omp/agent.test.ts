@@ -48,21 +48,6 @@ function workflowDisplayRequests(requests: Array<{ message: string; imageCount: 
   }));
 }
 
-const OMP_PLAN_TURN_DIRECTIVE = `<system-directive>
-Plan mode active for this turn. The working tree and system are read-only: NEVER create, edit, delete, or rename files, and NEVER run state-changing commands. You may inspect with read-only tools. Produce or refine the requested plan only.
-</system-directive>`;
-const OMP_STANDARD_TURN_DIRECTIVE = `<system-directive>
-Plan mode is inactive for this turn. All earlier per-turn Plan mode directives have expired. Follow the current user request normally; working-tree changes are permitted subject to the active tool-approval policy.
-</system-directive>`;
-
-function planTurnPrompt(prompt: string): string {
-  return `${OMP_PLAN_TURN_DIRECTIVE}\n\n${prompt}`;
-}
-
-function standardTurnPrompt(prompt: string): string {
-  return `${OMP_STANDARD_TURN_DIRECTIVE}\n\n${prompt}`;
-}
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -1406,7 +1391,7 @@ describe("OMP agent client and session", () => {
   });
 
   test.each([
-    ["plan", planTurnPrompt("design the change")],
+    ["plan", "design the change"],
     ["goal", "/goal design the change"],
   ] as const)(
     "starts OMP native %s workflow with the first prompt",
@@ -1884,10 +1869,7 @@ describe("OMP agent client and session", () => {
     await omp.setFeature("workflow_mode", "enhanced");
     await omp.runPrompt("implement it", "done");
 
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("draft a plan"),
-      standardTurnPrompt("implement it"),
-    ]);
+    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["draft a plan", "implement it"]);
     expect(omp.features()).toEqual([
       expect.objectContaining({ id: "workflow_mode", value: "enhanced" }),
     ]);
@@ -2172,149 +2154,101 @@ describe("OMP agent client and session", () => {
     });
   });
 
-  test("applies a selected plan workflow to every planning message", async () => {
+  test("separates planning conversation from the submitted artifact and approves its exact ID", async () => {
     const omp = new OmpHarness();
-    await omp.start({ modeId: "ask" });
+    await omp.start({ modeId: "ask", featureValues: { workflow_mode: "plan" } });
+    const runtime = omp.runtime();
 
-    await omp.setFeature("workflow_mode", "plan");
-    await omp.runPrompt("inspect first", "ready");
-    await omp.runPrompt("refine the plan", "refined");
-
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("inspect first"),
-      planTurnPrompt("refine the plan"),
-    ]);
-    expect(
-      omp
-        .timeline()
-        .filter((item) => item.type === "user_message")
-        .map((item) => item.text),
-    ).toEqual(["inspect first"]);
-    await expect(omp.currentMode()).resolves.toBe("ask");
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "plan" }),
-    ]);
-  });
-
-  test("returns to standard workflow before the next message", async () => {
-    const omp = new OmpHarness();
-    await omp.start({
-      modeId: "ask",
-      featureValues: { workflow_mode: "plan" },
-    });
-    await omp.runPrompt("make a plan", "ready");
-
-    await omp.setFeature("workflow_mode", "standard");
-    await omp.runPrompt("continue normally", "done");
-
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("make a plan"),
-      standardTurnPrompt("continue normally"),
-    ]);
-  });
-
-  test("keeps applying plan workflow after continuing planning", async () => {
-    const omp = new OmpHarness();
-    await omp.start({
-      modeId: "ask",
-      featureValues: { workflow_mode: "plan" },
-    });
-
-    const { completion } = await omp.startPromptWithEmptyAgentEnd(
-      "draft the change",
-      "# Initial plan",
-    );
-    await completion;
-    await omp.respondToPermission("omp-plan-approval", {
-      behavior: "deny",
-      selectedActionId: "continue-planning",
-    });
-
-    await omp.runPrompt("add rollback steps", "# Refined plan");
-
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("draft the change"),
-      planTurnPrompt("add rollback steps"),
-    ]);
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "plan" }),
-    ]);
-  });
-
-  test("publishes workflow changes inferred from legacy plan command output", async () => {
-    const omp = new OmpHarness();
-    await omp.start({ featureValues: { workflow_mode: "plan" } });
-
-    omp.runtime().emit({ type: "command_output", text: "Plan mode disabled" });
-    omp.runtime().emit({ type: "command_output", text: "Plan mode disabled" });
-
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "standard" }),
-    ]);
-    expect(omp.eventTypes().filter((type) => type === "features_changed")).toHaveLength(1);
-
-    omp.runtime().emit({ type: "command_output", text: "Plan mode enabled" });
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "plan" }),
-    ]);
-    expect(omp.eventTypes().filter((type) => type === "features_changed")).toHaveLength(2);
-  });
-  test("publishes streamed plans for approval when the terminal message has no text", async () => {
-    const omp = new OmpHarness();
-    await omp.start({
-      modeId: "ask",
-      featureValues: { workflow_mode: "plan" },
-    });
-
-    const { completion } = await omp.startPromptWithEmptyAgentEnd(
-      "design the change",
-      "# Implementation plan\n\n1. Inspect\n2. Edit",
-    );
-    await completion;
+    await omp.runPrompt("design the change", "I checked the migration; the plan is ready.");
+    expect(omp.pendingPermissions()).toEqual([]);
     expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
-      expect.objectContaining({
-        presentation: "plan",
-      }),
+      { type: "assistant_message", text: "I checked the migration; the plan is ready.", messageId: "omp-assistant-1" },
     ]);
+
+    const review = {
+      id: "review-a",
+      title: "Migration",
+      path: "local://migration-plan.md",
+      markdown: "# Migration\n\n1. Inspect\n2. Edit",
+    };
+    runtime.submitPlan(review);
+    expect(omp.timeline().at(-1)).toEqual({
+      type: "tool_call",
+      callId: review.id,
+      name: "plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: review.markdown, title: review.title, path: review.path },
+    });
     expect(omp.pendingPermissions()).toEqual([
       expect.objectContaining({
-        id: "omp-plan-approval",
+        id: review.id,
         kind: "plan",
-        input: { plan: "# Implementation plan\n\n1. Inspect\n2. Edit" },
-        metadata: { planMessageId: expect.any(String) },
+        input: { plan: review.markdown },
+        metadata: { planReviewId: review.id },
       }),
     ]);
 
-    const result = await omp.respondToPermission("omp-plan-approval", {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
+    await omp.runPrompt("Add rollback steps.", "I revised the plan.");
+    expect(omp.pendingPermissions()).toEqual([]);
+    const revision = { ...review, id: "review-b", markdown: `${review.markdown}\n3. Roll back` };
+    runtime.submitPlan(revision);
+    await expect(omp.respondToPermission(review.id, { behavior: "allow" })).rejects.toThrow("No pending permission");
+    await expect(omp.respondToPermission(revision.id, { behavior: "allow", selectedActionId: "implement" })).resolves.toBeUndefined();
 
-    expect(result).toEqual({
-      followUpPrompt:
-        "The plan is approved. Exit planning and implement it now. Use tools and modify the working tree as required.",
-    });
-    expect(omp.handoffRequests()).toEqual([]);
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("design the change"),
+    expect(runtime.planDecisions).toEqual([
+      { reviewId: review.id, choice: "refine" },
+      { reviewId: revision.id, choice: "approve" },
     ]);
-    if (typeof result?.followUpPrompt !== "string") {
-      throw new Error("Expected approved plan follow-up prompt");
-    }
-    await omp.runPrompt(result.followUpPrompt, "Implementation complete");
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("design the change"),
-      standardTurnPrompt(
-        "The plan is approved. Exit planning and implement it now. Use tools and modify the working tree as required.",
-      ),
-    ]);
+    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["design the change", "Add rollback steps."]);
     expect(omp.pendingPermissions()).toEqual([]);
     expect(omp.features()).toEqual([
       expect.objectContaining({ id: "workflow_mode", value: "standard" }),
     ]);
+    await expect(omp.currentMode()).resolves.toBe("ask");
+  });
 
-    await omp.runPrompt("answer a follow-up", "Follow-up complete");
-    expect(omp.recordedPrompts().at(-1)?.message).toBe("answer a follow-up");
+  test("leaving Plan dismisses the pending review without starting implementation", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_mode: "plan" } });
+    const runtime = omp.runtime();
+    runtime.submitPlan({ id: "old", title: "Draft", path: "local://draft-plan.md", markdown: "# Draft" });
+    await omp.setFeature("workflow_mode", "standard");
+    await omp.runPrompt("continue normally", "done");
+
+    expect(runtime.planState).toEqual({ enabled: false });
+    expect(runtime.planDecisions).toEqual([]);
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["continue normally"]);
+  });
+
+  test("consumes an approved plan even if implementation could not start", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_mode: "plan" } });
+    const runtime = omp.runtime();
+    runtime.submitPlan({
+      id: "approved-review",
+      title: "Draft",
+      path: "local://draft-plan.md",
+      markdown: "# Draft",
+    });
+    const resolvePlan = runtime.plan.resolve;
+    vi.spyOn(runtime.plan, "resolve").mockImplementation(async (...args) => ({
+      ...(await resolvePlan(...args)),
+      executionError: "Plan approved, but execution did not start: model unavailable",
+    }));
+    await omp.respondToPermission("approved-review", { behavior: "allow" });
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.timeline().at(-1)).toEqual({
+      type: "error",
+      message: "Plan approved, but execution did not start: model unavailable",
+    });
+    await expect(omp.respondToPermission("approved-review", { behavior: "allow" })).rejects.toThrow(
+      "No pending permission request",
+    );
+    expect(omp.features()).toEqual([
+      expect.objectContaining({ id: "workflow_mode", value: "standard" }),
+    ]);
   });
 
   test("deleting an empty pending goal does not send /goal drop", async () => {
@@ -2960,8 +2894,8 @@ describe("OMP agent client and session", () => {
     await standardPrompt.completion;
 
     expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      planTurnPrompt("draft locally"),
-      standardTurnPrompt("implement locally"),
+      "draft locally",
+      "implement locally",
     ]);
     expect(
       omp
@@ -3545,65 +3479,42 @@ describe("OMP agent client and session", () => {
     }
   });
 
-  test("a restored native extension command does not consume the next ordinary prompt's stale-plan reset", async () => {
-    const omp = new OmpHarness();
-    omp.queueCommands([{ name: "wechat", source: "extension" }]);
+  test("restores the pending native revision and keeps subsequent feedback in Plan mode", async () => {
+    const review = {
+      id: "restored-review",
+      title: "Migration",
+      path: "local://migration-plan.md",
+      markdown: "## Rollback\n\nRestore the previous schema.",
+    };
+    const omp = new OmpHarness({ initialPlanState: { enabled: true, review } });
     await omp.resume({
-      user: { id: "old-plan", text: planTurnPrompt("draft the migration") },
-      assistant: { id: "old-plan-answer", text: "migration planned" },
+      user: { id: "user-plan-history", text: "draft the migration" },
+      assistant: { id: "assistant-plan-history", text: "migration plan restored" },
     });
-    await omp.runPromptWithoutTurn("/wechat status");
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["/wechat status"]);
-    omp.runtime().promptAck = {};
-    await omp.runPrompt("implement the migration", "implementation complete");
-    expect(omp.recordedPrompts().at(-1)?.message).toBe(
-      standardTurnPrompt("implement the migration"),
-    );
-    expect(omp.timeline().findLast((item) => item.type === "assistant_message")).toMatchObject({
-      text: "implementation complete",
-    });
+    expect(omp.pendingPermissions()).toEqual([
+      expect.objectContaining({ id: review.id, input: { plan: review.markdown } }),
+    ]);
+    expect(omp.timeline()).toEqual([]);
+    expect(omp.features()).toEqual([expect.objectContaining({ id: "workflow_mode", value: "plan" })]);
+
+    await omp.runPrompt("add rollback steps", "updated migration plan");
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.runtime().planState).toEqual({ enabled: true });
+    expect(omp.recordedPrompts().at(-1)?.message).toBe("add rollback steps");
   });
 
-  test("expires stale plan directives when continuing a resumed standard session", async () => {
-    const omp = new OmpHarness();
-    await omp.resume(
-      {
-        user: { id: "user-stale-plan", text: planTurnPrompt("draft the migration") },
-        assistant: { id: "assistant-stale-plan", text: "migration plan ready" },
-      },
-      { modeId: "ask" },
-    );
-
-    expect((await omp.history()).find((item) => item.type === "user_message")?.text).toBe(
-      "draft the migration",
-    );
-
-    await omp.runPrompt("implement the migration now", "implementation complete");
-
-    expect(omp.recordedPrompts().at(-1)?.message).toBe(
-      standardTurnPrompt("implement the migration now"),
-    );
-    expect(omp.timeline().findLast((item) => item.type === "user_message")?.text).toBe(
-      "implement the migration now",
-    );
-  });
-
-  test("reapplies plan workflow when continuing a resumed session", async () => {
+  test("does not revive a stale Desktop plan preference after native approval", async () => {
     const omp = new OmpHarness();
     await omp.resume(
       {
         user: { id: "user-plan-history", text: "draft the migration" },
         assistant: { id: "assistant-plan-history", text: "migration plan restored" },
       },
-      {
-        modeId: "ask",
-        featureValues: { workflow_mode: "plan" },
-      },
+      { featureValues: { workflow_mode: "plan" } },
     );
-
-    await omp.runPrompt("add rollback steps", "updated migration plan");
-
-    expect(omp.recordedPrompts().at(-1)?.message).toBe(planTurnPrompt("add rollback steps"));
+    expect(omp.features()).toEqual([expect.objectContaining({ id: "workflow_mode", value: "standard" })]);
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.runtime().planModeChanges).toEqual([]);
   });
 
   test("maps permissions and sends the selected OMP response", async () => {

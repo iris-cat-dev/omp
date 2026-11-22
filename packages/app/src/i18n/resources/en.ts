@@ -392,10 +392,10 @@ export const en = {
         fast: "Fast",
         ultrafast: "Ultrafast",
         ultrafastNotice:
-          "Subscription: 8× included usage / 6× purchased credits. API access and rates depend on the provider.",
+          "ChatGPT included usage and purchased credits vary by model and date. API billing is separate; account access and speed are not guaranteed.",
         standardDescription: "Normal speed and usage rates.",
         ultrafastDescription:
-          "Subscription access consumes included usage at 8× and purchased credits at 6× the Standard rate. API availability and charges depend on the provider, model, and project. This option does not verify account access; actual speed varies.",
+          "Ultrafast with ChatGPT sign-in, relative to Standard on the same model:\nGPT-6.2 Astra / Sol: 6× included usage; purchased credits 3× through 2027-02-28, then 6× from 2027-03-01 (Pacific time).\nGPT-6 Astra / GPT-6.1 Sol: 8× included usage; 6× purchased credits.\nAPI keys use separate API billing. For other models, providers or unclear billing, check their rates. This option does not verify account access; actual speed varies.",
         selectWithValue: "Select speed, current: {{value}}",
         detecting: "Detecting supported speeds…",
         unsupported: "Speed selection is not supported",
@@ -458,13 +458,13 @@ export const en = {
     activityGroup: "Thinking and tool calls",
     permission: {
       plan: "Plan",
+      numberedPlan: "Plan {{number}}",
       required: "Permission Required",
       deny: "Deny",
       accept: "Accept",
       implement: "Approve and implement",
       continuePlanning: "Continue planning",
       question: "How would you like to proceed?",
-      proposedPlan: "Proposed plan",
     },
     turnMetadata: {
       tokens: "tokens",

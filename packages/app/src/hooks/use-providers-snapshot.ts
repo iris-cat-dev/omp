@@ -14,6 +14,7 @@ import {
   type ProviderSnapshotCache,
 } from "@/data/provider-snapshot-cache";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { providerFeaturesQueryRoot } from "@/data/provider-features";
 import {
   isProvidersSnapshotCacheable,
   mergeProvidersSnapshotHistory,
@@ -84,6 +85,11 @@ export async function refreshAndApplyProvidersSnapshot(input: {
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,
   });
+  for (const provider of input.providers ?? [undefined]) {
+    void input.queryClient.invalidateQueries({
+      queryKey: providerFeaturesQueryRoot(input.serverId, provider),
+    });
+  }
   return refreshResult;
 }
 

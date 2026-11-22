@@ -69,6 +69,8 @@ Desktop instructs OMP to write tool-call intent labels, including the live worki
 
 **Standard**, **Chat**, **Enhanced**, **Plan**, and **Goal** have hover descriptions localized in all nine supported interface languages. **Chat** (`对话` in Chinese) restricts active OMP tools to read-only file inspection (`read`, `glob`, `grep`), suppresses plugin prompt injections, and restores the full toolset when switching back to another workflow. **Enhanced** uses the same Sparkles icon in the workflow menu and current-mode control, whether in the toolbar or compact settings sheet.
 
+In iPad browsers, switching workflows leaves the keyboard closed when you aren't typing. When you tap the message field, the composer stays above the docked keyboard.
+
 Standard and Enhanced use OMP's native retry policy for temporary model-request failures. Retry status appears in the current turn, and no new user message is sent. If OMP cannot recover or reaches its retry limit, the turn ends with an error. **Stop** cancels retries in progress.
 
 Both modes still continue responses that hit the model's output-length limit so the model can finish the existing answer.

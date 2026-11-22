@@ -91,7 +91,7 @@ import {
 } from "@/command-center/agent-control-registration";
 import { useActiveAgentControlRegistration } from "@/command-center/provider";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { isNative } from "@/constants/platform";
+import { isIPadWeb, isNative } from "@/constants/platform";
 import {
   resolveComposerControlDensity,
   resolveComposerControlPresentation,
@@ -188,7 +188,7 @@ export interface DraftAgentControlsProps {
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   featureMetadataStatus?: "loading" | "error" | "ready";
-  onRetryFeatureMetadata?: () => void;
+  onEnsureFeatureMetadata?: () => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   onRetryModelProvider?: (provider: AgentProvider) => void;
@@ -496,7 +496,7 @@ function ControlledAgentControls({
   features,
   onSetFeature,
   featureMetadataStatus,
-  onDropdownClose,
+  onDropdownClose: restoreComposerFocus,
   onModelSelectorOpen,
   onRetryModelProvider,
   isRetryingModelProvider = false,
@@ -508,6 +508,8 @@ function ControlledAgentControls({
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
+  // Changing a setting on iPad should not reopen the software keyboard.
+  const onDropdownClose = isIPadWeb() ? undefined : restoreComposerFocus;
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
@@ -2085,7 +2087,7 @@ export function DraftAgentControls({
   onSelectThinkingOption,
   features,
   featureMetadataStatus,
-  onRetryFeatureMetadata,
+  onEnsureFeatureMetadata,
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
@@ -2186,8 +2188,8 @@ export function DraftAgentControls({
   });
   const handleDraftModelSelectorOpen = useCallback(() => {
     onModelSelectorOpen?.();
-    onRetryFeatureMetadata?.();
-  }, [onModelSelectorOpen, onRetryFeatureMetadata]);
+    onEnsureFeatureMetadata?.();
+  }, [onModelSelectorOpen, onEnsureFeatureMetadata]);
   return (
     <ControlledAgentControls
       provider={selectedProvider ?? ""}

@@ -283,10 +283,10 @@ export const es: TranslationResources = {
         fast: "Rápido (Fast)",
         ultrafast: "Ultrafast",
         ultrafastNotice:
-          "Suscripción: uso incluido 8× / créditos comprados 6×. Acceso y tarifas de API según el proveedor.",
+          "Las tasas de uso incluido y créditos comprados de ChatGPT varían según el modelo y la fecha. La API se factura por separado; no se garantizan el acceso ni la velocidad.",
         standardDescription: "Velocidad normal y tasas de consumo estándar.",
         ultrafastDescription:
-          "La suscripción consume el uso incluido a 8× y los créditos comprados a 6× la tasa estándar. La disponibilidad y las tarifas de API dependen del proveedor, modelo y proyecto. Esta opción no verifica el acceso de la cuenta; la velocidad real puede variar.",
+          "Ultrafast solo al iniciar sesión con ChatGPT, respecto a Standard en el mismo modelo:\nGPT-6.2 Astra / Sol: uso incluido 6×; créditos comprados 3× hasta el 2027-02-28 inclusive y 6× desde el 2027-03-01 (hora del Pacífico de EE. UU.).\nGPT-6 Astra / GPT-6.1 Sol: uso incluido 8×; créditos comprados 6×.\nLas claves API usan una facturación de API independiente. Para otros modelos, proveedores o formas de facturación no claras, consulta sus tarifas. Esta opción no verifica el acceso de la cuenta; la velocidad real puede variar.",
         selectWithValue: "Seleccionar velocidad, actual: {{value}}",
         detecting: "Detectando velocidades compatibles…",
         unsupported: "La selección de velocidad no es compatible",
@@ -340,13 +340,13 @@ export const es: TranslationResources = {
     activityGroup: "Razonamiento y llamadas a herramientas",
     permission: {
       plan: "Plan",
+      numberedPlan: "Plan {{number}}",
       required: "Permiso requerido",
       deny: "Denegar",
       accept: "Aceptar",
       implement: "Aprobar e implementar",
       continuePlanning: "Seguir planificando",
       question: "¿Cómo le gustaría proceder?",
-      proposedPlan: "Plan propuesto",
     },
     turnMetadata: {
       tokens: "tokens",

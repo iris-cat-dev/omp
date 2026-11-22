@@ -5,10 +5,12 @@ import {
   findMountedWindowStart,
   getMountedRecentStreamItems,
 } from "./history-window";
+import { isNativePlanItem } from "./plan-permission-placement";
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = DEFAULT_MOUNTED_RECENT_STREAM_ITEMS;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
+const PLAN_CARD_ROW_HEIGHT_ESTIMATE = 240;
 
 export function shouldAdjustScrollForVirtualRowResize(input: {
   isHistoryStartPrependActive: boolean;
@@ -65,7 +67,9 @@ export function estimateStreamItemHeight(item: StreamItem): number {
     case "assistant_message":
       return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
     case "tool_call":
-      return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
+      return isNativePlanItem(item)
+        ? PLAN_CARD_ROW_HEIGHT_ESTIMATE
+        : COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "thought":
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "todo_list":

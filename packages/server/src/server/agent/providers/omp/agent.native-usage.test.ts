@@ -438,7 +438,7 @@ describe("OMP native chat usage wire", () => {
       await omp.close();
     }
   });
-  test("preserves native footer facts when a plan body and its completion metadata coalesce", async () => {
+  test("preserves native footer facts on ordinary replies during Plan mode", async () => {
     let nowMs = BASE;
     vi.spyOn(Date, "now").mockImplementation(() => nowMs);
     const omp = new OmpHarness();
@@ -480,18 +480,15 @@ describe("OMP native chat usage wire", () => {
       await waitForImmediate();
       for (const event of omp.streamEvents()) coalescer.handle("plan-agent", event);
       coalescer.flushAll();
-      const plan = flushed.find(
-        (event) =>
-          event.item.type === "assistant_message" &&
-          event.item.presentation === "plan" &&
-          event.item.nativeUsage,
+      const reply = flushed.find(
+        (event) => event.item.type === "assistant_message" && event.item.nativeUsage,
       );
-      expect(plan?.item).toMatchObject({
+      expect(reply?.item).toMatchObject({
         type: "assistant_message",
         text: "native plan",
-        presentation: "plan",
         nativeUsage: { outputTokens: 1_000, nativeMetrics: { measuredDurationMs: 10_000 } },
       });
+      expect(reply?.item).not.toHaveProperty("presentation");
     } finally {
       coalescer.flushAll();
       await omp.close();

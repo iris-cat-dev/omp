@@ -114,7 +114,11 @@ import { isWeb } from "@/constants/platform";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
-import { placePlanPermissions } from "./plan-permission-placement";
+import {
+  isNativePlanItem,
+  placePlanPermissions,
+  type NativePlanItem,
+} from "./plan-permission-placement";
 import { collectDuplicateToolImagePreviewIds } from "./tool-image-previews";
 import { isLaunchCompletionItem } from "./launch-completion";
 import { LaunchCompletionView } from "./launch-completion-view";
@@ -148,8 +152,10 @@ function BottomOverlayInset({ height }: { height: number }) {
 }
 
 function renderPendingPermissionsNode(input: {
+  serverId: string;
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  standalonePlanNumbers: ReadonlyMap<string, number>;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -157,7 +163,13 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          serverId={input.serverId}
+          permission={permission}
+          client={input.client}
+          planNumber={input.standalonePlanNumbers.get(permission.key)}
+        />
       ))}
     </View>
   );
@@ -411,14 +423,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
     );
     const streamHead = providedStreamHead ?? sessionStreamHead;
-    const planPermissionPlacement = useMemo(
-      () =>
-        placePlanPermissions(
-          [...streamItems, ...(streamHead ?? EMPTY_STREAM_HEAD)],
-          pendingPermissionItems,
-        ),
-      [pendingPermissionItems, streamHead, streamItems],
-    );
     const forkAgent = useForkAgent({ serverId: resolvedServerId, toast, readOnly });
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
@@ -681,6 +685,37 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         ),
       [baseRenderModel.history, baseRenderModel.segments.liveHead],
     );
+    const historyPlanItems = useMemo(
+      () => effectiveStreamItems.filter(isNativePlanItem),
+      [effectiveStreamItems],
+    );
+    const livePlanItems = useMemo(
+      () =>
+        effectiveStreamHead?.some(isNativePlanItem)
+          ? effectiveStreamHead.filter(isNativePlanItem)
+          : EMPTY_STREAM_HEAD,
+      [effectiveStreamHead],
+    );
+    const renderedPlanItemIds = useMemo(
+      () =>
+        historyWindowStart > 0
+          ? new Set(
+              [...baseRenderModel.history.filter(isNativePlanItem), ...livePlanItems].map(
+                (item) => item.id,
+              ),
+            )
+          : undefined,
+      [baseRenderModel.history, historyWindowStart, livePlanItems],
+    );
+    const planPermissionPlacement = useMemo(
+      () =>
+        placePlanPermissions(
+          [...historyPlanItems, ...livePlanItems],
+          pendingPermissionItems,
+          renderedPlanItemIds,
+        ),
+      [historyPlanItems, livePlanItems, pendingPermissionItems, renderedPlanItemIds],
+    );
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
@@ -856,7 +891,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <LaunchCompletionView item={item} isLastInSequence={layoutItem.isLastInToolSequence} />
           );
         }
-        const isPlan = item.presentation === "plan";
+        const isPlan =
+          context.provider !== undefined &&
+          context.provider !== "omp" &&
+          item.presentation === "plan";
         const message = (
           <AssistantMessage
             occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
@@ -870,19 +908,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             phase={layoutItem.phase}
           />
         );
-        const planPermission = planPermissionPlacement.permissionByItemId.get(item.id);
-        let renderedMessage: ReactNode = message;
-        if (isPlan) {
-          renderedMessage = planPermission ? (
-            <PermissionRequestCard permission={planPermission} client={client}>
-              {message}
-            </PermissionRequestCard>
-          ) : (
-            <PlanCard testID="timeline-plan-card" disableOuterSpacing>
-              {message}
-            </PlanCard>
-          );
-        }
+        const renderedMessage = isPlan ? (
+          <PlanCard testID="timeline-plan-card" disableOuterSpacing>
+            {message}
+          </PlanCard>
+        ) : (
+          message
+        );
 
         return (
           <AssistantFileLinkResolverProvider
@@ -899,12 +931,44 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         agentId,
         client,
-        planPermissionPlacement.permissionByItemId,
+        context.provider,
         handleInlinePathPress,
         resolvedServerId,
         toast,
         workspaceRoot,
       ],
+    );
+
+    const renderNativePlanItem = useCallback(
+      (item: NativePlanItem) => {
+        const number = planPermissionPlacement.planNumberByItemId.get(item.id);
+        if (number === undefined) {
+          throw new Error(`Missing plan number for timeline item ${item.id}`);
+        }
+        const permission = planPermissionPlacement.permissionByItemId.get(item.id);
+        const text = item.payload.data.detail.text;
+        if (permission) {
+          return (
+            <PermissionRequestCard
+              key={permission.key}
+              serverId={resolvedServerId}
+              permission={permission}
+              client={client}
+              planNumber={number}
+              timelinePlanText={text}
+            />
+          );
+        }
+        return (
+          <PlanCard
+            title={t("agentStream.permission.numberedPlan", { number })}
+            text={text}
+            testID="timeline-plan-card"
+            disableOuterSpacing
+          />
+        );
+      },
+      [client, planPermissionPlacement, resolvedServerId, t],
     );
 
     const renderThoughtItem = useCallback(
@@ -1097,7 +1161,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return renderThoughtItem(layoutItem, item);
 
           case "tool_call":
-            return renderToolCallItem(layoutItem, item);
+            return isNativePlanItem(item)
+              ? renderNativePlanItem(item)
+              : renderToolCallItem(layoutItem, item);
 
           case "activity_log":
             return (
@@ -1140,6 +1206,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderThoughtItem,
+        renderNativePlanItem,
         renderToolCallItem,
       ],
     );
@@ -1228,12 +1295,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
+          serverId: resolvedServerId,
           pendingPermissions: pendingPermissionItems.filter(
             (permission) => !planPermissionPlacement.embeddedPermissionKeys.has(permission.key),
           ),
           client,
+          standalonePlanNumbers: planPermissionPlacement.standalonePlanNumberByPermissionKey,
         }),
-      [client, pendingPermissionItems, planPermissionPlacement.embeddedPermissionKeys],
+      [client, pendingPermissionItems, planPermissionPlacement, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1376,9 +1445,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => ({
         has: (id: string) =>
           projectedToolCalls.historyGroupUpdatesByHostId.has(id) ||
-          projectedActivity.historyGroupUpdatesByHostId.has(id),
+          projectedActivity.historyGroupUpdatesByHostId.has(id) ||
+          // Permission changes also update existing native list rows after the review is resolved.
+          planPermissionPlacement.planNumberByItemId.has(id),
       }),
       [
+        planPermissionPlacement,
         projectedActivity.historyGroupUpdatesByHostId,
         projectedToolCalls.historyGroupUpdatesByHostId,
       ],
@@ -1386,6 +1458,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const historyDisplayState = useMemo(
       () => new Set([...expandedActivityGroupIds, ...expandedToolCallGroupIds]),
       [expandedActivityGroupIds, expandedToolCallGroupIds],
+    );
+    const liveHeadRowRevision = useMemo(
+      () => ({ historyDisplayState, planPermissionPlacement }),
+      [historyDisplayState, planPermissionPlacement],
     );
     const historyRowRevision = useMemo(
       () => ({
@@ -1404,7 +1480,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               agentId,
               segments: renderModel.segments,
               historyRowRevision,
-              liveHeadRowRevision: historyDisplayState,
+              liveHeadRowRevision,
               boundary,
               renderers,
               listEmptyComponent,
@@ -1637,22 +1713,29 @@ function PermissionActionButton({
 }
 
 function PermissionRequestCard({
+  serverId,
   permission,
   client,
-  children,
+  planNumber,
+  timelinePlanText,
 }: {
+  serverId: string;
   permission: PendingPermission;
   client: DaemonClient | null;
-  children?: ReactNode;
+  planNumber?: number;
+  timelinePlanText?: string;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
-  const title = isPlanRequest
-    ? t("agentStream.permission.plan")
-    : (request.title ?? request.name ?? t("agentStream.permission.required"));
+  const title =
+    planNumber !== undefined
+      ? t("agentStream.permission.numberedPlan", { number: planNumber })
+      : isPlanRequest
+        ? t("agentStream.permission.plan")
+        : (request.title ?? request.name ?? t("agentStream.permission.required"));
   const description = request.description ?? "";
   const resolvedToolCallDetail = useMemo(
     () =>
@@ -1701,20 +1784,14 @@ function PermissionRequestCard({
   }, [isPlanRequest, request, t]);
 
   const planMarkdown = useMemo(() => {
-    if (!request) {
-      return undefined;
+    if (!isPlanRequest) return undefined;
+    if (timelinePlanText !== undefined) return timelinePlanText;
+    if (planNumber === undefined && typeof request.metadata?.planText === "string") {
+      return request.metadata.planText;
     }
-    const planFromMetadata =
-      typeof request.metadata?.planText === "string" ? request.metadata.planText : undefined;
-    if (planFromMetadata) {
-      return planFromMetadata;
-    }
-    const candidate = request.input?.["plan"];
-    if (typeof candidate === "string") {
-      return candidate;
-    }
-    return undefined;
-  }, [request]);
+    const candidate = request.input?.plan;
+    return typeof candidate === "string" ? candidate : undefined;
+  }, [isPlanRequest, planNumber, request, timelinePlanText]);
 
   const permissionMutation = useMutation({
     mutationFn: async (input: {
@@ -1791,6 +1868,7 @@ function PermissionRequestCard({
   if (request.kind === "question") {
     return (
       <QuestionFormCard
+        serverId={serverId}
         permission={permission}
         onRespond={handleResponse}
         isResponding={isResponding}
@@ -1816,7 +1894,9 @@ function PermissionRequestCard({
           const isRespondingAction = respondingActionId === action.id;
           const Icon = action.behavior === "allow" ? Check : X;
           let testID: string;
-          if (action.behavior === "deny") testID = "permission-request-deny";
+          if (planNumber !== undefined && action.id === "continue-planning") {
+            testID = "permission-request-action-continue-planning";
+          } else if (action.behavior === "deny") testID = "permission-request-deny";
           else if (action.id === "accept" || action.id === "implement")
             testID = "permission-request-accept";
           else testID = `permission-request-action-${action.id}`;
@@ -1838,19 +1918,18 @@ function PermissionRequestCard({
     </>
   );
 
-  if (isPlanRequest && (children || planMarkdown)) {
+  if (isPlanRequest && planMarkdown !== undefined) {
+    const status = isResponding ? t("common.states.loading") : t("agentStream.permission.required");
     return (
       <PlanCard
         title={title}
-        description={description}
-        status={isResponding ? t("common.states.loading") : t("agentStream.permission.required")}
-        text={children ? undefined : planMarkdown}
+        description={planNumber === undefined ? description : undefined}
+        status={planNumber === undefined ? status : undefined}
+        text={planMarkdown}
         footer={footer}
-        testID="permission-plan-card"
+        testID={timelinePlanText === undefined ? "permission-plan-card" : "timeline-plan-card"}
         disableOuterSpacing
-      >
-        {children}
-      </PlanCard>
+      />
     );
   }
 
@@ -1859,15 +1938,6 @@ function PermissionRequestCard({
       <Text style={permissionStyles.title}>{title}</Text>
 
       {description ? <Text style={permissionStyles.description}>{description}</Text> : null}
-
-      {planMarkdown ? (
-        <PlanCard
-          title={t("agentStream.permission.proposedPlan")}
-          text={planMarkdown}
-          testID="permission-plan-card"
-          disableOuterSpacing
-        />
-      ) : null}
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent detail={resolvedToolCallDetail} maxHeight={200} />

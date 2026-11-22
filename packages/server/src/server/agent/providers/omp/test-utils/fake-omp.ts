@@ -1,6 +1,7 @@
 import type {
   OmpRuntime,
   OmpRuntimeLaunch,
+  OmpPlanControl,
   OmpRuntimeSession,
   OmpStartSessionInput,
   OmpUserMessageOptions,
@@ -18,6 +19,8 @@ import type {
   OmpFastModeSelection,
   OmpLoginProvider,
   OmpModel,
+  OmpPlanReview,
+  OmpPlanState,
   OmpPromptAck,
   OmpRpcSlashCommand,
   OmpRuntimeEvent,
@@ -69,6 +72,7 @@ export class FakeOmp implements OmpRuntime {
   private initialActiveCredential: OmpSessionState["activeCredential"];
   private initialSessionTitle: Pick<OmpSessionState, "sessionName" | "titleSource"> = {};
   private initialSessionFile: string | undefined;
+  initialPlanState: OmpPlanState = { enabled: false };
   private readonly queuedStartErrors: Error[] = [];
 
   constructor(command: [string, ...string[]] = ["omp"]) {
@@ -84,6 +88,7 @@ export class FakeOmp implements OmpRuntime {
     });
     this.recordedLaunches.push(launch);
     const session = new FakeOmpSession(launch);
+    session.planState = this.initialPlanState;
     if (input.proxyPolicy) await session.setProxyPolicy(input.proxyPolicy);
     session.state = {
       ...session.state,
@@ -173,6 +178,27 @@ export class FakeOmp implements OmpRuntime {
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  planState: OmpPlanState = { enabled: false };
+  readonly planModeChanges: boolean[] = [];
+  readonly planDecisions: Array<{ reviewId: string; choice: "approve" | "refine" }> = [];
+  readonly plan: OmpPlanControl = {
+    getState: async () => this.planState,
+    setMode: async (enabled) => {
+      this.planModeChanges.push(enabled);
+      return (this.planState = { enabled });
+    },
+    resolve: async (reviewId, choice) => {
+      if (this.planState.review?.id !== reviewId) throw new Error("Plan review is no longer pending");
+      this.planDecisions.push({ reviewId, choice });
+      return (this.planState = { enabled: choice === "refine" });
+    },
+  };
+
+  submitPlan(review: OmpPlanReview): void {
+    this.planState = { enabled: true, review };
+    this.emit({ type: "plan_review", review });
+  }
+
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly promptUserMessageOptions: OmpUserMessageOptions[] = [];
   readonly steerUserMessageOptions: OmpUserMessageOptions[] = [];

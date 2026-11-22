@@ -283,10 +283,10 @@ export const ja: TranslationResources = {
         fast: "高速 (Fast)",
         ultrafast: "超高速 (Ultrafast)",
         ultrafastNotice:
-          "サブスクリプション：プラン内使用量 8 倍 / 購入クレジット 6 倍。API の利用可否・料金はプロバイダーによります。",
+          "ChatGPT のプラン内使用量と購入クレジットの倍率はモデルと日付によって異なります。API は別料金で、アカウントの権限や実際の速度は保証されません。",
         standardDescription: "通常の速度と使用量の消費率。",
         ultrafastDescription:
-          "サブスクリプションは標準の 8 倍の割合でプラン内使用量を、6 倍の割合で購入クレジットを消費します。API の利用可否と料金はプロバイダー、モデル、プロジェクトによります。この選択肢はアカウントの権限を確認するものではなく、実際の速度は状況によって異なります。",
+          "Ultrafast は ChatGPT でのログインのみ対象。同じモデルの標準モードとの比較：\nGPT-6.2 Astra / Sol：プラン内使用量 6 倍。購入クレジットは 2027-02-28（当日を含む）まで 3 倍、2027-03-01 から 6 倍（米国太平洋時間）。\nGPT-6 Astra / GPT-6.1 Sol：プラン内使用量 8 倍、購入クレジット 6 倍。\nAPI キーは独立した API 料金が適用されます。他のモデル、プロバイダー、または課金方法が不明な場合は、その料金を確認してください。この選択肢はアカウントの権限を確認するものではなく、実際の速度は状況によって異なります。",
         selectWithValue: "速度を選択、現在：{{value}}",
         detecting: "対応する速度を検出中…",
         unsupported: "速度の選択には対応していません",
@@ -340,13 +340,13 @@ export const ja: TranslationResources = {
     activityGroup: "思考とツール呼び出し",
     permission: {
       plan: "プラン",
+      numberedPlan: "プラン {{number}}",
       required: "権限が必要です",
       deny: "拒否",
       accept: "承認",
       implement: "承認して実装",
       continuePlanning: "計画を続ける",
       question: "どのように続けますか？",
-      proposedPlan: "提案されたプラン",
     },
     turnMetadata: {
       tokens: "トークン",

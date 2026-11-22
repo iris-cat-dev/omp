@@ -30,6 +30,7 @@ import type {
   OmpAgentMessage,
   OmpModel,
   OmpRpcSlashCommand,
+  OmpPlanState,
   OmpRuntimeEvent,
   OmpSessionStats,
   OmpSessionState,
@@ -94,6 +95,7 @@ export class OmpHarness {
       noTurnScheduler?: OmpNoTurnScheduler;
       usagePollScheduler?: OmpUsagePollScheduler;
       initialStats?: OmpSessionStats;
+      initialPlanState?: OmpPlanState;
     } = {},
   ) {
     this.omp.setFastModeSupported(options.fastModeSupported ?? true);
@@ -101,6 +103,7 @@ export class OmpHarness {
     this.omp.setInitialFastModeTier(options.initialFastModeTier);
     this.omp.setInitialModel(options.initialModel ?? null);
     this.omp.setInitialActiveCredential(options.initialActiveCredential);
+    if (options.initialPlanState) this.omp.initialPlanState = options.initialPlanState;
     if (options.initialStats) {
       this.omp.setInitialStats(options.initialStats);
     }

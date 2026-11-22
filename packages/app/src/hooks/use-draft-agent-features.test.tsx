@@ -138,38 +138,6 @@ describe("draft catalog speed controls", () => {
     expect(result.featureValues?.fast_mode).toBe("ultrafast");
   });
 
-  it("replaces stale cached speed metadata with native confirmation and keeps account controls", async () => {
-    const account: AgentFeature = {
-      id: "oauth_account_credential",
-      label: "Account",
-      type: "select",
-      value: "automatic",
-      options: [
-        { id: "automatic", label: "Automatic" },
-        { id: "41", label: "Account 41" },
-      ],
-    };
-    queryClient.setQueryData(
-      [
-        "providerFeatures",
-        "draft-host",
-        "omp",
-        "/workspace",
-        "full",
-        "supported",
-        null,
-        "automatic",
-        0,
-      ],
-      [legacy, account],
-    );
-    state.listProviderFeatures.mockResolvedValue({ features: [speed, account] });
-    setModels([catalogModel("supported", [speed])]);
-    await render("supported");
-    expect(selectedSpeed()).toMatchObject({ type: "select", value: "off" });
-    expect(result.features.find((feature) => feature.id === account.id)).toEqual(account);
-  });
-
   it("does not let an old catalog override native unsupported confirmation", async () => {
     state.saved = { fast_mode: "ultrafast" };
     state.listProviderFeatures.mockResolvedValue({ features: [] });

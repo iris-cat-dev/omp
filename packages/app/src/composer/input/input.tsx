@@ -45,7 +45,7 @@ import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { isWeb } from "@/constants/platform";
+import { isIPadWeb, isWeb } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
@@ -492,7 +492,7 @@ function MessageInputAutoFocus({
   textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>;
 }) {
   const { isActiveComposer } = useComposerKeyboardScope();
-  useAutoFocusOnWebEffect(textInputRef, enabled && isActiveComposer, autoFocusKey);
+  useAutoFocusOnWebEffect(textInputRef, enabled && isActiveComposer && !isIPadWeb(), autoFocusKey);
   return null;
 }
 
