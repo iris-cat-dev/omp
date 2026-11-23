@@ -82,6 +82,8 @@ Desktop 安装 ID 继续使用现有 `PluginIdSchema` 的小写、数字、连�
 
 源码接入仍进入同一套服务注册表、客户端注册表和生命周期引擎。保留默认扩展注册函数与 cleanup，不添加没有依据的 `activate/deactivate`，也不要求业务代码改成 OMP factory。注册方法可以返回 `void`；对应扩展函数的 cleanup 和宿主清理集合仍负责释放所有注册项。
 
+工作区面板贡献可通过 `addWorkspacePanel({ context: "workspace", fileSuffix: ".canva.json", … })` 为文件标签页提供自定义编辑器。宿主仅匹配已启用的本机插件或当前 daemon 的插件，忽略后缀大小写，优先使用最长匹配。组件收到相对于当前检出目录的 `filePath`（使用 `/` 分隔，不含行号）；从插件入口直接打开面板时没有此属性。文件仍使用原有标签页身份和文件树布局；无法定位到当前检出目录或没有匹配编辑器时，使用普通预览。此注册不影响系统文件关联，也不授予文件访问权限。
+
 `omp-plugin.json` 保持严格的 `{ id }` 格式。新元数据放在带版本的 `package.json.ompDesktop` 描述中，不向 `{ id }` 塞额外字段。新公开契约的初始版本为 `apiVersion: 1`，与没有 API 版本字段的源码格式区分。
 
 拟定的编译后 QQ 插件包描述示例：
@@ -236,6 +238,7 @@ capabilities 描述并授权宿主受控接口，不构成可执行 Node 插件�
 - `agents.prompt` 下的 `agent.run()` 提交真实 provider turn 并观察完成／失败；`send()` 保留宿主 out-of-band 命令语义。foreground 创建带 prompt 时等待真实回合，取消调用方等待不取消底层 Agent。
 - `images.generate` 必须显式声明并批准，且只允许在 active 模式调用。`omp.images.generate({ prompt, images }, { signal })` 在所选主机启用并配置生图后直接生成或编辑图片，不创建 Agent。参考图合计最多 8 MiB，单图及结果最多 4 MiB，仅接受 PNG、JPEG、WebP。主机保管供应商凭据；中止调用、停用插件或断开连接均取消主机请求。
 - `agents.tools` 授权安装实例绑定的 Agent 工具注册；`files.scoped` 授权 `files.data-directory` 与 `files.resolve-path` 原生操作，返回所属安装目录及主机解析后的路径。
+- `workspace.files` 必须显式声明并批准，仅在 active 模式可用。`omp.workspaceFiles` 以已登记的工作区 ID 定位当前 checkout（`workspace`）或项目根目录（`project`），读取、列出、创建或按文件版本写入相对路径；不允许越出所选目录。原生 `files.scoped` 仍只用于插件私有目录。工作区插件面板可声明 `fileSuffix`，由文件标签在对应工作区内匹配，并将相对路径作为 `filePath` 传入；没有匹配的启用插件时沿用普通文件预览。
 - `events.changed` 必须显式声明并批准；插件完成持久化后调用该原生操作，发布现有插件变更通知，客户端订阅刷新业务状态，不引入轮询。
 
 宿主绑定安装实例、角色、进程或 `webContents/mainFrame`、文档 epoch 和激活实例，调用方不能自行选择 owner 字段。明确批准的 Node 代码仍拥有运行用户的系统权限。受控接口能阻止协议内跨所有者操作，但不能让高权限 Node worker 或可信渲染代码变成无害代码。

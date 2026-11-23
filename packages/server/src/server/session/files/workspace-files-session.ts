@@ -1,5 +1,7 @@
 import type pino from "pino";
+import { isUtf8 } from "node:buffer";
 import { getErrorMessage } from "@omp-desktop/protocol/error-utils";
+import { MAX_WORKSPACE_FILE_BYTES } from "@omp-desktop/protocol/messages";
 import {
   encodeFileTransferFrame,
   FileTransferOpcode,
@@ -21,21 +23,30 @@ import type {
   FileWriteRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
+  WorkspaceFileCreateRequest,
+  WorkspaceFileCreateResponse,
+  WorkspaceFileExploreRequest,
+  WorkspaceFileTarget,
+  WorkspaceFileWriteRequest,
 } from "../../messages.js";
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
   createExplorerEntry,
+  createScopedExplorerEntry,
   deleteExplorerEntry,
   duplicateExplorerEntry,
   getDownloadableFileInfo,
+  isMissingExplorerEntry,
   listDirectoryEntries,
   moveExplorerEntry,
   readExplorerFile,
   resolveExplorerDirectoryPath,
   renameExplorerEntry,
   streamExplorerFile,
+  validateWorkspaceFilePath,
   writeExplorerFile,
+  type ExplorerFileWriteResult,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { createFileObserver as createDirectoryObserver } from "../../file-observer/index.js";
@@ -58,20 +69,21 @@ export interface WorkspaceFilesSessionOptions {
   downloadTokenStore: DownloadTokenStore;
   paseoHome: string;
   logger: pino.Logger;
+  resolveWorkspaceRoot(target: WorkspaceFileTarget): Promise<string>;
   fileObserver?: FileObserver;
 }
 
 /**
  * A client's workspace file-access surface: browsing directories, reading file
  * contents (inline JSON or binary frames), receiving uploads, issuing download
- * tokens, and reading project icons. It owns the upload store and reaches no
- * workspace-git, registry, or subscription state — file I/O scoped to a cwd is
- * the whole concern.
+ * tokens, and reading project icons. The host resolves registered scope roots;
+ * this subsystem validates relative paths and handles the file I/O.
  */
 export class WorkspaceFilesSession {
   private readonly host: WorkspaceFilesSessionHost;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly logger: pino.Logger;
+  private readonly resolveWorkspaceRoot: WorkspaceFilesSessionOptions["resolveWorkspaceRoot"];
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSubscriptions = new Map<string, () => void>();
@@ -85,6 +97,7 @@ export class WorkspaceFilesSession {
     this.host = options.host;
     this.downloadTokenStore = options.downloadTokenStore;
     this.logger = options.logger;
+    this.resolveWorkspaceRoot = options.resolveWorkspaceRoot;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
   }
@@ -210,18 +223,56 @@ export class WorkspaceFilesSession {
     });
   }
 
-  async handleFileWriteRequest(request: FileWriteRequest): Promise<void> {
-    const result = await writeExplorerFile({
-      root: request.cwd,
-      relativePath: request.path,
-      content: request.content,
-      expectedModifiedAt: request.expectedModifiedAt,
-      expectedRevision: request.expectedRevision,
-    });
-    this.host.emit({
-      type: "fs.file.write.response",
-      payload: { result, requestId: request.requestId },
-    });
+  private async resolveScopedRoot(target: WorkspaceFileTarget): Promise<string> {
+    validateWorkspaceFilePath(target.path);
+    return this.resolveWorkspaceRoot(target);
+  }
+
+  async handleFileWriteRequest(
+    request: FileWriteRequest | WorkspaceFileWriteRequest,
+    source?: object,
+  ): Promise<void> {
+    const strict = request.type === "workspace.files.write.request";
+    let result: ExplorerFileWriteResult;
+    try {
+      const root = strict ? await this.resolveScopedRoot(request) : request.cwd;
+      result = await writeExplorerFile({
+        root,
+        relativePath: request.path,
+        content: strict ? decodeWorkspaceFileContent(request.contentBase64) : request.content,
+        expectedModifiedAt: request.expectedModifiedAt,
+        expectedRevision: request.expectedRevision,
+        strict,
+      });
+    } catch (error) {
+      result = { status: "error", error: getErrorMessage(error) };
+    }
+    this.host.emit(
+      { type: "fs.file.write.response", payload: { result, requestId: request.requestId } },
+      source,
+    );
+  }
+
+  async handleWorkspaceFileCreateRequest(
+    request: WorkspaceFileCreateRequest,
+    source?: object,
+  ): Promise<void> {
+    let result: WorkspaceFileCreateResponse["payload"]["result"];
+    try {
+      const root = await this.resolveScopedRoot(request);
+      const entry = request.entry.kind === "file"
+        ? { kind: "file" as const, content: decodeWorkspaceFileContent(request.entry.contentBase64) }
+        : request.entry;
+      result = {
+        status: await createScopedExplorerEntry({ root, relativePath: request.path }, entry),
+      };
+    } catch (error) {
+      result = { status: "error", error: getErrorMessage(error) };
+    }
+    this.host.emit(
+      { type: "workspace.files.create.response", payload: { result, requestId: request.requestId } },
+      source,
+    );
   }
 
   async handleFileEntryCreateRequest(request: FileEntryCreateRequest): Promise<void> {
@@ -325,34 +376,19 @@ export class WorkspaceFilesSession {
     this.closeDirectoryWatch(() => this.directoryObserver.close());
   }
 
-  async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.host.emit(
-        {
-          type: "file_explorer_response",
-          payload: {
-            cwd: workspaceCwd,
-            path: requestedPath,
-            mode,
-            directory: null,
-            file: null,
-            error: "cwd is required",
-            requestId,
-          },
-        },
-        source,
-      );
-      return;
-    }
-
+  async handleFileExplorerRequest(
+    request: FileExplorerRequest | WorkspaceFileExploreRequest,
+    source?: object,
+  ): Promise<void> {
+    const { path: requestedPath = ".", mode, requestId } = request;
+    const strict = request.type === "workspace.files.explore.request";
+    let cwd = "";
     try {
+      cwd = strict ? await this.resolveScopedRoot(request) : request.cwd.trim();
+      if (!cwd) throw new Error("cwd is required");
+      const options = { root: cwd, relativePath: requestedPath, strict };
       if (mode === "list") {
-        const directory = await listDirectoryEntries({
-          root: cwd,
-          relativePath: requestedPath,
-        });
+        const directory = await listDirectoryEntries(options);
 
         this.host.emit(
           {
@@ -370,14 +406,12 @@ export class WorkspaceFilesSession {
           source,
         );
       } else {
-        if (request.maxBytes) {
-          const file = await getDownloadableFileInfo({ root: cwd, relativePath: requestedPath });
-          if (file.size > request.maxBytes) {
-            throw new Error("File is too large to display");
-          }
-        }
+        const readOptions = {
+          ...options,
+          maxBytes: strict ? MAX_WORKSPACE_FILE_BYTES : request.maxBytes,
+        };
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
-          await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
+          await streamExplorerFile(readOptions, async (file) => {
             await this.host.emitBinary(
               encodeFileTransferFrame({
                 opcode: FileTransferOpcode.FileBegin,
@@ -411,10 +445,7 @@ export class WorkspaceFilesSession {
             );
           });
         } else {
-          const file = await readExplorerFile({
-            root: cwd,
-            relativePath: requestedPath,
-          });
+          const file = await readExplorerFile(readOptions);
 
           this.host.emit(
             {
@@ -434,20 +465,24 @@ export class WorkspaceFilesSession {
         }
       }
     } catch (error) {
-      this.logger.error(
-        { err: error, cwd, path: requestedPath },
-        `Failed to fulfill file explorer request for workspace ${cwd}`,
-      );
+      const missing = strict && cwd !== "" && isMissingExplorerEntry(error);
+      if (!missing) {
+        this.logger.error(
+          { err: error, cwd, path: requestedPath },
+          `Failed to fulfill file explorer request for workspace ${cwd}`,
+        );
+      }
       this.host.emit(
         {
           type: "file_explorer_response",
           payload: {
-            cwd,
+            cwd: cwd || (request.type === "file_explorer_request" ? request.cwd : ""),
             path: requestedPath,
             mode,
             directory: null,
             file: null,
             error: getErrorMessage(error),
+            ...(missing ? { errorCode: "not_found" } : {}),
             requestId,
           },
         },
@@ -568,4 +603,10 @@ export class WorkspaceFilesSession {
       });
     }
   }
+}
+
+function decodeWorkspaceFileContent(encoded: string): Uint8Array {
+  const bytes = Buffer.from(encoded, "base64");
+  if (!isUtf8(bytes)) throw new Error("Workspace file content must be valid UTF-8");
+  return bytes;
 }

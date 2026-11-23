@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  FileEntryCreateRequestSchema,
+  FileExplorerResponseSchema,
   FileSubscribeRequestSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeRequestSchema,
@@ -7,6 +9,8 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ServerInfoStatusPayloadSchema,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
 } from "./messages.js";
 
 describe("workspace file editing messages", () => {
@@ -18,6 +22,45 @@ describe("workspace file editing messages", () => {
         features: {},
       }).features?.workspaceFileEditing,
     ).toBeUndefined();
+  });
+
+  test("scoped creates require initial content and cannot parse as a legacy create", () => {
+    const request = {
+      type: "workspace.files.create.request",
+      workspaceId: "workspace-1",
+      scope: "project",
+      path: "canvases/diagram.canva.json",
+      entry: { kind: "file", contentBase64: "e30=" },
+      requestId: "request-1",
+    };
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(FileEntryCreateRequestSchema.safeParse(request).success).toBe(false);
+    for (const entry of [{ kind: "file" }, { kind: "file", contentBase64: "not base64" }]) {
+      expect(SessionInboundMessageSchema.safeParse({ ...request, entry }).success).toBe(false);
+    }
+    const response = {
+      type: "workspace.files.create.response",
+      payload: { requestId: "request-1", result: { status: "created" } },
+    };
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
+  test("adds an optional structured absence code to explorer responses", () => {
+    const response = {
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/workspace",
+        path: "canvases",
+        mode: "list",
+        directory: null,
+        file: null,
+        error: "No such file or directory",
+        requestId: "request-1",
+      },
+    };
+    expect(FileExplorerResponseSchema.parse(response)).toEqual(response);
+    const missing = { ...response, payload: { ...response.payload, errorCode: "not_found" } };
+    expect(FileExplorerResponseSchema.parse(missing)).toEqual(missing);
   });
 
   test("parses subscribe, unsubscribe, and version update messages", () => {

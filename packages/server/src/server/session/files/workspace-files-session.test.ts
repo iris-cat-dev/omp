@@ -61,6 +61,7 @@ function makeSubsystem(
     downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
     paseoHome,
     logger: pino({ level: "silent" }),
+    resolveWorkspaceRoot: async () => { throw new Error("No registered workspace"); },
   });
   return {
     subsystem,

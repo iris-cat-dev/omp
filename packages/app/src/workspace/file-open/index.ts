@@ -150,6 +150,7 @@ export function resolveWorkspaceFilePaths(input: {
   if (!filePath || !workspaceRoot) {
     return null;
   }
+  const prefix = workspaceRoot.endsWith("/") ? workspaceRoot : `${workspaceRoot}/`;
 
   if (isAbsolutePath(filePath)) {
     const normalizedFile = normalizeAbsolutePath(filePath);
@@ -159,7 +160,6 @@ export function resolveWorkspaceFilePaths(input: {
     if (pathsEqual(normalizedFile, workspaceRoot)) {
       return null;
     }
-    const prefix = `${workspaceRoot}/`;
     const relativePath = startsWithPath(normalizedFile, prefix)
       ? normalizedFile.slice(prefix.length)
       : null;
@@ -174,5 +174,5 @@ export function resolveWorkspaceFilePaths(input: {
   if (!relativePath) {
     return null;
   }
-  return { absolutePath: `${workspaceRoot}/${relativePath}`, relativePath };
+  return { absolutePath: `${prefix}${relativePath}`, relativePath };
 }

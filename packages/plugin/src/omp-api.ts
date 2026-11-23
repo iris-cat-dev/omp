@@ -1,5 +1,6 @@
 import type { OmpApi } from "@omp-desktop/client";
 import { IMAGE_GENERATION_CAPABILITY } from "@omp-desktop/protocol/image-generation";
+import { WORKSPACE_FILES_CAPABILITY } from "@omp-desktop/protocol/messages";
 import type { PluginInstallation } from "./runtime-contracts.js";
 import type { PluginActivationScope } from "./activation.js";
 export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,scope:PluginActivationScope,options:{mode:"manage"|"active";legacy?:boolean}):OmpApi {
@@ -7,6 +8,7 @@ export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,sc
  const subscriptions=new WeakMap<object,()=>void|Promise<void>>();
  const capability=(path:readonly string[])=>{
   if(path[0]==="images")return IMAGE_GENERATION_CAPABILITY;
+  if(path[0]==="workspaceFiles")return WORKSPACE_FILES_CAPABILITY;
   const method=path.at(-1);
   if(method==="configuration")return "agents.configuration";
   if(method==="respondToPermission")return "agents.permissions";
@@ -31,9 +33,9 @@ export function createPluginOmpApi(api:OmpApi,installation:PluginInstallation,sc
     return (...args:unknown[])=>{
      scope.assertCurrent(installation.generation);
      const managementAuthoring=installation.owner==="desktop" && (next[0]==="providers" || (next.length===2 && next[0]==="host" && key==="info") || (next[0]==="workspaces" && next[1]==="create" && (next.length===2 || (next.length===4 && next[2]==="agents" && key==="create"))));
-     if(options.mode!=="active" && !managementAuthoring)throw new Error("Agent operations are unavailable in management mode");
+     if(options.mode!=="active" && !managementAuthoring)throw new Error(next[0]==="workspaceFiles" ? "Workspace file operations are unavailable in management mode" : "Agent operations are unavailable in management mode");
      const required=capability(next);
-     if((!options.legacy || required===IMAGE_GENERATION_CAPABILITY) && (!installation.declaredCapabilities.includes(required)||!installation.grantedCapabilities.includes(required)))throw new Error(`Plugin capability is not granted: ${required}`);
+     if((!options.legacy || required===IMAGE_GENERATION_CAPABILITY || required===WORKSPACE_FILES_CAPABILITY) && (!installation.declaredCapabilities.includes(required)||!installation.grantedCapabilities.includes(required)))throw new Error(`Plugin capability is not granted: ${required}`);
      const guarded=args.map(argument=>typeof argument==="function"?(...values:unknown[])=>{if(scope.signal.aborted)return;scope.assertCurrent(installation.generation);return argument(...values);}:argument);
      if(next[0]==="images" && key==="generate"){
       const inputOptions=guarded[1] as {signal?:AbortSignal}|undefined;

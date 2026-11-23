@@ -32,6 +32,7 @@ import {
   AgentInitializationProgressStatusPayloadSchema,
   AgentResumedStatusPayloadSchema,
   CheckoutRenameBranchResponseSchema,
+  MAX_WORKSPACE_FILE_BYTES,
   parseServerInfoStatusPayload,
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
@@ -54,6 +55,8 @@ import type {
   FileExplorerResponse,
   FileVersion,
   FileWriteResult,
+  WorkspaceFileTarget,
+  WorkspaceFileWriteRequest,
   FetchAgentTimelineResponseMessage,
   AgentForkContextResponseMessage,
   GitSetupOptions,
@@ -538,6 +541,23 @@ export interface FileReadResult {
   kind: LegacyFileExplorerFilePayload["kind"];
   modifiedAt: string;
   revision?: string;
+}
+
+export interface WorkspaceFileVersion {
+  modifiedAt: string;
+  revision?: string;
+}
+
+export interface WorkspaceTextFile extends WorkspaceFileVersion {
+  content: string;
+}
+
+export type WorkspaceFileEntry = Pick<FileExplorerDirectoryPayload["entries"][number], "name" | "kind">;
+
+export interface WorkspaceFileWriteInput extends WorkspaceFileTarget {
+  content: string;
+  expectedModifiedAt: string;
+  expectedRevision?: string;
 }
 export interface FileUploadInput {
   fileName: string;
@@ -1078,6 +1098,22 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function encodeWorkspaceFileContent(content: string): string | null {
+  // UTF-8 uses at least one byte per UTF-16 code unit. Check this inexpensive
+  // bound before allocating the byte array.
+  if (content.length > MAX_WORKSPACE_FILE_BYTES) return null;
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > MAX_WORKSPACE_FILE_BYTES) return null;
+
+  // Encode whole Base64 groups until the final chunk without a Node dependency.
+  const chunkSize = 24 * 1024;
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(btoa(String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))));
+  }
+  return chunks.join("");
 }
 
 function legacyExplorerFileToBytes(file: LegacyFileExplorerFilePayload): FileReadResult {
@@ -5062,19 +5098,24 @@ export class DaemonClient {
   // ============================================================================
 
   private async requestFileExplorer(
-    cwd: string,
-    path: string,
+    target: { cwd: string; path: string } | WorkspaceFileTarget,
     mode: "list" | "file",
     requestId?: string,
     acceptBinary = false,
     maxBytes?: number,
   ): Promise<FileExplorerPayload> {
+    const location = "workspaceId" in target
+      ? {
+          type: "workspace.files.explore.request" as const,
+          workspaceId: target.workspaceId,
+          scope: target.scope,
+          path: target.path,
+        }
+      : { type: "file_explorer_request" as const, cwd: target.cwd, path: target.path };
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "file_explorer_request",
-        cwd,
-        path,
+        ...location,
         mode,
         ...(acceptBinary ? { acceptBinary: true } : {}),
         ...(maxBytes ? { maxBytes } : {}),
@@ -5088,7 +5129,7 @@ export class DaemonClient {
     path: string,
     requestId?: string,
   ): Promise<FileExplorerDirectoryPayload> {
-    const payload = await this.requestFileExplorer(cwd, path, "list", requestId);
+    const payload = await this.requestFileExplorer({ cwd, path }, "list", requestId);
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -5104,18 +5145,33 @@ export class DaemonClient {
     requestId?: string,
     maxBytes?: number,
   ): Promise<FileReadResult> {
+    const result = await this.readFileTransfer({ cwd, path }, requestId, maxBytes);
+    if (!result) throw new Error("File unavailable.");
+    return result;
+  }
+
+  private async readFileTransfer(
+    target: { cwd: string; path: string } | WorkspaceFileTarget,
+    requestId?: string,
+    maxBytes?: number,
+  ): Promise<FileReadResult | null> {
     const resolvedRequestId = this.createRequestId(requestId);
-    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
+    const scoped = "workspaceId" in target;
+    this.pendingBinaryFileReads.set(resolvedRequestId, {
+      cwd: scoped ? "" : target.cwd,
+      path: target.path,
+      maxBytes,
+    });
     try {
       const payload = await this.requestFileExplorer(
-        cwd,
-        path,
+        target,
         "file",
         resolvedRequestId,
         true,
         maxBytes,
       );
-      if (payload.error) {
+      if (scoped && payload.errorCode === "not_found") return null;
+      if (payload.error !== null) {
         throw new Error(payload.error);
       }
       const binaryResult = this.completedBinaryFileReads.get(resolvedRequestId);
@@ -5126,11 +5182,86 @@ export class DaemonClient {
       if (!payload.file) {
         throw new Error("File unavailable.");
       }
+      if (
+        scoped &&
+        payload.file.kind === "text" &&
+        (payload.file.encoding !== "utf-8" || payload.file.content === undefined)
+      ) {
+        throw new Error("Host returned malformed workspace file content.");
+      }
       return legacyExplorerFileToBytes(payload.file);
     } finally {
       this.pendingBinaryFileReads.delete(resolvedRequestId);
       this.activeBinaryFileTransfers.delete(resolvedRequestId);
     }
+  }
+
+  private requireWorkspaceFiles(): void {
+    if (this.lastServerInfoMessage?.features?.scopedWorkspaceFiles !== true) {
+      throw new Error("Update the host to use scoped workspace files.");
+    }
+  }
+
+  async listWorkspaceFiles(target: WorkspaceFileTarget): Promise<WorkspaceFileEntry[] | null> {
+    this.requireWorkspaceFiles();
+    const payload = await this.requestFileExplorer(target, "list");
+    if (payload.errorCode === "not_found") return null;
+    if (payload.error !== null) throw new Error(payload.error);
+    if (!payload.directory) throw new Error("Directory listing unavailable.");
+    return payload.directory.entries.map(({ name, kind }) => ({ name, kind }));
+  }
+
+  async readWorkspaceFile(target: WorkspaceFileTarget): Promise<WorkspaceTextFile | null> {
+    this.requireWorkspaceFiles();
+    const file = await this.readFileTransfer(target, undefined, MAX_WORKSPACE_FILE_BYTES);
+    if (!file) return null;
+    if (file.kind !== "text") throw new Error("Requested file is not a UTF-8 text file.");
+    return {
+      content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(file.bytes),
+      modifiedAt: file.modifiedAt,
+      revision: file.revision,
+    };
+  }
+
+  async createWorkspaceFileEntry(
+    target: WorkspaceFileTarget,
+    entry: { kind: "directory" } | { kind: "file"; content: string },
+  ): Promise<boolean> {
+    this.requireWorkspaceFiles();
+    const contentBase64 = entry.kind === "file" ? encodeWorkspaceFileContent(entry.content) : null;
+    if (entry.kind === "file" && contentBase64 === null) throw new Error("File is too large to create");
+    const { result } = await this.sendCorrelatedSessionRequest({
+      message: {
+        type: "workspace.files.create.request",
+        workspaceId: target.workspaceId,
+        scope: target.scope,
+        path: target.path,
+        entry: contentBase64 === null ? { kind: "directory" } : { kind: "file", contentBase64 },
+      },
+      responseType: "workspace.files.create.response",
+    });
+    if (result.status === "error") throw new Error(result.error);
+    return result.status === "created";
+  }
+
+  async writeWorkspaceFile(input: WorkspaceFileWriteInput): Promise<FileWriteResult> {
+    this.requireWorkspaceFiles();
+    const contentBase64 = encodeWorkspaceFileContent(input.content);
+    if (contentBase64 === null) return { status: "error", error: "File is too large to edit" };
+    const message: Omit<WorkspaceFileWriteRequest, "requestId"> = {
+      type: "workspace.files.write.request",
+      workspaceId: input.workspaceId,
+      scope: input.scope,
+      path: input.path,
+      contentBase64,
+      expectedModifiedAt: input.expectedModifiedAt,
+      expectedRevision: input.expectedRevision,
+    };
+    const { result } = await this.sendCorrelatedSessionRequest({
+      message,
+      responseType: "fs.file.write.response",
+    });
+    return result;
   }
 
   async subscribeFile(

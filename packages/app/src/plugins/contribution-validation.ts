@@ -35,6 +35,13 @@ export function validatePluginContribution<K extends keyof PluginContributions>(
   }
   if ((kind === "command" || kind === "menu") && typeof parsed.onSelect !== "function") throw new Error(`Plugin ${kind} ${id} has no action callback`);
   if (kind === "panel" && parsed.context !== "workspace" && parsed.context !== "agent") throw new Error(`Plugin panel ${id} has invalid context`);
+  if (kind === "panel" && parsed.fileSuffix !== undefined) {
+    const suffix = requireText(parsed.fileSuffix, `panel ${id} file suffix`);
+    if (parsed.context !== "workspace" || !/^\.[^/\\]+$/.test(suffix)) {
+      throw new Error(`Plugin panel ${id} requires a workspace context and a dot-prefixed filename suffix`);
+    }
+    parsed.fileSuffix = suffix;
+  }
   if (kind === "command" && parsed.context !== "global" && parsed.context !== "workspace" && parsed.context !== "agent") throw new Error(`Plugin command ${id} has invalid context`);
   if (kind === "menu" && !["workspace", "agent", "tab", "application"].includes(parsed.position as string)) throw new Error(`Plugin menu ${id} has invalid position`);
   if (kind === "sidebar") parsed.surface = requireId(parsed.surface, `sidebar ${id} surface`);

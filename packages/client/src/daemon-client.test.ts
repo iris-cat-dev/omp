@@ -743,6 +743,27 @@ test("cancels an image request on the host using its original request ID", async
   await expect(result).resolves.toEqual(image);
 });
 
+test("scoped workspace files cannot fall back to a legacy empty create", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "scoped-workspace-files",
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  await expect(createOmpApi(client).workspaceFiles.create({
+    workspaceId: "workspace-1",
+    scope: "project",
+    path: "canvases/diagram.canva.json",
+    content: '{"name":"Diagram"}',
+  })).rejects.toThrow("Update the host to use scoped workspace files");
+  expect(mock.sent).toEqual([]);
+});
+
 test("finishes provider subscription waits on dispose or disabled reconnect", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

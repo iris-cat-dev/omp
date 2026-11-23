@@ -3421,6 +3421,53 @@ export const FileExplorerRequestSchema = z.object({
   maxBytes: z.number().int().positive().optional(),
 });
 
+export const WORKSPACE_FILES_CAPABILITY = "workspace.files";
+export const MAX_WORKSPACE_FILE_BYTES = 16 * 1024 * 1024;
+
+const WorkspaceFileTargetSchema = z.object({
+  workspaceId: z.string().min(1),
+  scope: z.enum(["project", "workspace"]),
+  path: z.string().min(1),
+});
+export type WorkspaceFileTarget = z.infer<typeof WorkspaceFileTargetSchema>;
+
+// Separate request tags keep older daemons from interpreting scoped writes or
+// creates as legacy operations with fields silently removed by their schemas.
+export const WorkspaceFileExploreRequestSchema = WorkspaceFileTargetSchema.extend({
+  type: z.literal("workspace.files.explore.request"),
+  mode: z.enum(["list", "file"]),
+  acceptBinary: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+// Base64 bounds any 16 MiB text at 21⅓ MiB before encryption, even when
+// sending quotes or control characters that JSON would otherwise expand.
+const WorkspaceFileContentSchema = z
+  .string()
+  .max(4 * Math.ceil(MAX_WORKSPACE_FILE_BYTES / 3))
+  .regex(/^[A-Za-z0-9+/]*={0,2}(?![\s\S])/)
+  .refine((data) => {
+    const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+    return data.length % 4 === 0 && (data.length / 4) * 3 - padding <= MAX_WORKSPACE_FILE_BYTES;
+  }, "Expected Base64-encoded text of at most 16 MiB");
+
+export const WorkspaceFileWriteRequestSchema = WorkspaceFileTargetSchema.extend({
+  type: z.literal("workspace.files.write.request"),
+  contentBase64: WorkspaceFileContentSchema,
+  expectedModifiedAt: z.string(),
+  expectedRevision: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const WorkspaceFileCreateRequestSchema = WorkspaceFileTargetSchema.extend({
+  type: z.literal("workspace.files.create.request"),
+  entry: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("directory") }),
+    z.object({ kind: z.literal("file"), contentBase64: WorkspaceFileContentSchema }),
+  ]),
+  requestId: z.string(),
+});
+
 export const FileVersionSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ready"),
@@ -4079,6 +4126,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceCreateRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
+  WorkspaceFileExploreRequestSchema,
+  WorkspaceFileWriteRequestSchema,
+  WorkspaceFileCreateRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   DirectorySubscribeRequestSchema,
@@ -4353,6 +4403,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: z.boolean().optional(),
         fsDirectoryWatch: z.boolean().optional(),
+        scopedWorkspaceFiles: z.boolean().optional(),
         // COMPAT(fsEntryMove): added in v0.3.2, remove gate after 2027-03-10.
         fsEntryMove: z.boolean().optional(),
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
@@ -6637,6 +6688,7 @@ export const FileExplorerResponseSchema = z.object({
     directory: FileExplorerDirectorySchema.nullable(),
     file: FileExplorerFileSchema.nullable(),
     error: z.string().nullable(),
+    errorCode: z.literal("not_found").optional(),
     requestId: z.string(),
   }),
 });
@@ -6690,6 +6742,18 @@ export const FileWriteResponseSchema = z.object({
   type: z.literal("fs.file.write.response"),
   payload: z.object({
     result: FileWriteResultSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const WorkspaceFileCreateResponseSchema = z.object({
+  type: z.literal("workspace.files.create.response"),
+  payload: z.object({
+    result: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("created") }),
+      z.object({ status: z.literal("exists") }),
+      z.object({ status: z.literal("error"), error: z.string() }),
+    ]),
     requestId: z.string(),
   }),
 });
@@ -8130,6 +8194,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DirectorySubscribeResponseSchema,
   DirectoryUpdateSchema,
   FileWriteResponseSchema,
+  WorkspaceFileCreateResponseSchema,
   FileEntryCreateResponseSchema,
   FileEntryRenameResponseSchema,
   FileEntryMoveResponseSchema,
@@ -8770,6 +8835,10 @@ export type DeleteWorkspaceRequest = z.infer<typeof DeleteWorkspaceRequestSchema
 export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type WorkspaceFileExploreRequest = z.infer<typeof WorkspaceFileExploreRequestSchema>;
+export type WorkspaceFileWriteRequest = z.infer<typeof WorkspaceFileWriteRequestSchema>;
+export type WorkspaceFileCreateRequest = z.infer<typeof WorkspaceFileCreateRequestSchema>;
+export type WorkspaceFileCreateResponse = z.infer<typeof WorkspaceFileCreateResponseSchema>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;

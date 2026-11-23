@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import {
   createExplorerEntry,
+  createScopedExplorerEntry,
   deleteExplorerEntry,
   duplicateExplorerEntry,
   getExplorerFileVersion,
@@ -112,6 +113,31 @@ describe("file explorer service", () => {
       await expect(listDirectoryEntries({ root })).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       enumeration.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes a complete staged file without replacing an existing target", async () => {
+    const root = await createTempDir("paseo-workspace-create-");
+    const relativePath = "diagram.canva.json";
+    const destination = path.join(root, relativePath);
+    const content = Buffer.from('{"title":"你好"}');
+    const link = fs.link.bind(fs);
+    const publish = vi.spyOn(fs, "link").mockImplementationOnce(async (staged, target) => {
+      await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fs.readFile(staged)).toEqual(content);
+      await link(staged, target);
+    });
+    try {
+      await expect(createScopedExplorerEntry({ root, relativePath }, { kind: "file", content }))
+        .resolves.toBe("created");
+      await expect(createScopedExplorerEntry(
+        { root, relativePath }, { kind: "file", content: Buffer.from("never overwrite") },
+      )).resolves.toBe("exists");
+      expect(await readFile(destination)).toEqual(content);
+      expect(await fs.readdir(root)).toEqual([relativePath]);
+    } finally {
+      publish.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });

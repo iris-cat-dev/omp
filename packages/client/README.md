@@ -28,6 +28,31 @@ The public API is the package root. Imports under `@omp-desktop/client/internal/
 
 See the [public API definitions](./src/index.ts) for agents, workspaces, provider discovery, events, and the API reference. Runnable TypeScript patterns live in [`examples/`](./examples/README.md).
 
+## Workspace files
+
+Use `client.workspaceFiles` to read or save UTF-8 text on the daemon that owns a workspace. Pass its registered `workspaceId` and a forward-slash relative `path`. `scope: "project"` starts at the project root; `scope: "workspace"` starts at the workspace checkout.
+
+```ts
+const directory = { workspaceId, scope: "project", path: "canvases" } as const;
+await client.workspaceFiles.mkdir(directory);
+const target = { ...directory, path: "canvases/diagram.canva.json" };
+await client.workspaceFiles.create({ ...target, content: '{"name":"Diagram"}\n' });
+
+const current = await client.workspaceFiles.read(target);
+if (current) {
+  const result = await client.workspaceFiles.write({
+    ...target,
+    content: '{"name":"Updated diagram"}\n',
+    expectedModifiedAt: current.modifiedAt,
+    expectedRevision: current.revision,
+  });
+  if (result.status === "conflict") console.log("The file changed; reload before saving.");
+  if (result.status === "error") throw new Error(result.error);
+}
+```
+
+`list` and `read` return `null` for a missing entry; errors such as wrong entry type or an out-of-scope path are reported separately. `create` publishes the full file at once and returns `false` if the target already exists. Text files can be up to 16 MiB. Plugins need an active installation that declares and is granted `workspace.files`.
+
 ## Runtime
 
 The client needs a WebSocket implementation. Modern browsers and Node.js 22 provide one globally.

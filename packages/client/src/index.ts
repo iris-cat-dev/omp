@@ -14,6 +14,8 @@ import type {
   ForgeAuthLoginStartResponse,
   ForgeAuthLoginFinishResponse,
   ForgeAuthLoginCancelResponse,
+  FileWriteResult,
+  WorkspaceFileTarget,
   ForgeAuthLogoutResponse,
   MutableDaemonConfigPatch,
   OmpCustomProviderInput,
@@ -62,8 +64,18 @@ import type {
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
   WaitForFinishResult,
+  WorkspaceFileEntry,
+  WorkspaceFileWriteInput,
+  WorkspaceTextFile,
 } from "./daemon-client.js";
 export type { AgentPromptContextPayload } from "./daemon-client.js";
+export type { FileWriteResult, WorkspaceFileTarget } from "@omp-desktop/protocol/messages";
+export type {
+  WorkspaceFileEntry,
+  WorkspaceFileVersion,
+  WorkspaceFileWriteInput,
+  WorkspaceTextFile,
+} from "./daemon-client.js";
 
 /**
  * Coding turns routinely run for minutes, so the handle waits far longer than
@@ -558,11 +570,26 @@ export interface OmpImageActions {
   generate(input: ImageGenerationInput, options?: { signal?: AbortSignal }): Promise<GeneratedImage>;
 }
 
+/** Files relative to a registered project root or workspace checkout on this host. */
+export interface OmpWorkspaceFileActions {
+  /** Lists a directory, or returns null if it does not exist. Use "." for the scope root. */
+  list(target: WorkspaceFileTarget): Promise<WorkspaceFileEntry[] | null>;
+  /** Reads UTF-8 text and its revision, or returns null if the file does not exist. */
+  read(target: WorkspaceFileTarget): Promise<WorkspaceTextFile | null>;
+  /** Creates a directory; succeeds if the target is already a directory. */
+  mkdir(target: WorkspaceFileTarget): Promise<void>;
+  /** Creates a complete file atomically. Returns false if any entry already exists. */
+  create(input: WorkspaceFileTarget & { content: string }): Promise<boolean>;
+  /** Replaces text only at the expected revision (or modification time if no revision was supplied). */
+  write(input: WorkspaceFileWriteInput): Promise<FileWriteResult>;
+}
+
 export interface OmpApi {
   readonly hostId:string;
   readonly host: { info(): Promise<ServerInfoStatusPayload> };
   readonly plugins:DesktopPluginActions;
   readonly workspaces: OmpWorkspaceActions;
+  readonly workspaceFiles: OmpWorkspaceFileActions;
   readonly agents: OmpAgentActions;
   readonly images: OmpImageActions;
   readonly providers: OmpProviderActions;
@@ -648,6 +675,13 @@ export function createOmpApi(daemonClient: DaemonClient): OmpApi {
         daemonClient.on("workspace_update", (message) => {
           handler(message.payload);
         }),
+    },
+    workspaceFiles: {
+      list: (target) => daemonClient.listWorkspaceFiles(target),
+      read: (target) => daemonClient.readWorkspaceFile(target),
+      mkdir: async (target) => { await daemonClient.createWorkspaceFileEntry(target, { kind: "directory" }); },
+      create: (input) => daemonClient.createWorkspaceFileEntry(input, { kind: "file", content: input.content }),
+      write: (input) => daemonClient.writeWorkspaceFile(input),
     },
     agents: {
       list: (options) => daemonClient.fetchAgents(options),

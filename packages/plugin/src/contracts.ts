@@ -74,6 +74,8 @@ interface PluginWorkspacePanelBase {
 export interface PluginWorkspacePanelProps extends PluginHostProps {
   context: "workspace";
   workspaceId: string;
+  /** Checkout-relative file path when rendered in a file tab; absent in a plugin tab. */
+  filePath?: string;
   state?: JsonValue;
   setState?(value:JsonValue):void;
 }
@@ -89,6 +91,8 @@ export interface PluginAgentPanelProps extends PluginHostProps {
 export type PluginWorkspacePanelContribution =
   | (PluginWorkspacePanelBase & {
       context: "workspace";
+      /** Optional dot-prefixed file suffix matched case-insensitively in workspace file tabs. */
+      fileSuffix?: string;
       Component: ComponentType<PluginWorkspacePanelProps>;
     })
   | (PluginWorkspacePanelBase & {

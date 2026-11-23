@@ -185,6 +185,52 @@ it("requires declared and granted image generation access, including for legacy 
   expect(caller.signal.aborted).toBe(false);
 });
 
+it.each([false, true])(
+  "requires an active workspace.files declaration and grant (legacy=%s)",
+  async (legacy) => {
+    const scope = createActivationScope(1);
+    const installation: PluginInstallation = {
+      id: "canvas", packageId: "canvas", owner: "desktop", version: "1.0.0", generation: 1,
+      enabled: true, declaredCapabilities: ["workspace.files"], grantedCapabilities: ["workspace.files"],
+    };
+    const workspaceFiles = {
+      list: vi.fn().mockResolvedValue([]),
+      read: vi.fn().mockResolvedValue(null),
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      create: vi.fn().mockResolvedValue(true),
+      write: vi.fn().mockResolvedValue({ status: "written", modifiedAt: "now", size: 2 }),
+    };
+    const api = { workspaceFiles } as unknown as OmpApi;
+    const target = { workspaceId: "workspace-1", scope: "project", path: "canvases/diagram.canva.json" } as const;
+    const writes = { ...target, content: "{}" };
+    function calls(files: OmpApi["workspaceFiles"]) {
+      return [
+        () => files.list(target),
+        () => files.read(target),
+        () => files.mkdir(target),
+        () => files.create(writes),
+        () => files.write({ ...writes, expectedModifiedAt: "before" }),
+      ];
+    }
+
+    for (const partial of [{ declaredCapabilities: [] }, { grantedCapabilities: [] }]) {
+      const denied = createPluginOmpApi(api, { ...installation, ...partial }, scope, { mode: "active", legacy });
+      for (const call of calls(denied.workspaceFiles)) {
+        expect(call).toThrow("Plugin capability is not granted: workspace.files");
+      }
+    }
+    const managed = createPluginOmpApi(api, installation, scope, { mode: "manage", legacy });
+    for (const call of calls(managed.workspaceFiles)) {
+      expect(call).toThrow("Workspace file operations are unavailable in management mode");
+    }
+    for (const method of Object.values(workspaceFiles)) expect(method).not.toHaveBeenCalled();
+
+    const approved = createPluginOmpApi(api, installation, scope, { mode: "active", legacy });
+    await Promise.all(calls(approved.workspaceFiles).map((call) => call()));
+    for (const method of Object.values(workspaceFiles)) expect(method).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("keeps provider model data usable by React without proxying frozen element types", async () => {
   const scope = createActivationScope(1);
   const installation: PluginInstallation = {

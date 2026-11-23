@@ -12,6 +12,9 @@ import { TreeRail } from "@/components/tree-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { defaultFileState, fileStateSchema } from "@/panels/file/state";
 import { usePanelState } from "@/panels/use-panel-state";
+import { resolvePluginFilePanel, type ResolvedPluginFilePanel } from "@/plugins/file-panel";
+import { usePluginContributions } from "@/plugins/hooks";
+import { PluginView, usePluginHostProps } from "@/plugins/view";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 
 const CENTERED_PADDED_STYLE = {
@@ -34,6 +37,27 @@ function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
   };
 }
 
+function PluginFileEditor({ editor }: { editor: ResolvedPluginFilePanel }) {
+  const { serverId, workspaceId } = usePaneContext();
+  const host = usePluginHostProps(serverId);
+  const {
+    instance,
+    contribution: { Component },
+    filePath,
+  } = editor;
+  return (
+    <PluginView instance={instance} hostId={serverId}>
+      <Component
+        key={filePath}
+        {...host}
+        context="workspace"
+        workspaceId={workspaceId}
+        filePath={filePath}
+      />
+    </PluginView>
+  );
+}
+
 function FilePanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, target, fileNavigationRevision, retargetCurrentTab } =
@@ -42,6 +66,7 @@ function FilePanel() {
   const isCompact = useIsCompactFormFactor();
   const treeVisible = fileState.treeVisible;
   const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
+  const pluginPanels = usePluginContributions("panel");
   const handleOpenFile = useCallback(
     (location: WorkspaceFileLocation) => retargetCurrentTab({ kind: "file", ...location }),
     [retargetCurrentTab],
@@ -58,17 +83,24 @@ function FilePanel() {
       </View>
     );
   }
+  const editor = resolvePluginFilePanel(pluginPanels, serverId, {
+    path: target.path,
+    workspaceRoot: workspaceDirectory,
+  });
+  const content = editor ? (
+    <PluginFileEditor key={editor.key} editor={editor} />
+  ) : (
+    <FilePane
+      serverId={serverId}
+      workspaceRoot={workspaceDirectory}
+      location={target}
+      navigationRevision={fileNavigationRevision ?? 0}
+    />
+  );
   // Branch around the whole rail rather than making the tree slot conditional —
   // see the `TreeRail` children contract.
   if (isCompact || !treeVisible) {
-    return (
-      <FilePane
-        serverId={serverId}
-        workspaceRoot={workspaceDirectory}
-        location={target}
-        navigationRevision={fileNavigationRevision ?? 0}
-      />
-    );
+    return content;
   }
   return (
     <TreeRail
@@ -77,12 +109,7 @@ function FilePanel() {
       onWidthChange={handleTreeWidthChange}
       minimumWidth={160}
     >
-      <FilePane
-        serverId={serverId}
-        workspaceRoot={workspaceDirectory}
-        location={target}
-        navigationRevision={fileNavigationRevision ?? 0}
-      />
+      {content}
       <FileExplorerPane
         serverId={serverId}
         workspaceId={workspaceId}

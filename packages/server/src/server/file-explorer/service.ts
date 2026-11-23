@@ -2,6 +2,8 @@ import { constants, promises as fs, type BigIntStats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { isUtf8 } from "node:buffer";
+import { MAX_WORKSPACE_FILE_BYTES } from "@omp-desktop/protocol/messages";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
 
@@ -12,15 +14,16 @@ export type ExplorerEncoding = "utf-8" | "base64" | "none";
 export interface ListDirectoryParams {
   root: string;
   relativePath?: string;
+  strict?: boolean;
 }
 
-export interface ReadFileParams {
-  root: string;
+export interface ReadFileParams extends ListDirectoryParams {
   relativePath: string;
+  maxBytes?: number;
 }
 
 export interface WriteFileParams extends ReadFileParams {
-  content: string;
+  content: string | Uint8Array;
   expectedModifiedAt: string;
   expectedRevision?: string;
 }
@@ -98,8 +101,11 @@ const DIRECTORY_METADATA_CONCURRENCY = 32;
 export const FILE_EXPLORER_STREAM_CHUNK_BYTES = 256 * 1024;
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
-  process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
+  process.platform === "win32"
+    ? constants.O_RDONLY
+    : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const ACCESS_OUTSIDE_WORKSPACE_MESSAGE = "Access outside of workspace is not allowed";
+const pendingFileCommits = new Map<string, Promise<void>>();
 
 function fileRevision(stats: BigIntStats): string {
   return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}`;
@@ -110,7 +116,7 @@ function matchesExpectedRevision(
   expectedModifiedAt: string,
   expectedRevision?: string,
 ): boolean {
-  return expectedRevision
+  return expectedRevision !== undefined
     ? fileRevision(stats) === expectedRevision
     : stats.mtime.toISOString() === expectedModifiedAt;
 }
@@ -125,10 +131,7 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-interface ScopedPathParams {
-  root: string;
-  relativePath?: string;
-}
+type ScopedPathParams = ListDirectoryParams;
 
 interface ScopedPath {
   requestedPath: string;
@@ -139,17 +142,42 @@ interface EntryPayloadParams {
   root: string;
   targetPath: string;
   name: string;
+  strict?: boolean;
 }
 
 export async function resolveExplorerDirectoryPath(params: ListDirectoryParams): Promise<string> {
   return (await resolveScopedPath(params)).resolvedPath;
 }
 
+/** Workspace SDK paths use forward slashes on every host. */
+export function validateWorkspaceFilePath(relativePath: string): void {
+  const parts = relativePath.split("/");
+  if (
+    !relativePath ||
+    relativePath.startsWith("/") ||
+    relativePath.includes("\\") ||
+    relativePath.includes("\0") ||
+    /^[a-z]:/i.test(relativePath) ||
+    parts[0] === "~" ||
+    parts.some((part) => part === "..") ||
+    (process.platform === "win32" &&
+      parts.some(
+        (part) =>
+          /[:<>"|?*]/.test(part) ||
+          (part !== "." && /[. ]$/.test(part)) ||
+          /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\.|$)/i.test(part),
+      ))
+  ) {
+    throw new Error("Workspace file paths must be relative and stay within the selected scope");
+  }
+}
+
 export async function listDirectoryEntries({
   root,
   relativePath = ".",
+  strict,
 }: ListDirectoryParams): Promise<FileExplorerDirectory> {
-  const directoryPath = await resolveScopedPath({ root, relativePath });
+  const directoryPath = await resolveScopedPath({ root, relativePath, strict });
   const stats = await fs.stat(directoryPath.resolvedPath);
 
   if (!stats.isDirectory()) {
@@ -173,10 +201,15 @@ export async function listDirectoryEntries({
             root,
             targetPath,
             name,
+            strict,
           });
         } catch (error) {
           // Skip dangling links and entries that disappeared or leave the workspace.
-          if (isMissingEntryError(error) || isOutsideWorkspaceError(error)) {
+          if (
+            isMissingEntryError(error) ||
+            isOutsideWorkspaceError(error) ||
+            error instanceof DanglingExplorerPathError
+          ) {
             entriesWithNulls[index] = null;
             continue;
           }
@@ -197,16 +230,13 @@ export async function listDirectoryEntries({
   });
 
   return {
-    path: normalizeRelativePath({ root, targetPath: directoryPath.requestedPath }),
+    path: normalizeRelativePath({ root, targetPath: directoryPath.requestedPath, strict }),
     entries,
   };
 }
 
-export async function readExplorerFile({
-  root,
-  relativePath,
-}: ReadFileParams): Promise<FileExplorerFile> {
-  const file = await readExplorerFileBytes({ root, relativePath });
+export async function readExplorerFile(params: ReadFileParams): Promise<FileExplorerFile> {
+  const file = await readExplorerFileBytes(params);
 
   if (file.kind === "image") {
     return {
@@ -248,20 +278,18 @@ export async function readExplorerFile({
 export async function readExplorerFileBytes({
   root,
   relativePath,
+  strict,
+  maxBytes,
 }: ReadFileParams): Promise<FileExplorerFileBytes> {
-  const filePath = await resolveScopedPath({ root, relativePath });
+  const filePath = await resolveScopedPath({ root, relativePath, strict });
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
-    const stats = await handle.stat({ bigint: true });
-
-    if (!stats.isFile()) {
-      throw new Error("Requested path is not a file");
-    }
+    const stats = await statReadableFile(handle, maxBytes);
 
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const basePayload = {
-      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath, strict }),
       size: Number(stats.size),
       modifiedAt: stats.mtime.toISOString(),
       revision: fileRevision(stats),
@@ -278,7 +306,7 @@ export async function readExplorerFileBytes({
       };
     }
 
-    if (isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
+    if (isLikelyBinary(buffer) || !isUtf8(buffer)) {
       return {
         ...basePayload,
         kind: "binary",
@@ -301,17 +329,14 @@ export async function readExplorerFileBytes({
 }
 
 export async function streamExplorerFile(
-  { root, relativePath }: ReadFileParams,
+  { root, relativePath, strict, maxBytes }: ReadFileParams,
   consume: (file: FileExplorerFileStream) => Promise<void>,
 ): Promise<void> {
-  const filePath = await resolveScopedPath({ root, relativePath });
+  const filePath = await resolveScopedPath({ root, relativePath, strict });
   const handle = await openFileForRead(filePath.resolvedPath);
 
   try {
-    const stats = await handle.stat({ bigint: true });
-    if (!stats.isFile()) {
-      throw new Error("Requested path is not a file");
-    }
+    const stats = await statReadableFile(handle, maxBytes);
 
     const advertisedSize = Number(stats.size);
     const advertisedRevision = fileRevision(stats);
@@ -329,7 +354,7 @@ export async function streamExplorerFile(
     }
 
     await consume({
-      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
+      path: normalizeRelativePath({ root, targetPath: filePath.requestedPath, strict }),
       kind,
       encoding: isBinary ? "binary" : "utf-8",
       mimeType,
@@ -341,6 +366,15 @@ export async function streamExplorerFile(
   } finally {
     await handle.close();
   }
+}
+
+async function statReadableFile(handle: FileHandle, maxBytes?: number): Promise<BigIntStats> {
+  const stats = await handle.stat({ bigint: true });
+  if (!stats.isFile()) throw new Error("Requested path is not a file");
+  if (maxBytes !== undefined && stats.size > BigInt(maxBytes)) {
+    throw new Error("File is too large to display");
+  }
+  return stats;
 }
 
 async function isFileHandleBinary(handle: FileHandle, advertisedSize: number): Promise<boolean> {
@@ -445,101 +479,137 @@ export async function resolveExplorerFilePath({
 export async function writeExplorerFile({
   root,
   relativePath,
+  strict,
   content,
   expectedModifiedAt,
   expectedRevision,
 }: WriteFileParams): Promise<ExplorerFileWriteResult> {
-  const encoded = Buffer.from(content, "utf8");
-  if (encoded.byteLength > MAX_EDITABLE_FILE_BYTES) {
+  const maxBytes = strict ? MAX_WORKSPACE_FILE_BYTES : MAX_EDITABLE_FILE_BYTES;
+  if (Buffer.byteLength(content, "utf8") > maxBytes) {
     return { status: "error", error: "File is too large to edit" };
   }
 
-  let filePath: ScopedPath;
-  let currentMode = 0o600;
+  const params = { root, relativePath, strict };
+  const cwd = strict ? root : expandUserPath(root);
+  const readyVersion = (scoped: ScopedPath, stats: BigIntStats) =>
+    ({
+      status: "ready",
+      cwd,
+      path: normalizeRelativePath({ root, targetPath: scoped.requestedPath, strict }),
+      size: Number(stats.size),
+      modifiedAt: stats.mtime.toISOString(),
+      revision: fileRevision(stats),
+    }) as const;
+
   try {
-    filePath = await resolveScopedPath({ root, relativePath });
+    const filePath = await resolveScopedPath(params);
     const handle = await openFileForRead(filePath.resolvedPath);
+    let currentStats: BigIntStats;
     try {
-      const stats = await handle.stat({ bigint: true });
-      if (!stats.isFile()) {
+      currentStats = await handle.stat({ bigint: true });
+      if (!currentStats.isFile()) {
         return { status: "error", error: "Requested path is not a file" };
       }
-      if (stats.size > BigInt(MAX_EDITABLE_FILE_BYTES)) {
+      if (currentStats.size > BigInt(maxBytes)) {
         return { status: "error", error: "File is too large to edit" };
       }
       const current = await handle.readFile();
-      if (isLikelyBinary(current) || !isValidUtf8(current)) {
+      if (isLikelyBinary(current) || !isUtf8(current)) {
         return { status: "error", error: "Binary files cannot be edited" };
       }
-      currentMode = Number(stats.mode);
-      const modifiedAt = stats.mtime.toISOString();
-      if (!matchesExpectedRevision(stats, expectedModifiedAt, expectedRevision)) {
-        return {
-          status: "conflict",
-          version: {
-            status: "ready",
-            cwd: expandUserPath(root),
-            path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-            size: Number(stats.size),
-            modifiedAt,
-            revision: fileRevision(stats),
-          },
-        };
+      if (!matchesExpectedRevision(currentStats, expectedModifiedAt, expectedRevision)) {
+        return { status: "conflict", version: readyVersion(filePath, currentStats) };
       }
     } finally {
       await handle.close();
     }
+
+    return await withSyncedTemporaryFile(
+      path.dirname(filePath.resolvedPath),
+      content,
+      Number(currentStats.mode),
+      async (temporaryPath) => {
+        const saved = await fs.stat(temporaryPath, { bigint: true });
+        return withFileCommit(currentStats, async (): Promise<ExplorerFileWriteResult> => {
+          const latest = await resolveScopedPath(params);
+          const stats = await fs.lstat(latest.resolvedPath, { bigint: true });
+          if (!stats.isFile()) {
+            return { status: "error", error: "Requested path is not a file" };
+          }
+          if (
+            latest.resolvedPath !== filePath.resolvedPath ||
+            fileRevision(stats) !== fileRevision(currentStats)
+          ) {
+            return { status: "conflict", version: readyVersion(latest, stats) };
+          }
+
+          await fs.rename(temporaryPath, filePath.resolvedPath);
+          return {
+            status: "written",
+            modifiedAt: saved.mtime.toISOString(),
+            size: Number(saved.size),
+            revision: fileRevision(saved),
+          };
+        });
+      },
+    );
   } catch (error) {
-    if (isMissingEntryError(error)) {
-      return {
-        status: "conflict",
-        version: { status: "missing", cwd: expandUserPath(root), path: relativePath },
-      };
+    if (strict ? isMissingExplorerEntry(error) : isMissingEntryError(error)) {
+      if (!strict) {
+        return { status: "conflict", version: { status: "missing", cwd, path: relativePath } };
+      }
+      try {
+        const latest = await resolveScopedPath(params);
+        await fs.lstat(latest.resolvedPath);
+      } catch (cause) {
+        if (isMissingExplorerEntry(cause)) {
+          return { status: "conflict", version: { status: "missing", cwd, path: relativePath } };
+        }
+        return { status: "error", error: cause instanceof Error ? cause.message : String(cause) };
+      }
     }
     return { status: "error", error: error instanceof Error ? error.message : String(error) };
   }
+}
 
-  const temporaryPath = path.join(
-    path.dirname(filePath.resolvedPath),
-    `.${path.basename(filePath.resolvedPath)}.paseo-${randomUUID()}.tmp`,
-  );
-  let temporaryHandle: FileHandle | null = null;
+async function withSyncedTemporaryFile<T>(
+  directory: string,
+  content: string | Uint8Array,
+  existingMode: number | undefined,
+  publish: (temporaryPath: string) => Promise<T>,
+): Promise<T> {
+  const temporaryPath = path.join(directory, `.paseo-${randomUUID()}.tmp`);
+  const handle = await fs.open(temporaryPath, "wx", existingMode ?? 0o644);
   try {
-    temporaryHandle = await fs.open(temporaryPath, "wx", currentMode);
-    if (process.platform !== "win32") {
-      await temporaryHandle.chmod(currentMode & 0o7777);
+    try {
+      if (existingMode !== undefined && process.platform !== "win32") {
+        await handle.chmod(existingMode & 0o7777);
+      }
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
     }
-    await temporaryHandle.writeFile(encoded);
-    await temporaryHandle.sync();
-    await temporaryHandle.close();
-    temporaryHandle = null;
-    const latestStats = await fs.stat(filePath.resolvedPath, { bigint: true });
-    if (!matchesExpectedRevision(latestStats, expectedModifiedAt, expectedRevision)) {
-      return {
-        status: "conflict",
-        version: {
-          status: "ready",
-          cwd: expandUserPath(root),
-          path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
-          size: Number(latestStats.size),
-          modifiedAt: latestStats.mtime.toISOString(),
-          revision: fileRevision(latestStats),
-        },
-      };
-    }
-    await fs.rename(temporaryPath, filePath.resolvedPath);
-    const stats = await fs.stat(filePath.resolvedPath, { bigint: true });
-    return {
-      status: "written",
-      modifiedAt: stats.mtime.toISOString(),
-      size: Number(stats.size),
-      revision: fileRevision(stats),
-    };
-  } catch (error) {
-    return { status: "error", error: error instanceof Error ? error.message : String(error) };
+    return await publish(temporaryPath);
   } finally {
-    await temporaryHandle?.close().catch(() => undefined);
     await fs.unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+// Serialize only comparison and replacement. Inode identity groups aliases
+// to the same baseline, including case-insensitive paths and symlinks.
+// An external editor can still race the filesystem rename.
+async function withFileCommit<T>(currentStats: BigIntStats, commit: () => Promise<T>): Promise<T> {
+  const key = `${currentStats.dev}:${currentStats.ino}`;
+  const previous = pendingFileCommits.get(key);
+  const { promise, resolve } = Promise.withResolvers<void>();
+  pendingFileCommits.set(key, promise);
+  try {
+    await previous;
+    return await commit();
+  } finally {
+    if (pendingFileCommits.get(key) === promise) pendingFileCommits.delete(key);
+    resolve();
   }
 }
 
@@ -645,6 +715,52 @@ export async function createExplorerEntry({
     }
     return { status: "error", error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export async function createScopedExplorerEntry(
+  { root, relativePath }: ReadFileParams,
+  entry: { kind: "directory" } | { kind: "file"; content: Uint8Array },
+): Promise<"created" | "exists"> {
+  if (entry.kind === "file" && entry.content.byteLength > MAX_WORKSPACE_FILE_BYTES) {
+    throw new Error("File is too large to create");
+  }
+
+  const parentParams = { root, relativePath: path.posix.dirname(relativePath), strict: true };
+  const parent = await resolveScopedPath(parentParams);
+  if (!(await fs.stat(parent.resolvedPath)).isDirectory()) {
+    throw new Error("Parent path is not a directory");
+  }
+  const targetPath = path.join(parent.resolvedPath, path.posix.basename(relativePath));
+  if (entry.kind === "directory") {
+    try {
+      await fs.mkdir(targetPath);
+      return "created";
+    } catch (error) {
+      if (isEntryExistsError(error) && (await fs.lstat(targetPath)).isDirectory()) return "exists";
+      throw error;
+    }
+  }
+
+  return withSyncedTemporaryFile(
+    parent.resolvedPath,
+    entry.content,
+    undefined,
+    async (temporaryPath) => {
+      const currentParent = await resolveScopedPath(parentParams);
+      if (currentParent.resolvedPath !== parent.resolvedPath) {
+        throw new Error("Destination directory changed during file creation");
+      }
+      try {
+        // Link publishes the complete, synced file and fails if a destination
+        // entry already exists, including a symlink or a concurrent creator.
+        await fs.link(temporaryPath, targetPath);
+        return "created";
+      } catch (error) {
+        if (isEntryExistsError(error)) return "exists";
+        throw error;
+      }
+    },
+  );
 }
 
 export async function duplicateExplorerEntry({
@@ -849,31 +965,82 @@ function isEntryExistsError(error: unknown): boolean {
 async function resolveScopedPath({
   root,
   relativePath = ".",
+  strict,
 }: ScopedPathParams): Promise<ScopedPath> {
-  const normalizedRoot = expandUserPath(root);
-  const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
-  const relative = path.relative(normalizedRoot, requestedPath);
+  if (strict && !path.isAbsolute(root)) {
+    throw new Error("The registered workspace file scope must be absolute");
+  }
+  const normalizedRoot = strict ? root : expandUserPath(root);
+  const requestedPath = strict
+    ? path.resolve(normalizedRoot, relativePath)
+    : resolvePathFromBase(normalizedRoot, relativePath);
+  assertContainedPath(normalizedRoot, requestedPath);
 
-  if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {
-    throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+  let realRoot: string;
+  try {
+    realRoot = await fs.realpath(normalizedRoot);
+  } catch (error) {
+    if (strict && isMissingExplorerEntry(error)) {
+      throw new Error("The registered workspace file scope no longer exists", { cause: error });
+    }
+    throw error;
   }
 
-  const realRoot = await fs.realpath(normalizedRoot);
-
   try {
-    const realPath = await fs.realpath(requestedPath);
-    const realRelative = path.relative(realRoot, realPath);
-    if (realRelative !== "" && (realRelative.startsWith("..") || path.isAbsolute(realRelative))) {
-      throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
-    }
-    return { requestedPath, resolvedPath: realPath };
+    const resolvedPath = await fs.realpath(requestedPath);
+    assertContainedPath(realRoot, resolvedPath);
+    return { requestedPath, resolvedPath };
   } catch (error) {
-    if (isMissingEntryError(error)) {
+    if (strict) {
+      if (isMissingExplorerEntry(error)) {
+        await assertMissingPathIsContained(realRoot, requestedPath);
+      }
+    } else if (isMissingEntryError(error)) {
       return { requestedPath, resolvedPath: requestedPath };
     }
     throw error;
   }
 }
+
+function assertContainedPath(root: string, target: string): void {
+  const relative = path.relative(root, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+  }
+}
+
+// A missing leaf may sit beneath a symlink to another directory, or be a
+// dangling symlink itself. Check the nearest existing ancestor first.
+async function assertMissingPathIsContained(realRoot: string, target: string): Promise<void> {
+  let candidate = target;
+  for (;;) {
+    try {
+      const stats = await fs.lstat(candidate);
+      if (candidate !== target && !stats.isDirectory() && !stats.isSymbolicLink()) {
+        throw new Error("Parent path is not a directory");
+      }
+      break;
+    } catch (error) {
+      const parent = path.dirname(candidate);
+      if (!isMissingExplorerEntry(error) || parent === candidate) throw error;
+      candidate = parent;
+    }
+  }
+  try {
+    const resolved = await fs.realpath(candidate);
+    assertContainedPath(realRoot, resolved);
+    if (candidate !== target && !(await fs.stat(resolved)).isDirectory()) {
+      throw new Error("Parent path is not a directory");
+    }
+  } catch (error) {
+    if (isMissingExplorerEntry(error)) {
+      throw new DanglingExplorerPathError("Symbolic link target does not exist");
+    }
+    throw error;
+  }
+}
+
+class DanglingExplorerPathError extends Error {}
 
 async function openFileForRead(filePath: string): Promise<FileHandle> {
   return fs.open(filePath, READ_FILE_OPEN_FLAGS);
@@ -883,19 +1050,23 @@ async function buildEntryPayload({
   root,
   targetPath,
   name,
+  strict,
 }: EntryPayloadParams): Promise<FileExplorerEntry> {
-  const entryPath = await resolveScopedPath({
-    root,
-    relativePath: normalizeRelativePath({ root, targetPath }),
-  });
+  const relativePath = normalizeRelativePath({ root, targetPath, strict });
+  const entryPath = await resolveScopedPath({ root, relativePath, strict });
   const stats = await fs.stat(entryPath.resolvedPath);
   return {
     name,
-    path: normalizeRelativePath({ root, targetPath }),
+    path: relativePath,
     kind: stats.isDirectory() ? "directory" : "file",
     size: stats.size,
     modifiedAt: stats.mtime.toISOString(),
   };
+}
+
+/** Only actual absence, not ENOTDIR, symlink loops, or permissions. */
+export function isMissingExplorerEntry(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
 
 function isMissingEntryError(error: unknown): boolean {
@@ -907,10 +1078,14 @@ function isOutsideWorkspaceError(error: unknown): boolean {
   return error instanceof Error && error.message === ACCESS_OUTSIDE_WORKSPACE_MESSAGE;
 }
 
-function normalizeRelativePath({ root, targetPath }: { root: string; targetPath: string }): string {
-  const normalizedRoot = expandUserPath(root);
-  const normalizedTarget = expandUserPath(targetPath);
-  const relative = path.relative(normalizedRoot, normalizedTarget);
+function normalizeRelativePath({
+  root,
+  targetPath,
+  strict,
+}: { root: string; targetPath: string; strict?: boolean }): string {
+  const relative = strict
+    ? path.relative(root, targetPath)
+    : path.relative(expandUserPath(root), expandUserPath(targetPath));
   return relative === "" ? "." : relative.split(path.sep).join("/");
 }
 
@@ -942,13 +1117,4 @@ function isLikelyBinary(buffer: Buffer): boolean {
   }
 
   return suspicious / buffer.length > 0.3;
-}
-
-function isValidUtf8(buffer: Buffer): boolean {
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    return true;
-  } catch {
-    return false;
-  }
 }

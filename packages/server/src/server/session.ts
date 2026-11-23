@@ -17,6 +17,7 @@ import {
 } from "@omp-desktop/protocol/image-generation";
 import {
   serializeAgentStreamEvent,
+  WORKSPACE_FILES_CAPABILITY,
   ListCommandsResponseSchema,
   type AgentSnapshotPayload,
   type FirstAgentContext,
@@ -32,6 +33,7 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
+  type WorkspaceFileTarget,
 } from "./messages.js";
 import { searchWorkspaceText } from "./workspace-text-search.js";
 import type {
@@ -879,6 +881,7 @@ export class Session {
       downloadTokenStore,
       paseoHome,
       logger: this.sessionLogger,
+      resolveWorkspaceRoot: (target) => this.resolveWorkspaceFileRoot(target),
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -2001,9 +2004,9 @@ export class Session {
       this.sessionLogger.trace(
         {
           messageType: msg.type,
-          ...(msg.type === "images.generate.request"
-            ? {}
-            : { payloadBytes: JSON.stringify(msg).length }),
+          ...(this.sessionLogger.isLevelEnabled?.("trace") && msg.type !== "images.generate.request"
+            ? { payloadBytes: JSON.stringify(msg).length }
+            : {}),
         },
         "agent.session.inbound",
       );
@@ -2861,12 +2864,34 @@ export class Session {
     }
   }
 
+  private async resolveWorkspaceFileRoot({
+    workspaceId,
+    scope,
+  }: WorkspaceFileTarget): Promise<string> {
+    if (this.serviceOrigin) {
+      if (!this.servicePluginId || !this.authorizeServiceCapability) {
+        throw new Error(`Plugin capability is not granted: ${WORKSPACE_FILES_CAPABILITY}`);
+      }
+      this.authorizeServiceCapability(WORKSPACE_FILES_CAPABILITY);
+    }
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace || workspace.archivedAt) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (scope === "workspace") return workspace.cwd;
+
+    const project = await this.projectRegistry.get(workspace.projectId);
+    if (!project || project.archivedAt) {
+      throw new Error(`Project not found for workspace: ${workspaceId}`);
+    }
+    return project.rootPath;
+  }
+
   private dispatchWorkspaceFileMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
       case "file_explorer_request":
+      case "workspace.files.explore.request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.directory.subscribe.request":
         return this.workspaceFilesSession.handleDirectorySubscribeRequest(msg, source);
@@ -2880,6 +2905,10 @@ export class Session {
         return undefined;
       case "fs.file.write.request":
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
+      case "workspace.files.write.request":
+        return this.workspaceFilesSession.handleFileWriteRequest(msg, source);
+      case "workspace.files.create.request":
+        return this.workspaceFilesSession.handleWorkspaceFileCreateRequest(msg, source);
       case "fs.entry.create.request":
         return this.workspaceFilesSession.handleFileEntryCreateRequest(msg);
       case "fs.entry.rename.request":
