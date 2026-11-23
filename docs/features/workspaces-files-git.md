@@ -87,7 +87,9 @@ The header bottom-panel button and **Cmd+Shift+\\** on macOS toggle terminals. H
 
 The **+** beside the bottom terminal tabs creates and selects another terminal in the same pane. With the built-in zsh integration, starting a command changes the tab title to the executable name (for example, `sleep` or `node`); returning to the prompt restores the current directory. Application-provided terminal titles still take precedence while running, and manually renamed terminals keep their titles. Other shells retain their own terminal-title escape-sequence behavior.
 
-Desktop scroll surfaces use compact terminal-style scrollbars. Sidebar and vertical splitters have two-pixel accent hover highlights without reducing invisible drag targets. Hit areas sit above adjacent panes, including horizontal terminal splits, and opt out of native window dragging so overhanging edges resize rather than move the window. Divider movement follows pointer distance even beside hidden panes; hidden panes retain stored sizes for restoration.
+Desktop scroll surfaces use compact terminal-style scrollbars. The project sidebar uses the same flat, draggable thumb as the Files tree in both grouping modes. The thumb appears only when the list needs scrolling and sits clear of the sidebar resize target without taking space from the list.
+
+Sidebar and vertical splitters have two-pixel accent hover highlights without reducing invisible drag targets. Hit areas sit above adjacent panes, including horizontal terminal splits, and opt out of native window dragging so overhanging edges resize rather than move the window. Divider movement follows pointer distance even beside hidden panes; hidden panes retain stored sizes for restoration.
 
 Adding or removing split panes invalidates saved resize weights with a different pane count. The current layout's sizes apply instead, keeping the Files divider draggable in both directions after opening a second side-by-side conversation. Compatible saved weights, including those of temporarily hidden panes, remain in use.
 

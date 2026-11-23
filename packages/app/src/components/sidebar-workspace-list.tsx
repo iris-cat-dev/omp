@@ -1,7 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   Pressable,
-  ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
   View,
@@ -112,6 +111,7 @@ import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reor
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
+import { SidebarListScrollView } from "@/components/sidebar/sidebar-list-scroll-view";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
   SidebarWorkspaceContextMenu,
@@ -3217,14 +3217,13 @@ function ProjectModeList({
           {content}
         </NestableScrollContainer>
       ) : (
-        <ScrollView
+        <SidebarListScrollView
           style={styles.list}
           contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator
           testID="sidebar-project-workspace-list-scroll"
         >
           {content}
-        </ScrollView>
+        </SidebarListScrollView>
       )}
     </View>
   );

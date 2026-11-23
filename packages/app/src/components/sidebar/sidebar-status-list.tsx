@@ -4,7 +4,6 @@ import {
   View,
   Text,
   Pressable,
-  ScrollView,
   type GestureResponderEvent,
   type PressableStateCallbackType,
 } from "react-native";
@@ -17,6 +16,7 @@ import {
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import { SidebarListScrollView } from "@/components/sidebar/sidebar-list-scroll-view";
 import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
@@ -179,14 +179,13 @@ export function SidebarStatusWorkspaceList({
           {content}
         </NestableScrollContainer>
       ) : (
-        <ScrollView
+        <SidebarListScrollView
           style={styles.list}
           contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator
           testID="sidebar-status-list-scroll"
         >
           {content}
-        </ScrollView>
+        </SidebarListScrollView>
       )}
     </View>
   );
