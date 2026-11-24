@@ -67,15 +67,6 @@ describe("turn activity", () => {
     });
   });
 
-  it("keeps submission-only activity untimed", () => {
-    expect(resolveTurnPresentation(TURN_LIVENESS_IDLE, true)).toEqual({
-      isActive: true,
-      isCancelling: false,
-      startedAt: null,
-      turnId: null,
-    });
-  });
-
   it("shows the latest nonempty intent only for the active turn", () => {
     const open = reduceTurnLiveness(TURN_LIVENESS_IDLE, {
       type: "stream_open",
@@ -91,7 +82,7 @@ describe("turn activity", () => {
       turnId: "turn-1",
       intent: "  Updating code  ",
     });
-    expect(resolveTurnPresentation(latest, false).workingIntent).toBe("Updating code");
+    expect(resolveTurnPresentation(latest).workingIntent).toBe("Updating code");
     expect(
       reduceTurnLiveness(latest, {
         type: "working_intent",
@@ -117,17 +108,17 @@ describe("turn activity", () => {
       type: "stream_open",
       turn: { turnId: "turn-1", startedAt },
     });
-    expect(resolveTurnPresentation(reopened, false).workingIntent).toBe("Reading files");
+    expect(resolveTurnPresentation(reopened).workingIntent).toBe("Reading files");
     const reset = reduceTurnLiveness(reopened, {
       type: "snapshot",
       activeTurn: { turnId: "turn-1", startedAt, workingIntent: null },
     });
-    expect(resolveTurnPresentation(reset, false).workingIntent).toBeUndefined();
+    expect(resolveTurnPresentation(reset).workingIntent).toBeUndefined();
     const next = reduceTurnLiveness(restored, {
       type: "stream_open",
       turn: { turnId: "turn-2", startedAt },
     });
-    expect(resolveTurnPresentation(next, false).workingIntent).toBeUndefined();
+    expect(resolveTurnPresentation(next).workingIntent).toBeUndefined();
   });
 
   it("does not revive working intent after cancellation or terminal close", () => {

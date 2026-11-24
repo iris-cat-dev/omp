@@ -160,6 +160,7 @@ export const ar: TranslationResources = {
       sendAndInterrupt: "إرسال ومقاطعة",
       sendAndSteer: "إرسال وتوجيه",
       sendMessage: "أرسل رسالة",
+      waitingForMessageConfirmation: "في انتظار تأكيد استلام الرسالة…",
       queue: "طابور",
       send: "يرسل",
     },

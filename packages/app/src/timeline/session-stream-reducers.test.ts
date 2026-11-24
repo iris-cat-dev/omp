@@ -1790,6 +1790,31 @@ describe("processTimelineResponse", () => {
     expect(result.acknowledgedClientMessageIds).toEqual([clientMessageId]);
   });
 
+  it("acknowledges a prompt in a replacement page without a temporary row to merge", () => {
+    const clientMessageId = "submitted-prompt";
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentCursor: { epoch: "old-epoch", startSeq: 1, endSeq: 4 },
+      sendingClientMessageIds: [clientMessageId],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "canonical prompt", "user_message"),
+            item: { type: "user_message", text: "canonical prompt", clientMessageId },
+          },
+        ],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["canonical prompt"]);
+    expect(result.acknowledgedClientMessageIds).toEqual([clientMessageId]);
+  });
+
   it("reconciles multiple submitted user messages in canonical order", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
@@ -3906,7 +3931,7 @@ describe("processAgentStreamEvent", () => {
     },
   );
 
-  it("does not resurrect an omitted prompt from a stale metadata update", () => {
+  it("acknowledges an omitted prompt from a same-epoch metadata update without resurrecting it", () => {
     const currentHead = [makeAssistantItem("live reply")];
     const result = processAgentStreamEvent({
       ...baseStreamInput,
@@ -3922,6 +3947,7 @@ describe("processAgentStreamEvent", () => {
           type: "user_message",
           text: "old prompt",
           messageId: "omitted",
+          clientMessageId: "pending-prompt",
           rewindStatus: "ready",
         },
       },
@@ -3930,6 +3956,7 @@ describe("processAgentStreamEvent", () => {
     expect(result.head).toBe(currentHead);
     expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(false);
+    expect(result.acknowledgedClientMessageIds).toEqual(["pending-prompt"]);
   });
 
   it("preserves the live timeline cursor on an assistant error", () => {

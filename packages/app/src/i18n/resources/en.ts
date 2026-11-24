@@ -270,6 +270,7 @@ export const en = {
       sendAndInterrupt: "Send and interrupt",
       sendAndSteer: "Send and steer",
       sendMessage: "Send message",
+      waitingForMessageConfirmation: "Waiting for message confirmation…",
       queue: "Queue",
       send: "Send",
     },

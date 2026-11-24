@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type * as Reanimated from "react-native-reanimated";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ComposerAcceptanceFixture,
@@ -16,10 +16,13 @@ import { __setAttachmentStoreForTests } from "@/attachments/store";
 import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore } from "@/stores/session-store";
 import { i18n } from "@/i18n/i18next";
+import { createUserMessage } from "@/types/stream";
+import type { DaemonClient } from "@omp-desktop/client/internal/daemon-client";
 
-const { storage, reevaluateQueue } = vi.hoisted(() => ({
+const { storage, reevaluateQueue, sendSettings } = vi.hoisted(() => ({
   storage: new Map<string, string>(),
   reevaluateQueue: vi.fn(),
+  sendSettings: { sendBehavior: "interrupt" as "interrupt" | "steer" },
 }));
 
 // Only platform/configuration boundaries are controlled. Composer, MessageInput,
@@ -59,7 +62,7 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 vi.mock("@/hooks/use-is-local-daemon", () => ({ useIsLocalDaemon: () => false }));
 vi.mock("@/hooks/use-settings", () => ({
-  useAppSettings: () => ({ settings: { sendBehavior: "interrupt" } }),
+  useAppSettings: () => ({ settings: sendSettings }),
 }));
 vi.mock("@/hooks/use-keyboard-shift-style", () => ({
   useKeyboardShiftStyle: () => ({ style: {} }),
@@ -224,6 +227,7 @@ beforeEach(async () => {
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   storage.clear();
+  sendSettings.sendBehavior = "interrupt";
   submissions = [];
   afterPaint = new Set();
   // Keep the actual AfterPaintPublication; control only when the browser paints.
@@ -263,6 +267,60 @@ afterEach(() => {
   __setAttachmentStoreForTests(null);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("switches from Stop to normal Enter while the last message is still unconfirmed", async () => {
+  sendSettings.sendBehavior = "steer";
+  const agentId = "agent-a";
+  const clientMessageId = "planning-request";
+  const now = new Date();
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  store.beginAgentMessageSubmission(
+    serverId,
+    agentId,
+    createUserMessage({ clientMessageId, text: "Draft a plan", timestamp: now }),
+  );
+  store.acceptAgentMessageSubmission(serverId, agentId, clientMessageId);
+  store.applyAgentTurnLiveness(serverId, agentId, {
+    type: "stream_open",
+    turn: { turnId: "plan-turn", startedAt: now },
+  });
+  await show(agentId);
+  const stop = page.getByRole("button", { name: i18n.t("composer.cancel.stopAgent") });
+  await expect.element(stop).toBeVisible();
+
+  act(() => edit("Add rollback steps"));
+  const steer = page.getByRole("button", { name: i18n.t("composer.input.sendAndSteer") });
+  await expect.element(steer).toBeVisible();
+  act(() => {
+    edit("");
+    store.applyAgentTurnLiveness(serverId, agentId, [
+      { type: "stream_close", turnId: "plan-turn" },
+      { type: "snapshot", activeTurn: null },
+    ]);
+  });
+  await expect.element(stop).not.toBeInTheDocument();
+  const waiting = page.getByText(i18n.t("composer.input.waitingForMessageConfirmation"));
+  await expect.element(waiting).toBeVisible();
+  act(() => edit("Add rollback steps"));
+  await expect
+    .element(page.getByRole("button", { name: i18n.t("composer.input.sendMessage") }))
+    .toBeVisible();
+  await expect.element(steer).not.toBeInTheDocument();
+
+  await act(async () => {
+    await userEvent.click(textarea());
+    await userEvent.keyboard("{Enter}");
+  });
+  expect(submissions).toMatchObject([{ payload: { text: "Add rollback steps" } }]);
+  await accept();
+  act(() => {
+    store.setAgentStreamState(serverId, agentId, {
+      acknowledgedClientMessageIds: [clientMessageId],
+    });
+  });
+  await expect.element(waiting).not.toBeInTheDocument();
 });
 
 describe("Composer parent acceptance and deferred draft publication", () => {

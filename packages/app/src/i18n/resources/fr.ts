@@ -161,6 +161,7 @@ export const fr: TranslationResources = {
       sendAndInterrupt: "Envoyer et interrompre",
       sendAndSteer: "Envoyer et guider",
       sendMessage: "Envoyer un message",
+      waitingForMessageConfirmation: "En attente de confirmation du message…",
       queue: "File d'attente",
       send: "Envoyer",
     },

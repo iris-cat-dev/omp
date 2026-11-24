@@ -58,10 +58,7 @@ export interface TurnPresentation {
   workingIntent?: string;
 }
 
-export function resolveTurnPresentation(
-  liveness: TurnLiveness,
-  hasActiveSubmission: boolean,
-): TurnPresentation {
+export function resolveTurnPresentation(liveness: TurnLiveness): TurnPresentation {
   if (liveness.phase === "open") {
     return {
       isActive: true,
@@ -72,7 +69,7 @@ export function resolveTurnPresentation(
     };
   }
   return {
-    isActive: hasActiveSubmission,
+    isActive: false,
     isCancelling: liveness.cancellationRequestId !== null,
     startedAt: null,
     turnId: null,
