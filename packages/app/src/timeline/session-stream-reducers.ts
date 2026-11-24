@@ -262,6 +262,7 @@ function reconcilePromptWindowItems(input: {
       page.push(item);
       continue;
     }
+    if (item.clientMessageId) acknowledgedClientMessageIds.push(item.clientMessageId);
     const reconciled = upsertUserMessageAcrossStream({
       tail,
       head,
@@ -275,9 +276,6 @@ function reconcilePromptWindowItems(input: {
       continue;
     }
     page.push(location.message);
-    if (item.clientMessageId !== undefined) {
-      acknowledgedClientMessageIds.push(item.clientMessageId);
-    }
     tail = reconciled.tail;
     head = reconciled.head;
     if (location.lane === "tail") {
@@ -1245,7 +1243,7 @@ function applyAcceptedTimelinePage(input: {
       endSeq: payload.endCursor?.seq ?? acceptedUnits.at(-1)?.seqEnd ?? 0,
     }),
     head: projected.head,
-    acknowledgedClientMessageIds: [],
+    acknowledgedClientMessageIds: collectExplicitUserMessageAcknowledgements(acceptedUnits),
   };
 }
 
@@ -1386,6 +1384,13 @@ function reconcileMaterializedTimelineMetadata(
       });
       timelineResult.tail = revised.tail;
       timelineResult.head = revised.head;
+      const clientMessageId = unit.event.item.clientMessageId;
+      if (
+        clientMessageId &&
+        !timelineResult.acknowledgedClientMessageIds.includes(clientMessageId)
+      ) {
+        timelineResult.acknowledgedClientMessageIds.push(clientMessageId);
+      }
       continue;
     }
     if (
@@ -1962,6 +1967,22 @@ export function processAgentStreamEvent(
   };
 }
 
+function collectExplicitUserMessageAcknowledgements(
+  entries: readonly { event: AgentStreamEventPayload }[],
+): string[] {
+  const clientMessageIds = new Set<string>();
+  for (const { event } of entries) {
+    if (
+      event.type === "timeline" &&
+      event.item.type === "user_message" &&
+      event.item.clientMessageId
+    ) {
+      clientMessageIds.add(event.item.clientMessageId);
+    }
+  }
+  return [...clientMessageIds];
+}
+
 export function processAgentStreamEvents(
   input: ProcessAgentStreamEventsInput,
 ): ProcessAgentStreamEventOutput {
@@ -1973,7 +1994,7 @@ export function processAgentStreamEvents(
       changedHead: false,
       cursor: input.currentCursor ?? null,
       cursorChanged: false,
-      acknowledgedClientMessageIds: [],
+      acknowledgedClientMessageIds: collectExplicitUserMessageAcknowledgements(input.events),
       sideEffects: [],
     };
   }

@@ -160,6 +160,7 @@ export const ja: TranslationResources = {
       sendAndInterrupt: "送信して中断",
       sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
+      waitingForMessageConfirmation: "メッセージの受信確認を待っています…",
       queue: "キュー",
       send: "送信",
     },

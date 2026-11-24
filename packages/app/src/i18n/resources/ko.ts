@@ -160,6 +160,7 @@ export const ko: TranslationResources = {
       sendAndInterrupt: "보내고 중단",
       sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
+      waitingForMessageConfirmation: "메시지 수신 확인을 기다리는 중…",
       queue: "대기열",
       send: "보내기",
     },

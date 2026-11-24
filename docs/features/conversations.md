@@ -77,6 +77,8 @@ Both modes still continue responses that hit the model's output-length limit so 
 
 Plan cards use accent colors for section headings and numbered steps. Inline code, such as file paths and identifiers, uses a tinted monospace style. Fenced blocks use the configured syntax theme when their language is supported.
 
+**Continue planning** closes the review and keeps Plan mode on. The next message you send starts a new read-only planning turn. Use the normal send action, including **Enter** in the desktop chat composer.
+
 ### Approval changes during a session
 
 Desktop offers **Always ask** and **Auto approval**. New conversations default to Auto approval (`yolo` in the SDK); an explicitly selected or saved Always ask preference is retained. The former Full access selection keeps its `full` ID and now displays as Auto approval. Retired Write approval preferences and stored conversations migrate to Always ask, without granting execution permission; imported native `write` settings also select Always ask.
@@ -91,11 +93,13 @@ Explicit per-tool `prompt` and `deny` policies remain effective with Auto approv
 
 While a conversation runs, the composer defaults to **Steer**. Steering guides the active turn without canceling it or managed descendants; a parent stays steerable while an OMP-native subagent runs in the background. A submitted steer stays visibly pending until OMP's canonical user-message event confirms consumption. An RPC acknowledgement confirms only admission.
 
+When the turn ends, the composer returns to normal sending. If a submitted message is still awaiting its server confirmation, the composer shows **Waiting for message confirmation…** instead of leaving the running indicator or **Stop** visible. The notice does not block the next message.
+
 If the provider cannot accept steering, Desktop reports a send failure and leaves the current turn running. Agent-to-agent prompts and completion notifications follow this same non-destructive rule, rather than replacing the turn.
 
 Prompt admission is serialized per target until its provider accepts the turn, not until the task finishes. Concurrent messages and completion notifications then steer that turn instead of replacing a still-starting request. Queued admissions retain their submission-time Stop epochs, including managed ancestors: Stop withdraws them rather than letting a late admission response restart work. Deliberate messages submitted after Stop can start normally. Other conversations remain independent; out-of-band controls bypass admission waits.
 
-Sending immediately clears the submitted text and image/file attachments from the composer and cancels any deferred publication of that draft. The conversation displays one local message while loading or sending; the host's canonical echo reconciles by client message ID. On rejection, the submitted text and attachments return only if the current composer is still empty. New text or attachment edits, and drafts in a newly selected conversation, are never cleared or overwritten by an earlier submission.
+Sending immediately clears the submitted text and image/file attachments from the composer and cancels any deferred publication of that draft. The conversation shows a temporary message while the host processes it. The formal message confirms delivery by its client message ID, even if reloading the timeline removed the temporary row. On rejection, the submitted text and attachments return only if the current composer is still empty. New text or attachment edits, and drafts in a newly selected conversation, are never cleared or overwritten by an earlier submission.
 
 Workspace setup retains its submitted text and image/file attachments until creation is accepted. Directory-validation and agent-creation failures are rejected submissions, not acceptance. Successful creation clears only its unchanged originating snapshot before closing or navigating, cancels unpublished text, and preserves attachment edits or a replacement workspace draft.
 

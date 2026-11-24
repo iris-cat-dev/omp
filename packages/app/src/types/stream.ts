@@ -790,6 +790,7 @@ export function replaceWithCanonicalStream(
       continue;
     }
 
+    if (item.clientMessageId) acknowledgedClientMessageIds.add(item.clientMessageId);
     nextTail.push(item);
   }
 
@@ -2307,6 +2308,7 @@ function applyCanonicalUserMessageEvent(params: {
     images: timelineImagesToAttachments(event.item.images, id, timestamp),
     attachments: event.item.attachments,
   });
+  const explicitClientMessageId = canonical.clientMessageId;
   const updatesExistingPosition =
     timelineCursor !== undefined &&
     (tail.some(
@@ -2322,13 +2324,17 @@ function applyCanonicalUserMessageEvent(params: {
           item.timelineCursor.seq === timelineCursor.seq,
       ));
   if (unmatchedInsert === "none" || updatesExistingPosition) {
-    return upsertUserMessageAcrossStream({
+    const reconciled = upsertUserMessageAcrossStream({
       tail,
       head,
       message: canonical,
       insert: "none",
       presentation: "existing",
     });
+    return {
+      ...reconciled,
+      acknowledgedClientMessageIds: explicitClientMessageId ? [explicitClientMessageId] : [],
+    };
   }
   const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
   const flushedHead = head.length > 0 ? [] : head;
@@ -2350,15 +2356,15 @@ function applyCanonicalUserMessageEvent(params: {
       canonical.clientMessageId,
       event.turnId,
     );
+    const confirmedClientMessageId =
+      explicitClientMessageId ??
+      (reconciled.location?.matched ? reconciled.location.message.clientMessageId : undefined);
     return {
       tail: reconciledTail,
       head: reconciledHead,
       changedTail: reconciled.changedTail || reconciledTail !== reconciled.tail,
       changedHead: reconciled.changedHead || reconciledHead !== reconciled.head,
-      acknowledgedClientMessageIds:
-        reconciled.location?.matched && reconciled.location.message.clientMessageId
-          ? [reconciled.location.message.clientMessageId]
-          : [],
+      acknowledgedClientMessageIds: confirmedClientMessageId ? [confirmedClientMessageId] : [],
     };
   }
   const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, hasContent);
@@ -2367,15 +2373,15 @@ function applyCanonicalUserMessageEvent(params: {
     canonical.clientMessageId,
     event.turnId,
   );
+  const confirmedClientMessageId =
+    explicitClientMessageId ??
+    (reconciled.matched ? reconciled.message.clientMessageId : undefined);
   return {
     tail: reconciledTail,
     head: flushedHead,
     changedTail: flushedTail !== tail || reconciledTail !== flushedTail,
     changedHead: flushedHead !== head,
-    acknowledgedClientMessageIds:
-      reconciled.matched && reconciled.message.clientMessageId
-        ? [reconciled.message.clientMessageId]
-        : [],
+    acknowledgedClientMessageIds: confirmedClientMessageId ? [confirmedClientMessageId] : [],
   };
 }
 

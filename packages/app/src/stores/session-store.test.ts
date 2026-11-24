@@ -17,6 +17,7 @@ import {
 } from "./session-store";
 import type { StreamItem } from "../types/stream";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
+import { processAgentStreamEvent } from "@/timeline/session-stream-reducers";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -84,21 +85,6 @@ function submittedMessage(clientMessageId: string): Extract<StreamItem, { kind: 
     text: clientMessageId,
     timestamp: new Date("2026-07-31T10:00:00.000Z"),
   };
-}
-
-function hasSubmittedMessage(items: readonly StreamItem[] | undefined, clientMessageId: string) {
-  return items?.some(
-    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
-  );
-}
-
-function permutations<T>(values: readonly T[]): T[][] {
-  if (values.length === 0) return [[]];
-  return values.flatMap((value, index) =>
-    permutations([...values.slice(0, index), ...values.slice(index + 1)]).map((suffix) =>
-      [value].concat(suffix),
-    ),
-  );
 }
 
 function taskTexts(tasks: ReadonlyArray<{ text: string }>): string[] {
@@ -316,135 +302,64 @@ describe("agent timeline state", () => {
 describe("message submission ordering", () => {
   const agentId = "agent-1";
   const clientMessageId = "client-1";
-  const startedAt = new Date("2026-07-31T10:00:01.000Z");
-  const steps = [
-    "accept",
-    "canonical-row",
-    "stream-open",
-    "snapshot-idle",
-    "snapshot-open",
-    "stream-close",
-  ] as const;
 
-  function applyStep(step: (typeof steps)[number]): void {
+  it("acknowledges a formal message arriving after its temporary row was lost in a timeline reset", () => {
+    initializeTestSession();
     const store = useSessionStore.getState();
-    if (step === "accept") {
-      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
-      return;
-    }
-    if (step === "canonical-row") {
-      store.setAgentStreamState("test-server", agentId, {
-        acknowledgedClientMessageIds: [clientMessageId],
-      });
-      return;
-    }
-    if (step === "stream-open") {
-      store.applyAgentTurnLiveness("test-server", agentId, {
-        type: "stream_open",
-        turn: { turnId: "turn-1", startedAt },
-      });
-      return;
-    }
-    if (step === "snapshot-open") {
-      store.applyAgentTurnLiveness("test-server", agentId, {
-        type: "snapshot",
-        activeTurn: { turnId: "turn-1", startedAt },
-      });
-      return;
-    }
-    if (step === "snapshot-idle") {
-      store.applyAgentTurnLiveness("test-server", agentId, {
-        type: "snapshot",
-        activeTurn: null,
-      });
-      return;
-    }
+    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+    store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage("other-prompt"));
+
+    const result = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "omp",
+        turnId: "turn-1",
+        item: { type: "user_message", text: "prompt", clientMessageId, messageId: "native-id" },
+      },
+      epoch: "new-epoch",
+      seq: 1,
+      currentCursor: { epoch: "old-epoch", startSeq: 1, endSeq: 3 },
+      currentTail: getTestSessionReferences().session.agentStreamTail.get(agentId)!,
+      currentHead: [],
+      timestamp: new Date(0),
+    });
+    store.setAgentStreamState("test-server", agentId, result);
+
+    const { session } = getTestSessionReferences();
+    expect(session.agentStreamTail.get(agentId)).toMatchObject([
+      { kind: "user_message", clientMessageId, messageId: "native-id" },
+    ]);
+    expect(
+      session.messageSubmissions.get(agentId)?.map((submission) => submission.clientMessageId),
+    ).toEqual(["other-prompt"]);
+  });
+
+  it("closes the turn while a sent message is still waiting for confirmation", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+    store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+    const presentation = () =>
+      selectAgentTurnPresentation(getTestSessionReferences().session, agentId);
+    expect(presentation().isActive).toBe(false);
+
+    store.applyAgentTurnLiveness("test-server", agentId, {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt: new Date(0) },
+    });
+    expect(presentation()).toMatchObject({ isActive: true, turnId: "turn-1" });
+
     store.applyAgentTurnLiveness("test-server", agentId, {
       type: "stream_close",
       turnId: "turn-1",
     });
-  }
-
-  it("keeps every ordering active until its canonical row and settles at quiescence", () => {
-    const continuityViolations: string[] = [];
-    const settlementViolations: string[] = [];
-
-    for (const ordering of permutations(steps)) {
-      useSessionStore.getState().clearSession("test-server");
-      initializeTestSession();
-      useSessionStore
-        .getState()
-        .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
-      let canonicalObserved = false;
-
-      for (const step of ordering) {
-        applyStep(step);
-        canonicalObserved ||= step === "canonical-row";
-        const presentation = selectAgentTurnPresentation(
-          useSessionStore.getState().sessions["test-server"],
-          agentId,
-        );
-        if (!canonicalObserved && !presentation.isActive) {
-          continuityViolations.push(`${ordering.join(" → ")}: inactive after ${step}`);
-        }
-      }
-
-      const store = useSessionStore.getState();
-      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
-      store.setAgentStreamState("test-server", agentId, {
-        acknowledgedClientMessageIds: [clientMessageId],
-      });
-      store.applyAgentTurnLiveness("test-server", agentId, [
-        { type: "stream_close", turnId: "turn-1" },
-        { type: "snapshot", activeTurn: null },
-      ]);
-      const settled = selectAgentTurnPresentation(
-        useSessionStore.getState().sessions["test-server"],
-        agentId,
-      );
-      if (settled.isActive) settlementViolations.push(ordering.join(" → "));
-    }
-
-    expect({ continuityViolations, settlementViolations }).toEqual({
-      continuityViolations: [],
-      settlementViolations: [],
-    });
-  });
-
-  it("publishes the optimistic row and active presentation in one store notification", () => {
-    initializeTestSession();
-    const notifications: Array<{ hasOptimisticRow: boolean; isActive: boolean }> = [];
-    const unsubscribe = useSessionStore.subscribe((state) => {
-      const session = state.sessions["test-server"];
-      notifications.push({
-        hasOptimisticRow:
-          hasSubmittedMessage(session?.agentStreamTail.get(agentId), clientMessageId) === true,
-        isActive: selectAgentTurnPresentation(session, agentId).isActive,
-      });
-    });
-
-    useSessionStore
-      .getState()
-      .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
-    unsubscribe();
-
-    expect(notifications).toEqual([{ hasOptimisticRow: true, isActive: true }]);
-  });
-
-  it("keeps another unacknowledged submission active after one row is acknowledged", () => {
-    initializeTestSession();
-    const store = useSessionStore.getState();
-    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
-    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage("client-2"));
-    store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
-    store.setAgentStreamState("test-server", agentId, {
-      acknowledgedClientMessageIds: [clientMessageId],
-    });
-
-    expect(
-      selectAgentTurnPresentation(useSessionStore.getState().sessions["test-server"], agentId)
-        .isActive,
-    ).toBe(true);
+    expect(presentation()).toMatchObject({ isActive: false, turnId: null });
+    store.applyAgentTurnLiveness("test-server", agentId, { type: "snapshot", activeTurn: null });
+    expect(presentation()).toMatchObject({ isActive: false, turnId: null });
+    expect(getTestSessionReferences().session.messageSubmissions.get(agentId)).toEqual([
+      { clientMessageId, rpcSettled: true, providerAcknowledged: false },
+    ]);
   });
 
   it("reconciles a created-agent row without creating a submission transaction", () => {
