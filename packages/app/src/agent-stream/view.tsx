@@ -567,10 +567,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamItems = isActive ? streamItems : EMPTY_STREAM_HEAD;
     const effectiveStreamHead = isActive ? streamHead : EMPTY_STREAM_HEAD;
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
-    const effectiveHasPendingSubmission = useRetainedValue(
-      pendingMessageSubmissions.length > 0,
-      isActive,
-    );
     const isTurnActive = effectiveTurnPresentation.isActive;
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
@@ -646,10 +642,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [effectiveStreamHead, effectiveStreamItems],
     );
     const workingMessage =
-      isTurnActive &&
-      !effectiveTurnPresentation.isCancelling &&
-      !effectiveHasPendingSubmission &&
-      effectiveTurnPresentation.turnId
+      isTurnActive && !effectiveTurnPresentation.isCancelling && effectiveTurnPresentation.turnId
         ? effectiveTurnPresentation.workingIntent
         : undefined;
     const duplicateToolImagePreviewIds = useMemo(

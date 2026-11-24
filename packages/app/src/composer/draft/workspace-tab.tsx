@@ -56,6 +56,7 @@ import { resolveProjectLayoutKey } from "@/workspace-tabs/project-scope";
 import { openSidePanelView } from "@/workspace-tabs/side-panel";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
+const DRAFT_TURN_PRESENTATION = resolveTurnPresentation(TURN_LIVENESS_IDLE);
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -539,10 +540,6 @@ export function WorkspaceDraftAgentTab({
       onCreated(result);
     },
   });
-  const turnPresentation = useMemo(
-    () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
-    [pendingMessageSubmissions],
-  );
   useAgentControlCommandCenterActions({
     sourceId: `draft:${serverId}:${tabId}`,
     enabled: isPaneFocused && !isSubmitting,
@@ -695,7 +692,7 @@ export function WorkspaceDraftAgentTab({
               context={draftAgent}
               streamItems={submittedStreamItems}
               pendingMessageSubmissions={pendingMessageSubmissions}
-              turnPresentation={turnPresentation}
+              turnPresentation={DRAFT_TURN_PRESENTATION}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />

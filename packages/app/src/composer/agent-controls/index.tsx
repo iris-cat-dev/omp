@@ -1900,9 +1900,20 @@ export const AgentControls = memo(function AgentControls({
       }
       try {
         if (agentProvider === "omp" && featureId === WORKFLOW_MODE_FEATURE_ID) {
-          await client.setAgentFeature(agentId, WORKFLOW_LOCALE_FEATURE_ID, workflowLocale);
+          if (supportsConfigApply) {
+            await client.applyAgentConfig(agentId, {
+              featureValues: {
+                [WORKFLOW_LOCALE_FEATURE_ID]: workflowLocale,
+                [WORKFLOW_MODE_FEATURE_ID]: value,
+              },
+            });
+          } else {
+            await client.setAgentFeature(agentId, WORKFLOW_LOCALE_FEATURE_ID, workflowLocale);
+            await client.setAgentFeature(agentId, featureId, value);
+          }
+        } else {
+          await client.setAgentFeature(agentId, featureId, value);
         }
-        await client.setAgentFeature(agentId, featureId, value);
         if (!shouldPersistAgentFeatureValue(featureId)) {
           return;
         }
@@ -1922,7 +1933,17 @@ export const AgentControls = memo(function AgentControls({
         toast.error(toErrorMessage(error));
       }
     },
-    [agent?.status, agentId, agentProvider, client, t, toast, updatePreferences, workflowLocale],
+    [
+      agent?.status,
+      agentId,
+      agentProvider,
+      client,
+      supportsConfigApply,
+      t,
+      toast,
+      updatePreferences,
+      workflowLocale,
+    ],
   );
   const handleApplyModelConfiguration = useCallback(
     async (selection: ModelUsageSelection) => {

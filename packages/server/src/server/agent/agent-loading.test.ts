@@ -5,7 +5,11 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
+import {
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  trySetOmpWorkflow,
+} from "./agent-loading.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -150,6 +154,7 @@ test.each([
             modelId,
           });
         },
+        trySetOmpWorkflow: (id, values) => trySetOmpWorkflow(id, values, manager),
         setModel: (id, model) => manager.setAgentModel(id, model),
         setMode: (id, mode) => manager.setAgentMode(id, mode),
         setThinking: (id, thinking) => manager.setAgentThinkingOption(id, thinking),

@@ -446,10 +446,7 @@ export function selectAgentTurnPresentation(
   session: SessionState | undefined,
   agentId: string,
 ): TurnPresentation {
-  return resolveTurnPresentation(
-    session?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE,
-    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).length > 0,
-  );
+  return resolveTurnPresentation(session?.agentTurnLiveness.get(agentId) ?? TURN_LIVENESS_IDLE);
 }
 
 function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {

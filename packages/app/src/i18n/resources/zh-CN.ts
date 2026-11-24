@@ -267,6 +267,7 @@ export const zhCN: TranslationResources = {
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
+      waitingForMessageConfirmation: "等待消息确认…",
       queue: "排队",
       send: "发送",
     },

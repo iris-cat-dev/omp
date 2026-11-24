@@ -1470,6 +1470,12 @@ function ComposerContentImpl({
   const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
   const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
   const isAgentRunning = hasActiveTurn;
+  const hasUnconfirmedMessage = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.messageSubmissions
+        .get(agentId)
+        ?.some((submission) => !submission.providerAcknowledged) ?? false,
+  );
   // Queueing behind a permission prompt would strand the message: the turn is
   // parked until the request is answered.
   const hasPendingPermission = useSessionStore((state) => {
@@ -2547,6 +2553,11 @@ function ComposerContentImpl({
             {!isCancellingAgent && recoveredTarget === composerTarget ? (
               <Text role="status" accessibilityLiveRegion="polite" style={styles.sendStatusText}>
                 {t("composer.cancel.runtimeRecovered")}
+              </Text>
+            ) : null}
+            {!isAgentRunning && !isCancellingAgent && hasUnconfirmedMessage ? (
+              <Text role="status" accessibilityLiveRegion="polite" style={styles.sendStatusText}>
+                {t("composer.input.waitingForMessageConfirmation")}
               </Text>
             ) : null}
 

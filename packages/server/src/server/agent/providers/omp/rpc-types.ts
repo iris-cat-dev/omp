@@ -171,6 +171,26 @@ export const OmpActiveCredentialSchema = z.object({
   credentialId: z.number().int().positive(),
 });
 
+export const OmpGoalSchema = z
+  .object({
+    id: z.string().optional(),
+    objective: z.string().optional(),
+    status: z.string().optional(),
+    tokenBudget: z.number().optional(),
+    tokensUsed: z.number().optional(),
+    timeUsedSeconds: z.number().optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+export const OmpGoalModeStateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    mode: z.string().optional(),
+    reason: z.string().optional(),
+    goal: OmpGoalSchema.optional(),
+  })
+  .passthrough();
 export const OmpSessionStateSchema = z
   .object({
     model: OmpModelSchema.nullable().optional(),
@@ -192,6 +212,7 @@ export const OmpSessionStateSchema = z
     queuedMessageCount: z.number().int().nonnegative(),
     contextUsage: OmpContextUsageSchema.optional(),
     activeCredential: OmpActiveCredentialSchema.nullable().optional(),
+    goal: OmpGoalModeStateSchema.nullable().optional(),
     todoPhases: z.unknown().optional(),
   })
   .passthrough();
@@ -431,26 +452,6 @@ export const OmpNoticeEventSchema = z
     level: z.enum(["info", "warning", "error"]),
     message: z.string(),
     source: z.string().optional(),
-  })
-  .passthrough();
-export const OmpGoalSchema = z
-  .object({
-    id: z.string().optional(),
-    objective: z.string().optional(),
-    status: z.string().optional(),
-    tokenBudget: z.number().optional(),
-    tokensUsed: z.number().optional(),
-    timeUsedSeconds: z.number().optional(),
-    createdAt: z.string().optional(),
-    updatedAt: z.string().optional(),
-  })
-  .passthrough();
-export const OmpGoalModeStateSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    mode: z.string().optional(),
-    reason: z.string().optional(),
-    goal: OmpGoalSchema.optional(),
   })
   .passthrough();
 export const OmpGoalUpdatedEventSchema = z

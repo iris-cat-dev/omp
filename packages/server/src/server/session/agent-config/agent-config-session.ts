@@ -4,6 +4,7 @@ import { getErrorMessage, getErrorMessageOr } from "@omp-desktop/protocol/error-
 import type { AgentConfigApply } from "@omp-desktop/protocol/messages";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
+import { isOmpWorkflowFeature } from "../../agent/providers/omp/workflow-config.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
 /**
@@ -27,6 +28,7 @@ export interface AgentConfigSessionHost {
  */
 export interface AgentConfigOperations {
   ensureLoaded(agentId: string, modelId?: string | null): Promise<void>;
+  trySetOmpWorkflow(agentId: string, values: Record<string, unknown>): Promise<boolean>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void>;
@@ -52,6 +54,7 @@ interface ConfigChange {
   logLabel: string;
   logFields: Record<string, unknown>;
   failureText: string;
+  tryBeforeLoad?: () => Promise<boolean>;
   run: () => Promise<AgentProviderNotice | null | undefined>;
   emitResponse: (payload: AgentActionResponsePayload) => void;
 }
@@ -136,6 +139,9 @@ export class AgentConfigSession {
       logLabel: "set_agent_feature_request",
       logFields: { agentId, featureId, value, requestId },
       failureText: "Failed to set agent feature",
+      tryBeforeLoad: isOmpWorkflowFeature(featureId)
+        ? () => this.operations.trySetOmpWorkflow(agentId, { [featureId]: value })
+        : undefined,
       run: async () => {
         await this.operations.setFeature(agentId, featureId, value);
         return undefined;
@@ -200,6 +206,14 @@ export class AgentConfigSession {
     msg: Extract<SessionInboundMessage, { type: "agent.config.apply.request" }>,
   ): Promise<void> {
     const { agentId, config, requestId } = msg;
+    const { featureValues } = config;
+    const featureIds = Object.keys(featureValues ?? {});
+    const onlyWorkflow =
+      config.modelId === undefined &&
+      config.modeId === undefined &&
+      config.thinkingOptionId === undefined &&
+      featureIds.length > 0 &&
+      featureIds.every(isOmpWorkflowFeature);
     return this.applyConfigChange({
       agentId,
       modelId: config.modelId,
@@ -207,6 +221,10 @@ export class AgentConfigSession {
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
+      tryBeforeLoad:
+        onlyWorkflow && featureValues
+          ? () => this.operations.trySetOmpWorkflow(agentId, featureValues)
+          : undefined,
       run: () => this.applyBundle(agentId, config),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });
@@ -263,8 +281,11 @@ export class AgentConfigSession {
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId, change.modelId);
-      const notice = await run();
+      let notice: AgentProviderNotice | null | undefined;
+      if (!change.tryBeforeLoad || !(await change.tryBeforeLoad())) {
+        await this.operations.ensureLoaded(agentId, change.modelId);
+        notice = await run();
+      }
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });
     } catch (error) {

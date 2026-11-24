@@ -18,6 +18,30 @@ interface PendingAgentInitialization {
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
+const pendingOmpWorkflowChanges = new Map<string, Promise<void>>();
+
+export async function trySetOmpWorkflow(
+  agentId: string,
+  values: Record<string, unknown>,
+  manager: Pick<AgentManager, "trySetOmpWorkflow">,
+): Promise<boolean> {
+  const previous = pendingOmpWorkflowChanges.get(agentId);
+  const change = Promise.resolve(previous).then(async () => {
+    // Restore already in progress owns the runtime; apply to it once registered.
+    await pendingAgentInitializations.get(agentId)?.promise.catch(() => undefined);
+    return manager.trySetOmpWorkflow(agentId, values);
+  });
+  const tail = change.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingOmpWorkflowChanges.set(agentId, tail);
+  try {
+    return await change;
+  } finally {
+    if (pendingOmpWorkflowChanges.get(agentId) === tail) pendingOmpWorkflowChanges.delete(agentId);
+  }
+}
 
 export type AgentLoaderManager = Pick<
   AgentManager,
@@ -86,6 +110,11 @@ export async function ensureAgentLoaded(
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
   await deps.agentManager.waitForAgentClose?.(agentId);
+  // A prompt following a workflow click must read the new config, not start
+  // a runtime that can overwrite a still-pending cold write on registration.
+  while (pendingOmpWorkflowChanges.has(agentId)) {
+    await pendingOmpWorkflowChanges.get(agentId);
+  }
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
@@ -101,11 +130,16 @@ export async function ensureAgentLoaded(
   // work. Once the live lookup is empty, this second barrier closes that gap
   // before storage-backed resume begins.
   await deps.agentManager.waitForAgentClose?.(agentId);
+  while (pendingOmpWorkflowChanges.has(agentId)) {
+    await pendingOmpWorkflowChanges.get(agentId);
+  }
 
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     return awaitPendingInitialization(agentId, deps, laterInflight);
   }
+  const laterExisting = deps.agentManager.getAgent(agentId);
+  if (laterExisting) return laterExisting;
 
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,

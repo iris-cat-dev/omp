@@ -96,6 +96,16 @@ import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtim
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { inspectOmpSessionHistoryAvailability } from "./providers/omp/session-descriptor.js";
+import {
+  createOmpWorkflowFeature,
+  isOmpWorkflowSelection,
+  normalizeOmpWorkflowSelection,
+  OMP_WORKFLOW_FEATURE_ID,
+  OMP_WORKFLOW_LOCALE_FEATURE_ID,
+  OMP_WORKFLOW_RESUME_FROM,
+  parseOmpWorkflowLocale,
+  parseOmpWorkflowSelection,
+} from "./providers/omp/workflow-config.js";
 import { ProviderSubagentCoalescer } from "./provider-subagents/coalescer.js";
 import {
   ProviderSubagentStore,
@@ -1648,6 +1658,16 @@ export class AgentManager {
       launchContext,
       resumeOptions,
     );
+    if (
+      handle.provider === "omp" &&
+      resumeOptions?.purpose !== "history" &&
+      storedConfig.featureValues &&
+      Object.hasOwn(storedConfig.featureValues, OMP_WORKFLOW_RESUME_FROM)
+    ) {
+      const featureValues = { ...storedConfig.featureValues };
+      delete featureValues[OMP_WORKFLOW_RESUME_FROM];
+      storedConfig.featureValues = featureValues;
+    }
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
@@ -2514,6 +2534,84 @@ export class AgentManager {
     agent.config.featureValues = { ...agent.config.featureValues, [featureId]: value };
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  async trySetOmpWorkflow(agentId: string, values: Record<string, unknown>): Promise<boolean> {
+    return this.runLifecycleMutation(
+      agentId,
+      async () => {
+        await this.waitForAgentClose(agentId);
+        const registry = this.requireRegistry();
+        const record = await registry.get(agentId);
+        const agent = this.agents.get(agentId);
+        if ((agent?.provider ?? record?.provider) !== "omp") return false;
+        if (record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+
+        const mode = Object.hasOwn(values, OMP_WORKFLOW_FEATURE_ID)
+          ? parseOmpWorkflowSelection(values[OMP_WORKFLOW_FEATURE_ID])
+          : undefined;
+        const locale = Object.hasOwn(values, OMP_WORKFLOW_LOCALE_FEATURE_ID)
+          ? parseOmpWorkflowLocale(values[OMP_WORKFLOW_LOCALE_FEATURE_ID])
+          : undefined;
+
+        if (agent?.session) {
+          const session = agent.session;
+          if (!session.setFeature) return false;
+          if (mode !== undefined) await session.setFeature(OMP_WORKFLOW_FEATURE_ID, mode);
+          if (locale !== undefined)
+            await session.setFeature(OMP_WORKFLOW_LOCALE_FEATURE_ID, locale);
+          await this.drainSessionEvents(agentId);
+          agent.config.featureValues = { ...agent.config.featureValues, ...values };
+          this.touchUpdatedAt(agent);
+          this.syncFeaturesFromSession(agent);
+          await this.persistSnapshot(agent);
+          this.emitState(agent, { persist: false });
+          return true;
+        }
+        if (!record || record.internal) throw new Error(`Agent not found: ${agentId}`);
+        const workflow = record.features?.find((feature) => feature.id === OMP_WORKFLOW_FEATURE_ID);
+        // An older record with no catalog needs a live capability check for Plan only.
+        if (mode === "plan" && !workflow) return false;
+        if (
+          mode === "plan" &&
+          (workflow?.type !== "select" || !workflow.options.some(({ id }) => id === mode))
+        ) {
+          throw new Error("OMP Plan requires an updated Desktop SDK backend");
+        }
+        const updated = await registry.updateRecord(agentId, (current) => {
+          if (current.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+          const featureValues = { ...current.config?.featureValues };
+          if (locale !== undefined) featureValues[OMP_WORKFLOW_LOCALE_FEATURE_ID] = locale;
+          let features = current.features;
+          if (mode !== undefined) {
+            const previous = featureValues[OMP_WORKFLOW_RESUME_FROM];
+            const baseline = isOmpWorkflowSelection(previous)
+              ? previous
+              : normalizeOmpWorkflowSelection(
+                  featureValues[OMP_WORKFLOW_FEATURE_ID] ?? workflow?.value,
+                );
+            if (current.persistence?.nativeHandle && mode !== baseline) {
+              featureValues[OMP_WORKFLOW_RESUME_FROM] = baseline;
+            } else {
+              delete featureValues[OMP_WORKFLOW_RESUME_FROM];
+            }
+            featureValues[OMP_WORKFLOW_FEATURE_ID] = mode;
+            const nextWorkflow =
+              workflow?.type === "select"
+                ? { ...workflow, value: mode }
+                : createOmpWorkflowFeature(mode, false);
+            features = [
+              nextWorkflow,
+              ...(features ?? []).filter((feature) => feature.id !== OMP_WORKFLOW_FEATURE_ID),
+            ];
+          }
+          return { ...current, config: { ...current.config, featureValues }, features };
+        });
+        this.dispatch({ type: "stored_agent_state", record: updated });
+        return true;
+      },
+      true,
+    );
   }
 
   async setAgentGoalObjective(agentId: string, objective: string): Promise<void> {
