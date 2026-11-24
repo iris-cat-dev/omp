@@ -4356,15 +4356,11 @@ export class OmpAgentSession implements AgentSession {
     }
     if (this.queueDeferredSubagentRuntimeEvent(event)) return true;
     this.updateWorkflowModeFromRuntimeEvent(event);
-    if (
-      handleOmpHostToolRuntimeEvent(event, {
-        runtimeSession: this.runtimeSession,
-        paseoTools: this.paseoTools,
-        logger: this.logger,
-      })
-    ) {
-      return true;
-    }
+    if (handleOmpHostToolRuntimeEvent(event, {
+      runtimeSession: this.runtimeSession,
+      paseoTools: this.paseoTools,
+      logger: this.logger,
+    })) return true;
     if (event.type === "subagent_lifecycle") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_lifecycle" }>).payload;
       this.subagentCardTracker.handleLifecycle(payload, (toolCallId) =>

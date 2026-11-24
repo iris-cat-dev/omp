@@ -62,16 +62,22 @@ function announceImageBridge(child: TestChild, port: number) {
 
 async function imageBridge(holdUpdates = false) {
   const requests: string[] = [];
+  const bodies: unknown[] = [];
   const updateReceived = Promise.withResolvers<void>();
   const server = createServer((request, response) => {
     requests.push(request.headers.authorization ?? "");
-    request.resume();
-    if (holdUpdates && requests.length > 1) {
-      updateReceived.resolve();
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end("{}");
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => { body += chunk; });
+    request.on("end", () => {
+      bodies.push(JSON.parse(body));
+      if (holdUpdates && requests.length > 1) {
+        updateReceived.resolve();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end("{}");
+    });
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -80,6 +86,7 @@ async function imageBridge(holdUpdates = false) {
   return {
     port: address.port,
     requests,
+    bodies,
     updateReceived: updateReceived.promise,
     close: async () => {
       const closed = once(server, "close");

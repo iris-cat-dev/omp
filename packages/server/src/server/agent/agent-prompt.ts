@@ -365,7 +365,6 @@ export async function sendPromptToAgent(
   params: SendPromptToAgentParams,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const unarchive = params.unarchive ?? true;
-
   const record = await params.agentStorage.get(params.agentId);
   if (record?.archivedAt) {
     if (!unarchive) {
@@ -384,10 +383,8 @@ export async function sendPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
-  const sourceAgentId =
-    params.sourceAgentId && params.sourceAgentId !== params.agentId
-      ? params.sourceAgentId
-      : undefined;
+  const sourceAgentId = params.sourceAgentId && params.sourceAgentId !== params.agentId
+    ? params.sourceAgentId : undefined;
   const sourceKind = sourceAgentId ? "agent" : (params.sourceKind ?? "service");
   const clientMessageId = params.messageId || params.runOptions?.clientMessageId || randomUUID();
   const runOptions = { ...params.runOptions, clientMessageId, sourceKind, ...(sourceAgentId ? { sourceAgentId } : {}) };
