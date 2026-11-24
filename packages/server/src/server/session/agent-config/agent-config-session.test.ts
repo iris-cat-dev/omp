@@ -32,6 +32,10 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     if (this.loadFailure) throw this.loadFailure;
   }
 
+  async trySetOmpWorkflow(): Promise<boolean> {
+    return false;
+  }
+
   async setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     this.modeCalls.push({ agentId, modeId });
     this.callLog.push("mode");

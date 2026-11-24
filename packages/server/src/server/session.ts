@@ -49,7 +49,11 @@ import {
   isStoredAgentProviderAvailable,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import {
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  trySetOmpWorkflow,
+} from "./agent/agent-loading.js";
 import { readPersistedAgentHistory } from "./agent/persisted-agent-history.js";
 import {
   generateWorkflowImage,
@@ -995,6 +999,7 @@ export class Session {
             modelId,
           });
         },
+        trySetOmpWorkflow: (agentId, values) => trySetOmpWorkflow(agentId, values, agentManager),
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),

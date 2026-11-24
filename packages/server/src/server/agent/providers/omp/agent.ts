@@ -128,6 +128,20 @@ import {
   buildOmpToolIntentPrompt,
   getOmpWorkflowDisplayText,
 } from "./workflow-prompt.js";
+import {
+  createOmpWorkflowFeature,
+  isOmpWorkflowSelection,
+  normalizeOmpWorkflowSelection,
+  OMP_CONTINUATION_BY_LOCALE,
+  OMP_WORKFLOW_FEATURE_ID,
+  OMP_WORKFLOW_LOCALE_FEATURE_ID,
+  OMP_WORKFLOW_RESUME_FROM,
+  parseOmpWorkflowLocale,
+  parseOmpWorkflowSelection,
+  type OmpWorkflowLocale,
+  type OmpWorkflowMode,
+  type OmpWorkflowSelection,
+} from "./workflow-config.js";
 import { mapOmpIrcMessageToToolCall, mapOmpSystemNoticeToToolCall } from "./system-notice.js";
 import {
   readOmpSubagentSettings,
@@ -732,13 +746,17 @@ interface OmpAgentSessionOptions {
    */
   live?: boolean;
   purpose?: AgentResumeSessionOptions["purpose"];
+  deferredWorkflow?: OmpWorkflowSelection;
 }
 
 function initialOmpNativeWorkflowMode(
   selection: OmpWorkflowSelection,
-  live: boolean | undefined,
+  options: OmpAgentSessionOptions,
 ): OmpWorkflowMode | null {
-  return live === false && selection === "goal" ? "goal" : null;
+  if (options.live !== false) return null;
+  const goal = options.initialState.goal;
+  // Distinguish a saved native goal (including paused) from a selection awaiting its first prompt.
+  return (goal === undefined ? selection === "goal" : goal !== null) ? "goal" : null;
 }
 
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -795,33 +813,11 @@ interface OmpSlashCommandInvocation {
   commandName: string;
   args?: string;
 }
-const OMP_WORKFLOW_FEATURE_ID = "workflow_mode";
-const OMP_WORKFLOW_LOCALE_FEATURE_ID = "workflow_locale";
 const OMP_OAUTH_ACCOUNT_FEATURE_ID = "oauth_account_credential";
 const OMP_OAUTH_ACCOUNT_AUTOMATIC_VALUE = "automatic";
 const OMP_FAST_MODE_FEATURE_ID = "fast_mode";
 const OMP_PLAN_APPROVAL_REQUEST_NAME = "OmpPlanApproval";
 export const OMP_CHAT_TOOL_NAMES = ["read", "glob", "grep"] as const;
-type OmpWorkflowMode = "plan" | "goal";
-type OmpWorkflowSelection = "standard" | "chat" | "enhanced" | OmpWorkflowMode;
-const OMP_CONTINUATION_BY_LOCALE = {
-  ar: "تابع",
-  en: "Continue",
-  es: "Continúa",
-  fr: "Continue",
-  ja: "続けて",
-  ko: "계속해",
-  "pt-BR": "Continue",
-  ru: "Продолжай",
-  "zh-CN": "继续",
-} as const;
-type OmpWorkflowLocale = keyof typeof OMP_CONTINUATION_BY_LOCALE;
-
-function normalizeOmpWorkflowSelection(value: unknown): OmpWorkflowSelection {
-  return value === "chat" || value === "enhanced" || value === "plan" || value === "goal"
-    ? value
-    : "standard";
-}
 
 function isOmpNativeWorkflowMode(value: OmpWorkflowSelection): value is OmpWorkflowMode {
   return value === "plan" || value === "goal";
@@ -920,24 +916,7 @@ function createOmpFeatures(
   nativePlanAvailable = true,
 ): AgentFeature[] {
   const features: AgentFeature[] = [
-    {
-      type: "select",
-      id: OMP_WORKFLOW_FEATURE_ID,
-      label: "Workflow",
-      description: "Choose a conversation workflow independently from tool approvals.",
-      icon: "Target",
-      value:
-        !nativePlanAvailable && config.featureValues?.[OMP_WORKFLOW_FEATURE_ID] === "plan"
-          ? "standard"
-          : normalizeOmpWorkflowSelection(config.featureValues?.[OMP_WORKFLOW_FEATURE_ID]),
-      options: [
-        { id: "standard", label: "Standard" },
-        { id: "chat", label: "Chat" },
-        { id: "enhanced", label: "Enhanced" },
-        ...(nativePlanAvailable ? [{ id: "plan", label: "Plan" }] : []),
-        { id: "goal", label: "Goal" },
-      ],
-    },
+    createOmpWorkflowFeature(config.featureValues?.[OMP_WORKFLOW_FEATURE_ID], nativePlanAvailable),
   ];
   const modelProvider = parseModelReference(config.model ?? null)?.provider;
   const fastFeature = createOmpFastFeature(
@@ -2060,9 +2039,12 @@ export class OmpAgentSession implements AgentSession {
       options.initialState.activeCredential,
       !!options.runtimeSession.plan && !options.config.sandbox,
     );
-    this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options.live);
+    this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options);
     this.workflowModePending =
-      this.live && configuredWorkflowMode !== "standard" ? configuredWorkflowMode : null;
+      (this.live && configuredWorkflowMode !== "standard") ||
+      (!this.live && (this.activeWorkflowMode === "goal") !== (configuredWorkflowMode === "goal"))
+        ? configuredWorkflowMode
+        : null;
     this.chatTurnActive = options.live === false && configuredWorkflowMode === "chat";
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
@@ -2760,41 +2742,28 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     if (featureId === OMP_WORKFLOW_LOCALE_FEATURE_ID) {
-      if (
-        typeof value !== "string" ||
-        !Object.prototype.hasOwnProperty.call(OMP_CONTINUATION_BY_LOCALE, value)
-      ) {
-        throw new Error(`Invalid OMP workflow locale '${String(value)}'`);
-      }
+      const locale = parseOmpWorkflowLocale(value);
       this.config.featureValues = {
         ...this.config.featureValues,
-        [OMP_WORKFLOW_LOCALE_FEATURE_ID]: value,
+        [OMP_WORKFLOW_LOCALE_FEATURE_ID]: locale,
       };
       return;
     }
     if (featureId !== OMP_WORKFLOW_FEATURE_ID) {
       throw new Error(`Unsupported OMP feature '${featureId}'`);
     }
-    if (
-      value !== "standard" &&
-      value !== "chat" &&
-      value !== "enhanced" &&
-      value !== "plan" &&
-      value !== "goal"
-    ) {
-      throw new Error(`Invalid OMP workflow '${String(value)}'`);
-    }
+    const selection = parseOmpWorkflowSelection(value);
     const feature = this.features[0];
     if (feature?.type !== "select") {
       throw new Error("OMP workflow feature is unavailable");
     }
-    if (value === "plan" || this.activeWorkflowMode === "plan") {
+    if (selection === "plan" || this.activeWorkflowMode === "plan") {
       const plan = this.runtimeSession.plan;
       if (!plan) throw new Error("OMP Plan requires an updated Desktop SDK backend");
-      if (value !== this.activeWorkflowMode) {
+      if (selection !== this.activeWorkflowMode) {
         if (this.activeTurnId || this.pendingTurnAdmission || this.resolvingPlanApproval)
           throw new Error("Wait for the current turn or review decision before changing Plan mode");
-        if (value === "plan") {
+        if (selection === "plan") {
           await this.syncChatToolRestriction(false);
           if (this.activeWorkflowMode === "goal") await this.disableActiveWorkflowMode();
           await plan.setMode(true);
@@ -2805,15 +2774,15 @@ export class OmpAgentSession implements AgentSession {
       }
     }
     if (!this.activeTurnId && !this.pendingTurnAdmission) {
-      await this.syncChatToolRestriction(value === "chat");
+      await this.syncChatToolRestriction(selection === "chat");
     }
-    feature.value = value;
+    feature.value = selection;
     this.config.featureValues = {
       ...this.config.featureValues,
-      [OMP_WORKFLOW_FEATURE_ID]: value,
+      [OMP_WORKFLOW_FEATURE_ID]: selection,
     };
-    this.workflowModePending = value === this.activeWorkflowMode ? null : value;
-    if (value !== "chat" && this.chatTurnActive && !isOmpNativeWorkflowMode(value)) {
+    this.workflowModePending = selection === this.activeWorkflowMode ? null : selection;
+    if (selection !== "chat" && this.chatTurnActive && !isOmpNativeWorkflowMode(selection)) {
       this.chatTurnActive = false;
       this.chatContextResetPending = true;
     }
@@ -3087,7 +3056,7 @@ export class OmpAgentSession implements AgentSession {
     this.refreshFeatures();
   }
 
-  async initialize(): Promise<void> {
+  async initialize(deferredWorkflow?: OmpWorkflowSelection): Promise<void> {
     await this.subagentSubscription;
     const explicitTitle = this.config.title?.trim();
     if (
@@ -3110,7 +3079,9 @@ export class OmpAgentSession implements AgentSession {
         this.workflowModePending = null;
       }
     }
-    if (
+    if (deferredWorkflow !== undefined) {
+      await this.setFeature(OMP_WORKFLOW_FEATURE_ID, deferredWorkflow);
+    } else if (
       this.purpose !== "history" &&
       normalizeOmpWorkflowSelection(this.features[0]?.value) === "chat"
     ) {
@@ -6091,7 +6062,7 @@ export class OmpAgentClient implements AgentClient {
       getDefaultProxyPolicy: () => this.defaultProxyPolicy,
       onClosed: () => this.proxySessions.delete(session),
     });
-    await session.initialize();
+    await session.initialize(options.deferredWorkflow);
     this.proxySessions.add(session);
     return session;
   }
@@ -6336,6 +6307,18 @@ export class OmpAgentClient implements AgentClient {
 
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
+    const values = resumeConfig.config.featureValues;
+    const previousWorkflow = values?.[OMP_WORKFLOW_RESUME_FROM];
+    let deferredWorkflow: OmpWorkflowSelection | undefined;
+    if (options?.purpose !== "history" && values && isOmpWorkflowSelection(previousWorkflow)) {
+      deferredWorkflow = parseOmpWorkflowSelection(values[OMP_WORKFLOW_FEATURE_ID]);
+      const restoredValues: Record<string, unknown> = {
+        ...values,
+        [OMP_WORKFLOW_FEATURE_ID]: previousWorkflow,
+      };
+      delete restoredValues[OMP_WORKFLOW_RESUME_FROM];
+      resumeConfig.config.featureValues = restoredValues;
+    }
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
     const backgroundOwnerId = launchContext?.agentId
@@ -6406,6 +6389,7 @@ export class OmpAgentClient implements AgentClient {
           ),
           live: false,
           purpose: options?.purpose,
+          deferredWorkflow,
         },
         oauthAccounts,
       );
