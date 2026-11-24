@@ -391,7 +391,7 @@ Precise trackpad input must populate Blink's wheel ticks as well as pixel deltas
 
 QQ clipboard compatibility requires native runtime `0.1.12` or newer: QQ can advertise PNG bytes as TIFF, so the runtime must identify the actual encoding. The distribution override also selects a locally built fix.
 
-Known macOS host limitation: the optional pet overlay still requires the missing `BrowserWindow.setIgnoreMouseEvents` API. Activity publication was verified with the default hidden pet; this does not establish full overlay compatibility.
+Optional plugin overlay support and historical input qualification are documented with the [Desktop pet plugin](https://github.com/iris-cat-dev/omp-plugins/blob/main/desktop-pet/docs/qualification.md#runtime-support-boundary).
 
 ### Window lifecycle and recovery
 
@@ -427,7 +427,7 @@ Desktop packaging keeps build/test-only dependencies out of the production depen
 
 The early OMP catalog hook is loaded through an encoded module URL, so installation directories containing spaces remain valid. Windows ConPTY files are loaded from the matching node-pty prebuild, not its duplicate `third_party` directory.
 
-The optional Agent Speed folder package owns the native local monitor, including its Windows adapter. Ship the plugin's production dependencies alongside its built entry points: it lazily loads Koffi 3.3.4 and the target `@koromix/koffi-win32-x64` Node-API binding for process-local HWND passthrough. Keep optional dependencies enabled. Desktop still uses Koffi independently for system-browser integration; its production dependency and after-pack loader/binary checks remain required. Koffi's `src/` contains runtime JavaScript, not build-only source. Existing `asar: false` keeps relative loaders on disk. The monitor adapter pairs Windows layered/transparent input flags only while needed, preserves DirectComposition and unrelated window styles, and never installs native callbacks or global hooks.
+Desktop uses Koffi for system-browser integration; its production dependency and after-pack loader/binary checks remain required. Koffi's `src/` contains runtime JavaScript, not build-only source. Existing `asar: false` keeps relative loaders on disk. The optional monitor's native dependencies and Windows input adapter are documented in [Agent Speed](https://github.com/iris-cat-dev/omp-plugins/blob/main/agent-speed/README.md#native-windows-dependencies).
 
 Daemon command execution collects `execFile` callback stdout and stderr explicitly. The mini-electron runtime does not expose Node's custom `promisify(execFile)` result shape; using it can misreport a supported bundled OMP as older than the required version. The actual minimum remains **OMP 18.8.7**.
 
@@ -481,6 +481,6 @@ At deployment, Desktop selects the SSH host's target, streams its pinned SDK thr
 
 The repository-root [`skills/`](../skills) directory is the source catalog for bundled orchestration skills. During the server build, [`packages/server/package.json`](../packages/server/package.json) removes the previous `dist/server/skills` directory and recursively copies `../../skills` into it. This makes the same catalog available to the development server and packaged application.
 
-The core catalog is currently empty except for `.gitkeep`. Plugin-specific skills belong to their plugin packages, not this catalog. The Desktop pet plugin owns [`assets/skills/hatch-pet/SKILL.md`](../plugins/desktop-pet/assets/skills/hatch-pet/SKILL.md); its existing `files: ["dist", "src", "assets", ...]` packaging includes the skill and compiled installer. Creating a pet copies the skill only into the authoring workspace's `.omp/skills/hatch-pet/`. It neither installs a global skill nor adds pet resources to Desktop or remote-backend packages.
+The core catalog is currently empty except for `.gitkeep`. Plugin-specific skills belong to their plugin packages, not this catalog. Package resources, skill distribution, and authoring workflows are maintained in the [plugin repository](https://github.com/iris-cat-dev/omp-plugins).
 
 Keep the `skills/` directory even when no bundled skills are present: removing it causes the recursive copy step to fail. Add bundled skills as subdirectories containing their `SKILL.md` files.

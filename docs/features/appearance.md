@@ -1,12 +1,12 @@
-# Appearance, wallpaper, and input
+# Appearance and input
 
-Customize local appearance and wallpaper, understand platform window behavior, and use touch/hybrid layouts. The [Desktop pet](desktop-pet.md) has its own guide.
+Customize local appearance, understand platform window behavior, and use touch/hybrid layouts. Optional [Wallpaper](https://github.com/iris-cat-dev/omp-plugins/blob/main/wallpaper/README.md) and [Desktop pet](https://github.com/iris-cat-dev/omp-plugins/blob/main/desktop-pet/README.md) features have plugin-owned guides.
 
 ## Contents
 
 - [Language and display preferences](#language-and-display-preferences)
 - [Window and theme behavior](#window-and-theme-behavior)
-- [Wallpaper](#wallpaper)
+- [Wallpaper plugin](https://github.com/iris-cat-dev/omp-plugins/blob/main/wallpaper/README.md)
 - [Touch and hybrid input](#touch-and-hybrid-input)
 
 ## Language and display preferences
@@ -35,31 +35,11 @@ The document `color-scheme` follows resolved theme so native selection and form 
 
 **Settings → Connections** lists saved hosts, connection state, and daemon version above relay/pairing controls. **About** shows app version and Desktop app updates, not the host list. Remote hosts offer **Disconnect / Reconnect** in host pickers, this list, and host overviews. Disconnect preserves the saved connection and cached workspace data, stops probing and automatic reconnection, and persists after restart. Reconnect resumes that connection. Neither action stops the remote daemon; **Remove host** is separate. See [Remote hosts](../remote-hosts.md).
 
+Windows/Linux native caption controls use a transparent overlay on the HTML titlebar, not an opaque patch; the top resize strip remains inside titlebar bounds and aligned with the right edge when restored/maximized.
+
 ## Wallpaper
 
-Wallpaper controls belong to an optional folder-installed plugin, not the default application. Install a compatible wallpaper package through **Settings → Plugins → Discover** first. Then open that installation's **Configure**, enable it, choose **File**, and use **Add files** with the system picker. Configuration remains available while disabled. Ctrl/Shift multi-selection and files from different folders work. Candidates persist across restarts; originals remain where they are.
-
-Media, candidate records, and Desktop selection stay on this computer. Pairing a phone/tablet does not copy them. A Web browser can independently configure URL wallpaper in browser-local settings; that is not Desktop synchronization. For connecting clients see [Remote hosts](../remote-hosts.md) and [Deployment](../deployment.md).
-
-With Wallpaper enabled, the home screen hides decorative-motion controls and its poster overlay so media stays visible. Turning it off restores the control and previous value. Project/conversation shortcuts remain available either way.
-
-### Candidate management and formats
-
-The candidate grid is continuously scrollable and virtualized, not paginated or limited to 48 entries. Covers are static, including video covers. Adding does not apply media; select a card manually. There is no rotation.
-
-**Manage** selects/removes multiple records, including offscreen candidates, without deleting source files. Removing the active candidate restores theme background rather than choosing another. Re-adding the same file makes a new candidate and does not reactivate the old selection. Missing/undecodable files remain listed: restore and retry or remove the record.
-
-Accepted file extensions: `jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`, `avif`, `mp4`, `m4v`, `webm`, `mov`, `ogv`. Playback depends on the runtime and codec; Desktop does not transcode. **URL** accepts HTTP(S) images/videos and detects type from pathname, including signed video URLs with query strings.
-
-**Last verified Windows mini-electron 0.1.28 package:** its media-player factory is not implemented. Valid MP4 and WebM files fail with “error creating media player” even over HTTP; changing a filename or codec does not repair that missing player. Images remain usable. Newer Windows runtime and video-wallpaper support require actual Windows artifact verification.
-
-### Transparency and loading
-
-**Interface transparency** spans 0–100%. At 0% regular surfaces use solid theme backgrounds; increasing reveals media, and 100% removes sidebar/titlebar/composer veils. Slider changes preview without persisting every intermediate value. Dragging preserves Settings mount, focus, and scroll position.
-
-Base workspaces become transparent only after media loads, including newly selected tabs. Floating menus, palettes, tooltips, dialogs, and notifications stay opaque. Text still follows theme: match wallpaper/theme or reduce transparency if contrast suffers. Load errors appear in Wallpaper settings and retain normal surfaces. Source switching or load recovery preserves focused inputs and pet-creation drafts. Selected media and committed transparency persist across restarts.
-
-Local media uses app-scoped opaque IDs rather than whole-file renderer IPC. The mini-electron 0.1.28 protocol adapter buffers each response before delivery, so that runtime does not provide end-to-end media streaming. Windows/Linux native caption controls use a transparent overlay on the HTML titlebar, not an opaque patch; the top resize strip remains inside titlebar bounds and aligned with the right edge when restored/maximized. Model lists and Thinking/Fast/Context window settings remain opaque, theme-matched, and readable over media.
+Setup, local candidate management, file/URL formats, transparency, loading, resource handling, and platform limits are maintained in the [Wallpaper plugin guide](https://github.com/iris-cat-dev/omp-plugins/blob/main/wallpaper/README.md). Required regressions and historical GUI evidence are in its [qualification notes](https://github.com/iris-cat-dev/omp-plugins/blob/main/wallpaper/docs/qualification.md).
 
 ## Touch and hybrid input
 

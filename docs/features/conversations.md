@@ -61,7 +61,7 @@ Inspection requires a resident OMP runtime with `get_prompt_context` support. An
 
 ## Turn usage and speed
 
-Native token usage, duration, context and quota facts remain available without plugins. Live speed widgets and plugin-derived speed footers require an explicitly installed and enabled speed plugin; the default application no longer loads Agent Speed's calculation or UI. Historical assistant messages retain their native per-turn facts for replay and footer restoration, including Plan messages. After reconnecting, completed replayed facts take precedence over retained in-flight samples.
+Native token usage, duration, context, quota facts, and live/completed output speed remain available without plugins. The default application owns its native speed calculation and footer UI; the optional [Agent Speed plugin](https://github.com/iris-cat-dev/omp-plugins/blob/main/agent-speed/README.md) supplies the separate local monitor. Historical assistant messages retain their native per-turn facts for replay and footer restoration, including Plan messages. After reconnecting, completed replayed facts take precedence over retained in-flight samples.
 
 Desktop instructs OMP to write tool-call intent labels, including the live working label, in the interface language resolved when the prompt is sent. This also applies to `/skill:<name>` requests, with or without arguments. The hidden directive stays out of displayed prompts and reopened history; response language and other tool arguments are unchanged.
 
@@ -238,13 +238,7 @@ Reading cold history, focus, attention, or model metadata does not start an SDK 
 
 ## Schedules
 
-Install `plugins/schedules` through **Settings → Plugins → Discover** on the target daemon. Confirm its declared capabilities and this device's client-code trust, enable **Allow host plugins to run**, then enable the installation. The plugin supplies the **Schedules** sidebar and command-center entries, management page, scheduler, storage, and Agent tools; application packages do not include it.
-
-Use **New schedule** to create a new-Agent task. Existing-Agent heartbeats appear on the same page. Tasks retain cron/timezone or exact interval cadence, project, local/worktree isolation, provider/model/mode/thinking, archive behavior, maximum runs, and expiry. Each task has **Edit**, **Pause / Resume**, **Run now**, **Run history**, and **Delete** actions. Pausing prevents future triggers without interrupting started executions. Resume computes the next trigger from the original cadence without replaying missed runs.
-
-The canonical installation ID `schedules` imports the daemon's old `<daemon home>/schedules` records once, preserving IDs, paused state, and history without overwriting plugin records or removing the original files. Other installation IDs keep independent data. Disabling the installation or host execution stops future triggers and preserves tasks, history, and paused state; enabling it does not replay missed runs. Legacy CLI and WebSocket schedule calls forward to this enabled canonical plugin and report `plugin_unavailable` when it is unavailable.
-
-Agent tools use installation-bound names such as `schedules__list_schedules`, `schedules__pause_schedule`, and `schedules__resume_schedule`. These manage new-Agent schedules. Existing-Agent heartbeats are managed on the page or through the caller's heartbeat tools; they do not appear in the new-Agent schedule list.
+Recurring new-Agent tasks, existing-Agent heartbeats, configuration, controls, persistence, tools, and historical acceptance are documented in the [Schedules plugin guide](https://github.com/iris-cat-dev/omp-plugins/blob/main/schedules/README.md).
 
 ## Notifications
 

@@ -52,7 +52,7 @@ Installer builds default to `--publish never` and write to `packages/desktop/rel
 
 | Guide                                            | Contents                                                                                          |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| [All feature guides](docs/README.md#user-guides) | Conversations, models, usage, workspaces, files, Git, appearance, pets, tools, plugins, and media |
+| [All guides](docs/README.md) | Conversations, models, usage, workspaces, files, Git, appearance, tools, plugins, and media |
 | [Development](docs/development.md)               | Local setup, workspace packages, runtime notes, and verification                                  |
 | [Packaging](docs/packaging.md)                   | Build entry points, mini-electron, signing, installers, updates, and bundled OMP                  |
 | [SSH remote hosts](docs/remote-hosts.md)         | Provisioning, pairing, managed updates, and credential handling                                   |
