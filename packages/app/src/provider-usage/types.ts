@@ -17,6 +17,7 @@ export type ProviderUsageWindow = ProtocolProviderUsageWindow & {
 };
 
 export type ProviderUsage = Omit<ProtocolProviderUsage, "windows"> & {
+  accountLabel?: string;
   windows: ProviderUsageWindow[];
   extraUsage?: OmpProviderAccountQuota["extraUsage"];
   accountQuota?: OmpProviderAccountQuota;

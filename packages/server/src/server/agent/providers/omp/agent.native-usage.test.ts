@@ -52,6 +52,7 @@ describe("OMP native chat usage wire", () => {
           tokens: {
             input: (round + 1) * 100,
             cacheRead: (round + 1) * 40,
+            cacheWrite: (round + 1) * 10,
             output: (round + 1) * 1_000 + 9_000,
           },
           contextUsage: { contextWindow: 200_000, tokens: 12_000 },
@@ -83,12 +84,14 @@ describe("OMP native chat usage wire", () => {
       const sessionEvents = omp
         .streamEvents()
         .filter((event) => event.type === "usage_updated" && event.usage.scope === "session");
-      expect(sessionEvents.at(-1)).toMatchObject({
+      expect(AgentStreamEventPayloadSchema.parse(sessionEvents.at(-1))).toMatchObject({
         type: "usage_updated",
         usage: {
           scope: "session",
+          inputTokens: 200,
           outputTokens: 11_000,
           cachedInputTokens: 80,
+          cacheWriteTokens: 20,
           contextWindowUsedTokens: 12_000,
         },
       });

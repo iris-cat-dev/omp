@@ -14,7 +14,7 @@ export const en = {
   backgroundProcesses: backgroundProcesses.en,
   visualFeedback: visualFeedback.en,
   promptAnalysis: {
-    title: "Prompt analysis",
+    title: "Context analysis",
     currentSnapshot: "Current context snapshot",
     refresh: "Refresh",
     loading: "Reading the current context…",
@@ -2315,6 +2315,11 @@ export const en = {
     tokens: "{{used}} / {{max}} tokens",
     compactionCount: "Compaction rounds: {{count}}",
     sessionCost: "Session cost {{cost}}",
+    sessionUsage: "This session",
+    sessionCache: "Session cache",
+    cacheHitSummary: "{{rate}} hit rate",
+    cacheRead: "Cache read",
+    cacheWrite: "Cache write",
     accessibility: "Context window {{percentage}}% used",
   },
   review: {

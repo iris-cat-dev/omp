@@ -16,21 +16,15 @@ export function ProviderUsageTooltipSection({
   activeProviderId: string | null | undefined;
 }) {
   const { t } = useTranslation();
-  if (view.kind === "loading") {
+  if (view.kind !== "ready") {
     return (
-      <>
-        <View style={styles.divider} />
-        <Text style={styles.detail}>{t("providerUsage.tooltipLoading")}</Text>
-      </>
-    );
-  }
-
-  if (view.kind === "error") {
-    return (
-      <>
-        <View style={styles.divider} />
-        <Text style={styles.error}>{view.message}</Text>
-      </>
+      <View style={styles.section}>
+        {view.kind === "loading" ? (
+          <Text style={styles.detail}>{t("providerUsage.tooltipLoading")}</Text>
+        ) : (
+          <Text style={styles.error}>{view.message}</Text>
+        )}
+      </View>
     );
   }
 
@@ -39,23 +33,20 @@ export function ProviderUsageTooltipSection({
 
   return (
     <>
-      <View style={styles.divider} />
       {usages.map((usage) => (
-        <ProviderUsageCard key={usage.providerId} usage={usage} compact />
+        <View key={usage.providerId} style={styles.section}>
+          <ProviderUsageCard usage={usage} compact showAccountLabel={usages.length > 1} />
+        </View>
       ))}
     </>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  divider: {
-    height: 1,
-    // Same token the popover draws its own outline with, so the rule reads as the
-    // popover's edge. `border` is invisible here (equals the popover background).
-    backgroundColor: theme.colors.borderAccent,
-    marginVertical: theme.spacing[2],
-    // Cancel the tooltip content's horizontal padding so the rule spans edge to edge.
-    marginHorizontal: -theme.spacing[2],
+  section: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.borderAccent,
+    paddingTop: theme.spacing[2],
   },
   detail: {
     color: theme.colors.foregroundMuted,

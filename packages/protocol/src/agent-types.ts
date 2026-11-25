@@ -207,8 +207,11 @@ export interface AgentUsage {
   /** Explicitly separates session quota/context counters from one turn's requests. */
   scope?: "session" | "turn";
   nativeMetrics?: AgentNativeOutputMetrics;
+  /** For OMP session stats, input not read from or written to the prompt cache. */
   inputTokens?: number;
   cachedInputTokens?: number;
+  /** Input tokens written to the prompt cache, when reported by the session. */
+  cacheWriteTokens?: number;
   outputTokens?: number;
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;

@@ -12,8 +12,6 @@ interface OmpUsagePollerOptions {
   scheduler?: OmpUsagePollScheduler;
 }
 
-const EMPTY_TOKENS: NonNullable<OmpSessionStats["tokens"]> = {};
-
 function createScheduler(): OmpUsagePollScheduler {
   return {
     schedulePoll: (callback) => {
@@ -24,42 +22,39 @@ function createScheduler(): OmpUsagePollScheduler {
 }
 
 function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
-  const tokens = stats.tokens ?? EMPTY_TOKENS;
-  const inputTokens = tokens.input ?? 0;
-  const cachedInputTokens = tokens.cacheRead ?? 0;
-  const outputTokens = tokens.output ?? 0;
+  const tokens = stats.tokens;
+  const outputTokens = tokens?.output ?? 0;
   const totalCostUsd = stats.cost ?? 0;
-  const contextWindowMaxTokens = stats.contextUsage?.contextWindow ?? undefined;
-  const contextWindowUsedTokens = stats.contextUsage?.tokens ?? undefined;
-
   if (
-    inputTokens === 0 &&
-    cachedInputTokens === 0 &&
+    tokens?.input === undefined &&
+    tokens?.cacheRead === undefined &&
+    tokens?.cacheWrite === undefined &&
     outputTokens === 0 &&
     totalCostUsd === 0 &&
-    contextWindowMaxTokens === undefined &&
-    contextWindowUsedTokens === undefined &&
+    stats.contextUsage?.contextWindow == null &&
+    stats.contextUsage?.tokens == null &&
     stats.compactionCount === undefined
   ) {
     return undefined;
   }
 
-  return {
-    scope: "session",
-    inputTokens,
-    cachedInputTokens,
-    outputTokens,
-    totalCostUsd,
-    ...(typeof contextWindowMaxTokens === "number" ? { contextWindowMaxTokens } : {}),
-    ...(typeof contextWindowUsedTokens === "number" ? { contextWindowUsedTokens } : {}),
-    ...(stats.compactionCount !== undefined ? { compactionCount: stats.compactionCount } : {}),
-  };
+  const usage: AgentUsage = { scope: "session", outputTokens, totalCostUsd };
+  if (tokens?.input !== undefined) usage.inputTokens = tokens.input;
+  if (tokens?.cacheRead !== undefined) usage.cachedInputTokens = tokens.cacheRead;
+  if (tokens?.cacheWrite !== undefined) usage.cacheWriteTokens = tokens.cacheWrite;
+  if (stats.contextUsage?.contextWindow != null) {
+    usage.contextWindowMaxTokens = stats.contextUsage.contextWindow;
+  }
+  if (stats.contextUsage?.tokens != null) usage.contextWindowUsedTokens = stats.contextUsage.tokens;
+  if (stats.compactionCount !== undefined) usage.compactionCount = stats.compactionCount;
+  return usage;
 }
 
 function isSameUsage(left: AgentUsage, right: AgentUsage): boolean {
   return (
     left.inputTokens === right.inputTokens &&
     left.cachedInputTokens === right.cachedInputTokens &&
+    left.cacheWriteTokens === right.cacheWriteTokens &&
     left.outputTokens === right.outputTokens &&
     left.totalCostUsd === right.totalCostUsd &&
     left.contextWindowMaxTokens === right.contextWindowMaxTokens &&

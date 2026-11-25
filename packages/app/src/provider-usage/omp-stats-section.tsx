@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { getCacheHitRatio } from "@/components/context-window-meter.utils";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
@@ -268,10 +269,12 @@ function OmpStatsTokens({
       }),
     [i18n.language],
   );
-  const promptTokens =
-    metrics.totalInputTokens + metrics.totalCacheReadTokens + metrics.totalCacheWriteTokens;
-  const hitRate =
-    promptTokens > 0 ? percent.format(metrics.totalCacheReadTokens / promptTokens) : "—";
+  const ratio = getCacheHitRatio(
+    metrics.totalInputTokens,
+    metrics.totalCacheReadTokens,
+    metrics.totalCacheWriteTokens,
+  );
+  const hitRate = ratio === null ? "—" : percent.format(ratio);
   const tokens = [
     ["input", metrics.totalInputTokens],
     ["output", metrics.totalOutputTokens],
@@ -326,7 +329,7 @@ function OmpStatsTokens({
           <TooltipContent side="top">
             <Text style={styles.tooltipNote}>
               {t(
-                promptTokens > 0
+                ratio !== null
                   ? "providerUsage.nativeStats.cacheHitRateNotice"
                   : "providerUsage.nativeStats.noInputTokens",
               )}

@@ -67,6 +67,7 @@ describe("OMP native model discovery", () => {
   ])("publishes confirmed speeds before agent_start: $live/$enabled", async ({ live, enabled }) => {
     const h = await discoverySession(live, enabled);
     expect(h.fastMode()).toMatchObject({ type: "toggle", value: enabled });
+    h.events.length = 0; // Observe discovery separately from the resumed session's usage snapshot.
     h.discover();
     await waitForImmediate();
     expect(h.runtime.getStateRequestCount).toBe(1);

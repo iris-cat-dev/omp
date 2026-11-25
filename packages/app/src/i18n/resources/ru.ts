@@ -2130,6 +2130,11 @@ export const ru: TranslationResources = {
     tokens: "Токены: {{used}} / {{max}}",
     compactionCount: "Раунды сжатия: {{count}}",
     sessionCost: "Стоимость сессии: {{cost}}",
+    sessionUsage: "Текущий сеанс",
+    sessionCache: "Кэш сеанса",
+    cacheHitSummary: "{{rate}} попаданий",
+    cacheRead: "Чтение из кэша",
+    cacheWrite: "Запись в кэш",
     accessibility: "Использовано {{percentage}}% контекстного окна",
   },
   review: {

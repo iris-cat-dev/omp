@@ -2107,6 +2107,11 @@ export const ja: TranslationResources = {
     tokens: "{{used}} / {{max}}トークン",
     compactionCount: "圧縮回数: {{count}} 回",
     sessionCost: "セッションコスト: {{cost}}",
+    sessionUsage: "このセッション",
+    sessionCache: "セッションキャッシュ",
+    cacheHitSummary: "ヒット率 {{rate}}",
+    cacheRead: "キャッシュ読込",
+    cacheWrite: "キャッシュ書込",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
   },
   review: {

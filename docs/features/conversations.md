@@ -6,7 +6,7 @@ Run, steer, queue, organize, and stop conversations, manage independent agents, 
 
 - [Completion and failures](#completion-and-failures)
 - [Context compaction](#context-compaction)
-- [Prompt analysis](#prompt-analysis)
+- [Context analysis](#context-analysis)
 - [Turn usage and speed](#turn-usage-and-speed)
 - [Workflow and approval modes](#workflow-and-approval-modes)
 - [Steering and stopping](#steering-and-stopping)
@@ -47,9 +47,9 @@ Provider-request failures after the Agent runtime starts appear as sanitized sys
 
 Native manual-compaction progress updates the marker even before a model turn starts. The completion event or successful RPC result clears the loading state without duplicate markers. The waiting explanation disappears when compaction finishes.
 
-## Prompt analysis
+## Context analysis
 
-Hover over the composer's context meter and click **Prompt analysis** at the bottom of the **Context window** tooltip. For Claude, open its usage panel and select **Prompt analysis** there. The conversation tab menu also includes this action.
+Hover over the composer's context meter and click **Context analysis** at the bottom of the **Context window** tooltip. For Claude, open its usage panel and select **Context analysis** there. The conversation tab menu also includes this action.
 
 Desktop opens a separate workspace tab; opening it again reveals the same conversation's analysis tab without replacing the chat.
 

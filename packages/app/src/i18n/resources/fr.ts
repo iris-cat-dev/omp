@@ -2138,6 +2138,11 @@ export const fr: TranslationResources = {
     tokens: "Jetons{{used}}/{{max}}",
     compactionCount: "Cycles de compactage : {{count}}",
     sessionCost: "Coût de la séance{{cost}}",
+    sessionUsage: "Cette session",
+    sessionCache: "Cache de la session",
+    cacheHitSummary: "{{rate}} de réussite",
+    cacheRead: "Lecture du cache",
+    cacheWrite: "Écriture en cache",
     accessibility: "Fenêtre contextuelle{{percentage}}% utilisé",
   },
   review: {

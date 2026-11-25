@@ -2129,6 +2129,11 @@ export const ptBR: TranslationResources = {
     tokens: "{{used}} / {{max}} tokens",
     compactionCount: "Rodadas de compactação: {{count}}",
     sessionCost: "Custo da sessão {{cost}}",
+    sessionUsage: "Esta sessão",
+    sessionCache: "Cache da sessão",
+    cacheHitSummary: "{{rate}} de acertos",
+    cacheRead: "Leitura do cache",
+    cacheWrite: "Gravação no cache",
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
   review: {

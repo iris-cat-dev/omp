@@ -6,8 +6,10 @@ import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { OmpProviderManagement } from "@omp-desktop/protocol/messages";
+import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
 import { en } from "@/i18n/resources/en";
 import { ContextWindowMeter } from "./context-window-meter";
+import { ContextUsageDetails } from "./context-usage-details";
 
 const runtime = vi.hoisted(() => {
   vi.stubGlobal(
@@ -111,8 +113,7 @@ test.each([
             provider="anthropic"
             accountCredentialId={selectedId}
             accountCredentialIds={["71", "72"]}
-            maxTokens={null}
-            usedTokens={null}
+            usage={{}}
           />
         </I18nextProvider>
       </QueryClientProvider>,
@@ -120,9 +121,10 @@ test.each([
     expect(runtime.getManagement).not.toHaveBeenCalled();
     const entry = screen.getByRole("button", { name: "Claude usage" });
     fireEvent.click(entry); // The normal touch-generated click; no hover/long-press is dispatched.
-    await screen.findByText("75%");
-    expect(Boolean(screen.queryByText("10%"))).toBe(otherAccountVisible);
-    expect(Boolean(screen.queryByText("Claude · Account 2"))).toBe(otherAccountVisible);
+    const remaining = () =>
+      screen.queryAllByRole("progressbar").map((bar) => bar.getAttribute("aria-valuenow"));
+    await waitFor(() => expect(remaining()).toEqual(otherAccountVisible ? ["75", "10"] : ["75"]));
+    expect(Boolean(screen.queryByText("Account 2"))).toBe(otherAccountVisible);
     expect(screen.queryByText("Context window")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     const refreshed = structuredClone(management);
@@ -133,9 +135,43 @@ test.each([
     }
     runtime.getManagement.mockResolvedValue(refreshed);
     fireEvent.click(entry);
-    await waitFor(() =>
-      expect(screen.getAllByText("60%")).toHaveLength(otherAccountVisible ? 2 : 1),
-    );
-    expect(screen.queryByText("75%")).toBeNull();
+    await waitFor(() => expect(remaining()).toEqual(otherAccountVisible ? ["60", "60"] : ["60"]));
   },
 );
+
+test("replaces session cache figures without treating missing writes or turn counters as session totals", async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: "en", resources: { en: { translation: en } } });
+  const details = (usage: AgentUsage) => (
+    <I18nextProvider i18n={i18n}>
+      <ContextUsageDetails usage={usage} reading={null} />
+    </I18nextProvider>
+  );
+  const session: AgentUsage = {
+    scope: "session",
+    inputTokens: 100,
+    cachedInputTokens: 250,
+    cacheWriteTokens: 50,
+    outputTokens: 5_000,
+  };
+  const view = render(details(session));
+  const header = screen.getByRole("button", { name: /Session cache.*62\.5%/ });
+  expect(header.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Cache read")).toBeNull();
+  fireEvent.click(header);
+  expect(screen.getByText("250 tokens")).toBeTruthy();
+  expect(screen.getByText("50 tokens")).toBeTruthy();
+  view.rerender(details({ scope: "session", inputTokens: 100, cachedInputTokens: 0 }));
+  expect(screen.getByText("0 tokens")).toBeTruthy();
+  expect(screen.getByText("—")).toBeTruthy(); // Unknown writes.
+  expect(screen.getByRole("button", { name: /Session cache.*—/ })).toBeTruthy();
+  view.rerender(details({ ...session, cacheWriteTokens: 0, cachedInputTokens: 0 }));
+  const zeroRate = screen.getByRole("button", { name: /Session cache.*0%/ });
+  fireEvent.click(zeroRate);
+  expect(zeroRate.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Cache write")).toBeNull();
+  for (const scope of ["turn", undefined] as const) {
+    view.rerender(details({ ...session, scope }));
+    expect(screen.queryByRole("button", { name: /Session cache/ })).toBeNull();
+  }
+});

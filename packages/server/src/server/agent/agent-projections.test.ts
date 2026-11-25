@@ -335,6 +335,7 @@ describe("toAgentPayload", () => {
     const fields = [
       "inputTokens",
       "cachedInputTokens",
+      "cacheWriteTokens",
       "outputTokens",
       "totalCostUsd",
       "contextWindowMaxTokens",

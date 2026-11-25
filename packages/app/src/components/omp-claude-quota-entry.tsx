@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshCw, TextSearch } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -12,55 +13,16 @@ import {
   createOmpAccountUsageCopy,
   mergeOmpAccountProviderUsage,
 } from "@/provider-usage/omp-account";
-import { formatSessionCost, formatTokenCount } from "./context-window-meter.utils";
-import { ContextCompactionCount } from "./context-compaction-count";
+import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
+import { getContextWindowReading } from "./context-window-meter.utils";
+import { ContextUsageDetails } from "./context-usage-details";
 
 interface OmpClaudeQuotaEntryProps {
   serverId?: string;
   accountCredentialId?: string | null;
   accountCredentialIds?: readonly string[];
-  maxTokens: number | null;
-  usedTokens: number | null;
-  totalCostUsd?: number | null;
-  compactionCount?: number | null;
+  usage: AgentUsage;
   onOpenPromptAnalysis?: () => void;
-}
-
-function ContextUsageDetails({
-  maxTokens,
-  usedTokens,
-  totalCostUsd,
-  compactionCount,
-}: OmpClaudeQuotaEntryProps) {
-  const { t } = useTranslation();
-  const cost = typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
-  const hasUsage =
-    maxTokens !== null &&
-    Number.isFinite(maxTokens) &&
-    maxTokens > 0 &&
-    usedTokens !== null &&
-    Number.isFinite(usedTokens) &&
-    usedTokens >= 0;
-  return (
-    <>
-      {hasUsage ? (
-        <>
-          <Text style={styles.title}>{t("contextWindow.title")}</Text>
-          <Text style={styles.detail}>
-            {t("contextWindow.used", { percentage: Math.round((usedTokens / maxTokens) * 100) })}
-          </Text>
-          <Text style={styles.detail}>
-            {t("contextWindow.tokens", {
-              used: formatTokenCount(usedTokens),
-              max: formatTokenCount(maxTokens),
-            })}
-          </Text>
-        </>
-      ) : null}
-      <ContextCompactionCount count={compactionCount} style={styles.detail} />
-      {cost ? <Text style={styles.detail}>{t("contextWindow.sessionCost", { cost })}</Text> : null}
-    </>
-  );
 }
 
 export function OmpClaudeQuotaEntry(props: OmpClaudeQuotaEntryProps) {
@@ -130,7 +92,14 @@ export function OmpClaudeQuotaEntry(props: OmpClaudeQuotaEntryProps) {
         sizeContentToCurrentSnapPoint
       >
         <View style={styles.content}>
-          <Button size="sm" variant="ghost" disabled={accountQuota.loading} onPress={refreshQuota}>
+          <Button
+            size="sm"
+            variant="ghost"
+            leftIcon={RefreshCw}
+            disabled={accountQuota.loading}
+            onPress={refreshQuota}
+            accessibilityLabel={t(accountQuota.loading ? "providerUsage.refreshing" : "providerUsage.refresh")}
+          >
             {t(accountQuota.loading ? "providerUsage.refreshing" : "providerUsage.refresh")}
           </Button>
           {!accountCredentialId && accountQuota.accounts.length > 1 ? (
@@ -143,12 +112,14 @@ export function OmpClaudeQuotaEntry(props: OmpClaudeQuotaEntryProps) {
           ) : (
             <ProviderUsageTooltipSection view={view} activeProviderId="anthropic" />
           )}
-          <ContextUsageDetails {...props} />
+          <ContextUsageDetails usage={props.usage} reading={getContextWindowReading(props.usage)} />
           {props.onOpenPromptAnalysis ? (
             <Button
               size="sm"
               variant="outline"
+              leftIcon={TextSearch}
               onPress={openPromptAnalysis}
+              accessibilityLabel={t("promptAnalysis.title")}
               testID="context-window-prompt-analysis"
             >
               {t("promptAnalysis.title")}
@@ -175,7 +146,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   content: { gap: theme.spacing[3] },
-  title: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   detail: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,

@@ -7,6 +7,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { Theme } from "@/styles/theme";
 import { ProviderUsageBalanceBar } from "./balance-bar";
+import { CompactAccount } from "./compact-account";
 import { formatAgo, formatProviderUsageLabel } from "./format";
 import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
@@ -39,10 +40,13 @@ function statusText(usage: ProviderUsage, t: TFunction): string | null {
     : t("providerUsage.status.unavailable");
 }
 
-function footerText(usage: ProviderUsage, t: TFunction): string | null {
+function footerText(usage: ProviderUsage, t: TFunction, compact: boolean): string | null {
   const updated = isOmpQuotaStale(usage.accountQuota) ? null : formatAgo(usage.fetchedAt, t);
+  const source = usage.sourceLabel;
+  const sourceInTitle =
+    source && (usage.displayName === source || usage.displayName.startsWith(`${source} · `));
   const parts = [
-    usage.sourceLabel,
+    compact && sourceInTitle ? null : source,
     updated ? t("providerUsage.updated", { time: updated }) : null,
   ].filter((part): part is string => typeof part === "string" && part.length > 0);
   return parts.length > 0 ? parts.join(" · ") : null;
@@ -51,20 +55,23 @@ function footerText(usage: ProviderUsage, t: TFunction): string | null {
 export function ProviderUsageCard({
   usage,
   compact = false,
+  showAccountLabel = true,
   children,
 }: {
   usage: ProviderUsage;
   compact?: boolean;
+  showAccountLabel?: boolean;
   children?: ReactNode;
 }) {
   const { t } = useTranslation();
   const status = statusText(usage, t);
-  const footer = footerText(usage, t);
-  const stale = isOmpQuotaStale(usage.accountQuota);
-  const balances = usage.balances ?? [];
-  const details = usage.details ?? [];
+  const footer = footerText(usage, t, compact);
   let notices: ReactNode = null;
-  if (usage.accountQuota) {
+  if (
+    usage.accountQuota &&
+    (!compact || usage.accountQuota.status !== "available" ||
+      usage.accountQuota.queryError || usage.accountQuota.modelRateLimit)
+  ) {
     notices =
       usage.providerId.split(":")[0] === "openai-codex" ? (
         <OmpCodexQuotaNotices quota={usage.accountQuota} />
@@ -73,10 +80,6 @@ export function ProviderUsageCard({
       );
   }
 
-  const containerStyle = useMemo(
-    () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
-    [compact],
-  );
   const dotStyle = useMemo(
     () => [
       styles.statusDot,
@@ -85,9 +88,41 @@ export function ProviderUsageCard({
     ],
     [usage.status],
   );
+  const statusIndicator = status ? (
+    <View style={styles.statusRow}>
+      <View style={dotStyle} />
+      <Text style={styles.statusLabel}>{status}</Text>
+    </View>
+  ) : null;
 
+  const alerts = (
+    <>
+      {notices}
+      <ProviderUsageUnsupportedNotice usage={usage} />
+      {!usage.accountQuota && usage.error ? (
+        <Text testID="provider-usage-error" style={styles.error} numberOfLines={compact ? undefined : 3}>
+          {usage.error}
+        </Text>
+      ) : null}
+    </>
+  );
+  if (compact) {
+    return (
+      <CompactAccount
+        usage={usage}
+        showAccountLabel={showAccountLabel}
+        footer={footer}
+        notices={<>{statusIndicator}{alerts}</>}
+      >
+        {children}
+      </CompactAccount>
+    );
+  }
+  const balances = usage.balances ?? [];
+  const details = usage.details ?? [];
+  const stale = isOmpQuotaStale(usage.accountQuota);
   return (
-    <View style={containerStyle}>
+    <View style={styles.containerPadded}>
       <View style={styles.header}>
         <ThemedProviderUsageIcon
           iconKey={usage.providerId.split(":")[0] ?? usage.providerId}
@@ -99,21 +134,9 @@ export function ProviderUsageCard({
         </Text>
         {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" /> : null}
         <View style={styles.headerSpacer} />
-        {status ? (
-          <View style={styles.statusRow}>
-            <View style={dotStyle} />
-            <Text style={styles.statusLabel}>{status}</Text>
-          </View>
-        ) : null}
+        {statusIndicator}
       </View>
-
-      {notices}
-      <ProviderUsageUnsupportedNotice usage={usage} />
-      {!usage.accountQuota && usage.error ? (
-        <Text testID="provider-usage-error" style={styles.error} numberOfLines={3}>
-          {usage.error}
-        </Text>
-      ) : null}
+      {alerts}
 
       {usage.windows.length > 0 || balances.length > 0 ? (
         <View testID="provider-usage-metrics" style={styles.bars}>
@@ -121,12 +144,11 @@ export function ProviderUsageCard({
             <ProviderUsageWindowBar
               key={window.id}
               window={window}
-              showReset={!compact || window.percentageDisplay === "remaining"}
               stale={stale}
             />
           ))}
           {balances.map((balance) => (
-            <ProviderUsageBalanceBar key={balance.id} balance={balance} showReset={!compact} />
+            <ProviderUsageBalanceBar key={balance.id} balance={balance} />
           ))}
         </View>
       ) : null}
@@ -134,16 +156,19 @@ export function ProviderUsageCard({
 
       {details.length > 0 ? (
         <View style={styles.details}>
-          {details.map((detail) => (
-            <View key={detail.id} style={styles.detailRow}>
-              <Text style={styles.detailLabel} numberOfLines={1}>
-                {formatProviderUsageLabel(detail.id, detail.label, t)}
-              </Text>
-              <Text style={styles.detailValue} numberOfLines={1}>
-                {detail.value}
-              </Text>
-            </View>
-          ))}
+          {details.map((detail) => {
+            const label = formatProviderUsageLabel(detail.id, detail.label, t);
+            return (
+              <View key={detail.id} style={styles.detailRow}>
+                <Text style={styles.detailLabel} numberOfLines={1}>
+                  {label}
+                </Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {detail.value}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
@@ -158,16 +183,10 @@ export function ProviderUsageCard({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
-    gap: theme.spacing[3],
-  },
   containerPadded: {
     gap: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
-  },
-  containerCompact: {
-    gap: theme.spacing[3],
   },
   header: {
     flexDirection: "row",

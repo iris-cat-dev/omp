@@ -87,6 +87,33 @@ describe("OMP usage poller", () => {
     expect(scheduler.activePollCount()).toBe(0);
   });
 
+  test("publishes cache-write-only changes and keeps missing counters unknown", async () => {
+    let stats: OmpSessionStats = {};
+    const updates: AgentUsage[] = [];
+    const poller = new OmpUsagePoller({
+      readStats: async () => stats,
+      onUsage: (usage) => updates.push(usage),
+      onPollError: (error) => {
+        throw error;
+      },
+    });
+    await poller.refresh();
+    stats = { tokens: { output: 0 }, cost: 0 };
+    await poller.refresh();
+    stats = { tokens: { cacheWrite: 0 } };
+    await poller.refresh();
+    stats = { tokens: { cacheWrite: 500 } };
+    await poller.refresh();
+    await poller.refresh();
+    stats = { tokens: { input: 0, cacheRead: 0 } };
+    await poller.refresh();
+    expect(updates).toStrictEqual([
+      { scope: "session", cacheWriteTokens: 0, outputTokens: 0, totalCostUsd: 0 },
+      { scope: "session", cacheWriteTokens: 500, outputTokens: 0, totalCostUsd: 0 },
+      { scope: "session", inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, totalCostUsd: 0 },
+    ]);
+  });
+
   test("publishes compaction changes even when token usage is unchanged", async () => {
     const updates: AgentUsage[] = [];
     let stats: OmpSessionStats = { compactionCount: 0 };
@@ -116,8 +143,6 @@ describe("OMP usage poller", () => {
     const finalStats = { contextUsage: { contextWindow: 200_000, tokens: 150 } };
     const finalUsage: AgentUsage = {
       scope: "session",
-      inputTokens: 0,
-      cachedInputTokens: 0,
       outputTokens: 0,
       totalCostUsd: 0,
       contextWindowMaxTokens: 200_000,

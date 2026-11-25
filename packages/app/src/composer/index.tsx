@@ -115,7 +115,7 @@ import { areAttachmentsEqual } from "@/composer/draft/input-draft-core";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import type { AgentFeature, AgentUsage } from "@omp-desktop/protocol/agent-types";
+import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
 import type { ForgeSearchItem } from "@omp-desktop/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -261,10 +261,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
     const usage = agent?.lastUsage ?? EMPTY_AGENT_USAGE;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: usage.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: usage.contextWindowUsedTokens ?? null,
-      totalCostUsd: usage.totalCostUsd ?? null,
-      compactionCount: usage.compactionCount ?? null,
+      usage,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
       accountFeature: agent?.features?.find(
@@ -272,61 +269,6 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       ),
     };
   };
-}
-
-function renderContextWindowMeter(
-  contextWindowMaxTokens: number | null,
-  contextWindowUsedTokens: number | null,
-  totalCostUsd: number | null,
-  compactionCount: number | null,
-  showPercentage: boolean,
-  serverId: string,
-  provider: string | null,
-  accountFeature: AgentFeature | undefined,
-  pending: boolean,
-  glyphSize: number,
-  onOpenPromptAnalysis?: () => void,
-): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending && provider !== "anthropic") {
-    return null;
-  }
-  return (
-    <ContextWindowMeter
-      maxTokens={contextWindowMaxTokens}
-      usedTokens={contextWindowUsedTokens}
-      totalCostUsd={totalCostUsd}
-      compactionCount={compactionCount}
-      showPercentage={showPercentage}
-      serverId={serverId}
-      provider={provider}
-      accountCredentialId={
-        accountFeature?.type === "select"
-          ? resolveOmpAccountFeatureSelection(accountFeature).effectiveValue
-          : null
-      }
-      accountCredentialIds={
-        accountFeature?.type === "select"
-          ? accountFeature.options.map((option) => option.id)
-          : undefined
-      }
-      pending={pending}
-      glyphSize={glyphSize}
-      onOpenPromptAnalysis={onOpenPromptAnalysis}
-    />
-  );
-}
-
-function resolveContextWindowPlacement(
-  meter: ReactElement | null,
-  reserveSlot: boolean,
-  quotaEntry = false,
-): ReactNode {
-  return reserveSlot ? (
-    <View style={[styles.contextWindowMeterSlot, quotaEntry && styles.quotaEntrySlot]}>
-      {meter}
-    </View>
-  ) : null;
 }
 
 interface RenderLeftContentArgs {
@@ -996,16 +938,6 @@ type OmpToolUseCommand = typeof OMP_BROWSER_USE_COMMAND | typeof OMP_COMPUTER_US
 
 const EMPTY_ARRAY: QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
-
-function resolveContextWindowValues(
-  rawMax: number | null,
-  rawUsed: number | null,
-): { contextWindowMaxTokens: number | null; contextWindowUsedTokens: number | null } {
-  if (typeof rawMax === "number" && typeof rawUsed === "number") {
-    return { contextWindowMaxTokens: rawMax, contextWindowUsedTokens: rawUsed };
-  }
-  return { contextWindowMaxTokens: null, contextWindowUsedTokens: null };
-}
 
 interface ComposerCancelButtonProps {
   buttonIconSize: number;
@@ -2092,63 +2024,49 @@ function ComposerContentImpl({
     ],
   );
 
-  const { contextWindowMaxTokens, contextWindowUsedTokens } = resolveContextWindowValues(
-    agentState.contextWindowMaxTokens,
-    agentState.contextWindowUsedTokens,
-  );
-
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
 
-  const contextWindowMeter = useMemo(
-    () =>
-      renderContextWindowMeter(
-        contextWindowMaxTokens,
-        contextWindowUsedTokens,
-        agentState.totalCostUsd,
-        agentState.compactionCount,
-        true,
-        serverId,
-        agentState.provider
-          ? resolveModelBrowserProviderNamespaceId(
-              agentState.provider,
-              agentState.model ?? undefined,
-            )
-          : null,
-        agentState.accountFeature,
-        contextWindowPending,
-        contextWindowMeterGlyphSize,
-        onOpenPromptAnalysis,
-      ),
-    [
-      contextWindowMaxTokens,
-      contextWindowUsedTokens,
-      agentState.totalCostUsd,
-      agentState.compactionCount,
-      serverId,
-      agentState.provider,
-      agentState.model,
-      agentState.accountFeature,
-      contextWindowPending,
-      contextWindowMeterGlyphSize,
-      onOpenPromptAnalysis,
-    ],
-  );
-  const rightLeadingContent = useMemo(
-    () =>
-      resolveContextWindowPlacement(
-        contextWindowMeter,
-        hasAgent,
-        Boolean(
-          agentState.provider &&
-          resolveModelBrowserProviderNamespaceId(
-            agentState.provider,
-            agentState.model ?? undefined,
-          ) === "anthropic",
-        ),
-      ),
-    [contextWindowMeter, hasAgent, agentState.provider, agentState.model],
-  );
+  const rightLeadingContent = useMemo(() => {
+    if (!hasAgent) return null;
+    const provider = agentState.provider
+      ? resolveModelBrowserProviderNamespaceId(agentState.provider, agentState.model ?? undefined)
+      : null;
+    const account = agentState.accountFeature;
+    return (
+      <View
+        style={[styles.contextWindowMeterSlot, provider === "anthropic" && styles.quotaEntrySlot]}
+      >
+        <ContextWindowMeter
+          usage={agentState.usage}
+          showPercentage
+          serverId={serverId}
+          provider={provider}
+          accountCredentialId={
+            account?.type === "select"
+              ? resolveOmpAccountFeatureSelection(account).effectiveValue
+              : null
+          }
+          accountCredentialIds={
+            account?.type === "select" ? account.options.map((option) => option.id) : undefined
+          }
+          pending={contextWindowPending}
+          glyphSize={contextWindowMeterGlyphSize}
+          onOpenPromptAnalysis={onOpenPromptAnalysis}
+        />
+      </View>
+    );
+  }, [
+    hasAgent,
+    agentState.usage,
+    agentState.provider,
+    agentState.model,
+    agentState.accountFeature,
+    serverId,
+    contextWindowPending,
+    contextWindowMeterGlyphSize,
+    onOpenPromptAnalysis,
+  ]);
 
   const hasGithubAttachment = useMemo(
     () =>

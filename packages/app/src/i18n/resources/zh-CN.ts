@@ -16,7 +16,7 @@ export const zhCN: TranslationResources = {
   backgroundProcesses: backgroundProcesses["zh-CN"],
   visualFeedback: visualFeedback.zhCN,
   promptAnalysis: {
-    title: "提示词分析",
+    title: "上下文分析",
     currentSnapshot: "当前上下文快照",
     refresh: "刷新",
     loading: "正在读取当前上下文…",
@@ -2271,9 +2271,14 @@ export const zhCN: TranslationResources = {
   contextWindow: {
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
-    tokens: "{{used}} / {{max}} tokens",
+    tokens: "{{used}} / {{max}} 词元",
     compactionCount: "已压缩 {{count}} 轮",
     sessionCost: "会话费用 {{cost}}",
+    sessionUsage: "本次会话",
+    sessionCache: "会话缓存",
+    cacheHitSummary: "命中 {{rate}}",
+    cacheRead: "缓存读取",
+    cacheWrite: "缓存写入",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },
   review: {

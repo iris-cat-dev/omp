@@ -2083,6 +2083,11 @@ export const ar: TranslationResources = {
     tokens: "رموز{{used}}/{{max}}",
     compactionCount: "جولات الضغط: {{count}}",
     sessionCost: "تكلفة الجلسة{{cost}}",
+    sessionUsage: "هذه الجلسة",
+    sessionCache: "الذاكرة المؤقتة للجلسة",
+    cacheHitSummary: "نسبة الإصابة {{rate}}",
+    cacheRead: "قراءة من الذاكرة المؤقتة",
+    cacheWrite: "كتابة إلى الذاكرة المؤقتة",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },
   review: {

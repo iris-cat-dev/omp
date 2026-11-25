@@ -7829,6 +7829,7 @@ test("native own-turn usage cannot overwrite the session quota/context counters"
     inputTokens: 30_000,
     outputTokens: 9_000,
     cachedInputTokens: 20_000,
+    cacheWriteTokens: 7_000,
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 150_000,
   };
@@ -7848,7 +7849,7 @@ test("native own-turn usage cannot overwrite the session quota/context counters"
     usage: { scope: "turn", inputTokens: 100, outputTokens: 1_000 },
   });
   await vi.waitFor(() => expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle"));
-  expect(manager.getAgent(snapshot.id)?.lastUsage).toEqual(sessionUsage);
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!).lastUsage).toEqual(sessionUsage);
 });
 
 test("ignores stale autonomous terminals without lowering the active turn lifecycle", async () => {

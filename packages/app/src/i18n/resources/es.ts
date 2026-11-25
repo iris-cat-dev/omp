@@ -2136,6 +2136,11 @@ export const es: TranslationResources = {
     tokens: "Fichas{{used}}/{{max}}",
     compactionCount: "Rondas de compactación: {{count}}",
     sessionCost: "Costo de la sesión{{cost}}",
+    sessionUsage: "Esta sesión",
+    sessionCache: "Caché de la sesión",
+    cacheHitSummary: "{{rate}} de aciertos",
+    cacheRead: "Lectura de caché",
+    cacheWrite: "Escritura en caché",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },
   review: {

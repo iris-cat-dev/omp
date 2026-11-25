@@ -203,6 +203,7 @@ export function buildOmpAccountProviderUsage(
     return {
       providerId: `${copy.providerId}:${account.credentialId}`,
       displayName: `${providerName} · ${accountLabel}`,
+      accountLabel,
       status: source.error ? "error" : (quota?.status ?? "unavailable"),
       planLabel: formatOmpAccountPlanLabel(copy.providerId, quota?.planLabel),
       sourceLabel: providerName,

@@ -2366,9 +2366,10 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
-  test("probes current context usage once when a historical session opens", async () => {
+  test("probes native session counters and context once when a historical session opens", async () => {
     const omp = new OmpHarness({
       initialStats: {
+        tokens: { input: 1_000, cacheRead: 2_000, cacheWrite: 400 },
         contextUsage: { tokens: 48_000, contextWindow: 272_000 },
       },
     });
@@ -2382,8 +2383,9 @@ describe("OMP agent client and session", () => {
     expect(omp.usageUpdates()).toEqual([
       {
         scope: "session",
-        inputTokens: 0,
-        cachedInputTokens: 0,
+        inputTokens: 1_000,
+        cachedInputTokens: 2_000,
+        cacheWriteTokens: 400,
         outputTokens: 0,
         totalCostUsd: 0,
         contextWindowMaxTokens: 272_000,
@@ -2407,8 +2409,6 @@ describe("OMP agent client and session", () => {
     expect(omp.usageUpdates()).toEqual([
       {
         scope: "session",
-        inputTokens: 0,
-        cachedInputTokens: 0,
         outputTokens: 0,
         totalCostUsd: 0,
         contextWindowMaxTokens: 200_000,
@@ -4418,8 +4418,6 @@ describe("OMP agent client and session", () => {
     expect(omp.usageUpdates()).toEqual([
       {
         scope: "session",
-        inputTokens: 0,
-        cachedInputTokens: 0,
         outputTokens: 0,
         totalCostUsd: 0,
         contextWindowMaxTokens: 272_000,
@@ -4427,8 +4425,6 @@ describe("OMP agent client and session", () => {
       },
       {
         scope: "session",
-        inputTokens: 0,
-        cachedInputTokens: 0,
         outputTokens: 0,
         totalCostUsd: 0,
         contextWindowMaxTokens: 272_000,

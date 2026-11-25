@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
+import { ChevronRight, TextSearch } from "lucide-react-native";
+import type { AgentUsage } from "@omp-desktop/protocol/agent-types";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -15,15 +17,17 @@ import {
   mergeOmpAccountProviderUsage,
 } from "@/provider-usage/omp-account";
 import { selectOmpQuotaAccounts } from "@/components/omp-provider-accounts";
-import { formatSessionCost, formatTokenCount } from "./context-window-meter.utils";
+import {
+  getContextProgressColor,
+  getContextWindowReading,
+  hasSessionCache,
+  type ContextWindowReading,
+} from "./context-window-meter.utils";
 import { OmpClaudeQuotaEntry } from "./omp-claude-quota-entry";
-import { ContextCompactionCount } from "./context-compaction-count";
+import { ContextUsageDetails } from "./context-usage-details";
 
 interface ContextWindowMeterProps {
-  maxTokens: number | null;
-  usedTokens: number | null;
-  totalCostUsd?: number | null;
-  compactionCount?: number | null;
+  usage: AgentUsage;
   showPercentage?: boolean;
   serverId?: string;
   /** The active model's provider namespace, including configured OMP providers. */
@@ -44,39 +48,6 @@ const COMPACT_RADIUS = 5;
 const STROKE_WIDTH = 2;
 const COMPACT_STROKE_WIDTH = 1.75;
 const COMPACT_CIRCUMFERENCE = 2 * Math.PI * COMPACT_RADIUS;
-
-function isValidMaxTokens(value: number): boolean {
-  return Number.isFinite(value) && value > 0;
-}
-
-function isValidUsedTokens(value: number): boolean {
-  return Number.isFinite(value) && value >= 0;
-}
-
-function getUsagePercentage(maxTokens: number, usedTokens: number): number | null {
-  if (!isValidMaxTokens(maxTokens) || !isValidUsedTokens(usedTokens)) {
-    return null;
-  }
-  return (usedTokens / maxTokens) * 100;
-}
-
-function clampPercentage(value: number): number {
-  return Math.max(0, Math.min(100, value));
-}
-
-function getMeterColors(
-  percentage: number,
-  theme: ReturnType<typeof useUnistyles>["theme"],
-): { progress: string; track: string } {
-  const track = theme.colors.surface3;
-  if (percentage > 90) {
-    return { progress: theme.colors.destructive, track };
-  }
-  if (percentage >= 70) {
-    return { progress: theme.colors.palette.amber[500], track };
-  }
-  return { progress: theme.colors.foregroundMuted, track };
-}
 
 function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   if (showPercentage) {
@@ -103,28 +74,29 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
 
 export function ContextWindowMeter(props: ContextWindowMeterProps) {
   if (props.provider === "anthropic") return <OmpClaudeQuotaEntry {...props} />;
-  return <TokenContextWindowMeter {...props} />;
+  const reading = getContextWindowReading(props.usage);
+  if (!reading && !props.pending && !hasSessionCache(props.usage)) return null;
+  return <TokenContextWindowMeter {...props} reading={reading} />;
 }
 
 function TokenContextWindowMeter({
-  maxTokens,
-  usedTokens,
-  totalCostUsd,
-  compactionCount,
+  usage,
+  reading,
   showPercentage = false,
   serverId,
   provider,
   accountCredentialId,
   accountCredentialIds,
-  pending = false,
   glyphSize,
   onOpenPromptAnalysis,
-}: ContextWindowMeterProps) {
+}: ContextWindowMeterProps & { reading: ContextWindowReading | null }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  const viewport = useWindowDimensions();
+  const tooltipWidth = Math.min(320, viewport.width - 16);
   const showPersistentActions = useShowPersistentActions();
-  const quotaProviderId = provider === "openai-codex" || provider === "anthropic" ? provider : null;
+  const quotaProviderId = provider === "openai-codex" ? provider : null;
   const { view: baseUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
     { enabled: isTooltipOpen && !quotaProviderId, providerId: provider ?? undefined },
@@ -132,7 +104,7 @@ function TokenContextWindowMeter({
   const accountQuota = useOmpProviderAccountQuota(serverId, quotaProviderId, isTooltipOpen);
   const providerUsageView = useMemo(() => {
     if (!quotaProviderId) return baseUsageView;
-    const usage = buildOmpAccountProviderUsage(
+    const accountUsage = buildOmpAccountProviderUsage(
       {
         ...accountQuota,
         accounts: selectOmpQuotaAccounts(
@@ -145,13 +117,11 @@ function TokenContextWindowMeter({
     );
     return mergeOmpAccountProviderUsage(
       { kind: "loading" },
-      usage,
+      accountUsage,
       accountQuota.loading,
       accountQuota.updatedAt,
     );
   }, [accountCredentialId, accountCredentialIds, accountQuota, baseUsageView, quotaProviderId, t]);
-  const percentage =
-    maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
       setIsTooltipOpen(nextOpen);
@@ -171,10 +141,7 @@ function TokenContextWindowMeter({
   // No usage yet: reserve the footprint with a track-only ring while a session is
   // active so the real ring fades in without shifting siblings. Render nothing when
   // no usage is expected.
-  if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
+  if (!reading && !hasSessionCache(usage)) {
     return (
       <View style={geometry.containerStyle}>
         <Svg
@@ -199,20 +166,16 @@ function TokenContextWindowMeter({
     );
   }
 
-  const clampedPercentage = clampPercentage(percentage);
-  const roundedPercentage = Math.round(percentage);
+  const roundedPercentage = reading ? Math.round(reading.percentage) : null;
   const { svgSize, center, radius, strokeWidth, circumference, containerStyle } = geometry;
-  const dashOffset = circumference - (clampedPercentage / 100) * circumference;
-  const colors = getMeterColors(clampedPercentage, theme);
-  const formattedSessionCost =
-    typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
+  const dashOffset = reading ? circumference * (1 - Math.min(reading.percentage, 100) / 100) : 0;
 
   return (
     <Tooltip
       open={isTooltipOpen}
       onOpenChange={handleTooltipOpenChange}
       delayDuration={0}
-      interactive={Boolean(onOpenPromptAnalysis)}
+      interactive
       openOnPress={showPersistentActions}
       enabledOnDesktop
       enabledOnMobile
@@ -222,9 +185,11 @@ function TokenContextWindowMeter({
           style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="button"
-          accessibilityLabel={t("contextWindow.accessibility", {
-            percentage: roundedPercentage,
-          })}
+          accessibilityLabel={
+            roundedPercentage === null
+              ? t("contextWindow.sessionUsage")
+              : t("contextWindow.accessibility", { percentage: roundedPercentage })
+          }
           accessibilityHint={t("contextWindow.title")}
           hitSlop={showPersistentActions ? 6 : undefined}
         >
@@ -241,58 +206,65 @@ function TokenContextWindowMeter({
               cy={center}
               r={radius}
               fill="none"
-              stroke={colors.track}
+              stroke={theme.colors.surface3}
               strokeWidth={strokeWidth}
             />
-            <Circle
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              stroke={colors.progress}
-              strokeWidth={strokeWidth}
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={dashOffset}
-            />
+            {reading ? (
+              <Circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={getContextProgressColor(reading.percentage, theme)}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+              />
+            ) : null}
           </Svg>
           {showPercentage ? (
-            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+            <Text style={styles.percentageLabel}>
+              {roundedPercentage === null ? "—" : `${roundedPercentage}%`}
+            </Text>
           ) : null}
         </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8} testID="context-window-tooltip">
-        <View style={styles.tooltipContent}>
-          <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
-          <Text style={styles.tooltipText}>
-            {t("contextWindow.used", { percentage: roundedPercentage })}
-          </Text>
-          <Text style={styles.tooltipDetail}>
-            {t("contextWindow.tokens", {
-              used: formatTokenCount(usedTokens),
-              max: formatTokenCount(maxTokens),
-            })}
-          </Text>
-          <ContextCompactionCount count={compactionCount} style={styles.tooltipDetail} />
-          {formattedSessionCost ? (
-            <Text style={styles.tooltipDetail}>
-              {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
-            </Text>
-          ) : null}
+      <TooltipContent
+        side="top"
+        align="center"
+        offset={8}
+        maxWidth={tooltipWidth}
+        style={[styles.tooltipSurface, { width: tooltipWidth, maxHeight: viewport.height - 16 }]}
+        testID="context-window-tooltip"
+      >
+        <ScrollView
+          bounces={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.tooltipContent}
+        >
+          <ContextUsageDetails usage={usage} reading={reading} />
           <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
           {onOpenPromptAnalysis ? (
             <View style={styles.tooltipAction}>
               <Button
                 size="sm"
-                variant="outline"
+                variant="ghost"
+                style={styles.actionRow}
+                textStyle={styles.actionLabel}
+                leftIcon={TextSearch}
+                trailing={
+                  <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                }
                 onPress={openPromptAnalysis}
+                accessibilityLabel={t("promptAnalysis.title")}
                 testID="context-window-prompt-analysis"
               >
                 {t("promptAnalysis.title")}
               </Button>
             </View>
           ) : null}
-        </View>
+        </ScrollView>
       </TooltipContent>
     </Tooltip>
   );
@@ -328,28 +300,21 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface3,
   },
+  tooltipSurface: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    overflow: "hidden",
+  },
   tooltipContent: {
-    gap: theme.spacing[1.5],
-    minWidth: 200,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    gap: theme.spacing[2],
   },
   tooltipAction: {
-    borderTopWidth: 1,
-    borderColor: theme.colors.border,
-    marginTop: theme.spacing[1],
-    paddingTop: theme.spacing[2],
+    borderTopWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    paddingTop: theme.spacing[0.5],
   },
-  tooltipTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  tooltipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: theme.fontSize.base * 1.4,
-  },
-  tooltipDetail: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.4,
-  },
+  actionRow: { justifyContent: "flex-start", paddingHorizontal: theme.spacing[1.5], gap: theme.spacing[3] },
+  actionLabel: { flex: 1 },
 }));

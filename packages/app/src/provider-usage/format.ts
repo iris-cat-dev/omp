@@ -29,12 +29,19 @@ function formatDuration(
   return t(`providerUsage.duration.${duration.unit}`, { count: duration.count });
 }
 
-export function formatResetLabel(iso: string | null | undefined, t: TFunction): string | null {
+export function formatResetLabel(
+  iso: string | null | undefined,
+  t: TFunction,
+  standalone = false,
+): string | null {
   if (!iso) return null;
   const duration = relativeDuration(iso);
   if (!duration) return null;
   if (duration.count === 0) return t("providerUsage.resetNow");
-  return t("providerUsage.resetsIn", { duration: formatDuration(duration, t) });
+  const time = formatDuration(duration, t);
+  return standalone
+    ? t("settings.providers.omp.codexQuota.resetsIn", { time })
+    : t("providerUsage.resetsIn", { duration: time });
 }
 
 export function formatRunsOutLabel(iso: string | null | undefined, t: TFunction): string | null {

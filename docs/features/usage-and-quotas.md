@@ -4,6 +4,7 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 
 ## Contents
 
+- [Current conversation](#current-conversation)
 - [Native OMP statistics](#native-omp-statistics)
 - [Agent Speed local monitor](https://github.com/iris-cat-dev/omp-plugins/blob/main/agent-speed/README.md)
 - [Custom provider balances](#custom-provider-balances)
@@ -14,7 +15,15 @@ Read native OMP totals separately from provider quotas and account credits. Conf
 
 For the selected host, **Settings → Usage** includes native OMP `/stats`, provider quotas/balances, Codex reset cards, and Claude limit-reset controls beside the affected account. Native totals and provider quotas are never added together. Reset actions require confirmation; changing account login or order remains in **Providers**.
 
-The composer's context-window tooltip shows **Compaction rounds** below token usage; Claude's usage sheet shows the same counter. It counts persisted compaction records on the current native session branch, including older compacted history, and restores that count on resume. Automatic and manual compactions count equally; loading, canceled, failed, and skipped attempts do not add a round. A new session reports zero, while hosts that do not provide the counter omit the row. Rebuild the SDK, backend, and renderer, then restart the backend and session hosts to load this change. Reloading only the renderer does not recover a counter omitted from an older backend's session snapshot.
+## Current conversation
+
+Open the percentage ring in the composer to see three things at a glance: how full the context window is, how often this session reused cached input, and how much quota the account has left. The gauge, cache, and wallet icons distinguish these readings. Select **Session cache** to see exact token reads and writes, the reported session cost, and compaction rounds. Select an account heading with a chevron for its additional quota windows, reset times, and full credit balance when available. Quota warnings stay visible without expanding anything. Claude's usage sheet uses the same summaries.
+
+For example, 250 tokens read from cache, 50 written, and 100 uncached input tokens give a hit rate of **62.5%** (`250 / 400`). Output tokens do not enter the calculation. A reported zero is shown as zero; a missing counter or a rate with no input is shown as `—`. If the host reports neither cache counter, the cache breakdown is omitted. The figures follow the SDK's restored session state, so switching branches or compacting can change them. They do not come from the last turn or the host-wide Usage page.
+
+Cache writes require the updated backend and renderer; restart previously loaded session hosts to pick up the backend. No new SDK build is required for cache reporting.
+
+The session's **compaction rounds** count persisted compaction records on the current native branch, including older compacted history, and restore on resume. Automatic and manual compactions count equally; loading, canceled, failed, and skipped attempts do not add a round. A new session reports zero, while hosts that do not provide the counter omit it. Rebuild the SDK, backend, and renderer, then restart the backend and session hosts to enable compaction reporting. Reloading only the renderer does not recover a counter omitted from an older backend's session snapshot.
 
 ## Native OMP statistics
 
