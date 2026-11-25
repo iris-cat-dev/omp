@@ -136,8 +136,10 @@ export default defineConfig({
       "@dnd-kit/sortable",
       "@dnd-kit/utilities",
       "hoist-non-react-statics",
+      "htmlparser2",
       "invariant",
       "fbjs/lib/invariant",
+      "react-native-markdown-display",
     ],
     exclude: [
       // Real component subpaths must share the React alias with the renderer.

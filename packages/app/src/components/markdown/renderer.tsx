@@ -364,6 +364,9 @@ function MarkdownImageTextGroup({
   );
 }
 
+const DETAILS_EXPANDED_STATE = { expanded: true } as const;
+const DETAILS_COLLAPSED_STATE = { expanded: false } as const;
+
 function MarkdownDetails({
   part,
   rendererProps,
@@ -379,7 +382,13 @@ function MarkdownDetails({
   );
   return (
     <View style={detailsStyles.container}>
-      <Pressable style={detailsStyles.summaryRow} onPress={toggle} accessibilityRole="button">
+      <Pressable
+        style={detailsStyles.summaryRow}
+        onPress={toggle}
+        accessibilityRole="button"
+        accessibilityState={open ? DETAILS_EXPANDED_STATE : DETAILS_COLLAPSED_STATE}
+        aria-expanded={open}
+      >
         {open ? (
           <ChevronDown size={14} color={detailsStyles.summaryIcon.color} />
         ) : (
@@ -771,14 +780,15 @@ const detailsStyles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing[2],
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[3],
     overflow: "hidden",
   },
   summaryRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.surface2,
   },
@@ -790,12 +800,12 @@ const detailsStyles = StyleSheet.create((theme) => ({
     minWidth: 0,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: theme.fontWeight.medium,
     lineHeight: 18,
   },
   body: {
-    paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
   },
   inlineImageWrap: {
     alignSelf: "flex-start",
