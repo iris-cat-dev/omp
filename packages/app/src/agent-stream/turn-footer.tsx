@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
+import { Clock3 } from "lucide-react-native";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -26,6 +27,8 @@ import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useSettings } from "@/hooks/use-settings";
 
+const ThemedClock = withUnistyles(Clock3);
+const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
@@ -167,12 +170,15 @@ const WorkingIndicator = memo(function WorkingIndicator({
         />
       ) : null}
       {inFlightTurnStartedAt ? (
-        <LiveElapsed
-          startedAt={inFlightTurnStartedAt}
-          active={active}
-          style={stylesheet.workingElapsed}
-          testID="turn-working-elapsed"
-        />
+        <View style={stylesheet.workingMetric}>
+          <ThemedClock size={13} uniProps={mutedIconColorMapping} aria-hidden />
+          <LiveElapsed
+            startedAt={inFlightTurnStartedAt}
+            active={active}
+            style={stylesheet.workingElapsed}
+            testID="turn-working-elapsed"
+          />
+        </View>
       ) : null}
       <TurnMetrics {...metricProps} />
     </View>
@@ -293,6 +299,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     maxWidth: "100%",
     minWidth: 0,
     flexShrink: 1,
+  },
+  workingMetric: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
   },
   workingElapsed: {
     color: theme.colors.foregroundMuted,

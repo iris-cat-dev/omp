@@ -770,11 +770,21 @@ export const LiveElapsed = memo(function LiveElapsed({
     return () => clearInterval(handle);
   }, [active, startedAtMs]);
 
+  const totalSeconds = Math.floor(visibleElapsedMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = String(Math.floor(totalSeconds / 60) % 60).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  const label = hours > 0 ? `${hours}:${minutes}:${seconds}` : `${minutes}:${seconds}`;
+
   return (
-    <Text style={style} testID={testID}>
-      {formatDuration(visibleElapsedMs, (count, unit) =>
+    <Text
+      style={style}
+      testID={testID}
+      accessibilityLabel={formatDuration(visibleElapsedMs, (count, unit) =>
         t(`agentStream.turnMetadata.duration.${unit}`, { count }),
       )}
+    >
+      {label}
     </Text>
   );
 });

@@ -1,14 +1,19 @@
+import { Zap } from "lucide-react-native";
 import React, { memo } from "react";
 import { Platform, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { PluginTurnMetricProps } from "@omp-desktop/plugin";
+import type { Theme } from "@/styles/theme";
 import {
   calculateCompletedOutputRate,
   formatOutputTokenSpeed,
   useNativeOutputRate,
   type NativeOutputRate,
 } from "./token-output-speed";
+
+const ThemedZap = withUnistyles(Zap);
+const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const sourceLabels = {
   en: {
@@ -56,9 +61,8 @@ export const TurnOutputSpeed = memo(function TurnOutputSpeed(props: PluginTurnMe
     ? (rate?.output ?? null)
     : calculateCompletedOutputRate(props.recordedUsage, props.replayedUsage);
   if (value === null) return null;
-  const label = t("agentStream.turnMetadata.tokensPerSecond", {
-    speed: formatOutputTokenSpeed(value),
-  });
+  const speed = formatOutputTokenSpeed(value);
+  const label = t("agentStream.turnMetadata.tokensPerSecond", { speed });
   const { source, tooltip } = describeOutputSpeed(label, rate, props.active, i18n.language);
   const text = (
     <Text
@@ -67,11 +71,12 @@ export const TurnOutputSpeed = memo(function TurnOutputSpeed(props: PluginTurnMe
       accessibilityHint={tooltip}
       testID={props.active ? "turn-token-output-speed" : "turn-avg-speed"}
     >
-      {label}
+      {props.active ? `${speed} t/s` : label}
     </Text>
   );
   return (
     <View style={props.active ? styles.live : undefined}>
+      {props.active ? <ThemedZap size={13} uniProps={mutedIconColorMapping} aria-hidden /> : null}
       {Platform.OS === "web" ? React.createElement("span", { title: tooltip }, text) : text}
     </View>
   );
@@ -79,13 +84,10 @@ export const TurnOutputSpeed = memo(function TurnOutputSpeed(props: PluginTurnMe
 
 const styles = StyleSheet.create((theme) => ({
   live: {
-    height: 24,
-    flexShrink: 0,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[1],
+    flexShrink: 0,
   },
   text: {
     color: theme.colors.foregroundMuted,

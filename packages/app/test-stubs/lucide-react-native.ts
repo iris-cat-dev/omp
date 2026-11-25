@@ -40,6 +40,7 @@ export const CircleDot = StubIcon;
 export const CircleSlash = StubIcon;
 export const CircleX = StubIcon;
 export const ClipboardPaste = StubIcon;
+export const Clock3 = StubIcon;
 export const Code = StubIcon;
 export const Copy = StubIcon;
 export const CopyPlus = StubIcon;
