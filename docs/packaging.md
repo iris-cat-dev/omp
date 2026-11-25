@@ -128,6 +128,12 @@ npx mini-electron --update-runtime
 
 Normal dependency installation reuses an already valid native runtime; updating the npm installer alone does not refresh it. Verify the selected native version in `node_modules/@iriscat/mini-electron/dist/version.json`.
 
+On Apple Silicon, use [macOS runtime `0.1.45`](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.45)
+or newer for the fix to dropped spaces and punctuation in text fields under
+macOS input methods. If this checkout still has `0.1.44` installed, run
+`npx mini-electron --update-runtime 0.1.45` from the repository root. Restart the
+development app or rebuild the desktop package to use the new binary.
+
 For reproducible Windows x64 builds, select published
 [runtime `0.1.41`](https://github.com/iris-cat-dev/mini-electron/releases/tag/v0.1.41),
 which carries all required capability markers, or use a newer qualified/local
