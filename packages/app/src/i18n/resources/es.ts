@@ -1,3 +1,4 @@
+import { authenticationError } from "./authentication-error";
 import { en, type TranslationResources } from "./en";
 import { ompPluginSettings, pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
@@ -7,6 +8,7 @@ import { providerUsage } from "./provider-usage";
 import { wallpaperLibrary } from "./wallpaper-library";
 
 export const es: TranslationResources = {
+  authenticationError: authenticationError.es,
   plugins: en.plugins,
   nativePlugin: en.nativePlugin,
   providerUsage: providerUsage.es,

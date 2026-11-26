@@ -1,3 +1,4 @@
+import { authenticationError } from "./authentication-error";
 import { ompProviderSettings } from "./omp-provider-settings";
 import { ompMemorySettings } from "./omp-memory-settings";
 import { modelConnectionChat } from "./model-connection-chat";
@@ -8,6 +9,7 @@ import { visualFeedback } from "./visual-feedback";
 import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
 
 export const en = {
+  authenticationError: authenticationError.en,
   plugins: unifiedPluginSettings.en,
   nativePlugin: { details: nativePluginDetails.en },
   providerUsage: providerUsage.en,

@@ -1,3 +1,4 @@
+import { authenticationError } from "./authentication-error";
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 import { ompProviderSettings } from "./omp-provider-settings";
@@ -10,6 +11,7 @@ import { visualFeedback } from "./visual-feedback";
 import { unifiedPluginSettings, nativePluginDetails } from "./unified-plugin-settings";
 
 export const zhCN: TranslationResources = {
+  authenticationError: authenticationError["zh-CN"],
   plugins: unifiedPluginSettings["zh-CN"],
   nativePlugin: { details: nativePluginDetails["zh-CN"] },
   providerUsage: providerUsage["zh-CN"],

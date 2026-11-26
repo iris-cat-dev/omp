@@ -32,6 +32,8 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import { classifyAuthenticationError } from "@/components/authentication-error";
+import { AuthenticationErrorMessage } from "@/components/authentication-error-message";
 import { Button } from "@/components/ui/button";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
@@ -882,6 +884,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (isLaunchCompletionItem(item)) {
           return (
             <LaunchCompletionView item={item} isLastInSequence={layoutItem.isLastInToolSequence} />
+          );
+        }
+        const authenticationError = classifyAuthenticationError(item.text);
+        if (authenticationError) {
+          return (
+            <AuthenticationErrorMessage
+              error={authenticationError}
+              spacing={layoutItem.assistantSpacing}
+            />
           );
         }
         const isPlan =

@@ -73,6 +73,18 @@ When OMP offers both Codex sign-in methods, they appear under one Codex provider
 
 Official Codex OAuth accepts dynamic models only from the dedicated Codex catalog and requires Codex capability metadata per entry. Credentials are never sent to the generic ChatGPT model catalog as a fallback. Temporary failure, invalid JSON, or non-Codex responses preserve the last validated catalog or OMP's built-in models and reasoning options. When upgrading from affected older versions, legacy Codex cache entries whose endpoint/protocol cannot be proven are removed; credentials, other provider caches, and conversation settings are untouched.
 
+### Connection errors in conversations
+
+When a conversation cannot authenticate, Desktop shows a connection notice with a readable reason and next step. Expand **Technical details** to inspect the original error; the conversation's copy action retains that original message.
+
+| Notice or reason | Next step |
+| --- | --- |
+| **Login credential refresh failed** — unsupported country or region | Check **Host Settings → Proxy** and ensure the network exit meets the provider's requirements. |
+| **Login credential refresh failed** — connection timeout or another refresh failure | Check the host's proxy/network connection, then retry. |
+| **Model connection unavailable** — no usable credentials | Check sign-in under **Host Settings → Model connections**. If already signed in, check the proxy/network connection. |
+
+Older missing-key messages may have hidden a refresh failure, so Desktop does not guess their cause or claim that the account is signed out. Their original text remains in **Technical details**, including any obsolete database-creation hint. Resolve these errors through connection settings, not by creating or deleting a credentials database.
+
 ## Frequently used model combinations
 
 The conversation model picker shows **Frequently used** above the full model list. Each record stores a model, Thinking level, and Speed together. Select a record to restore all three; Standard, Fast, and Ultrafast remain distinct. Unsupported Thinking or Speed is labeled explicitly.
