@@ -116,6 +116,6 @@ Native plugin custom replies preserve original punctuation and do not complete a
 
 Completed assistant turns display duration, completion time, total tokens, and average output speed in the selected interface language. Completion time is always beside duration, without hover/tap. Weekdays/dates follow interface language; the clock follows system 12/24-hour preference. Missing metadata is omitted independently; footers wrap on narrow screens.
 
-While the assistant is running, a clock shows elapsed time as `14:34` or `1:00:00` once an hour elapses. When output speed is available, it appears beside a lightning icon as `36.9 t/s`, without a badge. Hover over the speed to see whether it is measured or estimated.
+While the assistant is running, a clock shows elapsed time as `14:34` or `1:00:00` once an hour elapses. When output speed is available, the lightning icon and speed (for example, `36.9 t/s`) are vertically centered alongside the clock, without a badge. Hover over the speed to see whether it is measured or estimated.
 
 For indexed host-wide totals, provider quotas, and billing caveats see [Usage and quotas](usage-and-quotas.md).

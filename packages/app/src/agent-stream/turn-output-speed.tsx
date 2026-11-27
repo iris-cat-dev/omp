@@ -14,6 +14,8 @@ import {
 
 const ThemedZap = withUnistyles(Zap);
 const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+// Keep the Web tooltip wrapper from adding its own text line box around the label.
+const webLiveLabelStyle = { display: "flex" } as const;
 
 const sourceLabels = {
   en: {
@@ -77,7 +79,13 @@ export const TurnOutputSpeed = memo(function TurnOutputSpeed(props: PluginTurnMe
   return (
     <View style={props.active ? styles.live : undefined}>
       {props.active ? <ThemedZap size={13} uniProps={mutedIconColorMapping} aria-hidden /> : null}
-      {Platform.OS === "web" ? React.createElement("span", { title: tooltip }, text) : text}
+      {Platform.OS === "web"
+        ? React.createElement(
+            "div",
+            { title: tooltip, style: props.active ? webLiveLabelStyle : undefined },
+            text,
+          )
+        : text}
     </View>
   );
 });
