@@ -1,7 +1,7 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@omp-desktop/protocol/error-utils";
-import type { AgentConfigApply } from "@omp-desktop/protocol/messages";
+import type { AgentConfigApply, AgentGoalSnapshot } from "@omp-desktop/protocol/messages";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import { isOmpWorkflowFeature } from "../../agent/providers/omp/workflow-config.js";
@@ -34,7 +34,7 @@ export interface AgentConfigOperations {
   setProxyPolicy(agentId: string, policy: ProxyPolicy | null): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
   setGoalObjective(agentId: string, objective: string): Promise<void>;
-  controlGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<void>;
+  controlGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<AgentGoalSnapshot | null>;
   setThinking(
     agentId: string,
     thinkingOptionId: string | null,
@@ -173,6 +173,7 @@ export class AgentConfigSession {
     msg: Extract<SessionInboundMessage, { type: "control_agent_goal_request" }>,
   ): Promise<void> {
     const { agentId, action, requestId } = msg;
+    let goal: AgentGoalSnapshot | null = null;
     return this.applyConfigChange({
       agentId,
       requestId,
@@ -180,10 +181,17 @@ export class AgentConfigSession {
       logFields: { agentId, action, requestId },
       failureText: "Failed to control agent goal",
       run: async () => {
-        await this.operations.controlGoal(agentId, action);
+        goal = await this.operations.controlGoal(agentId, action);
+        if (action === "start" && goal?.status !== "active") {
+          throw new Error("The runtime did not confirm an active goal");
+        }
         return undefined;
       },
-      emitResponse: (payload) => this.host.emit({ type: "control_agent_goal_response", payload }),
+      emitResponse: (payload) =>
+        this.host.emit({
+          type: "control_agent_goal_response",
+          payload: payload.accepted ? { ...payload, goal } : payload,
+        }),
     });
   }
 

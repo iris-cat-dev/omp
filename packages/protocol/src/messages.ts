@@ -2584,9 +2584,18 @@ export const ControlAgentGoalRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentGoalSnapshotSchema = z.object({
+  id: z.string().min(1),
+  objective: z.string().min(1),
+  status: z.enum(["active", "paused", "budget-limited", "complete", "dropped"]),
+});
+export type AgentGoalSnapshot = z.infer<typeof AgentGoalSnapshotSchema>;
+
 export const ControlAgentGoalResponseMessageSchema = z.object({
   type: z.literal("control_agent_goal_response"),
-  payload: AgentActionResponsePayloadSchema,
+  payload: AgentActionResponsePayloadSchema.extend({
+    goal: AgentGoalSnapshotSchema.nullable().optional(),
+  }),
 });
 
 /**

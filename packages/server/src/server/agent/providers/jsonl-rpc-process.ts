@@ -12,6 +12,9 @@ export const JSONL_RPC_DEFAULT_TIMEOUT_MS = 30_000;
  */
 export const JSONL_RPC_NO_TIMEOUT = null;
 
+/** A response from the runtime, as distinct from timeout, transport loss, or decoding failure. */
+export class JsonlRpcRequestRejectedError extends Error {}
+
 const STDERR_BUFFER_LIMIT = 8192;
 const STDERR_FATAL_LIMIT = 1024;
 const STDERR_DRAIN_TIMEOUT_MS = 500;
@@ -557,7 +560,7 @@ export class JsonlRpcProcess {
     this.pending.delete(response.id);
     if (!response.success) {
       pending.reject(
-        new Error(
+        new JsonlRpcRequestRejectedError(
           response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
         ),
       );

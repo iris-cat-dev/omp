@@ -18,6 +18,7 @@ import type {
   OmpFastModeResult,
   OmpFastModeSelection,
   OmpLoginProvider,
+  OmpGoalResult,
   OmpModel,
   OmpPlanReview,
   OmpPlanState,
@@ -178,6 +179,30 @@ export class FakeOmp implements OmpRuntime {
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  private goalSequence = 0;
+
+  async controlGoal(
+    op: "get" | "create" | "resume" | "pause" | "drop",
+    objective?: string,
+  ): Promise<OmpGoalResult> {
+    const previous = this.state.goal?.goal;
+    if (op === "get") return { goal: previous ?? null, state: this.state.goal ?? null };
+    if (op === "drop") {
+      this.state.goal = null;
+      if (previous) this.emit({ type: "goal_updated", goal: { ...previous, status: "dropped" } });
+      return { goal: null, state: null };
+    }
+    if (op === "create" && previous) throw new Error("A goal already exists");
+    const goal = op === "create"
+      ? { id: `native-goal-${++this.goalSequence}`, objective, status: "active" }
+      : previous && { ...previous, status: op === "pause" ? "paused" : "active" };
+    if (!goal) return { goal: null, state: null };
+    const state = { enabled: goal.status === "active", mode: "active", goal };
+    this.state.goal = state;
+    this.emit({ type: "goal_updated", goal, state });
+    return { goal, state };
+  }
+
   planState: OmpPlanState = { enabled: false };
   readonly planModeChanges: boolean[] = [];
   readonly planDecisions: Array<{ reviewId: string; choice: "approve" | "refine" }> = [];

@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createProviderEnv } from "../../provider-launch-config.js";
@@ -138,12 +141,20 @@ export class OmpSdkRuntime implements OmpRuntime {
         })
       : undefined;
     let modelSource: OmpLocalModelGatewaySource | undefined;
+    let goalConfigDir: string | undefined;
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => cleanupPromise ??= Promise.all([
       imageLaunch?.cleanup(),
+      goalConfigDir ? rm(goalConfigDir, { recursive: true, force: true }) : undefined,
       modelSource?.close(),
     ]).then(() => undefined);
     try {
+      let goalConfig: string | undefined;
+      if (!input.sandbox && !input.noSession && launch.protocolMode === "rpc-ui") {
+        goalConfigDir = await mkdtemp(join(tmpdir(), "omp-desktop-goal-"));
+        goalConfig = join(goalConfigDir, "config.yml");
+        await writeFile(goalConfig, "goal:\n  continuationModes: [interactive, rpc]\n");
+      }
       if (input.sandbox && !enabled) {
         modelSource = await startOmpLocalModelGateway(sourceInput => this.startSession({
           ...sourceInput,
@@ -167,6 +178,7 @@ export class OmpSdkRuntime implements OmpRuntime {
         extensions,
         runtimeSettings,
         imageLaunch,
+        goalConfig,
       );
       input.signal?.throwIfAborted();
       input.onActivity?.("prepareMs", performance.now() - preparationStartedAt);
@@ -258,6 +270,7 @@ export class OmpSdkRuntime implements OmpRuntime {
     extensions: string[],
     runtimeSettings: ProviderRuntimeSettings | undefined,
     imageLaunch: { configPath: string; token: string } | undefined,
+    goalConfig: string | undefined,
   ): string[] {
     if (imageLaunch && !input.sandbox) extensions.push(resolveOmpImageSettingsExtensionPath());
     const denied = [
@@ -295,7 +308,10 @@ export class OmpSdkRuntime implements OmpRuntime {
       ],
       extensions: input.sandbox ? [] : extensions,
       disallowedTools: input.localModelGateway ? [] : denied,
-      configFiles: !input.sandbox && imageLaunch ? [imageLaunch.configPath] : [],
+      configFiles: [
+        ...(goalConfig ? [goalConfig] : []),
+        ...(!input.sandbox && imageLaunch ? [imageLaunch.configPath] : []),
+      ],
     });
     launch.argv = [...command];
     launch.env = {

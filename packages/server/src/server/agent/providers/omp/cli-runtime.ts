@@ -68,6 +68,7 @@ import {
   OmpModelsResultSchema,
   OmpNativeServiceTierSnapshotSchema,
   OmpPlanStateSchema,
+  OmpGoalResultSchema,
   OmpPromptAckSchema,
   OmpRpcCommandSchema,
   OmpRuntimeEventSchema,
@@ -809,6 +810,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       resolve: async (reviewId, choice) =>
         OmpPlanStateSchema.parse(await this.request({ type: "resolve_plan_review", reviewId, choice })),
     };
+  }
+
+  async controlGoal(
+    op: "get" | "create" | "resume" | "pause" | "drop",
+    objective?: string,
+  ) {
+    return OmpGoalResultSchema.parse(await this.request({ type: "goal", op, objective }));
   }
 
   async getState(): Promise<OmpSessionState> {

@@ -171,6 +171,11 @@ export const OmpActiveCredentialSchema = z.object({
   credentialId: z.number().int().positive(),
 });
 
+const OmpGoalTimestampSchema = z.union([
+  z.string(),
+  z.number().min(-8.64e15).max(8.64e15).transform((value) => new Date(value).toISOString()),
+]);
+
 export const OmpGoalSchema = z
   .object({
     id: z.string().optional(),
@@ -179,8 +184,8 @@ export const OmpGoalSchema = z
     tokenBudget: z.number().optional(),
     tokensUsed: z.number().optional(),
     timeUsedSeconds: z.number().optional(),
-    createdAt: z.string().optional(),
-    updatedAt: z.string().optional(),
+    createdAt: OmpGoalTimestampSchema.optional(),
+    updatedAt: OmpGoalTimestampSchema.optional(),
   })
   .passthrough();
 export const OmpGoalModeStateSchema = z
@@ -191,6 +196,10 @@ export const OmpGoalModeStateSchema = z
     goal: OmpGoalSchema.optional(),
   })
   .passthrough();
+export const OmpGoalResultSchema = z.object({
+  goal: OmpGoalSchema.nullable(),
+  state: OmpGoalModeStateSchema.nullable(),
+});
 export const OmpSessionStateSchema = z
   .object({
     model: OmpModelSchema.nullable().optional(),
@@ -787,6 +796,12 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...OmpCommandBase,
+    type: z.literal("goal"),
+    op: z.enum(["get", "create", "resume", "pause", "drop"]),
+    objective: z.string().optional(),
+  }),
+  z.object({
+    ...OmpCommandBase,
     type: z.literal("prompt"),
     message: z.string(),
     images: z.array(OmpImageContentSchema).optional(),
@@ -978,6 +993,7 @@ export type OmpTodoPhase = z.infer<typeof OmpTodoPhaseSchema>;
 export type OmpTodoReminderEvent = z.infer<typeof OmpTodoReminderEventSchema>;
 export type OmpNoticeEvent = z.infer<typeof OmpNoticeEventSchema>;
 export type OmpGoal = z.infer<typeof OmpGoalSchema>;
+export type OmpGoalResult = z.infer<typeof OmpGoalResultSchema>;
 export type OmpGoalUpdatedEvent = z.infer<typeof OmpGoalUpdatedEventSchema>;
 export type OmpAutoRetryStartEvent = z.infer<typeof OmpAutoRetryStartEventSchema>;
 export type OmpAutoRetryEndEvent = z.infer<typeof OmpAutoRetryEndEventSchema>;

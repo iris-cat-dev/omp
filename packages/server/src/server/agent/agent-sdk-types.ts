@@ -13,6 +13,7 @@ import type {
 } from "@omp-desktop/protocol/agent-types";
 import type {
   AgentAttachment,
+  AgentGoalSnapshot,
   AgentSandbox,
   OmpCustomProviderInput,
   OmpInstallationStatus,
@@ -768,7 +769,7 @@ export interface AgentSession {
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   setGoalObjective?(objective: string): Promise<void>;
-  controlGoal?(action: "start" | "pause" | "delete"): Promise<void>;
+  controlGoal?(action: "start" | "pause" | "delete"): Promise<AgentGoalSnapshot | null>;
   /** Non-destructively resolve a submitted prompt's authoritative native message ID. */
   resolveUserMessageId?(input: { clientMessageId: string; text: string }): Promise<string | null>;
   revertConversation?(input: { messageId: string }): Promise<void>;

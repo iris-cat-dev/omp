@@ -6,6 +6,7 @@ import {
   type AgentConfigSessionHost,
 } from "./agent-config-session.js";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
+import type { AgentGoalSnapshot } from "@omp-desktop/protocol/messages";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type { ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 
@@ -65,10 +66,15 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     if (this.failWith) throw this.failWith;
   }
 
-  async controlGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<void> {
+  async controlGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<AgentGoalSnapshot | null> {
     this.goalControlCalls.push({ agentId, action });
     this.callLog.push(`goal:${action}`);
     if (this.failWith) throw this.failWith;
+    return action === "delete" ? null : {
+      id: "native-1",
+      objective: "Ship the goal bar",
+      status: action === "start" ? "active" : "paused",
+    };
   }
 
   async setThinking(
@@ -301,21 +307,26 @@ describe("AgentConfigSession", () => {
     ]);
   });
 
-  test("control goal: forwards the action and emits an accepted response", async () => {
+  test("returns the native identity for a confirmed goal start", async () => {
     const { subsystem, emitted, operations } = makeSubsystem();
 
     await subsystem.handleControlAgentGoalRequest({
       type: "control_agent_goal_request",
       agentId: "agent-1",
-      action: "pause",
+      action: "start",
       requestId: "req-1",
     });
 
-    expect(operations.goalControlCalls).toEqual([{ agentId: "agent-1", action: "pause" }]);
     expect(emitted).toEqual([
       {
         type: "control_agent_goal_response",
-        payload: { requestId: "req-1", agentId: "agent-1", accepted: true, error: null },
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          goal: { id: "native-1", objective: "Ship the goal bar", status: "active" },
+        },
       },
     ]);
   });

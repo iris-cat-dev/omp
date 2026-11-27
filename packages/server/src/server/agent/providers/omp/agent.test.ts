@@ -12,6 +12,7 @@ import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "./rpc-types.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpReadyTimeoutError } from "./cli-runtime.js";
+import { JsonlRpcRequestRejectedError } from "../jsonl-rpc-process.js";
 import { getOmpWorkflowDisplayText } from "./workflow-prompt.js";
 
 const GROUPED_ASK_QUESTIONS = [
@@ -1390,26 +1391,13 @@ describe("OMP agent client and session", () => {
     expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "max"]));
   });
 
-  test.each([
-    ["plan", "design the change"],
-    ["goal", "/goal design the change"],
-  ] as const)(
-    "starts OMP native %s workflow with the first prompt",
-    async (workflow, expectedPrompt) => {
-      const omp = new OmpHarness();
-      await omp.start({
-        modeId: "ask",
-        featureValues: { workflow_mode: workflow },
-      });
-
-      await omp.runPrompt("design the change", "ready");
-      expect(omp.recordedPrompts()[0]?.message).toBe(expectedPrompt);
-      await expect(omp.currentMode()).resolves.toBe("ask");
-      expect(omp.features()).toEqual([
-        expect.objectContaining({ id: "workflow_mode", value: workflow }),
-      ]);
-    },
-  );
+  test("keeps the first Plan prompt inside the native read-only workflow", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "ask", featureValues: { workflow_mode: "plan" } });
+    await omp.runPrompt("design the change", "ready");
+    expect(omp.runtime().planState.enabled).toBe(true);
+    await expect(omp.currentMode()).resolves.toBe("ask");
+  });
 
   test("starts enhanced workflow without sending a native workflow command", async () => {
     const omp = new OmpHarness();
@@ -1464,16 +1452,20 @@ describe("OMP agent client and session", () => {
       featureValues: { workflow_mode: "goal" },
     });
     await omp.runPrompt("finish feature", "working");
+    await vi.waitFor(async () => {
+      expect((await omp.runtime().controlGoal("get")).goal).toMatchObject({
+        objective: "finish feature",
+        status: "active",
+      });
+    });
 
     await omp.setFeature("workflow_mode", "chat");
+    expect((await omp.runtime().controlGoal("get")).goal).toBeNull();
     expect(omp.runtime().activeToolSetRequests).toEqual([["read", "glob", "grep"]]);
 
     const runtime = omp.runtime();
     const start = omp.requireStartTurn("just answer a question");
     await start;
-    if (omp.recordedPrompts().length < 3) {
-      await runtime.nextPrompt();
-    }
     runtime.beginTurn();
     runtime.acceptPrompt("just answer a question", "user-2");
     runtime.finishTurn({
@@ -1486,8 +1478,7 @@ describe("OMP agent client and session", () => {
     });
 
     expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      "/goal finish feature",
-      "/goal drop",
+      "finish feature",
       expect.stringContaining("Chat mode active for this turn."),
     ]);
 
@@ -2251,38 +2242,86 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("deleting an empty pending goal does not send /goal drop", async () => {
+  test.each([false, true])("confirms the native goal with a busy session = %s", async (busy) => {
     const omp = new OmpHarness();
-    await omp.start({ featureValues: { workflow_mode: "goal" } });
+    await omp.start();
+    if (busy) {
+      await omp.requireStartTurn("existing work");
+      omp.runtime().beginTurn();
+    }
+    await omp.setFeature("workflow_mode", "goal");
+    const objective = "完成 A\n再处理 B";
+    await omp.updateGoalObjective(objective);
+    expect((await omp.runtime().controlGoal("get")).goal).toBeNull();
 
+    const active = await omp.controlGoal("start");
+    expect(active).toEqual({ id: expect.any(String), objective, status: "active" });
+    expect((await omp.runtime().controlGoal("get")).goal).toEqual(active);
+    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(
+      busy ? ["existing work"] : [],
+    );
+    expect(omp.runtime().followUpRequests).toEqual([]);
+    expect(omp.runtime().abortRequested).toBe(false);
+    expect(await omp.controlGoal("pause")).toEqual({ ...active, status: "paused" });
+    expect(await omp.controlGoal("start")).toEqual(active);
     await omp.controlGoal("delete");
-    await omp.runPrompt("continue normally", "done");
-
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual(["continue normally"]);
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "standard" }),
-    ]);
+    expect((await omp.runtime().controlGoal("get")).goal).toBeNull();
   });
 
-  test("stores, starts, pauses, and deletes a goal independently", async () => {
+  test("reports native rejection and allows another attempt after the rejection is resolved", async () => {
     const omp = new OmpHarness();
     await omp.start({ featureValues: { workflow_mode: "goal" } });
+    await omp.updateGoalObjective("Ship the goal bar");
+    const runtime = omp.runtime();
+    const control = runtime.controlGoal.bind(runtime);
+    const operation = vi.spyOn(runtime, "controlGoal").mockImplementation(async (op, objective) => {
+      if (op === "create") throw new JsonlRpcRequestRejectedError("Goal mode is disabled (goal.enabled).");
+      return await control(op, objective);
+    });
 
-    await omp.updateGoalObjective("Ship the editable goal bar");
+    await expect(omp.controlGoal("start")).rejects.toThrow("Goal mode is disabled (goal.enabled).");
+    expect((await control("get")).goal).toBeNull();
     expect(omp.recordedPrompts()).toEqual([]);
+    operation.mockRestore();
+    expect(await omp.controlGoal("start")).toMatchObject({ status: "active" });
+  });
 
-    await omp.controlGoal("start");
-    await omp.controlGoal("pause");
-    await omp.controlGoal("delete");
+  test("reuses a journaled start after the reply is lost and the goal has already completed", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_mode: "goal" } });
+    await omp.updateGoalObjective("Ship the goal bar");
+    const runtime = omp.runtime();
+    const control = runtime.controlGoal.bind(runtime);
+    vi.spyOn(runtime, "controlGoal").mockImplementation(async (op, objective) => {
+      const result = await control(op, objective);
+      if (op !== "create" || !result.goal) return result;
+      runtime.state.goal = null;
+      runtime.emit({ type: "goal_updated", goal: { ...result.goal, status: "complete" } });
+      throw new Error("Lost create reply");
+    });
 
-    expect(omp.recordedPrompts().map((prompt) => prompt.message)).toEqual([
-      "/goal Ship the editable goal bar",
-      "/goal pause",
-      "/goal drop",
-    ]);
-    expect(omp.features()).toEqual([
-      expect.objectContaining({ id: "workflow_mode", value: "standard" }),
-    ]);
+    const first = await omp.controlGoal("start");
+    expect(first).toMatchObject({ id: "native-goal-1", status: "active" });
+    expect((await control("get")).goal).toBeNull();
+    expect(await omp.controlGoal("start")).toEqual(first);
+    expect(omp.features()[0]?.value).toBe("standard");
+  });
+
+  test("does not issue a second create when a lost response has no native evidence", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ featureValues: { workflow_mode: "goal" } });
+    await omp.updateGoalObjective("Ship the goal bar");
+    const runtime = omp.runtime();
+    const control = runtime.controlGoal.bind(runtime);
+    const operation = vi.spyOn(runtime, "controlGoal").mockImplementation(async (op, objective) => {
+      if (op === "create") throw new Error("Lost create reply");
+      return await control(op, objective);
+    });
+
+    await expect(omp.controlGoal("start")).rejects.toThrow("Lost create reply");
+    await expect(omp.controlGoal("start")).rejects.toThrow("will not be submitted again");
+    expect(operation.mock.calls.filter(([op]) => op === "create")).toHaveLength(1);
+    expect(omp.recordedPrompts()).toEqual([]);
   });
 
   test("streams a prompt through completion", async () => {

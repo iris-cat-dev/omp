@@ -46,6 +46,7 @@ import {
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
+  AgentGoalSnapshot,
   ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
   CreateAgentRequestMessage,
@@ -4155,7 +4156,10 @@ export class DaemonClient {
     }
   }
 
-  async controlAgentGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<void> {
+  async controlAgentGoal(
+    agentId: string,
+    action: "start" | "pause" | "delete",
+  ): Promise<AgentGoalSnapshot | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "control_agent_goal_request",
@@ -4176,6 +4180,10 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "controlAgentGoal rejected");
     }
+    if (payload.goal === undefined || (action === "start" && payload.goal === null)) {
+      throw new Error("The daemon did not confirm a native goal; update OMP Desktop");
+    }
+    return payload.goal;
   }
 
   async setAgentThinkingOption(

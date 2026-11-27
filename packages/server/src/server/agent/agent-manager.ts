@@ -1,7 +1,7 @@
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
 import { randomUUID } from "node:crypto";
 import equal from "fast-deep-equal";
-import { ListCommandsResponseSchema } from "@omp-desktop/protocol/messages";
+import { ListCommandsResponseSchema, type AgentGoalSnapshot } from "@omp-desktop/protocol/messages";
 import type {
   BackgroundProcess,
   BackgroundProcessOutput,
@@ -2629,12 +2629,15 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async controlAgentGoal(agentId: string, action: "start" | "pause" | "delete"): Promise<void> {
+  async controlAgentGoal(
+    agentId: string,
+    action: "start" | "pause" | "delete",
+  ): Promise<AgentGoalSnapshot | null> {
     const agent = this.requireAgent(agentId);
     if (!agent.session.controlGoal) {
       throw new Error("Agent session does not support controlling goals");
     }
-    await agent.session.controlGoal(action);
+    const goal = await agent.session.controlGoal(action);
     await this.drainSessionEvents(agentId);
     if (action === "delete") {
       agent.config.featureValues = {
@@ -2645,6 +2648,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    return goal;
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

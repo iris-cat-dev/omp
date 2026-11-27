@@ -648,8 +648,8 @@ export class OmpHarness {
     await this.requireSession().setGoalObjective(objective);
   }
 
-  async controlGoal(action: "start" | "pause" | "delete"): Promise<void> {
-    await this.requireSession().controlGoal(action);
+  controlGoal(action: "start" | "pause" | "delete") {
+    return this.requireSession().controlGoal(action);
   }
 
   async rewind(messageId: string, restoredPrompt: string): Promise<void> {

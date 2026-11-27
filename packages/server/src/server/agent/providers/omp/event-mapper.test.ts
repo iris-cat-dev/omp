@@ -46,8 +46,8 @@ describe("OMP runtime event mapper", () => {
           tokenBudget: 2000,
           tokensUsed: 345,
           timeUsedSeconds: 12,
-          createdAt: "2026-08-26T10:00:00.000Z",
-          updatedAt: "2026-08-26T10:00:12.000Z",
+          createdAt: Date.parse("2026-08-26T10:00:00.000Z"),
+          updatedAt: Date.parse("2026-08-26T10:00:12.000Z"),
         },
         state: {
           enabled: true,

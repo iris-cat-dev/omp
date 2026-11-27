@@ -195,6 +195,16 @@ OMP Plan uses the session's read-only SDK workflow. The agent writes `local://<s
 
 When an unresolved choice would change scope, compatibility, permissions, or acceptance, Plan asks through the normal question card and waits for an answer without a timeout. The answer is recorded in the Markdown before review. A question and a proposal sent in the same tool batch cannot open a review.
 
+In an OMP conversation, **Save goal** stores the objective draft. **Start goal** uses the
+SDK's native `goal` RPC and returns the confirmed goal ID, objective, and status. Starting
+a goal during a turn leaves that turn running; an idle Desktop SDK conversation starts
+its own goal turn. Pausing and resuming keep the same goal ID. If the runtime rejects the
+request, the Desktop client receives the reason. A repeated start for the same draft in
+the loaded session reuses the confirmed result; if neither a reply nor native state can
+confirm the first attempt, Desktop reports it as unconfirmed instead of sending another
+create. The external CLI backend requires native `goal` RPC support; automatic continuation
+there follows the CLI's `goal.continuationModes` setting.
+
 `debug` is enabled in Node RPC hosts, including Desktop and SDK-backed remote sessions, subject to the normal `debug.enabled` setting, tool allowlists, and explicit denials. DAP adapter launch and `runInTerminal` use the shared cross-runtime process manager; stdio, TCP, and platform-specific socket transports no longer require Bun. Install/configure the target language's debugger adapter separately. Rebuild the SDK and recreate existing session hosts to load the repaired transport and tool registry; already-running hosts retain their loaded code.
 
 Browser Relay also uses the embedded runtime: the first loopback relay browser open lazily starts `dist/node/host.mjs browser-relay` through the SDK's machine-global daemon broker. It does not invoke an `omp` executable from `PATH`. Concurrent SDK sessions share the existing relay; broker leases keep it alive while another consumer remains, and externally started relays remain under their owner's control. Remote relay endpoints are never auto-started.

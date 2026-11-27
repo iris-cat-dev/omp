@@ -12,6 +12,7 @@ import type {
   OmpExtensionUiResponse,
   OmpFastModeResult,
   OmpFastModeSelection,
+  OmpGoalResult,
   OmpModel,
   OmpLoginProvider,
   OmpPlanState,
@@ -108,6 +109,10 @@ export interface OmpPlanControl {
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   plan?: OmpPlanControl;
+  controlGoal(
+    op: "get" | "create" | "resume" | "pause" | "drop",
+    objective?: string,
+  ): Promise<OmpGoalResult>;
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,

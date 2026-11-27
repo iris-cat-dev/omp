@@ -17,6 +17,7 @@ import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import type {
+  AgentGoalSnapshot,
   OmpCustomProviderInput,
   OmpInstallationStatus,
   OmpProviderAccountQuota,
@@ -85,7 +86,7 @@ import {
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
 import { ProxyPolicySchema, type ProxyPolicy } from "@omp-desktop/protocol/provider-config";
-import { AgentSandboxSchema } from "@omp-desktop/protocol/messages";
+import { AgentGoalSnapshotSchema, AgentSandboxSchema } from "@omp-desktop/protocol/messages";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import {
@@ -161,6 +162,7 @@ import {
   installOmp,
 } from "./installer.js";
 import { OmpCliRuntime, OmpReadyTimeoutError } from "./cli-runtime.js";
+import { JsonlRpcRequestRejectedError } from "../jsonl-rpc-process.js";
 import { OmpSdkRuntime } from "./sdk-runtime.js";
 import { resolveOmpBackend, resolveOmpSdkInstallation } from "./sdk-installation.js";
 import {
@@ -181,6 +183,7 @@ import type {
   OmpAgentSessionEvent,
   OmpAgentMessage,
   OmpFastModeSelection,
+  OmpGoal,
   OmpImageContent,
   OmpModel,
   OmpPlanReview,
@@ -749,14 +752,15 @@ interface OmpAgentSessionOptions {
   deferredWorkflow?: OmpWorkflowSelection;
 }
 
-function initialOmpNativeWorkflowMode(
-  selection: OmpWorkflowSelection,
-  options: OmpAgentSessionOptions,
-): OmpWorkflowMode | null {
-  if (options.live !== false) return null;
-  const goal = options.initialState.goal;
-  // Distinguish a saved native goal (including paused) from a selection awaiting its first prompt.
-  return (goal === undefined ? selection === "goal" : goal !== null) ? "goal" : null;
+function readGoalSnapshot(goal: OmpGoal | null | undefined): AgentGoalSnapshot | null {
+  const parsed = AgentGoalSnapshotSchema.safeParse(goal);
+  return parsed.success ? parsed.data : null;
+}
+
+interface OmpGoalStart {
+  objective: string;
+  expectedId: string | null;
+  confirmed?: AgentGoalSnapshot;
 }
 
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -1942,6 +1946,8 @@ export class OmpAgentSession implements AgentSession {
   private currentModeId: string | null;
   private activeWorkflowMode: OmpWorkflowMode | null;
   private workflowModePending: OmpWorkflowSelection | null;
+  private goalControls = Promise.resolve();
+  private goalStart: OmpGoalStart | null = null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
@@ -2039,7 +2045,7 @@ export class OmpAgentSession implements AgentSession {
       options.initialState.activeCredential,
       !!options.runtimeSession.plan && !options.config.sandbox,
     );
-    this.activeWorkflowMode = initialOmpNativeWorkflowMode(configuredWorkflowMode, options);
+    this.activeWorkflowMode = readGoalSnapshot(options.initialState.goal?.goal) ? "goal" : null;
     this.workflowModePending =
       (this.live && configuredWorkflowMode !== "standard") ||
       (!this.live && (this.activeWorkflowMode === "goal") !== (configuredWorkflowMode === "goal"))
@@ -2314,6 +2320,12 @@ export class OmpAgentSession implements AgentSession {
     const displayPromptText = payload.text;
     const preparedText = await this.prepareWorkflowTurnPrompt(payload.text, nativeCommand, signal);
     if (preparedText === null) return { turnId };
+    const goalObjective =
+      nativeCommand === undefined &&
+      this.workflowModePending === "goal" &&
+      this.activeWorkflowMode !== "goal"
+        ? (optionalString(this.config.featureValues?.goal_objective)?.trim() || displayPromptText.trim())
+        : null;
     payload.text = preparedText;
     this.live = true;
     this.activeTurnId = turnId;
@@ -2347,12 +2359,34 @@ export class OmpAgentSession implements AgentSession {
         const ack = await this.runtimeSession.prompt(payload.text, payload.images, {
           clientMessageId,
         });
-        if (this.activeTurnId !== turnId) return;
-        this.activePromptAwaitingAck = false;
-        this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
           : undefined;
+        if (
+          goalObjective && (correlatedResult?.agentInvoked ?? ack.agentInvoked) !== false &&
+          !signal.aborted
+        ) {
+          void this.runGoalControl(async () => {
+            const currentDraft =
+              optionalString(this.config.featureValues?.goal_objective)?.trim() || displayPromptText.trim();
+            if (
+              !signal.aborted && this.workflowModePending === "goal" &&
+              this.activeWorkflowMode !== "goal" && currentDraft === goalObjective
+            ) {
+              await this.startNativeGoal(goalObjective);
+            }
+          }).catch((error: unknown) => {
+            this.emit({
+              type: "timeline",
+              provider: this.provider,
+              turnId,
+              item: { type: "error", message: toDiagnosticErrorMessage(error) },
+            });
+          });
+        }
+        if (this.activeTurnId !== turnId) return;
+        this.activePromptAwaitingAck = false;
+        this.activePromptRequestId = ack.requestId ?? null;
         this.pendingPromptResults.clear();
         this.activePromptAgentInvoked = correlatedResult?.agentInvoked ?? ack.agentInvoked ?? null;
         if (correlatedResult) {
@@ -2752,7 +2786,10 @@ export class OmpAgentSession implements AgentSession {
     if (featureId !== OMP_WORKFLOW_FEATURE_ID) {
       throw new Error(`Unsupported OMP feature '${featureId}'`);
     }
-    const selection = parseOmpWorkflowSelection(value);
+    await this.runGoalControl(() => this.setWorkflowSelection(parseOmpWorkflowSelection(value)));
+  }
+
+  private async setWorkflowSelection(selection: OmpWorkflowSelection): Promise<void> {
     const feature = this.features[0];
     if (feature?.type !== "select") {
       throw new Error("OMP workflow feature is unavailable");
@@ -2772,10 +2809,14 @@ export class OmpAgentSession implements AgentSession {
           await this.disableActiveWorkflowMode();
         }
       }
+    } else if (this.activeWorkflowMode === "goal" && selection !== "goal") {
+      await this.disableActiveWorkflowMode();
     }
     if (!this.activeTurnId && !this.pendingTurnAdmission) {
       await this.syncChatToolRestriction(selection === "chat");
     }
+    if (selection === "goal" && feature.value !== "goal" && this.goalStart?.confirmed)
+      this.goalStart = null;
     feature.value = selection;
     this.config.featureValues = {
       ...this.config.featureValues,
@@ -2829,7 +2870,7 @@ export class OmpAgentSession implements AgentSession {
     signal: AbortSignal,
   ): Promise<string | null> {
     if (this.activeWorkflowMode) {
-      await this.disableActiveWorkflowMode(signal);
+      await this.runGoalControl(() => this.disableActiveWorkflowMode(signal));
       if (signal.aborted) return null;
     }
     await this.syncChatToolRestriction(true);
@@ -2848,19 +2889,16 @@ export class OmpAgentSession implements AgentSession {
     let text = promptText;
     const workflowMode = this.workflowModePending;
     if (workflowMode === "standard" || workflowMode === "enhanced") {
-      await this.disableActiveWorkflowMode(signal);
+      await this.runGoalControl(() => this.disableActiveWorkflowMode(signal));
       if (signal.aborted) return null;
       this.workflowModePending = null;
     } else if (workflowMode && workflowMode !== "chat") {
       if (this.activeWorkflowMode && this.activeWorkflowMode !== workflowMode) {
-        await this.disableActiveWorkflowMode(signal);
+        await this.runGoalControl(() => this.disableActiveWorkflowMode(signal));
         if (signal.aborted) return null;
       }
-      if (workflowMode === "goal") {
-        text = `/goal ${text}`;
-        this.activeWorkflowMode = "goal";
-      }
-      this.workflowModePending = null;
+      // Goal is entered separately from chat admission; keep the selection pending until confirmed.
+      if (workflowMode !== "goal") this.workflowModePending = null;
     }
     if (!isOmpNativeWorkflowMode(selectedWorkflowMode) && this.chatContextResetPending) {
       text = buildOmpChatExitTurnPrompt(text);
@@ -3115,48 +3153,117 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async setGoalObjective(objective: string): Promise<void> {
-    this.assertRuntimeWorkAllowed();
-    const normalizedObjective = objective.trim();
-    if (!normalizedObjective) {
-      throw new Error("OMP goal objective is required");
-    }
-    const workflowFeature = this.features[0];
-    if (workflowFeature?.type !== "select" || workflowFeature.value !== "goal") {
-      throw new Error("OMP goal mode is not active");
-    }
-    this.config.featureValues = {
-      ...this.config.featureValues,
-      goal_objective: normalizedObjective,
-    };
+    await this.runGoalControl(async () => {
+      const normalizedObjective = objective.trim();
+      if (!normalizedObjective) throw new Error("OMP goal objective is required");
+      const workflowFeature = this.features[0];
+      if (workflowFeature?.type !== "select" || workflowFeature.value !== "goal") {
+        throw new Error("OMP goal mode is not active");
+      }
+      if (this.goalStart?.objective !== normalizedObjective) this.goalStart = null;
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        goal_objective: normalizedObjective,
+      };
+    });
   }
 
-  async controlGoal(action: "start" | "pause" | "delete"): Promise<void> {
-    this.assertRuntimeWorkAllowed();
-    const objective = optionalString(this.config.featureValues?.goal_objective)?.trim();
-    if (action === "start" && !objective) {
-      throw new Error("OMP goal objective is required before starting");
-    }
-    if (action === "delete" && !objective && this.activeWorkflowMode === null) {
+  controlGoal(action: "start" | "pause" | "delete"): Promise<AgentGoalSnapshot | null> {
+    return this.runGoalControl(async () => {
+      if (action === "start") {
+        const objective =
+          optionalString(this.config.featureValues?.goal_objective)?.trim() || this.goalStart?.objective;
+        if (this.features[0]?.value !== "goal" && (!objective || this.goalStart?.objective !== objective)) {
+          throw new Error("OMP goal mode is not selected");
+        }
+        await this.syncChatToolRestriction(false);
+        return await this.startNativeGoal(objective);
+      }
+      if (action === "pause") {
+        const result = await this.runtimeSession.controlGoal("pause");
+        if (result.goal === null) return null;
+        const goal = readGoalSnapshot(result.goal);
+        if (!goal || goal.status !== "paused") throw new Error("OMP did not confirm a paused goal");
+        return goal;
+      }
+      if (this.activeWorkflowMode === "goal" || this.goalStart) await this.dropNativeGoal();
       this.clearGoalConfiguration();
-      return;
+      return null;
+    });
+  }
+
+  private runGoalControl<T>(run: () => Promise<T>): Promise<T> {
+    const action = this.goalControls.then(() => {
+      this.assertRuntimeWorkAllowed();
+      return run();
+    });
+    this.goalControls = action.then(() => undefined, () => undefined);
+    return action;
+  }
+
+  private async startNativeGoal(draft: string | undefined): Promise<AgentGoalSnapshot> {
+    const current = readGoalSnapshot((await this.runtimeSession.controlGoal("get")).goal);
+    const objective = draft || current?.objective;
+    if (!objective) throw new Error("OMP goal objective is required before starting");
+    const previous = this.goalStart?.objective === objective ? this.goalStart : null;
+    const previousId = previous?.confirmed?.id ?? previous?.expectedId;
+    const resume =
+      current?.objective === objective && current.status === "paused" &&
+      (!previousId || current.id === previousId);
+    if (previous && !resume) {
+      if (previous.confirmed) return previous.confirmed;
+      if (
+        current?.objective === objective &&
+        current.status === "active" &&
+        (!previous.expectedId || current.id === previous.expectedId)
+      ) {
+        return (previous.confirmed = current);
+      }
+      throw new Error("OMP could not confirm the previous goal start; it will not be submitted again");
     }
-    let command = "/goal drop";
-    if (action === "start") {
-      command = `/goal ${objective}`;
-    } else if (action === "pause") {
-      command = "/goal pause";
+    if (current?.objective === objective && current.status === "active") {
+      this.goalStart = { objective, expectedId: current.id, confirmed: current };
+      return current;
     }
-    if (this.activeTurnId) {
-      this.runtimeSession.followUp(command);
-    } else {
-      await this.runtimeSession.prompt(command);
+    // Retain this draft's attempt until a definite rejection, a new draft, or an explicit drop.
+    const attempt: OmpGoalStart = { objective, expectedId: resume ? current.id : null };
+    this.goalStart = attempt;
+    try {
+      const result = resume
+        ? await this.runtimeSession.controlGoal("resume")
+        : await this.runtimeSession.controlGoal("create", objective);
+      const goal = readGoalSnapshot(result.goal);
+      if (
+        goal?.status === "active" && result.state?.enabled === true &&
+        goal.objective === objective && (!attempt.expectedId || goal.id === attempt.expectedId)
+      ) {
+        return (attempt.confirmed = goal);
+      }
+      if (attempt.confirmed) return attempt.confirmed;
+      throw new Error("OMP did not confirm that the requested goal is active");
+    } catch (error) {
+      if (error instanceof JsonlRpcRequestRejectedError) {
+        if (!attempt.confirmed) this.goalStart = null;
+        throw error;
+      }
+      // The event is emitted after the goal is journaled, before the command responds.
+      // Retain it if the reply was lost, even when the goal has already completed.
+      if (attempt.confirmed) return attempt.confirmed;
+      throw new Error(`OMP could not confirm goal start: ${toDiagnosticErrorMessage(error)}`, {
+        cause: error,
+      });
     }
-    if (action === "delete") {
-      this.clearGoalConfiguration();
-    }
+  }
+
+  private async dropNativeGoal(): Promise<void> {
+    const result = await this.runtimeSession.controlGoal("drop");
+    if (result.goal !== null || result.state !== null)
+      throw new Error("OMP did not confirm that the goal was deleted");
+    this.goalStart = null;
   }
 
   private clearGoalConfiguration(): void {
+    this.goalStart = null;
     this.workflowModePending = null;
     this.config.featureValues = {
       ...this.config.featureValues,
@@ -4256,11 +4363,18 @@ export class OmpAgentSession implements AgentSession {
   }
   private updateWorkflowModeFromRuntimeEvent(event: OmpRuntimeEvent): void {
     if (event.type !== "goal_updated") return;
-    const goalStatus = event.state?.goal?.status ?? event.goal?.status;
-    const goalActive =
-      event.state?.enabled === true && goalStatus !== "complete" && goalStatus !== "dropped";
-    if (goalActive || this.activeWorkflowMode === "goal")
-      this.setActiveWorkflowMode(goalActive ? "goal" : null, true);
+    const goal = readGoalSnapshot(event.state?.goal ?? event.goal);
+    const attempt = this.goalStart;
+    if (goal?.status === "active" && event.state?.enabled === true) {
+      if (
+        attempt && !attempt.confirmed && attempt.objective === goal.objective &&
+        (!attempt.expectedId || attempt.expectedId === goal.id)
+      ) attempt.confirmed = goal;
+      if (this.workflowModePending === "goal") this.workflowModePending = null;
+    }
+    const hasGoal = goal !== null && goal.status !== "complete" && goal.status !== "dropped";
+    if (hasGoal || this.activeWorkflowMode === "goal")
+      this.setActiveWorkflowMode(hasGoal ? "goal" : null, true);
   }
 
   private setActiveWorkflowMode(mode: OmpWorkflowMode | null, publishFeatureChange = false): void {
@@ -4291,7 +4405,7 @@ export class OmpAgentSession implements AgentSession {
   private async disableActiveWorkflowMode(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted || !this.activeWorkflowMode) return;
     if (this.activeWorkflowMode === "goal") {
-      await this.runtimeSession.prompt("/goal drop");
+      await this.dropNativeGoal();
     } else {
       await this.runtimeSession.plan!.setMode(false);
       const pending = this.pendingPlanApproval();
