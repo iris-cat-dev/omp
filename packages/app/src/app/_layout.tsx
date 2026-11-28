@@ -924,6 +924,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
     (pathname === "/open-project" ||
       pathname === "/sessions" ||
       pathname === "/file-preview" ||
+      /^\/plugin\/[^/]+\/(?:sidebar|surface)\/[^/]+\/?$/.test(pathname) ||
       routeHasKnownHost);
 
   return <AppContainer chromeEnabled={shouldShowAppChrome}>{children}</AppContainer>;

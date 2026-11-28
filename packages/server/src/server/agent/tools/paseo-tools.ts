@@ -25,6 +25,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
+import { ensureUnarchivedAgentLoaded } from "../agent-loading.js";
 import { readPersistedAgentHistory } from "../persisted-agent-history.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -655,14 +656,18 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
       { message: "provider must be omp or omp/model" },
     );
+  const AgentFeatureValuesInputSchema = z
+    .object({
+      workflow_mode: z.string().optional().describe("OMP workflow selection. Use 'goal' for Goal mode."),
+      goal_objective: z.string().trim().min(1).optional().describe("Objective text for OMP Goal mode."),
+    })
+    .passthrough()
+    .describe("Provider-specific feature values.");
   const CreateAgentSettingsInputSchema = z
     .object({
       modeId: z.string().optional().describe("Session mode to configure before the first run."),
       thinkingOptionId: z.string().optional().describe("Thinking option ID."),
-      features: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      features: AgentFeatureValuesInputSchema.optional(),
     })
     .strict();
   const UpdateAgentSettingsInputSchema = z
@@ -674,10 +679,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         .nullable()
         .optional()
         .describe("Thinking option ID. Pass null to clear."),
-      features: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      features: AgentFeatureValuesInputSchema.optional(),
     })
     .strict();
   const InspectProviderSettingsInputSchema = z
@@ -1369,7 +1371,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       title: "Create agent",
       description:
         "Create an OMP agent. To assign a specific model to a new subagent, call list_models and pass the exact ID as provider: \"omp/<model-id>\" here. The native task tool uses the configured worker model; task.model is reserved for seance history consults. " +
-        "Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace; pass a workspaceId from create_workspace to run it in that workspace as its conversation. Independent roots require a workspace with no unarchived root; call create_workspace first for another conversation. Top-level creation without workspaceId creates a new local workspace. An initial prompt is required.",
+        "Agent-scoped creation defaults to a caller-owned subagent in the caller's workspace; pass a workspaceId from create_workspace to run it in that workspace as its conversation. Independent roots require a workspace with no unarchived root; call create_workspace first for another conversation. Top-level creation without workspaceId creates a new local workspace. An initial prompt is required. " +
+        "To start in Goal mode, set settings.features.workflow_mode to 'goal' and settings.features.goal_objective to the objective. Use update_agent to save a Goal objective on an existing conversation.",
       inputSchema: createAgentInputSchema,
       // Publish the canonical contract to OMP. An open catchall is interpreted
       // by the SDK as owning the harness's `i` field, so it would forward it.
@@ -2170,7 +2173,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "update_agent",
     {
       title: "Update agent",
-      description: "Update an agent name, labels, and/or runtime settings.",
+      description:
+        "Update an agent name, labels, and/or runtime settings. For an OMP Goal draft, set settings.features.goal_objective. Include workflow_mode: 'goal' in the same features object if Goal is not selected. Saving a draft does not start a turn.",
       inputSchema: {
         agentId: z.string(),
         name: z.string().optional(),
@@ -2184,6 +2188,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      const { goal_objective: goalObjective, ...features } = settings?.features ?? {};
+      if (goalObjective !== undefined) {
+        await ensureUnarchivedAgentLoaded(agentId, { agentManager, agentStorage, logger: childLogger });
+      }
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
@@ -2193,10 +2201,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (settings?.thinkingOptionId !== undefined) {
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
-      if (settings?.features) {
-        for (const [featureId, value] of Object.entries(settings.features)) {
-          await agentManager.setAgentFeature(agentId, featureId, value);
-        }
+      for (const [featureId, value] of Object.entries(features)) {
+        await agentManager.setAgentFeature(agentId, featureId, value);
+      }
+      if (goalObjective !== undefined) {
+        await agentManager.setAgentGoalObjective(agentId, goalObjective);
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });

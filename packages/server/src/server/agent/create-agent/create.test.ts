@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -12,6 +12,9 @@ import { AgentStorage, type StoredAgentRecord } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
+import { OmpAgentClient } from "../providers/omp/agent.js";
+import { FakeOmp } from "../providers/omp/test-utils/fake-omp.js";
+import { createPaseoToolCatalog } from "../tools/paseo-tools.js";
 
 const logger = createTestLogger();
 
@@ -463,6 +466,97 @@ test("same-workspace subagents remain valid and an archived root can be replaced
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
+
+test.each(["at creation", "after creation", "after unload"])(
+  "a parent agent can set a Goal objective %s",
+  async (when) => {
+    const workdir = mkdtempSync(join(tmpdir(), "create-agent-goal-test-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const runtime = new FakeOmp();
+    const omp = new OmpAgentClient({
+      logger,
+      runtime,
+      runtimeSettings: {
+        ompSdkPath: process.env.OMP_DESKTOP_TEST_SDK_ROOT,
+        ompBackend: "cli",
+        env: { PI_CODING_AGENT_DIR: workdir },
+      },
+      oauthAccounts: [],
+    });
+    const agentManager = new AgentManager({ clients: { omp }, registry: storage, logger });
+    const { manager: providerSnapshotManager } = createProviderSnapshotManagerStub();
+    vi.spyOn(providerSnapshotManager, "resolveCreateConfig").mockImplementation(
+      async ({ featureValues }) => ({ featureValues }),
+    );
+
+    try {
+      const parent = await agentManager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+        workspaceId: "ws-goal",
+      });
+      const tools = createPaseoToolCatalog({
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager,
+        callerAgentId: parent.id,
+      });
+      const firstPrompt = "Inspect the repository before implementation";
+      const objective = "完成迁移\n验证旧数据仍可读取";
+      const features = { goal_objective: ` ${objective} `, workflow_mode: "goal" };
+      const sessionFile = join(workdir, "child.jsonl");
+      const header = { type: "session", id: "omp-session-1", parentId: null, cwd: workdir };
+      writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
+      runtime.setInitialSessionFile(sessionFile);
+      const created = await tools.executeTool("create_agent", {
+        provider: "omp/openai-codex/gpt-5.4",
+        title: "Implement migration",
+        initialPrompt: firstPrompt,
+        notifyOnFinish: false,
+        ...(when === "at creation" ? { settings: { features } } : {}),
+      });
+      const result = created.structuredContent;
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("agentId" in result) ||
+        typeof result.agentId !== "string"
+      ) {
+        throw new Error("Missing created agent ID");
+      }
+      const childId = result.agentId;
+      const childRuntime = runtime.latestSession();
+      childRuntime.beginTurn();
+      childRuntime.acceptPrompt(firstPrompt, "initial-user");
+      childRuntime.streamAssistantText("Repository inspected");
+      childRuntime.finishTurn();
+      await agentManager.waitForAgentEvent(childId);
+
+      if (when !== "at creation") {
+        if (when === "after unload") await agentManager.closeAgent(childId);
+        await tools.executeTool("update_agent", { agentId: childId, settings: { features } });
+        expect((await runtime.latestSession().controlGoal("get")).goal).toBeNull();
+        await tools.executeTool("send_agent_prompt", {
+          agentId: childId,
+          prompt: "Proceed with implementation",
+          notifyOnFinish: false,
+        });
+      }
+      await agentManager.flush();
+      expect((await storage.get(childId))?.config?.featureValues).toMatchObject({
+        workflow_mode: "goal",
+        goal_objective: objective,
+      });
+      await vi.waitFor(async () => {
+        expect((await runtime.latestSession().controlGoal("get")).goal).toMatchObject({
+          objective,
+          status: "active",
+        });
+      });
+    } finally {
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    }
+  },
+);
 
 test("concurrent root creation commits only one root per workspace", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-root-race-test-"));

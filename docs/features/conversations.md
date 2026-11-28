@@ -210,6 +210,24 @@ Agent-scoped `create_agent` creates a child in the caller's workspace by default
 
 To use a specific model for one new child, look up the model with `list_models` and pass `provider: "omp/<model-id>"` to `create_agent`, for example `omp/cursor/gemini-4-hydrogen`. This leaves the [configured built-in worker models](models-and-providers.md#subagent-model-overrides) unchanged. Native `task` uses those settings for ordinary workers; its `model` argument is reserved for `seance` history consults.
 
+To give a new OMP conversation a Goal, pass `settings.features` to `create_agent` with `workflow_mode: "goal"` and a non-empty `goal_objective`. `initialPrompt` is still required: it opens the first turn, while the objective tells Goal mode what to keep working toward.
+
+For an existing conversation, use `update_agent` with its `agentId`:
+
+```json
+{
+  "agentId": "<agent-id>",
+  "settings": {
+    "features": {
+      "workflow_mode": "goal",
+      "goal_objective": "Finish the migration and verify that old records still load."
+    }
+  }
+}
+```
+
+If Goal is already selected, omit `workflow_mode`. This saves a draft without starting a new turn or replacing a running goal. In a conversation without a running goal, the next prompt that starts a new turn uses the saved objective.
+
 A new workspace starts without a conversation. `create_workspace` registers a persistent sidebar workspace and instructs the caller to use `create_agent` with that ID so work appears as the workspace's own conversation; it is not intended for disposable Git operations (`git worktree add` in `bash`). Built-in task subagents retain the caller's workspace: editing another worktree changes its files, but does not relocate the conversation.
 
 For a worktree under the current project, pass `isolation: "worktree"` and the Git checkout's `path`. In an agent session, the caller's project owns the new workspace even if the checkout is a separate repository nested in a non-Git project. To choose a different existing project, pass `projectId` alongside `path`. Set `separateProject: true` instead to use or create a project rooted at the repository. The result includes the owning `projectId` and whether it was newly created (`projectCreated`). Outside an agent session, omitting both ownership options retains checkout-based project selection and may create a project.
